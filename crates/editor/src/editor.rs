@@ -65,49 +65,49 @@ const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct SelectNext {
     #[serde(default)]
     pub replace_newest: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct GoToDiagnostic(pub Direction);
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct Scroll(pub Vector2F);
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct Select(pub SelectPhase);
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct Input(pub String);
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct SelectToBeginningOfLine {
     #[serde(default)]
     stop_at_soft_wraps: bool,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct SelectToEndOfLine {
     #[serde(default)]
     stop_at_soft_wraps: bool,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct ToggleCodeActions {
     #[serde(default)]
     pub deployed_from_indicator: bool,
 }
 
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Default, Deserialize, PartialEq)]
 pub struct ConfirmCompletion {
     #[serde(default)]
     pub item_ix: Option<usize>,
 }
 
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Default, Deserialize, PartialEq)]
 pub struct ConfirmCodeAction {
     #[serde(default)]
     pub item_ix: Option<usize>,
@@ -307,7 +307,7 @@ trait InvalidationRegion {
     fn ranges(&self) -> &[Range<Anchor>];
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SelectPhase {
     Begin {
         position: DisplayPoint,

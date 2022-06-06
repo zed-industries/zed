@@ -176,7 +176,7 @@ impl Matcher {
         cx: &Context,
     ) -> Option<SmallVec<[Keystroke; 2]>> {
         for binding in self.keymap.bindings.iter().rev() {
-            if binding.action.id() == action.id()
+            if binding.action.eq(action)
                 && binding
                     .context_predicate
                     .as_ref()
@@ -264,6 +264,10 @@ impl Binding {
 
     pub fn keystrokes(&self) -> &[Keystroke] {
         &self.keystrokes
+    }
+
+    pub fn action(&self) -> &dyn Action {
+        self.action.as_ref()
     }
 }
 

@@ -60,7 +60,7 @@ pub struct Sidebar {
     custom_width: Rc<RefCell<f32>>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 pub enum Side {
     Left,
     Right,
@@ -76,13 +76,13 @@ pub struct SidebarButtons {
     sidebar: ViewHandle<Sidebar>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct ToggleSidebarItem {
     pub side: Side,
     pub item_index: usize,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct ToggleSidebarItemFocus {
     pub side: Side,
     pub item_index: usize,

@@ -4,7 +4,7 @@ use gpui::{impl_actions, MutableAppContext, ViewContext};
 use serde::Deserialize;
 use workspace::Workspace;
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct ChangeWord {
     #[serde(default)]

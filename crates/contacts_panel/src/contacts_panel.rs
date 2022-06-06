@@ -48,7 +48,7 @@ enum ContactEntry {
     OfflineProject(WeakModelHandle<Project>),
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct ToggleExpanded(Section);
 
 pub struct ContactsPanel {
@@ -63,13 +63,13 @@ pub struct ContactsPanel {
     _maintain_contacts: Subscription,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct RequestContact(pub u64);
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct RemoveContact(pub u64);
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct RespondToContactRequest {
     pub user_id: u64,
     pub accept: bool,

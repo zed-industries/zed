@@ -18,10 +18,10 @@ use settings::Settings;
 use state::{Mode, Operator, VimState};
 use workspace::{self, Workspace};
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct SwitchMode(pub Mode);
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct PushOperator(pub Operator);
 
 impl_actions!(vim, [SwitchMode, PushOperator]);

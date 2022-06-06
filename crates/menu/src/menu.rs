@@ -1,4 +1,4 @@
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct SelectIndex(pub usize);
 
 gpui::actions!(

@@ -73,7 +73,7 @@ type FollowableItemBuilders = HashMap<
     ),
 >;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct RemoveFolderFromProject(pub WorktreeId);
 
 actions!(
@@ -94,21 +94,21 @@ actions!(
     ]
 );
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct OpenPaths {
     pub paths: Vec<PathBuf>,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct ToggleProjectOnline {
     #[serde(skip_deserializing)]
     pub project: Option<ModelHandle<Project>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct ToggleFollow(pub PeerId);
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct JoinProject {
     pub contact: Arc<Contact>,
     pub project_index: usize,

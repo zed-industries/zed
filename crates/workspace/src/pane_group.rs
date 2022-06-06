@@ -255,7 +255,7 @@ impl PaneAxis {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 pub enum SplitDirection {
     Up,
     Down,

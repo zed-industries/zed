@@ -35,7 +35,7 @@ use util::ResultExt;
 pub use workspace;
 use workspace::{AppState, Workspace};
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, PartialEq)]
 struct OpenBrowser {
     url: Arc<str>,
 }

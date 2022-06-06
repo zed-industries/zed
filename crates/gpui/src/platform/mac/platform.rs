@@ -154,7 +154,7 @@ impl MacForegroundPlatform {
                         let mut keystroke = None;
                         if let Some(binding) = keystroke_matcher
                             .bindings_for_action_type(action.as_any().type_id())
-                            .next()
+                            .find(|binding| binding.action().eq(action.as_ref()))
                         {
                             if binding.keystrokes().len() == 1 {
                                 keystroke = binding.keystrokes().first()
