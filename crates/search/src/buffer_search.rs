@@ -1,9 +1,9 @@
 use crate::{
-    active_match_index, match_index_for_direction, Direction, SearchOption, SelectNextMatch,
-    SelectPrevMatch,
+    active_match_index, match_index_for_direction, query_suggestion_for_editor, Direction,
+    SearchOption, SelectNextMatch, SelectPrevMatch,
 };
 use collections::HashMap;
-use editor::{display_map::ToDisplayPoint, Anchor, Autoscroll, Bias, Editor};
+use editor::{Anchor, Autoscroll, Editor};
 use gpui::{
     actions, elements::*, impl_actions, impl_internal_actions, platform::CursorStyle, AppContext,
     Entity, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
@@ -222,28 +222,7 @@ impl BufferSearchBar {
             return false;
         };
 
-        let display_map = editor
-            .update(cx, |editor, cx| editor.snapshot(cx))
-            .display_snapshot;
-        let selection = editor.read(cx).selections.newest::<usize>(cx);
-
-        let mut text: String;
-        if selection.start == selection.end {
-            let point = selection.start.to_display_point(&display_map);
-            let range = editor::movement::surrounding_word(&display_map, point);
-            let range = range.start.to_offset(&display_map, Bias::Left)
-                ..range.end.to_offset(&display_map, Bias::Right);
-            text = display_map.buffer_snapshot.text_for_range(range).collect();
-            if text.trim().is_empty() {
-                text = String::new();
-            }
-        } else {
-            text = display_map
-                .buffer_snapshot
-                .text_for_range(selection.start..selection.end)
-                .collect();
-        }
-
+        let text = query_suggestion_for_editor(&editor, cx);
         if !text.is_empty() {
             self.set_query(&text, cx);
         }

@@ -1,6 +1,6 @@
 use crate::{
-    active_match_index, match_index_for_direction, Direction, SearchOption, SelectNextMatch,
-    SelectPrevMatch, ToggleSearchOption,
+    active_match_index, match_index_for_direction, query_suggestion_for_editor, Direction,
+    SearchOption, SelectNextMatch, SelectPrevMatch, ToggleSearchOption,
 };
 use collections::HashMap;
 use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll};
@@ -410,18 +410,32 @@ impl ProjectSearchView {
             })
             .or_else(|| workspace.item_of_type::<ProjectSearchView>(cx));
 
-        if let Some(existing) = existing {
+        let query = workspace.active_item(cx).and_then(|item| {
+            let editor = item.act_as::<Editor>(cx)?;
+            let query = query_suggestion_for_editor(&editor, cx);
+            if query.is_empty() {
+                None
+            } else {
+                Some(query)
+            }
+        });
+
+        let search = if let Some(existing) = existing {
             workspace.activate_item(&existing, cx);
-            existing.update(cx, |existing, cx| {
-                existing.focus_query_editor(cx);
-            });
+            existing
         } else {
             let model = cx.add_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
-            workspace.add_item(
-                Box::new(cx.add_view(|cx| ProjectSearchView::new(model, cx))),
-                cx,
-            );
-        }
+            let view = cx.add_view(|cx| ProjectSearchView::new(model, cx));
+            workspace.add_item(Box::new(view.clone()), cx);
+            view
+        };
+
+        search.update(cx, |search, cx| {
+            if let Some(query) = query {
+                search.set_query(&query, cx);
+            }
+            search.focus_query_editor(cx)
+        });
     }
 
     fn search(&mut self, cx: &mut ViewContext<Self>) {
@@ -476,6 +490,11 @@ impl ProjectSearchView {
             query_editor.select_all(&SelectAll, cx);
         });
         cx.focus(&self.query_editor);
+    }
+
+    fn set_query(&mut self, query: &str, cx: &mut ViewContext<Self>) {
+        self.query_editor
+            .update(cx, |query_editor, cx| query_editor.set_text(query, cx));
     }
 
     fn focus_results_editor(&self, cx: &mut ViewContext<Self>) {
