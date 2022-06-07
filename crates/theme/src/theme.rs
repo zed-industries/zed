@@ -31,6 +31,7 @@ pub struct Theme {
     pub project_diagnostics: ProjectDiagnostics,
     pub breadcrumbs: ContainedText,
     pub contact_notification: ContactNotification,
+    pub update_notification: UpdateNotification,
     pub tooltip: TooltipStyle,
 }
 
@@ -409,6 +410,13 @@ pub struct ContactNotification {
     pub header_height: f32,
     pub body_message: ContainedText,
     pub button: Interactive<ContainedText>,
+    pub dismiss_button: Interactive<IconButton>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct UpdateNotification {
+    pub message: ContainedText,
+    pub action_message: Interactive<ContainedText>,
     pub dismiss_button: Interactive<IconButton>,
 }
 

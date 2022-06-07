@@ -346,12 +346,15 @@ dependencies = [
  "isahc",
  "lazy_static",
  "log",
+ "menu",
+ "project",
  "serde",
  "serde_json",
  "settings",
  "smol",
  "tempdir",
  "theme",
+ "util",
  "workspace",
 ]
 

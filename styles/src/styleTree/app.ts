@@ -12,6 +12,7 @@ import workspace from "./workspace";
 import contextMenu from "./contextMenu";
 import projectDiagnostics from "./projectDiagnostics";
 import contactNotification from "./contactNotification";
+import updateNotification from "./updateNotification";
 import tooltip from "./tooltip";
 
 export const panel = {
@@ -38,6 +39,7 @@ export default function app(theme: Theme): Object {
       },
     },
     contactNotification: contactNotification(theme),
+    updateNotification: updateNotification(theme),
     tooltip: tooltip(theme),
   };
 }

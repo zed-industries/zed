@@ -158,7 +158,6 @@ fn main() {
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
 
         context_menu::init(cx);
-        auto_update::init(http, client::ZED_SERVER_URL.clone(), cx);
         project::Project::init(&client);
         client::Channel::init(&client);
         client::init(client.clone(), cx);
@@ -211,7 +210,7 @@ fn main() {
         .detach();
         cx.set_global(settings);
 
-        let project_store = cx.add_model(|_| ProjectStore::new(db));
+        let project_store = cx.add_model(|_| ProjectStore::new(db.clone()));
         let app_state = Arc::new(AppState {
             languages,
             themes,
@@ -222,6 +221,7 @@ fn main() {
             build_window_options,
             initialize_workspace,
         });
+        auto_update::init(db, http, client::ZED_SERVER_URL.clone(), cx);
         workspace::init(app_state.clone(), cx);
         journal::init(app_state.clone(), cx);
         theme_selector::init(app_state.clone(), cx);
