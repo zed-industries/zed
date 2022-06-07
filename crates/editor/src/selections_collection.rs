@@ -195,6 +195,14 @@ impl SelectionsCollection {
         resolve(self.newest_anchor(), &self.buffer(cx))
     }
 
+    pub fn newest_display(&self, cx: &mut MutableAppContext) -> Selection<DisplayPoint> {
+        let display_map = self.display_map(cx);
+        let selection = self
+            .newest_anchor()
+            .map(|point| point.to_display_point(&display_map));
+        selection
+    }
+
     pub fn oldest_anchor(&self) -> &Selection<Anchor> {
         self.disjoint
             .iter()

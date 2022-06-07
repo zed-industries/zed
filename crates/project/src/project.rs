@@ -219,7 +219,7 @@ pub struct Symbol {
     pub signature: [u8; 32],
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct HoverBlock {
     pub text: String,
     pub language: Option<String>,
@@ -2926,7 +2926,6 @@ impl Project {
         position: T,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Hover>>> {
-        // TODO: proper return type
         let position = position.to_point_utf16(buffer.read(cx));
         self.request_lsp(buffer.clone(), GetHover { position }, cx)
     }
@@ -3767,8 +3766,10 @@ impl Project {
         } else if let Some(project_id) = self.remote_id() {
             let rpc = self.client.clone();
             let message = request.to_proto(project_id, buffer);
+            dbg!(&message);
             return cx.spawn(|this, cx| async move {
                 let response = rpc.request(message).await?;
+                dbg!(&response);
                 request
                     .response_from_proto(response, this, buffer_handle, cx)
                     .await

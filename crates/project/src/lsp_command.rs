@@ -984,6 +984,7 @@ impl LspCommand for GetHover {
         _: ModelHandle<Buffer>,
         _: AsyncAppContext,
     ) -> Result<Self::Response> {
+        println!("Response from proto");
         let range = if let (Some(start), Some(end)) = (message.start, message.end) {
             language::proto::deserialize_anchor(start)
                 .and_then(|start| language::proto::deserialize_anchor(end).map(|end| start..end))

@@ -21,6 +21,7 @@ export default function HoverPopover(theme: Theme) {
     block_style: {
       padding: { top: 4 },
     },
-    prose: text(theme, "sans", "primary", { "size": "sm" })
+    prose: text(theme, "sans", "primary", { "size": "sm" }),
+    highlight: theme.editor.highlight.occurrence.value,
   }
 }

@@ -319,6 +319,17 @@ impl Element for Flex {
                 }
             }
         }
+
+        if !handled {
+            if let &Event::MouseMoved { position, .. } = event {
+                // If this is a scrollable flex, and the mouse is over it, eat the scroll event to prevent
+                // propogating it to the element below.
+                if self.scroll_state.is_some() && bounds.contains_point(position) {
+                    handled = true;
+                }
+            }
+        }
+
         handled
     }
 

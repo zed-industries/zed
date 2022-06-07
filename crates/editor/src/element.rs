@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     display_map::{DisplaySnapshot, TransformBlock},
-    EditorStyle, GoToDefinition, Hover,
+    EditorStyle, GoToDefinition, HoverAt,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
@@ -509,36 +509,31 @@ impl EditorElement {
         }
 
         if let Some((position, hover_popover)) = layout.hover.as_mut() {
-            if position.row() >= start_row {
-                if let Some(cursor_row_layout) = &layout
-                    .line_layouts
-                    .get((position.row() - start_row) as usize)
-                {
-                    cx.scene.push_stacking_context(None);
+            cx.scene.push_stacking_context(None);
 
-                    let size = hover_popover.size();
-                    let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_left;
-                    let y = position.row() as f32 * layout.line_height - scroll_top - size.y();
-                    let mut popover_origin = content_origin + vec2f(x, y);
+            // This is safe because we check on layout whether the required row is available
+            let hovered_row_layout = &layout.line_layouts[(position.row() - start_row) as usize];
+            let size = hover_popover.size();
+            let x = hovered_row_layout.x_for_index(position.column() as usize) - scroll_left;
+            let y = position.row() as f32 * layout.line_height - scroll_top - size.y();
+            let mut popover_origin = content_origin + vec2f(x, y);
 
-                    if popover_origin.y() < 0.0 {
-                        popover_origin.set_y(popover_origin.y() + layout.line_height + size.y());
-                    }
-
-                    let x_out_of_bounds = bounds.max_x() - (popover_origin.x() + size.x());
-                    if x_out_of_bounds < 0.0 {
-                        popover_origin.set_x(popover_origin.x() + x_out_of_bounds);
-                    }
-
-                    hover_popover.paint(
-                        popover_origin,
-                        RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
-                        cx,
-                    );
-
-                    cx.scene.pop_stacking_context();
-                }
+            if popover_origin.y() < 0.0 {
+                popover_origin.set_y(popover_origin.y() + layout.line_height + size.y());
             }
+
+            let x_out_of_bounds = bounds.max_x() - (popover_origin.x() + size.x());
+            if x_out_of_bounds < 0.0 {
+                popover_origin.set_x(popover_origin.x() + x_out_of_bounds);
+            }
+
+            hover_popover.paint(
+                popover_origin,
+                RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
+                cx,
+            );
+
+            cx.scene.pop_stacking_context();
         }
 
         cx.scene.pop_layer();
@@ -1114,7 +1109,6 @@ impl Element for EditorElement {
 
         let mut context_menu = None;
         let mut code_actions_indicator = None;
-        let mut hover = None;
         cx.render(&self.view.upgrade(cx).unwrap(), |view, cx| {
             let newest_selection_head = view
                 .selections
@@ -1125,17 +1119,13 @@ impl Element for EditorElement {
             let style = view.style(cx);
             if (start_row..end_row).contains(&newest_selection_head.row()) {
                 if view.context_menu_visible() {
-                    context_menu = view.render_context_menu(newest_selection_head, style.clone());
+                    context_menu =
+                        view.render_context_menu(newest_selection_head, style.clone(), cx);
                 }
 
                 code_actions_indicator = view
                     .render_code_actions_indicator(&style, cx)
                     .map(|indicator| (newest_selection_head.row(), indicator));
-            }
-
-            if let Some(project) = view.project.clone() {
-                let project = project.read(cx);
-                hover = view.render_hover_popover(style, project);
             }
         });
 
@@ -1159,18 +1149,27 @@ impl Element for EditorElement {
             );
         }
 
-        if let Some((_, hover)) = hover.as_mut() {
-            hover.layout(
-                SizeConstraint {
-                    min: Vector2F::zero(),
-                    max: vec2f(
-                        (120. * em_width).min(size.x()),
-                        (size.y() - line_height) * 3. / 2.,
-                    ),
-                },
-                cx,
-            );
-        }
+        let hover = self.view(cx).hover_popover().and_then(|hover| {
+            let (point, mut rendered) = hover.render(style.clone(), cx);
+
+            if point.row() >= snapshot.scroll_position().y() as u32 {
+                if line_layouts.len() > (point.row() - start_row) as usize {
+                    rendered.layout(
+                        SizeConstraint {
+                            min: Vector2F::zero(),
+                            max: vec2f(
+                                (120. * em_width).min(size.x()),
+                                (size.y() - line_height) * 1. / 2.,
+                            ),
+                        },
+                        cx,
+                    );
+                    return Some((point, rendered));
+                }
+            }
+
+            None
+        });
 
         let blocks = self.layout_blocks(
             start_row..end_row,
@@ -1270,6 +1269,12 @@ impl Element for EditorElement {
             }
         }
 
+        if let Some((_, hover)) = &mut layout.hover {
+            if hover.dispatch_event(event, cx) {
+                return true;
+            }
+        }
+
         for (_, block) in &mut layout.blocks {
             if block.dispatch_event(event, cx) {
                 return true;
@@ -1317,7 +1322,7 @@ impl Element for EditorElement {
                     None
                 };
 
-                cx.dispatch_action(Hover { point });
+                cx.dispatch_action(HoverAt { point });
                 true
             }
             _ => false,

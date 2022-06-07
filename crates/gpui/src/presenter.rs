@@ -160,7 +160,12 @@ impl Presenter {
 
             if cx.window_is_active(self.window_id) {
                 if let Some(event) = self.last_mouse_moved_event.clone() {
-                    self.dispatch_event(event, cx)
+                    let mut invalidated_views = Vec::new();
+                    self.handle_hover_events(&event, &mut invalidated_views, cx);
+
+                    for view_id in invalidated_views {
+                        cx.notify_view(self.window_id, view_id);
+                    }
                 }
             }
         } else {
@@ -222,8 +227,6 @@ impl Presenter {
     pub fn dispatch_event(&mut self, event: Event, cx: &mut MutableAppContext) {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
             let mut invalidated_views = Vec::new();
-            let mut hovered_regions = Vec::new();
-            let mut unhovered_regions = Vec::new();
             let mut mouse_down_out_handlers = Vec::new();
             let mut mouse_down_region = None;
             let mut clicked_region = None;
@@ -288,46 +291,8 @@ impl Presenter {
                         }
                     }
                 }
-                Event::MouseMoved {
-                    position,
-                    left_mouse_down,
-                } => {
+                Event::MouseMoved { .. } => {
                     self.last_mouse_moved_event = Some(event.clone());
-
-                    if !left_mouse_down {
-                        let mut style_to_assign = CursorStyle::Arrow;
-                        for region in self.cursor_regions.iter().rev() {
-                            if region.bounds.contains_point(position) {
-                                style_to_assign = region.style;
-                                break;
-                            }
-                        }
-                        cx.platform().set_cursor_style(style_to_assign);
-
-                        let mut hover_depth = None;
-                        for (region, depth) in self.mouse_regions.iter().rev() {
-                            if region.bounds.contains_point(position)
-                                && hover_depth.map_or(true, |hover_depth| hover_depth == *depth)
-                            {
-                                hover_depth = Some(*depth);
-                                if let Some(region_id) = region.id() {
-                                    if !self.hovered_region_ids.contains(&region_id) {
-                                        invalidated_views.push(region.view_id);
-                                        hovered_regions.push((region.clone(), position));
-                                        self.hovered_region_ids.insert(region_id);
-                                    }
-                                }
-                            } else {
-                                if let Some(region_id) = region.id() {
-                                    if self.hovered_region_ids.contains(&region_id) {
-                                        invalidated_views.push(region.view_id);
-                                        unhovered_regions.push((region.clone(), position));
-                                        self.hovered_region_ids.remove(&region_id);
-                                    }
-                                }
-                            }
-                        }
-                    }
                 }
                 Event::LeftMouseDragged { position } => {
                     if let Some((clicked_region, prev_drag_position)) = self
@@ -348,25 +313,8 @@ impl Presenter {
                 _ => {}
             }
 
-            let mut event_cx = self.build_event_context(cx);
-            let mut handled = false;
-            for (unhovered_region, position) in unhovered_regions {
-                handled = true;
-                if let Some(hover_callback) = unhovered_region.hover {
-                    event_cx.with_current_view(unhovered_region.view_id, |event_cx| {
-                        hover_callback(position, false, event_cx);
-                    })
-                }
-            }
-
-            for (hovered_region, position) in hovered_regions {
-                handled = true;
-                if let Some(hover_callback) = hovered_region.hover {
-                    event_cx.with_current_view(hovered_region.view_id, |event_cx| {
-                        hover_callback(position, true, event_cx);
-                    })
-                }
-            }
+            let (mut handled, mut event_cx) =
+                self.handle_hover_events(&event, &mut invalidated_views, cx);
 
             for (handler, view_id, position) in mouse_down_out_handlers {
                 event_cx.with_current_view(view_id, |event_cx| handler(position, event_cx))
@@ -437,6 +385,80 @@ impl Presenter {
                 cx.dispatch_action_any(self.window_id, &dispatch_path, directive.action.as_ref());
             }
         }
+    }
+
+    fn handle_hover_events<'a>(
+        &'a mut self,
+        event: &Event,
+        invalidated_views: &mut Vec<usize>,
+        cx: &'a mut MutableAppContext,
+    ) -> (bool, EventContext<'a>) {
+        let mut unhovered_regions = Vec::new();
+        let mut hovered_regions = Vec::new();
+
+        if let Event::MouseMoved {
+            position,
+            left_mouse_down,
+        } = event
+        {
+            if !left_mouse_down {
+                let mut style_to_assign = CursorStyle::Arrow;
+                for region in self.cursor_regions.iter().rev() {
+                    if region.bounds.contains_point(*position) {
+                        style_to_assign = region.style;
+                        break;
+                    }
+                }
+                cx.platform().set_cursor_style(style_to_assign);
+
+                let mut hover_depth = None;
+                for (region, depth) in self.mouse_regions.iter().rev() {
+                    if region.bounds.contains_point(*position)
+                        && hover_depth.map_or(true, |hover_depth| hover_depth == *depth)
+                    {
+                        hover_depth = Some(*depth);
+                        if let Some(region_id) = region.id() {
+                            if !self.hovered_region_ids.contains(&region_id) {
+                                invalidated_views.push(region.view_id);
+                                hovered_regions.push((region.clone(), position));
+                                self.hovered_region_ids.insert(region_id);
+                            }
+                        }
+                    } else {
+                        if let Some(region_id) = region.id() {
+                            if self.hovered_region_ids.contains(&region_id) {
+                                invalidated_views.push(region.view_id);
+                                unhovered_regions.push((region.clone(), position));
+                                self.hovered_region_ids.remove(&region_id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut event_cx = self.build_event_context(cx);
+        let mut handled = false;
+
+        for (unhovered_region, position) in unhovered_regions {
+            handled = true;
+            if let Some(hover_callback) = unhovered_region.hover {
+                event_cx.with_current_view(unhovered_region.view_id, |event_cx| {
+                    hover_callback(*position, false, event_cx);
+                })
+            }
+        }
+
+        for (hovered_region, position) in hovered_regions {
+            handled = true;
+            if let Some(hover_callback) = hovered_region.hover {
+                event_cx.with_current_view(hovered_region.view_id, |event_cx| {
+                    hover_callback(*position, true, event_cx);
+                })
+            }
+        }
+
+        (handled, event_cx)
     }
 
     pub fn build_event_context<'a>(

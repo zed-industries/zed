@@ -25,9 +25,9 @@ use gpui::{
     geometry::vector::{vec2f, Vector2F},
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
-    text_layout, AppContext, AsyncAppContext, Axis, ClipboardItem, Element, ElementBox, Entity,
-    ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    text_layout, AppContext, AsyncAppContext, Axis, ClipboardItem, Element, ElementBox,
+    ElementStateContext, Entity, ModelHandle, MutableAppContext, ReadModel, RenderContext, Task,
+    View, ViewContext, ViewHandle, WeakViewHandle,
 };
 pub use language::{char_kind, CharKind};
 use language::{
@@ -81,7 +81,7 @@ pub struct Scroll(pub Vector2F);
 pub struct Select(pub SelectPhase);
 
 #[derive(Clone)]
-pub struct Hover {
+pub struct HoverAt {
     point: Option<DisplayPoint>,
 }
 
@@ -198,6 +198,7 @@ actions!(
         ShowCompletions,
         OpenExcerpts,
         RestartLanguageServer,
+        Hover,
     ]
 );
 
@@ -214,7 +215,7 @@ impl_actions!(
     ]
 );
 
-impl_internal_actions!(editor, [Scroll, Select, Hover, GoToDefinitionAt]);
+impl_internal_actions!(editor, [Scroll, Select, HoverAt, GoToDefinitionAt]);
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
@@ -302,6 +303,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::show_completions);
     cx.add_action(Editor::toggle_code_actions);
     cx.add_action(Editor::hover);
+    cx.add_action(Editor::hover_at);
     cx.add_action(Editor::open_excerpts);
     cx.add_action(Editor::restart_language_server);
     cx.add_async_action(Editor::confirm_completion);
@@ -888,48 +890,64 @@ impl CodeActionsMenu {
     }
 }
 
-struct HoverPopover {
+#[derive(Clone)]
+pub(crate) struct HoverPopover {
+    pub project: ModelHandle<Project>,
+    pub hover_point: DisplayPoint,
     pub range: Range<DisplayPoint>,
     pub contents: Vec<HoverBlock>,
 }
 
 impl HoverPopover {
-    fn render(&self, style: EditorStyle, project: &Project) -> (DisplayPoint, ElementBox) {
-        let mut flex = Flex::new(Axis::Vertical);
-        flex.extend(self.contents.iter().map(|content| {
-            if let Some(language) = content
-                .language
-                .clone()
-                .and_then(|language| project.languages().get_language(&language))
-            {
-                let runs =
-                    language.highlight_text(&content.text.as_str().into(), 0..content.text.len());
+    fn render<C: ElementStateContext + ReadModel>(
+        &self,
+        style: EditorStyle,
+        cx: &mut C,
+    ) -> (DisplayPoint, ElementBox) {
+        let element = MouseEventHandler::new::<HoverPopover, _, _>(0, cx, |_, cx| {
+            let mut flex = Flex::new(Axis::Vertical).scrollable::<HoverBlock, _>(1, None, cx);
+            flex.extend(self.contents.iter().map(|content| {
+                let project = self.project.read(cx);
+                if let Some(language) = content
+                    .language
+                    .clone()
+                    .and_then(|language| project.languages().get_language(&language))
+                {
+                    let runs = language
+                        .highlight_text(&content.text.as_str().into(), 0..content.text.len());
 
-                Text::new(content.text.clone(), style.text.clone())
-                    .with_soft_wrap(true)
-                    .with_highlights(
-                        runs.iter()
-                            .filter_map(|(range, id)| {
-                                id.style(style.theme.syntax.as_ref())
-                                    .map(|style| (range.clone(), style))
-                            })
-                            .collect(),
-                    )
-                    .boxed()
-            } else {
-                Text::new(content.text.clone(), style.hover_popover.prose.clone())
-                    .with_soft_wrap(true)
-                    .contained()
-                    .with_style(style.hover_popover.block_style)
-                    .boxed()
-            }
-        }));
-        (
-            self.range.start,
+                    Text::new(content.text.clone(), style.text.clone())
+                        .with_soft_wrap(true)
+                        .with_highlights(
+                            runs.iter()
+                                .filter_map(|(range, id)| {
+                                    id.style(style.theme.syntax.as_ref())
+                                        .map(|style| (range.clone(), style))
+                                })
+                                .collect(),
+                        )
+                        .boxed()
+                } else {
+                    Text::new(content.text.clone(), style.hover_popover.prose.clone())
+                        .with_soft_wrap(true)
+                        .contained()
+                        .with_style(style.hover_popover.block_style)
+                        .boxed()
+                }
+            }));
             flex.contained()
                 .with_style(style.hover_popover.container)
-                .boxed(),
-        )
+                .boxed()
+        })
+        .with_cursor_style(CursorStyle::Arrow)
+        .with_padding(Padding {
+            bottom: 5.,
+            top: 5.,
+            ..Default::default()
+        })
+        .boxed();
+
+        (self.range.start, element)
     }
 }
 
@@ -1489,7 +1507,7 @@ impl Editor {
                 }
             }
 
-            self.hover_state.close();
+            self.hide_hover(cx);
 
             if old_cursor_position.to_display_point(&display_map).row()
                 != new_cursor_position.to_display_point(&display_map).row()
@@ -1849,6 +1867,10 @@ impl Editor {
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
         if self.take_rename(false, cx).is_some() {
+            return;
+        }
+
+        if self.hide_hover(cx) {
             return;
         }
 
@@ -2480,47 +2502,63 @@ impl Editor {
         }))
     }
 
-    /// The hover action dispatches between `show_hover` or `hide_hover`
+    /// Bindable action which uses the most recent selection head to trigger a hover
+    fn hover(&mut self, _: &Hover, cx: &mut ViewContext<Self>) {
+        let head = self.selections.newest_display(cx).head();
+        self.show_hover(head, true, cx);
+    }
+
+    /// The internal hover action dispatches between `show_hover` or `hide_hover`
     /// depending on whether a point to hover over is provided.
-    fn hover(&mut self, action: &Hover, cx: &mut ViewContext<Self>) {
+    fn hover_at(&mut self, action: &HoverAt, cx: &mut ViewContext<Self>) {
         if let Some(point) = action.point {
-            self.show_hover(point, cx);
+            self.show_hover(point, false, cx);
         } else {
             self.hide_hover(cx);
         }
     }
 
-    /// Hides the type information popup ASAP.
-    /// Triggered by the `Hover` action when the cursor is not over a symbol.
-    fn hide_hover(&mut self, cx: &mut ViewContext<Self>) {
-        let task = cx.spawn_weak(|this, mut cx| {
-            async move {
-                if let Some(this) = this.upgrade(&cx) {
-                    this.update(&mut cx, |this, cx| {
-                        // consistently keep track of state to make handoff smooth
-                        let (_recent_hover, _in_grace) = this.hover_state.determine_state(false);
+    /// Hides the type information popup.
+    /// Triggered by the `Hover` action when the cursor is not over a symbol or when the
+    /// selecitons changed.
+    fn hide_hover(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        // consistently keep track of state to make handoff smooth
+        self.hover_state.determine_state(false);
 
-                        // only notify the context once
-                        if this.hover_state.popover.is_some() {
-                            this.hover_state.popover = None;
-                            cx.notify();
-                        }
-                    });
-                }
-                Ok(())
-            }
-            .log_err()
-        });
+        let mut did_hide = false;
 
-        self.hover_task = Some(task);
+        // only notify the context once
+        if self.hover_state.popover.is_some() {
+            self.hover_state.popover = None;
+            did_hide = true;
+            cx.notify();
+        }
+
+        self.clear_background_highlights::<HoverState>(cx);
+
+        self.hover_task = None;
+
+        did_hide
     }
 
     /// Queries the LSP and shows type info and documentation
     /// about the symbol the mouse is currently hovering over.
     /// Triggered by the `Hover` action when the cursor may be over a symbol.
-    fn show_hover(&mut self, point: DisplayPoint, cx: &mut ViewContext<Self>) {
+    fn show_hover(
+        &mut self,
+        point: DisplayPoint,
+        ignore_timeout: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
         if self.pending_rename.is_some() {
             return;
+        }
+
+        if let Some(hover) = &self.hover_state.popover {
+            if hover.hover_point == point {
+                // Hover triggered from same location as last time. Don't show again.
+                return;
+            }
         }
 
         let snapshot = self.snapshot(cx);
@@ -2534,15 +2572,6 @@ impl Editor {
             return;
         };
 
-        let buffer_snapshot = buffer.read(cx).snapshot();
-
-        if let Some(existing_popover) = &self.hover_state.popover {
-            if existing_popover.range.contains(&point) {
-                // Hover already contains value. No need to request a new one
-                return;
-            }
-        }
-
         let project = if let Some(project) = self.project.clone() {
             project
         } else {
@@ -2550,49 +2579,44 @@ impl Editor {
         };
 
         // query the LSP for hover info
-        let hover = project.update(cx, |project, cx| {
+        let hover_request = project.update(cx, |project, cx| {
             project.hover(&buffer, buffer_position.clone(), cx)
         });
 
+        let buffer_snapshot = buffer.read(cx).snapshot();
+
         let task = cx.spawn_weak(|this, mut cx| {
             async move {
-                let mut contents = None;
-
-                let hover = match hover.await {
-                    Ok(hover) => hover,
-                    Err(_) => None,
-                };
-
-                let mut symbol_range = point..point;
-
-                // determine the contents of the popover
-                if let Some(hover) = hover {
-                    if hover.contents.is_empty() {
-                        contents = None;
-                    } else {
-                        contents = Some(hover.contents);
-
-                        if let Some(range) = hover.range {
-                            let offset_range = range.to_offset(&buffer_snapshot);
-                            if offset_range
-                                .contains(&point.to_offset(&snapshot.display_snapshot, Bias::Left))
-                            {
-                                symbol_range = offset_range
-                                    .start
-                                    .to_display_point(&snapshot.display_snapshot)
-                                    ..offset_range
-                                        .end
-                                        .to_display_point(&snapshot.display_snapshot);
-                            } else {
-                                contents = None;
-                            }
-                        }
+                // Construct new hover popover from hover request
+                let hover_popover = hover_request.await.ok().flatten().and_then(|hover_result| {
+                    if hover_result.contents.is_empty() {
+                        return None;
                     }
-                };
 
-                let hover_popover = contents.map(|contents| HoverPopover {
-                    range: symbol_range,
-                    contents,
+                    let range = if let Some(range) = hover_result.range {
+                        let offset_range = range.to_offset(&buffer_snapshot);
+                        if !offset_range
+                            .contains(&point.to_offset(&snapshot.display_snapshot, Bias::Left))
+                        {
+                            return None;
+                        }
+
+                        offset_range
+                            .start
+                            .to_display_point(&snapshot.display_snapshot)
+                            ..offset_range
+                                .end
+                                .to_display_point(&snapshot.display_snapshot)
+                    } else {
+                        point..point
+                    };
+
+                    Some(HoverPopover {
+                        project: project.clone(),
+                        hover_point: point,
+                        range,
+                        contents: hover_result.contents,
+                    })
                 });
 
                 if let Some(this) = this.upgrade(&cx) {
@@ -2612,7 +2636,32 @@ impl Editor {
 
                         // `smooth_handoff` and `in_grace` determine whether to switch right away.
                         // `recent_hover` will activate the handoff after the initial delay.
-                        if (smooth_handoff || !recent_hover || in_grace) && visible {
+                        // `ignore_timeout` is set when the user manually sent the hover action.
+                        if (ignore_timeout || smooth_handoff || !recent_hover || in_grace)
+                            && visible
+                        {
+                            // Highlight the selected symbol using a background highlight
+                            if let Some(display_range) =
+                                hover_popover.as_ref().map(|popover| popover.range.clone())
+                            {
+                                let start = snapshot.display_snapshot.buffer_snapshot.anchor_after(
+                                    display_range
+                                        .start
+                                        .to_offset(&snapshot.display_snapshot, Bias::Right),
+                                );
+                                let end = snapshot.display_snapshot.buffer_snapshot.anchor_before(
+                                    display_range
+                                        .end
+                                        .to_offset(&snapshot.display_snapshot, Bias::Left),
+                                );
+
+                                this.highlight_background::<HoverState>(
+                                    vec![start..end],
+                                    |theme| theme.editor.hover_popover.highlight,
+                                    cx,
+                                );
+                            }
+
                             this.hover_state.popover = hover_popover;
                             cx.notify();
                         }
@@ -2869,18 +2918,11 @@ impl Editor {
     ) -> Option<(DisplayPoint, ElementBox)> {
         self.context_menu
             .as_ref()
-            .map(|menu| menu.render(cursor_position, style))
+            .map(|menu| menu.render(cursor_position, style, cx))
     }
 
-    pub fn render_hover_popover(
-        &self,
-        style: EditorStyle,
-        project: &Project,
-    ) -> Option<(DisplayPoint, ElementBox)> {
-        self.hover_state
-            .popover
-            .as_ref()
-            .map(|hover| hover.render(style, project))
+    pub(crate) fn hover_popover(&self) -> Option<HoverPopover> {
+        self.hover_state.popover.clone()
     }
 
     fn show_context_menu(&mut self, menu: ContextMenu, cx: &mut ViewContext<Self>) {
@@ -4963,7 +5005,6 @@ impl Editor {
                     // Position the selection in the rename editor so that it matches the current selection.
                     this.show_local_selections = false;
                     let rename_editor = cx.add_view(|cx| {
-                        println!("Rename editor created.");
                         let mut editor = Editor::single_line(None, cx);
                         if let Some(old_highlight_id) = old_highlight_id {
                             editor.override_text_style =

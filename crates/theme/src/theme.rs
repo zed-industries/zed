@@ -629,4 +629,5 @@ pub struct HoverPopover {
     pub container: ContainerStyle,
     pub block_style: ContainerStyle,
     pub prose: TextStyle,
+    pub highlight: Color,
 }
