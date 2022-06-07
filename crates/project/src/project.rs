@@ -154,8 +154,9 @@ pub enum Event {
     ActiveEntryChanged(Option<ProjectEntryId>),
     WorktreeAdded,
     WorktreeRemoved(WorktreeId),
-    DiskBasedDiagnosticsStarted,
-    DiskBasedDiagnosticsUpdated,
+    DiskBasedDiagnosticsStarted {
+        language_server_id: usize,
+    },
     DiskBasedDiagnosticsFinished {
         language_server_id: usize,
     },
@@ -2126,7 +2127,7 @@ impl Project {
                 if Some(token.as_str()) == disk_based_diagnostics_progress_token {
                     language_server_status.pending_diagnostic_updates += 1;
                     if language_server_status.pending_diagnostic_updates == 1 {
-                        self.disk_based_diagnostics_started(cx);
+                        self.disk_based_diagnostics_started(server_id, cx);
                         self.broadcast_language_server_update(
                             server_id,
                             proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(
@@ -3997,10 +3998,18 @@ impl Project {
         }
     }
 
-    pub fn is_running_disk_based_diagnostics(&self) -> bool {
+    pub fn language_servers_running_disk_based_diagnostics<'a>(
+        &'a self,
+    ) -> impl 'a + Iterator<Item = usize> {
         self.language_server_statuses
-            .values()
-            .any(|status| status.pending_diagnostic_updates > 0)
+            .iter()
+            .filter_map(|(id, status)| {
+                if status.pending_diagnostic_updates > 0 {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
     }
 
     pub fn diagnostic_summary(&self, cx: &AppContext) -> DiagnosticSummary {
@@ -4025,16 +4034,12 @@ impl Project {
         })
     }
 
-    pub fn disk_based_diagnostics_started(&mut self, cx: &mut ModelContext<Self>) {
-        if self
-            .language_server_statuses
-            .values()
-            .map(|status| status.pending_diagnostic_updates)
-            .sum::<isize>()
-            == 1
-        {
-            cx.emit(Event::DiskBasedDiagnosticsStarted);
-        }
+    pub fn disk_based_diagnostics_started(
+        &mut self,
+        language_server_id: usize,
+        cx: &mut ModelContext<Self>,
+    ) {
+        cx.emit(Event::DiskBasedDiagnosticsStarted { language_server_id });
     }
 
     pub fn disk_based_diagnostics_finished(
@@ -4042,7 +4047,6 @@ impl Project {
         language_server_id: usize,
         cx: &mut ModelContext<Self>,
     ) {
-        cx.emit(Event::DiskBasedDiagnosticsUpdated);
         cx.emit(Event::DiskBasedDiagnosticsFinished { language_server_id });
     }
 
@@ -4446,7 +4450,7 @@ impl Project {
             }
             proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(_) => {
                 this.update(&mut cx, |this, cx| {
-                    this.disk_based_diagnostics_started(cx);
+                    this.disk_based_diagnostics_started(language_server_id, cx);
                 })
             }
             proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(_) => {
@@ -6208,7 +6212,9 @@ mod tests {
         fake_server.start_progress(progress_token).await;
         assert_eq!(
             events.next().await.unwrap(),
-            Event::DiskBasedDiagnosticsStarted
+            Event::DiskBasedDiagnosticsStarted {
+                language_server_id: 0,
+            }
         );
 
         fake_server.start_progress(progress_token).await;
@@ -6237,10 +6243,6 @@ mod tests {
 
         fake_server.end_progress(progress_token).await;
         fake_server.end_progress(progress_token).await;
-        assert_eq!(
-            events.next().await.unwrap(),
-            Event::DiskBasedDiagnosticsUpdated
-        );
         assert_eq!(
             events.next().await.unwrap(),
             Event::DiskBasedDiagnosticsFinished {
@@ -6344,22 +6346,35 @@ mod tests {
         fake_server.start_progress(progress_token).await;
         assert_eq!(
             events.next().await.unwrap(),
-            Event::DiskBasedDiagnosticsStarted
+            Event::DiskBasedDiagnosticsStarted {
+                language_server_id: 1
+            }
         );
+        project.read_with(cx, |project, _| {
+            assert_eq!(
+                project
+                    .language_servers_running_disk_based_diagnostics()
+                    .collect::<Vec<_>>(),
+                [1]
+            );
+        });
 
         // All diagnostics are considered done, despite the old server's diagnostic
         // task never completing.
         fake_server.end_progress(progress_token).await;
         assert_eq!(
             events.next().await.unwrap(),
-            Event::DiskBasedDiagnosticsUpdated
+            Event::DiskBasedDiagnosticsFinished {
+                language_server_id: 1
+            }
         );
-        assert!(matches!(
-            events.next().await.unwrap(),
-            Event::DiskBasedDiagnosticsFinished { .. }
-        ));
         project.read_with(cx, |project, _| {
-            assert!(!project.is_running_disk_based_diagnostics());
+            assert_eq!(
+                project
+                    .language_servers_running_disk_based_diagnostics()
+                    .collect::<Vec<_>>(),
+                [0; 0]
+            );
         });
     }
 

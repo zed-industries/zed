@@ -1,3 +1,4 @@
+use collections::HashSet;
 use editor::{Editor, GoToNextDiagnostic};
 use gpui::{
     elements::*, platform::CursorStyle, serde_json, Entity, ModelHandle, MutableAppContext,
@@ -12,7 +13,7 @@ pub struct DiagnosticIndicator {
     summary: project::DiagnosticSummary,
     active_editor: Option<WeakViewHandle<Editor>>,
     current_diagnostic: Option<Diagnostic>,
-    check_in_progress: bool,
+    in_progress_checks: HashSet<usize>,
     _observe_active_editor: Option<Subscription>,
 }
 
@@ -23,16 +24,13 @@ pub fn init(cx: &mut MutableAppContext) {
 impl DiagnosticIndicator {
     pub fn new(project: &ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
         cx.subscribe(project, |this, project, event, cx| match event {
-            project::Event::DiskBasedDiagnosticsUpdated => {
+            project::Event::DiskBasedDiagnosticsStarted { language_server_id } => {
+                this.in_progress_checks.insert(*language_server_id);
                 cx.notify();
             }
-            project::Event::DiskBasedDiagnosticsStarted => {
-                this.check_in_progress = true;
-                cx.notify();
-            }
-            project::Event::DiskBasedDiagnosticsFinished { .. } => {
+            project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
                 this.summary = project.read(cx).diagnostic_summary(cx);
-                this.check_in_progress = false;
+                this.in_progress_checks.remove(language_server_id);
                 cx.notify();
             }
             _ => {}
@@ -40,7 +38,10 @@ impl DiagnosticIndicator {
         .detach();
         Self {
             summary: project.read(cx).diagnostic_summary(cx),
-            check_in_progress: project.read(cx).is_running_disk_based_diagnostics(),
+            in_progress_checks: project
+                .read(cx)
+                .language_servers_running_disk_based_diagnostics()
+                .collect(),
             active_editor: None,
             current_diagnostic: None,
             _observe_active_editor: None,
@@ -85,7 +86,7 @@ impl View for DiagnosticIndicator {
         enum Summary {}
         enum Message {}
 
-        let in_progress = self.check_in_progress;
+        let in_progress = !self.in_progress_checks.is_empty();
         let mut element = Flex::row().with_child(
             MouseEventHandler::new::<Summary, _, _>(0, cx, |state, cx| {
                 let style = &cx

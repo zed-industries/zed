@@ -1003,7 +1003,7 @@ mod tests {
 
         // Diagnostics are added for another earlier path.
         project.update(cx, |project, cx| {
-            project.disk_based_diagnostics_started(cx);
+            project.disk_based_diagnostics_started(0, cx);
             project
                 .update_diagnostic_entries(
                     0,
@@ -1103,7 +1103,7 @@ mod tests {
 
         // Diagnostics are added to the first path
         project.update(cx, |project, cx| {
-            project.disk_based_diagnostics_started(cx);
+            project.disk_based_diagnostics_started(0, cx);
             project
                 .update_diagnostic_entries(
                     0,
