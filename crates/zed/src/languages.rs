@@ -1,7 +1,11 @@
-use gpui::Task;
+use gpui::{
+    executor::{self, Background},
+    Task,
+};
 pub use language::*;
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, str, sync::Arc};
+use util::ResultExt;
 
 mod c;
 mod go;
@@ -17,8 +21,7 @@ mod typescript;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
-pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegistry {
-    let languages = LanguageRegistry::new(login_shell_env_loaded);
+pub async fn init(languages: Arc<LanguageRegistry>, executor: Arc<Background>) {
     for (name, grammar, lsp_adapter) in [
         (
             "c",
@@ -38,7 +41,10 @@ pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegi
         (
             "json",
             tree_sitter_json::language(),
-            Some(Arc::new(language_plugin::new_json())),
+            language_plugin::new_json(executor)
+                .await
+                .log_err()
+                .map(|lang| Arc::new(lang) as Arc<_>),
         ),
         (
             "markdown",
@@ -78,7 +84,6 @@ pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegi
     ] {
         languages.add(Arc::new(language(name, grammar, lsp_adapter)));
     }
-    languages
 }
 
 pub(crate) fn language(

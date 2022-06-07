@@ -2,6 +2,7 @@ use super::installation::{npm_install_packages, npm_package_latest_version};
 use anyhow::{anyhow, Context, Result};
 use client::http::HttpClient;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
+use gpui::executor::{self, Background};
 use isahc::http::version;
 use language::{LanguageServerName, LspAdapter};
 use parking_lot::{Mutex, RwLock};
@@ -11,23 +12,25 @@ use std::fs;
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::{ResultExt, TryFutureExt};
 
-pub fn new_json() -> LanguagePluginLspAdapter {
+pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
     let plugin = WasiPlugin {
         module: include_bytes!("../../../../plugins/bin/json_language.wasm").to_vec(),
         wasi_ctx: Wasi::default_ctx(),
     };
-    LanguagePluginLspAdapter::new(plugin)
+    PluginLspAdapter::new(plugin, executor).await
 }
 
-pub struct LanguagePluginLspAdapter {
-    runtime: Mutex<Wasi>,
+pub struct PluginLspAdapter {
+    runtime: Arc<Mutex<Wasi>>,
+    executor: Arc<Background>,
 }
 
-impl LanguagePluginLspAdapter {
-    pub fn new(plugin: WasiPlugin) -> Self {
-        Self {
-            runtime: Mutex::new(Wasi::init(plugin).unwrap()),
-        }
+impl PluginLspAdapter {
+    pub async fn new(plugin: WasiPlugin, executor: Arc<Background>) -> Result<Self> {
+        Ok(Self {
+            runtime: Arc::new(Mutex::new(Wasi::init(plugin).await?)),
+            executor,
+        })
     }
 }
 
@@ -36,32 +39,43 @@ struct Versions {
     server_version: String,
 }
 
-impl LspAdapter for LanguagePluginLspAdapter {
+macro_rules! call_block {
+    ($self:ident, $name:expr, $arg:expr) => {
+        $self
+            .executor
+            .block(async { $self.runtime.lock().call($name, $arg).await })
+    };
+}
+
+impl LspAdapter for PluginLspAdapter {
     fn name(&self) -> LanguageServerName {
-        let name: String = self.runtime.lock().call("name", ()).unwrap();
+        let name: String = call_block!(self, "name", ()).unwrap();
         LanguageServerName(name.into())
     }
 
     fn server_args<'a>(&'a self) -> Vec<String> {
-        self.runtime.lock().call("server_args", ()).unwrap()
+        call_block!(self, "server_args", ()).unwrap()
     }
 
     fn fetch_latest_server_version(
         &self,
         _: Arc<dyn HttpClient>,
     ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>> {
-        let versions: Result<(String, String)> =
-            self.runtime.lock().call("fetch_latest_server_version", ());
-
-        async move {
-            versions.map(|(language_version, server_version)| {
-                Box::new(Versions {
-                    language_version,
-                    server_version,
-                }) as Box<_>
-            })
-        }
-        .boxed()
+        todo!()
+        // async move {
+        //     let versions: Result<String, String> = self
+        //         .runtime
+        //         .lock()
+        //         .call::<_, Option<String>>("fetch_latest_server_version", ())
+        //         .await?;
+        //     versions.map(|(language_version, server_version)| {
+        //         Box::new(Versions {
+        //             language_version,
+        //             server_version,
+        //         }) as Box<_>
+        //     })
+        // }
+        // .boxed()
     }
 
     fn fetch_server_binary(
@@ -70,34 +84,37 @@ impl LspAdapter for LanguagePluginLspAdapter {
         _: Arc<dyn HttpClient>,
         container_dir: PathBuf,
     ) -> BoxFuture<'static, Result<PathBuf>> {
-        let version = version.downcast::<String>().unwrap();
-        let mut runtime = self.runtime.lock();
+        todo!()
+        // let version = version.downcast::<String>().unwrap();
 
-        let result: Result<PathBuf, _> = (|| {
-            let handle = runtime.attach_path(&container_dir)?;
-            let result = runtime
-                .call::<_, Option<PathBuf>>("fetch_server_binary", container_dir)?
-                .ok_or_else(|| anyhow!("Could not load cached server binary"));
-            runtime.remove_resource(handle)?;
-            result
-        })();
-
-        async move { result }.boxed()
+        // async move {
+        //     let runtime = self.runtime.clone();
+        //     let handle = runtime.lock().attach_path(&container_dir).unwrap();
+        //     let result = runtime
+        //         .lock()
+        //         .call::<_, Option<PathBuf>>("fetch_server_binary", container_dir)
+        //         .await
+        //         .unwrap()
+        //         .ok_or_else(|| anyhow!("Could not load cached server binary"));
+        //     // runtime.remove_resource(handle).ok();
+        //     result
+        // }
+        // .boxed()
     }
 
     fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>> {
-        let mut runtime = self.runtime.lock();
-
-        let result: Option<PathBuf> = (|| {
-            let handle = runtime.attach_path(&container_dir).ok()?;
-            let result = runtime
-                .call::<_, Option<PathBuf>>("cached_server_binary", container_dir)
-                .ok()?;
-            runtime.remove_resource(handle).ok()?;
-            result
-        })();
-
-        async move { result }.boxed()
+        todo!()
+        // let runtime = self.runtime.clone();
+        // async move {
+        //     let handle = runtime.lock().attach_path(&container_dir).ok()?;
+        //     let result = runtime
+        //         .lock()
+        //         .call::<_, Option<PathBuf>>("cached_server_binary", container_dir);
+        //     let result = result.await;
+        //     runtime.lock().remove_resource(handle).ok()?;
+        //     result.ok()?
+        // }
+        // .boxed()
     }
 
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
@@ -111,11 +128,7 @@ impl LspAdapter for LanguagePluginLspAdapter {
         let len = item.label.len();
         let grammar = language.grammar()?;
         let kind = format!("{:?}", item.kind?);
-        let name: String = self
-            .runtime
-            .lock()
-            .call("label_for_completion", kind)
-            .ok()?;
+        let name: String = call_block!(self, "label_for_completion", kind).log_err()?;
         let highlight_id = grammar.highlight_id_for_name(&name)?;
         Some(language::CodeLabel {
             text: item.label.clone(),
@@ -125,11 +138,7 @@ impl LspAdapter for LanguagePluginLspAdapter {
     }
 
     fn initialization_options(&self) -> Option<serde_json::Value> {
-        let string = self
-            .runtime
-            .lock()
-            .call::<_, Option<String>>("initialization_options", ())
-            .unwrap()?;
+        let string: String = call_block!(self, "initialization_options", ()).log_err()?;
 
         serde_json::from_str(&string).ok()
     }
