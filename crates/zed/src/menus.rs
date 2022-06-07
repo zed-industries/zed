@@ -254,6 +254,12 @@ pub fn menus() -> Vec<Menu<'static>> {
                 },
                 MenuItem::Separator,
                 MenuItem::Action {
+                    name: "Give Feedback",
+                    action: Box::new(crate::OpenBrowser {
+                        url: super::feedback::NEW_ISSUE_URL.into(),
+                    }),
+                },
+                MenuItem::Action {
                     name: "Zed.dev",
                     action: Box::new(crate::OpenBrowser {
                         url: "https://zed.dev".into(),

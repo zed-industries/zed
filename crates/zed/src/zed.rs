@@ -1,3 +1,4 @@
+mod feedback;
 pub mod languages;
 pub mod menus;
 pub mod settings_file;
@@ -203,11 +204,13 @@ pub fn initialize_workspace(
     });
     let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
     let auto_update = cx.add_view(|cx| auto_update::AutoUpdateIndicator::new(cx));
+    let feedback_link = cx.add_view(|_| feedback::FeedbackLink);
     workspace.status_bar().update(cx, |status_bar, cx| {
         status_bar.add_left_item(diagnostic_summary, cx);
         status_bar.add_left_item(lsp_status, cx);
         status_bar.add_right_item(cursor_position, cx);
         status_bar.add_right_item(auto_update, cx);
+        status_bar.add_right_item(feedback_link, cx);
     });
 
     auto_update::notify_of_any_new_update(cx.weak_handle(), cx);
