@@ -157,6 +157,7 @@ pub struct StatusBar {
     pub auto_update_progress_message: TextStyle,
     pub auto_update_done_message: TextStyle,
     pub lsp_status: Interactive<StatusBarLspStatus>,
+    pub feedback: Interactive<TextStyle>,
     pub sidebar_buttons: StatusBarSidebarButtons,
     pub diagnostic_summary: Interactive<StatusBarDiagnosticSummary>,
     pub diagnostic_message: Interactive<ContainedText>,

@@ -43,6 +43,10 @@ export default function statusBar(theme: Theme) {
       ...text(theme, "sans", "muted"),
       hover: text(theme, "sans", "secondary"),
     },
+    feedback: {
+      ...text(theme, "sans", "muted"),
+      hover: text(theme, "sans", "active"),
+    },
     diagnosticSummary: {
       height: 16,
       iconWidth: 14,
