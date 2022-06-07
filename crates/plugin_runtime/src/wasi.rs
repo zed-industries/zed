@@ -4,7 +4,7 @@ use anyhow::{anyhow, Error};
 use serde::{de::DeserializeOwned, Serialize};
 
 use wasi_common::{dir, file};
-use wasmtime::{Engine, Instance, Linker, Module, Store, TypedFunc};
+use wasmtime::{Config, Engine, Instance, Linker, Module, Store, TypedFunc};
 use wasmtime_wasi::{Dir, WasiCtx, WasiCtxBuilder};
 
 pub struct WasiResource(u32);
@@ -50,8 +50,10 @@ impl Wasi {
             .build()
     }
 
-    pub fn init(plugin: WasiPlugin) -> Result<Self, Error> {
-        let engine = Engine::default();
+    pub async fn init(plugin: WasiPlugin) -> Result<Self, Error> {
+        let mut config = Config::default();
+        config.async_support(true);
+        let engine = Engine::new(&config)?;
         let mut linker = Linker::new(&engine);
 
         linker.func_wrap("env", "__hello", |x: u32| x * 2).unwrap();
@@ -62,8 +64,8 @@ impl Wasi {
         let mut store: Store<_> = Store::new(&engine, plugin.wasi_ctx);
         let module = Module::new(&engine, plugin.module)?;
 
-        linker.module(&mut store, "", &module)?;
-        let instance = linker.instantiate(&mut store, &module)?;
+        linker.module_async(&mut store, "", &module).await?;
+        let instance = linker.instantiate_async(&mut store, &module).await?;
 
         let alloc_buffer = instance.get_typed_func(&mut store, "__alloc_buffer")?;
         // let free_buffer = instance.get_typed_func(&mut store, "__free_buffer")?;
@@ -166,13 +168,16 @@ impl Wasi {
 
     /// Takes an item, allocates a buffer, serializes the argument to that buffer,
     /// and returns a (ptr, len) pair to that buffer.
-    fn serialize_to_buffer<T: Serialize>(&mut self, item: T) -> Result<(u32, u32), Error> {
+    async fn serialize_to_buffer<T: Serialize>(&mut self, item: T) -> Result<(u32, u32), Error> {
         // serialize the argument using bincode
         let item = bincode::serialize(&item)?;
         let buffer_len = item.len() as u32;
 
         // allocate a buffer and write the argument to that buffer
-        let buffer_ptr = self.alloc_buffer.call(&mut self.store, buffer_len)?;
+        let buffer_ptr = self
+            .alloc_buffer
+            .call_async(&mut self.store, buffer_len)
+            .await?;
         let plugin_memory = self
             .instance
             .get_memory(&mut self.store, "memory")
@@ -212,18 +217,17 @@ impl Wasi {
     }
 
     // TODO: dont' use as for conversions
-    pub fn call<A: Serialize, R: DeserializeOwned>(
+    pub async fn call<A: Serialize, R: DeserializeOwned>(
         &mut self,
         handle: &str,
         arg: A,
     ) -> Result<R, Error> {
-        let start = std::time::Instant::now();
         dbg!(&handle);
         // dbg!(serde_json::to_string(&arg)).unwrap();
 
         // write the argument to linear memory
         // this returns a (ptr, lentgh) pair
-        let arg_buffer = self.serialize_to_buffer(arg)?;
+        let arg_buffer = self.serialize_to_buffer(arg).await?;
 
         // get the webassembly function we want to actually call
         // TODO: precompute handle
@@ -234,7 +238,7 @@ impl Wasi {
 
         // call the function, passing in the buffer and its length
         // this returns a ptr to a (ptr, lentgh) pair
-        let result_buffer = fun.call(&mut self.store, arg_buffer)?;
+        let result_buffer = fun.call_async(&mut self.store, arg_buffer).await?;
 
         self.deserialize_from_buffer(result_buffer)
     }

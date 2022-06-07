@@ -21,6 +21,7 @@ use futures::{
 };
 use gpui::{executor::Background, App, AssetSource, AsyncAppContext, Task};
 use isahc::{config::Configurable, AsyncBody, Request};
+use language::LanguageRegistry;
 use log::LevelFilter;
 use parking_lot::Mutex;
 use project::Fs;
@@ -131,7 +132,7 @@ fn main() {
 
     app.run(move |cx| {
         let client = client::Client::new(http.clone());
-        let mut languages = languages::build_language_registry(login_shell_env_loaded);
+        let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
 
         context_menu::init(cx);
@@ -177,6 +178,9 @@ fn main() {
 
         languages.set_language_server_download_dir(zed::ROOT_PATH.clone());
         let languages = Arc::new(languages);
+        cx.background()
+            .spawn(languages::init(languages.clone(), cx.background().clone()))
+            .detach();
 
         cx.observe_global::<Settings, _>({
             let languages = languages.clone();
