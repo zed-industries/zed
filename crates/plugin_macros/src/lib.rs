@@ -61,11 +61,7 @@ pub fn bind(args: TokenStream, function: TokenStream) -> TokenStream {
             // operation
             let data: #ty = match ::plugin::bincode::deserialize(&data) {
                 Ok(d) => d,
-                Err(e) => {
-                    println!("data: {:?}", data);
-                    println!("error: {}", e);
-                    panic!("Data passed to function not deserializable.")
-                },
+                Err(e) => panic!("Data passed to function not deserializable."),
             };
             let result = #inner_fn_name(#args);
             let new_data: Result<Vec<u8>, _> = ::plugin::bincode::serialize(&result);

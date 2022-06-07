@@ -125,13 +125,12 @@ impl LspAdapter for LanguagePluginLspAdapter {
     }
 
     fn initialization_options(&self) -> Option<serde_json::Value> {
-        // self.runtime
-        //     .lock()
-        //     .call::<_, Option<serde_json::Value>>("initialization_options", ())
-        //     .unwrap()
+        let string = self
+            .runtime
+            .lock()
+            .call::<_, Option<String>>("initialization_options", ())
+            .unwrap()?;
 
-        Some(json!({
-            "provideFormatter": true
-        }))
+        serde_json::from_str(&string).ok()
     }
 }
