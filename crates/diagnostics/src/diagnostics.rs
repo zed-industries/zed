@@ -1,7 +1,7 @@
 pub mod items;
 
 use anyhow::Result;
-use collections::{BTreeSet, HashSet};
+use collections::{BTreeMap, HashSet};
 use editor::{
     diagnostic_block_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties, RenderBlock},
@@ -23,7 +23,6 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     cmp::Ordering,
-    mem,
     ops::Range,
     path::PathBuf,
     sync::Arc,
@@ -52,7 +51,7 @@ struct ProjectDiagnosticsEditor {
     summary: DiagnosticSummary,
     excerpts: ModelHandle<MultiBuffer>,
     path_states: Vec<PathState>,
-    paths_to_update: BTreeSet<ProjectPath>,
+    paths_to_update: BTreeMap<ProjectPath, usize>,
 }
 
 struct PathState {
@@ -114,8 +113,8 @@ impl View for ProjectDiagnosticsEditor {
                 "summary": project.diagnostic_summary(cx),
             }),
             "summary": self.summary,
-            "paths_to_update": self.paths_to_update.iter().map(|path|
-                path.path.to_string_lossy()
+            "paths_to_update": self.paths_to_update.iter().map(|(path, server_id)|
+                (path.path.to_string_lossy(), server_id)
             ).collect::<Vec<_>>(),
             "paths_states": self.path_states.iter().map(|state|
                 json!({
@@ -139,12 +138,16 @@ impl ProjectDiagnosticsEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         cx.subscribe(&project_handle, |this, _, event, cx| match event {
-            project::Event::DiskBasedDiagnosticsFinished => {
-                this.update_excerpts(cx);
+            project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
+                this.update_excerpts(Some(*language_server_id), cx);
                 this.update_title(cx);
             }
-            project::Event::DiagnosticsUpdated(path) => {
-                this.paths_to_update.insert(path.clone());
+            project::Event::DiagnosticsUpdated {
+                language_server_id,
+                path,
+            } => {
+                this.paths_to_update
+                    .insert(path.clone(), *language_server_id);
             }
             _ => {}
         })
@@ -161,7 +164,10 @@ impl ProjectDiagnosticsEditor {
             .detach();
 
         let project = project_handle.read(cx);
-        let paths_to_update = project.diagnostic_summaries(cx).map(|e| e.0).collect();
+        let paths_to_update = project
+            .diagnostic_summaries(cx)
+            .map(|e| (e.0, e.1.language_server_id))
+            .collect();
         let summary = project.diagnostic_summary(cx);
         let mut this = Self {
             project: project_handle,
@@ -172,7 +178,7 @@ impl ProjectDiagnosticsEditor {
             path_states: Default::default(),
             paths_to_update,
         };
-        this.update_excerpts(cx);
+        this.update_excerpts(None, cx);
         this
     }
 
@@ -212,8 +218,18 @@ impl ProjectDiagnosticsEditor {
         .detach()
     }
 
-    fn update_excerpts(&mut self, cx: &mut ViewContext<Self>) {
-        let paths = mem::take(&mut self.paths_to_update);
+    fn update_excerpts(&mut self, language_server_id: Option<usize>, cx: &mut ViewContext<Self>) {
+        let mut paths = Vec::new();
+        self.paths_to_update.retain(|path, server_id| {
+            if language_server_id
+                .map_or(true, |language_server_id| language_server_id == *server_id)
+            {
+                paths.push(path.clone());
+                false
+            } else {
+                true
+            }
+        });
         let project = self.project.clone();
         cx.spawn(|this, mut cx| {
             async move {
@@ -221,7 +237,7 @@ impl ProjectDiagnosticsEditor {
                     let buffer = project
                         .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))
                         .await?;
-                    this.update(&mut cx, |view, cx| view.populate_excerpts(path, buffer, cx))
+                    this.update(&mut cx, |this, cx| this.populate_excerpts(path, buffer, cx))
                 }
                 Result::<_, anyhow::Error>::Ok(())
             }
@@ -838,6 +854,7 @@ mod tests {
         project.update(cx, |project, cx| {
             project
                 .update_diagnostic_entries(
+                    0,
                     PathBuf::from("/test/main.rs"),
                     None,
                     vec![
@@ -986,9 +1003,10 @@ mod tests {
 
         // Diagnostics are added for another earlier path.
         project.update(cx, |project, cx| {
-            project.disk_based_diagnostics_started(cx);
+            project.disk_based_diagnostics_started(0, cx);
             project
                 .update_diagnostic_entries(
+                    0,
                     PathBuf::from("/test/consts.rs"),
                     None,
                     vec![DiagnosticEntry {
@@ -1005,7 +1023,7 @@ mod tests {
                     cx,
                 )
                 .unwrap();
-            project.disk_based_diagnostics_finished(cx);
+            project.disk_based_diagnostics_finished(0, cx);
         });
 
         view.next_notification(&cx).await;
@@ -1085,9 +1103,10 @@ mod tests {
 
         // Diagnostics are added to the first path
         project.update(cx, |project, cx| {
-            project.disk_based_diagnostics_started(cx);
+            project.disk_based_diagnostics_started(0, cx);
             project
                 .update_diagnostic_entries(
+                    0,
                     PathBuf::from("/test/consts.rs"),
                     None,
                     vec![
@@ -1118,7 +1137,7 @@ mod tests {
                     cx,
                 )
                 .unwrap();
-            project.disk_based_diagnostics_finished(cx);
+            project.disk_based_diagnostics_finished(0, cx);
         });
 
         view.next_notification(&cx).await;

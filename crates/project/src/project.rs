@@ -154,10 +154,16 @@ pub enum Event {
     ActiveEntryChanged(Option<ProjectEntryId>),
     WorktreeAdded,
     WorktreeRemoved(WorktreeId),
-    DiskBasedDiagnosticsStarted,
-    DiskBasedDiagnosticsUpdated,
-    DiskBasedDiagnosticsFinished,
-    DiagnosticsUpdated(ProjectPath),
+    DiskBasedDiagnosticsStarted {
+        language_server_id: usize,
+    },
+    DiskBasedDiagnosticsFinished {
+        language_server_id: usize,
+    },
+    DiagnosticsUpdated {
+        path: ProjectPath,
+        language_server_id: usize,
+    },
     RemoteIdChanged(Option<u64>),
     CollaboratorLeft(PeerId),
     ContactRequestedJoin(Arc<User>),
@@ -187,6 +193,7 @@ pub struct ProjectPath {
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Serialize)]
 pub struct DiagnosticSummary {
+    pub language_server_id: usize,
     pub error_count: usize,
     pub warning_count: usize,
 }
@@ -220,8 +227,12 @@ pub struct Symbol {
 pub struct ProjectTransaction(pub HashMap<ModelHandle<Buffer>, language::Transaction>);
 
 impl DiagnosticSummary {
-    fn new<'a, T: 'a>(diagnostics: impl IntoIterator<Item = &'a DiagnosticEntry<T>>) -> Self {
+    fn new<'a, T: 'a>(
+        language_server_id: usize,
+        diagnostics: impl IntoIterator<Item = &'a DiagnosticEntry<T>>,
+    ) -> Self {
         let mut this = Self {
+            language_server_id,
             error_count: 0,
             warning_count: 0,
         };
@@ -246,6 +257,7 @@ impl DiagnosticSummary {
     pub fn to_proto(&self, path: &Path) -> proto::DiagnosticSummary {
         proto::DiagnosticSummary {
             path: path.to_string_lossy().to_string(),
+            language_server_id: self.language_server_id as u64,
             error_count: self.error_count as u32,
             warning_count: self.warning_count as u32,
         }
@@ -1742,6 +1754,24 @@ impl Project {
                         )
                         .log_err();
                 }
+
+                // After saving a buffer, simulate disk-based diagnostics being finished for languages
+                // that don't support a disk-based progress token.
+                let (lsp_adapter, language_server) =
+                    self.language_server_for_buffer(buffer.read(cx), cx)?;
+                if lsp_adapter
+                    .disk_based_diagnostics_progress_token()
+                    .is_none()
+                {
+                    let server_id = language_server.server_id();
+                    self.disk_based_diagnostics_finished(server_id, cx);
+                    self.broadcast_language_server_update(
+                        server_id,
+                        proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
+                            proto::LspDiskBasedDiagnosticsUpdated {},
+                        ),
+                    );
+                }
             }
             _ => {}
         }
@@ -1827,11 +1857,7 @@ impl Project {
                                 if let Some(this) = this.upgrade(&cx) {
                                     this.update(&mut cx, |this, cx| {
                                         this.on_lsp_diagnostics_published(
-                                            server_id,
-                                            params,
-                                            &adapter,
-                                            disk_based_diagnostics_progress_token,
-                                            cx,
+                                            server_id, params, &adapter, cx,
                                         );
                                     });
                                 }
@@ -2061,30 +2087,16 @@ impl Project {
         server_id: usize,
         mut params: lsp::PublishDiagnosticsParams,
         adapter: &Arc<dyn LspAdapter>,
-        disk_based_diagnostics_progress_token: Option<&str>,
         cx: &mut ModelContext<Self>,
     ) {
         adapter.process_diagnostics(&mut params);
-        if disk_based_diagnostics_progress_token.is_none() {
-            self.disk_based_diagnostics_started(cx);
-            self.broadcast_language_server_update(
-                server_id,
-                proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(
-                    proto::LspDiskBasedDiagnosticsUpdating {},
-                ),
-            );
-        }
-        self.update_diagnostics(params, adapter.disk_based_diagnostic_sources(), cx)
-            .log_err();
-        if disk_based_diagnostics_progress_token.is_none() {
-            self.disk_based_diagnostics_finished(cx);
-            self.broadcast_language_server_update(
-                server_id,
-                proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
-                    proto::LspDiskBasedDiagnosticsUpdated {},
-                ),
-            );
-        }
+        self.update_diagnostics(
+            server_id,
+            params,
+            adapter.disk_based_diagnostic_sources(),
+            cx,
+        )
+        .log_err();
     }
 
     fn on_lsp_progress(
@@ -2115,7 +2127,7 @@ impl Project {
                 if Some(token.as_str()) == disk_based_diagnostics_progress_token {
                     language_server_status.pending_diagnostic_updates += 1;
                     if language_server_status.pending_diagnostic_updates == 1 {
-                        self.disk_based_diagnostics_started(cx);
+                        self.disk_based_diagnostics_started(server_id, cx);
                         self.broadcast_language_server_update(
                             server_id,
                             proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(
@@ -2161,7 +2173,7 @@ impl Project {
                 if Some(token.as_str()) == disk_based_diagnostics_progress_token {
                     language_server_status.pending_diagnostic_updates -= 1;
                     if language_server_status.pending_diagnostic_updates == 0 {
-                        self.disk_based_diagnostics_finished(cx);
+                        self.disk_based_diagnostics_finished(server_id, cx);
                         self.broadcast_language_server_update(
                             server_id,
                             proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
@@ -2297,6 +2309,7 @@ impl Project {
 
     pub fn update_diagnostics(
         &mut self,
+        language_server_id: usize,
         params: lsp::PublishDiagnosticsParams,
         disk_based_sources: &[&str],
         cx: &mut ModelContext<Self>,
@@ -2401,12 +2414,19 @@ impl Project {
             }
         }
 
-        self.update_diagnostic_entries(abs_path, params.version, diagnostics, cx)?;
+        self.update_diagnostic_entries(
+            language_server_id,
+            abs_path,
+            params.version,
+            diagnostics,
+            cx,
+        )?;
         Ok(())
     }
 
     pub fn update_diagnostic_entries(
         &mut self,
+        language_server_id: usize,
         abs_path: PathBuf,
         version: Option<i32>,
         diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
@@ -2431,10 +2451,18 @@ impl Project {
             worktree
                 .as_local_mut()
                 .ok_or_else(|| anyhow!("not a local worktree"))?
-                .update_diagnostics(project_path.path.clone(), diagnostics, cx)
+                .update_diagnostics(
+                    language_server_id,
+                    project_path.path.clone(),
+                    diagnostics,
+                    cx,
+                )
         })?;
         if updated {
-            cx.emit(Event::DiagnosticsUpdated(project_path));
+            cx.emit(Event::DiagnosticsUpdated {
+                language_server_id,
+                path: project_path,
+            });
         }
         Ok(())
     }
@@ -3970,10 +3998,18 @@ impl Project {
         }
     }
 
-    pub fn is_running_disk_based_diagnostics(&self) -> bool {
+    pub fn language_servers_running_disk_based_diagnostics<'a>(
+        &'a self,
+    ) -> impl 'a + Iterator<Item = usize> {
         self.language_server_statuses
-            .values()
-            .any(|status| status.pending_diagnostic_updates > 0)
+            .iter()
+            .filter_map(|(id, status)| {
+                if status.pending_diagnostic_updates > 0 {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
     }
 
     pub fn diagnostic_summary(&self, cx: &AppContext) -> DiagnosticSummary {
@@ -3998,29 +4034,20 @@ impl Project {
         })
     }
 
-    pub fn disk_based_diagnostics_started(&mut self, cx: &mut ModelContext<Self>) {
-        if self
-            .language_server_statuses
-            .values()
-            .map(|status| status.pending_diagnostic_updates)
-            .sum::<isize>()
-            == 1
-        {
-            cx.emit(Event::DiskBasedDiagnosticsStarted);
-        }
+    pub fn disk_based_diagnostics_started(
+        &mut self,
+        language_server_id: usize,
+        cx: &mut ModelContext<Self>,
+    ) {
+        cx.emit(Event::DiskBasedDiagnosticsStarted { language_server_id });
     }
 
-    pub fn disk_based_diagnostics_finished(&mut self, cx: &mut ModelContext<Self>) {
-        cx.emit(Event::DiskBasedDiagnosticsUpdated);
-        if self
-            .language_server_statuses
-            .values()
-            .map(|status| status.pending_diagnostic_updates)
-            .sum::<isize>()
-            == 0
-        {
-            cx.emit(Event::DiskBasedDiagnosticsFinished);
-        }
+    pub fn disk_based_diagnostics_finished(
+        &mut self,
+        language_server_id: usize,
+        cx: &mut ModelContext<Self>,
+    ) {
+        cx.emit(Event::DiskBasedDiagnosticsFinished { language_server_id });
     }
 
     pub fn active_entry(&self) -> Option<ProjectEntryId> {
@@ -4351,7 +4378,10 @@ impl Project {
                             .unwrap()
                             .update_diagnostic_summary(project_path.path.clone(), &summary);
                     });
-                    cx.emit(Event::DiagnosticsUpdated(project_path));
+                    cx.emit(Event::DiagnosticsUpdated {
+                        language_server_id: summary.language_server_id as usize,
+                        path: project_path,
+                    });
                 }
             }
             Ok(())
@@ -4420,11 +4450,13 @@ impl Project {
             }
             proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(_) => {
                 this.update(&mut cx, |this, cx| {
-                    this.disk_based_diagnostics_started(cx);
+                    this.disk_based_diagnostics_started(language_server_id, cx);
                 })
             }
             proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(_) => {
-                this.update(&mut cx, |this, cx| this.disk_based_diagnostics_finished(cx));
+                this.update(&mut cx, |this, cx| {
+                    this.disk_based_diagnostics_finished(language_server_id, cx)
+                });
             }
         }
 
@@ -6064,6 +6096,7 @@ mod tests {
         project.update(cx, |project, cx| {
             project
                 .update_diagnostics(
+                    0,
                     lsp::PublishDiagnosticsParams {
                         uri: Url::from_file_path("/dir/a.rs").unwrap(),
                         version: None,
@@ -6083,6 +6116,7 @@ mod tests {
                 .unwrap();
             project
                 .update_diagnostics(
+                    0,
                     lsp::PublishDiagnosticsParams {
                         uri: Url::from_file_path("/dir/b.rs").unwrap(),
                         version: None,
@@ -6178,7 +6212,9 @@ mod tests {
         fake_server.start_progress(progress_token).await;
         assert_eq!(
             events.next().await.unwrap(),
-            Event::DiskBasedDiagnosticsStarted
+            Event::DiskBasedDiagnosticsStarted {
+                language_server_id: 0,
+            }
         );
 
         fake_server.start_progress(progress_token).await;
@@ -6199,18 +6235,19 @@ mod tests {
         );
         assert_eq!(
             events.next().await.unwrap(),
-            Event::DiagnosticsUpdated((worktree_id, Path::new("a.rs")).into())
+            Event::DiagnosticsUpdated {
+                language_server_id: 0,
+                path: (worktree_id, Path::new("a.rs")).into()
+            }
         );
 
         fake_server.end_progress(progress_token).await;
         fake_server.end_progress(progress_token).await;
         assert_eq!(
             events.next().await.unwrap(),
-            Event::DiskBasedDiagnosticsUpdated
-        );
-        assert_eq!(
-            events.next().await.unwrap(),
-            Event::DiskBasedDiagnosticsFinished
+            Event::DiskBasedDiagnosticsFinished {
+                language_server_id: 0
+            }
         );
 
         let buffer = project
@@ -6248,7 +6285,10 @@ mod tests {
         );
         assert_eq!(
             events.next().await.unwrap(),
-            Event::DiagnosticsUpdated((worktree_id, Path::new("a.rs")).into())
+            Event::DiagnosticsUpdated {
+                language_server_id: 0,
+                path: (worktree_id, Path::new("a.rs")).into()
+            }
         );
 
         fake_server.notify::<lsp::notification::PublishDiagnostics>(
@@ -6306,22 +6346,35 @@ mod tests {
         fake_server.start_progress(progress_token).await;
         assert_eq!(
             events.next().await.unwrap(),
-            Event::DiskBasedDiagnosticsStarted
+            Event::DiskBasedDiagnosticsStarted {
+                language_server_id: 1
+            }
         );
+        project.read_with(cx, |project, _| {
+            assert_eq!(
+                project
+                    .language_servers_running_disk_based_diagnostics()
+                    .collect::<Vec<_>>(),
+                [1]
+            );
+        });
 
         // All diagnostics are considered done, despite the old server's diagnostic
         // task never completing.
         fake_server.end_progress(progress_token).await;
         assert_eq!(
             events.next().await.unwrap(),
-            Event::DiskBasedDiagnosticsUpdated
-        );
-        assert_eq!(
-            events.next().await.unwrap(),
-            Event::DiskBasedDiagnosticsFinished
+            Event::DiskBasedDiagnosticsFinished {
+                language_server_id: 1
+            }
         );
         project.read_with(cx, |project, _| {
-            assert!(!project.is_running_disk_based_diagnostics());
+            assert_eq!(
+                project
+                    .language_servers_running_disk_based_diagnostics()
+                    .collect::<Vec<_>>(),
+                [0; 0]
+            );
         });
     }
 
@@ -8002,7 +8055,7 @@ mod tests {
         };
 
         project
-            .update(cx, |p, cx| p.update_diagnostics(message, &[], cx))
+            .update(cx, |p, cx| p.update_diagnostics(0, message, &[], cx))
             .unwrap();
         let buffer = buffer.read_with(cx, |buffer, _| buffer.snapshot());
 
