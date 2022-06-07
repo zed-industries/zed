@@ -4,9 +4,10 @@ import {
   backgroundColor,
   border,
   player,
-  shadow,
+  modalShadow,
   text,
-  TextColor
+  TextColor,
+  popoverShadow
 } from "./components";
 
 export default function chatPanel(theme: Theme) {
@@ -69,7 +70,7 @@ export default function chatPanel(theme: Theme) {
         cornerRadius: 6,
         padding: 4,
         border: border(theme, "primary"),
-        shadow: shadow(theme),
+        shadow: popoverShadow(theme),
       },
     },
     signInPrompt: text(theme, "sans", "secondary", { underline: true }),

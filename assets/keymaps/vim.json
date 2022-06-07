@@ -99,6 +99,7 @@
         "context": "Editor && vim_operator == g",
         "bindings": {
             "g": "vim::StartOfDocument",
+            "h": "editor::Hover",
             "escape": [
                 "vim::SwitchMode",
                 "Normal"

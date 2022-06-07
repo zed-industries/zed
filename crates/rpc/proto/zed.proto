@@ -66,41 +66,43 @@ message Envelope {
         ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 56;
         GetCodeActions get_code_actions = 57;
         GetCodeActionsResponse get_code_actions_response = 58;
-        ApplyCodeAction apply_code_action = 59;
-        ApplyCodeActionResponse apply_code_action_response = 60;
-        PrepareRename prepare_rename = 61;
-        PrepareRenameResponse prepare_rename_response = 62;
-        PerformRename perform_rename = 63;
-        PerformRenameResponse perform_rename_response = 64;
-        SearchProject search_project = 65;
-        SearchProjectResponse search_project_response = 66;
+        GetHover get_hover = 59;
+        GetHoverResponse get_hover_response = 60;
+        ApplyCodeAction apply_code_action = 61;
+        ApplyCodeActionResponse apply_code_action_response = 62;
+        PrepareRename prepare_rename = 63;
+        PrepareRenameResponse prepare_rename_response = 64;
+        PerformRename perform_rename = 65;
+        PerformRenameResponse perform_rename_response = 66;
+        SearchProject search_project = 67;
+        SearchProjectResponse search_project_response = 68;
 
-        GetChannels get_channels = 67;
-        GetChannelsResponse get_channels_response = 68;
-        JoinChannel join_channel = 69;
-        JoinChannelResponse join_channel_response = 70;
-        LeaveChannel leave_channel = 71;
-        SendChannelMessage send_channel_message = 72;
-        SendChannelMessageResponse send_channel_message_response = 73;
-        ChannelMessageSent channel_message_sent = 74;
-        GetChannelMessages get_channel_messages = 75;
-        GetChannelMessagesResponse get_channel_messages_response = 76;
+        GetChannels get_channels = 69;
+        GetChannelsResponse get_channels_response = 70;
+        JoinChannel join_channel = 71;
+        JoinChannelResponse join_channel_response = 72;
+        LeaveChannel leave_channel = 73;
+        SendChannelMessage send_channel_message = 74;
+        SendChannelMessageResponse send_channel_message_response = 75;
+        ChannelMessageSent channel_message_sent = 76;
+        GetChannelMessages get_channel_messages = 77;
+        GetChannelMessagesResponse get_channel_messages_response = 78;
 
-        UpdateContacts update_contacts = 77;
-        UpdateInviteInfo update_invite_info = 78;
-        ShowContacts show_contacts = 79;
+        UpdateContacts update_contacts = 79;
+        UpdateInviteInfo update_invite_info = 80;
+        ShowContacts show_contacts = 81;
 
-        GetUsers get_users = 80;
-        FuzzySearchUsers fuzzy_search_users = 81;
-        UsersResponse users_response = 82;
-        RequestContact request_contact = 83;
-        RespondToContactRequest respond_to_contact_request = 84;
-        RemoveContact remove_contact = 85;
+        GetUsers get_users = 82;
+        FuzzySearchUsers fuzzy_search_users = 83;
+        UsersResponse users_response = 84;
+        RequestContact request_contact = 85;
+        RespondToContactRequest respond_to_contact_request = 86;
+        RemoveContact remove_contact = 87;
 
-        Follow follow = 86;
-        FollowResponse follow_response = 87;
-        UpdateFollowers update_followers = 88;
-        Unfollow unfollow = 89;
+        Follow follow = 88;
+        FollowResponse follow_response = 89;
+        UpdateFollowers update_followers = 90;
+        Unfollow unfollow = 91;
     }
 }
 
@@ -424,6 +426,24 @@ message GetCodeActions {
 message GetCodeActionsResponse {
     repeated CodeAction actions = 1;
     repeated VectorClockEntry version = 2;
+}
+
+message GetHover {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+    repeated VectorClockEntry version = 5;
+}
+
+message GetHoverResponse {
+    optional Anchor start = 1;
+    optional Anchor end = 2;
+    repeated HoverBlock contents = 3;
+}
+
+message HoverBlock {
+    string text = 1;
+    optional string language = 2;
 }
 
 message ApplyCodeAction {

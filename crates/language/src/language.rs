@@ -236,7 +236,7 @@ impl LanguageRegistry {
         self.languages
             .read()
             .iter()
-            .find(|language| language.name().as_ref() == name)
+            .find(|language| language.name().to_lowercase() == name.to_lowercase())
             .cloned()
     }
 

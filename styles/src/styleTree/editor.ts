@@ -4,9 +4,11 @@ import {
   border,
   iconColor,
   player,
+  popoverShadow,
   text,
   TextColor
 } from "./components";
+import hoverPopover from "./hoverPopover";
 
 export default function editor(theme: Theme) {
   const autocompleteItem = {
@@ -80,6 +82,7 @@ export default function editor(theme: Theme) {
       cornerRadius: 8,
       padding: 4,
       border: border(theme, "secondary"),
+      shadow: popoverShadow(theme),
       item: autocompleteItem,
       hoveredItem: {
         ...autocompleteItem,
@@ -143,6 +146,7 @@ export default function editor(theme: Theme) {
     invalidHintDiagnostic: diagnostic(theme, "muted"),
     invalidInformationDiagnostic: diagnostic(theme, "muted"),
     invalidWarningDiagnostic: diagnostic(theme, "muted"),
+    hover_popover: hoverPopover(theme),
     syntax,
   };
 }

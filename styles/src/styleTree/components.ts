@@ -1,4 +1,5 @@
 import chroma from "chroma-js";
+import { isIPv4 } from "net";
 import Theme, { BackgroundColorSet } from "../themes/common/theme";
 import { fontFamilies, fontSizes, FontWeight } from "../tokens";
 import { Color } from "../utils/color";
@@ -84,10 +85,18 @@ export function backgroundColor(
   return theme.backgroundColor[name][state || "base"].value;
 }
 
-export function shadow(theme: Theme) {
+export function modalShadow(theme: Theme) {
   return {
     blur: 16,
-    color: chroma("black").alpha(theme.shadowAlpha.value).hex(),
+    color: theme.shadow.value,
     offset: [0, 2],
+  };
+}
+
+export function popoverShadow(theme: Theme) {
+  return {
+    blur: 4,
+    color: theme.shadow.value,
+    offset: [1, 2],
   };
 }

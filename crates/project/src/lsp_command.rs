@@ -1,4 +1,4 @@
-use crate::{DocumentHighlight, Location, Project, ProjectTransaction};
+use crate::{DocumentHighlight, Hover, HoverBlock, Location, Project, ProjectTransaction};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use client::{proto, PeerId};
@@ -9,6 +9,7 @@ use language::{
     range_from_lsp, Anchor, Bias, Buffer, PointUtf16, ToPointUtf16,
 };
 use lsp::{DocumentHighlightKind, ServerCapabilities};
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 use std::{cmp::Reverse, ops::Range, path::Path};
 
 #[async_trait(?Send)]
@@ -77,6 +78,10 @@ pub(crate) struct GetReferences {
 }
 
 pub(crate) struct GetDocumentHighlights {
+    pub position: PointUtf16,
+}
+
+pub(crate) struct GetHover {
     pub position: PointUtf16,
 }
 
@@ -791,6 +796,223 @@ impl LspCommand for GetDocumentHighlights {
     }
 
     fn buffer_id_from_proto(message: &proto::GetDocumentHighlights) -> u64 {
+        message.buffer_id
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GetHover {
+    type Response = Option<Hover>;
+    type LspRequest = lsp::request::HoverRequest;
+    type ProtoRequest = proto::GetHover;
+
+    fn to_lsp(&self, path: &Path, _: &AppContext) -> lsp::HoverParams {
+        lsp::HoverParams {
+            text_document_position_params: lsp::TextDocumentPositionParams {
+                text_document: lsp::TextDocumentIdentifier {
+                    uri: lsp::Url::from_file_path(path).unwrap(),
+                },
+                position: point_to_lsp(self.position),
+            },
+            work_done_progress_params: Default::default(),
+        }
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<lsp::Hover>,
+        _: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self::Response> {
+        Ok(message.and_then(|hover| {
+            let range = hover.range.map(|range| {
+                cx.read(|cx| {
+                    let buffer = buffer.read(cx);
+                    let token_start =
+                        buffer.clip_point_utf16(point_from_lsp(range.start), Bias::Left);
+                    let token_end = buffer.clip_point_utf16(point_from_lsp(range.end), Bias::Left);
+                    buffer.anchor_after(token_start)..buffer.anchor_before(token_end)
+                })
+            });
+
+            let contents = cx.read(|_| match hover.contents {
+                lsp::HoverContents::Scalar(marked_string) => {
+                    HoverBlock::try_new(marked_string).map(|contents| vec![contents])
+                }
+                lsp::HoverContents::Array(marked_strings) => {
+                    let content: Vec<HoverBlock> = marked_strings
+                        .into_iter()
+                        .filter_map(|marked_string| HoverBlock::try_new(marked_string))
+                        .collect();
+                    if content.is_empty() {
+                        None
+                    } else {
+                        Some(content)
+                    }
+                }
+                lsp::HoverContents::Markup(markup_content) => {
+                    let mut contents = Vec::new();
+                    let mut language = None;
+                    let mut current_text = String::new();
+                    for event in Parser::new_ext(&markup_content.value, Options::all()) {
+                        match event {
+                            Event::SoftBreak => {
+                                current_text.push(' ');
+                            }
+                            Event::Text(text) | Event::Code(text) => {
+                                current_text.push_str(&text.to_string());
+                            }
+                            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(new_language))) => {
+                                if !current_text.is_empty() {
+                                    let text = std::mem::replace(&mut current_text, String::new());
+                                    contents.push(HoverBlock { text, language });
+                                }
+
+                                language = if new_language.is_empty() {
+                                    None
+                                } else {
+                                    Some(new_language.to_string())
+                                };
+                            }
+                            Event::End(Tag::CodeBlock(_))
+                            | Event::End(Tag::Paragraph)
+                            | Event::End(Tag::Heading(_, _, _))
+                            | Event::End(Tag::BlockQuote)
+                            | Event::HardBreak => {
+                                if !current_text.is_empty() {
+                                    let text = std::mem::replace(&mut current_text, String::new());
+                                    contents.push(HoverBlock { text, language });
+                                    current_text.clear();
+                                }
+                                language = None;
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    if !current_text.is_empty() {
+                        contents.push(HoverBlock {
+                            text: current_text,
+                            language,
+                        });
+                    }
+
+                    if contents.is_empty() {
+                        None
+                    } else {
+                        Some(contents)
+                    }
+                }
+            });
+
+            contents.map(|contents| Hover { contents, range })
+        }))
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
+        proto::GetHover {
+            project_id,
+            buffer_id: buffer.remote_id(),
+            position: Some(language::proto::serialize_anchor(
+                &buffer.anchor_before(self.position),
+            )),
+            version: serialize_version(&buffer.version),
+        }
+    }
+
+    async fn from_proto(
+        message: Self::ProtoRequest,
+        _: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self> {
+        let position = message
+            .position
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(message.version))
+            })
+            .await;
+        Ok(Self {
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
+        })
+    }
+
+    fn response_to_proto(
+        response: Self::Response,
+        _: &mut Project,
+        _: PeerId,
+        _: &clock::Global,
+        _: &AppContext,
+    ) -> proto::GetHoverResponse {
+        if let Some(response) = response {
+            let (start, end) = if let Some(range) = response.range {
+                (
+                    Some(language::proto::serialize_anchor(&range.start)),
+                    Some(language::proto::serialize_anchor(&range.end)),
+                )
+            } else {
+                (None, None)
+            };
+
+            let contents = response
+                .contents
+                .into_iter()
+                .map(|block| proto::HoverBlock {
+                    text: block.text,
+                    language: block.language,
+                })
+                .collect();
+
+            proto::GetHoverResponse {
+                start,
+                end,
+                contents,
+            }
+        } else {
+            proto::GetHoverResponse {
+                start: None,
+                end: None,
+                contents: Vec::new(),
+            }
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::GetHoverResponse,
+        _: ModelHandle<Project>,
+        _: ModelHandle<Buffer>,
+        _: AsyncAppContext,
+    ) -> Result<Self::Response> {
+        println!("Response from proto");
+        let range = if let (Some(start), Some(end)) = (message.start, message.end) {
+            language::proto::deserialize_anchor(start)
+                .and_then(|start| language::proto::deserialize_anchor(end).map(|end| start..end))
+        } else {
+            None
+        };
+
+        let contents: Vec<_> = message
+            .contents
+            .into_iter()
+            .map(|block| HoverBlock {
+                text: block.text,
+                language: block.language,
+            })
+            .collect();
+
+        Ok(if contents.is_empty() {
+            None
+        } else {
+            Some(Hover { contents, range })
+        })
+    }
+
+    fn buffer_id_from_proto(message: &Self::ProtoRequest) -> u64 {
         message.buffer_id
     }
 }

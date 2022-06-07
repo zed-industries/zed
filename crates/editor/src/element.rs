@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     display_map::{DisplaySnapshot, TransformBlock},
-    EditorStyle,
+    EditorStyle, HoverAt,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
@@ -102,6 +102,7 @@ impl EditorElement {
     fn mouse_down(
         &self,
         position: Vector2F,
+        _: bool,
         alt: bool,
         shift: bool,
         mut click_count: usize,
@@ -121,7 +122,7 @@ impl EditorElement {
         if shift && alt {
             cx.dispatch_action(Select(SelectPhase::BeginColumnar {
                 position,
-                overshoot,
+                overshoot: overshoot.column(),
             }));
         } else if shift {
             cx.dispatch_action(Select(SelectPhase::Extend {
@@ -190,7 +191,7 @@ impl EditorElement {
 
             cx.dispatch_action(Select(SelectPhase::Update {
                 position,
-                overshoot,
+                overshoot: overshoot.column(),
                 scroll_position: (snapshot.scroll_position() + scroll_delta)
                     .clamp(Vector2F::zero(), layout.scroll_max),
             }));
@@ -349,6 +350,7 @@ impl EditorElement {
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut LayoutState,
+        paint: &mut PaintState,
         cx: &mut PaintContext,
     ) {
         let view = self.view(cx.app);
@@ -490,7 +492,7 @@ impl EditorElement {
             let mut list_origin = content_origin + vec2f(x, y);
             let list_height = context_menu.size().y();
 
-            if list_origin.y() + list_height > bounds.lower_left().y() {
+            if list_origin.y() + list_height > bounds.max_y() {
                 list_origin.set_y(list_origin.y() - layout.line_height - list_height);
             }
 
@@ -498,6 +500,38 @@ impl EditorElement {
                 list_origin,
                 RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
                 cx,
+            );
+
+            cx.scene.pop_stacking_context();
+        }
+
+        if let Some((position, hover_popover)) = layout.hover.as_mut() {
+            cx.scene.push_stacking_context(None);
+
+            // This is safe because we check on layout whether the required row is available
+            let hovered_row_layout = &layout.line_layouts[(position.row() - start_row) as usize];
+            let size = hover_popover.size();
+            let x = hovered_row_layout.x_for_index(position.column() as usize) - scroll_left;
+            let y = position.row() as f32 * layout.line_height - scroll_top - size.y();
+            let mut popover_origin = content_origin + vec2f(x, y);
+
+            if popover_origin.y() < 0.0 {
+                popover_origin.set_y(popover_origin.y() + layout.line_height + size.y());
+            }
+
+            let x_out_of_bounds = bounds.max_x() - (popover_origin.x() + size.x());
+            if x_out_of_bounds < 0.0 {
+                popover_origin.set_x(popover_origin.x() + x_out_of_bounds);
+            }
+
+            hover_popover.paint(
+                popover_origin,
+                RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
+                cx,
+            );
+
+            paint.hover_bounds = Some(
+                RectF::new(popover_origin, hover_popover.size()).dilate(Vector2F::new(0., 5.)),
             );
 
             cx.scene.pop_stacking_context();
@@ -1076,6 +1110,7 @@ impl Element for EditorElement {
 
         let mut context_menu = None;
         let mut code_actions_indicator = None;
+        let mut hover = None;
         cx.render(&self.view.upgrade(cx).unwrap(), |view, cx| {
             let newest_selection_head = view
                 .selections
@@ -1083,8 +1118,8 @@ impl Element for EditorElement {
                 .head()
                 .to_display_point(&snapshot);
 
+            let style = view.style(cx);
             if (start_row..end_row).contains(&newest_selection_head.row()) {
-                let style = view.style(cx);
                 if view.context_menu_visible() {
                     context_menu =
                         view.render_context_menu(newest_selection_head, style.clone(), cx);
@@ -1094,6 +1129,17 @@ impl Element for EditorElement {
                     .render_code_actions_indicator(&style, cx)
                     .map(|indicator| (newest_selection_head.row(), indicator));
             }
+
+            hover = view.hover_popover().and_then(|hover| {
+                let (point, rendered) = hover.render(style.clone(), cx);
+                if point.row() >= snapshot.scroll_position().y() as u32 {
+                    if line_layouts.len() > (point.row() - start_row) as usize {
+                        return Some((point, rendered));
+                    }
+                }
+
+                None
+            });
         });
 
         if let Some((_, context_menu)) = context_menu.as_mut() {
@@ -1112,6 +1158,19 @@ impl Element for EditorElement {
         if let Some((_, indicator)) = code_actions_indicator.as_mut() {
             indicator.layout(
                 SizeConstraint::strict_along(Axis::Vertical, line_height * 0.618),
+                cx,
+            );
+        }
+
+        if let Some((_, hover)) = hover.as_mut() {
+            hover.layout(
+                SizeConstraint {
+                    min: Vector2F::zero(),
+                    max: vec2f(
+                        (120. * em_width).min(size.x()),
+                        (size.y() - line_height) * 1. / 2.,
+                    ),
+                },
                 cx,
             );
         }
@@ -1152,6 +1211,7 @@ impl Element for EditorElement {
                 selections,
                 context_menu,
                 code_actions_indicator,
+                hover,
             },
         )
     }
@@ -1171,11 +1231,18 @@ impl Element for EditorElement {
             layout.text_size,
         );
 
+        let mut paint_state = PaintState {
+            bounds,
+            gutter_bounds,
+            text_bounds,
+            hover_bounds: None,
+        };
+
         self.paint_background(gutter_bounds, text_bounds, layout, cx);
         if layout.gutter_size.x() > 0. {
             self.paint_gutter(gutter_bounds, visible_bounds, layout, cx);
         }
-        self.paint_text(text_bounds, visible_bounds, layout, cx);
+        self.paint_text(text_bounds, visible_bounds, layout, &mut paint_state, cx);
 
         if !layout.blocks.is_empty() {
             cx.scene.push_layer(Some(bounds));
@@ -1185,11 +1252,7 @@ impl Element for EditorElement {
 
         cx.scene.pop_layer();
 
-        PaintState {
-            bounds,
-            gutter_bounds,
-            text_bounds,
-        }
+        paint_state
     }
 
     fn dispatch_event(
@@ -1213,6 +1276,12 @@ impl Element for EditorElement {
             }
         }
 
+        if let Some((_, hover)) = &mut layout.hover {
+            if hover.dispatch_event(event, cx) {
+                return true;
+            }
+        }
+
         for (_, block) in &mut layout.blocks {
             if block.dispatch_event(event, cx) {
                 return true;
@@ -1222,11 +1291,21 @@ impl Element for EditorElement {
         match event {
             Event::LeftMouseDown {
                 position,
+                cmd,
                 alt,
                 shift,
                 click_count,
                 ..
-            } => self.mouse_down(*position, *alt, *shift, *click_count, layout, paint, cx),
+            } => self.mouse_down(
+                *position,
+                *cmd,
+                *alt,
+                *shift,
+                *click_count,
+                layout,
+                paint,
+                cx,
+            ),
             Event::LeftMouseUp { position, .. } => self.mouse_up(*position, cx),
             Event::LeftMouseDragged { position } => {
                 self.mouse_dragged(*position, layout, paint, cx)
@@ -1237,6 +1316,29 @@ impl Element for EditorElement {
                 precise,
             } => self.scroll(*position, *delta, *precise, layout, paint, cx),
             Event::KeyDown { input, .. } => self.key_down(input.as_deref(), cx),
+            Event::MouseMoved { position, .. } => {
+                if paint
+                    .hover_bounds
+                    .map_or(false, |hover_bounds| hover_bounds.contains_point(*position))
+                {
+                    return false;
+                }
+
+                let point = if paint.text_bounds.contains_point(*position) {
+                    let (point, overshoot) =
+                        paint.point_for_position(&self.snapshot(cx), layout, *position);
+                    if overshoot.is_zero() {
+                        Some(point)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                cx.dispatch_action(HoverAt { point });
+                true
+            }
             _ => false,
         }
     }
@@ -1275,6 +1377,7 @@ pub struct LayoutState {
     selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
     context_menu: Option<(DisplayPoint, ElementBox)>,
     code_actions_indicator: Option<(u32, ElementBox)>,
+    hover: Option<(DisplayPoint, ElementBox)>,
 }
 
 fn layout_line(
@@ -1312,19 +1415,24 @@ pub struct PaintState {
     bounds: RectF,
     gutter_bounds: RectF,
     text_bounds: RectF,
+    hover_bounds: Option<RectF>,
 }
 
 impl PaintState {
+    /// Returns two display points. The first is the nearest valid
+    /// position in the current buffer and the second is the distance to the
+    /// nearest valid position if there was overshoot.
     fn point_for_position(
         &self,
         snapshot: &EditorSnapshot,
         layout: &LayoutState,
         position: Vector2F,
-    ) -> (DisplayPoint, u32) {
+    ) -> (DisplayPoint, DisplayPoint) {
         let scroll_position = snapshot.scroll_position();
         let position = position - self.text_bounds.origin();
         let y = position.y().max(0.0).min(layout.size.y());
         let row = ((y / layout.line_height) + scroll_position.y()) as u32;
+        let row_overshoot = row.saturating_sub(snapshot.max_point().row());
         let row = cmp::min(row, snapshot.max_point().row());
         let line = &layout.line_layouts[(row - scroll_position.y() as u32) as usize];
         let x = position.x() + (scroll_position.x() * layout.em_width);
@@ -1336,9 +1444,12 @@ impl PaintState {
         } else {
             0
         };
-        let overshoot = (0f32.max(x - line.width()) / layout.em_advance) as u32;
+        let column_overshoot = (0f32.max(x - line.width()) / layout.em_advance) as u32;
 
-        (DisplayPoint::new(row, column), overshoot)
+        (
+            DisplayPoint::new(row, column),
+            DisplayPoint::new(row_overshoot, column_overshoot),
+        )
     }
 }
 

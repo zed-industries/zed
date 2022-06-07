@@ -23,7 +23,10 @@ use language::{
     LanguageRegistry, LanguageServerName, LocalFile, LspAdapter, OffsetRangeExt, Operation, Patch,
     PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
 };
-use lsp::{DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer};
+use lsp::{
+    DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer, LanguageString,
+    MarkedString,
+};
 use lsp_command::*;
 use parking_lot::Mutex;
 use postage::stream::Stream;
@@ -223,6 +226,38 @@ pub struct Symbol {
     pub signature: [u8; 32],
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct HoverBlock {
+    pub text: String,
+    pub language: Option<String>,
+}
+
+impl HoverBlock {
+    fn try_new(marked_string: MarkedString) -> Option<Self> {
+        let result = match marked_string {
+            MarkedString::LanguageString(LanguageString { language, value }) => HoverBlock {
+                text: value,
+                language: Some(language),
+            },
+            MarkedString::String(text) => HoverBlock {
+                text,
+                language: None,
+            },
+        };
+        if result.text.is_empty() {
+            None
+        } else {
+            Some(result)
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Hover {
+    pub contents: Vec<HoverBlock>,
+    pub range: Option<Range<language::Anchor>>,
+}
+
 #[derive(Default)]
 pub struct ProjectTransaction(pub HashMap<ModelHandle<Buffer>, language::Transaction>);
 
@@ -314,6 +349,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_format_buffers);
         client.add_model_request_handler(Self::handle_get_code_actions);
         client.add_model_request_handler(Self::handle_get_completions);
+        client.add_model_request_handler(Self::handle_lsp_command::<GetHover>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetDefinition>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetReferences>);
@@ -2910,6 +2946,16 @@ impl Project {
         } else {
             Task::ready(Err(anyhow!("project does not have a remote id")))
         }
+    }
+
+    pub fn hover<T: ToPointUtf16>(
+        &self,
+        buffer: &ModelHandle<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Option<Hover>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.request_lsp(buffer.clone(), GetHover { position }, cx)
     }
 
     pub fn completions<T: ToPointUtf16>(
