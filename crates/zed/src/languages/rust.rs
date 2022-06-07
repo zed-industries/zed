@@ -22,10 +22,17 @@ impl LspAdapter for RustLspAdapter {
         http: Arc<dyn HttpClient>,
     ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>> {
         async move {
-            let version = latest_github_release("rust-analyzer/rust-analyzer", http, |_| {
-                format!("rust-analyzer-{}-apple-darwin.gz", consts::ARCH)
-            })
-            .await?;
+            let release = latest_github_release("rust-analyzer/rust-analyzer", http).await?;
+            let asset_name = format!("rust-analyzer-{}-apple-darwin.gz", consts::ARCH);
+            let asset = release
+                .assets
+                .iter()
+                .find(|asset| asset.name == asset_name)
+                .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
+            let version = GitHubLspBinaryVersion {
+                name: release.name,
+                url: asset.browser_download_url.clone(),
+            };
             Ok(Box::new(version) as Box<_>)
         }
         .boxed()

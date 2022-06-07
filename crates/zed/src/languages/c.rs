@@ -19,10 +19,17 @@ impl super::LspAdapter for CLspAdapter {
         http: Arc<dyn HttpClient>,
     ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>> {
         async move {
-            let version = latest_github_release("clangd/clangd", http, |release_name| {
-                format!("clangd-mac-{release_name}.zip")
-            })
-            .await?;
+            let release = latest_github_release("clangd/clangd", http).await?;
+            let asset_name = format!("clangd-mac-{}.zip", release.name);
+            let asset = release
+                .assets
+                .iter()
+                .find(|asset| asset.name == asset_name)
+                .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
+            let version = GitHubLspBinaryVersion {
+                name: release.name,
+                url: asset.browser_download_url.clone(),
+            };
             Ok(Box::new(version) as Box<_>)
         }
         .boxed()
