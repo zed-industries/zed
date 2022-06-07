@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     display_map::{DisplaySnapshot, TransformBlock},
-    EditorStyle, GoToDefinition, HoverAt,
+    EditorStyle, HoverAt,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
@@ -102,7 +102,7 @@ impl EditorElement {
     fn mouse_down(
         &self,
         position: Vector2F,
-        cmd: bool,
+        _: bool,
         alt: bool,
         shift: bool,
         mut click_count: usize,
@@ -119,11 +119,7 @@ impl EditorElement {
         let snapshot = self.snapshot(cx.app);
         let (position, overshoot) = paint.point_for_position(&snapshot, layout, position);
 
-        if cmd {
-            cx.dispatch_action(GoToDefinitionAt {
-                location: Some(position),
-            });
-        } else if shift && alt {
+        if shift && alt {
             cx.dispatch_action(Select(SelectPhase::BeginColumnar {
                 position,
                 overshoot: overshoot.column(),
@@ -354,6 +350,7 @@ impl EditorElement {
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut LayoutState,
+        paint: &mut PaintState,
         cx: &mut PaintContext,
     ) {
         let view = self.view(cx.app);
@@ -531,6 +528,10 @@ impl EditorElement {
                 popover_origin,
                 RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
                 cx,
+            );
+
+            paint.hover_bounds = Some(
+                RectF::new(popover_origin, hover_popover.size()).dilate(Vector2F::new(0., 5.)),
             );
 
             cx.scene.pop_stacking_context();
@@ -1109,6 +1110,7 @@ impl Element for EditorElement {
 
         let mut context_menu = None;
         let mut code_actions_indicator = None;
+        let mut hover = None;
         cx.render(&self.view.upgrade(cx).unwrap(), |view, cx| {
             let newest_selection_head = view
                 .selections
@@ -1127,6 +1129,17 @@ impl Element for EditorElement {
                     .render_code_actions_indicator(&style, cx)
                     .map(|indicator| (newest_selection_head.row(), indicator));
             }
+
+            hover = view.hover_popover().and_then(|hover| {
+                let (point, rendered) = hover.render(style.clone(), cx);
+                if point.row() >= snapshot.scroll_position().y() as u32 {
+                    if line_layouts.len() > (point.row() - start_row) as usize {
+                        return Some((point, rendered));
+                    }
+                }
+
+                None
+            });
         });
 
         if let Some((_, context_menu)) = context_menu.as_mut() {
@@ -1149,27 +1162,18 @@ impl Element for EditorElement {
             );
         }
 
-        let hover = self.view(cx).hover_popover().and_then(|hover| {
-            let (point, mut rendered) = hover.render(style.clone(), cx);
-
-            if point.row() >= snapshot.scroll_position().y() as u32 {
-                if line_layouts.len() > (point.row() - start_row) as usize {
-                    rendered.layout(
-                        SizeConstraint {
-                            min: Vector2F::zero(),
-                            max: vec2f(
-                                (120. * em_width).min(size.x()),
-                                (size.y() - line_height) * 1. / 2.,
-                            ),
-                        },
-                        cx,
-                    );
-                    return Some((point, rendered));
-                }
-            }
-
-            None
-        });
+        if let Some((_, hover)) = hover.as_mut() {
+            hover.layout(
+                SizeConstraint {
+                    min: Vector2F::zero(),
+                    max: vec2f(
+                        (120. * em_width).min(size.x()),
+                        (size.y() - line_height) * 1. / 2.,
+                    ),
+                },
+                cx,
+            );
+        }
 
         let blocks = self.layout_blocks(
             start_row..end_row,
@@ -1227,11 +1231,18 @@ impl Element for EditorElement {
             layout.text_size,
         );
 
+        let mut paint_state = PaintState {
+            bounds,
+            gutter_bounds,
+            text_bounds,
+            hover_bounds: None,
+        };
+
         self.paint_background(gutter_bounds, text_bounds, layout, cx);
         if layout.gutter_size.x() > 0. {
             self.paint_gutter(gutter_bounds, visible_bounds, layout, cx);
         }
-        self.paint_text(text_bounds, visible_bounds, layout, cx);
+        self.paint_text(text_bounds, visible_bounds, layout, &mut paint_state, cx);
 
         if !layout.blocks.is_empty() {
             cx.scene.push_layer(Some(bounds));
@@ -1241,11 +1252,7 @@ impl Element for EditorElement {
 
         cx.scene.pop_layer();
 
-        PaintState {
-            bounds,
-            gutter_bounds,
-            text_bounds,
-        }
+        paint_state
     }
 
     fn dispatch_event(
@@ -1310,6 +1317,13 @@ impl Element for EditorElement {
             } => self.scroll(*position, *delta, *precise, layout, paint, cx),
             Event::KeyDown { input, .. } => self.key_down(input.as_deref(), cx),
             Event::MouseMoved { position, .. } => {
+                if paint
+                    .hover_bounds
+                    .map_or(false, |hover_bounds| hover_bounds.contains_point(*position))
+                {
+                    return false;
+                }
+
                 let point = if paint.text_bounds.contains_point(*position) {
                     let (point, overshoot) =
                         paint.point_for_position(&self.snapshot(cx), layout, *position);
@@ -1401,6 +1415,7 @@ pub struct PaintState {
     bounds: RectF,
     gutter_bounds: RectF,
     text_bounds: RectF,
+    hover_bounds: Option<RectF>,
 }
 
 impl PaintState {

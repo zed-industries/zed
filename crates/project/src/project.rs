@@ -219,7 +219,7 @@ pub struct Symbol {
     pub signature: [u8; 32],
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct HoverBlock {
     pub text: String,
     pub language: Option<String>,
@@ -3766,10 +3766,8 @@ impl Project {
         } else if let Some(project_id) = self.remote_id() {
             let rpc = self.client.clone();
             let message = request.to_proto(project_id, buffer);
-            dbg!(&message);
             return cx.spawn(|this, cx| async move {
                 let response = rpc.request(message).await?;
-                dbg!(&response);
                 request
                     .response_from_proto(response, this, buffer_handle, cx)
                     .await

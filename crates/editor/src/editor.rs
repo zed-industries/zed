@@ -25,9 +25,9 @@ use gpui::{
     geometry::vector::{vec2f, Vector2F},
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
-    text_layout, AppContext, AsyncAppContext, Axis, ClipboardItem, Element, ElementBox,
-    ElementStateContext, Entity, ModelHandle, MutableAppContext, ReadModel, RenderContext, Task,
-    View, ViewContext, ViewHandle, WeakViewHandle,
+    text_layout, AppContext, AsyncAppContext, Axis, ClipboardItem, Element, ElementBox, Entity,
+    ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 pub use language::{char_kind, CharKind};
 use language::{
@@ -80,7 +80,7 @@ pub struct Scroll(pub Vector2F);
 #[derive(Clone, PartialEq)]
 pub struct Select(pub SelectPhase);
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct HoverAt {
     point: Option<DisplayPoint>,
 }
@@ -215,7 +215,7 @@ impl_actions!(
     ]
 );
 
-impl_internal_actions!(editor, [Scroll, Select, HoverAt, GoToDefinitionAt]);
+impl_internal_actions!(editor, [Scroll, Select, HoverAt]);
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
@@ -645,7 +645,6 @@ impl ContextMenu {
         match self {
             ContextMenu::Completions(menu) => (cursor_position, menu.render(style, cx)),
             ContextMenu::CodeActions(menu) => menu.render(cursor_position, style, cx),
-            ContextMenu::Hover(popover) => (cursor_position, popover.render(style)),
         }
     }
 }
@@ -899,10 +898,10 @@ pub(crate) struct HoverPopover {
 }
 
 impl HoverPopover {
-    fn render<C: ElementStateContext + ReadModel>(
+    fn render(
         &self,
         style: EditorStyle,
-        cx: &mut C,
+        cx: &mut RenderContext<Editor>,
     ) -> (DisplayPoint, ElementBox) {
         let element = MouseEventHandler::new::<HoverPopover, _, _>(0, cx, |_, cx| {
             let mut flex = Flex::new(Axis::Vertical).scrollable::<HoverBlock, _>(1, None, cx);

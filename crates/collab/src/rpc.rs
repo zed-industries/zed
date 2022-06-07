@@ -150,6 +150,7 @@ impl Server {
             .add_message_handler(Server::start_language_server)
             .add_message_handler(Server::update_language_server)
             .add_message_handler(Server::update_diagnostic_summary)
+            .add_request_handler(Server::forward_project_request::<proto::GetHover>)
             .add_request_handler(Server::forward_project_request::<proto::GetDefinition>)
             .add_request_handler(Server::forward_project_request::<proto::GetReferences>)
             .add_request_handler(Server::forward_project_request::<proto::SearchProject>)

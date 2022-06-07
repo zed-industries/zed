@@ -857,6 +857,9 @@ impl LspCommand for GetHover {
                     let mut current_text = String::new();
                     for event in Parser::new_ext(&markup_content.value, Options::all()) {
                         match event {
+                            Event::SoftBreak => {
+                                current_text.push(' ');
+                            }
                             Event::Text(text) | Event::Code(text) => {
                                 current_text.push_str(&text.to_string());
                             }
@@ -875,7 +878,8 @@ impl LspCommand for GetHover {
                             Event::End(Tag::CodeBlock(_))
                             | Event::End(Tag::Paragraph)
                             | Event::End(Tag::Heading(_, _, _))
-                            | Event::End(Tag::BlockQuote) => {
+                            | Event::End(Tag::BlockQuote)
+                            | Event::HardBreak => {
                                 if !current_text.is_empty() {
                                     let text = std::mem::replace(&mut current_text, String::new());
                                     contents.push(HoverBlock { text, language });

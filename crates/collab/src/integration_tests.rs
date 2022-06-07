@@ -2282,6 +2282,104 @@ async fn test_document_highlights(cx_a: &mut TestAppContext, cx_b: &mut TestAppC
 }
 
 #[gpui::test(iterations = 10)]
+async fn test_lsp_hover(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    cx_a.foreground().forbid_parking();
+    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    client_a
+        .fs
+        .insert_tree(
+            "/root-1",
+            json!({
+                "main.rs": "use std::collections::HashMap;",
+            }),
+        )
+        .await;
+
+    // Set up a fake language server.
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default());
+    client_a.language_registry.add(Arc::new(language));
+
+    let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
+    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+
+    // Open the file as the guest
+    let buffer_b = cx_b
+        .background()
+        .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx)))
+        .await
+        .unwrap();
+
+    // Request hover information as the guest.
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+    fake_language_server.handle_request::<lsp::request::HoverRequest, _, _>(
+        |params, _| async move {
+            assert_eq!(
+                params
+                    .text_document_position_params
+                    .text_document
+                    .uri
+                    .as_str(),
+                "file:///root-1/main.rs"
+            );
+            assert_eq!(
+                params.text_document_position_params.position,
+                lsp::Position::new(0, 22)
+            );
+            Ok(Some(lsp::Hover {
+                contents: lsp::HoverContents::Array(vec![
+                    lsp::MarkedString::String("Test hover content.".to_string()),
+                    lsp::MarkedString::LanguageString(lsp::LanguageString {
+                        language: "Rust".to_string(),
+                        value: "let foo = 42;".to_string(),
+                    }),
+                ]),
+                range: Some(lsp::Range::new(
+                    lsp::Position::new(0, 22),
+                    lsp::Position::new(0, 29),
+                )),
+            }))
+        },
+    );
+
+    let hover_info = project_b
+        .update(cx_b, |p, cx| p.hover(&buffer_b, 22, cx))
+        .await
+        .unwrap()
+        .unwrap();
+    buffer_b.read_with(cx_b, |buffer, _| {
+        let snapshot = buffer.snapshot();
+        assert_eq!(hover_info.range.unwrap().to_offset(&snapshot), 22..29);
+        assert_eq!(
+            hover_info.contents,
+            vec![
+                project::HoverBlock {
+                    text: "Test hover content.".to_string(),
+                    language: None,
+                },
+                project::HoverBlock {
+                    text: "let foo = 42;".to_string(),
+                    language: Some("Rust".to_string()),
+                }
+            ]
+        );
+    });
+}
+
+#[gpui::test(iterations = 10)]
 async fn test_project_symbols(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
