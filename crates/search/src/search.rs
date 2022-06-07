@@ -1,6 +1,6 @@
 pub use buffer_search::BufferSearchBar;
-use editor::{Anchor, MultiBufferSnapshot};
-use gpui::{actions, impl_internal_actions, MutableAppContext};
+use editor::{display_map::ToDisplayPoint, Anchor, Bias, Editor, MultiBufferSnapshot};
+use gpui::{actions, impl_internal_actions, MutableAppContext, ViewHandle};
 pub use project_search::{ProjectSearchBar, ProjectSearchView};
 use std::{
     cmp::{self, Ordering},
@@ -89,4 +89,31 @@ pub(crate) fn match_index_for_direction(
         }
     };
     index
+}
+
+pub(crate) fn query_suggestion_for_editor(
+    editor: &ViewHandle<Editor>,
+    cx: &mut MutableAppContext,
+) -> String {
+    let display_map = editor
+        .update(cx, |editor, cx| editor.snapshot(cx))
+        .display_snapshot;
+    let selection = editor.read(cx).selections.newest::<usize>(cx);
+    if selection.start == selection.end {
+        let point = selection.start.to_display_point(&display_map);
+        let range = editor::movement::surrounding_word(&display_map, point);
+        let range = range.start.to_offset(&display_map, Bias::Left)
+            ..range.end.to_offset(&display_map, Bias::Right);
+        let text: String = display_map.buffer_snapshot.text_for_range(range).collect();
+        if text.trim().is_empty() {
+            String::new()
+        } else {
+            text
+        }
+    } else {
+        display_map
+            .buffer_snapshot
+            .text_for_range(selection.start..selection.end)
+            .collect()
+    }
 }
