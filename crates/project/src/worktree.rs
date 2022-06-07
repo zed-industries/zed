@@ -210,6 +210,7 @@ impl Worktree {
                         (
                             PathKey(PathBuf::from(summary.path).into()),
                             DiagnosticSummary {
+                                language_server_id: summary.language_server_id as usize,
                                 error_count: summary.error_count as usize,
                                 warning_count: summary.warning_count as usize,
                             },
@@ -528,6 +529,7 @@ impl LocalWorktree {
 
     pub fn update_diagnostics(
         &mut self,
+        language_server_id: usize,
         worktree_path: Arc<Path>,
         diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
         _: &mut ModelContext<Worktree>,
@@ -537,7 +539,7 @@ impl LocalWorktree {
             .diagnostic_summaries
             .remove(&PathKey(worktree_path.clone()))
             .unwrap_or_default();
-        let new_summary = DiagnosticSummary::new(&diagnostics);
+        let new_summary = DiagnosticSummary::new(language_server_id, &diagnostics);
         if !new_summary.is_empty() {
             self.diagnostic_summaries
                 .insert(PathKey(worktree_path.clone()), new_summary);
@@ -553,6 +555,7 @@ impl LocalWorktree {
                         worktree_id: self.id().to_proto(),
                         summary: Some(proto::DiagnosticSummary {
                             path: worktree_path.to_string_lossy().to_string(),
+                            language_server_id: language_server_id as u64,
                             error_count: new_summary.error_count as u32,
                             warning_count: new_summary.warning_count as u32,
                         }),
@@ -1065,6 +1068,7 @@ impl RemoteWorktree {
         summary: &proto::DiagnosticSummary,
     ) {
         let summary = DiagnosticSummary {
+            language_server_id: summary.language_server_id as usize,
             error_count: summary.error_count as usize,
             warning_count: summary.warning_count as usize,
         };

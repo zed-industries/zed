@@ -30,7 +30,7 @@ impl DiagnosticIndicator {
                 this.check_in_progress = true;
                 cx.notify();
             }
-            project::Event::DiskBasedDiagnosticsFinished => {
+            project::Event::DiskBasedDiagnosticsFinished { .. } => {
                 this.summary = project.read(cx).diagnostic_summary(cx);
                 this.check_in_progress = false;
                 cx.notify();

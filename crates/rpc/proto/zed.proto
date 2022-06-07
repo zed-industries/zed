@@ -516,8 +516,9 @@ message UpdateDiagnosticSummary {
 
 message DiagnosticSummary {
     string path = 1;
-    uint32 error_count = 2;
-    uint32 warning_count = 3;
+    uint64 language_server_id = 2;
+    uint32 error_count = 3;
+    uint32 warning_count = 4;
 }
 
 message UpdateLanguageServer {
