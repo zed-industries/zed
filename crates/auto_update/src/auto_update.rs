@@ -1,19 +1,24 @@
+mod update_notification;
+
 use anyhow::{anyhow, Context, Result};
 use client::{http::HttpClient, ZED_SECRET_CLIENT_TOKEN};
 use gpui::{
     actions,
     elements::{Empty, MouseEventHandler, Text},
     platform::AppVersion,
-    AsyncAppContext, Element, Entity, ModelContext, ModelHandle, MutableAppContext, Task, View,
-    ViewContext,
+    AppContext, AsyncAppContext, Element, Entity, ModelContext, ModelHandle, MutableAppContext,
+    Task, View, ViewContext, WeakViewHandle,
 };
 use lazy_static::lazy_static;
 use serde::Deserialize;
 use settings::Settings;
 use smol::{fs::File, io::AsyncReadExt, process::Command};
 use std::{env, ffi::OsString, path::PathBuf, sync::Arc, time::Duration};
-use workspace::{ItemHandle, StatusItemView};
+use update_notification::UpdateNotification;
+use workspace::{ItemHandle, StatusItemView, Workspace};
 
+const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &'static str =
+    "auto-updater-should-show-updated-notification";
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 lazy_static! {
@@ -23,7 +28,7 @@ lazy_static! {
     pub static ref ZED_APP_PATH: Option<PathBuf> = env::var("ZED_APP_PATH").ok().map(PathBuf::from);
 }
 
-actions!(auto_update, [Check, DismissErrorMessage]);
+actions!(auto_update, [Check, DismissErrorMessage, ViewReleaseNotes]);
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum AutoUpdateStatus {
@@ -40,6 +45,7 @@ pub struct AutoUpdater {
     current_version: AppVersion,
     http_client: Arc<dyn HttpClient>,
     pending_poll: Option<Task<()>>,
+    db: Arc<project::Db>,
     server_url: String,
 }
 
@@ -57,10 +63,15 @@ impl Entity for AutoUpdater {
     type Event = ();
 }
 
-pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut MutableAppContext) {
+pub fn init(
+    db: Arc<project::Db>,
+    http_client: Arc<dyn HttpClient>,
+    server_url: String,
+    cx: &mut MutableAppContext,
+) {
     if let Some(version) = ZED_APP_VERSION.clone().or(cx.platform().app_version().ok()) {
         let auto_updater = cx.add_model(|cx| {
-            let updater = AutoUpdater::new(version, http_client, server_url);
+            let updater = AutoUpdater::new(version, db.clone(), http_client, server_url.clone());
             updater.start_polling(cx).detach();
             updater
         });
@@ -70,8 +81,42 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut Mutab
                 updater.update(cx, |updater, cx| updater.poll(cx));
             }
         });
+        cx.add_global_action(move |_: &ViewReleaseNotes, cx| {
+            cx.platform().open_url(&format!("{server_url}/releases"));
+        });
         cx.add_action(AutoUpdateIndicator::dismiss_error_message);
+        cx.add_action(UpdateNotification::dismiss);
     }
+}
+
+pub fn notify_of_any_new_update(
+    workspace: WeakViewHandle<Workspace>,
+    cx: &mut MutableAppContext,
+) -> Option<()> {
+    let updater = AutoUpdater::get(cx)?;
+    let version = updater.read(cx).current_version;
+    let should_show_notification = updater.read(cx).should_show_update_notification(cx);
+
+    cx.spawn(|mut cx| async move {
+        let should_show_notification = should_show_notification.await?;
+        if should_show_notification {
+            if let Some(workspace) = workspace.upgrade(&cx) {
+                workspace.update(&mut cx, |workspace, cx| {
+                    workspace.show_notification(0, cx, |cx| {
+                        cx.add_view(|_| UpdateNotification::new(version))
+                    });
+                    updater
+                        .read(cx)
+                        .set_should_show_update_notification(false, cx)
+                        .detach_and_log_err(cx);
+                });
+            }
+        }
+        anyhow::Ok(())
+    })
+    .detach();
+
+    None
 }
 
 impl AutoUpdater {
@@ -81,12 +126,14 @@ impl AutoUpdater {
 
     fn new(
         current_version: AppVersion,
+        db: Arc<project::Db>,
         http_client: Arc<dyn HttpClient>,
         server_url: String,
     ) -> Self {
         Self {
             status: AutoUpdateStatus::Idle,
             current_version,
+            db,
             http_client,
             server_url,
             pending_poll: None,
@@ -221,10 +268,35 @@ impl AutoUpdater {
         }
 
         this.update(&mut cx, |this, cx| {
+            this.set_should_show_update_notification(true, cx)
+                .detach_and_log_err(cx);
             this.status = AutoUpdateStatus::Updated;
             cx.notify();
         });
         Ok(())
+    }
+
+    fn set_should_show_update_notification(
+        &self,
+        should_show: bool,
+        cx: &AppContext,
+    ) -> Task<Result<()>> {
+        let db = self.db.clone();
+        cx.background().spawn(async move {
+            if should_show {
+                db.write([(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY, "")])?;
+            } else {
+                db.delete([(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)])?;
+            }
+            Ok(())
+        })
+    }
+
+    fn should_show_update_notification(&self, cx: &AppContext) -> Task<Result<bool>> {
+        let db = self.db.clone();
+        cx.background().spawn(async move {
+            Ok(db.read([(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)])?[0].is_some())
+        })
     }
 }
 

@@ -209,6 +209,8 @@ pub fn initialize_workspace(
         status_bar.add_right_item(cursor_position, cx);
         status_bar.add_right_item(auto_update, cx);
     });
+
+    auto_update::notify_of_any_new_update(cx.weak_handle(), cx);
 }
 
 pub fn build_window_options() -> WindowOptions<'static> {
