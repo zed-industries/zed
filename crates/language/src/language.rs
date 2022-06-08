@@ -286,7 +286,7 @@ impl LanguageRegistry {
                     .config
                     .path_suffixes
                     .iter()
-                    .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())))
+                    .any(|suffix| dbg!(path_suffixes.contains(&Some(dbg!(suffix.as_str())))))
             })
             .cloned()
     }

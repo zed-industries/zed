@@ -165,6 +165,11 @@ fn main() {
     app.run(move |cx| {
         let client = client::Client::new(http.clone());
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
+        languages.set_language_server_download_dir(zed::ROOT_PATH.clone());
+        let languages = Arc::new(languages);
+        let init_languages = cx
+            .background()
+            .spawn(languages::init(languages.clone(), cx.background().clone()));
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
 
         context_menu::init(cx);
@@ -209,12 +214,6 @@ fn main() {
         })
         .detach();
 
-        languages.set_language_server_download_dir(zed::ROOT_PATH.clone());
-        let languages = Arc::new(languages);
-        cx.background()
-            .spawn(languages::init(languages.clone(), cx.background().clone()))
-            .detach();
-
         cx.observe_global::<Settings, _>({
             let languages = languages.clone();
             move |cx| {
@@ -223,6 +222,14 @@ fn main() {
         })
         .detach();
         cx.set_global(settings);
+        cx.spawn({
+            let languages = languages.clone();
+            |cx| async move {
+                init_languages.await;
+                cx.read(|cx| languages.set_theme(&cx.global::<Settings>().theme.editor.syntax));
+            }
+        })
+        .detach();
 
         let project_store = cx.add_model(|_| ProjectStore::new(db.clone()));
         let app_state = Arc::new(AppState {

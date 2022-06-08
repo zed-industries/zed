@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 // #[import]
 fn command(string: &str) -> Option<String> {
-    todo!()
+    None
 }
 
 // TODO: some sort of macro to generate ABI bindings
@@ -111,6 +111,11 @@ pub fn cached_server_binary(container_dir: PathBuf) -> Option<PathBuf> {
     } else {
         None
     }
+}
+
+#[bind]
+pub fn label_for_completion(label: String) -> Option<String> {
+    None
 }
 
 #[bind]

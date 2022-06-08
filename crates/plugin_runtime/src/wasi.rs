@@ -1,4 +1,4 @@
-use std::{fs::File, os::unix::prelude::AsRawFd, path::Path};
+use std::{fs::File, marker::PhantomData, path::Path};
 
 use anyhow::{anyhow, Error};
 use serde::{de::DeserializeOwned, Serialize};
@@ -8,6 +8,29 @@ use wasmtime::{Config, Engine, Instance, Linker, Module, Store, TypedFunc};
 use wasmtime_wasi::{Dir, WasiCtx, WasiCtxBuilder};
 
 pub struct WasiResource(u32);
+
+pub struct WasiFn<A: Serialize, R: DeserializeOwned> {
+    function: TypedFunc<(u32, u32), u32>,
+    _function_type: PhantomData<fn(A) -> R>,
+}
+
+impl<A: Serialize, R: DeserializeOwned> Copy for WasiFn<A, R> {}
+
+impl<A: Serialize, R: DeserializeOwned> Clone for WasiFn<A, R> {
+    fn clone(&self) -> Self {
+        Self {
+            function: self.function,
+            _function_type: PhantomData,
+        }
+    }
+}
+
+// impl<A: Serialize, R: DeserializeOwned> WasiFn<A, R> {
+//     #[inline(always)]
+//     pub async fn call(&self, runtime: &mut Wasi, arg: A) -> Result<R, Error> {
+//         runtime.call(self, arg).await
+//     }
+// }
 
 pub struct Wasi {
     engine: Engine,
@@ -216,13 +239,27 @@ impl Wasi {
         Ok(result)
     }
 
+    pub fn function<A: Serialize, R: DeserializeOwned, T: AsRef<str>>(
+        &mut self,
+        name: T,
+    ) -> Result<WasiFn<A, R>, Error> {
+        let fun_name = format!("__{}", name.as_ref());
+        let fun = self
+            .instance
+            .get_typed_func::<(u32, u32), u32, _>(&mut self.store, &fun_name)?;
+        Ok(WasiFn {
+            function: fun,
+            _function_type: PhantomData,
+        })
+    }
+
     // TODO: dont' use as for conversions
     pub async fn call<A: Serialize, R: DeserializeOwned>(
         &mut self,
-        handle: &str,
+        handle: &WasiFn<A, R>,
         arg: A,
     ) -> Result<R, Error> {
-        dbg!(&handle);
+        // dbg!(&handle.name);
         // dbg!(serde_json::to_string(&arg)).unwrap();
 
         // write the argument to linear memory
@@ -231,10 +268,11 @@ impl Wasi {
 
         // get the webassembly function we want to actually call
         // TODO: precompute handle
-        let fun_name = format!("__{}", handle);
-        let fun = self
-            .instance
-            .get_typed_func::<(u32, u32), u32, _>(&mut self.store, &fun_name)?;
+        // let fun_name = format!("__{}", handle);
+        // let fun = self
+        //     .instance
+        //     .get_typed_func::<(u32, u32), u32, _>(&mut self.store, &fun_name)?;
+        let fun = handle.function;
 
         // call the function, passing in the buffer and its length
         // this returns a ptr to a (ptr, lentgh) pair

@@ -10,11 +10,10 @@ use util::ResultExt;
 mod c;
 mod go;
 mod installation;
-mod python;
 mod language_plugin;
+mod python;
 mod rust;
 mod typescript;
-// mod json;
 
 #[derive(RustEmbed)]
 #[folder = "src/languages"]
@@ -41,6 +40,7 @@ pub async fn init(languages: Arc<LanguageRegistry>, executor: Arc<Background>) {
         (
             "json",
             tree_sitter_json::language(),
+            // Some(Arc::new(json::JsonLspAdapter)),
             language_plugin::new_json(executor)
                 .await
                 .log_err()
