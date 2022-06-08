@@ -1,11 +1,11 @@
 use super::installation::{npm_install_packages, npm_package_latest_version};
 use anyhow::{anyhow, Context, Result};
 use client::http::HttpClient;
+use futures::lock::Mutex;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::executor::{self, Background};
 use isahc::http::version;
 use language::{LanguageServerName, LspAdapter};
-use parking_lot::{Mutex, RwLock};
 use plugin_runtime::{Wasi, WasiPlugin};
 use serde_json::json;
 use std::fs;
@@ -43,7 +43,7 @@ macro_rules! call_block {
     ($self:ident, $name:expr, $arg:expr) => {
         $self
             .executor
-            .block(async { $self.runtime.lock().call($name, $arg).await })
+            .block(async { $self.runtime.lock().await.call($name, $arg).await })
     };
 }
 
@@ -61,14 +61,13 @@ impl LspAdapter for PluginLspAdapter {
         &self,
         _: Arc<dyn HttpClient>,
     ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>> {
-        let versions: Result<Option<String>> = call_block!(self, "fetch_latest_server_version", ());
+        // let versions: Result<Option<String>> = call_block!(self, "fetch_latest_server_version", ());
+        let runtime = self.runtime.clone();
         async move {
-            // let versions: Result<Option<String>> = self
-            //     .runtime
-            //     .lock()
-            //     .call::<_, Option<String>>("fetch_latest_server_version", ())
-            //     .await;
-
+            let mut runtime = runtime.lock().await;
+            let versions: Result<Option<String>> = runtime
+                .call::<_, Option<String>>("fetch_latest_server_version", ())
+                .await;
             versions
                 .map_err(|e| anyhow!("{}", e))?
                 .ok_or_else(|| anyhow!("Could not fetch latest server version"))
@@ -84,29 +83,34 @@ impl LspAdapter for PluginLspAdapter {
         container_dir: PathBuf,
     ) -> BoxFuture<'static, Result<PathBuf>> {
         let version = version.downcast::<String>().unwrap();
-        let mut runtime = self.runtime.lock();
-        let result = (|| {
+        let runtime = self.runtime.clone();
+
+        async move {
+            let mut runtime = runtime.lock().await;
             let handle = runtime.attach_path(&container_dir)?;
-            let result: Option<PathBuf> =
-                call_block!(self, "fetch_server_binary", (container_dir, version))?;
+            let result: Option<PathBuf> = runtime
+                .call("fetch_server_binary", (container_dir, version))
+                .await?;
             runtime.remove_resource(handle)?;
             result.ok_or_else(|| anyhow!("Could not load cached server binary"))
-        })();
-
-        async move { result }.boxed()
+        }
+        .boxed()
     }
 
     fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>> {
-        let mut runtime = self.runtime.lock();
-        let result: Option<PathBuf> = (|| {
+        let runtime = self.runtime.clone();
+
+        async move {
+            let mut runtime = runtime.lock().await;
             let handle = runtime.attach_path(&container_dir).ok()?;
-            let result: Option<PathBuf> =
-                call_block!(self, "cached_server_binary", container_dir).ok()?;
+            let result: Option<PathBuf> = runtime
+                .call("cached_server_binary", container_dir)
+                .await
+                .ok()?;
             runtime.remove_resource(handle).ok()?;
             result
-        })();
-
-        async move { result }.boxed()
+        }
+        .boxed()
     }
 
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
