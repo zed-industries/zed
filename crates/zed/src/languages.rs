@@ -29,6 +29,11 @@ pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegi
             Some(Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>),
         ),
         (
+            "go",
+            tree_sitter_go::language(),
+            Some(Arc::new(go::GoLspAdapter) as Arc<dyn LspAdapter>),
+        ),
+        (
             "json",
             tree_sitter_json::language(),
             Some(Arc::new(json::JsonLspAdapter)),

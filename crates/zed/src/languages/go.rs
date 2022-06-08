@@ -26,6 +26,10 @@ impl super::LspAdapter for GoLspAdapter {
         LanguageServerName("gopls".into())
     }
 
+    fn server_args(&self) -> &[&str] {
+        &["-mode=stdio"]
+    }
+
     fn fetch_latest_server_version(
         &self,
         http: Arc<dyn HttpClient>,
@@ -99,8 +103,9 @@ impl super::LspAdapter for GoLspAdapter {
             let version_stdout = str::from_utf8(&version_output.stdout)
                 .map_err(|_| anyhow!("gopls version produced invalid utf8"))?;
             let version = GOPLS_VERSION_REGEX
-                .shortest_match(version_stdout)
-                .ok_or_else(|| anyhow!("failed to parse gopls version output"))?;
+                .find(version_stdout)
+                .ok_or_else(|| anyhow!("failed to parse gopls version output"))?
+                .as_str();
             let binary_path = container_dir.join(&format!("gopls_{version}"));
             fs::rename(&installed_binary_path, &binary_path).await?;
 
