@@ -7721,6 +7721,7 @@ mod tests {
                 toml_buffer.clone(),
                 [ExcerptRange {
                     context: Point::new(0, 0)..Point::new(2, 0),
+                    primary: None,
                 }],
                 cx,
             );
@@ -7728,6 +7729,7 @@ mod tests {
                 rust_buffer.clone(),
                 [ExcerptRange {
                     context: Point::new(0, 0)..Point::new(1, 0),
+                    primary: None,
                 }],
                 cx,
             );
@@ -9602,9 +9604,11 @@ mod tests {
                 [
                     ExcerptRange {
                         context: Point::new(0, 0)..Point::new(0, 4),
+                        primary: None,
                     },
                     ExcerptRange {
                         context: Point::new(1, 0)..Point::new(1, 4),
+                        primary: None,
                     },
                 ],
                 cx,
@@ -9645,7 +9649,7 @@ mod tests {
                 cccc)"});
         let excerpt_ranges = excerpt_ranges
             .into_iter()
-            .map(|context| ExcerptRange { context });
+            .map(|context| ExcerptRange { context, primary: None });
         let buffer = cx.add_model(|cx| Buffer::new(0, initial_text, cx));
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
@@ -9701,9 +9705,11 @@ mod tests {
                     [
                         ExcerptRange {
                             context: Point::new(0, 0)..Point::new(1, 4),
+                            primary: None,
                         },
                         ExcerptRange {
                             context: Point::new(1, 0)..Point::new(2, 4),
+                            primary: None,
                         },
                     ],
                     cx,
@@ -9789,9 +9795,11 @@ mod tests {
                     [
                         ExcerptRange {
                             context: Point::new(0, 0)..Point::new(1, 4),
+                            primary: None,
                         },
                         ExcerptRange {
                             context: Point::new(1, 0)..Point::new(2, 4),
+                            primary: None,
                         },
                     ],
                     cx,

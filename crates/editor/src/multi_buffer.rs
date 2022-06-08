@@ -122,6 +122,7 @@ struct Excerpt {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExcerptRange<T> {
     pub context: Range<T>,
+    pub primary: Option<Range<T>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -224,6 +225,7 @@ impl MultiBuffer {
             buffer,
             [ExcerptRange {
                 context: text::Anchor::MIN..text::Anchor::MAX,
+                primary: None,
             }],
             cx,
         );
@@ -722,6 +724,7 @@ impl MultiBuffer {
 
             excerpt_ranges.push(ExcerptRange {
                 context: excerpt_start..excerpt_end,
+                primary: Some(range),
             });
             range_counts.push(ranges_in_excerpt);
         }
@@ -819,6 +822,10 @@ impl MultiBuffer {
             let range = ExcerptRange {
                 context: buffer_snapshot.anchor_before(&range.context.start)
                     ..buffer_snapshot.anchor_after(&range.context.end),
+                primary: range.primary.map(|primary| {
+                    buffer_snapshot.anchor_before(&primary.start)
+                        ..buffer_snapshot.anchor_after(&primary.end)
+                }),
             };
             let excerpt = Excerpt::new(
                 id.clone(),
@@ -1418,6 +1425,7 @@ impl MultiBuffer {
                         let start_ix = buffer.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
                         ExcerptRange {
                             context: start_ix..end_ix,
+                            primary: None,
                         }
                     })
                     .collect::<Vec<_>>();
@@ -3142,6 +3150,7 @@ mod tests {
                 buffer_1.clone(),
                 [ExcerptRange {
                     context: Point::new(1, 2)..Point::new(2, 5),
+                    primary: None,
                 }],
                 cx,
             );
@@ -3157,6 +3166,7 @@ mod tests {
                 buffer_1.clone(),
                 [ExcerptRange {
                     context: Point::new(3, 3)..Point::new(4, 4),
+                    primary: None,
                 }],
                 cx,
             );
@@ -3164,6 +3174,7 @@ mod tests {
                 buffer_2.clone(),
                 [ExcerptRange {
                     context: Point::new(3, 1)..Point::new(3, 3),
+                    primary: None,
                 }],
                 cx,
             );
@@ -3411,8 +3422,22 @@ mod tests {
         let buffer_2 = cx.add_model(|cx| Buffer::new(0, "efghi", cx));
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
-            multibuffer.push_excerpts(buffer_1.clone(), [ExcerptRange { context: 0..4 }], cx);
-            multibuffer.push_excerpts(buffer_2.clone(), [ExcerptRange { context: 0..5 }], cx);
+            multibuffer.push_excerpts(
+                buffer_1.clone(),
+                [ExcerptRange {
+                    context: 0..4,
+                    primary: None,
+                }],
+                cx,
+            );
+            multibuffer.push_excerpts(
+                buffer_2.clone(),
+                [ExcerptRange {
+                    context: 0..5,
+                    primary: None,
+                }],
+                cx,
+            );
             multibuffer
         });
         let old_snapshot = multibuffer.read(cx).snapshot(cx);
@@ -3462,7 +3487,14 @@ mod tests {
         buffer_1.update(cx, |buffer, cx| buffer.edit([(4..4, "123")], cx));
         let excerpt_id_1 = multibuffer.update(cx, |multibuffer, cx| {
             multibuffer
-                .push_excerpts(buffer_1.clone(), [ExcerptRange { context: 0..7 }], cx)
+                .push_excerpts(
+                    buffer_1.clone(),
+                    [ExcerptRange {
+                        context: 0..7,
+                        primary: None,
+                    }],
+                    cx,
+                )
                 .pop()
                 .unwrap()
         });
@@ -3477,9 +3509,18 @@ mod tests {
                 .push_excerpts(
                     buffer_2.clone(),
                     [
-                        ExcerptRange { context: 0..4 },
-                        ExcerptRange { context: 6..10 },
-                        ExcerptRange { context: 12..16 },
+                        ExcerptRange {
+                            context: 0..4,
+                            primary: None,
+                        },
+                        ExcerptRange {
+                            context: 6..10,
+                            primary: None,
+                        },
+                        ExcerptRange {
+                            context: 12..16,
+                            primary: None,
+                        },
                     ],
                     cx,
                 )
@@ -3525,7 +3566,10 @@ mod tests {
                 .insert_excerpts_after(
                     &excerpt_id_3,
                     buffer_2.clone(),
-                    [ExcerptRange { context: 5..8 }],
+                    [ExcerptRange {
+                        context: 5..8,
+                        primary: None,
+                    }],
                     cx,
                 )
                 .pop()
@@ -3676,6 +3720,7 @@ mod tests {
                                 buffer_handle.clone(),
                                 [ExcerptRange {
                                     context: start_ix..end_ix,
+                                    primary: None,
                                 }],
                                 cx,
                             )
@@ -3989,6 +4034,7 @@ mod tests {
                 buffer_1.clone(),
                 [ExcerptRange {
                     context: 0..buffer_1.read(cx).len(),
+                    primary: None,
                 }],
                 cx,
             );
@@ -3996,6 +4042,7 @@ mod tests {
                 buffer_2.clone(),
                 [ExcerptRange {
                     context: 0..buffer_2.read(cx).len(),
+                    primary: None,
                 }],
                 cx,
             );
