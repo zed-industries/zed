@@ -1,10 +1,13 @@
-use std::{fs::File, marker::PhantomData, path::Path};
+use std::{
+    collections::HashMap, fs::File, future::Future, marker::PhantomData, path::Path, pin::Pin,
+};
 
 use anyhow::{anyhow, Error};
 use serde::{de::DeserializeOwned, Serialize};
 
 use wasi_common::{dir, file};
-use wasmtime::{Config, Engine, Instance, Linker, Module, Store, TypedFunc};
+use wasmtime::IntoFunc;
+use wasmtime::{Caller, Config, Engine, Instance, Linker, Module, Store, TypedFunc};
 use wasmtime_wasi::{Dir, WasiCtx, WasiCtxBuilder};
 
 pub struct WasiResource(u32);
@@ -41,9 +44,93 @@ pub struct Wasi {
     // free_buffer: TypedFunc<(u32, u32), ()>,
 }
 
+// type signature derived from:
+// https://docs.rs/wasmtime/latest/wasmtime/struct.Linker.html#method.func_wrap2_async
+// macro_rules! dynHostFunction {
+//     () => {
+//         Box<
+//             dyn for<'a> Fn(Caller<'a, WasiCtx>, u32, u32)
+//                 -> Box<dyn Future<Output = u32> + Send + 'a>
+//                     + Send
+//                     + Sync
+//                     + 'static
+//         >
+//     };
+// }
+
+// macro_rules! implHostFunction {
+//     () => {
+//         impl for<'a> Fn(Caller<'a, WasiCtx>, u32, u32)
+//             -> Box<dyn Future<Output = u32> + Send + 'a>
+//                 + Send
+//                 + Sync
+//                 + 'static
+//     };
+// }
+
+// This type signature goodness gracious
+pub type HostFunction = Box<dyn IntoFunc<WasiCtx, (u32, u32), u32>>;
+
+pub struct WasiPluginBuilder {
+    host_functions: HashMap<String, HostFunction>,
+    wasi_ctx_builder: WasiCtxBuilder,
+}
+
+impl WasiPluginBuilder {
+    pub fn new() -> Self {
+        WasiPluginBuilder {
+            host_functions: HashMap::new(),
+            wasi_ctx_builder: WasiCtxBuilder::new(),
+        }
+    }
+
+    pub fn new_with_default_ctx() -> WasiPluginBuilder {
+        let mut this = Self::new();
+        this.wasi_ctx_builder = this.wasi_ctx_builder.inherit_stdin().inherit_stderr();
+        this
+    }
+
+    fn wrap_host_function<A: Serialize, R: DeserializeOwned>(
+        function: impl Fn(A) -> R + Send + Sync + 'static,
+    ) -> HostFunction {
+        Box::new(move |ptr, len| {
+            function(todo!());
+            todo!()
+        })
+    }
+
+    pub fn host_function<A: Serialize, R: DeserializeOwned>(
+        mut self,
+        name: &str,
+        function: impl Fn(A) -> R + Send + Sync + 'static,
+    ) -> Self {
+        self.host_functions
+            .insert(name.to_string(), Self::wrap_host_function(function));
+        self
+    }
+
+    pub fn wasi_ctx(mut self, config: impl FnOnce(WasiCtxBuilder) -> WasiCtxBuilder) -> Self {
+        self.wasi_ctx_builder = config(self.wasi_ctx_builder);
+        self
+    }
+
+    pub async fn init<T: AsRef<[u8]>>(self, module: T) -> Result<Wasi, Error> {
+        let plugin = WasiPlugin {
+            module: module.as_ref().to_vec(),
+            wasi_ctx: self.wasi_ctx_builder.build(),
+            host_functions: self.host_functions,
+        };
+
+        Wasi::init(plugin).await
+    }
+}
+
+/// Represents a to-be-initialized plugin.
+/// Please use [`WasiPluginBuilder`], don't use this directly.
 pub struct WasiPlugin {
     pub module: Vec<u8>,
     pub wasi_ctx: WasiCtx,
+    pub host_functions: HashMap<String, HostFunction>,
 }
 
 impl Wasi {
@@ -66,19 +153,15 @@ impl Wasi {
 }
 
 impl Wasi {
-    pub fn default_ctx() -> WasiCtx {
-        WasiCtxBuilder::new()
-            .inherit_stdout()
-            .inherit_stderr()
-            .build()
-    }
-
-    pub async fn init(plugin: WasiPlugin) -> Result<Self, Error> {
+    async fn init(plugin: WasiPlugin) -> Result<Self, Error> {
         let mut config = Config::default();
         config.async_support(true);
         let engine = Engine::new(&config)?;
         let mut linker = Linker::new(&engine);
 
+        linker
+            .func_wrap("env", "__command", |x: u32, y: u32| x + y)
+            .unwrap();
         linker.func_wrap("env", "__hello", |x: u32| x * 2).unwrap();
         linker.func_wrap("env", "__bye", |x: u32| x / 2).unwrap();
 

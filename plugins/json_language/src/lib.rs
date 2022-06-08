@@ -5,8 +5,56 @@ use std::fs;
 use std::path::PathBuf;
 
 // #[import]
+// fn command(string: &str) -> Option<String>;
+
+extern "C" {
+    #[no_mangle]
+    fn __command(ptr: *const u8, len: usize) -> *const ::plugin::__Buffer;
+}
+
+// #[no_mangle]
+// // TODO: switch len from usize to u32?
+// pub extern "C" fn #outer_fn_name(ptr: *const u8, len: usize) -> *const ::plugin::__Buffer {
+//     // setup
+//     let buffer = ::plugin::__Buffer { ptr, len };
+//     let data = unsafe { buffer.to_vec() };
+
+//     // operation
+//     let data: #ty = match ::plugin::bincode::deserialize(&data) {
+//         Ok(d) => d,
+//         Err(e) => panic!("Data passed to function not deserializable."),
+//     };
+//     let result = #inner_fn_name(#args);
+//     let new_data: Result<Vec<u8>, _> = ::plugin::bincode::serialize(&result);
+//     let new_data = new_data.unwrap();
+
+//     // teardown
+//     let new_buffer = unsafe { ::plugin::__Buffer::from_vec(new_data) };
+//     return new_buffer.leak_to_heap();
+// }
+
+#[no_mangle]
 fn command(string: &str) -> Option<String> {
-    None
+    println!("executing command: {}", string);
+    // serialize data
+    let data = string;
+    let data = ::plugin::bincode::serialize(&data).unwrap();
+    let buffer = unsafe { ::plugin::__Buffer::from_vec(data) };
+    let ptr = buffer.ptr;
+    let len = buffer.len;
+    // leak data to heap
+    buffer.leak_to_heap();
+    // call extern function
+    let result = unsafe { __command(ptr, len) };
+    // get result
+    let result = todo!(); // convert into box
+
+    // deserialize data
+    let data: Option<String> = match ::plugin::bincode::deserialize(&data) {
+        Ok(d) => d,
+        Err(e) => panic!("Data passed to function not deserializable."),
+    };
+    return data;
 }
 
 // TODO: some sort of macro to generate ABI bindings
@@ -30,7 +78,7 @@ extern "C" {
 const BIN_PATH: &'static str =
     "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
 
-#[bind]
+#[export]
 pub fn name() -> &'static str {
     // let number = unsafe { hello(27) };
     // println!("got: {}", number);
@@ -39,12 +87,12 @@ pub fn name() -> &'static str {
     "vscode-json-languageserver"
 }
 
-#[bind]
+#[export]
 pub fn server_args() -> Vec<String> {
     vec!["--stdio".into()]
 }
 
-#[bind]
+#[export]
 pub fn fetch_latest_server_version() -> Option<String> {
     #[derive(Deserialize)]
     struct NpmInfo {
@@ -61,7 +109,7 @@ pub fn fetch_latest_server_version() -> Option<String> {
     info.versions.pop()
 }
 
-#[bind]
+#[export]
 pub fn fetch_server_binary(container_dir: PathBuf, version: String) -> Result<PathBuf, String> {
     let version_dir = container_dir.join(version.as_str());
     fs::create_dir_all(&version_dir)
@@ -92,7 +140,7 @@ pub fn fetch_server_binary(container_dir: PathBuf, version: String) -> Result<Pa
     Ok(binary_path)
 }
 
-#[bind]
+#[export]
 pub fn cached_server_binary(container_dir: PathBuf) -> Option<PathBuf> {
     let mut last_version_dir = None;
     let mut entries = fs::read_dir(&container_dir).ok()?;
@@ -113,17 +161,17 @@ pub fn cached_server_binary(container_dir: PathBuf) -> Option<PathBuf> {
     }
 }
 
-#[bind]
+#[export]
 pub fn label_for_completion(label: String) -> Option<String> {
     None
 }
 
-#[bind]
+#[export]
 pub fn initialization_options() -> Option<String> {
     Some("{ \"provideFormatter\": true }".to_string())
 }
 
-#[bind]
+#[export]
 pub fn id_for_language(name: String) -> Option<String> {
     if name == "JSON" {
         Some("jsonc".into())
