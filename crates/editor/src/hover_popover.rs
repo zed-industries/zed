@@ -62,10 +62,9 @@ pub fn hide_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
         did_hide = true;
         cx.notify();
     }
+    editor.hover_state.task = None;
 
     editor.clear_background_highlights::<HoverState>(cx);
-
-    editor.hover_state.task = None;
 
     did_hide
 }
@@ -85,16 +84,6 @@ fn show_hover(
 
     let snapshot = editor.snapshot(cx);
     let multibuffer_offset = point.to_offset(&snapshot.display_snapshot, Bias::Left);
-
-    if let Some(range) = &editor.hover_state.symbol_range {
-        if range
-            .to_offset(&snapshot.buffer_snapshot)
-            .contains(&multibuffer_offset)
-        {
-            // Hover triggered from same location as last time. Don't show again.
-            return;
-        }
-    }
 
     let (buffer, buffer_position) = if let Some(output) = editor
         .buffer
@@ -136,6 +125,18 @@ fn show_hover(
             .map(|hidden| hidden.elapsed().as_millis() > 200)
             .unwrap_or(true) // Hover was visible recently enough
         && !ignore_timeout; // Hover triggered from keyboard
+
+    if should_delay {
+        if let Some(range) = &editor.hover_state.symbol_range {
+            if range
+                .to_offset(&snapshot.buffer_snapshot)
+                .contains(&multibuffer_offset)
+            {
+                // Hover triggered from same location as last time. Don't show again.
+                return;
+            }
+        }
+    }
 
     // Get input anchor
     let anchor = snapshot
@@ -205,6 +206,10 @@ fn show_hover(
                         }
 
                         cx.notify();
+                    }
+
+                    if this.hover_state.popover.is_none() {
+                        this.hover_state.symbol_range = None;
                     }
                 });
             }

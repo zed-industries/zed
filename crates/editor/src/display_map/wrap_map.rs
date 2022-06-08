@@ -121,10 +121,18 @@ impl WrapMap {
         (self.snapshot.clone(), mem::take(&mut self.edits_since_sync))
     }
 
-    pub fn set_font(&mut self, font_id: FontId, font_size: f32, cx: &mut ModelContext<Self>) {
+    pub fn set_font(
+        &mut self,
+        font_id: FontId,
+        font_size: f32,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
         if (font_id, font_size) != self.font {
             self.font = (font_id, font_size);
-            self.rewrap(cx)
+            self.rewrap(cx);
+            true
+        } else {
+            false
         }
     }
 

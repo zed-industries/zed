@@ -5688,9 +5688,22 @@ impl Entity for Editor {
 impl View for Editor {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let style = self.style(cx);
-        self.display_map.update(cx, |map, cx| {
+        let font_changed = self.display_map.update(cx, |map, cx| {
             map.set_font(style.text.font_id, style.text.font_size, cx)
         });
+
+        // If the
+        if font_changed {
+            let handle = self.handle.clone();
+            cx.defer(move |cx| {
+                if let Some(editor) = handle.upgrade(cx) {
+                    editor.update(cx, |editor, cx| {
+                        hide_hover(editor, cx);
+                    })
+                }
+            });
+        }
+
         EditorElement::new(self.handle.clone(), style.clone(), self.cursor_shape).boxed()
     }
 
