@@ -5,7 +5,8 @@ use collections::{BTreeMap, HashSet};
 use editor::{
     diagnostic_block_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties, RenderBlock},
-    highlight_diagnostic_message, Autoscroll, Editor, ExcerptId, MultiBuffer, ToOffset,
+    highlight_diagnostic_message, Autoscroll, Editor, ExcerptId, ExcerptRange, MultiBuffer,
+    ToOffset,
 };
 use gpui::{
     actions, elements::*, fonts::TextStyle, impl_internal_actions, platform::CursorStyle,
@@ -348,7 +349,9 @@ impl ProjectDiagnosticsEditor {
                                 .insert_excerpts_after(
                                     &prev_excerpt_id,
                                     buffer.clone(),
-                                    [excerpt_start..excerpt_end],
+                                    [ExcerptRange {
+                                        context: excerpt_start..excerpt_end,
+                                    }],
                                     excerpts_cx,
                                 )
                                 .pop()

@@ -2,7 +2,7 @@ use super::{
     wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot},
     TextHighlights,
 };
-use crate::{Anchor, ToPoint as _};
+use crate::{Anchor, ExcerptRange, ToPoint as _};
 use collections::{Bound, HashMap, HashSet};
 use gpui::{ElementBox, RenderContext};
 use language::{BufferSnapshot, Chunk, Patch};
@@ -98,7 +98,7 @@ pub enum TransformBlock {
     Custom(Arc<Block>),
     ExcerptHeader {
         buffer: BufferSnapshot,
-        range: Range<text::Anchor>,
+        range: ExcerptRange<text::Anchor>,
         height: u8,
         starts_new_buffer: bool,
     },

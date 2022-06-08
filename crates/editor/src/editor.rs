@@ -36,7 +36,8 @@ use language::{
 };
 use multi_buffer::MultiBufferChunks;
 pub use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
+    ToPoint,
 };
 use ordered_float::OrderedFloat;
 use project::{HoverBlock, Project, ProjectTransaction};
@@ -2833,11 +2834,11 @@ impl Editor {
                             let start = highlight
                                 .range
                                 .start
-                                .max(&excerpt_range.start, cursor_buffer_snapshot);
+                                .max(&excerpt_range.context.start, cursor_buffer_snapshot);
                             let end = highlight
                                 .range
                                 .end
-                                .min(&excerpt_range.end, cursor_buffer_snapshot);
+                                .min(&excerpt_range.context.end, cursor_buffer_snapshot);
                             if start.cmp(&end, cursor_buffer_snapshot).is_ge() {
                                 continue;
                             }
@@ -7718,12 +7719,16 @@ mod tests {
             let mut multibuffer = MultiBuffer::new(0);
             multibuffer.push_excerpts(
                 toml_buffer.clone(),
-                [Point::new(0, 0)..Point::new(2, 0)],
+                [ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(2, 0),
+                }],
                 cx,
             );
             multibuffer.push_excerpts(
                 rust_buffer.clone(),
-                [Point::new(0, 0)..Point::new(1, 0)],
+                [ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(1, 0),
+                }],
                 cx,
             );
             multibuffer
@@ -9595,8 +9600,12 @@ mod tests {
             multibuffer.push_excerpts(
                 buffer.clone(),
                 [
-                    Point::new(0, 0)..Point::new(0, 4),
-                    Point::new(1, 0)..Point::new(1, 4),
+                    ExcerptRange {
+                        context: Point::new(0, 0)..Point::new(0, 4),
+                    },
+                    ExcerptRange {
+                        context: Point::new(1, 0)..Point::new(1, 4),
+                    },
                 ],
                 cx,
             );
@@ -9634,6 +9643,9 @@ mod tests {
                 [aaaa
                 (bbbb]
                 cccc)"});
+        let excerpt_ranges = excerpt_ranges
+            .into_iter()
+            .map(|context| ExcerptRange { context });
         let buffer = cx.add_model(|cx| Buffer::new(0, initial_text, cx));
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
@@ -9687,8 +9699,12 @@ mod tests {
                 .push_excerpts(
                     buffer.clone(),
                     [
-                        Point::new(0, 0)..Point::new(1, 4),
-                        Point::new(1, 0)..Point::new(2, 4),
+                        ExcerptRange {
+                            context: Point::new(0, 0)..Point::new(1, 4),
+                        },
+                        ExcerptRange {
+                            context: Point::new(1, 0)..Point::new(2, 4),
+                        },
                     ],
                     cx,
                 )
@@ -9771,8 +9787,12 @@ mod tests {
                 .push_excerpts(
                     buffer.clone(),
                     [
-                        Point::new(0, 0)..Point::new(1, 4),
-                        Point::new(1, 0)..Point::new(2, 4),
+                        ExcerptRange {
+                            context: Point::new(0, 0)..Point::new(1, 4),
+                        },
+                        ExcerptRange {
+                            context: Point::new(1, 0)..Point::new(2, 4),
+                        },
                     ],
                     cx,
                 )
