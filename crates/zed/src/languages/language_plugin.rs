@@ -61,21 +61,20 @@ impl LspAdapter for PluginLspAdapter {
         &self,
         _: Arc<dyn HttpClient>,
     ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>> {
-        todo!()
-        // async move {
-        //     let versions: Result<String, String> = self
-        //         .runtime
-        //         .lock()
-        //         .call::<_, Option<String>>("fetch_latest_server_version", ())
-        //         .await?;
-        //     versions.map(|(language_version, server_version)| {
-        //         Box::new(Versions {
-        //             language_version,
-        //             server_version,
-        //         }) as Box<_>
-        //     })
-        // }
-        // .boxed()
+        let versions: Result<Option<String>> = call_block!(self, "fetch_latest_server_version", ());
+        async move {
+            // let versions: Result<Option<String>> = self
+            //     .runtime
+            //     .lock()
+            //     .call::<_, Option<String>>("fetch_latest_server_version", ())
+            //     .await;
+
+            versions
+                .map_err(|e| anyhow!("{}", e))?
+                .ok_or_else(|| anyhow!("Could not fetch latest server version"))
+                .map(|v| Box::new(v) as Box<_>)
+        }
+        .boxed()
     }
 
     fn fetch_server_binary(
@@ -84,37 +83,30 @@ impl LspAdapter for PluginLspAdapter {
         _: Arc<dyn HttpClient>,
         container_dir: PathBuf,
     ) -> BoxFuture<'static, Result<PathBuf>> {
-        todo!()
-        // let version = version.downcast::<String>().unwrap();
+        let version = version.downcast::<String>().unwrap();
+        let mut runtime = self.runtime.lock();
+        let result = (|| {
+            let handle = runtime.attach_path(&container_dir)?;
+            let result: Option<PathBuf> =
+                call_block!(self, "fetch_server_binary", (container_dir, version))?;
+            runtime.remove_resource(handle)?;
+            result.ok_or_else(|| anyhow!("Could not load cached server binary"))
+        })();
 
-        // async move {
-        //     let runtime = self.runtime.clone();
-        //     let handle = runtime.lock().attach_path(&container_dir).unwrap();
-        //     let result = runtime
-        //         .lock()
-        //         .call::<_, Option<PathBuf>>("fetch_server_binary", container_dir)
-        //         .await
-        //         .unwrap()
-        //         .ok_or_else(|| anyhow!("Could not load cached server binary"));
-        //     // runtime.remove_resource(handle).ok();
-        //     result
-        // }
-        // .boxed()
+        async move { result }.boxed()
     }
 
     fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>> {
-        todo!()
-        // let runtime = self.runtime.clone();
-        // async move {
-        //     let handle = runtime.lock().attach_path(&container_dir).ok()?;
-        //     let result = runtime
-        //         .lock()
-        //         .call::<_, Option<PathBuf>>("cached_server_binary", container_dir);
-        //     let result = result.await;
-        //     runtime.lock().remove_resource(handle).ok()?;
-        //     result.ok()?
-        // }
-        // .boxed()
+        let mut runtime = self.runtime.lock();
+        let result: Option<PathBuf> = (|| {
+            let handle = runtime.attach_path(&container_dir).ok()?;
+            let result: Option<PathBuf> =
+                call_block!(self, "cached_server_binary", container_dir).ok()?;
+            runtime.remove_resource(handle).ok()?;
+            result
+        })();
+
+        async move { result }.boxed()
     }
 
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
