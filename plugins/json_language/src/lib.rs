@@ -41,24 +41,24 @@ pub fn server_args() -> Vec<String> {
     vec!["--stdio".into()]
 }
 
+#[bind]
+pub fn fetch_latest_server_version() -> Option<String> {
+    #[derive(Deserialize)]
+    struct NpmInfo {
+        versions: Vec<String>,
+    }
+
+    let output = command("npm info vscode-json-languageserver --json")?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let mut info: NpmInfo = serde_json::from_slice(&output.stdout)?;
+    info.versions.pop()
+}
+
 // #[bind]
-// pub fn fetch_latest_server_version() -> Option<String> {
-//     #[derive(Deserialize)]
-//     struct NpmInfo {
-//         versions: Vec<String>,
-//     }
-
-//     let output = command("npm info vscode-json-languageserver --json")?;
-//     if !output.status.success() {
-//         return None;
-//     }
-
-//     let mut info: NpmInfo = serde_json::from_slice(&output.stdout)?;
-//     info.versions.pop()
-// }
-
-// #[bind]
-// pub fn fetch_server_binary(container_dir: PathBuf, version: String) -> Result<PathBuf, String> {
+// pub fn fetch_server_binary(container_dir: PathBuf, version: String) -> Option<PathBuf> {
 //     let version_dir = container_dir.join(version.as_str());
 //     fs::create_dir_all(&version_dir)
 //         .or_or_else(|| "failed to create version directory".to_string())?;
