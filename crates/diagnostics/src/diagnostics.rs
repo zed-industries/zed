@@ -28,7 +28,7 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
-use util::{ResultExt, TryFutureExt};
+use util::TryFutureExt;
 use workspace::{ItemHandle as _, ItemNavHistory, Workspace};
 
 actions!(diagnostics, [Deploy]);
@@ -39,7 +39,6 @@ const CONTEXT_LINE_COUNT: u32 = 1;
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectDiagnosticsEditor::deploy);
-    cx.add_action(ProjectDiagnosticsEditor::jump);
     items::init(cx);
 }
 
@@ -193,30 +192,6 @@ impl ProjectDiagnosticsEditor {
             });
             workspace.add_item(Box::new(diagnostics), cx);
         }
-    }
-
-    fn jump(workspace: &mut Workspace, action: &Jump, cx: &mut ViewContext<Workspace>) {
-        let editor = workspace.open_path(action.path.clone(), true, cx);
-        let position = action.position;
-        let anchor = action.anchor;
-        cx.spawn_weak(|_, mut cx| async move {
-            let editor = editor.await.log_err()?.downcast::<Editor>()?;
-            editor.update(&mut cx, |editor, cx| {
-                let buffer = editor.buffer().read(cx).as_singleton()?;
-                let buffer = buffer.read(cx);
-                let cursor = if buffer.can_resolve(&anchor) {
-                    anchor.to_point(buffer)
-                } else {
-                    buffer.clip_point(position, Bias::Left)
-                };
-                editor.change_selections(Some(Autoscroll::Newest), cx, |s| {
-                    s.select_ranges([cursor..cursor]);
-                });
-                Some(())
-            })?;
-            Some(())
-        })
-        .detach()
     }
 
     fn update_excerpts(&mut self, language_server_id: Option<usize>, cx: &mut ViewContext<Self>) {

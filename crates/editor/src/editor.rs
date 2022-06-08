@@ -40,7 +40,7 @@ pub use multi_buffer::{
     ToPoint,
 };
 use ordered_float::OrderedFloat;
-use project::{HoverBlock, Project, ProjectTransaction};
+use project::{HoverBlock, Project, ProjectPath, ProjectTransaction};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -84,6 +84,13 @@ pub struct Select(pub SelectPhase);
 #[derive(Clone, PartialEq)]
 pub struct HoverAt {
     point: Option<DisplayPoint>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Jump {
+    path: ProjectPath,
+    position: Point,
+    anchor: language::Anchor,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -216,7 +223,7 @@ impl_actions!(
     ]
 );
 
-impl_internal_actions!(editor, [Scroll, Select, HoverAt]);
+impl_internal_actions!(editor, [Scroll, Select, HoverAt, Jump]);
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
@@ -306,6 +313,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::hover);
     cx.add_action(Editor::hover_at);
     cx.add_action(Editor::open_excerpts);
+    cx.add_action(Editor::jump);
     cx.add_action(Editor::restart_language_server);
     cx.add_async_action(Editor::confirm_completion);
     cx.add_async_action(Editor::confirm_code_action);
@@ -5826,6 +5834,30 @@ impl Editor {
             nav_history.borrow_mut().enable();
         });
     }
+
+    fn jump(workspace: &mut Workspace, action: &Jump, cx: &mut ViewContext<Workspace>) {
+        let editor = workspace.open_path(action.path.clone(), true, cx);
+        let position = action.position;
+        let anchor = action.anchor;
+        cx.spawn_weak(|_, mut cx| async move {
+            let editor = editor.await.log_err()?.downcast::<Editor>()?;
+            editor.update(&mut cx, |editor, cx| {
+                let buffer = editor.buffer().read(cx).as_singleton()?;
+                let buffer = buffer.read(cx);
+                let cursor = if buffer.can_resolve(&anchor) {
+                    language::ToPoint::to_point(&anchor, buffer)
+                } else {
+                    buffer.clip_point(position, Bias::Left)
+                };
+                editor.change_selections(Some(Autoscroll::Newest), cx, |s| {
+                    s.select_ranges([cursor..cursor]);
+                });
+                Some(())
+            })?;
+            Some(())
+        })
+        .detach()
+    }
 }
 
 impl EditorSnapshot {
@@ -9647,9 +9679,10 @@ mod tests {
                 [aaaa
                 (bbbb]
                 cccc)"});
-        let excerpt_ranges = excerpt_ranges
-            .into_iter()
-            .map(|context| ExcerptRange { context, primary: None });
+        let excerpt_ranges = excerpt_ranges.into_iter().map(|context| ExcerptRange {
+            context,
+            primary: None,
+        });
         let buffer = cx.add_model(|cx| Buffer::new(0, initial_text, cx));
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
