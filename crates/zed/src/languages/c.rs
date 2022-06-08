@@ -4,7 +4,11 @@ use client::http::HttpClient;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 pub use language::*;
 use smol::fs::{self, File};
-use std::{any::Any, path::PathBuf, sync::Arc};
+use std::{
+    any::Any,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::{ResultExt, TryFutureExt};
 
 pub struct CLspAdapter;
@@ -39,7 +43,7 @@ impl super::LspAdapter for CLspAdapter {
         &self,
         version: Box<dyn 'static + Send + Any>,
         http: Arc<dyn HttpClient>,
-        container_dir: PathBuf,
+        container_dir: Arc<Path>,
     ) -> BoxFuture<'static, Result<PathBuf>> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         async move {
@@ -88,7 +92,10 @@ impl super::LspAdapter for CLspAdapter {
         .boxed()
     }
 
-    fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>> {
+    fn cached_server_binary(
+        &self,
+        container_dir: Arc<Path>,
+    ) -> BoxFuture<'static, Option<PathBuf>> {
         async move {
             let mut last_clangd_dir = None;
             let mut entries = fs::read_dir(&container_dir).await?;

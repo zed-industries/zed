@@ -5,7 +5,11 @@ use futures::{future::BoxFuture, FutureExt, StreamExt};
 use language::{LanguageServerName, LspAdapter};
 use serde_json::json;
 use smol::fs;
-use std::{any::Any, path::PathBuf, sync::Arc};
+use std::{
+    any::Any,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::{ResultExt, TryFutureExt};
 
 pub struct TypeScriptLspAdapter;
@@ -45,7 +49,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         &self,
         versions: Box<dyn 'static + Send + Any>,
         _: Arc<dyn HttpClient>,
-        container_dir: PathBuf,
+        container_dir: Arc<Path>,
     ) -> BoxFuture<'static, Result<PathBuf>> {
         let versions = versions.downcast::<Versions>().unwrap();
         async move {
@@ -88,7 +92,10 @@ impl LspAdapter for TypeScriptLspAdapter {
         .boxed()
     }
 
-    fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>> {
+    fn cached_server_binary(
+        &self,
+        container_dir: Arc<Path>,
+    ) -> BoxFuture<'static, Option<PathBuf>> {
         async move {
             let mut last_version_dir = None;
             let mut entries = fs::read_dir(&container_dir).await?;

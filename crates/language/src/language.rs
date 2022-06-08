@@ -75,9 +75,10 @@ pub trait LspAdapter: 'static + Send + Sync {
         &self,
         version: Box<dyn 'static + Send + Any>,
         http: Arc<dyn HttpClient>,
-        container_dir: PathBuf,
+        container_dir: Arc<Path>,
     ) -> BoxFuture<'static, Result<PathBuf>>;
-    fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>>;
+    fn cached_server_binary(&self, container_dir: Arc<Path>)
+        -> BoxFuture<'static, Option<PathBuf>>;
 
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
@@ -362,7 +363,7 @@ async fn get_server_binary_path(
     download_dir: Arc<Path>,
     statuses: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
 ) -> Result<PathBuf> {
-    let container_dir = download_dir.join(adapter.name().0.as_ref());
+    let container_dir: Arc<Path> = download_dir.join(adapter.name().0.as_ref()).into();
     if !container_dir.exists() {
         smol::fs::create_dir_all(&container_dir)
             .await
@@ -399,6 +400,7 @@ async fn fetch_latest_server_binary_path(
     container_dir: &Path,
     lsp_binary_statuses_tx: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
 ) -> Result<PathBuf> {
+    let container_dir: Arc<Path> = container_dir.into();
     lsp_binary_statuses_tx
         .broadcast((
             language.clone(),
@@ -412,7 +414,7 @@ async fn fetch_latest_server_binary_path(
         .broadcast((language.clone(), LanguageServerBinaryStatus::Downloading))
         .await?;
     let path = adapter
-        .fetch_server_binary(version_info, http_client, container_dir.to_path_buf())
+        .fetch_server_binary(version_info, http_client, container_dir.clone())
         .await?;
     lsp_binary_statuses_tx
         .broadcast((language.clone(), LanguageServerBinaryStatus::Downloaded))
@@ -657,12 +659,12 @@ impl LspAdapter for FakeLspAdapter {
         &self,
         _: Box<dyn 'static + Send + Any>,
         _: Arc<dyn HttpClient>,
-        _: PathBuf,
+        _: Arc<Path>,
     ) -> BoxFuture<'static, Result<PathBuf>> {
         unreachable!();
     }
 
-    fn cached_server_binary(&self, _: PathBuf) -> BoxFuture<'static, Option<PathBuf>> {
+    fn cached_server_binary(&self, _: Arc<Path>) -> BoxFuture<'static, Option<PathBuf>> {
         unreachable!();
     }
 

@@ -4,6 +4,7 @@ use rust_embed::RustEmbed;
 use std::{borrow::Cow, str, sync::Arc};
 
 mod c;
+mod go;
 mod installation;
 mod json;
 mod rust;

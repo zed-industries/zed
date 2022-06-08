@@ -7,7 +7,14 @@ pub use language::*;
 use lazy_static::lazy_static;
 use regex::Regex;
 use smol::fs::{self, File};
-use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
+use std::{
+    any::Any,
+    borrow::Cow,
+    env::consts,
+    path::{Path, PathBuf},
+    str,
+    sync::Arc,
+};
 use util::{ResultExt, TryFutureExt};
 
 pub struct RustLspAdapter;
@@ -42,7 +49,7 @@ impl LspAdapter for RustLspAdapter {
         &self,
         version: Box<dyn 'static + Send + Any>,
         http: Arc<dyn HttpClient>,
-        container_dir: PathBuf,
+        container_dir: Arc<Path>,
     ) -> BoxFuture<'static, Result<PathBuf>> {
         async move {
             let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
@@ -79,7 +86,10 @@ impl LspAdapter for RustLspAdapter {
         .boxed()
     }
 
-    fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>> {
+    fn cached_server_binary(
+        &self,
+        container_dir: Arc<Path>,
+    ) -> BoxFuture<'static, Option<PathBuf>> {
         async move {
             let mut last = None;
             let mut entries = fs::read_dir(&container_dir).await?;
