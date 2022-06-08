@@ -49,5 +49,5 @@ impl __Buffer {
 
 pub mod prelude {
     pub use super::{__Buffer, __alloc_buffer};
-    pub use plugin_macros::bind;
+    pub use plugin_macros::{export, import};
 }

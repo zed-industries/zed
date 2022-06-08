@@ -6,17 +6,21 @@ use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::executor::{self, Background};
 use isahc::http::version;
 use language::{LanguageServerName, LspAdapter};
-use plugin_runtime::{Wasi, WasiFn, WasiPlugin};
+use plugin_runtime::{Wasi, WasiFn, WasiPlugin, WasiPluginBuilder};
 use serde_json::json;
 use std::fs;
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::{ResultExt, TryFutureExt};
 
 pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
-    let plugin = WasiPlugin {
-        module: include_bytes!("../../../../plugins/bin/json_language.wasm").to_vec(),
-        wasi_ctx: Wasi::default_ctx(),
-    };
+    let plugin = WasiPluginBuilder::new_with_default_ctx()
+        .host_function("command", |command: String| {
+            // TODO: actual thing
+            std::process::Command::new(command).output().unwrap();
+            Some("Hello".to_string())
+        })
+        .init(include_bytes!("../../../../plugins/bin/json_language.wasm"))
+        .await?;
     PluginLspAdapter::new(plugin, executor).await
 }
 
@@ -33,8 +37,7 @@ pub struct PluginLspAdapter {
 }
 
 impl PluginLspAdapter {
-    pub async fn new(plugin: WasiPlugin, executor: Arc<Background>) -> Result<Self> {
-        let mut plugin = Wasi::init(plugin).await?;
+    pub async fn new(mut plugin: Wasi, executor: Arc<Background>) -> Result<Self> {
         Ok(Self {
             name: plugin.function("name")?,
             server_args: plugin.function("server_args")?,
