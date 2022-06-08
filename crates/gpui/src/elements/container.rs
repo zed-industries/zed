@@ -212,11 +212,13 @@ impl Element for Container {
             });
         }
 
-        if let Some(style) = self.style.cursor {
-            cx.scene.push_cursor_region(CursorRegion {
-                bounds: quad_bounds,
-                style,
-            });
+        if let Some(hit_bounds) = quad_bounds.intersection(visible_bounds) {
+            if let Some(style) = self.style.cursor {
+                cx.scene.push_cursor_region(CursorRegion {
+                    bounds: hit_bounds,
+                    style,
+                });
+            }
         }
 
         let child_origin =

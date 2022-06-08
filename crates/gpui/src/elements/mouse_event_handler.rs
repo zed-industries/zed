@@ -152,9 +152,10 @@ impl Element for MouseEventHandler {
         _: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
+        let hit_bounds = self.hit_bounds(visible_bounds);
         if let Some(style) = self.cursor_style {
             cx.scene.push_cursor_region(CursorRegion {
-                bounds: self.hit_bounds(bounds),
+                bounds: hit_bounds,
                 style,
             });
         }
@@ -162,7 +163,7 @@ impl Element for MouseEventHandler {
         cx.scene.push_mouse_region(MouseRegion {
             view_id: cx.current_view_id(),
             discriminant: Some((self.tag, self.id)),
-            bounds: self.hit_bounds(bounds),
+            bounds: hit_bounds,
             hover: self.hover.clone(),
             click: self.click.clone(),
             mouse_down: self.mouse_down.clone(),
