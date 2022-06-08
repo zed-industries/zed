@@ -838,7 +838,8 @@ impl EditorElement {
 
                             let mut filename = None;
                             let mut parent_path = None;
-                            if let Some(path) = buffer.path() {
+                            if let Some(file) = buffer.file() {
+                                let path = file.path();
                                 filename =
                                     path.file_name().map(|f| f.to_string_lossy().to_string());
                                 parent_path =

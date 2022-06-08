@@ -126,7 +126,7 @@ impl Debug for TransformBlock {
             Self::Custom(block) => f.debug_struct("Custom").field("block", block).finish(),
             Self::ExcerptHeader { buffer, .. } => f
                 .debug_struct("ExcerptHeader")
-                .field("path", &buffer.path())
+                .field("path", &buffer.file().map(|f| f.path()))
                 .finish(),
         }
     }

@@ -49,7 +49,7 @@ lazy_static! {
 
 pub struct Buffer {
     text: TextBuffer,
-    file: Option<Box<dyn File>>,
+    file: Option<Arc<dyn File>>,
     saved_version: clock::Global,
     saved_mtime: SystemTime,
     language: Option<Arc<Language>>,
@@ -72,7 +72,7 @@ pub struct Buffer {
 pub struct BufferSnapshot {
     text: text::BufferSnapshot,
     tree: Option<Tree>,
-    path: Option<Arc<Path>>,
+    file: Option<Arc<dyn File>>,
     diagnostics: DiagnosticSet,
     diagnostics_update_count: usize,
     file_update_count: usize,
@@ -152,7 +152,7 @@ pub enum Event {
     Closed,
 }
 
-pub trait File {
+pub trait File: Send + Sync {
     fn as_local(&self) -> Option<&dyn LocalFile>;
 
     fn is_local(&self) -> bool {
@@ -306,7 +306,7 @@ impl Buffer {
     pub fn from_file<T: Into<Arc<str>>>(
         replica_id: ReplicaId,
         base_text: T,
-        file: Box<dyn File>,
+        file: Arc<dyn File>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         Self::build(
@@ -322,7 +322,7 @@ impl Buffer {
     pub fn from_proto(
         replica_id: ReplicaId,
         message: proto::BufferState,
-        file: Option<Box<dyn File>>,
+        file: Option<Arc<dyn File>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<Self> {
         let buffer = TextBuffer::new(
@@ -403,7 +403,7 @@ impl Buffer {
         self
     }
 
-    fn build(buffer: TextBuffer, file: Option<Box<dyn File>>) -> Self {
+    fn build(buffer: TextBuffer, file: Option<Arc<dyn File>>) -> Self {
         let saved_mtime;
         if let Some(file) = file.as_ref() {
             saved_mtime = file.mtime();
@@ -438,7 +438,7 @@ impl Buffer {
         BufferSnapshot {
             text: self.text.snapshot(),
             tree: self.syntax_tree(),
-            path: self.file.as_ref().map(|f| f.path().clone()),
+            file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
             diagnostics_update_count: self.diagnostics_update_count,
@@ -496,7 +496,7 @@ impl Buffer {
         &mut self,
         version: clock::Global,
         mtime: SystemTime,
-        new_file: Option<Box<dyn File>>,
+        new_file: Option<Arc<dyn File>>,
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_mtime = mtime;
@@ -550,7 +550,7 @@ impl Buffer {
 
     pub fn file_updated(
         &mut self,
-        new_file: Box<dyn File>,
+        new_file: Arc<dyn File>,
         cx: &mut ModelContext<Self>,
     ) -> Task<()> {
         let old_file = if let Some(file) = self.file.as_ref() {
@@ -1980,8 +1980,8 @@ impl BufferSnapshot {
         self.selections_update_count
     }
 
-    pub fn path(&self) -> Option<&Arc<Path>> {
-        self.path.as_ref()
+    pub fn file(&self) -> Option<&Arc<dyn File>> {
+        self.file.as_ref()
     }
 
     pub fn file_update_count(&self) -> usize {
@@ -1994,7 +1994,7 @@ impl Clone for BufferSnapshot {
         Self {
             text: self.text.clone(),
             tree: self.tree.clone(),
-            path: self.path.clone(),
+            file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
             selections_update_count: self.selections_update_count,

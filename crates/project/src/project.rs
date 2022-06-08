@@ -4013,7 +4013,7 @@ impl Project {
                                 })
                                 .log_err();
                         }
-                        buffer.file_updated(Box::new(new_file), cx).detach();
+                        buffer.file_updated(Arc::new(new_file), cx).detach();
                     }
                 });
             } else {
@@ -4565,7 +4565,7 @@ impl Project {
                 .and_then(|b| b.upgrade(cx))
                 .ok_or_else(|| anyhow!("no such buffer"))?;
             buffer.update(cx, |buffer, cx| {
-                buffer.file_updated(Box::new(file), cx).detach();
+                buffer.file_updated(Arc::new(file), cx).detach();
             });
             Ok(())
         })
@@ -5089,8 +5089,8 @@ impl Project {
                                     anyhow!("no worktree found for id {}", file.worktree_id)
                                 })?;
                             buffer_file =
-                                Some(Box::new(File::from_proto(file, worktree.clone(), cx)?)
-                                    as Box<dyn language::File>);
+                                Some(Arc::new(File::from_proto(file, worktree.clone(), cx)?)
+                                    as Arc<dyn language::File>);
                             buffer_worktree = Some(worktree);
                             Ok::<_, anyhow::Error>(())
                         })?;
