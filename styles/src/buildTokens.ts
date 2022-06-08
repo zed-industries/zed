@@ -30,7 +30,7 @@ function themeTokens(theme: Theme) {
       boolean: theme.syntax.boolean.color,
     },
     player: theme.player,
-    shadowAlpha: theme.shadowAlpha,
+    shadow: theme.shadow,
   };
 }
 

@@ -3,9 +3,10 @@ use super::{
     Anchor, DisplayPoint, Editor, EditorMode, EditorSnapshot, Input, Scroll, Select, SelectPhase,
     SoftWrap, ToPoint, MAX_LINE_LEN,
 };
+use crate::hover_popover::HoverAt;
 use crate::{
     display_map::{DisplaySnapshot, TransformBlock},
-    EditorStyle, HoverAt,
+    EditorStyle,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
@@ -1196,8 +1197,8 @@ impl Element for EditorElement {
                     .map(|indicator| (newest_selection_head.row(), indicator));
             }
 
-            hover = view.hover_popover().and_then(|hover| {
-                let (point, rendered) = hover.render(style.clone(), cx);
+            hover = view.hover_state.popover.clone().and_then(|hover| {
+                let (point, rendered) = hover.render(&snapshot, style.clone(), cx);
                 if point.row() >= snapshot.scroll_position().y() as u32 {
                     if line_layouts.len() > (point.row() - start_row) as usize {
                         return Some((point, rendered));
@@ -1233,8 +1234,12 @@ impl Element for EditorElement {
                 SizeConstraint {
                     min: Vector2F::zero(),
                     max: vec2f(
-                        (120. * em_width).min(size.x()),
-                        (size.y() - line_height) * 1. / 2.,
+                        (120. * em_width) // Default size
+                            .min(size.x() / 2.) // Shrink to half of the editor width
+                            .max(20. * em_width), // Apply minimum width of 20 characters
+                        (16. * line_height) // Default size
+                            .min(size.y() / 2.) // Shrink to half of the editor height
+                            .max(4. * line_height), // Apply minimum height of 4 lines
                     ),
                 },
                 cx,

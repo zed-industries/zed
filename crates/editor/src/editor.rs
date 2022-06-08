@@ -1,6 +1,6 @@
 pub mod display_map;
 mod element;
-mod hover;
+mod hover_popover;
 pub mod items;
 pub mod movement;
 mod multi_buffer;
@@ -26,10 +26,11 @@ use gpui::{
     geometry::vector::{vec2f, Vector2F},
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
-    text_layout, AppContext, AsyncAppContext, Axis, ClipboardItem, Element, ElementBox, Entity,
+    text_layout, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
     ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
     WeakViewHandle,
 };
+use hover_popover::{hide_hover, HoverState};
 pub use language::{char_kind, CharKind};
 use language::{
     BracketPair, Buffer, CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticSeverity,
@@ -83,11 +84,6 @@ pub struct Scroll(pub Vector2F);
 #[derive(Clone, PartialEq)]
 pub struct Select(pub SelectPhase);
 
-#[derive(Clone, PartialEq)]
-pub struct HoverAt {
-    point: Option<DisplayPoint>,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct Jump {
     path: ProjectPath,
@@ -126,11 +122,6 @@ pub struct ConfirmCompletion {
 pub struct ConfirmCodeAction {
     #[serde(default)]
     pub item_ix: Option<usize>,
-}
-
-#[derive(Clone, Default)]
-pub struct GoToDefinitionAt {
-    pub location: Option<DisplayPoint>,
 }
 
 actions!(
@@ -225,7 +216,7 @@ impl_actions!(
     ]
 );
 
-impl_internal_actions!(editor, [Scroll, Select, HoverAt, Jump]);
+impl_internal_actions!(editor, [Scroll, Select, Jump]);
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
@@ -312,8 +303,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::fold_selected_ranges);
     cx.add_action(Editor::show_completions);
     cx.add_action(Editor::toggle_code_actions);
-    cx.add_action(Editor::hover);
-    cx.add_action(Editor::hover_at);
     cx.add_action(Editor::open_excerpts);
     cx.add_action(Editor::jump);
     cx.add_action(Editor::restart_language_server);
@@ -322,6 +311,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_async_action(Editor::rename);
     cx.add_async_action(Editor::confirm_rename);
     cx.add_async_action(Editor::find_all_references);
+
+    hover_popover::init(cx);
 
     workspace::register_project_item::<Editor>(cx);
     workspace::register_followable_item::<Editor>(cx);
@@ -1023,7 +1014,7 @@ impl Editor {
             next_completion_id: 0,
             available_code_actions: Default::default(),
             code_actions_task: Default::default(),
-            hover_task: Default::default(),
+
             document_highlights_task: Default::default(),
             pending_rename: Default::default(),
             searchable: true,
@@ -1032,11 +1023,7 @@ impl Editor {
             keymap_context_layers: Default::default(),
             input_enabled: true,
             leader_replica_id: None,
-            hover_state: HoverState {
-                popover: None,
-                last_hover: std::time::Instant::now(),
-                start_grace: std::time::Instant::now(),
-            },
+            hover_state: Default::default(),
         };
         this.end_selection(cx);
 
@@ -1159,6 +1146,8 @@ impl Editor {
         }
 
         self.autoscroll_request.take();
+        hide_hover(self, cx);
+
         cx.emit(Event::ScrollPositionChanged { local });
         cx.notify();
     }
@@ -1422,7 +1411,7 @@ impl Editor {
                 }
             }
 
-            self.hide_hover(cx);
+            hide_hover(self, cx);
 
             if old_cursor_position.to_display_point(&display_map).row()
                 != new_cursor_position.to_display_point(&display_map).row()
@@ -1785,7 +1774,7 @@ impl Editor {
             return;
         }
 
-        if self.hide_hover(cx) {
+        if hide_hover(self, cx) {
             return;
         }
 
@@ -2416,179 +2405,6 @@ impl Editor {
         }))
     }
 
-    /// Bindable action which uses the most recent selection head to trigger a hover
-    fn hover(&mut self, _: &Hover, cx: &mut ViewContext<Self>) {
-        let head = self.selections.newest_display(cx).head();
-        self.show_hover(head, true, cx);
-    }
-
-    /// The internal hover action dispatches between `show_hover` or `hide_hover`
-    /// depending on whether a point to hover over is provided.
-    fn hover_at(&mut self, action: &HoverAt, cx: &mut ViewContext<Self>) {
-        if let Some(point) = action.point {
-            self.show_hover(point, false, cx);
-        } else {
-            self.hide_hover(cx);
-        }
-    }
-
-    /// Hides the type information popup.
-    /// Triggered by the `Hover` action when the cursor is not over a symbol or when the
-    /// selecitons changed.
-    fn hide_hover(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        // consistently keep track of state to make handoff smooth
-        self.hover_state.determine_state(false);
-
-        let mut did_hide = false;
-
-        // only notify the context once
-        if self.hover_state.popover.is_some() {
-            self.hover_state.popover = None;
-            did_hide = true;
-            cx.notify();
-        }
-
-        self.clear_background_highlights::<HoverState>(cx);
-
-        self.hover_task = None;
-
-        did_hide
-    }
-
-    /// Queries the LSP and shows type info and documentation
-    /// about the symbol the mouse is currently hovering over.
-    /// Triggered by the `Hover` action when the cursor may be over a symbol.
-    fn show_hover(
-        &mut self,
-        point: DisplayPoint,
-        ignore_timeout: bool,
-        cx: &mut ViewContext<Self>,
-    ) {
-        if self.pending_rename.is_some() {
-            return;
-        }
-
-        if let Some(hover) = &self.hover_state.popover {
-            if hover.hover_point == point {
-                // Hover triggered from same location as last time. Don't show again.
-                return;
-            }
-        }
-
-        let snapshot = self.snapshot(cx);
-        let (buffer, buffer_position) = if let Some(output) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(point.to_point(&snapshot.display_snapshot), cx)
-        {
-            output
-        } else {
-            return;
-        };
-
-        let project = if let Some(project) = self.project.clone() {
-            project
-        } else {
-            return;
-        };
-
-        // query the LSP for hover info
-        let hover_request = project.update(cx, |project, cx| {
-            project.hover(&buffer, buffer_position.clone(), cx)
-        });
-
-        let buffer_snapshot = buffer.read(cx).snapshot();
-
-        let task = cx.spawn_weak(|this, mut cx| {
-            async move {
-                // Construct new hover popover from hover request
-                let hover_popover = hover_request.await.ok().flatten().and_then(|hover_result| {
-                    if hover_result.contents.is_empty() {
-                        return None;
-                    }
-
-                    let range = if let Some(range) = hover_result.range {
-                        let offset_range = range.to_offset(&buffer_snapshot);
-                        if !offset_range
-                            .contains(&point.to_offset(&snapshot.display_snapshot, Bias::Left))
-                        {
-                            return None;
-                        }
-
-                        offset_range
-                            .start
-                            .to_display_point(&snapshot.display_snapshot)
-                            ..offset_range
-                                .end
-                                .to_display_point(&snapshot.display_snapshot)
-                    } else {
-                        point..point
-                    };
-
-                    Some(HoverPopover {
-                        project: project.clone(),
-                        hover_point: point,
-                        range,
-                        contents: hover_result.contents,
-                    })
-                });
-
-                if let Some(this) = this.upgrade(&cx) {
-                    this.update(&mut cx, |this, cx| {
-                        // this was trickier than expected, trying to do a couple things:
-                        //
-                        // 1. if you hover over a symbol, there should be a slight delay
-                        //    before the popover shows
-                        // 2. if you move to another symbol when the popover is showing,
-                        //    the popover should switch right away, and you should
-                        //    not have to wait for it to come up again
-                        let (recent_hover, in_grace) =
-                            this.hover_state.determine_state(hover_popover.is_some());
-                        let smooth_handoff =
-                            this.hover_state.popover.is_some() && hover_popover.is_some();
-                        let visible = this.hover_state.popover.is_some() || hover_popover.is_some();
-
-                        // `smooth_handoff` and `in_grace` determine whether to switch right away.
-                        // `recent_hover` will activate the handoff after the initial delay.
-                        // `ignore_timeout` is set when the user manually sent the hover action.
-                        if (ignore_timeout || smooth_handoff || !recent_hover || in_grace)
-                            && visible
-                        {
-                            // Highlight the selected symbol using a background highlight
-                            if let Some(display_range) =
-                                hover_popover.as_ref().map(|popover| popover.range.clone())
-                            {
-                                let start = snapshot.display_snapshot.buffer_snapshot.anchor_after(
-                                    display_range
-                                        .start
-                                        .to_offset(&snapshot.display_snapshot, Bias::Right),
-                                );
-                                let end = snapshot.display_snapshot.buffer_snapshot.anchor_before(
-                                    display_range
-                                        .end
-                                        .to_offset(&snapshot.display_snapshot, Bias::Left),
-                                );
-
-                                this.highlight_background::<HoverState>(
-                                    vec![start..end],
-                                    |theme| theme.editor.hover_popover.highlight,
-                                    cx,
-                                );
-                            }
-
-                            this.hover_state.popover = hover_popover;
-                            cx.notify();
-                        }
-                    });
-                }
-                Ok::<_, anyhow::Error>(())
-            }
-            .log_err()
-        });
-
-        self.hover_task = Some(task);
-    }
-
     async fn open_project_transaction(
         this: ViewHandle<Editor>,
         workspace: ViewHandle<Workspace>,
@@ -2614,7 +2430,7 @@ impl Editor {
                         .read(cx)
                         .excerpt_containing(editor.selections.newest_anchor().head(), cx)
                 });
-                if let Some((excerpted_buffer, excerpt_range)) = excerpt {
+                if let Some((_, excerpted_buffer, excerpt_range)) = excerpt {
                     if excerpted_buffer == *buffer {
                         let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
                         let excerpt_range = excerpt_range.to_offset(&snapshot);
@@ -2833,10 +2649,6 @@ impl Editor {
         self.context_menu
             .as_ref()
             .map(|menu| menu.render(cursor_position, style, cx))
-    }
-
-    pub(crate) fn hover_popover(&self) -> Option<HoverPopover> {
-        self.hover_state.popover.clone()
     }
 
     fn show_context_menu(&mut self, menu: ContextMenu, cx: &mut ViewContext<Self>) {
