@@ -1980,8 +1980,8 @@ impl BufferSnapshot {
         self.selections_update_count
     }
 
-    pub fn file(&self) -> Option<&Arc<dyn File>> {
-        self.file.as_ref()
+    pub fn file(&self) -> Option<&dyn File> {
+        self.file.as_deref()
     }
 
     pub fn file_update_count(&self) -> usize {

@@ -454,6 +454,7 @@ pub struct Editor {
     pub code_actions_indicator: Color,
     pub unnecessary_code_fade: f32,
     pub hover_popover: HoverPopover,
+    pub jump_icon: Interactive<IconButton>,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -473,7 +474,6 @@ pub struct DiagnosticHeader {
     pub code: ContainedText,
     pub text_scale_factor: f32,
     pub icon_width_factor: f32,
-    pub jump_icon: Interactive<IconButton>,
 }
 
 #[derive(Clone, Deserialize, Default)]

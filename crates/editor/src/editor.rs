@@ -5849,9 +5849,13 @@ impl Editor {
                 } else {
                     buffer.clip_point(position, Bias::Left)
                 };
+
+                let nav_history = editor.nav_history.take();
                 editor.change_selections(Some(Autoscroll::Newest), cx, |s| {
                     s.select_ranges([cursor..cursor]);
                 });
+                editor.nav_history = nav_history;
+
                 Some(())
             })?;
             Some(())

@@ -97,6 +97,7 @@ struct Transform {
 pub enum TransformBlock {
     Custom(Arc<Block>),
     ExcerptHeader {
+        key: usize,
         buffer: BufferSnapshot,
         range: ExcerptRange<text::Anchor>,
         height: u8,
@@ -359,6 +360,7 @@ impl BlockMap {
                                 .from_point(Point::new(excerpt_boundary.row, 0), Bias::Left)
                                 .row(),
                             TransformBlock::ExcerptHeader {
+                                key: excerpt_boundary.key,
                                 buffer: excerpt_boundary.buffer,
                                 range: excerpt_boundary.range,
                                 height: if excerpt_boundary.starts_new_buffer {
