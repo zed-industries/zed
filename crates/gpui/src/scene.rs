@@ -250,11 +250,15 @@ impl Scene {
     }
 
     pub fn push_cursor_region(&mut self, region: CursorRegion) {
-        self.active_layer().push_cursor_region(region);
+        if can_draw(region.bounds) {
+            self.active_layer().push_cursor_region(region);
+        }
     }
 
     pub fn push_mouse_region(&mut self, region: MouseRegion) {
-        self.active_layer().push_mouse_region(region);
+        if can_draw(region.bounds) {
+            self.active_layer().push_mouse_region(region);
+        }
     }
 
     pub fn push_image(&mut self, image: Image) {

@@ -78,13 +78,13 @@ impl Element for EventHandler {
         if let Some(discriminant) = self.capture_all {
             cx.scene.push_stacking_context(None);
             cx.scene.push_cursor_region(CursorRegion {
-                bounds,
+                bounds: visible_bounds,
                 style: Default::default(),
             });
             cx.scene.push_mouse_region(MouseRegion {
                 view_id: cx.current_view_id(),
                 discriminant: Some(discriminant),
-                bounds,
+                bounds: visible_bounds,
                 hover: Some(Rc::new(|_, _, _| {})),
                 mouse_down: Some(Rc::new(|_, _| {})),
                 click: Some(Rc::new(|_, _, _| {})),
