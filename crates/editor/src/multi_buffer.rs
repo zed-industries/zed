@@ -31,6 +31,7 @@ use text::{
     Edit, Point, PointUtf16, TextSummary,
 };
 use theme::SyntaxTheme;
+use util::post_inc;
 
 const NEWLINES: &'static [u8] = &[b'\n'; u8::MAX as usize];
 
@@ -40,6 +41,7 @@ pub struct MultiBuffer {
     snapshot: RefCell<MultiBufferSnapshot>,
     buffers: RefCell<HashMap<usize, BufferState>>,
     used_excerpt_ids: SumTree<ExcerptId>,
+    next_excerpt_key: usize,
     subscriptions: Topic,
     singleton: bool,
     replica_id: ReplicaId,
@@ -102,6 +104,7 @@ pub struct MultiBufferSnapshot {
 
 pub struct ExcerptBoundary {
     pub id: ExcerptId,
+    pub key: usize,
     pub row: u32,
     pub buffer: BufferSnapshot,
     pub range: ExcerptRange<text::Anchor>,
@@ -111,6 +114,7 @@ pub struct ExcerptBoundary {
 #[derive(Clone)]
 struct Excerpt {
     id: ExcerptId,
+    key: usize,
     buffer_id: usize,
     buffer: BufferSnapshot,
     range: ExcerptRange<text::Anchor>,
@@ -167,6 +171,7 @@ impl MultiBuffer {
             snapshot: Default::default(),
             buffers: Default::default(),
             used_excerpt_ids: Default::default(),
+            next_excerpt_key: Default::default(),
             subscriptions: Default::default(),
             singleton: false,
             replica_id,
@@ -204,7 +209,8 @@ impl MultiBuffer {
         Self {
             snapshot: RefCell::new(self.snapshot.borrow().clone()),
             buffers: RefCell::new(buffers),
-            used_excerpt_ids: Default::default(),
+            used_excerpt_ids: self.used_excerpt_ids.clone(),
+            next_excerpt_key: self.next_excerpt_key,
             subscriptions: Default::default(),
             singleton: self.singleton,
             replica_id: self.replica_id,
@@ -829,6 +835,7 @@ impl MultiBuffer {
             };
             let excerpt = Excerpt::new(
                 id.clone(),
+                post_inc(&mut self.next_excerpt_key),
                 buffer_id,
                 buffer_snapshot.clone(),
                 range,
@@ -1288,6 +1295,7 @@ impl MultiBuffer {
 
                 new_excerpt = Excerpt::new(
                     id.clone(),
+                    old_excerpt.key,
                     buffer_id,
                     buffer.snapshot(),
                     old_excerpt.range.clone(),
@@ -2247,6 +2255,7 @@ impl MultiBufferSnapshot {
                 let starts_new_buffer = Some(excerpt.buffer_id) != prev_buffer_id;
                 let boundary = ExcerptBoundary {
                     id: excerpt.id.clone(),
+                    key: excerpt.key,
                     row: cursor.start().1.row,
                     buffer: excerpt.buffer.clone(),
                     range: excerpt.range.clone(),
@@ -2675,6 +2684,7 @@ impl History {
 impl Excerpt {
     fn new(
         id: ExcerptId,
+        key: usize,
         buffer_id: usize,
         buffer: BufferSnapshot,
         range: ExcerptRange<text::Anchor>,
@@ -2682,6 +2692,7 @@ impl Excerpt {
     ) -> Self {
         Excerpt {
             id,
+            key,
             max_buffer_row: range.context.end.to_point(&buffer).row,
             text_summary: buffer
                 .text_summary_for_range::<TextSummary, _>(range.context.to_offset(&buffer)),
