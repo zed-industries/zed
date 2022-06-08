@@ -9,7 +9,7 @@ use util::ResultExt;
 
 mod c;
 mod installation;
-// mod json;
+mod json;
 mod language_plugin;
 mod rust;
 mod typescript;
@@ -29,6 +29,7 @@ pub async fn init(languages: Arc<LanguageRegistry>, executor: Arc<Background>) {
         (
             "json",
             tree_sitter_json::language(),
+            // Some(Arc::new(json::JsonLspAdapter)),
             language_plugin::new_json(executor)
                 .await
                 .log_err()
