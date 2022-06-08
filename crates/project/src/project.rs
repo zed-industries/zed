@@ -2724,7 +2724,7 @@ impl Project {
                                 text_document,
                                 range: lsp::Range::new(buffer_start, buffer_end),
                                 options: lsp::FormattingOptions {
-                                    tab_size: 4,
+                                    tab_size,
                                     insert_spaces: true,
                                     insert_final_newline: Some(true),
                                     ..Default::default()

@@ -9044,7 +9044,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_format_during_save(cx: &mut gpui::TestAppContext) {
+    async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         cx.foreground().forbid_parking();
         cx.update(|cx| cx.set_global(Settings::test(cx)));
 
@@ -9143,6 +9143,121 @@ mod tests {
         let save = cx.update(|cx| editor.save(project.clone(), cx));
         fake_server
             .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path("/file.rs").unwrap()
+                );
+                assert_eq!(params.options.tab_size, 8);
+                Ok(Some(vec![]))
+            })
+            .next()
+            .await;
+        cx.foreground().start_waiting();
+        save.await.unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
+
+        let mut language = Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        );
+        let mut fake_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        let fs = FakeFs::new(cx.background().clone());
+        fs.insert_file("/file.rs", Default::default()).await;
+
+        let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+        project.update(cx, |project, _| project.languages().add(Arc::new(language)));
+        let buffer = project
+            .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
+            .await
+            .unwrap();
+
+        cx.foreground().start_waiting();
+        let fake_server = fake_servers.next().await.unwrap();
+
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let (_, editor) = cx.add_window(|cx| build_editor(buffer, cx));
+        editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+        assert!(cx.read(|cx| editor.is_dirty(cx)));
+
+        let save = cx.update(|cx| editor.save(project.clone(), cx));
+        fake_server
+            .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path("/file.rs").unwrap()
+                );
+                assert_eq!(params.options.tab_size, 4);
+                Ok(Some(vec![lsp::TextEdit::new(
+                    lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
+                    ", ".to_string(),
+                )]))
+            })
+            .next()
+            .await;
+        cx.foreground().start_waiting();
+        save.await.unwrap();
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "one, two\nthree\n"
+        );
+        assert!(!cx.read(|cx| editor.is_dirty(cx)));
+
+        editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+        assert!(cx.read(|cx| editor.is_dirty(cx)));
+
+        // Ensure we can still save even if formatting hangs.
+        fake_server.handle_request::<lsp::request::RangeFormatting, _, _>(
+            move |params, _| async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path("/file.rs").unwrap()
+                );
+                futures::future::pending::<()>().await;
+                unreachable!()
+            },
+        );
+        let save = cx.update(|cx| editor.save(project.clone(), cx));
+        cx.foreground().advance_clock(items::FORMAT_TIMEOUT);
+        cx.foreground().start_waiting();
+        save.await.unwrap();
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "one\ntwo\nthree\n"
+        );
+        assert!(!cx.read(|cx| editor.is_dirty(cx)));
+
+        // Set rust language override and assert overriden tabsize is sent to language server
+        cx.update(|cx| {
+            cx.update_global::<Settings, _, _>(|settings, _| {
+                settings.language_overrides.insert(
+                    "Rust".into(),
+                    LanguageOverride {
+                        tab_size: Some(8),
+                        ..Default::default()
+                    },
+                );
+            })
+        });
+
+        let save = cx.update(|cx| editor.save(project.clone(), cx));
+        fake_server
+            .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
                 assert_eq!(
                     params.text_document.uri,
                     lsp::Url::from_file_path("/file.rs").unwrap()
