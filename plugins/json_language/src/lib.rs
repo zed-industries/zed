@@ -1,10 +1,13 @@
 use plugin::prelude::*;
+use serde::Deserialize;
 use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
 
 // #[import]
-// fn command(string: String) -> Option<String>;
+fn command(string: &str) -> Option<String> {
+    todo!()
+}
 
 // TODO: some sort of macro to generate ABI bindings
 extern "C" {
@@ -48,45 +51,46 @@ pub fn fetch_latest_server_version() -> Option<String> {
         versions: Vec<String>,
     }
 
+    // TODO: command returns error code
     let output = command("npm info vscode-json-languageserver --json")?;
-    if !output.status.success() {
-        return None;
-    }
+    // if !output.is_ok() {
+    //     return None;
+    // }
 
-    let mut info: NpmInfo = serde_json::from_slice(&output.stdout)?;
+    let mut info: NpmInfo = serde_json::from_str(&output).ok()?;
     info.versions.pop()
 }
 
-// #[bind]
-// pub fn fetch_server_binary(container_dir: PathBuf, version: String) -> Option<PathBuf> {
-//     let version_dir = container_dir.join(version.as_str());
-//     fs::create_dir_all(&version_dir)
-//         .or_or_else(|| "failed to create version directory".to_string())?;
-//     let binary_path = version_dir.join(Self::BIN_PATH);
+#[bind]
+pub fn fetch_server_binary(container_dir: PathBuf, version: String) -> Result<PathBuf, String> {
+    let version_dir = container_dir.join(version.as_str());
+    fs::create_dir_all(&version_dir)
+        .map_err(|_| "failed to create version directory".to_string())?;
+    let binary_path = version_dir.join(BIN_PATH);
 
-//     if fs::metadata(&binary_path).await.is_err() {
-//         let output = command(format!(
-//             "npm install vscode-json-languageserver@{}",
-//             version
-//         ));
-//         if !output.status.success() {
-//             Err(anyhow!("failed to install vscode-json-languageserver"))?;
-//         }
+    if fs::metadata(&binary_path).is_err() {
+        let output = command(&format!(
+            "npm install vscode-json-languageserver@{}",
+            version
+        ));
+        if output.is_none() {
+            return Err("failed to install vscode-json-languageserver".to_string());
+        }
 
-//         if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
-//             while let Some(entry) = entries.next().await {
-//                 if let Some(entry) = entry.log_err() {
-//                     let entry_path = entry.path();
-//                     if entry_path.as_path() != version_dir {
-//                         fs::remove_dir_all(&entry_path).await.log_err();
-//                     }
-//                 }
-//             }
-//         }
-//     }
+        if let Some(mut entries) = fs::read_dir(&container_dir).ok() {
+            while let Some(entry) = entries.next() {
+                if let Some(entry) = entry.ok() {
+                    let entry_path = entry.path();
+                    if entry_path.as_path() != version_dir {
+                        fs::remove_dir_all(&entry_path).ok();
+                    }
+                }
+            }
+        }
+    }
 
-//     Ok(binary_path)
-// }
+    Ok(binary_path)
+}
 
 #[bind]
 pub fn cached_server_binary(container_dir: PathBuf) -> Option<PathBuf> {
