@@ -59,10 +59,9 @@ pub fn export(args: TokenStream, function: TokenStream) -> TokenStream {
 
         #[no_mangle]
         // TODO: switch len from usize to u32?
-        pub extern "C" fn #outer_fn_name(ptr: *const u8, len: usize) -> *const ::plugin::__Buffer {
+        pub extern "C" fn #outer_fn_name(packed_buffer: u64) -> u64 {
             // setup
-            let buffer = ::plugin::__Buffer { ptr, len };
-            let data = unsafe { buffer.to_vec() };
+            let data = unsafe { ::plugin::__Buffer::from_u64(packed_buffer).to_vec() };
 
             // operation
             let data: #ty = match ::plugin::bincode::deserialize(&data) {
@@ -74,8 +73,8 @@ pub fn export(args: TokenStream, function: TokenStream) -> TokenStream {
             let new_data = new_data.unwrap();
 
             // teardown
-            let new_buffer = unsafe { ::plugin::__Buffer::from_vec(new_data) };
-            return new_buffer.leak_to_heap();
+            let new_buffer = unsafe { ::plugin::__Buffer::from_vec(new_data) }.into_u64();
+            return new_buffer;
         }
     })
 }
@@ -101,8 +100,8 @@ pub fn import(args: TokenStream, function: TokenStream) -> TokenStream {
     //     block: todo!(),
     // };
 
-    // let inner_fn_name = format_ident!("{}", inner_fn.sig.ident);
-    // let outer_fn_name = format_ident!("__{}", inner_fn_name);
+    let outer_fn_name = format_ident!("{}", fn_declare.sig.ident);
+    let inner_fn_name = format_ident!("__{}", outer_fn_name);
 
     //     let variadic = inner_fn.sig.inputs.len();
     //     let i = (0..variadic).map(syn::Index::from);
@@ -135,32 +134,26 @@ pub fn import(args: TokenStream, function: TokenStream) -> TokenStream {
 
     // TokenStream::from(quote! {
     //     extern "C" {
-    //         #[no_mangle]
-    //         fn #outer_fn_name(ptr: *const u8, len: usize) -> *const ::plugin::__Buffer;
+    //         fn #inner_fn_name(buffer: u64) -> u64;
     //     }
 
     //     #[no_mangle]
-    //     fn #inner_fn_name #params -> #output {
-    //         println!("executing command: {}", string);
-    //         // serialize data
-    //         let data = #collect_params;
+    //     fn #outer_fn_name #args /* (string: &str) */ -> #return_type /* Option<Vec<u8>> */ {
+    //         dbg!("executing command: {}", string);
+    //         // setup
+    //         let data = #args_collect;
     //         let data = ::plugin::bincode::serialize(&data).unwrap();
     //         let buffer = unsafe { ::plugin::__Buffer::from_vec(data) };
-    //         let ptr = buffer.ptr;
-    //         let len = buffer.len;
-    //         // leak data to heap
-    //         buffer.leak_to_heap();
-    //         // call extern function
-    //         let result = unsafe { __command(ptr, len) };
-    //         // get result
-    //         let result = todo!(); // convert into box
 
-    //         // deserialize data
-    //         let data: Option<String> = match ::plugin::bincode::deserialize(&data) {
+    //         // operation
+    //         let new_buffer = unsafe { #inner_fn_name(buffer.into_u64()) };
+    //         let new_data = unsafe { ::plugin::__Buffer::from_u64(new_buffer).to_vec() };
+
+    //         // teardown
+    //         match ::plugin::bincode::deserialize(&new_data) {
     //             Ok(d) => d,
-    //             Err(e) => panic!("Data passed to function not deserializable."),
-    //         };
-    //         return data;
+    //             Err(e) => panic!("Data returned from function not deserializable."),
+    //         }
     //     }
     // })
     todo!()

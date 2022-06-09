@@ -12,8 +12,14 @@ pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
     let plugin = WasiPluginBuilder::new_with_default_ctx()?
         .host_function("command", |command: String| {
             // TODO: actual thing
-            std::process::Command::new(command).output().unwrap();
-            Some("Hello".to_string())
+            dbg!(&command);
+            let mut args = command.split(' ');
+            let command = args.next().unwrap();
+            std::process::Command::new(command)
+                .args(args)
+                .output()
+                .log_err()
+                .map(|output| dbg!(output.stdout))
         })?
         .init(include_bytes!("../../../../plugins/bin/json_language.wasm"))
         .await?;
@@ -24,7 +30,7 @@ pub struct PluginLspAdapter {
     name: WasiFn<(), String>,
     server_args: WasiFn<(), Vec<String>>,
     fetch_latest_server_version: WasiFn<(), Option<String>>,
-    fetch_server_binary: WasiFn<(PathBuf, String), Option<PathBuf>>,
+    fetch_server_binary: WasiFn<(PathBuf, String), Result<PathBuf, String>>,
     cached_server_binary: WasiFn<PathBuf, Option<PathBuf>>,
     label_for_completion: WasiFn<String, Option<String>>,
     initialization_options: WasiFn<(), String>,
@@ -102,9 +108,10 @@ impl LspAdapter for PluginLspAdapter {
         async move {
             let mut runtime = runtime.lock().await;
             let handle = runtime.attach_path(&container_dir)?;
-            let result: Option<PathBuf> = runtime.call(&function, (container_dir, version)).await?;
+            let result: Result<PathBuf, String> =
+                runtime.call(&function, (container_dir, version)).await?;
             runtime.remove_resource(handle)?;
-            result.ok_or_else(|| anyhow!("Could not load cached server binary"))
+            result.map_err(|e| anyhow!("{}", e))
         }
         .boxed()
     }
