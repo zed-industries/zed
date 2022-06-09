@@ -140,11 +140,19 @@ export default function editor(theme: Theme) {
     invalidWarningDiagnostic: diagnostic(theme, "muted"),
     hover_popover: hoverPopover(theme),
     jumpIcon: {
-      color: iconColor(theme, "primary"),
-      iconWidth: 10,
-      buttonWidth: 10,
+      color: iconColor(theme, "muted"),
+      iconWidth: 20,
+      buttonWidth: 20,
+      cornerRadius: 6,
+      padding: {
+        top: 6,
+        bottom: 6,
+        left: 6,
+        right: 6,
+      },
       hover: {
-        color: iconColor(theme, "active")
+        color: iconColor(theme, "active"),
+        background: backgroundColor(theme, "on500", "base"),
       }
     },
     syntax,
