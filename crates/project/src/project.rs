@@ -90,7 +90,8 @@ pub struct Project {
     fs: Arc<dyn Fs>,
     client_state: ProjectClientState,
     collaborators: HashMap<PeerId, Collaborator>,
-    subscriptions: Vec<client::Subscription>,
+    client_subscriptions: Vec<client::Subscription>,
+    _subscriptions: Vec<gpui::Subscription>,
     opened_buffer: (Rc<RefCell<watch::Sender<()>>>, watch::Receiver<()>),
     shared_buffers: HashMap<PeerId, HashSet<u64>>,
     loading_buffers: HashMap<
@@ -418,7 +419,8 @@ impl Project {
                     _maintain_remote_id_task,
                 },
                 opened_buffer: (Rc::new(RefCell::new(opened_buffer_tx)), opened_buffer_rx),
-                subscriptions: Vec::new(),
+                client_subscriptions: Vec::new(),
+                _subscriptions: vec![cx.observe_global::<Settings, _>(Self::on_settings_changed)],
                 active_entry: None,
                 languages,
                 client,
@@ -503,7 +505,8 @@ impl Project {
                 fs,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
-                subscriptions: vec![client.add_model_for_remote_entity(remote_id, cx)],
+                client_subscriptions: vec![client.add_model_for_remote_entity(remote_id, cx)],
+                _subscriptions: Default::default(),
                 client: client.clone(),
                 client_state: ProjectClientState::Remote {
                     sharing_has_stopped: false,
@@ -650,6 +653,55 @@ impl Project {
         })
     }
 
+    fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
+        let settings = cx.global::<Settings>();
+
+        let mut language_servers_to_start = Vec::new();
+        for buffer in self.opened_buffers.values() {
+            if let Some(buffer) = buffer.upgrade(cx) {
+                let buffer = buffer.read(cx);
+                if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language())
+                {
+                    if settings.enable_language_server(Some(&language.name())) {
+                        let worktree = file.worktree.read(cx);
+                        language_servers_to_start.push((
+                            worktree.id(),
+                            worktree.as_local().unwrap().abs_path().clone(),
+                            language.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        let mut language_servers_to_stop = Vec::new();
+        for language in self.languages.to_vec() {
+            if let Some(lsp_adapter) = language.lsp_adapter() {
+                if !settings.enable_language_server(Some(&language.name())) {
+                    let lsp_name = lsp_adapter.name();
+                    for (worktree_id, started_lsp_name) in self.started_language_servers.keys() {
+                        if lsp_name == *started_lsp_name {
+                            language_servers_to_stop.push((*worktree_id, started_lsp_name.clone()));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Stop all newly-disabled language servers.
+        for (worktree_id, adapter_name) in language_servers_to_stop {
+            self.stop_language_server(worktree_id, adapter_name, cx)
+                .detach();
+        }
+
+        // Start all the newly-enabled language servers.
+        for (worktree_id, worktree_path, language) in language_servers_to_start {
+            self.start_language_server(worktree_id, worktree_path, language, cx);
+        }
+
+        cx.notify();
+    }
+
     pub fn buffer_for_id(&self, remote_id: u64, cx: &AppContext) -> Option<ModelHandle<Buffer>> {
         self.opened_buffers
             .get(&remote_id)
@@ -775,7 +827,7 @@ impl Project {
                         {
                             *remote_id_tx.borrow_mut() = None;
                         }
-                        this.subscriptions.clear();
+                        this.client_subscriptions.clear();
                         this.metadata_changed(false, cx);
                     });
                     response.map(drop)
@@ -802,7 +854,7 @@ impl Project {
 
                 this.metadata_changed(false, cx);
                 cx.emit(Event::RemoteIdChanged(Some(remote_id)));
-                this.subscriptions
+                this.client_subscriptions
                     .push(this.client.add_model_for_remote_entity(remote_id, cx));
                 Ok(())
             })
@@ -1858,6 +1910,13 @@ impl Project {
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
+        if !cx
+            .global::<Settings>()
+            .enable_language_server(Some(&language.name()))
+        {
+            return;
+        }
+
         let adapter = if let Some(adapter) = language.lsp_adapter() {
             adapter
         } else {

@@ -240,6 +240,10 @@ impl LanguageRegistry {
             .cloned()
     }
 
+    pub fn to_vec(&self) -> Vec<Arc<Language>> {
+        self.languages.read().iter().cloned().collect()
+    }
+
     pub fn language_names(&self) -> Vec<String> {
         self.languages
             .read()
