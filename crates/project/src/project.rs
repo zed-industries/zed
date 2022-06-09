@@ -2060,6 +2060,35 @@ impl Project {
             });
     }
 
+    fn stop_language_server(
+        &mut self,
+        worktree_id: WorktreeId,
+        adapter_name: LanguageServerName,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<()> {
+        let key = (worktree_id, adapter_name);
+        self.language_servers.remove(&key);
+        if let Some(language_server) = self.started_language_servers.remove(&key) {
+            cx.spawn_weak(|this, mut cx| async move {
+                if let Some(language_server) = language_server.await {
+                    if let Some(shutdown) = language_server.shutdown() {
+                        shutdown.await;
+                    }
+
+                    if let Some(this) = this.upgrade(&cx) {
+                        this.update(&mut cx, |this, cx| {
+                            this.language_server_statuses
+                                .remove(&language_server.server_id());
+                            cx.notify();
+                        });
+                    }
+                }
+            })
+        } else {
+            Task::ready(())
+        }
+    }
+
     pub fn restart_language_servers_for_buffers(
         &mut self,
         buffers: impl IntoIterator<Item = ModelHandle<Buffer>>,
@@ -2096,20 +2125,11 @@ impl Project {
         } else {
             return;
         };
-        let key = (worktree_id, adapter.name());
-        let server_to_shutdown = self.language_servers.remove(&key);
-        self.started_language_servers.remove(&key);
-        server_to_shutdown
-            .as_ref()
-            .map(|(_, server)| self.language_server_statuses.remove(&server.server_id()));
-        cx.spawn_weak(|this, mut cx| async move {
-            if let Some(this) = this.upgrade(&cx) {
-                if let Some((_, server_to_shutdown)) = server_to_shutdown {
-                    if let Some(shutdown_task) = server_to_shutdown.shutdown() {
-                        shutdown_task.await;
-                    }
-                }
 
+        let stop = self.stop_language_server(worktree_id, adapter.name(), cx);
+        cx.spawn_weak(|this, mut cx| async move {
+            stop.await;
+            if let Some(this) = this.upgrade(&cx) {
                 this.update(&mut cx, |this, cx| {
                     this.start_language_server(worktree_id, worktree_path, language, cx);
                 });
