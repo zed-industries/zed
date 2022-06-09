@@ -8,15 +8,34 @@ use serde::{de::DeserializeOwned, Serialize};
 use wasi_common::{dir, file};
 use wasmtime::{
     AsContext, AsContextMut, Caller, Config, Engine, Extern, Instance, Linker, Module, Store,
-    StoreContext, StoreContextMut, Trap, TypedFunc,
+    StoreContext, StoreContextMut, Trap, TypedFunc, WasmParams,
 };
 use wasmtime::{IntoFunc, Memory};
 use wasmtime_wasi::{Dir, WasiCtx, WasiCtxBuilder};
 
 pub struct WasiResource(u32);
 
+#[repr(C)]
+struct WasiBuffer {
+    ptr: u32,
+    len: u32,
+}
+
+impl WasiBuffer {
+    pub fn into_u64(self) -> u64 {
+        ((self.ptr as u64) << 32) | (self.len as u64)
+    }
+
+    pub fn from_u64(packed: u64) -> Self {
+        WasiBuffer {
+            ptr: (packed >> 32) as u32,
+            len: packed as u32,
+        }
+    }
+}
+
 pub struct WasiFn<A: Serialize, R: DeserializeOwned> {
-    function: TypedFunc<(u32, u32), u32>,
+    function: TypedFunc<u64, u64>,
     _function_type: PhantomData<fn(A) -> R>,
 }
 
@@ -31,37 +50,6 @@ impl<A: Serialize, R: DeserializeOwned> Clone for WasiFn<A, R> {
     }
 }
 
-// impl<A: Serialize, R: DeserializeOwned> WasiFn<A, R> {
-//     #[inline(always)]
-//     pub async fn call(&self, runtime: &mut Wasi, arg: A) -> Result<R, Error> {
-//         runtime.call(self, arg).await
-//     }
-// }
-
-// type signature derived from:
-// https://docs.rs/wasmtime/latest/wasmtime/struct.Linker.html#method.func_wrap2_async
-// macro_rules! dynHostFunction {
-//     () => {
-//         Box<
-//             dyn for<'a> Fn(Caller<'a, WasiCtx>, u32, u32)
-//                 -> Box<dyn Future<Output = u32> + Send + 'a>
-//                     + Send
-//                     + Sync
-//                     + 'static
-//         >
-//     };
-// }
-
-// macro_rules! implHostFunction {
-//     () => {
-//         impl for<'a> Fn(Caller<'a, WasiCtx>, u32, u32)
-//             -> Box<dyn Future<Output = u32> + Send + 'a>
-//                 + Send
-//                 + Sync
-//                 + 'static
-//     };
-// }
-
 pub struct WasiPluginBuilder {
     wasi_ctx: WasiCtx,
     engine: Engine,
@@ -73,7 +61,7 @@ impl WasiPluginBuilder {
         let mut config = Config::default();
         config.async_support(true);
         let engine = Engine::new(&config)?;
-        let mut linker = Linker::new(&engine);
+        let linker = Linker::new(&engine);
 
         Ok(WasiPluginBuilder {
             // host_functions: HashMap::new(),
@@ -96,10 +84,10 @@ impl WasiPluginBuilder {
         name: &str,
         function: impl Fn(A) -> R + Send + Sync + 'static,
     ) -> Result<Self, Error> {
-        self.linker.func_wrap2_async(
+        self.linker.func_wrap1_async(
             "env",
-            name,
-            move |mut caller: Caller<'_, WasiCtxAlloc>, ptr: u32, len: u32| {
+            &format!("__{}", name),
+            move |mut caller: Caller<'_, WasiCtxAlloc>, packed_buffer: u64| {
                 // TODO: use try block once avaliable
                 let result: Result<(Memory, Vec<u8>), Trap> = (|| {
                     // grab a handle to the memory
@@ -109,8 +97,11 @@ impl WasiPluginBuilder {
                     };
 
                     // get the args passed from Guest
-                    let args =
-                        Wasi::deserialize_from_buffer(&mut plugin_memory, &caller, ptr, len)?;
+                    let args = Wasi::deserialize_from_buffer(
+                        &mut plugin_memory,
+                        &caller,
+                        WasiBuffer::from_u64(packed_buffer),
+                    )?;
 
                     // Call the Host-side function
                     let result: R = function(args);
@@ -125,8 +116,7 @@ impl WasiPluginBuilder {
                 Box::new(async move {
                     let (mut plugin_memory, result) = result?;
 
-                    // todo!();
-                    let (ptr, len) = Wasi::serialize_to_buffer(
+                    let buffer = Wasi::serialize_to_buffer(
                         caller.data().alloc_buffer(),
                         &mut plugin_memory,
                         &mut caller,
@@ -134,7 +124,7 @@ impl WasiPluginBuilder {
                     )
                     .await?;
 
-                    Ok(7u32)
+                    Ok(buffer.into_u64())
                 })
             },
         )?;
@@ -159,7 +149,7 @@ impl WasiPluginBuilder {
 #[derive(Copy, Clone)]
 struct WasiAlloc {
     alloc_buffer: TypedFunc<u32, u32>,
-    free_buffer: TypedFunc<u32, u32>,
+    free_buffer: TypedFunc<u64, ()>,
 }
 
 struct WasiCtxAlloc {
@@ -174,7 +164,7 @@ impl WasiCtxAlloc {
             .alloc_buffer
     }
 
-    fn free_buffer(&self) -> TypedFunc<u32, u32> {
+    fn free_buffer(&self) -> TypedFunc<u64, ()> {
         self.alloc
             .expect("allocator has been not initialized, cannot free buffer!")
             .free_buffer
@@ -351,48 +341,46 @@ impl Wasi {
         plugin_memory: &mut Memory,
         mut store: impl AsContextMut<Data = WasiCtxAlloc>,
         item: Vec<u8>,
-    ) -> Result<(u32, u32), Error> {
+    ) -> Result<WasiBuffer, Error> {
         // allocate a buffer and write the argument to that buffer
-        let buffer_len = item.len() as u32;
-        let buffer_ptr = alloc_buffer.call_async(&mut store, buffer_len).await?;
-        plugin_memory.write(&mut store, buffer_ptr as usize, &item)?;
-        Ok((buffer_ptr, buffer_len))
+        let len = item.len() as u32;
+        let ptr = alloc_buffer.call_async(&mut store, len).await?;
+        plugin_memory.write(&mut store, ptr as usize, &item)?;
+        Ok(WasiBuffer { ptr, len })
     }
 
-    /// Takes `ptr to a `(ptr, len)` pair, and returns `(ptr, len)`.
-    fn deref_buffer(
-        plugin_memory: &mut Memory,
-        store: impl AsContext<Data = WasiCtxAlloc>,
-        buffer: u32,
-    ) -> Result<(u32, u32), Error> {
-        // create a buffer to read the (ptr, length) pair into
-        // this is a total of 4 + 4 = 8 bytes.
-        let raw_buffer = &mut [0; 8];
-        plugin_memory.read(store, buffer as usize, raw_buffer)?;
+    // /// Takes `ptr to a `(ptr, len)` pair, and returns `(ptr, len)`.
+    // fn deref_buffer(
+    //     plugin_memory: &mut Memory,
+    //     store: impl AsContext<Data = WasiCtxAlloc>,
+    //     buffer: u32,
+    // ) -> Result<(u32, u32), Error> {
+    //     // create a buffer to read the (ptr, length) pair into
+    //     // this is a total of 4 + 4 = 8 bytes.
+    //     let raw_buffer = &mut [0; 8];
+    //     plugin_memory.read(store, buffer as usize, raw_buffer)?;
 
-        // use these bytes (wasm stores things little-endian)
-        // to get a pointer to the buffer and its length
-        let b = raw_buffer;
-        let buffer_ptr = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
-        let buffer_len = u32::from_le_bytes([b[4], b[5], b[6], b[7]]);
+    //     // use these bytes (wasm stores things little-endian)
+    //     // to get a pointer to the buffer and its length
+    //     let b = raw_buffer;
+    //     let buffer_ptr = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+    //     let buffer_len = u32::from_le_bytes([b[4], b[5], b[6], b[7]]);
 
-        return Ok((buffer_ptr, buffer_len));
-    }
+    //     return Ok((buffer_ptr, buffer_len));
+    // }
 
     /// Takes a `(ptr, len)` pair and returns the corresponding deserialized buffer.
     fn deserialize_from_buffer<R: DeserializeOwned>(
         plugin_memory: &mut Memory,
         store: impl AsContext<Data = WasiCtxAlloc>,
-        buffer_ptr: u32,
-        buffer_len: u32,
+        buffer: WasiBuffer,
     ) -> Result<R, Error> {
-        let buffer_ptr = buffer_ptr as usize;
-        let buffer_len = buffer_len as usize;
-        let buffer_end = buffer_ptr + buffer_len;
+        let buffer_start = buffer.ptr as usize;
+        let buffer_end = buffer_start + buffer.len as usize;
 
         // read the buffer at this point into a byte array
         // deserialize the byte array into the provided serde type
-        let result = &plugin_memory.data(store.as_context())[buffer_ptr..buffer_end];
+        let result = &plugin_memory.data(store.as_context())[buffer_start..buffer_end];
         let result = bincode::deserialize(result)?;
 
         // TODO: this is handled wasm-side
@@ -402,6 +390,7 @@ impl Wasi {
         Ok(result)
     }
 
+    /// Retrieves the handle to a function of a given type.
     pub fn function<A: Serialize, R: DeserializeOwned, T: AsRef<str>>(
         &mut self,
         name: T,
@@ -409,7 +398,7 @@ impl Wasi {
         let fun_name = format!("__{}", name.as_ref());
         let fun = self
             .instance
-            .get_typed_func::<(u32, u32), u32, _>(&mut self.store, &fun_name)?;
+            .get_typed_func::<u64, u64, _>(&mut self.store, &fun_name)?;
         Ok(WasiFn {
             function: fun,
             _function_type: PhantomData,
@@ -417,6 +406,7 @@ impl Wasi {
     }
 
     // TODO: dont' use as for conversions
+    /// Asynchronously calls a function defined Guest-side.
     pub async fn call<A: Serialize, R: DeserializeOwned>(
         &mut self,
         handle: &WasiFn<A, R>,
@@ -444,16 +434,13 @@ impl Wasi {
         // this returns a ptr to a (ptr, lentgh) pair
         let result_buffer = handle
             .function
-            .call_async(&mut self.store, arg_buffer)
+            .call_async(&mut self.store, arg_buffer.into_u64())
             .await?;
-        let (result_buffer_ptr, result_buffer_len) =
-            Self::deref_buffer(&mut plugin_memory, &mut self.store, result_buffer)?;
 
         Self::deserialize_from_buffer(
             &mut plugin_memory,
             &mut self.store,
-            result_buffer_ptr,
-            result_buffer_len,
+            WasiBuffer::from_u64(result_buffer),
         )
     }
 }
