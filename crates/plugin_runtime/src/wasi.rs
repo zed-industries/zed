@@ -72,59 +72,55 @@ pub struct Wasi {
 pub type HostFunction = Box<dyn IntoFunc<WasiCtx, (u32, u32), u32>>;
 
 pub struct WasiPluginBuilder {
-    host_functions: HashMap<String, Box<dyn Fn(&str, &mut Linker<WasiCtx>) -> Result<(), Error>>>,
-    wasi_ctx_builder: WasiCtxBuilder,
+    // host_functions: HashMap<String, Box<dyn Fn(&str, &mut Linker<WasiCtx>) -> Result<(), Error>>>,
+    wasi_ctx: WasiCtx,
+    engine: Engine,
+    linker: Linker<WasiCtx>,
 }
 
 impl WasiPluginBuilder {
-    pub fn new() -> Self {
-        WasiPluginBuilder {
-            host_functions: HashMap::new(),
-            wasi_ctx_builder: WasiCtxBuilder::new(),
-        }
+    pub fn new(wasi_ctx: WasiCtx) -> Result<Self, Error> {
+        let mut config = Config::default();
+        config.async_support(true);
+        let engine = Engine::new(&config)?;
+        let mut linker = Linker::new(&engine);
+
+        Ok(WasiPluginBuilder {
+            // host_functions: HashMap::new(),
+            wasi_ctx,
+            engine,
+            linker,
+        })
     }
 
-    pub fn new_with_default_ctx() -> WasiPluginBuilder {
-        let mut this = Self::new();
-        this.wasi_ctx_builder = this.wasi_ctx_builder.inherit_stdin().inherit_stderr();
-        this
+    pub fn new_with_default_ctx() -> Result<Self, Error> {
+        let wasi_ctx = WasiCtxBuilder::new()
+            .inherit_stdin()
+            .inherit_stderr()
+            .build();
+        Self::new(wasi_ctx)
     }
 
     pub fn host_function<A: Serialize, R: DeserializeOwned>(
         mut self,
         name: &str,
-        function: &dyn Fn(A) -> R + Send + Sync + 'static,
-    ) -> Self {
-        let name = name.to_string();
-        self.host_functions.insert(
-            name,
-            Box::new(move |name: &str, linker: &mut Linker<WasiCtx>| {
-                linker.func_wrap("env", name, |ptr: u32, len: u32| {
-                    function(todo!());
-                    7u32
-                })?;
-                Ok(())
-            }),
-        );
-        self
-    }
-
-    pub fn wasi_ctx(mut self, config: impl FnOnce(WasiCtxBuilder) -> WasiCtxBuilder) -> Self {
-        self.wasi_ctx_builder = config(self.wasi_ctx_builder);
-        self
+        function: impl Fn(A) -> R + Send + Sync + 'static,
+    ) -> Result<Self, Error> {
+        self.linker
+            .func_wrap("env", name, move |ptr: u32, len: u32| {
+                // TODO: insert serialization code
+                function(todo!());
+                7u32
+            })?;
+        Ok(self)
     }
 
     pub async fn init<T: AsRef<[u8]>>(self, module: T) -> Result<Wasi, Error> {
-        let plugin = WasiPlugin {
-            module: module.as_ref().to_vec(),
-            wasi_ctx: self.wasi_ctx_builder.build(),
-            host_functions: self.host_functions,
-        };
-
-        Wasi::init(plugin).await
+        Wasi::init(module.as_ref().to_vec(), self).await
     }
 }
 
+// TODO: remove
 /// Represents a to-be-initialized plugin.
 /// Please use [`WasiPluginBuilder`], don't use this directly.
 pub struct WasiPlugin {
@@ -154,26 +150,17 @@ impl Wasi {
 }
 
 impl Wasi {
-    async fn init(plugin: WasiPlugin) -> Result<Self, Error> {
-        let mut config = Config::default();
-        config.async_support(true);
-        let engine = Engine::new(&config)?;
-        let mut linker = Linker::new(&engine);
+    async fn init(module: Vec<u8>, plugin: WasiPluginBuilder) -> Result<Self, Error> {
+        let engine = plugin.engine;
+        let mut linker = plugin.linker;
 
-        for (name, add_to_linker) in plugin.host_functions.into_iter() {
-            add_to_linker(&name, &mut linker)?;
-        }
-
-        linker
-            .func_wrap("env", "__command", |x: u32, y: u32| x + y)
-            .unwrap();
         linker.func_wrap("env", "__hello", |x: u32| x * 2).unwrap();
         linker.func_wrap("env", "__bye", |x: u32| x / 2).unwrap();
 
         wasmtime_wasi::add_to_linker(&mut linker, |s| s)?;
 
         let mut store: Store<_> = Store::new(&engine, plugin.wasi_ctx);
-        let module = Module::new(&engine, plugin.module)?;
+        let module = Module::new(&engine, module)?;
 
         linker.module_async(&mut store, "", &module).await?;
         let instance = linker.instantiate_async(&mut store, &module).await?;
