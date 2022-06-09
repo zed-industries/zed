@@ -217,7 +217,7 @@ fn show_hover(
                         this.hover_state.popover = hover_popover;
                         cx.notify();
                     } else {
-                        if this.hover_state.popover.is_some() {
+                        if this.hover_state.visible() {
                             // Popover was visible, but now is hidden. Dismiss it
                             hide_hover(this, cx);
                         } else {

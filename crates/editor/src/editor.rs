@@ -43,7 +43,7 @@ pub use multi_buffer::{
     ToPoint,
 };
 use ordered_float::OrderedFloat;
-use project::{HoverBlock, Project, ProjectPath, ProjectTransaction};
+use project::{Project, ProjectPath, ProjectTransaction};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -6148,10 +6148,7 @@ pub fn styled_runs_for_code_label<'a>(
 #[cfg(test)]
 mod tests {
     use crate::{
-        hover_popover::{
-            hover, hover_at, HoverAt, HOVER_DELAY_MILLIS, HOVER_GRACE_MILLIS,
-            HOVER_REQUEST_DELAY_MILLIS,
-        },
+        hover_popover::{hover, hover_at, HoverAt, HOVER_DELAY_MILLIS, HOVER_GRACE_MILLIS},
         test::{
             assert_text_with_selections, build_editor, select_ranges, EditorLspTestContext,
             EditorTestContext,

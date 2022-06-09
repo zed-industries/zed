@@ -449,6 +449,7 @@ impl<'a> EditorLspTestContext<'a> {
         }
     }
 
+    #[cfg(feature = "test-support")]
     pub async fn new_rust(
         capabilities: lsp::ServerCapabilities,
         cx: &'a mut gpui::TestAppContext,
