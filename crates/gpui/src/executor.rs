@@ -330,6 +330,11 @@ impl Deterministic {
         Timer::Deterministic(DeterministicTimer { rx, id, state })
     }
 
+    pub fn now(&self) -> std::time::Instant {
+        let state = self.state.lock();
+        state.now.clone()
+    }
+
     pub fn advance_clock(&self, duration: Duration) {
         let new_now = self.state.lock().now + duration;
         loop {
@@ -644,6 +649,14 @@ impl Background {
             Background::Production { .. } => Timer::Production(smol::Timer::after(duration)),
             #[cfg(any(test, feature = "test-support"))]
             Background::Deterministic { executor } => executor.timer(duration),
+        }
+    }
+
+    pub fn now(&self) -> std::time::Instant {
+        match self {
+            Background::Production { .. } => std::time::Instant::now(),
+            #[cfg(any(test, feature = "test-support"))]
+            Background::Deterministic { executor } => executor.now(),
         }
     }
 

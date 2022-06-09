@@ -19,6 +19,10 @@ use crate::{
     EditorStyle,
 };
 
+pub const HOVER_DELAY_MILLIS: u64 = 500;
+pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 250;
+pub const HOVER_GRACE_MILLIS: u64 = 250;
+
 #[derive(Clone, PartialEq)]
 pub struct HoverAt {
     pub point: Option<DisplayPoint>,
@@ -33,14 +37,14 @@ pub fn init(cx: &mut MutableAppContext) {
 }
 
 /// Bindable action which uses the most recent selection head to trigger a hover
-fn hover(editor: &mut Editor, _: &Hover, cx: &mut ViewContext<Editor>) {
+pub fn hover(editor: &mut Editor, _: &Hover, cx: &mut ViewContext<Editor>) {
     let head = editor.selections.newest_display(cx).head();
     show_hover(editor, head, true, cx);
 }
 
 /// The internal hover action dispatches between `show_hover` or `hide_hover`
 /// depending on whether a point to hover over is provided.
-fn hover_at(editor: &mut Editor, action: &HoverAt, cx: &mut ViewContext<Editor>) {
+pub fn hover_at(editor: &mut Editor, action: &HoverAt, cx: &mut ViewContext<Editor>) {
     if let Some(point) = action.point {
         show_hover(editor, point, false, cx);
     } else {
@@ -57,12 +61,12 @@ pub fn hide_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
     // only notify the context once
     if editor.hover_state.popover.is_some() {
         editor.hover_state.popover = None;
-        editor.hover_state.hidden_at = Some(Instant::now());
-        editor.hover_state.symbol_range = None;
+        editor.hover_state.hidden_at = Some(cx.background().now());
         did_hide = true;
         cx.notify();
     }
     editor.hover_state.task = None;
+    editor.hover_state.symbol_range = None;
 
     editor.clear_background_highlights::<HoverState>(cx);
 
@@ -118,13 +122,13 @@ fn show_hover(
 
     // We should only delay if the hover popover isn't visible, it wasn't recently hidden, and
     // the hover wasn't triggered from the keyboard
-    let should_delay = editor.hover_state.popover.is_none() // Hover visible currently
+    let should_delay = editor.hover_state.popover.is_none() // Hover not visible currently
         && editor
             .hover_state
             .hidden_at
-            .map(|hidden| hidden.elapsed().as_millis() > 200)
-            .unwrap_or(true) // Hover was visible recently enough
-        && !ignore_timeout; // Hover triggered from keyboard
+            .map(|hidden| hidden.elapsed().as_millis() > HOVER_GRACE_MILLIS as u128)
+            .unwrap_or(true) // Hover wasn't recently visible
+        && !ignore_timeout; // Hover was not triggered from keyboard
 
     if should_delay {
         if let Some(range) = &editor.hover_state.symbol_range {
@@ -145,8 +149,18 @@ fn show_hover(
 
     let task = cx.spawn_weak(|this, mut cx| {
         async move {
+            // If we need to delay, delay a set amount initially before making the lsp request
             let delay = if should_delay {
-                Some(cx.background().timer(Duration::from_millis(500)))
+                // Construct delay task to wait for later
+                let total_delay = Some(
+                    cx.background()
+                        .timer(Duration::from_millis(HOVER_DELAY_MILLIS)),
+                );
+
+                cx.background()
+                    .timer(Duration::from_millis(HOVER_REQUEST_DELAY_MILLIS))
+                    .await;
+                total_delay
             } else {
                 None
             };
@@ -157,6 +171,8 @@ fn show_hover(
                     return None;
                 }
 
+                // Create symbol range of anchors for highlighting and filtering
+                // of future requests.
                 let range = if let Some(range) = hover_result.range {
                     let start = snapshot
                         .buffer_snapshot
@@ -189,7 +205,7 @@ fn show_hover(
 
             if let Some(this) = this.upgrade(&cx) {
                 this.update(&mut cx, |this, cx| {
-                    if this.hover_state.popover.is_some() || hover_popover.is_some() {
+                    if hover_popover.is_some() {
                         // Highlight the selected symbol using a background highlight
                         if let Some(range) = this.hover_state.symbol_range.clone() {
                             this.highlight_background::<HoverState>(
@@ -198,18 +214,16 @@ fn show_hover(
                                 cx,
                             );
                         }
-
                         this.hover_state.popover = hover_popover;
-
-                        if this.hover_state.popover.is_none() {
-                            this.hover_state.hidden_at = Some(Instant::now());
-                        }
-
                         cx.notify();
-                    }
-
-                    if this.hover_state.popover.is_none() {
-                        this.hover_state.symbol_range = None;
+                    } else {
+                        if this.hover_state.popover.is_some() {
+                            // Popover was visible, but now is hidden. Dismiss it
+                            hide_hover(this, cx);
+                        } else {
+                            // Clear selected symbol range for future requests
+                            this.hover_state.symbol_range = None;
+                        }
                     }
                 });
             }
@@ -229,7 +243,13 @@ pub struct HoverState {
     pub task: Option<Task<Option<()>>>,
 }
 
-#[derive(Clone)]
+impl HoverState {
+    pub fn visible(&self) -> bool {
+        self.popover.is_some()
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct HoverPopover {
     pub project: ModelHandle<Project>,
     pub anchor: Anchor,

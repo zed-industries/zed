@@ -6147,8 +6147,15 @@ pub fn styled_runs_for_code_label<'a>(
 
 #[cfg(test)]
 mod tests {
-    use crate::test::{
-        assert_text_with_selections, build_editor, select_ranges, EditorTestContext,
+    use crate::{
+        hover_popover::{
+            hover, hover_at, HoverAt, HOVER_DELAY_MILLIS, HOVER_GRACE_MILLIS,
+            HOVER_REQUEST_DELAY_MILLIS,
+        },
+        test::{
+            assert_text_with_selections, build_editor, select_ranges, EditorLspTestContext,
+            EditorTestContext,
+        },
     };
 
     use super::*;
@@ -6159,7 +6166,7 @@ mod tests {
     use indoc::indoc;
     use language::{FakeLspAdapter, LanguageConfig};
     use lsp::FakeLanguageServer;
-    use project::FakeFs;
+    use project::{FakeFs, HoverBlock};
     use settings::LanguageOverride;
     use smol::stream::StreamExt;
     use std::{cell::RefCell, rc::Rc, time::Instant};
@@ -9389,6 +9396,184 @@ mod tests {
             .next()
             .await;
         }
+    }
+
+    #[gpui::test]
+    async fn test_hover_popover(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        // Basic hover delays and then pops without moving the mouse
+        cx.set_state(indoc! {"
+            fn |test()
+                println!();"});
+        let hover_point = cx.display_point(indoc! {"
+            fn test()
+                print|ln!();"});
+        cx.update_editor(|editor, cx| {
+            hover_at(
+                editor,
+                &HoverAt {
+                    point: Some(hover_point),
+                },
+                cx,
+            )
+        });
+        assert!(!cx.editor(|editor, _| editor.hover_state.visible()));
+
+        // After delay, hover should be visible.
+        let symbol_range = cx.lsp_range(indoc! {"
+            fn test()
+                [println!]();"});
+        cx.handle_request::<lsp::request::HoverRequest, _>(move |_| {
+            Some(lsp::Hover {
+                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                    kind: lsp::MarkupKind::Markdown,
+                    value: indoc! {"
+                        # Some basic docs
+                        Some test documentation"}
+                    .to_string(),
+                }),
+                range: Some(symbol_range),
+            })
+        })
+        .await;
+        cx.foreground()
+            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+
+        cx.editor(|editor, _| {
+            assert!(editor.hover_state.visible());
+            assert_eq!(
+                editor.hover_state.popover.clone().unwrap().contents,
+                vec![
+                    HoverBlock {
+                        text: "Some basic docs".to_string(),
+                        language: None
+                    },
+                    HoverBlock {
+                        text: "Some test documentation".to_string(),
+                        language: None
+                    }
+                ]
+            )
+        });
+
+        // Mouse moved with no hover response dismisses
+        let hover_point = cx.display_point(indoc! {"
+            fn te|st()
+                println!();"});
+        cx.update_editor(|editor, cx| {
+            hover_at(
+                editor,
+                &HoverAt {
+                    point: Some(hover_point),
+                },
+                cx,
+            )
+        });
+        cx.handle_request::<lsp::request::HoverRequest, _>(move |_| None)
+            .await;
+        cx.foreground().run_until_parked();
+        cx.editor(|editor, _| {
+            assert!(!editor.hover_state.visible());
+        });
+        cx.foreground()
+            .advance_clock(Duration::from_millis(HOVER_GRACE_MILLIS + 100));
+
+        // Hover with keyboard has no delay
+        cx.set_state(indoc! {"
+            f|n test()
+                println!();"});
+        cx.update_editor(|editor, cx| hover(editor, &hover_popover::Hover, cx));
+        let symbol_range = cx.lsp_range(indoc! {"
+            [fn] test()
+                println!();"});
+        cx.handle_request::<lsp::request::HoverRequest, _>(move |_| {
+            Some(lsp::Hover {
+                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                    kind: lsp::MarkupKind::Markdown,
+                    value: indoc! {"
+                        # Some other basic docs
+                        Some other test documentation"}
+                    .to_string(),
+                }),
+                range: Some(symbol_range),
+            })
+        })
+        .await;
+        cx.foreground().run_until_parked();
+        cx.editor(|editor, _| {
+            assert!(editor.hover_state.visible());
+            assert_eq!(
+                editor.hover_state.popover.clone().unwrap().contents,
+                vec![
+                    HoverBlock {
+                        text: "Some other basic docs".to_string(),
+                        language: None
+                    },
+                    HoverBlock {
+                        text: "Some other test documentation".to_string(),
+                        language: None
+                    }
+                ]
+            )
+        });
+
+        // Open hover popover disables delay
+        let hover_point = cx.display_point(indoc! {"
+            fn test()
+                print|ln!();"});
+        cx.update_editor(|editor, cx| {
+            hover_at(
+                editor,
+                &HoverAt {
+                    point: Some(hover_point),
+                },
+                cx,
+            )
+        });
+
+        let symbol_range = cx.lsp_range(indoc! {"
+            fn test()
+                [println!]();"});
+        cx.handle_request::<lsp::request::HoverRequest, _>(move |_| {
+            Some(lsp::Hover {
+                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                    kind: lsp::MarkupKind::Markdown,
+                    value: indoc! {"
+                        # Some third basic docs
+                        Some third test documentation"}
+                    .to_string(),
+                }),
+                range: Some(symbol_range),
+            })
+        })
+        .await;
+        cx.foreground().run_until_parked();
+        // No delay as the popover is already visible
+
+        cx.editor(|editor, _| {
+            assert!(editor.hover_state.visible());
+            assert_eq!(
+                editor.hover_state.popover.clone().unwrap().contents,
+                vec![
+                    HoverBlock {
+                        text: "Some third basic docs".to_string(),
+                        language: None
+                    },
+                    HoverBlock {
+                        text: "Some third test documentation".to_string(),
+                        language: None
+                    }
+                ]
+            )
+        });
     }
 
     #[gpui::test]
