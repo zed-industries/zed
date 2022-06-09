@@ -5,12 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 
 // #[import]
-// fn command(string: &str) -> Option<String>;
-
-extern "C" {
-    #[no_mangle]
-    fn __command(ptr: *const u8, len: usize) -> *const ::plugin::__Buffer;
-}
+// fn my_command(string: &str) -> Option<String>;
 
 // #[no_mangle]
 // // TODO: switch len from usize to u32?
@@ -33,9 +28,13 @@ extern "C" {
 //     return new_buffer.leak_to_heap();
 // }
 
+extern "C" {
+    fn __command(ptr: *const u8, len: usize) -> *mut ::plugin::__Buffer;
+}
+
 #[no_mangle]
 fn command(string: &str) -> Option<String> {
-    println!("executing command: {}", string);
+    dbg!("executing command: {}", string);
     // serialize data
     let data = string;
     let data = ::plugin::bincode::serialize(&data).unwrap();
@@ -47,14 +46,15 @@ fn command(string: &str) -> Option<String> {
     // call extern function
     let result = unsafe { __command(ptr, len) };
     // get result
-    let result = todo!(); // convert into box
+    let new_buffer = unsafe { Box::from_raw(result) }; // convert into box
+    let new_data = unsafe { new_buffer.to_vec() };
 
     // deserialize data
-    let data: Option<String> = match ::plugin::bincode::deserialize(&data) {
+    let new_data: Option<String> = match ::plugin::bincode::deserialize(&new_data) {
         Ok(d) => d,
-        Err(e) => panic!("Data passed to function not deserializable."),
+        Err(e) => panic!("Data returned from function not deserializable."),
     };
-    return data;
+    return new_data;
 }
 
 // TODO: some sort of macro to generate ABI bindings
@@ -81,7 +81,6 @@ const BIN_PATH: &'static str =
 #[export]
 pub fn name() -> &'static str {
     // let number = unsafe { hello(27) };
-    // println!("got: {}", number);
     // let number = unsafe { bye(28) };
     // println!("got: {}", number);
     "vscode-json-languageserver"
