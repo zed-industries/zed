@@ -79,7 +79,7 @@ impl Tooltip {
                         })
                         .boxed(),
                 )
-                .align_to_fit(true)
+                .move_to_fit(true)
                 .with_abs_position(state.position.get())
                 .boxed(),
             )

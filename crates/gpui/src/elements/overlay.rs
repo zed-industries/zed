@@ -10,7 +10,7 @@ use crate::{
 pub struct Overlay {
     child: ElementBox,
     abs_position: Option<Vector2F>,
-    align_to_fit: bool,
+    move_to_fit: bool,
     hoverable: bool,
 }
 
@@ -19,7 +19,7 @@ impl Overlay {
         Self {
             child,
             abs_position: None,
-            align_to_fit: false,
+            move_to_fit: false,
             hoverable: false,
         }
     }
@@ -29,8 +29,8 @@ impl Overlay {
         self
     }
 
-    pub fn align_to_fit(mut self, align_to_fit: bool) -> Self {
-        self.align_to_fit = align_to_fit;
+    pub fn move_to_fit(mut self, align_to_fit: bool) -> Self {
+        self.move_to_fit = align_to_fit;
         self
     }
 
@@ -76,15 +76,17 @@ impl Element for Overlay {
             });
         }
 
-        if self.align_to_fit {
-            // Align overlay to the left if its bounds overflow the window width.
+        if self.move_to_fit {
+            // Snap the right edge of the overlay to the right edge of the window if
+            // its horizontal bounds overflow.
             if bounds.lower_right().x() > cx.window_size.x() {
-                bounds.set_origin_x(bounds.origin_x() - bounds.width());
+                bounds.set_origin_x((cx.window_size.x() - bounds.width()).max(0.));
             }
 
-            // Align overlay to the top if its bounds overflow the window height.
+            // Snap the bottom edge of the overlay to the bottom edge of the window if
+            // its vertical bounds overflow.
             if bounds.lower_right().y() > cx.window_size.y() {
-                bounds.set_origin_y(bounds.origin_y() - bounds.height());
+                bounds.set_origin_y((cx.window_size.y() - bounds.height()).max(0.));
             }
         }
 
