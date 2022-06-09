@@ -585,6 +585,10 @@ impl Project {
         root_paths: impl IntoIterator<Item = &Path>,
         cx: &mut gpui::TestAppContext,
     ) -> ModelHandle<Project> {
+        if !cx.read(|cx| cx.has_global::<Settings>()) {
+            cx.update(|cx| cx.set_global(Settings::test(cx)));
+        }
+
         let languages = Arc::new(LanguageRegistry::test());
         let http_client = client::test::FakeHttpClient::with_404_response();
         let client = client::Client::new(http_client.clone());
@@ -5751,7 +5755,7 @@ mod tests {
     use super::{Event, *};
     use fs::RealFs;
     use futures::{future, StreamExt};
-    use gpui::test::subscribe;
+    use gpui::{executor::Deterministic, test::subscribe};
     use language::{
         tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
         OffsetRangeExt, Point, ToPoint,
@@ -6501,6 +6505,130 @@ mod tests {
                 [0; 0]
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_toggling_enable_language_server(
+        deterministic: Arc<Deterministic>,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        deterministic.forbid_parking();
+
+        let mut rust = Language::new(
+            LanguageConfig {
+                name: Arc::from("Rust"),
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            None,
+        );
+        let mut fake_rust_servers = rust.set_fake_lsp_adapter(FakeLspAdapter {
+            name: "rust-lsp",
+            ..Default::default()
+        });
+        let mut js = Language::new(
+            LanguageConfig {
+                name: Arc::from("JavaScript"),
+                path_suffixes: vec!["js".to_string()],
+                ..Default::default()
+            },
+            None,
+        );
+        let mut fake_js_servers = js.set_fake_lsp_adapter(FakeLspAdapter {
+            name: "js-lsp",
+            ..Default::default()
+        });
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree("/dir", json!({ "a.rs": "", "b.js": "" }))
+            .await;
+
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        project.update(cx, |project, _| {
+            project.languages.add(Arc::new(rust));
+            project.languages.add(Arc::new(js));
+        });
+
+        let _rs_buffer = project
+            .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+            .await
+            .unwrap();
+        let _js_buffer = project
+            .update(cx, |project, cx| project.open_local_buffer("/dir/b.js", cx))
+            .await
+            .unwrap();
+
+        let mut fake_rust_server_1 = fake_rust_servers.next().await.unwrap();
+        assert_eq!(
+            fake_rust_server_1
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document
+                .uri
+                .as_str(),
+            "file:///dir/a.rs"
+        );
+
+        let mut fake_js_server = fake_js_servers.next().await.unwrap();
+        assert_eq!(
+            fake_js_server
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document
+                .uri
+                .as_str(),
+            "file:///dir/b.js"
+        );
+
+        // Disable Rust language server, ensuring only that server gets stopped.
+        cx.update(|cx| {
+            cx.update_global(|settings: &mut Settings, _| {
+                settings.language_overrides.insert(
+                    Arc::from("Rust"),
+                    settings::LanguageOverride {
+                        enable_language_server: Some(false),
+                        ..Default::default()
+                    },
+                );
+            })
+        });
+        fake_rust_server_1
+            .receive_notification::<lsp::notification::Exit>()
+            .await;
+
+        // Enable Rust and disable JavaScript language servers, ensuring that the
+        // former gets started again and that the latter stops.
+        cx.update(|cx| {
+            cx.update_global(|settings: &mut Settings, _| {
+                settings.language_overrides.insert(
+                    Arc::from("Rust"),
+                    settings::LanguageOverride {
+                        enable_language_server: Some(true),
+                        ..Default::default()
+                    },
+                );
+                settings.language_overrides.insert(
+                    Arc::from("JavaScript"),
+                    settings::LanguageOverride {
+                        enable_language_server: Some(false),
+                        ..Default::default()
+                    },
+                );
+            })
+        });
+        let mut fake_rust_server_2 = fake_rust_servers.next().await.unwrap();
+        assert_eq!(
+            fake_rust_server_2
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document
+                .uri
+                .as_str(),
+            "file:///dir/a.rs"
+        );
+        fake_js_server
+            .receive_notification::<lsp::notification::Exit>()
+            .await;
     }
 
     #[gpui::test]
