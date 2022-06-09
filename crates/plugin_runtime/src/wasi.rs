@@ -6,7 +6,10 @@ use anyhow::{anyhow, Error};
 use serde::{de::DeserializeOwned, Serialize};
 
 use wasi_common::{dir, file};
-use wasmtime::{Caller, Config, Engine, Instance, Linker, Module, Store, TypedFunc};
+use wasmtime::{
+    AsContext, AsContextMut, Caller, Config, Engine, Extern, Instance, Linker, Module, Store,
+    StoreContext, StoreContextMut, Trap, TypedFunc,
+};
 use wasmtime::{IntoFunc, Memory};
 use wasmtime_wasi::{Dir, WasiCtx, WasiCtxBuilder};
 
@@ -35,15 +38,6 @@ impl<A: Serialize, R: DeserializeOwned> Clone for WasiFn<A, R> {
 //     }
 // }
 
-pub struct Wasi {
-    engine: Engine,
-    module: Module,
-    store: Store<WasiCtx>,
-    instance: Instance,
-    alloc_buffer: TypedFunc<u32, u32>,
-    // free_buffer: TypedFunc<(u32, u32), ()>,
-}
-
 // type signature derived from:
 // https://docs.rs/wasmtime/latest/wasmtime/struct.Linker.html#method.func_wrap2_async
 // macro_rules! dynHostFunction {
@@ -68,14 +62,10 @@ pub struct Wasi {
 //     };
 // }
 
-// This type signature goodness gracious
-pub type HostFunction = Box<dyn IntoFunc<WasiCtx, (u32, u32), u32>>;
-
 pub struct WasiPluginBuilder {
-    // host_functions: HashMap<String, Box<dyn Fn(&str, &mut Linker<WasiCtx>) -> Result<(), Error>>>,
     wasi_ctx: WasiCtx,
     engine: Engine,
-    linker: Linker<WasiCtx>,
+    linker: Linker<WasiCtxAlloc>,
 }
 
 impl WasiPluginBuilder {
@@ -101,7 +91,7 @@ impl WasiPluginBuilder {
         Self::new(wasi_ctx)
     }
 
-    pub fn host_function<A: Serialize, R: DeserializeOwned>(
+    pub fn host_function<A: DeserializeOwned, R: Serialize>(
         mut self,
         name: &str,
         function: impl Fn(A) -> R + Send + Sync + 'static,
@@ -109,10 +99,23 @@ impl WasiPluginBuilder {
         self.linker.func_wrap(
             "env",
             name,
-            move |ctx: Caller<'_, WasiCtx>, ptr: u32, len: u32| {
-                // TODO: insert serialization code
-                function(todo!());
-                7u32
+            move |mut caller: Caller<'_, WasiCtxAlloc>, ptr: u32, len: u32| {
+                let mut plugin_memory = match caller.get_export("memory") {
+                    Some(Extern::Memory(mem)) => mem,
+                    _ => return Err(Trap::new("Could not grab slice of plugin memory")),
+                };
+                let args = Wasi::deserialize_from_buffer(&mut plugin_memory, &caller, ptr, len)?;
+
+                let result = function(args);
+                let buffer = Wasi::serialize_to_buffer(
+                    caller.data().alloc_buffer(),
+                    &mut plugin_memory,
+                    &mut caller,
+                    result,
+                )
+                .await;
+
+                Ok(7u32)
             },
         )?;
         Ok(self)
@@ -123,14 +126,50 @@ impl WasiPluginBuilder {
     }
 }
 
-// TODO: remove
-/// Represents a to-be-initialized plugin.
-/// Please use [`WasiPluginBuilder`], don't use this directly.
-pub struct WasiPlugin {
-    pub module: Vec<u8>,
-    pub wasi_ctx: WasiCtx,
-    pub host_functions:
-        HashMap<String, Box<dyn Fn(&str, &mut Linker<WasiCtx>) -> Result<(), Error>>>,
+// // TODO: remove
+// /// Represents a to-be-initialized plugin.
+// /// Please use [`WasiPluginBuilder`], don't use this directly.
+// pub struct WasiPlugin {
+//     pub module: Vec<u8>,
+//     pub wasi_ctx: WasiCtx,
+//     pub host_functions:
+//         HashMap<String, Box<dyn Fn(&str, &mut Linker<WasiCtx>) -> Result<(), Error>>>,
+// }
+
+#[derive(Copy, Clone)]
+struct WasiAlloc {
+    alloc_buffer: TypedFunc<u32, u32>,
+    free_buffer: TypedFunc<u32, u32>,
+}
+
+struct WasiCtxAlloc {
+    wasi_ctx: WasiCtx,
+    alloc: Option<WasiAlloc>,
+}
+
+impl WasiCtxAlloc {
+    fn alloc_buffer(&self) -> TypedFunc<u32, u32> {
+        self.alloc
+            .expect("allocator has been not initialized, cannot allocate buffer!")
+            .alloc_buffer
+    }
+
+    fn free_buffer(&self) -> TypedFunc<u32, u32> {
+        self.alloc
+            .expect("allocator has been not initialized, cannot free buffer!")
+            .free_buffer
+    }
+
+    fn init_alloc(&mut self, alloc: WasiAlloc) {
+        self.alloc = Some(alloc)
+    }
+}
+
+pub struct Wasi {
+    engine: Engine,
+    module: Module,
+    store: Store<WasiCtxAlloc>,
+    instance: Instance,
 }
 
 impl Wasi {
@@ -154,30 +193,40 @@ impl Wasi {
 
 impl Wasi {
     async fn init(module: Vec<u8>, plugin: WasiPluginBuilder) -> Result<Self, Error> {
+        // initialize the WebAssembly System Interface context
         let engine = plugin.engine;
         let mut linker = plugin.linker;
+        wasmtime_wasi::add_to_linker(&mut linker, |s| &mut s.wasi_ctx)?;
 
-        linker.func_wrap("env", "__hello", |x: u32| x * 2).unwrap();
-        linker.func_wrap("env", "__bye", |x: u32| x / 2).unwrap();
-
-        wasmtime_wasi::add_to_linker(&mut linker, |s| s)?;
-
-        let mut store: Store<_> = Store::new(&engine, plugin.wasi_ctx);
+        // create a store, note that we can't initialize the allocator,
+        // because we can't grab the functions until initialized.
+        let mut store: Store<WasiCtxAlloc> = Store::new(
+            &engine,
+            WasiCtxAlloc {
+                wasi_ctx: plugin.wasi_ctx,
+                alloc: None,
+            },
+        );
         let module = Module::new(&engine, module)?;
 
+        // load the provided module into the asynchronous runtime
         linker.module_async(&mut store, "", &module).await?;
         let instance = linker.instantiate_async(&mut store, &module).await?;
 
+        // now that the module is initialized,
+        // we can initialize the store's allocator
         let alloc_buffer = instance.get_typed_func(&mut store, "__alloc_buffer")?;
-        // let free_buffer = instance.get_typed_func(&mut store, "__free_buffer")?;
+        let free_buffer = instance.get_typed_func(&mut store, "__free_buffer")?;
+        store.data_mut().init_alloc(WasiAlloc {
+            alloc_buffer,
+            free_buffer,
+        });
 
         Ok(Wasi {
             engine,
             module,
             store,
             instance,
-            alloc_buffer,
-            // free_buffer,
         })
     }
 
@@ -194,13 +243,14 @@ impl Wasi {
         let dir = Box::new(wasmtime_wasi::dir::Dir::from_cap_std(dir));
 
         // grab an empty file descriptor, specify capabilities
-        let fd = ctx.table().push(Box::new(()))?;
+        let fd = ctx.wasi_ctx.table().push(Box::new(()))?;
         let caps = dir::DirCaps::all();
         let file_caps = file::FileCaps::all();
 
         // insert the directory at the given fd,
         // return a handle to the resource
-        ctx.insert_dir(fd, dir, caps, file_caps, path.as_ref().to_path_buf());
+        ctx.wasi_ctx
+            .insert_dir(fd, dir, caps, file_caps, path.as_ref().to_path_buf());
         Ok(WasiResource(fd))
     }
 
@@ -208,6 +258,7 @@ impl Wasi {
     pub fn remove_resource(&mut self, resource: WasiResource) -> Result<(), Error> {
         self.store
             .data_mut()
+            .wasi_ctx
             .table()
             .delete(resource.0)
             .ok_or_else(|| anyhow!("Resource did not exist, but a valid handle was passed in"))?;
@@ -269,11 +320,11 @@ impl Wasi {
 
     /// Takes an item, allocates a buffer, serializes the argument to that buffer,
     /// and returns a (ptr, len) pair to that buffer.
-    async fn serialize_to_buffer<T: Serialize>(
+    async fn serialize_to_buffer<A: Serialize>(
         alloc_buffer: TypedFunc<u32, u32>,
         plugin_memory: &mut Memory,
-        mut store: &mut Store<WasiCtx>,
-        item: T,
+        mut store: impl AsContextMut<Data = WasiCtxAlloc>,
+        item: A,
     ) -> Result<(u32, u32), Error> {
         // serialize the argument using bincode
         let item = bincode::serialize(&item)?;
@@ -288,7 +339,7 @@ impl Wasi {
     /// Takes `ptr to a `(ptr, len)` pair, and returns `(ptr, len)`.
     fn deref_buffer(
         plugin_memory: &mut Memory,
-        store: &mut Store<WasiCtx>,
+        store: impl AsContext<Data = WasiCtxAlloc>,
         buffer: u32,
     ) -> Result<(u32, u32), Error> {
         // create a buffer to read the (ptr, length) pair into
@@ -308,7 +359,7 @@ impl Wasi {
     /// Takes a `(ptr, len)` pair and returns the corresponding deserialized buffer.
     fn deserialize_from_buffer<R: DeserializeOwned>(
         plugin_memory: &mut Memory,
-        store: &mut Store<WasiCtx>,
+        store: impl AsContext<Data = WasiCtxAlloc>,
         buffer_ptr: u32,
         buffer_len: u32,
     ) -> Result<R, Error> {
@@ -318,10 +369,10 @@ impl Wasi {
 
         // read the buffer at this point into a byte array
         // deserialize the byte array into the provided serde type
-        let result = &plugin_memory.data(store)[buffer_ptr..buffer_end];
+        let result = &plugin_memory.data(store.as_context())[buffer_ptr..buffer_end];
         let result = bincode::deserialize(result)?;
 
-        // TODO: this is handled wasm-side, but I'd like to double-check
+        // TODO: this is handled wasm-side
         // // deallocate the argument buffer
         // self.free_buffer.call(&mut self.store, arg_buffer);
 
@@ -358,9 +409,13 @@ impl Wasi {
 
         // write the argument to linear memory
         // this returns a (ptr, lentgh) pair
-        let arg_buffer =
-            Self::serialize_to_buffer(self.alloc_buffer, &mut plugin_memory, &mut self.store, arg)
-                .await?;
+        let arg_buffer = Self::serialize_to_buffer(
+            self.store.data().alloc_buffer(),
+            &mut plugin_memory,
+            &mut self.store,
+            arg,
+        )
+        .await?;
 
         // call the function, passing in the buffer and its length
         // this returns a ptr to a (ptr, lentgh) pair

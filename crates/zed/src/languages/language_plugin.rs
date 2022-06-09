@@ -1,16 +1,12 @@
-use super::installation::{npm_install_packages, npm_package_latest_version};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use client::http::HttpClient;
 use futures::lock::Mutex;
-use futures::{future::BoxFuture, FutureExt, StreamExt};
-use gpui::executor::{self, Background};
-use isahc::http::version;
+use futures::{future::BoxFuture, FutureExt};
+use gpui::executor::Background;
 use language::{LanguageServerName, LspAdapter};
-use plugin_runtime::{Wasi, WasiFn, WasiPlugin, WasiPluginBuilder};
-use serde_json::json;
-use std::fs;
+use plugin_runtime::{Wasi, WasiFn, WasiPluginBuilder};
 use std::{any::Any, path::PathBuf, sync::Arc};
-use util::{ResultExt, TryFutureExt};
+use util::ResultExt;
 
 pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
     let plugin = WasiPluginBuilder::new_with_default_ctx()?
