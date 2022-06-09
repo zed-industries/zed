@@ -243,6 +243,65 @@ impl super::LspAdapter for GoLspAdapter {
         }
         None
     }
+
+    fn label_for_symbol(
+        &self,
+        name: &str,
+        kind: lsp::SymbolKind,
+        language: &Language,
+    ) -> Option<CodeLabel> {
+        let (text, filter_range, display_range) = match kind {
+            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
+                let text = format!("func {} () {{}}", name);
+                let filter_range = 5..5 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::STRUCT => {
+                let text = format!("type {} struct {{}}", name);
+                let filter_range = 5..5 + name.len();
+                let display_range = 0..text.len();
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::INTERFACE => {
+                let text = format!("type {} interface {{}}", name);
+                let filter_range = 5..5 + name.len();
+                let display_range = 0..text.len();
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::CLASS => {
+                let text = format!("type {} T", name);
+                let filter_range = 5..5 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::CONSTANT => {
+                let text = format!("const {} = nil", name);
+                let filter_range = 6..6 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::VARIABLE => {
+                let text = format!("var {} = nil", name);
+                let filter_range = 4..4 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::MODULE => {
+                let text = format!("package {}", name);
+                let filter_range = 8..8 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            _ => return None,
+        };
+
+        Some(CodeLabel {
+            runs: language.highlight_text(&text.as_str().into(), display_range.clone()),
+            text: text[display_range].to_string(),
+            filter_range,
+        })
+    }
 }
 
 fn adjust_runs(
