@@ -2002,15 +2002,15 @@ impl BufferSnapshot {
 pub fn indent_size_for_line(text: &text::BufferSnapshot, row: u32) -> IndentSize {
     let mut result = IndentSize::spaces(0);
     for c in text.chars_at(Point::new(row, 0)) {
-        match (c, &result.kind) {
-            (' ', IndentKind::Space) | ('\t', IndentKind::Tab) => result.len += 1,
-            ('\t', IndentKind::Space) => {
-                if result.len == 0 {
-                    result = IndentSize::tab();
-                }
-            }
+        let kind = match c {
+            ' ' => IndentKind::Space,
+            '\t' => IndentKind::Tab,
             _ => break,
+        };
+        if result.len == 0 {
+            result.kind = kind;
         }
+        result.len += 1;
     }
     result
 }

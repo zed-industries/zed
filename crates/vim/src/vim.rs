@@ -202,7 +202,7 @@ mod test {
         cx.enable_vim();
         assert_eq!(cx.mode(), Mode::Normal);
         cx.simulate_keystrokes(["h", "h", "h", "l"]);
-        assert_eq!(cx.editor_text(), "hjkl".to_owned());
+        assert_eq!(cx.buffer_text(), "hjkl".to_owned());
         cx.assert_editor_state("h|jkl");
         cx.simulate_keystrokes(["i", "T", "e", "s", "t"]);
         cx.assert_editor_state("hTest|jkl");

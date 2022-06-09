@@ -3126,21 +3126,27 @@ impl Editor {
                     for selection in &mut selections {
                         let language_name =
                             buffer.language_at(selection.start, cx).map(|l| l.name());
-                        let tab_size = cx.global::<Settings>().tab_size(language_name.as_deref());
-                        let char_column = buffer
-                            .read(cx)
-                            .text_for_range(Point::new(selection.start.row, 0)..selection.start)
-                            .flat_map(str::chars)
-                            .count();
-                        let chars_to_next_tab_stop = tab_size - (char_column as u32 % tab_size);
+                        let settings = cx.global::<Settings>();
+                        let tab_size = if settings.hard_tabs(language_name.as_deref()) {
+                            IndentSize::tab()
+                        } else {
+                            let tab_size = settings.tab_size(language_name.as_deref());
+                            let char_column = buffer
+                                .read(cx)
+                                .text_for_range(Point::new(selection.start.row, 0)..selection.start)
+                                .flat_map(str::chars)
+                                .count();
+                            let chars_to_next_tab_stop = tab_size - (char_column as u32 % tab_size);
+                            IndentSize::spaces(chars_to_next_tab_stop)
+                        };
                         buffer.edit(
                             [(
                                 selection.start..selection.start,
-                                " ".repeat(chars_to_next_tab_stop as usize),
+                                tab_size.chars().collect::<String>(),
                             )],
                             cx,
                         );
-                        selection.start.column += chars_to_next_tab_stop;
+                        selection.start.column += tab_size.len;
                         selection.end = selection.start;
                     }
                 });
@@ -3161,7 +3167,14 @@ impl Editor {
                 let snapshot = buffer.snapshot(cx);
                 for selection in &mut selections {
                     let language_name = buffer.language_at(selection.start, cx).map(|l| l.name());
-                    let tab_size = cx.global::<Settings>().tab_size(language_name.as_deref());
+                    let settings = &cx.global::<Settings>();
+                    let tab_size = settings.tab_size(language_name.as_deref());
+                    let indent_kind = if settings.hard_tabs(language_name.as_deref()) {
+                        IndentKind::Tab
+                    } else {
+                        IndentKind::Space
+                    };
+
                     let mut start_row = selection.start.row;
                     let mut end_row = selection.end.row + 1;
 
@@ -3186,14 +3199,16 @@ impl Editor {
 
                     for row in start_row..end_row {
                         let current_indent = snapshot.indent_size_for_line(row);
-                        let indent_delta = match current_indent.kind {
-                            IndentKind::Space => {
+                        let indent_delta = match (current_indent.kind, indent_kind) {
+                            (IndentKind::Space, IndentKind::Space) => {
                                 let columns_to_next_tab_stop =
                                     tab_size - (current_indent.len % tab_size);
                                 IndentSize::spaces(columns_to_next_tab_stop)
                             }
-                            IndentKind::Tab => IndentSize::tab(),
+                            (IndentKind::Tab, IndentKind::Space) => IndentSize::spaces(tab_size),
+                            (_, IndentKind::Tab) => IndentSize::tab(),
                         };
+
                         let row_start = Point::new(row, 0);
                         buffer.edit(
                             [(
@@ -7694,6 +7709,88 @@ mod tests {
             one two
             |three
              four"});
+    }
+
+    #[gpui::test]
+    async fn test_indent_outdent_with_hard_tabs(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update(|cx| {
+            cx.update_global::<Settings, _, _>(|settings, _| {
+                settings.hard_tabs = true;
+            });
+        });
+
+        // select two ranges on one line
+        cx.set_state(indoc! {"
+            [one} [two}
+            three
+            four"});
+        cx.update_editor(|e, cx| e.tab(&Tab, cx));
+        cx.assert_editor_state(indoc! {"
+            \t[one} [two}
+            three
+            four"});
+        cx.update_editor(|e, cx| e.tab(&Tab, cx));
+        cx.assert_editor_state(indoc! {"
+            \t\t[one} [two}
+            three
+            four"});
+        cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
+        cx.assert_editor_state(indoc! {"
+            \t[one} [two}
+            three
+            four"});
+        cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
+        cx.assert_editor_state(indoc! {"
+            [one} [two}
+            three
+            four"});
+
+        // select across a line ending
+        cx.set_state(indoc! {"
+            one two
+            t[hree
+            }four"});
+        cx.update_editor(|e, cx| e.tab(&Tab, cx));
+        cx.assert_editor_state(indoc! {"
+            one two
+            \tt[hree
+            }four"});
+        cx.update_editor(|e, cx| e.tab(&Tab, cx));
+        cx.assert_editor_state(indoc! {"
+            one two
+            \t\tt[hree
+            }four"});
+        cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
+        cx.assert_editor_state(indoc! {"
+            one two
+            \tt[hree
+            }four"});
+        cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
+        cx.assert_editor_state(indoc! {"
+            one two
+            t[hree
+            }four"});
+
+        // Ensure that indenting/outdenting works when the cursor is at column 0.
+        cx.set_state(indoc! {"
+            one two
+            |three
+            four"});
+        cx.assert_editor_state(indoc! {"
+            one two
+            |three
+            four"});
+        cx.update_editor(|e, cx| e.tab(&Tab, cx));
+        cx.assert_editor_state(indoc! {"
+            one two
+            \t|three
+            four"});
+        cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
+        cx.assert_editor_state(indoc! {"
+            one two
+            |three
+            four"});
     }
 
     #[gpui::test]
