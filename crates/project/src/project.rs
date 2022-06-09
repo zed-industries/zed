@@ -2130,10 +2130,15 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<()> {
         let key = (worktree_id, adapter_name);
-        self.language_servers.remove(&key);
-        if let Some(language_server) = self.started_language_servers.remove(&key) {
+        if let Some((_, language_server)) = self.language_servers.remove(&key) {
+            self.language_server_statuses
+                .remove(&language_server.server_id());
+            cx.notify();
+        }
+
+        if let Some(started_language_server) = self.started_language_servers.remove(&key) {
             cx.spawn_weak(|this, mut cx| async move {
-                if let Some(language_server) = language_server.await {
+                if let Some(language_server) = started_language_server.await {
                     if let Some(shutdown) = language_server.shutdown() {
                         shutdown.await;
                     }
