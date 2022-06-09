@@ -571,19 +571,76 @@ fn test_range_for_syntax_ancestor(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_edit_with_autoindent(cx: &mut MutableAppContext) {
+fn test_autoindent_with_soft_tabs(cx: &mut MutableAppContext) {
     cx.add_model(|cx| {
         let text = "fn a() {}";
         let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
 
-        buffer.edit_with_autoindent([(8..8, "\n\n")], 4, cx);
+        buffer.edit_with_autoindent([(8..8, "\n\n")], IndentSize::spaces(4), cx);
         assert_eq!(buffer.text(), "fn a() {\n    \n}");
 
-        buffer.edit_with_autoindent([(Point::new(1, 4)..Point::new(1, 4), "b()\n")], 4, cx);
+        buffer.edit_with_autoindent(
+            [(Point::new(1, 4)..Point::new(1, 4), "b()\n")],
+            IndentSize::spaces(4),
+            cx,
+        );
         assert_eq!(buffer.text(), "fn a() {\n    b()\n    \n}");
 
-        buffer.edit_with_autoindent([(Point::new(2, 4)..Point::new(2, 4), ".c")], 4, cx);
+        // Create a field expression on a new line, causing that line
+        // to be indented.
+        buffer.edit_with_autoindent(
+            [(Point::new(2, 4)..Point::new(2, 4), ".c")],
+            IndentSize::spaces(4),
+            cx,
+        );
         assert_eq!(buffer.text(), "fn a() {\n    b()\n        .c\n}");
+
+        // Remove the dot so that the line is no longer a field expression,
+        // causing the line to be outdented.
+        buffer.edit_with_autoindent(
+            [(Point::new(2, 8)..Point::new(2, 9), "")],
+            IndentSize::spaces(4),
+            cx,
+        );
+        assert_eq!(buffer.text(), "fn a() {\n    b()\n    c\n}");
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_autoindent_with_hard_tabs(cx: &mut MutableAppContext) {
+    cx.add_model(|cx| {
+        let text = "fn a() {}";
+        let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
+
+        buffer.edit_with_autoindent([(8..8, "\n\n")], IndentSize::tab(), cx);
+        assert_eq!(buffer.text(), "fn a() {\n\t\n}");
+
+        buffer.edit_with_autoindent(
+            [(Point::new(1, 1)..Point::new(1, 1), "b()\n")],
+            IndentSize::tab(),
+            cx,
+        );
+        assert_eq!(buffer.text(), "fn a() {\n\tb()\n\t\n}");
+
+        // Create a field expression on a new line, causing that line
+        // to be indented.
+        buffer.edit_with_autoindent(
+            [(Point::new(2, 1)..Point::new(2, 1), ".c")],
+            IndentSize::tab(),
+            cx,
+        );
+        assert_eq!(buffer.text(), "fn a() {\n\tb()\n\t\t.c\n}");
+
+        // Remove the dot so that the line is no longer a field expression,
+        // causing the line to be outdented.
+        buffer.edit_with_autoindent(
+            [(Point::new(2, 2)..Point::new(2, 3), "")],
+            IndentSize::tab(),
+            cx,
+        );
+        assert_eq!(buffer.text(), "fn a() {\n\tb()\n\tc\n}");
 
         buffer
     });
@@ -609,7 +666,7 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
                 (empty(Point::new(1, 1)), "()"),
                 (empty(Point::new(2, 1)), "()"),
             ],
-            4,
+            IndentSize::spaces(4),
             cx,
         );
         assert_eq!(
@@ -630,7 +687,7 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
                 (empty(Point::new(1, 1)), "\n.f\n.g"),
                 (empty(Point::new(2, 1)), "\n.f\n.g"),
             ],
-            4,
+            IndentSize::spaces(4),
             cx,
         );
         assert_eq!(
@@ -653,13 +710,21 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
     cx.add_model(|cx| {
         let text = "fn a() {\n    {\n        b()?\n    }\n\n    Ok(())\n}";
         let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
-        buffer.edit_with_autoindent([(Point::new(3, 4)..Point::new(3, 5), "")], 4, cx);
+        buffer.edit_with_autoindent(
+            [(Point::new(3, 4)..Point::new(3, 5), "")],
+            IndentSize::spaces(4),
+            cx,
+        );
         assert_eq!(
             buffer.text(),
             "fn a() {\n    {\n        b()?\n            \n\n    Ok(())\n}"
         );
 
-        buffer.edit_with_autoindent([(Point::new(3, 0)..Point::new(3, 12), "")], 4, cx);
+        buffer.edit_with_autoindent(
+            [(Point::new(3, 0)..Point::new(3, 12), "")],
+            IndentSize::spaces(4),
+            cx,
+        );
         assert_eq!(
             buffer.text(),
             "fn a() {\n    {\n        b()?\n\n\n    Ok(())\n}"
@@ -678,7 +743,7 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
 
         let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
 
-        buffer.edit_with_autoindent([(5..5, "\nb")], 4, cx);
+        buffer.edit_with_autoindent([(5..5, "\nb")], IndentSize::spaces(4), cx);
         assert_eq!(
             buffer.text(),
             "
@@ -690,7 +755,11 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
 
         // The indentation suggestion changed because `@end` node (a close paren)
         // is now at the beginning of the line.
-        buffer.edit_with_autoindent([(Point::new(1, 4)..Point::new(1, 5), "")], 4, cx);
+        buffer.edit_with_autoindent(
+            [(Point::new(1, 4)..Point::new(1, 5), "")],
+            IndentSize::spaces(4),
+            cx,
+        );
         assert_eq!(
             buffer.text(),
             "
@@ -709,7 +778,7 @@ fn test_autoindent_with_edit_at_end_of_buffer(cx: &mut MutableAppContext) {
     cx.add_model(|cx| {
         let text = "a\nb";
         let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
-        buffer.edit_with_autoindent([(0..1, "\n"), (2..3, "\n")], 4, cx);
+        buffer.edit_with_autoindent([(0..1, "\n"), (2..3, "\n")], IndentSize::spaces(4), cx);
         assert_eq!(buffer.text(), "\n\n\n");
         buffer
     });

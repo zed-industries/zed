@@ -1990,6 +1990,20 @@ impl Project {
                         })
                         .detach();
 
+                    // Even though we don't have handling for these requests, respond to them to
+                    // avoid stalling any language server like `gopls` which waits for a response
+                    // to these requests when initializing.
+                    language_server
+                        .on_request::<lsp::request::WorkDoneProgressCreate, _, _>(|_, _| async {
+                            Ok(())
+                        })
+                        .detach();
+                    language_server
+                        .on_request::<lsp::request::RegisterCapability, _, _>(|_, _| async {
+                            Ok(())
+                        })
+                        .detach();
+
                     language_server
                         .on_request::<lsp::request::ApplyWorkspaceEdit, _, _>({
                             let this = this.downgrade();
@@ -2247,7 +2261,7 @@ impl Project {
                 return;
             };
         match progress {
-            lsp::WorkDoneProgress::Begin(_) => {
+            lsp::WorkDoneProgress::Begin(report) => {
                 if Some(token.as_str()) == disk_based_diagnostics_progress_token {
                     language_server_status.pending_diagnostic_updates += 1;
                     if language_server_status.pending_diagnostic_updates == 1 {
@@ -2260,11 +2274,22 @@ impl Project {
                         );
                     }
                 } else {
-                    self.on_lsp_work_start(server_id, token.clone(), cx);
+                    self.on_lsp_work_start(
+                        server_id,
+                        token.clone(),
+                        LanguageServerProgress {
+                            message: report.message.clone(),
+                            percentage: report.percentage.map(|p| p as usize),
+                            last_update_at: Instant::now(),
+                        },
+                        cx,
+                    );
                     self.broadcast_language_server_update(
                         server_id,
                         proto::update_language_server::Variant::WorkStart(proto::LspWorkStart {
                             token,
+                            message: report.message,
+                            percentage: report.percentage.map(|p| p as u32),
                         }),
                     );
                 }
@@ -2322,17 +2347,11 @@ impl Project {
         &mut self,
         language_server_id: usize,
         token: String,
+        progress: LanguageServerProgress,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
-            status.pending_work.insert(
-                token,
-                LanguageServerProgress {
-                    message: None,
-                    percentage: None,
-                    last_update_at: Instant::now(),
-                },
-            );
+            status.pending_work.insert(token, progress);
             cx.notify();
         }
     }
@@ -2345,7 +2364,21 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
-            status.pending_work.insert(token, progress);
+            let entry = status
+                .pending_work
+                .entry(token)
+                .or_insert(LanguageServerProgress {
+                    message: Default::default(),
+                    percentage: Default::default(),
+                    last_update_at: progress.last_update_at,
+                });
+            if progress.message.is_some() {
+                entry.message = progress.message;
+            }
+            if progress.percentage.is_some() {
+                entry.percentage = progress.percentage;
+            }
+            entry.last_update_at = progress.last_update_at;
             cx.notify();
         }
     }
@@ -3109,6 +3142,16 @@ impl Project {
                     Ok(completions
                         .into_iter()
                         .filter_map(|lsp_completion| {
+                            // For now, we can only handle additional edits if they are returned
+                            // when resolving the completion, not if they are present initially.
+                            if lsp_completion
+                                .additional_text_edits
+                                .as_ref()
+                                .map_or(false, |edits| !edits.is_empty())
+                            {
+                                return None;
+                            }
+
                             let (old_range, new_text) = match lsp_completion.text_edit.as_ref() {
                                 // If the language server provides a range to overwrite, then
                                 // check that the range is valid.
@@ -4560,7 +4603,16 @@ impl Project {
         {
             proto::update_language_server::Variant::WorkStart(payload) => {
                 this.update(&mut cx, |this, cx| {
-                    this.on_lsp_work_start(language_server_id, payload.token, cx);
+                    this.on_lsp_work_start(
+                        language_server_id,
+                        payload.token,
+                        LanguageServerProgress {
+                            message: payload.message,
+                            percentage: payload.percentage.map(|p| p as usize),
+                            last_update_at: Instant::now(),
+                        },
+                        cx,
+                    );
                 })
             }
             proto::update_language_server::Variant::WorkProgress(payload) => {

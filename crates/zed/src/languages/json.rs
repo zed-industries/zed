@@ -5,7 +5,11 @@ use language::{LanguageServerName, LspAdapter};
 use serde::Deserialize;
 use serde_json::json;
 use smol::fs;
-use std::{any::Any, path::PathBuf, sync::Arc};
+use std::{
+    any::Any,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::{ResultExt, TryFutureExt};
 
 pub struct JsonLspAdapter;
@@ -56,7 +60,7 @@ impl LspAdapter for JsonLspAdapter {
         &self,
         version: Box<dyn 'static + Send + Any>,
         _: Arc<dyn HttpClient>,
-        container_dir: PathBuf,
+        container_dir: Arc<Path>,
     ) -> BoxFuture<'static, Result<PathBuf>> {
         let version = version.downcast::<String>().unwrap();
         async move {
@@ -95,7 +99,10 @@ impl LspAdapter for JsonLspAdapter {
         .boxed()
     }
 
-    fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>> {
+    fn cached_server_binary(
+        &self,
+        container_dir: Arc<Path>,
+    ) -> BoxFuture<'static, Option<PathBuf>> {
         async move {
             let mut last_version_dir = None;
             let mut entries = fs::read_dir(&container_dir).await?;

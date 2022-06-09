@@ -95,6 +95,14 @@ fn main() {
             },
         )
         .with_overrides(
+            "Go",
+            settings::LanguageOverride {
+                tab_size: Some(4),
+                hard_tabs: Some(true),
+                ..Default::default()
+            },
+        )
+        .with_overrides(
             "Markdown",
             settings::LanguageOverride {
                 soft_wrap: Some(settings::SoftWrap::PreferredLineLength),

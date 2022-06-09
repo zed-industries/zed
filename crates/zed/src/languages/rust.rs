@@ -7,7 +7,14 @@ pub use language::*;
 use lazy_static::lazy_static;
 use regex::Regex;
 use smol::fs::{self, File};
-use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
+use std::{
+    any::Any,
+    borrow::Cow,
+    env::consts,
+    path::{Path, PathBuf},
+    str,
+    sync::Arc,
+};
 use util::{ResultExt, TryFutureExt};
 
 pub struct RustLspAdapter;
@@ -22,10 +29,17 @@ impl LspAdapter for RustLspAdapter {
         http: Arc<dyn HttpClient>,
     ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>> {
         async move {
-            let version = latest_github_release("rust-analyzer/rust-analyzer", http, |_| {
-                format!("rust-analyzer-{}-apple-darwin.gz", consts::ARCH)
-            })
-            .await?;
+            let release = latest_github_release("rust-analyzer/rust-analyzer", http).await?;
+            let asset_name = format!("rust-analyzer-{}-apple-darwin.gz", consts::ARCH);
+            let asset = release
+                .assets
+                .iter()
+                .find(|asset| asset.name == asset_name)
+                .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
+            let version = GitHubLspBinaryVersion {
+                name: release.name,
+                url: asset.browser_download_url.clone(),
+            };
             Ok(Box::new(version) as Box<_>)
         }
         .boxed()
@@ -35,7 +49,7 @@ impl LspAdapter for RustLspAdapter {
         &self,
         version: Box<dyn 'static + Send + Any>,
         http: Arc<dyn HttpClient>,
-        container_dir: PathBuf,
+        container_dir: Arc<Path>,
     ) -> BoxFuture<'static, Result<PathBuf>> {
         async move {
             let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
@@ -72,7 +86,10 @@ impl LspAdapter for RustLspAdapter {
         .boxed()
     }
 
-    fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>> {
+    fn cached_server_binary(
+        &self,
+        container_dir: Arc<Path>,
+    ) -> BoxFuture<'static, Option<PathBuf>> {
         async move {
             let mut last = None;
             let mut entries = fs::read_dir(&container_dir).await?;

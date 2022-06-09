@@ -1642,18 +1642,6 @@ impl BufferSnapshot {
             .all(|chunk| chunk.matches(|c: char| !c.is_whitespace()).next().is_none())
     }
 
-    pub fn indent_column_for_line(&self, row: u32) -> u32 {
-        let mut result = 0;
-        for c in self.chars_at(Point::new(row, 0)) {
-            if c == ' ' {
-                result += 1;
-            } else {
-                break;
-            }
-        }
-        result
-    }
-
     pub fn text_summary_for_range<'a, D, O: ToOffset>(&'a self, range: Range<O>) -> D
     where
         D: TextDimension,

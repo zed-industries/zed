@@ -25,14 +25,14 @@ struct NpmInfoDistTags {
 
 #[derive(Deserialize)]
 pub(crate) struct GithubRelease {
-    name: String,
-    assets: Vec<GithubReleaseAsset>,
+    pub name: String,
+    pub assets: Vec<GithubReleaseAsset>,
 }
 
 #[derive(Deserialize)]
 pub(crate) struct GithubReleaseAsset {
-    name: String,
-    browser_download_url: String,
+    pub name: String,
+    pub browser_download_url: String,
 }
 
 pub async fn npm_package_latest_version(name: &str) -> Result<String> {
@@ -78,11 +78,10 @@ pub async fn npm_install_packages(
     Ok(())
 }
 
-pub async fn latest_github_release(
+pub(crate) async fn latest_github_release(
     repo_name_with_owner: &str,
     http: Arc<dyn HttpClient>,
-    asset_name: impl Fn(&str) -> String,
-) -> Result<GitHubLspBinaryVersion> {
+) -> Result<GithubRelease, anyhow::Error> {
     let mut response = http
         .get(
             &format!("https://api.github.com/repos/{repo_name_with_owner}/releases/latest"),
@@ -91,24 +90,13 @@ pub async fn latest_github_release(
         )
         .await
         .context("error fetching latest release")?;
-
     let mut body = Vec::new();
     response
         .body_mut()
         .read_to_end(&mut body)
         .await
         .context("error reading latest release")?;
-
     let release: GithubRelease =
         serde_json::from_slice(body.as_slice()).context("error deserializing latest release")?;
-    let asset_name = asset_name(&release.name);
-    let asset = release
-        .assets
-        .iter()
-        .find(|asset| asset.name == asset_name)
-        .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
-    Ok(GitHubLspBinaryVersion {
-        name: release.name,
-        url: asset.browser_download_url.clone(),
-    })
+    Ok(release)
 }

@@ -4,7 +4,11 @@ use client::http::HttpClient;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 pub use language::*;
 use smol::fs::{self, File};
-use std::{any::Any, path::PathBuf, sync::Arc};
+use std::{
+    any::Any,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::{ResultExt, TryFutureExt};
 
 pub struct CLspAdapter;
@@ -19,10 +23,17 @@ impl super::LspAdapter for CLspAdapter {
         http: Arc<dyn HttpClient>,
     ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>> {
         async move {
-            let version = latest_github_release("clangd/clangd", http, |release_name| {
-                format!("clangd-mac-{release_name}.zip")
-            })
-            .await?;
+            let release = latest_github_release("clangd/clangd", http).await?;
+            let asset_name = format!("clangd-mac-{}.zip", release.name);
+            let asset = release
+                .assets
+                .iter()
+                .find(|asset| asset.name == asset_name)
+                .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
+            let version = GitHubLspBinaryVersion {
+                name: release.name,
+                url: asset.browser_download_url.clone(),
+            };
             Ok(Box::new(version) as Box<_>)
         }
         .boxed()
@@ -32,7 +43,7 @@ impl super::LspAdapter for CLspAdapter {
         &self,
         version: Box<dyn 'static + Send + Any>,
         http: Arc<dyn HttpClient>,
-        container_dir: PathBuf,
+        container_dir: Arc<Path>,
     ) -> BoxFuture<'static, Result<PathBuf>> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         async move {
@@ -81,7 +92,10 @@ impl super::LspAdapter for CLspAdapter {
         .boxed()
     }
 
-    fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>> {
+    fn cached_server_binary(
+        &self,
+        container_dir: Arc<Path>,
+    ) -> BoxFuture<'static, Option<PathBuf>> {
         async move {
             let mut last_clangd_dir = None;
             let mut entries = fs::read_dir(&container_dir).await?;

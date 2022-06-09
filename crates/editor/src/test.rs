@@ -109,9 +109,10 @@ impl<'a> EditorTestContext<'a> {
         self.editor.update(self.cx, update)
     }
 
-    pub fn editor_text(&mut self) -> String {
-        self.editor
-            .update(self.cx, |editor, cx| editor.snapshot(cx).text())
+    pub fn buffer_text(&mut self) -> String {
+        self.editor.read_with(self.cx, |editor, cx| {
+            editor.buffer.read(cx).snapshot(cx).text()
+        })
     }
 
     pub fn simulate_keystroke(&mut self, keystroke_text: &str) {
@@ -171,10 +172,10 @@ impl<'a> EditorTestContext<'a> {
             &text,
             vec!['|'.into(), ('[', '}').into(), ('{', ']').into()],
         );
-        let editor_text = self.editor_text();
+        let buffer_text = self.buffer_text();
         assert_eq!(
-            editor_text, unmarked_text,
-            "Unmarked text doesn't match editor text"
+            buffer_text, unmarked_text,
+            "Unmarked text doesn't match buffer text"
         );
 
         let expected_empty_selections = selection_ranges.remove(&'|'.into()).unwrap_or_default();
@@ -254,7 +255,7 @@ impl<'a> EditorTestContext<'a> {
         let actual_selections =
             self.insert_markers(&empty_selections, &reverse_selections, &forward_selections);
 
-        let unmarked_text = self.editor_text();
+        let unmarked_text = self.buffer_text();
         let all_eq: Result<(), SetEqError<String>> =
             set_eq!(expected_empty_selections, empty_selections)
                 .map_err(|err| {
@@ -322,7 +323,7 @@ impl<'a> EditorTestContext<'a> {
         reverse_selections: &Vec<Range<usize>>,
         forward_selections: &Vec<Range<usize>>,
     ) -> String {
-        let mut editor_text_with_selections = self.editor_text();
+        let mut editor_text_with_selections = self.buffer_text();
         let mut selection_marks = BTreeMap::new();
         for range in empty_selections {
             selection_marks.insert(&range.start, '|');

@@ -4,6 +4,7 @@ use rust_embed::RustEmbed;
 use std::{borrow::Cow, str, sync::Arc};
 
 mod c;
+mod go;
 mod installation;
 mod json;
 mod rust;
@@ -26,6 +27,11 @@ pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegi
             "cpp",
             tree_sitter_cpp::language(),
             Some(Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>),
+        ),
+        (
+            "go",
+            tree_sitter_go::language(),
+            Some(Arc::new(go::GoLspAdapter) as Arc<dyn LspAdapter>),
         ),
         (
             "json",
