@@ -72,7 +72,7 @@ pub struct Wasi {
 pub type HostFunction = Box<dyn IntoFunc<WasiCtx, (u32, u32), u32>>;
 
 pub struct WasiPluginBuilder {
-    host_functions: HashMap<String, HostFunction>,
+    host_functions: HashMap<String, Box<dyn Fn(&str, &mut Linker<WasiCtx>) -> Result<(), Error>>>,
     wasi_ctx_builder: WasiCtxBuilder,
 }
 
@@ -90,22 +90,22 @@ impl WasiPluginBuilder {
         this
     }
 
-    fn wrap_host_function<A: Serialize, R: DeserializeOwned>(
-        function: impl Fn(A) -> R + Send + Sync + 'static,
-    ) -> HostFunction {
-        Box::new(move |ptr, len| {
-            function(todo!());
-            todo!()
-        })
-    }
-
     pub fn host_function<A: Serialize, R: DeserializeOwned>(
         mut self,
         name: &str,
-        function: impl Fn(A) -> R + Send + Sync + 'static,
+        function: &dyn Fn(A) -> R + Send + Sync + 'static,
     ) -> Self {
-        self.host_functions
-            .insert(name.to_string(), Self::wrap_host_function(function));
+        let name = name.to_string();
+        self.host_functions.insert(
+            name,
+            Box::new(move |name: &str, linker: &mut Linker<WasiCtx>| {
+                linker.func_wrap("env", name, |ptr: u32, len: u32| {
+                    function(todo!());
+                    7u32
+                })?;
+                Ok(())
+            }),
+        );
         self
     }
 
@@ -130,7 +130,8 @@ impl WasiPluginBuilder {
 pub struct WasiPlugin {
     pub module: Vec<u8>,
     pub wasi_ctx: WasiCtx,
-    pub host_functions: HashMap<String, HostFunction>,
+    pub host_functions:
+        HashMap<String, Box<dyn Fn(&str, &mut Linker<WasiCtx>) -> Result<(), Error>>>,
 }
 
 impl Wasi {
@@ -158,6 +159,10 @@ impl Wasi {
         config.async_support(true);
         let engine = Engine::new(&config)?;
         let mut linker = Linker::new(&engine);
+
+        for (name, add_to_linker) in plugin.host_functions.into_iter() {
+            add_to_linker(&name, &mut linker)?;
+        }
 
         linker
             .func_wrap("env", "__command", |x: u32, y: u32| x + y)
