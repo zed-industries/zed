@@ -571,7 +571,7 @@ fn test_range_for_syntax_ancestor(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_edit_with_autoindent(cx: &mut MutableAppContext) {
+fn test_autoindent_with_soft_tabs(cx: &mut MutableAppContext) {
     cx.add_model(|cx| {
         let text = "fn a() {}";
         let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
@@ -586,12 +586,61 @@ fn test_edit_with_autoindent(cx: &mut MutableAppContext) {
         );
         assert_eq!(buffer.text(), "fn a() {\n    b()\n    \n}");
 
+        // Create a field expression on a new line, causing that line
+        // to be indented.
         buffer.edit_with_autoindent(
             [(Point::new(2, 4)..Point::new(2, 4), ".c")],
             IndentSize::spaces(4),
             cx,
         );
         assert_eq!(buffer.text(), "fn a() {\n    b()\n        .c\n}");
+
+        // Remove the dot so that the line is no longer a field expression,
+        // causing the line to be outdented.
+        buffer.edit_with_autoindent(
+            [(Point::new(2, 8)..Point::new(2, 9), "")],
+            IndentSize::spaces(4),
+            cx,
+        );
+        assert_eq!(buffer.text(), "fn a() {\n    b()\n    c\n}");
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_autoindent_with_hard_tabs(cx: &mut MutableAppContext) {
+    cx.add_model(|cx| {
+        let text = "fn a() {}";
+        let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
+
+        buffer.edit_with_autoindent([(8..8, "\n\n")], IndentSize::tab(), cx);
+        assert_eq!(buffer.text(), "fn a() {\n\t\n}");
+
+        buffer.edit_with_autoindent(
+            [(Point::new(1, 1)..Point::new(1, 1), "b()\n")],
+            IndentSize::tab(),
+            cx,
+        );
+        assert_eq!(buffer.text(), "fn a() {\n\tb()\n\t\n}");
+
+        // Create a field expression on a new line, causing that line
+        // to be indented.
+        buffer.edit_with_autoindent(
+            [(Point::new(2, 1)..Point::new(2, 1), ".c")],
+            IndentSize::tab(),
+            cx,
+        );
+        assert_eq!(buffer.text(), "fn a() {\n\tb()\n\t\t.c\n}");
+
+        // Remove the dot so that the line is no longer a field expression,
+        // causing the line to be outdented.
+        buffer.edit_with_autoindent(
+            [(Point::new(2, 2)..Point::new(2, 3), "")],
+            IndentSize::tab(),
+            cx,
+        );
+        assert_eq!(buffer.text(), "fn a() {\n\tb()\n\tc\n}");
 
         buffer
     });
