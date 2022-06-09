@@ -9,7 +9,6 @@ use indoc::indoc;
 use collections::BTreeMap;
 use gpui::{keymap::Keystroke, AppContext, ModelHandle, ViewContext, ViewHandle};
 use language::{point_to_lsp, FakeLspAdapter, Language, LanguageConfig, Selection};
-use lsp::request;
 use project::{FakeFs, Project};
 use settings::Settings;
 use util::{
@@ -390,7 +389,7 @@ impl<'a> DerefMut for EditorTestContext<'a> {
 
 pub struct EditorLspTestContext<'a> {
     pub cx: EditorTestContext<'a>,
-    lsp: lsp::FakeLanguageServer,
+    pub lsp: lsp::FakeLanguageServer,
 }
 
 impl<'a> EditorLspTestContext<'a> {
@@ -449,7 +448,6 @@ impl<'a> EditorLspTestContext<'a> {
         }
     }
 
-    #[cfg(feature = "test-support")]
     pub async fn new_rust(
         capabilities: lsp::ServerCapabilities,
         cx: &'a mut gpui::TestAppContext,
@@ -464,22 +462,6 @@ impl<'a> EditorLspTestContext<'a> {
         );
 
         Self::new(language, capabilities, cx).await
-    }
-
-    pub async fn handle_request<T, F>(&mut self, mut construct_result: F)
-    where
-        T: 'static + request::Request,
-        T::Params: 'static + Send,
-        T::Result: 'static + Send + Clone,
-        F: 'static + Send + FnMut(T::Params) -> T::Result,
-    {
-        self.lsp
-            .handle_request::<T, _, _>(move |params, _| {
-                let result = construct_result(params);
-                async move { Ok(result.clone()) }
-            })
-            .next()
-            .await;
     }
 
     // Constructs lsp range using a marked string with '[', ']' range delimiters

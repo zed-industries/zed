@@ -6156,6 +6156,7 @@ mod tests {
     };
 
     use super::*;
+    use futures::StreamExt;
     use gpui::{
         geometry::rect::RectF,
         platform::{WindowBounds, WindowOptions},
@@ -6165,7 +6166,6 @@ mod tests {
     use lsp::FakeLanguageServer;
     use project::{FakeFs, HoverBlock};
     use settings::LanguageOverride;
-    use smol::stream::StreamExt;
     use std::{cell::RefCell, rc::Rc, time::Instant};
     use text::Point;
     use unindent::Unindent;
@@ -9413,6 +9413,7 @@ mod tests {
         let hover_point = cx.display_point(indoc! {"
             fn test()
                 print|ln!();"});
+
         cx.update_editor(|editor, cx| {
             hover_at(
                 editor,
@@ -9428,21 +9429,23 @@ mod tests {
         let symbol_range = cx.lsp_range(indoc! {"
             fn test()
                 [println!]();"});
-        cx.handle_request::<lsp::request::HoverRequest, _>(move |_| {
-            Some(lsp::Hover {
-                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
-                    kind: lsp::MarkupKind::Markdown,
-                    value: indoc! {"
+        let mut requests =
+            cx.lsp
+                .handle_request::<lsp::request::HoverRequest, _, _>(move |_, _| async move {
+                    Ok(Some(lsp::Hover {
+                        contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                            kind: lsp::MarkupKind::Markdown,
+                            value: indoc! {"
                         # Some basic docs
                         Some test documentation"}
-                    .to_string(),
-                }),
-                range: Some(symbol_range),
-            })
-        })
-        .await;
+                            .to_string(),
+                        }),
+                        range: Some(symbol_range),
+                    }))
+                });
         cx.foreground()
             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+        requests.next().await;
 
         cx.editor(|editor, _| {
             assert!(editor.hover_state.visible());
@@ -9474,7 +9477,9 @@ mod tests {
                 cx,
             )
         });
-        cx.handle_request::<lsp::request::HoverRequest, _>(move |_| None)
+        cx.lsp
+            .handle_request::<lsp::request::HoverRequest, _, _>(|_, _| async move { Ok(None) })
+            .next()
             .await;
         cx.foreground().run_until_parked();
         cx.editor(|editor, _| {
@@ -9491,19 +9496,21 @@ mod tests {
         let symbol_range = cx.lsp_range(indoc! {"
             [fn] test()
                 println!();"});
-        cx.handle_request::<lsp::request::HoverRequest, _>(move |_| {
-            Some(lsp::Hover {
-                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
-                    kind: lsp::MarkupKind::Markdown,
-                    value: indoc! {"
+        cx.lsp
+            .handle_request::<lsp::request::HoverRequest, _, _>(move |_, _| async move {
+                Ok(Some(lsp::Hover {
+                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                        kind: lsp::MarkupKind::Markdown,
+                        value: indoc! {"
                         # Some other basic docs
                         Some other test documentation"}
-                    .to_string(),
-                }),
-                range: Some(symbol_range),
+                        .to_string(),
+                    }),
+                    range: Some(symbol_range),
+                }))
             })
-        })
-        .await;
+            .next()
+            .await;
         cx.foreground().run_until_parked();
         cx.editor(|editor, _| {
             assert!(editor.hover_state.visible());
@@ -9539,19 +9546,21 @@ mod tests {
         let symbol_range = cx.lsp_range(indoc! {"
             fn test()
                 [println!]();"});
-        cx.handle_request::<lsp::request::HoverRequest, _>(move |_| {
-            Some(lsp::Hover {
-                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
-                    kind: lsp::MarkupKind::Markdown,
-                    value: indoc! {"
+        cx.lsp
+            .handle_request::<lsp::request::HoverRequest, _, _>(move |_, _| async move {
+                Ok(Some(lsp::Hover {
+                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                        kind: lsp::MarkupKind::Markdown,
+                        value: indoc! {"
                         # Some third basic docs
                         Some third test documentation"}
-                    .to_string(),
-                }),
-                range: Some(symbol_range),
+                        .to_string(),
+                    }),
+                    range: Some(symbol_range),
+                }))
             })
-        })
-        .await;
+            .next()
+            .await;
         cx.foreground().run_until_parked();
         // No delay as the popover is already visible
 
