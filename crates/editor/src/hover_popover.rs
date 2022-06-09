@@ -66,6 +66,7 @@ pub fn hide_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
         cx.notify();
     }
     editor.hover_state.task = None;
+    editor.hover_state.triggered_from = None;
     editor.hover_state.symbol_range = None;
 
     editor.clear_background_highlights::<HoverState>(cx);
@@ -115,15 +116,10 @@ fn show_hover(
         return;
     };
 
-    // query the LSP for hover info
-    let hover_request = project.update(cx, |project, cx| {
-        project.hover(&buffer, buffer_position.clone(), cx)
-    });
-
     // We should only delay if the hover popover isn't visible, it wasn't recently hidden, and
     // the hover wasn't triggered from the keyboard
     let should_delay = editor.hover_state.popover.is_none() // Hover not visible currently
-        && editor
+    && editor
             .hover_state
             .hidden_at
             .map(|hidden| hidden.elapsed().as_millis() > HOVER_GRACE_MILLIS as u128)
@@ -147,6 +143,16 @@ fn show_hover(
         .buffer_snapshot
         .anchor_at(multibuffer_offset, Bias::Left);
 
+    // Don't request again if the location is the same as the previous request
+    if let Some(triggered_from) = &editor.hover_state.triggered_from {
+        if triggered_from
+            .cmp(&anchor, &snapshot.buffer_snapshot)
+            .is_eq()
+        {
+            return;
+        }
+    }
+
     let task = cx.spawn_weak(|this, mut cx| {
         async move {
             // If we need to delay, delay a set amount initially before making the lsp request
@@ -164,6 +170,13 @@ fn show_hover(
             } else {
                 None
             };
+
+            // query the LSP for hover info
+            let hover_request = cx.update(|cx| {
+                project.update(cx, |project, cx| {
+                    project.hover(&buffer, buffer_position.clone(), cx)
+                })
+            });
 
             // Construct new hover popover from hover request
             let hover_popover = hover_request.await.ok().flatten().and_then(|hover_result| {
@@ -239,6 +252,7 @@ fn show_hover(
 pub struct HoverState {
     pub popover: Option<HoverPopover>,
     pub hidden_at: Option<Instant>,
+    pub triggered_from: Option<Anchor>,
     pub symbol_range: Option<Range<Anchor>>,
     pub task: Option<Task<Option<()>>>,
 }
