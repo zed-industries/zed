@@ -9089,7 +9089,6 @@ mod tests {
     #[gpui::test]
     async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         cx.foreground().forbid_parking();
-        cx.update(|cx| cx.set_global(Settings::test(cx)));
 
         let mut language = Language::new(
             LanguageConfig {
@@ -9202,7 +9201,6 @@ mod tests {
     #[gpui::test]
     async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         cx.foreground().forbid_parking();
-        cx.update(|cx| cx.set_global(Settings::test(cx)));
 
         let mut language = Language::new(
             LanguageConfig {
@@ -9316,8 +9314,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_completion(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| cx.set_global(Settings::test(cx)));
-
         let mut language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),

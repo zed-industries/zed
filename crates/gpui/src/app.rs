@@ -3120,6 +3120,19 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         })
     }
 
+    pub fn observe_global<G, F>(&mut self, mut callback: F) -> Subscription
+    where
+        G: Any,
+        F: 'static + FnMut(&mut T, &mut ModelContext<T>),
+    {
+        let observer = self.weak_handle();
+        self.app.observe_global::<G, _>(move |cx| {
+            if let Some(observer) = observer.upgrade(cx) {
+                observer.update(cx, |observer, cx| callback(observer, cx));
+            }
+        })
+    }
+
     pub fn observe_release<S, F>(
         &mut self,
         handle: &ModelHandle<S>,

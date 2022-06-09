@@ -90,7 +90,8 @@ pub struct Project {
     fs: Arc<dyn Fs>,
     client_state: ProjectClientState,
     collaborators: HashMap<PeerId, Collaborator>,
-    subscriptions: Vec<client::Subscription>,
+    client_subscriptions: Vec<client::Subscription>,
+    _subscriptions: Vec<gpui::Subscription>,
     opened_buffer: (Rc<RefCell<watch::Sender<()>>>, watch::Receiver<()>),
     shared_buffers: HashMap<PeerId, HashSet<u64>>,
     loading_buffers: HashMap<
@@ -418,7 +419,8 @@ impl Project {
                     _maintain_remote_id_task,
                 },
                 opened_buffer: (Rc::new(RefCell::new(opened_buffer_tx)), opened_buffer_rx),
-                subscriptions: Vec::new(),
+                client_subscriptions: Vec::new(),
+                _subscriptions: vec![cx.observe_global::<Settings, _>(Self::on_settings_changed)],
                 active_entry: None,
                 languages,
                 client,
@@ -503,7 +505,8 @@ impl Project {
                 fs,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
-                subscriptions: vec![client.add_model_for_remote_entity(remote_id, cx)],
+                client_subscriptions: vec![client.add_model_for_remote_entity(remote_id, cx)],
+                _subscriptions: Default::default(),
                 client: client.clone(),
                 client_state: ProjectClientState::Remote {
                     sharing_has_stopped: false,
@@ -582,6 +585,10 @@ impl Project {
         root_paths: impl IntoIterator<Item = &Path>,
         cx: &mut gpui::TestAppContext,
     ) -> ModelHandle<Project> {
+        if !cx.read(|cx| cx.has_global::<Settings>()) {
+            cx.update(|cx| cx.set_global(Settings::test(cx)));
+        }
+
         let languages = Arc::new(LanguageRegistry::test());
         let http_client = client::test::FakeHttpClient::with_404_response();
         let client = client::Client::new(http_client.clone());
@@ -648,6 +655,55 @@ impl Project {
             let value = &[is_online as u8];
             db.write(keys.into_iter().map(|key| (key, value)))
         })
+    }
+
+    fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
+        let settings = cx.global::<Settings>();
+
+        let mut language_servers_to_start = Vec::new();
+        for buffer in self.opened_buffers.values() {
+            if let Some(buffer) = buffer.upgrade(cx) {
+                let buffer = buffer.read(cx);
+                if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language())
+                {
+                    if settings.enable_language_server(Some(&language.name())) {
+                        let worktree = file.worktree.read(cx);
+                        language_servers_to_start.push((
+                            worktree.id(),
+                            worktree.as_local().unwrap().abs_path().clone(),
+                            language.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        let mut language_servers_to_stop = Vec::new();
+        for language in self.languages.to_vec() {
+            if let Some(lsp_adapter) = language.lsp_adapter() {
+                if !settings.enable_language_server(Some(&language.name())) {
+                    let lsp_name = lsp_adapter.name();
+                    for (worktree_id, started_lsp_name) in self.started_language_servers.keys() {
+                        if lsp_name == *started_lsp_name {
+                            language_servers_to_stop.push((*worktree_id, started_lsp_name.clone()));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Stop all newly-disabled language servers.
+        for (worktree_id, adapter_name) in language_servers_to_stop {
+            self.stop_language_server(worktree_id, adapter_name, cx)
+                .detach();
+        }
+
+        // Start all the newly-enabled language servers.
+        for (worktree_id, worktree_path, language) in language_servers_to_start {
+            self.start_language_server(worktree_id, worktree_path, language, cx);
+        }
+
+        cx.notify();
     }
 
     pub fn buffer_for_id(&self, remote_id: u64, cx: &AppContext) -> Option<ModelHandle<Buffer>> {
@@ -775,7 +831,7 @@ impl Project {
                         {
                             *remote_id_tx.borrow_mut() = None;
                         }
-                        this.subscriptions.clear();
+                        this.client_subscriptions.clear();
                         this.metadata_changed(false, cx);
                     });
                     response.map(drop)
@@ -802,7 +858,7 @@ impl Project {
 
                 this.metadata_changed(false, cx);
                 cx.emit(Event::RemoteIdChanged(Some(remote_id)));
-                this.subscriptions
+                this.client_subscriptions
                     .push(this.client.add_model_for_remote_entity(remote_id, cx));
                 Ok(())
             })
@@ -1858,6 +1914,13 @@ impl Project {
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
+        if !cx
+            .global::<Settings>()
+            .enable_language_server(Some(&language.name()))
+        {
+            return;
+        }
+
         let adapter = if let Some(adapter) = language.lsp_adapter() {
             adapter
         } else {
@@ -2060,6 +2123,40 @@ impl Project {
             });
     }
 
+    fn stop_language_server(
+        &mut self,
+        worktree_id: WorktreeId,
+        adapter_name: LanguageServerName,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<()> {
+        let key = (worktree_id, adapter_name);
+        if let Some((_, language_server)) = self.language_servers.remove(&key) {
+            self.language_server_statuses
+                .remove(&language_server.server_id());
+            cx.notify();
+        }
+
+        if let Some(started_language_server) = self.started_language_servers.remove(&key) {
+            cx.spawn_weak(|this, mut cx| async move {
+                if let Some(language_server) = started_language_server.await {
+                    if let Some(shutdown) = language_server.shutdown() {
+                        shutdown.await;
+                    }
+
+                    if let Some(this) = this.upgrade(&cx) {
+                        this.update(&mut cx, |this, cx| {
+                            this.language_server_statuses
+                                .remove(&language_server.server_id());
+                            cx.notify();
+                        });
+                    }
+                }
+            })
+        } else {
+            Task::ready(())
+        }
+    }
+
     pub fn restart_language_servers_for_buffers(
         &mut self,
         buffers: impl IntoIterator<Item = ModelHandle<Buffer>>,
@@ -2096,20 +2193,11 @@ impl Project {
         } else {
             return;
         };
-        let key = (worktree_id, adapter.name());
-        let server_to_shutdown = self.language_servers.remove(&key);
-        self.started_language_servers.remove(&key);
-        server_to_shutdown
-            .as_ref()
-            .map(|(_, server)| self.language_server_statuses.remove(&server.server_id()));
-        cx.spawn_weak(|this, mut cx| async move {
-            if let Some(this) = this.upgrade(&cx) {
-                if let Some((_, server_to_shutdown)) = server_to_shutdown {
-                    if let Some(shutdown_task) = server_to_shutdown.shutdown() {
-                        shutdown_task.await;
-                    }
-                }
 
+        let stop = self.stop_language_server(worktree_id, adapter.name(), cx);
+        cx.spawn_weak(|this, mut cx| async move {
+            stop.await;
+            if let Some(this) = this.upgrade(&cx) {
                 this.update(&mut cx, |this, cx| {
                     this.start_language_server(worktree_id, worktree_path, language, cx);
                 });
@@ -5672,7 +5760,7 @@ mod tests {
     use super::{Event, *};
     use fs::RealFs;
     use futures::{future, StreamExt};
-    use gpui::test::subscribe;
+    use gpui::{executor::Deterministic, test::subscribe};
     use language::{
         tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
         OffsetRangeExt, Point, ToPoint,
@@ -6422,6 +6510,130 @@ mod tests {
                 [0; 0]
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_toggling_enable_language_server(
+        deterministic: Arc<Deterministic>,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        deterministic.forbid_parking();
+
+        let mut rust = Language::new(
+            LanguageConfig {
+                name: Arc::from("Rust"),
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            None,
+        );
+        let mut fake_rust_servers = rust.set_fake_lsp_adapter(FakeLspAdapter {
+            name: "rust-lsp",
+            ..Default::default()
+        });
+        let mut js = Language::new(
+            LanguageConfig {
+                name: Arc::from("JavaScript"),
+                path_suffixes: vec!["js".to_string()],
+                ..Default::default()
+            },
+            None,
+        );
+        let mut fake_js_servers = js.set_fake_lsp_adapter(FakeLspAdapter {
+            name: "js-lsp",
+            ..Default::default()
+        });
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree("/dir", json!({ "a.rs": "", "b.js": "" }))
+            .await;
+
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        project.update(cx, |project, _| {
+            project.languages.add(Arc::new(rust));
+            project.languages.add(Arc::new(js));
+        });
+
+        let _rs_buffer = project
+            .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+            .await
+            .unwrap();
+        let _js_buffer = project
+            .update(cx, |project, cx| project.open_local_buffer("/dir/b.js", cx))
+            .await
+            .unwrap();
+
+        let mut fake_rust_server_1 = fake_rust_servers.next().await.unwrap();
+        assert_eq!(
+            fake_rust_server_1
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document
+                .uri
+                .as_str(),
+            "file:///dir/a.rs"
+        );
+
+        let mut fake_js_server = fake_js_servers.next().await.unwrap();
+        assert_eq!(
+            fake_js_server
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document
+                .uri
+                .as_str(),
+            "file:///dir/b.js"
+        );
+
+        // Disable Rust language server, ensuring only that server gets stopped.
+        cx.update(|cx| {
+            cx.update_global(|settings: &mut Settings, _| {
+                settings.language_overrides.insert(
+                    Arc::from("Rust"),
+                    settings::LanguageOverride {
+                        enable_language_server: Some(false),
+                        ..Default::default()
+                    },
+                );
+            })
+        });
+        fake_rust_server_1
+            .receive_notification::<lsp::notification::Exit>()
+            .await;
+
+        // Enable Rust and disable JavaScript language servers, ensuring that the
+        // former gets started again and that the latter stops.
+        cx.update(|cx| {
+            cx.update_global(|settings: &mut Settings, _| {
+                settings.language_overrides.insert(
+                    Arc::from("Rust"),
+                    settings::LanguageOverride {
+                        enable_language_server: Some(true),
+                        ..Default::default()
+                    },
+                );
+                settings.language_overrides.insert(
+                    Arc::from("JavaScript"),
+                    settings::LanguageOverride {
+                        enable_language_server: Some(false),
+                        ..Default::default()
+                    },
+                );
+            })
+        });
+        let mut fake_rust_server_2 = fake_rust_servers.next().await.unwrap();
+        assert_eq!(
+            fake_rust_server_2
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document
+                .uri
+                .as_str(),
+            "file:///dir/a.rs"
+        );
+        fake_js_server
+            .receive_notification::<lsp::notification::Exit>()
+            .await;
     }
 
     #[gpui::test]

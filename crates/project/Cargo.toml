@@ -11,6 +11,7 @@ doctest = false
 test-support = [
     "client/test-support",
     "language/test-support",
+    "settings/test-support",
     "text/test-support",
 ]
 
@@ -56,6 +57,7 @@ collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
+settings = { path = "../settings", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 tempdir = { version = "0.3.7" }
