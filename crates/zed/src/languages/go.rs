@@ -8,6 +8,7 @@ use regex::Regex;
 use smol::{fs, process};
 use std::{
     any::Any,
+    ops::Range,
     path::{Path, PathBuf},
     str,
     sync::Arc,
@@ -141,5 +142,201 @@ impl super::LspAdapter for GoLspAdapter {
         }
         .log_err()
         .boxed()
+    }
+
+    fn label_for_completion(
+        &self,
+        completion: &lsp::CompletionItem,
+        language: &Language,
+    ) -> Option<CodeLabel> {
+        let label = &completion.label;
+
+        // Gopls returns nested fields and methods as completions.
+        // To syntax highlight these, combine their final component
+        // with their detail.
+        let name_offset = label.rfind(".").unwrap_or(0);
+
+        match completion.kind.zip(completion.detail.as_ref()) {
+            Some((lsp::CompletionItemKind::MODULE, detail)) => {
+                let text = format!("{label} {detail}");
+                let source = Rope::from(format!("import {text}").as_str());
+                let runs = language.highlight_text(&source, 7..7 + text.len());
+                return Some(CodeLabel {
+                    text,
+                    runs,
+                    filter_range: 0..label.len(),
+                });
+            }
+            Some((
+                lsp::CompletionItemKind::CONSTANT | lsp::CompletionItemKind::VARIABLE,
+                detail,
+            )) => {
+                let text = format!("{label} {detail}");
+                let source =
+                    Rope::from(format!("var {} {}", &text[name_offset..], detail).as_str());
+                let runs = adjust_runs(
+                    name_offset,
+                    language.highlight_text(&source, 4..4 + text.len()),
+                );
+                return Some(CodeLabel {
+                    text,
+                    runs,
+                    filter_range: 0..label.len(),
+                });
+            }
+            Some((lsp::CompletionItemKind::STRUCT, _)) => {
+                let text = format!("{label} struct {{}}");
+                let source = Rope::from(format!("type {}", &text[name_offset..]).as_str());
+                let runs = adjust_runs(
+                    name_offset,
+                    language.highlight_text(&source, 5..5 + text.len()),
+                );
+                return Some(CodeLabel {
+                    text,
+                    runs,
+                    filter_range: 0..label.len(),
+                });
+            }
+            Some((lsp::CompletionItemKind::INTERFACE, _)) => {
+                let text = format!("{label} interface {{}}");
+                let source = Rope::from(format!("type {}", &text[name_offset..]).as_str());
+                let runs = adjust_runs(
+                    name_offset,
+                    language.highlight_text(&source, 5..5 + text.len()),
+                );
+                return Some(CodeLabel {
+                    text,
+                    runs,
+                    filter_range: 0..label.len(),
+                });
+            }
+            Some((lsp::CompletionItemKind::FIELD, detail)) => {
+                let text = format!("{label} {detail}");
+                let source =
+                    Rope::from(format!("type T struct {{ {} }}", &text[name_offset..]).as_str());
+                let runs = adjust_runs(
+                    name_offset,
+                    language.highlight_text(&source, 16..16 + text.len()),
+                );
+                return Some(CodeLabel {
+                    text,
+                    runs,
+                    filter_range: 0..label.len(),
+                });
+            }
+            Some((lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD, detail)) => {
+                if let Some(signature) = detail.strip_prefix("func") {
+                    let text = format!("{label}{signature}");
+                    let source = Rope::from(format!("func {} {{}}", &text[name_offset..]).as_str());
+                    let runs = adjust_runs(
+                        name_offset,
+                        language.highlight_text(&source, 5..5 + text.len()),
+                    );
+                    return Some(CodeLabel {
+                        filter_range: 0..label.len(),
+                        text,
+                        runs,
+                    });
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+}
+
+fn adjust_runs(
+    delta: usize,
+    mut runs: Vec<(Range<usize>, HighlightId)>,
+) -> Vec<(Range<usize>, HighlightId)> {
+    for (range, _) in &mut runs {
+        range.start += delta;
+        range.end += delta;
+    }
+    runs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::languages::language;
+    use gpui::color::Color;
+    use theme::SyntaxTheme;
+
+    #[test]
+    fn test_go_label_for_completion() {
+        let language = language(
+            "go",
+            tree_sitter_go::language(),
+            Some(Arc::new(GoLspAdapter)),
+        );
+
+        let theme = SyntaxTheme::new(vec![
+            ("type".into(), Color::green().into()),
+            ("keyword".into(), Color::blue().into()),
+            ("function".into(), Color::red().into()),
+            ("number".into(), Color::yellow().into()),
+            ("property".into(), Color::white().into()),
+        ]);
+        language.set_theme(&theme);
+
+        let grammar = language.grammar().unwrap();
+        let highlight_function = grammar.highlight_id_for_name("function").unwrap();
+        let highlight_type = grammar.highlight_id_for_name("type").unwrap();
+        let highlight_keyword = grammar.highlight_id_for_name("keyword").unwrap();
+        let highlight_number = grammar.highlight_id_for_name("number").unwrap();
+        let highlight_field = grammar.highlight_id_for_name("property").unwrap();
+
+        assert_eq!(
+            language.label_for_completion(&lsp::CompletionItem {
+                kind: Some(lsp::CompletionItemKind::FUNCTION),
+                label: "Hello".to_string(),
+                detail: Some("func(a B) c.D".to_string()),
+                ..Default::default()
+            }),
+            Some(CodeLabel {
+                text: "Hello(a B) c.D".to_string(),
+                filter_range: 0..5,
+                runs: vec![
+                    (0..5, highlight_function),
+                    (8..9, highlight_type),
+                    (13..14, highlight_type),
+                ],
+            })
+        );
+
+        // Nested methods
+        assert_eq!(
+            language.label_for_completion(&lsp::CompletionItem {
+                kind: Some(lsp::CompletionItemKind::METHOD),
+                label: "one.two.Three".to_string(),
+                detail: Some("func() [3]interface{}".to_string()),
+                ..Default::default()
+            }),
+            Some(CodeLabel {
+                text: "one.two.Three() [3]interface{}".to_string(),
+                filter_range: 0..13,
+                runs: vec![
+                    (8..13, highlight_function),
+                    (17..18, highlight_number),
+                    (19..28, highlight_keyword),
+                ],
+            })
+        );
+
+        // Nested fields
+        assert_eq!(
+            language.label_for_completion(&lsp::CompletionItem {
+                kind: Some(lsp::CompletionItemKind::FIELD),
+                label: "two.Three".to_string(),
+                detail: Some("a.Bcd".to_string()),
+                ..Default::default()
+            }),
+            Some(CodeLabel {
+                text: "two.Three a.Bcd".to_string(),
+                filter_range: 0..9,
+                runs: vec![(4..9, highlight_field), (12..15, highlight_type)],
+            })
+        );
     }
 }
