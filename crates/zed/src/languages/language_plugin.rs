@@ -13,12 +13,12 @@ use std::{any::Any, path::PathBuf, sync::Arc};
 use util::{ResultExt, TryFutureExt};
 
 pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
-    let plugin = WasiPluginBuilder::new_with_default_ctx()
+    let plugin = WasiPluginBuilder::new_with_default_ctx()?
         .host_function("command", |command: String| {
             // TODO: actual thing
             std::process::Command::new(command).output().unwrap();
             Some("Hello".to_string())
-        })
+        })?
         .init(include_bytes!("../../../../plugins/bin/json_language.wasm"))
         .await?;
     PluginLspAdapter::new(plugin, executor).await
