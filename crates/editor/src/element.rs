@@ -491,7 +491,14 @@ impl EditorElement {
             let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_left;
             let y = (position.row() + 1) as f32 * layout.line_height - scroll_top;
             let mut list_origin = content_origin + vec2f(x, y);
+            let list_width = context_menu.size().x();
             let list_height = context_menu.size().y();
+
+            // Snap the right edge of the list to the right edge of the window if
+            // its horizontal bounds overflow.
+            if list_origin.x() + list_width > cx.window_size.x() {
+                list_origin.set_x((cx.window_size.x() - list_width).max(0.));
+            }
 
             if list_origin.y() + list_height > bounds.max_y() {
                 list_origin.set_y(list_origin.y() - layout.line_height - list_height);
