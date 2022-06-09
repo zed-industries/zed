@@ -106,7 +106,7 @@ pub fn line_beginning(
     let soft_line_start = map.clip_point(DisplayPoint::new(display_point.row(), 0), Bias::Right);
     let indent_start = Point::new(
         point.row,
-        map.buffer_snapshot.indent_column_for_line(point.row),
+        map.buffer_snapshot.indent_size_for_line(point.row).len,
     )
     .to_display_point(map);
     let line_start = map.prev_line_boundary(point).1;

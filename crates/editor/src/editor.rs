@@ -32,7 +32,8 @@ use gpui::{
 pub use language::{char_kind, CharKind};
 use language::{
     BracketPair, Buffer, CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticSeverity,
-    Language, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
+    IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal,
+    TransactionId,
 };
 use multi_buffer::MultiBufferChunks;
 pub use multi_buffer::{
@@ -50,7 +51,7 @@ use std::{
     any::TypeId,
     borrow::Cow,
     cmp::{self, Ordering, Reverse},
-    iter, mem,
+    mem,
     ops::{Deref, DerefMut, Range, RangeInclusive},
     sync::Arc,
     time::{Duration, Instant},
@@ -1923,9 +1924,8 @@ impl Editor {
                     .iter()
                     .map(|selection| {
                         let start_point = selection.start.to_point(&buffer);
-                        let indent = buffer
-                            .indent_column_for_line(start_point.row)
-                            .min(start_point.column);
+                        let mut indent = buffer.indent_size_for_line(start_point.row);
+                        indent.len = cmp::min(indent.len, start_point.column);
                         let start = selection.start;
                         let end = selection.end;
 
@@ -1958,9 +1958,9 @@ impl Editor {
                             });
                         }
 
-                        let mut new_text = String::with_capacity(1 + indent as usize);
+                        let mut new_text = String::with_capacity(1 + indent.len as usize);
                         new_text.push('\n');
-                        new_text.extend(iter::repeat(' ').take(indent as usize));
+                        new_text.extend(indent.chars());
                         if insert_extra_newline {
                             new_text = new_text.repeat(2);
                         }
@@ -3061,14 +3061,21 @@ impl Editor {
                         .buffer_snapshot
                         .buffer_line_for_row(old_head.row)
                     {
-                        let indent_column =
-                            buffer.indent_column_for_line(line_buffer_range.start.row);
+                        let indent_size = buffer.indent_size_for_line(line_buffer_range.start.row);
                         let language_name = buffer.language().map(|language| language.name());
-                        let indent = cx.global::<Settings>().tab_size(language_name.as_deref());
-                        if old_head.column <= indent_column && old_head.column > 0 {
+                        let indent_len = match indent_size.kind {
+                            IndentKind::Space => {
+                                cx.global::<Settings>().tab_size(language_name.as_deref())
+                            }
+                            IndentKind::Tab => 1,
+                        };
+                        if old_head.column <= indent_size.len && old_head.column > 0 {
                             new_head = cmp::min(
                                 new_head,
-                                Point::new(old_head.row, ((old_head.column - 1) / indent) * indent),
+                                Point::new(
+                                    old_head.row,
+                                    ((old_head.column - 1) / indent_len) * indent_len,
+                                ),
                             );
                         }
                     }
@@ -3178,26 +3185,33 @@ impl Editor {
                     }
 
                     for row in start_row..end_row {
-                        let indent_column = snapshot.indent_column_for_line(row);
-                        let columns_to_next_tab_stop = tab_size - (indent_column % tab_size);
+                        let current_indent = snapshot.indent_size_for_line(row);
+                        let indent_delta = match current_indent.kind {
+                            IndentKind::Space => {
+                                let columns_to_next_tab_stop =
+                                    tab_size - (current_indent.len % tab_size);
+                                IndentSize::spaces(columns_to_next_tab_stop)
+                            }
+                            IndentKind::Tab => IndentSize::tab(),
+                        };
                         let row_start = Point::new(row, 0);
                         buffer.edit(
                             [(
                                 row_start..row_start,
-                                " ".repeat(columns_to_next_tab_stop as usize),
+                                indent_delta.chars().collect::<String>(),
                             )],
                             cx,
                         );
 
                         // Update this selection's endpoints to reflect the indentation.
                         if row == selection.start.row {
-                            selection.start.column += columns_to_next_tab_stop as u32;
+                            selection.start.column += indent_delta.len;
                         }
                         if row == selection.end.row {
-                            selection.end.column += columns_to_next_tab_stop as u32;
+                            selection.end.column += indent_delta.len as u32;
                         }
 
-                        last_indent = Some((row, columns_to_next_tab_stop as u32));
+                        last_indent = Some((row, indent_delta.len));
                     }
                 }
             });
@@ -3230,12 +3244,19 @@ impl Editor {
                 }
 
                 for row in rows {
-                    let column = snapshot.indent_column_for_line(row);
-                    if column > 0 {
-                        let mut deletion_len = column % tab_size;
-                        if deletion_len == 0 {
-                            deletion_len = tab_size;
-                        }
+                    let indent_size = snapshot.indent_size_for_line(row);
+                    if indent_size.len > 0 {
+                        let deletion_len = match indent_size.kind {
+                            IndentKind::Space => {
+                                let columns_to_prev_tab_stop = indent_size.len % tab_size;
+                                if columns_to_prev_tab_stop == 0 {
+                                    tab_size
+                                } else {
+                                    columns_to_prev_tab_stop
+                                }
+                            }
+                            IndentKind::Tab => 1,
+                        };
                         deletion_ranges.push(Point::new(row, 0)..Point::new(row, deletion_len));
                         last_outdent = Some(row);
                     }
@@ -4549,7 +4570,7 @@ impl Editor {
                             continue;
                         }
 
-                        let start = Point::new(row, snapshot.indent_column_for_line(row));
+                        let start = Point::new(row, snapshot.indent_size_for_line(row).len);
                         let mut line_bytes = snapshot
                             .bytes_in_range(start..snapshot.max_point())
                             .flatten()

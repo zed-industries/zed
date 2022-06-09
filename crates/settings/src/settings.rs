@@ -25,6 +25,7 @@ pub struct Settings {
     pub default_buffer_font_size: f32,
     pub vim_mode: bool,
     pub tab_size: u32,
+    pub hard_tabs: bool,
     pub soft_wrap: SoftWrap,
     pub preferred_line_length: u32,
     pub format_on_save: bool,
@@ -35,6 +36,7 @@ pub struct Settings {
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct LanguageOverride {
     pub tab_size: Option<u32>,
+    pub hard_tabs: Option<bool>,
     pub soft_wrap: Option<SoftWrap>,
     pub preferred_line_length: Option<u32>,
     pub format_on_save: Option<bool>,
@@ -80,6 +82,7 @@ impl Settings {
             default_buffer_font_size: 15.,
             vim_mode: false,
             tab_size: 4,
+            hard_tabs: false,
             soft_wrap: SoftWrap::None,
             preferred_line_length: 80,
             language_overrides: Default::default(),
@@ -104,6 +107,13 @@ impl Settings {
             .and_then(|language| self.language_overrides.get(language))
             .and_then(|settings| settings.tab_size)
             .unwrap_or(self.tab_size)
+    }
+
+    pub fn hard_tabs(&self, language: Option<&str>) -> bool {
+        language
+            .and_then(|language| self.language_overrides.get(language))
+            .and_then(|settings| settings.hard_tabs)
+            .unwrap_or(self.hard_tabs)
     }
 
     pub fn soft_wrap(&self, language: Option<&str>) -> SoftWrap {
@@ -135,6 +145,7 @@ impl Settings {
             default_buffer_font_size: 14.,
             vim_mode: false,
             tab_size: 4,
+            hard_tabs: false,
             soft_wrap: SoftWrap::None,
             preferred_line_length: 80,
             format_on_save: true,

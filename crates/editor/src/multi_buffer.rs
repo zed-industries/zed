@@ -8,8 +8,8 @@ use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 pub use language::Completion;
 use language::{
     char_kind, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk, DiagnosticEntry, Event, File,
-    Language, OffsetRangeExt, Outline, OutlineItem, Selection, ToOffset as _, ToPoint as _,
-    ToPointUtf16 as _, TransactionId,
+    IndentSize, Language, OffsetRangeExt, Outline, OutlineItem, Selection, ToOffset as _,
+    ToPoint as _, ToPointUtf16 as _, TransactionId,
 };
 use settings::Settings;
 use smallvec::SmallVec;
@@ -322,9 +322,14 @@ impl MultiBuffer {
 
         if let Some(buffer) = self.as_singleton() {
             return buffer.update(cx, |buffer, cx| {
-                let language_name = buffer.language().map(|language| language.name());
-                let indent_size = cx.global::<Settings>().tab_size(language_name.as_deref());
                 if autoindent {
+                    let language_name = buffer.language().map(|language| language.name());
+                    let settings = cx.global::<Settings>();
+                    let indent_size = if settings.hard_tabs(language_name.as_deref()) {
+                        IndentSize::tab()
+                    } else {
+                        IndentSize::spaces(settings.tab_size(language_name.as_deref()))
+                    };
                     buffer.edit_with_autoindent(edits, indent_size, cx);
                 } else {
                     buffer.edit(edits, cx);
@@ -426,9 +431,15 @@ impl MultiBuffer {
                         }
                     }
                     let language_name = buffer.language().map(|l| l.name());
-                    let indent_size = cx.global::<Settings>().tab_size(language_name.as_deref());
 
                     if autoindent {
+                        let settings = cx.global::<Settings>();
+                        let indent_size = if settings.hard_tabs(language_name.as_deref()) {
+                            IndentSize::tab()
+                        } else {
+                            IndentSize::spaces(settings.tab_size(language_name.as_deref()))
+                        };
+
                         buffer.edit_with_autoindent(deletions, indent_size, cx);
                         buffer.edit_with_autoindent(insertions, indent_size, cx);
                     } else {
@@ -1787,14 +1798,16 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn indent_column_for_line(&self, row: u32) -> u32 {
+    pub fn indent_size_for_line(&self, row: u32) -> IndentSize {
         if let Some((buffer, range)) = self.buffer_line_for_row(row) {
-            buffer
-                .indent_column_for_line(range.start.row)
+            let mut size = buffer.indent_size_for_line(range.start.row);
+            size.len = size
+                .len
                 .min(range.end.column)
-                .saturating_sub(range.start.column)
+                .saturating_sub(range.start.column);
+            size
         } else {
-            0
+            IndentSize::spaces(0)
         }
     }
 
