@@ -27,6 +27,7 @@ use gpui::{
 };
 use json::json;
 use language::{Bias, DiagnosticSeverity, Selection};
+use project::ProjectPath;
 use settings::Settings;
 use smallvec::SmallVec;
 use std::{
@@ -795,6 +796,7 @@ impl EditorElement {
             return Default::default();
         };
 
+        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
         let scroll_x = snapshot.scroll_position.x();
         snapshot
             .blocks_in_range(rows.clone())
@@ -827,10 +829,60 @@ impl EditorElement {
                         })
                     }
                     TransformBlock::ExcerptHeader {
+                        key,
                         buffer,
+                        range,
                         starts_new_buffer,
                         ..
                     } => {
+                        let jump_icon = project::File::from_dyn(buffer.file()).map(|file| {
+                            let jump_position = range
+                                .primary
+                                .as_ref()
+                                .map_or(range.context.start, |primary| primary.start);
+                            let jump_action = crate::Jump {
+                                path: ProjectPath {
+                                    worktree_id: file.worktree_id(cx),
+                                    path: file.path.clone(),
+                                },
+                                position: language::ToPoint::to_point(&jump_position, buffer),
+                                anchor: jump_position,
+                            };
+
+                            enum JumpIcon {}
+                            cx.render(&editor, |_, cx| {
+                                MouseEventHandler::new::<JumpIcon, _, _>(*key, cx, |state, _| {
+                                    let style = style.jump_icon.style_for(state, false);
+                                    Svg::new("icons/jump.svg")
+                                        .with_color(style.color)
+                                        .constrained()
+                                        .with_width(style.icon_width)
+                                        .aligned()
+                                        .contained()
+                                        .with_style(style.container)
+                                        .constrained()
+                                        .with_width(style.button_width)
+                                        .with_height(style.button_width)
+                                        .boxed()
+                                })
+                                .with_cursor_style(CursorStyle::PointingHand)
+                                .on_click({
+                                    move |_, _, cx| cx.dispatch_action(jump_action.clone())
+                                })
+                                .with_tooltip(
+                                    *key,
+                                    "Jump to Buffer".to_string(),
+                                    Some(Box::new(crate::OpenExcerpts)),
+                                    tooltip_style.clone(),
+                                    cx,
+                                )
+                                .aligned()
+                                .flex_float()
+                                .boxed()
+                            })
+                        });
+
+                        let padding = gutter_padding + scroll_x * em_width;
                         if *starts_new_buffer {
                             let style = &self.style.diagnostic_path_header;
                             let font_size =
@@ -838,7 +890,8 @@ impl EditorElement {
 
                             let mut filename = None;
                             let mut parent_path = None;
-                            if let Some(path) = buffer.path() {
+                            if let Some(file) = buffer.file() {
+                                let path = file.path();
                                 filename =
                                     path.file_name().map(|f| f.to_string_lossy().to_string());
                                 parent_path =
@@ -853,6 +906,7 @@ impl EditorElement {
                                     )
                                     .contained()
                                     .with_style(style.filename.container)
+                                    .aligned()
                                     .boxed(),
                                 )
                                 .with_children(parent_path.map(|path| {
@@ -862,20 +916,25 @@ impl EditorElement {
                                     )
                                     .contained()
                                     .with_style(style.path.container)
+                                    .aligned()
                                     .boxed()
                                 }))
-                                .aligned()
-                                .left()
+                                .with_children(jump_icon)
                                 .contained()
                                 .with_style(style.container)
-                                .with_padding_left(gutter_padding + scroll_x * em_width)
+                                .with_padding_left(padding)
+                                .with_padding_right(padding)
                                 .expanded()
                                 .named("path header block")
                         } else {
                             let text_style = self.style.text.clone();
-                            Label::new("…".to_string(), text_style)
+                            Flex::row()
+                                .with_child(Label::new("…".to_string(), text_style).boxed())
+                                .with_children(jump_icon)
                                 .contained()
-                                .with_padding_left(gutter_padding + scroll_x * em_width)
+                                .with_padding_left(padding)
+                                .with_padding_right(padding)
+                                .expanded()
                                 .named("collapsed context")
                         }
                     }

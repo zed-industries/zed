@@ -5,16 +5,17 @@ use collections::{BTreeMap, HashSet};
 use editor::{
     diagnostic_block_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties, RenderBlock},
-    highlight_diagnostic_message, Autoscroll, Editor, ExcerptId, MultiBuffer, ToOffset,
+    highlight_diagnostic_message, Autoscroll, Editor, ExcerptId, ExcerptRange, MultiBuffer,
+    ToOffset,
 };
 use gpui::{
-    actions, elements::*, fonts::TextStyle, impl_internal_actions, platform::CursorStyle,
-    serde_json, AnyViewHandle, AppContext, Entity, ModelHandle, MutableAppContext, RenderContext,
-    Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    actions, elements::*, fonts::TextStyle, impl_internal_actions, serde_json, AnyViewHandle,
+    AppContext, Entity, ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use language::{
     Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection,
-    SelectionGoal, ToPoint,
+    SelectionGoal,
 };
 use project::{DiagnosticSummary, Project, ProjectPath};
 use serde_json::json;
@@ -27,7 +28,7 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
-use util::{ResultExt, TryFutureExt};
+use util::TryFutureExt;
 use workspace::{ItemHandle as _, ItemNavHistory, Workspace};
 
 actions!(diagnostics, [Deploy]);
@@ -38,7 +39,6 @@ const CONTEXT_LINE_COUNT: u32 = 1;
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectDiagnosticsEditor::deploy);
-    cx.add_action(ProjectDiagnosticsEditor::jump);
     items::init(cx);
 }
 
@@ -194,30 +194,6 @@ impl ProjectDiagnosticsEditor {
         }
     }
 
-    fn jump(workspace: &mut Workspace, action: &Jump, cx: &mut ViewContext<Workspace>) {
-        let editor = workspace.open_path(action.path.clone(), true, cx);
-        let position = action.position;
-        let anchor = action.anchor;
-        cx.spawn_weak(|_, mut cx| async move {
-            let editor = editor.await.log_err()?.downcast::<Editor>()?;
-            editor.update(&mut cx, |editor, cx| {
-                let buffer = editor.buffer().read(cx).as_singleton()?;
-                let buffer = buffer.read(cx);
-                let cursor = if buffer.can_resolve(&anchor) {
-                    anchor.to_point(buffer)
-                } else {
-                    buffer.clip_point(position, Bias::Left)
-                };
-                editor.change_selections(Some(Autoscroll::Newest), cx, |s| {
-                    s.select_ranges([cursor..cursor]);
-                });
-                Some(())
-            })?;
-            Some(())
-        })
-        .detach()
-    }
-
     fn update_excerpts(&mut self, language_server_id: Option<usize>, cx: &mut ViewContext<Self>) {
         let mut paths = Vec::new();
         self.paths_to_update.retain(|path, server_id| {
@@ -348,7 +324,10 @@ impl ProjectDiagnosticsEditor {
                                 .insert_excerpts_after(
                                     &prev_excerpt_id,
                                     buffer.clone(),
-                                    [excerpt_start..excerpt_end],
+                                    [ExcerptRange {
+                                        context: excerpt_start..excerpt_end,
+                                        primary: Some(range.clone()),
+                                    }],
                                     excerpts_cx,
                                 )
                                 .pop()
@@ -363,20 +342,13 @@ impl ProjectDiagnosticsEditor {
                                 is_first_excerpt_for_group = false;
                                 let mut primary =
                                     group.entries[group.primary_ix].diagnostic.clone();
-                                let anchor = group.entries[group.primary_ix].range.start;
-                                let position = anchor.to_point(&snapshot);
                                 primary.message =
                                     primary.message.split('\n').next().unwrap().to_string();
                                 group_state.block_count += 1;
                                 blocks_to_add.push(BlockProperties {
                                     position: header_position,
                                     height: 2,
-                                    render: diagnostic_header_renderer(
-                                        primary,
-                                        path.clone(),
-                                        position,
-                                        anchor,
-                                    ),
+                                    render: diagnostic_header_renderer(primary),
                                     disposition: BlockDisposition::Above,
                                 });
                             }
@@ -633,18 +605,10 @@ impl workspace::Item for ProjectDiagnosticsEditor {
     }
 }
 
-fn diagnostic_header_renderer(
-    diagnostic: Diagnostic,
-    path: ProjectPath,
-    position: Point,
-    anchor: Anchor,
-) -> RenderBlock {
-    enum JumpIcon {}
-
+fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let (message, highlights) = highlight_diagnostic_message(&diagnostic.message);
     Arc::new(move |cx| {
         let settings = cx.global::<Settings>();
-        let tooltip_style = settings.theme.tooltip.clone();
         let theme = &settings.theme.editor;
         let style = theme.diagnostic_header.clone();
         let font_size = (style.text_scale_factor * settings.buffer_font_size).round();
@@ -685,43 +649,6 @@ fn diagnostic_header_renderer(
                     .aligned()
                     .boxed()
             }))
-            .with_child(
-                MouseEventHandler::new::<JumpIcon, _, _>(diagnostic.group_id, cx, |state, _| {
-                    let style = style.jump_icon.style_for(state, false);
-                    Svg::new("icons/jump.svg")
-                        .with_color(style.color)
-                        .constrained()
-                        .with_width(style.icon_width)
-                        .aligned()
-                        .contained()
-                        .with_style(style.container)
-                        .constrained()
-                        .with_width(style.button_width)
-                        .with_height(style.button_width)
-                        .boxed()
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click({
-                    let path = path.clone();
-                    move |_, _, cx| {
-                        cx.dispatch_action(Jump {
-                            path: path.clone(),
-                            position,
-                            anchor,
-                        });
-                    }
-                })
-                .with_tooltip(
-                    diagnostic.group_id,
-                    "Jump to diagnostic".to_string(),
-                    Some(Box::new(editor::OpenExcerpts)),
-                    tooltip_style,
-                    cx,
-                )
-                .aligned()
-                .flex_float()
-                .boxed(),
-            )
             .contained()
             .with_style(style.container)
             .with_padding_left(x_padding)

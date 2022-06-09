@@ -485,7 +485,7 @@ impl BufferSearchBar {
                         );
                     } else {
                         for excerpt in buffer.excerpt_boundaries_in_range(0..buffer.len()) {
-                            let excerpt_range = excerpt.range.to_offset(&excerpt.buffer);
+                            let excerpt_range = excerpt.range.context.to_offset(&excerpt.buffer);
                             let rope = excerpt.buffer.as_rope().slice(excerpt_range.clone());
                             ranges.extend(query.search(&rope).await.into_iter().map(|range| {
                                 let start = excerpt

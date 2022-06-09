@@ -272,7 +272,7 @@ pub fn surrounding_word(map: &DisplaySnapshot, position: DisplayPoint) -> Range<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{test::marked_display_snapshot, Buffer, DisplayMap, MultiBuffer};
+    use crate::{test::marked_display_snapshot, Buffer, DisplayMap, ExcerptRange, MultiBuffer};
     use language::Point;
     use settings::Settings;
 
@@ -494,8 +494,14 @@ mod tests {
             multibuffer.push_excerpts(
                 buffer.clone(),
                 [
-                    Point::new(0, 0)..Point::new(1, 4),
-                    Point::new(2, 0)..Point::new(3, 2),
+                    ExcerptRange {
+                        context: Point::new(0, 0)..Point::new(1, 4),
+                        primary: None,
+                    },
+                    ExcerptRange {
+                        context: Point::new(2, 0)..Point::new(3, 2),
+                        primary: None,
+                    },
                 ],
                 cx,
             );

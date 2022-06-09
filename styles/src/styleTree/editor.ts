@@ -101,14 +101,6 @@ export default function editor(theme: Theme) {
       background: backgroundColor(theme, 300),
       iconWidthFactor: 1.5,
       textScaleFactor: 0.857, // NateQ: Will we need dynamic sizing for text? If so let's create tokens for these.
-      jumpIcon: {
-        color: iconColor(theme, "primary"),
-        iconWidth: 10,
-        buttonWidth: 10,
-        hover: {
-          color: iconColor(theme, "active")
-        }
-      },
       border: border(theme, "secondary", {
         bottom: true,
         top: true,
@@ -147,6 +139,14 @@ export default function editor(theme: Theme) {
     invalidInformationDiagnostic: diagnostic(theme, "muted"),
     invalidWarningDiagnostic: diagnostic(theme, "muted"),
     hover_popover: hoverPopover(theme),
+    jumpIcon: {
+      color: iconColor(theme, "primary"),
+      iconWidth: 10,
+      buttonWidth: 10,
+      hover: {
+        color: iconColor(theme, "active")
+      }
+    },
     syntax,
   };
 }

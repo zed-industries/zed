@@ -36,10 +36,11 @@ use language::{
 };
 use multi_buffer::MultiBufferChunks;
 pub use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
+    ToPoint,
 };
 use ordered_float::OrderedFloat;
-use project::{HoverBlock, Project, ProjectTransaction};
+use project::{HoverBlock, Project, ProjectPath, ProjectTransaction};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -83,6 +84,13 @@ pub struct Select(pub SelectPhase);
 #[derive(Clone, PartialEq)]
 pub struct HoverAt {
     point: Option<DisplayPoint>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Jump {
+    path: ProjectPath,
+    position: Point,
+    anchor: language::Anchor,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -215,7 +223,7 @@ impl_actions!(
     ]
 );
 
-impl_internal_actions!(editor, [Scroll, Select, HoverAt]);
+impl_internal_actions!(editor, [Scroll, Select, HoverAt, Jump]);
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
@@ -305,6 +313,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::hover);
     cx.add_action(Editor::hover_at);
     cx.add_action(Editor::open_excerpts);
+    cx.add_action(Editor::jump);
     cx.add_action(Editor::restart_language_server);
     cx.add_async_action(Editor::confirm_completion);
     cx.add_async_action(Editor::confirm_code_action);
@@ -2833,11 +2842,11 @@ impl Editor {
                             let start = highlight
                                 .range
                                 .start
-                                .max(&excerpt_range.start, cursor_buffer_snapshot);
+                                .max(&excerpt_range.context.start, cursor_buffer_snapshot);
                             let end = highlight
                                 .range
                                 .end
-                                .min(&excerpt_range.end, cursor_buffer_snapshot);
+                                .min(&excerpt_range.context.end, cursor_buffer_snapshot);
                             if start.cmp(&end, cursor_buffer_snapshot).is_ge() {
                                 continue;
                             }
@@ -5825,6 +5834,34 @@ impl Editor {
             nav_history.borrow_mut().enable();
         });
     }
+
+    fn jump(workspace: &mut Workspace, action: &Jump, cx: &mut ViewContext<Workspace>) {
+        let editor = workspace.open_path(action.path.clone(), true, cx);
+        let position = action.position;
+        let anchor = action.anchor;
+        cx.spawn_weak(|_, mut cx| async move {
+            let editor = editor.await.log_err()?.downcast::<Editor>()?;
+            editor.update(&mut cx, |editor, cx| {
+                let buffer = editor.buffer().read(cx).as_singleton()?;
+                let buffer = buffer.read(cx);
+                let cursor = if buffer.can_resolve(&anchor) {
+                    language::ToPoint::to_point(&anchor, buffer)
+                } else {
+                    buffer.clip_point(position, Bias::Left)
+                };
+
+                let nav_history = editor.nav_history.take();
+                editor.change_selections(Some(Autoscroll::Newest), cx, |s| {
+                    s.select_ranges([cursor..cursor]);
+                });
+                editor.nav_history = nav_history;
+
+                Some(())
+            })?;
+            Some(())
+        })
+        .detach()
+    }
 }
 
 impl EditorSnapshot {
@@ -7718,12 +7755,18 @@ mod tests {
             let mut multibuffer = MultiBuffer::new(0);
             multibuffer.push_excerpts(
                 toml_buffer.clone(),
-                [Point::new(0, 0)..Point::new(2, 0)],
+                [ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(2, 0),
+                    primary: None,
+                }],
                 cx,
             );
             multibuffer.push_excerpts(
                 rust_buffer.clone(),
-                [Point::new(0, 0)..Point::new(1, 0)],
+                [ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(1, 0),
+                    primary: None,
+                }],
                 cx,
             );
             multibuffer
@@ -9595,8 +9638,14 @@ mod tests {
             multibuffer.push_excerpts(
                 buffer.clone(),
                 [
-                    Point::new(0, 0)..Point::new(0, 4),
-                    Point::new(1, 0)..Point::new(1, 4),
+                    ExcerptRange {
+                        context: Point::new(0, 0)..Point::new(0, 4),
+                        primary: None,
+                    },
+                    ExcerptRange {
+                        context: Point::new(1, 0)..Point::new(1, 4),
+                        primary: None,
+                    },
                 ],
                 cx,
             );
@@ -9634,6 +9683,10 @@ mod tests {
                 [aaaa
                 (bbbb]
                 cccc)"});
+        let excerpt_ranges = excerpt_ranges.into_iter().map(|context| ExcerptRange {
+            context,
+            primary: None,
+        });
         let buffer = cx.add_model(|cx| Buffer::new(0, initial_text, cx));
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
@@ -9687,8 +9740,14 @@ mod tests {
                 .push_excerpts(
                     buffer.clone(),
                     [
-                        Point::new(0, 0)..Point::new(1, 4),
-                        Point::new(1, 0)..Point::new(2, 4),
+                        ExcerptRange {
+                            context: Point::new(0, 0)..Point::new(1, 4),
+                            primary: None,
+                        },
+                        ExcerptRange {
+                            context: Point::new(1, 0)..Point::new(2, 4),
+                            primary: None,
+                        },
                     ],
                     cx,
                 )
@@ -9771,8 +9830,14 @@ mod tests {
                 .push_excerpts(
                     buffer.clone(),
                     [
-                        Point::new(0, 0)..Point::new(1, 4),
-                        Point::new(1, 0)..Point::new(2, 4),
+                        ExcerptRange {
+                            context: Point::new(0, 0)..Point::new(1, 4),
+                            primary: None,
+                        },
+                        ExcerptRange {
+                            context: Point::new(1, 0)..Point::new(2, 4),
+                            primary: None,
+                        },
                     ],
                     cx,
                 )

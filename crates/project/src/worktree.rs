@@ -519,7 +519,7 @@ impl LocalWorktree {
             let (file, contents) = this
                 .update(&mut cx, |t, cx| t.as_local().unwrap().load(&path, cx))
                 .await?;
-            Ok(cx.add_model(|cx| Buffer::from_file(0, contents, Box::new(file), cx)))
+            Ok(cx.add_model(|cx| Buffer::from_file(0, contents, Arc::new(file), cx)))
         })
     }
 
@@ -648,7 +648,7 @@ impl LocalWorktree {
             };
 
             buffer_handle.update(&mut cx, |buffer, cx| {
-                buffer.did_save(version, file.mtime, Some(Box::new(file)), cx);
+                buffer.did_save(version, file.mtime, Some(Arc::new(file)), cx);
             });
 
             Ok(())
