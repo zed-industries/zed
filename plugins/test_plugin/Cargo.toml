@@ -1,0 +1,10 @@
+[package]
+name = "test_plugin"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+plugin = { path = "../../crates/plugin" }
+
+[lib]
+crate-type = ["cdylib"]
