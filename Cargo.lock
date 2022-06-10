@@ -3717,6 +3717,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bincode",
+ "pollster",
  "serde",
  "serde_json",
  "wasi-common",
