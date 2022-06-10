@@ -467,7 +467,7 @@ impl<'a> EditorLspTestContext<'a> {
     // Constructs lsp range using a marked string with '[', ']' range delimiters
     pub fn lsp_range(&mut self, marked_text: &str) -> lsp::Range {
         let (unmarked, mut ranges) = marked_text_ranges_by(marked_text, vec![('[', ']').into()]);
-        assert_eq!(unmarked, self.cx.editor_text());
+        assert_eq!(unmarked, self.cx.buffer_text());
         let snapshot = self.update_editor(|editor, cx| editor.snapshot(cx));
 
         let offset_range = ranges.remove(&('[', ']').into()).unwrap()[0].clone();
