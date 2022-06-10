@@ -2,6 +2,7 @@ pub mod display_map;
 mod element;
 mod hover_popover;
 pub mod items;
+mod link_go_to_definition;
 pub mod movement;
 mod multi_buffer;
 pub mod selections_collection;
@@ -432,6 +433,7 @@ pub struct Editor {
     input_enabled: bool,
     leader_replica_id: Option<u16>,
     hover_state: HoverState,
+    link_go_to_definition_state: LinkGoToDefinitionState,
 }
 
 pub struct EditorSnapshot {
