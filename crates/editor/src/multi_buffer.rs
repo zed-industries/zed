@@ -937,7 +937,7 @@ impl MultiBuffer {
         &self,
         position: impl ToOffset,
         cx: &AppContext,
-    ) -> Option<(ModelHandle<Buffer>, Range<text::Anchor>)> {
+    ) -> Option<(ExcerptId, ModelHandle<Buffer>, Range<text::Anchor>)> {
         let snapshot = self.read(cx);
         let position = position.to_offset(&snapshot);
 
@@ -945,6 +945,7 @@ impl MultiBuffer {
         cursor.seek(&position, Bias::Right, &());
         cursor.item().map(|excerpt| {
             (
+                excerpt.id.clone(),
                 self.buffers
                     .borrow()
                     .get(&excerpt.buffer_id)

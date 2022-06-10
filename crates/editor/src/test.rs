@@ -1,10 +1,15 @@
-use std::ops::{Deref, DerefMut, Range};
+use std::{
+    ops::{Deref, DerefMut, Range},
+    sync::Arc,
+};
 
+use futures::StreamExt;
 use indoc::indoc;
 
 use collections::BTreeMap;
-use gpui::{keymap::Keystroke, ModelHandle, ViewContext, ViewHandle};
-use language::Selection;
+use gpui::{keymap::Keystroke, AppContext, ModelHandle, ViewContext, ViewHandle};
+use language::{point_to_lsp, FakeLspAdapter, Language, LanguageConfig, Selection};
+use project::{FakeFs, Project};
 use settings::Settings;
 use util::{
     set_eq,
@@ -13,7 +18,8 @@ use util::{
 
 use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
-    Autoscroll, DisplayPoint, Editor, EditorMode, MultiBuffer,
+    multi_buffer::ToPointUtf16,
+    Autoscroll, DisplayPoint, Editor, EditorMode, MultiBuffer, ToPoint,
 };
 
 #[cfg(test)]
@@ -102,6 +108,13 @@ impl<'a> EditorTestContext<'a> {
         }
     }
 
+    pub fn editor<F, T>(&mut self, read: F) -> T
+    where
+        F: FnOnce(&Editor, &AppContext) -> T,
+    {
+        self.editor.read_with(self.cx, read)
+    }
+
     pub fn update_editor<F, T>(&mut self, update: F) -> T
     where
         F: FnOnce(&mut Editor, &mut ViewContext<Editor>) -> T,
@@ -130,6 +143,14 @@ impl<'a> EditorTestContext<'a> {
         for keystroke_text in keystroke_texts.into_iter() {
             self.simulate_keystroke(keystroke_text);
         }
+    }
+
+    pub fn display_point(&mut self, cursor_location: &str) -> DisplayPoint {
+        let (_, locations) = marked_text(cursor_location);
+        let snapshot = self
+            .editor
+            .update(self.cx, |editor, cx| editor.snapshot(cx));
+        locations[0].to_display_point(&snapshot.display_snapshot)
     }
 
     // Sets the editor state via a marked string.
@@ -361,6 +382,128 @@ impl<'a> Deref for EditorTestContext<'a> {
 }
 
 impl<'a> DerefMut for EditorTestContext<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.cx
+    }
+}
+
+pub struct EditorLspTestContext<'a> {
+    pub cx: EditorTestContext<'a>,
+    pub lsp: lsp::FakeLanguageServer,
+}
+
+impl<'a> EditorLspTestContext<'a> {
+    pub async fn new(
+        mut language: Language,
+        capabilities: lsp::ServerCapabilities,
+        cx: &'a mut gpui::TestAppContext,
+    ) -> EditorLspTestContext<'a> {
+        let file_name = format!(
+            "/file.{}",
+            language
+                .path_suffixes()
+                .first()
+                .unwrap_or(&"txt".to_string())
+        );
+
+        let mut fake_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
+            capabilities,
+            ..Default::default()
+        });
+
+        let fs = FakeFs::new(cx.background().clone());
+        fs.insert_file(file_name.clone(), "".to_string()).await;
+
+        let project = Project::test(fs, [file_name.as_ref()], cx).await;
+        project.update(cx, |project, _| project.languages().add(Arc::new(language)));
+        let buffer = project
+            .update(cx, |project, cx| project.open_local_buffer(file_name, cx))
+            .await
+            .unwrap();
+
+        let (window_id, editor) = cx.update(|cx| {
+            cx.set_global(Settings::test(cx));
+            crate::init(cx);
+
+            let (window_id, editor) = cx.add_window(Default::default(), |cx| {
+                let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+
+                Editor::new(EditorMode::Full, buffer, Some(project), None, None, cx)
+            });
+
+            editor.update(cx, |_, cx| cx.focus_self());
+
+            (window_id, editor)
+        });
+
+        let lsp = fake_servers.next().await.unwrap();
+
+        Self {
+            cx: EditorTestContext {
+                cx,
+                window_id,
+                editor,
+            },
+            lsp,
+        }
+    }
+
+    pub async fn new_rust(
+        capabilities: lsp::ServerCapabilities,
+        cx: &'a mut gpui::TestAppContext,
+    ) -> EditorLspTestContext<'a> {
+        let language = Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        );
+
+        Self::new(language, capabilities, cx).await
+    }
+
+    // Constructs lsp range using a marked string with '[', ']' range delimiters
+    pub fn lsp_range(&mut self, marked_text: &str) -> lsp::Range {
+        let (unmarked, mut ranges) = marked_text_ranges_by(marked_text, vec![('[', ']').into()]);
+        assert_eq!(unmarked, self.cx.buffer_text());
+        let snapshot = self.update_editor(|editor, cx| editor.snapshot(cx));
+
+        let offset_range = ranges.remove(&('[', ']').into()).unwrap()[0].clone();
+        let start_point = offset_range.start.to_point(&snapshot.buffer_snapshot);
+        let end_point = offset_range.end.to_point(&snapshot.buffer_snapshot);
+        self.editor(|editor, cx| {
+            let buffer = editor.buffer().read(cx);
+            let start = point_to_lsp(
+                buffer
+                    .point_to_buffer_offset(start_point, cx)
+                    .unwrap()
+                    .1
+                    .to_point_utf16(&buffer.read(cx)),
+            );
+            let end = point_to_lsp(
+                buffer
+                    .point_to_buffer_offset(end_point, cx)
+                    .unwrap()
+                    .1
+                    .to_point_utf16(&buffer.read(cx)),
+            );
+
+            lsp::Range { start, end }
+        })
+    }
+}
+
+impl<'a> Deref for EditorLspTestContext<'a> {
+    type Target = EditorTestContext<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.cx
+    }
+}
+
+impl<'a> DerefMut for EditorLspTestContext<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.cx
     }

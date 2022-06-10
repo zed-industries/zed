@@ -571,6 +571,10 @@ impl Language {
         &self.config.brackets
     }
 
+    pub fn path_suffixes(&self) -> &[String] {
+        &self.config.path_suffixes
+    }
+
     pub fn should_autoclose_before(&self, c: char) -> bool {
         c.is_whitespace() || self.config.autoclose_before.contains(c)
     }
