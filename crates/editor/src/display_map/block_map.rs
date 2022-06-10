@@ -56,6 +56,7 @@ pub struct Block {
     id: BlockId,
     position: Anchor,
     height: u8,
+    style: BlockStyle,
     render: Mutex<RenderBlock>,
     disposition: BlockDisposition,
 }
@@ -67,8 +68,16 @@ where
 {
     pub position: P,
     pub height: u8,
+    pub style: BlockStyle,
     pub render: Arc<dyn Fn(&mut BlockContext) -> ElementBox>,
     pub disposition: BlockDisposition,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub enum BlockStyle {
+    Fixed,
+    Flex,
+    Sticky,
 }
 
 pub struct BlockContext<'a, 'b> {
@@ -513,6 +522,7 @@ impl<'a> BlockMapWriter<'a> {
                     height: block.height,
                     render: Mutex::new(block.render),
                     disposition: block.disposition,
+                    style: block.style,
                 }),
             );
 
@@ -940,6 +950,10 @@ impl Block {
     pub fn position(&self) -> &Anchor {
         &self.position
     }
+
+    pub fn style(&self) -> BlockStyle {
+        self.style
+    }
 }
 
 impl Debug for Block {
@@ -1018,18 +1032,21 @@ mod tests {
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
         let block_ids = writer.insert(vec![
             BlockProperties {
+                style: BlockStyle::Fixed,
                 position: buffer_snapshot.anchor_after(Point::new(1, 0)),
                 height: 1,
                 disposition: BlockDisposition::Above,
                 render: Arc::new(|_| Empty::new().named("block 1")),
             },
             BlockProperties {
+                style: BlockStyle::Fixed,
                 position: buffer_snapshot.anchor_after(Point::new(1, 2)),
                 height: 2,
                 disposition: BlockDisposition::Above,
                 render: Arc::new(|_| Empty::new().named("block 2")),
             },
             BlockProperties {
+                style: BlockStyle::Fixed,
                 position: buffer_snapshot.anchor_after(Point::new(3, 3)),
                 height: 3,
                 disposition: BlockDisposition::Below,
@@ -1183,12 +1200,14 @@ mod tests {
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
         writer.insert(vec![
             BlockProperties {
+                style: BlockStyle::Fixed,
                 position: buffer_snapshot.anchor_after(Point::new(1, 12)),
                 disposition: BlockDisposition::Above,
                 render: Arc::new(|_| Empty::new().named("block 1")),
                 height: 1,
             },
             BlockProperties {
+                style: BlockStyle::Fixed,
                 position: buffer_snapshot.anchor_after(Point::new(1, 1)),
                 disposition: BlockDisposition::Below,
                 render: Arc::new(|_| Empty::new().named("block 2")),
@@ -1286,6 +1305,7 @@ mod tests {
                                 height
                             );
                             BlockProperties {
+                                style: BlockStyle::Fixed,
                                 position,
                                 height,
                                 disposition,

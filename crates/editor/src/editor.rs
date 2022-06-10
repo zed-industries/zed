@@ -4801,6 +4801,7 @@ impl Editor {
                     cx.focus(&rename_editor);
                     let block_id = this.insert_blocks(
                         [BlockProperties {
+                            style: BlockStyle::Flex,
                             position: range.start.clone(),
                             height: 1,
                             render: Arc::new({
@@ -4985,6 +4986,7 @@ impl Editor {
                         let diagnostic = entry.diagnostic.clone();
                         let message_height = diagnostic.message.lines().count() as u8;
                         BlockProperties {
+                            style: BlockStyle::Fixed,
                             position: buffer.anchor_after(entry.range.start),
                             height: message_height,
                             render: diagnostic_block_renderer(diagnostic, true),
@@ -7932,6 +7934,7 @@ mod tests {
         editor.update(cx, |editor, cx| {
             editor.insert_blocks(
                 [BlockProperties {
+                    style: BlockStyle::Fixed,
                     position: snapshot.anchor_after(Point::new(2, 0)),
                     disposition: BlockDisposition::Below,
                     height: 1,
