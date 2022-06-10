@@ -605,6 +605,7 @@ impl Server {
             guest_user_id = state.user_id_for_connection(request.sender_id)?;
         };
 
+        tracing::info!(project_id, %host_user_id, %host_connection_id, "join project");
         let has_contact = self
             .app_state
             .db
@@ -760,6 +761,12 @@ impl Server {
         {
             let mut store = self.store_mut().await;
             project = store.leave_project(sender_id, project_id)?;
+            tracing::info!(
+                project_id,
+                host_user_id = %project.host_user_id,
+                host_connection_id = %project.host_connection_id,
+                "leave project"
+            );
 
             if project.remove_collaborator {
                 broadcast(sender_id, project.connection_ids, |conn_id| {
@@ -833,6 +840,7 @@ impl Server {
             &request.payload.updated_entries,
             request.payload.scan_id,
         )?;
+        // TODO: log `extension_counts` from `Worktree`.
 
         broadcast(request.sender_id, connection_ids, |connection_id| {
             self.peer
