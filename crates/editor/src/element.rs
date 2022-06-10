@@ -791,7 +791,7 @@ impl EditorElement {
         &mut self,
         rows: Range<u32>,
         snapshot: &EditorSnapshot,
-        width: f32,
+        editor_width: f32,
         scroll_width: f32,
         gutter_padding: f32,
         gutter_width: f32,
@@ -959,11 +959,11 @@ impl EditorElement {
             element
         };
 
-        let mut max_width = width.max(scroll_width);
+        let mut fixed_block_max_width = 0f32;
         let mut blocks = Vec::new();
         for (row, block) in fixed_blocks {
             let element = render_block(block, f32::INFINITY);
-            max_width = max_width.max(element.size().x() + em_width);
+            fixed_block_max_width = fixed_block_max_width.max(element.size().x() + em_width);
             blocks.push(BlockLayout {
                 row,
                 element,
@@ -976,9 +976,11 @@ impl EditorElement {
                 TransformBlock::ExcerptHeader { .. } => BlockStyle::Sticky,
             };
             let width = match style {
+                BlockStyle::Sticky => editor_width,
+                BlockStyle::Flex => editor_width
+                    .max(fixed_block_max_width)
+                    .max(gutter_width + scroll_width),
                 BlockStyle::Fixed => unreachable!(),
-                BlockStyle::Sticky => width,
-                BlockStyle::Flex => max_width,
             };
             let element = render_block(block, width);
             blocks.push(BlockLayout {
@@ -987,7 +989,10 @@ impl EditorElement {
                 style,
             });
         }
-        (max_width, blocks)
+        (
+            scroll_width.max(fixed_block_max_width - gutter_width),
+            blocks,
+        )
     }
 }
 
@@ -1176,13 +1181,13 @@ impl Element for EditorElement {
             cx.text_layout_cache,
         )
         .width();
-        let mut scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.x();
+        let scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.x();
         let em_width = style.text.em_width(cx.font_cache);
-        let (blocks_max_width, blocks) = self.layout_blocks(
+        let (scroll_width, blocks) = self.layout_blocks(
             start_row..end_row,
             &snapshot,
             size.x(),
-            scroll_width + gutter_width,
+            scroll_width,
             gutter_padding,
             gutter_width,
             em_width,
@@ -1192,7 +1197,6 @@ impl Element for EditorElement {
             &line_layouts,
             cx,
         );
-        scroll_width = scroll_width.max(blocks_max_width - gutter_width);
 
         let max_row = snapshot.max_point().row();
         let scroll_max = vec2f(
