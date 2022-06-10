@@ -4,7 +4,7 @@ use anyhow::Result;
 use collections::{BTreeMap, HashSet};
 use editor::{
     diagnostic_block_renderer,
-    display_map::{BlockDisposition, BlockId, BlockProperties, RenderBlock},
+    display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock},
     highlight_diagnostic_message, Autoscroll, Editor, ExcerptId, ExcerptRange, MultiBuffer,
     ToOffset,
 };
@@ -348,6 +348,7 @@ impl ProjectDiagnosticsEditor {
                                 blocks_to_add.push(BlockProperties {
                                     position: header_position,
                                     height: 2,
+                                    style: BlockStyle::Sticky,
                                     render: diagnostic_header_renderer(primary),
                                     disposition: BlockDisposition::Above,
                                 });
@@ -366,6 +367,7 @@ impl ProjectDiagnosticsEditor {
                                     blocks_to_add.push(BlockProperties {
                                         position: (excerpt_id.clone(), entry.range.start.clone()),
                                         height: diagnostic.message.matches('\n').count() as u8 + 1,
+                                        style: BlockStyle::Fixed,
                                         render: diagnostic_block_renderer(diagnostic, true),
                                         disposition: BlockDisposition::Below,
                                     });
@@ -402,6 +404,7 @@ impl ProjectDiagnosticsEditor {
                     BlockProperties {
                         position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor),
                         height: block.height,
+                        style: block.style,
                         render: block.render,
                         disposition: block.disposition,
                     }
@@ -621,7 +624,6 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                 .with_color(theme.warning_diagnostic.message.text.color)
         };
 
-        let x_padding = cx.gutter_padding + cx.scroll_x * cx.em_width;
         Flex::row()
             .with_child(
                 icon.constrained()
@@ -651,8 +653,8 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
             }))
             .contained()
             .with_style(style.container)
-            .with_padding_left(x_padding)
-            .with_padding_right(x_padding)
+            .with_padding_left(cx.gutter_padding)
+            .with_padding_right(cx.gutter_padding)
             .expanded()
             .named("diagnostic header")
     })

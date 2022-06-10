@@ -3,9 +3,9 @@ use super::{
     Anchor, DisplayPoint, Editor, EditorMode, EditorSnapshot, Input, Scroll, Select, SelectPhase,
     SoftWrap, ToPoint, MAX_LINE_LEN,
 };
-use crate::hover_popover::HoverAt;
 use crate::{
-    display_map::{DisplaySnapshot, TransformBlock},
+    display_map::{BlockStyle, DisplaySnapshot, TransformBlock},
+    hover_popover::HoverAt,
     EditorStyle,
 };
 use clock::ReplicaId;
@@ -617,10 +617,13 @@ impl EditorElement {
         let scroll_left = scroll_position.x() * layout.em_width;
         let scroll_top = scroll_position.y() * layout.line_height;
 
-        for (row, element) in &mut layout.blocks {
-            let origin = bounds.origin()
-                + vec2f(-scroll_left, *row as f32 * layout.line_height - scroll_top);
-            element.paint(origin, visible_bounds, cx);
+        for block in &mut layout.blocks {
+            let mut origin =
+                bounds.origin() + vec2f(0., block.row as f32 * layout.line_height - scroll_top);
+            if !matches!(block.style, BlockStyle::Sticky) {
+                origin += vec2f(-scroll_left, 0.);
+            }
+            block.element.paint(origin, visible_bounds, cx);
         }
     }
 
@@ -789,6 +792,7 @@ impl EditorElement {
         rows: Range<u32>,
         snapshot: &EditorSnapshot,
         width: f32,
+        scroll_width: f32,
         gutter_padding: f32,
         gutter_width: f32,
         em_width: f32,
@@ -797,7 +801,7 @@ impl EditorElement {
         style: &EditorStyle,
         line_layouts: &[text_layout::Line],
         cx: &mut LayoutContext,
-    ) -> Vec<(u32, ElementBox)> {
+    ) -> (f32, Vec<BlockLayout>) {
         let editor = if let Some(editor) = self.view.upgrade(cx) {
             editor
         } else {
@@ -806,158 +810,184 @@ impl EditorElement {
 
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
         let scroll_x = snapshot.scroll_position.x();
-        snapshot
+        let (fixed_blocks, non_fixed_blocks) = snapshot
             .blocks_in_range(rows.clone())
-            .map(|(block_row, block)| {
-                let mut element = match block {
-                    TransformBlock::Custom(block) => {
-                        let align_to = block
-                            .position()
-                            .to_point(&snapshot.buffer_snapshot)
-                            .to_display_point(snapshot);
-                        let anchor_x = text_x
-                            + if rows.contains(&align_to.row()) {
-                                line_layouts[(align_to.row() - rows.start) as usize]
-                                    .x_for_index(align_to.column() as usize)
-                            } else {
-                                layout_line(align_to.row(), snapshot, style, cx.text_layout_cache)
-                                    .x_for_index(align_to.column() as usize)
-                            };
+            .partition::<Vec<_>, _>(|(_, block)| match block {
+                TransformBlock::ExcerptHeader { .. } => false,
+                TransformBlock::Custom(block) => block.style() == BlockStyle::Fixed,
+            });
+        let mut render_block = |block: &TransformBlock, width: f32| {
+            let mut element = match block {
+                TransformBlock::Custom(block) => {
+                    let align_to = block
+                        .position()
+                        .to_point(&snapshot.buffer_snapshot)
+                        .to_display_point(snapshot);
+                    let anchor_x = text_x
+                        + if rows.contains(&align_to.row()) {
+                            line_layouts[(align_to.row() - rows.start) as usize]
+                                .x_for_index(align_to.column() as usize)
+                        } else {
+                            layout_line(align_to.row(), snapshot, style, cx.text_layout_cache)
+                                .x_for_index(align_to.column() as usize)
+                        };
 
-                        cx.render(&editor, |_, cx| {
-                            block.render(&mut BlockContext {
-                                cx,
-                                anchor_x,
-                                gutter_padding,
-                                line_height,
-                                scroll_x,
-                                gutter_width,
-                                em_width,
-                            })
+                    cx.render(&editor, |_, cx| {
+                        block.render(&mut BlockContext {
+                            cx,
+                            anchor_x,
+                            gutter_padding,
+                            line_height,
+                            scroll_x,
+                            gutter_width,
+                            em_width,
                         })
-                    }
-                    TransformBlock::ExcerptHeader {
-                        key,
-                        buffer,
-                        range,
-                        starts_new_buffer,
-                        ..
-                    } => {
-                        let jump_icon = project::File::from_dyn(buffer.file()).map(|file| {
-                            let jump_position = range
-                                .primary
-                                .as_ref()
-                                .map_or(range.context.start, |primary| primary.start);
-                            let jump_action = crate::Jump {
-                                path: ProjectPath {
-                                    worktree_id: file.worktree_id(cx),
-                                    path: file.path.clone(),
-                                },
-                                position: language::ToPoint::to_point(&jump_position, buffer),
-                                anchor: jump_position,
-                            };
+                    })
+                }
+                TransformBlock::ExcerptHeader {
+                    key,
+                    buffer,
+                    range,
+                    starts_new_buffer,
+                    ..
+                } => {
+                    let jump_icon = project::File::from_dyn(buffer.file()).map(|file| {
+                        let jump_position = range
+                            .primary
+                            .as_ref()
+                            .map_or(range.context.start, |primary| primary.start);
+                        let jump_action = crate::Jump {
+                            path: ProjectPath {
+                                worktree_id: file.worktree_id(cx),
+                                path: file.path.clone(),
+                            },
+                            position: language::ToPoint::to_point(&jump_position, buffer),
+                            anchor: jump_position,
+                        };
 
-                            enum JumpIcon {}
-                            cx.render(&editor, |_, cx| {
-                                MouseEventHandler::new::<JumpIcon, _, _>(*key, cx, |state, _| {
-                                    let style = style.jump_icon.style_for(state, false);
-                                    Svg::new("icons/jump.svg")
-                                        .with_color(style.color)
-                                        .constrained()
-                                        .with_width(style.icon_width)
-                                        .aligned()
-                                        .contained()
-                                        .with_style(style.container)
-                                        .constrained()
-                                        .with_width(style.button_width)
-                                        .with_height(style.button_width)
-                                        .boxed()
-                                })
-                                .with_cursor_style(CursorStyle::PointingHand)
-                                .on_click({
-                                    move |_, _, cx| cx.dispatch_action(jump_action.clone())
-                                })
-                                .with_tooltip(
-                                    *key,
-                                    "Jump to Buffer".to_string(),
-                                    Some(Box::new(crate::OpenExcerpts)),
-                                    tooltip_style.clone(),
-                                    cx,
-                                )
-                                .aligned()
-                                .flex_float()
-                                .boxed()
-                            })
-                        });
-
-                        let padding = gutter_padding + scroll_x * em_width;
-                        if *starts_new_buffer {
-                            let style = &self.style.diagnostic_path_header;
-                            let font_size =
-                                (style.text_scale_factor * self.style.text.font_size).round();
-
-                            let mut filename = None;
-                            let mut parent_path = None;
-                            if let Some(file) = buffer.file() {
-                                let path = file.path();
-                                filename =
-                                    path.file_name().map(|f| f.to_string_lossy().to_string());
-                                parent_path =
-                                    path.parent().map(|p| p.to_string_lossy().to_string() + "/");
-                            }
-
-                            Flex::row()
-                                .with_child(
-                                    Label::new(
-                                        filename.unwrap_or_else(|| "untitled".to_string()),
-                                        style.filename.text.clone().with_font_size(font_size),
-                                    )
-                                    .contained()
-                                    .with_style(style.filename.container)
+                        enum JumpIcon {}
+                        cx.render(&editor, |_, cx| {
+                            MouseEventHandler::new::<JumpIcon, _, _>(*key, cx, |state, _| {
+                                let style = style.jump_icon.style_for(state, false);
+                                Svg::new("icons/jump.svg")
+                                    .with_color(style.color)
+                                    .constrained()
+                                    .with_width(style.icon_width)
                                     .aligned()
-                                    .boxed(),
+                                    .contained()
+                                    .with_style(style.container)
+                                    .constrained()
+                                    .with_width(style.button_width)
+                                    .with_height(style.button_width)
+                                    .boxed()
+                            })
+                            .with_cursor_style(CursorStyle::PointingHand)
+                            .on_click(move |_, _, cx| cx.dispatch_action(jump_action.clone()))
+                            .with_tooltip(
+                                *key,
+                                "Jump to Buffer".to_string(),
+                                Some(Box::new(crate::OpenExcerpts)),
+                                tooltip_style.clone(),
+                                cx,
+                            )
+                            .aligned()
+                            .flex_float()
+                            .boxed()
+                        })
+                    });
+
+                    if *starts_new_buffer {
+                        let style = &self.style.diagnostic_path_header;
+                        let font_size =
+                            (style.text_scale_factor * self.style.text.font_size).round();
+
+                        let mut filename = None;
+                        let mut parent_path = None;
+                        if let Some(file) = buffer.file() {
+                            let path = file.path();
+                            filename = path.file_name().map(|f| f.to_string_lossy().to_string());
+                            parent_path =
+                                path.parent().map(|p| p.to_string_lossy().to_string() + "/");
+                        }
+
+                        Flex::row()
+                            .with_child(
+                                Label::new(
+                                    filename.unwrap_or_else(|| "untitled".to_string()),
+                                    style.filename.text.clone().with_font_size(font_size),
                                 )
-                                .with_children(parent_path.map(|path| {
-                                    Label::new(
-                                        path,
-                                        style.path.text.clone().with_font_size(font_size),
-                                    )
+                                .contained()
+                                .with_style(style.filename.container)
+                                .aligned()
+                                .boxed(),
+                            )
+                            .with_children(parent_path.map(|path| {
+                                Label::new(path, style.path.text.clone().with_font_size(font_size))
                                     .contained()
                                     .with_style(style.path.container)
                                     .aligned()
                                     .boxed()
-                                }))
-                                .with_children(jump_icon)
-                                .contained()
-                                .with_style(style.container)
-                                .with_padding_left(padding)
-                                .with_padding_right(padding)
-                                .expanded()
-                                .named("path header block")
-                        } else {
-                            let text_style = self.style.text.clone();
-                            Flex::row()
-                                .with_child(Label::new("…".to_string(), text_style).boxed())
-                                .with_children(jump_icon)
-                                .contained()
-                                .with_padding_left(padding)
-                                .with_padding_right(padding)
-                                .expanded()
-                                .named("collapsed context")
-                        }
+                            }))
+                            .with_children(jump_icon)
+                            .contained()
+                            .with_style(style.container)
+                            .with_padding_left(gutter_padding)
+                            .with_padding_right(gutter_padding)
+                            .expanded()
+                            .named("path header block")
+                    } else {
+                        let text_style = self.style.text.clone();
+                        Flex::row()
+                            .with_child(Label::new("…".to_string(), text_style).boxed())
+                            .with_children(jump_icon)
+                            .contained()
+                            .with_padding_left(gutter_padding)
+                            .with_padding_right(gutter_padding)
+                            .expanded()
+                            .named("collapsed context")
                     }
-                };
+                }
+            };
 
-                element.layout(
-                    SizeConstraint {
-                        min: Vector2F::zero(),
-                        max: vec2f(width, block.height() as f32 * line_height),
-                    },
-                    cx,
-                );
-                (block_row, element)
-            })
-            .collect()
+            element.layout(
+                SizeConstraint {
+                    min: Vector2F::zero(),
+                    max: vec2f(width, block.height() as f32 * line_height),
+                },
+                cx,
+            );
+            element
+        };
+
+        let mut max_width = width.max(scroll_width);
+        let mut blocks = Vec::new();
+        for (row, block) in fixed_blocks {
+            let element = render_block(block, f32::INFINITY);
+            max_width = max_width.max(element.size().x() + em_width);
+            blocks.push(BlockLayout {
+                row,
+                element,
+                style: BlockStyle::Fixed,
+            });
+        }
+        for (row, block) in non_fixed_blocks {
+            let style = match block {
+                TransformBlock::Custom(block) => block.style(),
+                TransformBlock::ExcerptHeader { .. } => BlockStyle::Sticky,
+            };
+            let width = match style {
+                BlockStyle::Fixed => unreachable!(),
+                BlockStyle::Sticky => width,
+                BlockStyle::Flex => max_width,
+            };
+            let element = render_block(block, width);
+            blocks.push(BlockLayout {
+                row,
+                element,
+                style,
+            });
+        }
+        (max_width, blocks)
     }
 }
 
@@ -1146,8 +1176,24 @@ impl Element for EditorElement {
             cx.text_layout_cache,
         )
         .width();
-        let scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.x();
+        let mut scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.x();
         let em_width = style.text.em_width(cx.font_cache);
+        let (blocks_max_width, blocks) = self.layout_blocks(
+            start_row..end_row,
+            &snapshot,
+            size.x(),
+            scroll_width + gutter_width,
+            gutter_padding,
+            gutter_width,
+            em_width,
+            gutter_width + gutter_margin,
+            line_height,
+            &style,
+            &line_layouts,
+            cx,
+        );
+        scroll_width = scroll_width.max(blocks_max_width - gutter_width);
+
         let max_row = snapshot.max_point().row();
         let scroll_max = vec2f(
             ((scroll_width - text_size.x()) / em_width).max(0.0),
@@ -1246,20 +1292,6 @@ impl Element for EditorElement {
             );
         }
 
-        let blocks = self.layout_blocks(
-            start_row..end_row,
-            &snapshot,
-            size.x().max(scroll_width + gutter_width),
-            gutter_padding,
-            gutter_width,
-            em_width,
-            gutter_width + gutter_margin,
-            line_height,
-            &style,
-            &line_layouts,
-            cx,
-        );
-
         (
             size,
             LayoutState {
@@ -1353,8 +1385,8 @@ impl Element for EditorElement {
             }
         }
 
-        for (_, block) in &mut layout.blocks {
-            if block.dispatch_event(event, cx) {
+        for block in &mut layout.blocks {
+            if block.element.dispatch_event(event, cx) {
                 return true;
             }
         }
@@ -1440,7 +1472,7 @@ pub struct LayoutState {
     highlighted_rows: Option<Range<u32>>,
     line_layouts: Vec<text_layout::Line>,
     line_number_layouts: Vec<Option<text_layout::Line>>,
-    blocks: Vec<(u32, ElementBox)>,
+    blocks: Vec<BlockLayout>,
     line_height: f32,
     em_width: f32,
     em_advance: f32,
@@ -1449,6 +1481,12 @@ pub struct LayoutState {
     context_menu: Option<(DisplayPoint, ElementBox)>,
     code_actions_indicator: Option<(u32, ElementBox)>,
     hover: Option<(DisplayPoint, ElementBox)>,
+}
+
+struct BlockLayout {
+    row: u32,
+    element: ElementBox,
+    style: BlockStyle,
 }
 
 fn layout_line(
@@ -1763,6 +1801,7 @@ mod tests {
             editor.set_placeholder_text("hello", cx);
             editor.insert_blocks(
                 [BlockProperties {
+                    style: BlockStyle::Fixed,
                     disposition: BlockDisposition::Above,
                     height: 3,
                     position: Anchor::min(),

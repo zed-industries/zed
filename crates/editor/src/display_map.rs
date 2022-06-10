@@ -20,7 +20,7 @@ use wrap_map::WrapMap;
 
 pub use block_map::{
     BlockBufferRows as DisplayBufferRows, BlockChunks as DisplayChunks, BlockContext,
-    BlockDisposition, BlockId, BlockProperties, RenderBlock, TransformBlock,
+    BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
 
 pub trait ToDisplayPoint {
@@ -650,6 +650,7 @@ pub mod tests {
                                         height
                                     );
                                     BlockProperties {
+                                        style: BlockStyle::Fixed,
                                         position,
                                         height,
                                         disposition,
