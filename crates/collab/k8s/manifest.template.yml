@@ -27,6 +27,7 @@ kind: Deployment
 metadata:
   namespace: ${ZED_KUBE_NAMESPACE}
   name: collab
+
 spec:
   replicas: 1
   selector:
@@ -36,6 +37,19 @@ spec:
     metadata:
       labels:
         app: collab
+      annotations:
+        ad.datadoghq.com/collab.check_names: |
+          ["openmetrics"]
+        ad.datadoghq.com/collab.init_configs: |
+          [{}]
+        ad.datadoghq.com/collab.instances: |
+          [
+              {
+              "openmetrics_endpoint": "http://%%host%%:%%port%%/metrics",
+              "namespace": "collab_${ZED_KUBE_NAMESPACE}",
+              "metrics": [".*"]
+              }
+          ]
     spec:
       containers:
         - name: collab

@@ -29,6 +29,7 @@ use futures::{
     FutureExt, SinkExt, StreamExt, TryStreamExt,
 };
 use lazy_static::lazy_static;
+use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{self, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage},
     Connection, ConnectionId, Peer, Receipt, TypedEnvelope,
@@ -56,6 +57,18 @@ use tower::ServiceBuilder;
 use tracing::{info_span, instrument, Instrument};
 
 pub use store::{Store, Worktree};
+
+lazy_static! {
+    static ref METRIC_CONNECTIONS: IntGauge =
+        register_int_gauge!("connections", "number of connections").unwrap();
+    static ref METRIC_PROJECTS: IntGauge =
+        register_int_gauge!("projects", "number of open projects").unwrap();
+    static ref METRIC_SHARED_PROJECTS: IntGauge = register_int_gauge!(
+        "shared_projects",
+        "number of open projects with one or more guests"
+    )
+    .unwrap();
+}
 
 type MessageHandler =
     Box<dyn Send + Sync + Fn(Arc<Server>, Box<dyn AnyTypedEnvelope>) -> BoxFuture<'static, ()>>;
@@ -1534,6 +1547,11 @@ impl<'a> Drop for StoreWriteGuard<'a> {
         self.check_invariants();
 
         let metrics = self.metrics();
+
+        METRIC_CONNECTIONS.set(metrics.connections as _);
+        METRIC_PROJECTS.set(metrics.registered_projects as _);
+        METRIC_SHARED_PROJECTS.set(metrics.shared_projects as _);
+
         tracing::info!(
             connections = metrics.connections,
             registered_projects = metrics.registered_projects,
@@ -1609,6 +1627,7 @@ pub fn routes(server: Arc<Server>) -> Router<Body> {
                 .layer(middleware::from_fn(auth::validate_header))
                 .layer(Extension(server)),
         )
+        .route("/metrics", get(handle_metrics))
 }
 
 pub async fn handle_websocket_request(
@@ -1640,6 +1659,19 @@ pub async fn handle_websocket_request(
                 .log_err();
         }
     })
+}
+
+pub async fn handle_metrics() -> axum::response::Response {
+    let encoder = prometheus::TextEncoder::new();
+    let metric_families = prometheus::gather();
+    match encoder.encode_to_string(&metric_families) {
+        Ok(string) => (StatusCode::OK, string).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to encode metrics {:?}", error),
+        )
+            .into_response(),
+    }
 }
 
 fn to_axum_message(message: TungsteniteMessage) -> AxumMessage {
