@@ -911,7 +911,7 @@ impl Workspace {
         }))
     }
 
-    fn prepare_to_close(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<bool>> {
+    pub fn prepare_to_close(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<bool>> {
         self.save_all_internal(true, cx)
     }
 

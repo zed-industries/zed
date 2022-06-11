@@ -226,7 +226,29 @@ pub fn build_window_options() -> WindowOptions<'static> {
 }
 
 fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
-    cx.platform().quit();
+    let mut workspaces = cx
+        .window_ids()
+        .filter_map(|window_id| cx.root_view::<Workspace>(window_id))
+        .collect::<Vec<_>>();
+
+    // If multiple windows have unsaved changes, and need a save prompt,
+    // prompt in the active window before switching to a different window.
+    workspaces.sort_by_key(|workspace| !cx.window_is_active(workspace.window_id()));
+
+    cx.spawn(|mut cx| async move {
+        // If the user cancels any save prompt, then keep the app open.
+        for workspace in workspaces {
+            if !workspace
+                .update(&mut cx, |workspace, cx| workspace.prepare_to_close(cx))
+                .await?
+            {
+                return Ok(());
+            }
+        }
+        cx.platform().quit();
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
 }
 
 fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
