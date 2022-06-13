@@ -66,6 +66,7 @@ impl PluginBuilder {
     /// Create a new [`PluginBuilder`] with the given WASI context.
     /// Using the default context is a safe bet, see [`new_with_default_context`].
     pub fn new(wasi_ctx: WasiCtx) -> Result<Self, Error> {
+        dbg!("new plugin");
         let mut config = Config::default();
         config.async_support(true);
         let engine = Engine::new(&config)?;
@@ -231,6 +232,7 @@ impl PluginBuilder {
     /// Initializes a [`Plugin`] from a given compiled Wasm module.
     /// Both binary (`.wasm`) and text (`.wat`) module formats are supported.
     pub async fn init<T: AsRef<[u8]>>(self, module: T) -> Result<Plugin, Error> {
+        dbg!("initializing plugin");
         Plugin::init(module.as_ref().to_vec(), self).await
     }
 }
@@ -296,6 +298,7 @@ impl Plugin {
 
 impl Plugin {
     async fn init(module: Vec<u8>, plugin: PluginBuilder) -> Result<Self, Error> {
+        dbg!("started initialization");
         // initialize the WebAssembly System Interface context
         let engine = plugin.engine;
         let mut linker = plugin.linker;
@@ -311,6 +314,7 @@ impl Plugin {
             },
         );
         let module = Module::new(&engine, module)?;
+        dbg!("created store");
 
         // load the provided module into the asynchronous runtime
         linker.module_async(&mut store, "", &module).await?;
@@ -324,6 +328,8 @@ impl Plugin {
             alloc_buffer,
             free_buffer,
         });
+
+        dbg!("bound funcitons");
 
         Ok(Plugin {
             engine,
