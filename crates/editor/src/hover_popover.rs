@@ -1,7 +1,4 @@
-use std::{
-    ops::Range,
-    time::{Duration, Instant},
-};
+use std::{ops::Range, time::Duration};
 
 use gpui::{
     actions,
@@ -60,7 +57,6 @@ pub fn hide_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
     // only notify the context once
     if editor.hover_state.popover.is_some() {
         editor.hover_state.popover = None;
-        editor.hover_state.hidden_at = Some(cx.background().now());
         did_hide = true;
         cx.notify();
     }
@@ -242,7 +238,6 @@ fn show_hover(
 #[derive(Default)]
 pub struct HoverState {
     pub popover: Option<HoverPopover>,
-    pub hidden_at: Option<Instant>,
     pub triggered_from: Option<Anchor>,
     pub symbol_range: Option<Range<Anchor>>,
     pub task: Option<Task<Option<()>>>,

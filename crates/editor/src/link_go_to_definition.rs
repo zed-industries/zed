@@ -36,6 +36,13 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(go_to_fetched_definition);
 }
 
+#[derive(Default)]
+pub struct LinkGoToDefinitionState {
+    pub triggered_from: Option<Anchor>,
+    pub symbol_range: Option<Range<Anchor>>,
+    pub task: Option<Task<Option<()>>>,
+}
+
 pub fn fetch_definition(
     editor: &mut Editor,
     FetchDefinition { point }: &FetchDefinition,
@@ -48,11 +55,4 @@ pub fn go_to_fetched_definition(
     GoToFetchedDefinition { point }: &GoToFetchedDefinition,
     cx: &mut ViewContext<Editor>,
 ) {
-}
-
-#[derive(Default)]
-pub struct LinkGoToDefinitionState {
-    pub triggered_from
-    pub symbol_range: Option<Range<Anchor>>,
-    pub task: Option<Task<Option<()>>>,
 }

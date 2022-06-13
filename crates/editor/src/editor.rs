@@ -38,6 +38,7 @@ use language::{
     IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal,
     TransactionId,
 };
+use link_go_to_definition::LinkGoToDefinitionState;
 use multi_buffer::MultiBufferChunks;
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
@@ -1023,6 +1024,7 @@ impl Editor {
             input_enabled: true,
             leader_replica_id: None,
             hover_state: Default::default(),
+            link_go_to_definition_state: Default::default(),
         };
         this.end_selection(cx);
 
