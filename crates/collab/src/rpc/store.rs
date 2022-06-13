@@ -583,25 +583,41 @@ impl Store {
         let mut worktree = project.worktrees.entry(worktree_id).or_default();
         let metadata_changed = worktree_root_name != worktree.root_name;
         worktree.root_name = worktree_root_name.to_string();
+
         for entry_id in removed_entries {
             if let Some(entry) = worktree.entries.remove(&entry_id) {
-                if let Some(extension) = extension_for_entry(&entry) {
-                    if let Some(count) = worktree.extension_counts.get_mut(extension) {
-                        *count = count.saturating_sub(1);
+                if !entry.is_ignored {
+                    if let Some(extension) = extension_for_entry(&entry) {
+                        if let Some(count) = worktree.extension_counts.get_mut(extension) {
+                            *count = count.saturating_sub(1);
+                        }
                     }
                 }
             }
         }
+
         for entry in updated_entries {
-            if let Some(extension) = extension_for_entry(&entry) {
-                if let Some(count) = worktree.extension_counts.get_mut(extension) {
-                    *count += 1;
-                } else {
-                    worktree.extension_counts.insert(extension.into(), 1);
+            if let Some(old_entry) = worktree.entries.insert(entry.id, entry.clone()) {
+                if !old_entry.is_ignored {
+                    if let Some(extension) = extension_for_entry(&old_entry) {
+                        if let Some(count) = worktree.extension_counts.get_mut(extension) {
+                            *count = count.saturating_sub(1);
+                        }
+                    }
                 }
             }
-            worktree.entries.insert(entry.id, entry.clone());
+
+            if !entry.is_ignored {
+                if let Some(extension) = extension_for_entry(&entry) {
+                    if let Some(count) = worktree.extension_counts.get_mut(extension) {
+                        *count += 1;
+                    } else {
+                        worktree.extension_counts.insert(extension.into(), 1);
+                    }
+                }
+            }
         }
+
         worktree.scan_id = scan_id;
         Ok((connection_ids, metadata_changed, &worktree.extension_counts))
     }
