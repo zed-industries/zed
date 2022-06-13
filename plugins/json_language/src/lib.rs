@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 
 #[import]
-fn command(string: &str) -> Option<String>;
+fn command(string: &str) -> Option<Vec<u8>>;
 
 // #[no_mangle]
 // // TODO: switch len from usize to u32?
