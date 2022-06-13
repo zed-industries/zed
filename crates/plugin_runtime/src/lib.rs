@@ -20,6 +20,12 @@ mod tests {
             imports: WasiFn<u32, u32>,
         }
 
+        async fn half(a: u32) -> u32 {
+            a / 2
+        }
+
+        let x = half;
+
         async {
             let mut runtime = WasiPluginBuilder::new_with_default_ctx()
                 .unwrap()
@@ -31,6 +37,8 @@ mod tests {
                 .unwrap()
                 .host_function("import_swap", |(a, b): (u32, u32)| (b, a))
                 .unwrap()
+                // .host_function_async("import_half", half)
+                // .unwrap()
                 .init(include_bytes!("../../../plugins/bin/test_plugin.wasm"))
                 .await
                 .unwrap();
