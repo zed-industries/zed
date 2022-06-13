@@ -1,19 +1,17 @@
-use std::{
-    collections::HashMap, fs::File, future::Future, marker::PhantomData, path::Path, pin::Pin,
-};
+use std::{fs::File, marker::PhantomData, path::Path};
 
 use anyhow::{anyhow, Error};
 use serde::{de::DeserializeOwned, Serialize};
 
 use wasi_common::{dir, file};
+use wasmtime::Memory;
 use wasmtime::{
-    AsContext, AsContextMut, Caller, Config, Engine, Extern, Instance, Linker, Module, Store,
-    StoreContext, StoreContextMut, Trap, TypedFunc, WasmParams,
+    AsContext, AsContextMut, Caller, Config, Engine, Extern, Instance, Linker, Module, Store, Trap,
+    TypedFunc,
 };
-use wasmtime::{IntoFunc, Memory};
 use wasmtime_wasi::{Dir, WasiCtx, WasiCtxBuilder};
 
-pub struct WasiResource(u32);
+pub struct PluginResource(u32);
 
 #[repr(C)]
 struct WasiBuffer {
@@ -50,20 +48,20 @@ impl<A: Serialize, R: DeserializeOwned> Clone for WasiFn<A, R> {
     }
 }
 
-pub struct WasiPluginBuilder {
+pub struct PluginBuilder {
     wasi_ctx: WasiCtx,
     engine: Engine,
     linker: Linker<WasiCtxAlloc>,
 }
 
-impl WasiPluginBuilder {
+impl PluginBuilder {
     pub fn new(wasi_ctx: WasiCtx) -> Result<Self, Error> {
         let mut config = Config::default();
         config.async_support(true);
         let engine = Engine::new(&config)?;
         let linker = Linker::new(&engine);
 
-        Ok(WasiPluginBuilder {
+        Ok(PluginBuilder {
             // host_functions: HashMap::new(),
             wasi_ctx,
             engine,
@@ -241,13 +239,13 @@ impl WasiPluginBuilder {
                     let buffer = WasiBuffer::from_u64(packed_buffer);
 
                     // get the args passed from Guest
-                    let args = Wasi::buffer_to_type(&mut plugin_memory, &mut caller, &buffer)?;
+                    let args = Plugin::buffer_to_type(&mut plugin_memory, &mut caller, &buffer)?;
 
                     // Call the Host-side function
                     let result: R = function(args);
 
                     // Serialize the result back to guest
-                    let result = Wasi::serialize_to_bytes(result).map_err(|_| {
+                    let result = Plugin::serialize_to_bytes(result).map_err(|_| {
                         Trap::new("Could not serialize value returned from function")
                     })?;
 
@@ -257,9 +255,10 @@ impl WasiPluginBuilder {
                 Box::new(async move {
                     let (buffer, mut plugin_memory, result) = result?;
 
-                    Wasi::buffer_to_free(caller.data().free_buffer(), &mut caller, buffer).await?;
+                    Plugin::buffer_to_free(caller.data().free_buffer(), &mut caller, buffer)
+                        .await?;
 
-                    let buffer = Wasi::bytes_to_buffer(
+                    let buffer = Plugin::bytes_to_buffer(
                         caller.data().alloc_buffer(),
                         &mut plugin_memory,
                         &mut caller,
@@ -274,20 +273,10 @@ impl WasiPluginBuilder {
         Ok(self)
     }
 
-    pub async fn init<T: AsRef<[u8]>>(self, module: T) -> Result<Wasi, Error> {
-        Wasi::init(module.as_ref().to_vec(), self).await
+    pub async fn init<T: AsRef<[u8]>>(self, module: T) -> Result<Plugin, Error> {
+        Plugin::init(module.as_ref().to_vec(), self).await
     }
 }
-
-// // TODO: remove
-// /// Represents a to-be-initialized plugin.
-// /// Please use [`WasiPluginBuilder`], don't use this directly.
-// pub struct WasiPlugin {
-//     pub module: Vec<u8>,
-//     pub wasi_ctx: WasiCtx,
-//     pub host_functions:
-//         HashMap<String, Box<dyn Fn(&str, &mut Linker<WasiCtx>) -> Result<(), Error>>>,
-// }
 
 #[derive(Copy, Clone)]
 struct WasiAlloc {
@@ -318,14 +307,14 @@ impl WasiCtxAlloc {
     }
 }
 
-pub struct Wasi {
+pub struct Plugin {
     engine: Engine,
     module: Module,
     store: Store<WasiCtxAlloc>,
     instance: Instance,
 }
 
-impl Wasi {
+impl Plugin {
     pub fn dump_memory(data: &[u8]) {
         for (i, byte) in data.iter().enumerate() {
             if i % 32 == 0 {
@@ -344,8 +333,8 @@ impl Wasi {
     }
 }
 
-impl Wasi {
-    async fn init(module: Vec<u8>, plugin: WasiPluginBuilder) -> Result<Self, Error> {
+impl Plugin {
+    async fn init(module: Vec<u8>, plugin: PluginBuilder) -> Result<Self, Error> {
         // initialize the WebAssembly System Interface context
         let engine = plugin.engine;
         let mut linker = plugin.linker;
@@ -375,7 +364,7 @@ impl Wasi {
             free_buffer,
         });
 
-        Ok(Wasi {
+        Ok(Plugin {
             engine,
             module,
             store,
@@ -385,7 +374,7 @@ impl Wasi {
 
     /// Attaches a file or directory the the given system path to the runtime.
     /// Note that the resource must be freed by calling `remove_resource` afterwards.
-    pub fn attach_path<T: AsRef<Path>>(&mut self, path: T) -> Result<WasiResource, Error> {
+    pub fn attach_path<T: AsRef<Path>>(&mut self, path: T) -> Result<PluginResource, Error> {
         // grab the WASI context
         let ctx = self.store.data_mut();
 
@@ -404,11 +393,11 @@ impl Wasi {
         // return a handle to the resource
         ctx.wasi_ctx
             .insert_dir(fd, dir, caps, file_caps, path.as_ref().to_path_buf());
-        Ok(WasiResource(fd))
+        Ok(PluginResource(fd))
     }
 
     /// Returns `true` if the resource existed and was removed.
-    pub fn remove_resource(&mut self, resource: WasiResource) -> Result<(), Error> {
+    pub fn remove_resource(&mut self, resource: PluginResource) -> Result<(), Error> {
         self.store
             .data_mut()
             .wasi_ctx
