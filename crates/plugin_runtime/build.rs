@@ -10,7 +10,7 @@ fn main() {
     let _ =
         std::fs::create_dir_all(base.join("bin")).expect("Could not make plugins bin directory");
 
-    std::process::Command::new("cargo")
+    let build_successful = std::process::Command::new("cargo")
         .args([
             "build",
             "--release",
@@ -20,7 +20,9 @@ fn main() {
             base.join("Cargo.toml").to_str().unwrap(),
         ])
         .status()
-        .expect("Could not build plugins");
+        .expect("Could not build plugins")
+        .success();
+    assert!(build_successful);
 
     let binaries = std::fs::read_dir(base.join("target/wasm32-wasi/release"))
         .expect("Could not find compiled plugins in target");

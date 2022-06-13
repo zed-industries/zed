@@ -18,11 +18,8 @@ mod tests {
             print: WasiFn<String, ()>,
             and_back: WasiFn<u32, u32>,
             imports: WasiFn<u32, u32>,
+            half_async: WasiFn<u32, u32>,
         }
-
-        // async fn half(a: u32) -> u32 {
-        //     a / 2
-        // }
 
         async {
             let mut runtime = PluginBuilder::new_with_default_ctx()
@@ -35,8 +32,8 @@ mod tests {
                 .unwrap()
                 .host_function("import_swap", |(a, b): (u32, u32)| (b, a))
                 .unwrap()
-                // .host_function_async("import_half", half)
-                // .unwrap()
+                .host_function_async("import_half", |a: u32| async move { a / 2 })
+                .unwrap()
                 .init(include_bytes!("../../../plugins/bin/test_plugin.wasm"))
                 .await
                 .unwrap();
@@ -51,6 +48,7 @@ mod tests {
                 print: runtime.function("print").unwrap(),
                 and_back: runtime.function("and_back").unwrap(),
                 imports: runtime.function("imports").unwrap(),
+                half_async: runtime.function("half_async").unwrap(),
             };
 
             let unsorted = vec![1, 3, 4, 2, 5];
@@ -65,6 +63,7 @@ mod tests {
             assert_eq!(runtime.call(&plugin.print, "Hi!".into()).await.unwrap(), ());
             assert_eq!(runtime.call(&plugin.and_back, 1).await.unwrap(), 8);
             assert_eq!(runtime.call(&plugin.imports, 1).await.unwrap(), 8);
+            assert_eq!(runtime.call(&plugin.half_async, 4).await.unwrap(), 2);
 
             // dbg!("{}", runtime.call(&plugin.and_back, 1).await.unwrap());
         }
