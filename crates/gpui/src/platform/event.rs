@@ -32,6 +32,10 @@ pub enum Event {
     },
     LeftMouseDragged {
         position: Vector2F,
+        ctrl: bool,
+        alt: bool,
+        shift: bool,
+        cmd: bool,
     },
     RightMouseDown {
         position: Vector2F,
@@ -61,6 +65,10 @@ pub enum Event {
     MouseMoved {
         position: Vector2F,
         left_mouse_down: bool,
+        ctrl: bool,
+        cmd: bool,
+        alt: bool,
+        shift: bool,
     },
 }
 
@@ -71,7 +79,7 @@ impl Event {
             Event::ScrollWheel { position, .. }
             | Event::LeftMouseDown { position, .. }
             | Event::LeftMouseUp { position, .. }
-            | Event::LeftMouseDragged { position }
+            | Event::LeftMouseDragged { position, .. }
             | Event::RightMouseDown { position, .. }
             | Event::RightMouseUp { position, .. }
             | Event::NavigateMouseDown { position, .. }

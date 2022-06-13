@@ -209,6 +209,12 @@ pub struct Location {
 }
 
 #[derive(Debug)]
+pub struct LocationLink {
+    pub origin: Option<Location>,
+    pub target: Location,
+}
+
+#[derive(Debug)]
 pub struct DocumentHighlight {
     pub range: Range<language::Anchor>,
     pub kind: DocumentHighlightKind,
@@ -2915,7 +2921,7 @@ impl Project {
         buffer: &ModelHandle<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<Location>>> {
+    ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.request_lsp(buffer.clone(), GetDefinition { position }, cx)
     }
@@ -7564,7 +7570,7 @@ mod tests {
         assert_eq!(definitions.len(), 1);
         let definition = definitions.pop().unwrap();
         cx.update(|cx| {
-            let target_buffer = definition.buffer.read(cx);
+            let target_buffer = definition.target.buffer.read(cx);
             assert_eq!(
                 target_buffer
                     .file()
@@ -7574,7 +7580,7 @@ mod tests {
                     .abs_path(cx),
                 Path::new("/dir/a.rs"),
             );
-            assert_eq!(definition.range.to_offset(target_buffer), 9..10);
+            assert_eq!(definition.target.range.to_offset(target_buffer), 9..10);
             assert_eq!(
                 list_worktrees(&project, cx),
                 [("/dir/b.rs".as_ref(), true), ("/dir/a.rs".as_ref(), false)]

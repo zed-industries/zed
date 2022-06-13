@@ -316,6 +316,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_async_action(Editor::find_all_references);
 
     hover_popover::init(cx);
+    link_go_to_definition::init(cx);
 
     workspace::register_project_item::<Editor>(cx);
     workspace::register_followable_item::<Editor>(cx);
@@ -4603,9 +4604,13 @@ impl Editor {
             workspace.update(&mut cx, |workspace, cx| {
                 let nav_history = workspace.active_pane().read(cx).nav_history().clone();
                 for definition in definitions {
-                    let range = definition.range.to_offset(definition.buffer.read(cx));
+                    let range = definition
+                        .target
+                        .range
+                        .to_offset(definition.target.buffer.read(cx));
 
-                    let target_editor_handle = workspace.open_project_item(definition.buffer, cx);
+                    let target_editor_handle =
+                        workspace.open_project_item(definition.target.buffer, cx);
                     target_editor_handle.update(cx, |target_editor, cx| {
                         // When selecting a definition in a different buffer, disable the nav history
                         // to avoid creating a history entry at the previous cursor location.

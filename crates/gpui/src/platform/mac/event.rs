@@ -218,14 +218,19 @@ impl Event {
                     direction,
                 })
             }
-            NSEventType::NSLeftMouseDragged => {
-                window_height.map(|window_height| Self::LeftMouseDragged {
+            NSEventType::NSLeftMouseDragged => window_height.map(|window_height| {
+                let modifiers = native_event.modifierFlags();
+                Self::LeftMouseDragged {
                     position: vec2f(
                         native_event.locationInWindow().x as f32,
                         window_height - native_event.locationInWindow().y as f32,
                     ),
-                })
-            }
+                    ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
+                    alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
+                    shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
+                    cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
+                }
+            }),
             NSEventType::NSScrollWheel => window_height.map(|window_height| Self::ScrollWheel {
                 position: vec2f(
                     native_event.locationInWindow().x as f32,
@@ -237,12 +242,19 @@ impl Event {
                 ),
                 precise: native_event.hasPreciseScrollingDeltas() == YES,
             }),
-            NSEventType::NSMouseMoved => window_height.map(|window_height| Self::MouseMoved {
-                position: vec2f(
-                    native_event.locationInWindow().x as f32,
-                    window_height - native_event.locationInWindow().y as f32,
-                ),
-                left_mouse_down: NSEvent::pressedMouseButtons(nil) & 1 != 0,
+            NSEventType::NSMouseMoved => window_height.map(|window_height| {
+                let modifiers = native_event.modifierFlags();
+                Self::MouseMoved {
+                    position: vec2f(
+                        native_event.locationInWindow().x as f32,
+                        window_height - native_event.locationInWindow().y as f32,
+                    ),
+                    left_mouse_down: NSEvent::pressedMouseButtons(nil) & 1 != 0,
+                    ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
+                    alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
+                    shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
+                    cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
+                }
             }),
             _ => None,
         }

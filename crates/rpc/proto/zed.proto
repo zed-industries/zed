@@ -248,7 +248,7 @@ message GetDefinition {
  }
 
 message GetDefinitionResponse {
-    repeated Location locations = 1;
+    repeated LocationLink links = 1;
 }
 
 message GetReferences {
@@ -277,6 +277,11 @@ message Location {
     Buffer buffer = 1;
     Anchor start = 2;
     Anchor end = 3;
+}
+
+message LocationLink {
+    optional Location origin = 1;
+    Location target = 2;
 }
 
 message DocumentHighlight {

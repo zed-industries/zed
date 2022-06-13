@@ -294,7 +294,13 @@ impl Presenter {
                 Event::MouseMoved { .. } => {
                     self.last_mouse_moved_event = Some(event.clone());
                 }
-                Event::LeftMouseDragged { position } => {
+                Event::LeftMouseDragged {
+                    position,
+                    shift,
+                    ctrl,
+                    alt,
+                    cmd,
+                } => {
                     if let Some((clicked_region, prev_drag_position)) = self
                         .clicked_region
                         .as_ref()
@@ -308,6 +314,10 @@ impl Presenter {
                     self.last_mouse_moved_event = Some(Event::MouseMoved {
                         position,
                         left_mouse_down: true,
+                        shift,
+                        ctrl,
+                        alt,
+                        cmd,
                     });
                 }
                 _ => {}
@@ -403,6 +413,7 @@ impl Presenter {
         if let Event::MouseMoved {
             position,
             left_mouse_down,
+            ..
         } = event
         {
             if !left_mouse_down {

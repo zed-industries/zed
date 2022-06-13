@@ -597,7 +597,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
 
     if let Some(event) = event {
         match &event {
-            Event::LeftMouseDragged { position } => {
+            Event::LeftMouseDragged { position, .. } => {
                 window_state_borrow.synthetic_drag_counter += 1;
                 window_state_borrow
                     .executor
@@ -805,7 +805,14 @@ async fn synthetic_drag(
             if window_state_borrow.synthetic_drag_counter == drag_id {
                 if let Some(mut callback) = window_state_borrow.event_callback.take() {
                     drop(window_state_borrow);
-                    callback(Event::LeftMouseDragged { position });
+                    callback(Event::LeftMouseDragged {
+                        // TODO: Make sure empty modifiers is correct for this
+                        position,
+                        shift: false,
+                        ctrl: false,
+                        alt: false,
+                        cmd: false,
+                    });
                     window_state.borrow_mut().event_callback = Some(callback);
                 }
             } else {

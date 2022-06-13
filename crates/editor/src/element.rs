@@ -8,6 +8,7 @@ use crate::{
     hover_popover::HoverAt,
     EditorStyle,
 };
+use crate::{hover_popover::HoverAt, link_go_to_definition::FetchDefinition};
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
 use gpui::{
@@ -1417,7 +1418,7 @@ impl Element for EditorElement {
                 cx,
             ),
             Event::LeftMouseUp { position, .. } => self.mouse_up(*position, cx),
-            Event::LeftMouseDragged { position } => {
+            Event::LeftMouseDragged { position, .. } => {
                 self.mouse_dragged(*position, layout, paint, cx)
             }
             Event::ScrollWheel {
@@ -1426,9 +1427,26 @@ impl Element for EditorElement {
                 precise,
             } => self.scroll(*position, *delta, *precise, layout, paint, cx),
             Event::KeyDown { input, .. } => self.key_down(input.as_deref(), cx),
-            Event::MouseMoved { position, .. } => {
+            Event::MouseMoved { position, cmd, .. } => {
                 // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
                 // Don't trigger hover popover if mouse is hovering over context menu
+
+                let point = if paint.text_bounds.contains_point(*position) {
+                    let (point, overshoot) =
+                        paint.point_for_position(&self.snapshot(cx), layout, *position);
+                    if overshoot.is_zero() {
+                        Some(point)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                if *cmd {
+                    cx.dispatch_action(FetchDefinition { point });
+                }
+
                 if paint
                     .context_menu_bounds
                     .map_or(false, |context_menu_bounds| {
@@ -1444,18 +1462,6 @@ impl Element for EditorElement {
                 {
                     return false;
                 }
-
-                let point = if paint.text_bounds.contains_point(*position) {
-                    let (point, overshoot) =
-                        paint.point_for_position(&self.snapshot(cx), layout, *position);
-                    if overshoot.is_zero() {
-                        Some(point)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
 
                 cx.dispatch_action(HoverAt { point });
                 true
