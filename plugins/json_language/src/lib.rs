@@ -169,10 +169,26 @@ pub fn cached_server_binary(container_dir: PathBuf) -> Option<PathBuf> {
     }
 }
 
-#[export]
-pub fn label_for_completion(label: String) -> Option<String> {
-    None
-}
+// #[export]
+// pub fn label_for_completion(
+//     item: &lsp::CompletionItem,
+//     // language: &language::Language,
+// ) -> Option<language::CodeLabel> {
+//     // TODO: Push more of this method down into the plugin.
+//     use lsp::CompletionItemKind as Kind;
+//     let len = item.label.len();
+//     let grammar = language.grammar()?;
+//     let kind = format!("{:?}", item.kind?);
+
+//     // TODO: implementation
+
+//     let highlight_id = grammar.highlight_id_for_name(&name)?;
+//     Some(language::CodeLabel {
+//         text: item.label.clone(),
+//         runs: vec![(0..len, highlight_id)],
+//         filter_range: 0..len,
+//     })
+// }
 
 #[export]
 pub fn initialization_options() -> Option<String> {
