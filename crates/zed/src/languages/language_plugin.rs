@@ -32,7 +32,7 @@ pub struct PluginLspAdapter {
     fetch_latest_server_version: WasiFn<(), Option<String>>,
     fetch_server_binary: WasiFn<(PathBuf, String), Result<PathBuf, String>>,
     cached_server_binary: WasiFn<PathBuf, Option<PathBuf>>,
-    label_for_completion: WasiFn<String, Option<String>>,
+    // label_for_completion: WasiFn<String, Option<String>>,
     initialization_options: WasiFn<(), String>,
     executor: Arc<Background>,
     runtime: Arc<Mutex<Plugin>>,
@@ -46,7 +46,7 @@ impl PluginLspAdapter {
             fetch_latest_server_version: plugin.function("fetch_latest_server_version")?,
             fetch_server_binary: plugin.function("fetch_server_binary")?,
             cached_server_binary: plugin.function("cached_server_binary")?,
-            label_for_completion: plugin.function("label_for_completion")?,
+            // label_for_completion: plugin.function("label_for_completion")?,
             initialization_options: plugin.function("initialization_options")?,
             executor,
             runtime: Arc::new(Mutex::new(plugin)),
@@ -132,24 +132,24 @@ impl LspAdapter for PluginLspAdapter {
 
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
-    fn label_for_completion(
-        &self,
-        item: &lsp::CompletionItem,
-        language: &language::Language,
-    ) -> Option<language::CodeLabel> {
-        // TODO: Push more of this method down into the plugin.
-        use lsp::CompletionItemKind as Kind;
-        let len = item.label.len();
-        let grammar = language.grammar()?;
-        let kind = format!("{:?}", item.kind?);
-        let name: String = call_block!(self, &self.label_for_completion, kind).log_err()??;
-        let highlight_id = grammar.highlight_id_for_name(&name)?;
-        Some(language::CodeLabel {
-            text: item.label.clone(),
-            runs: vec![(0..len, highlight_id)],
-            filter_range: 0..len,
-        })
-    }
+    // fn label_for_completion(
+    //     &self,
+    //     item: &lsp::CompletionItem,
+    //     language: &language::Language,
+    // ) -> Option<language::CodeLabel> {
+    //     // TODO: Push more of this method down into the plugin.
+    //     use lsp::CompletionItemKind as Kind;
+    //     let len = item.label.len();
+    //     let grammar = language.grammar()?;
+    //     let kind = format!("{:?}", item.kind?);
+    //     let name: String = call_block!(self, &self.label_for_completion, kind).log_err()??;
+    //     let highlight_id = grammar.highlight_id_for_name(&name)?;
+    //     Some(language::CodeLabel {
+    //         text: item.label.clone(),
+    //         runs: vec![(0..len, highlight_id)],
+    //         filter_range: 0..len,
+    //     })
+    // }
 
     fn initialization_options(&self) -> Option<serde_json::Value> {
         let string: String = call_block!(self, &self.initialization_options, ()).log_err()?;
