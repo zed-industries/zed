@@ -577,8 +577,9 @@ impl Store {
         removed_entries: &[u64],
         updated_entries: &[proto::Entry],
         scan_id: u64,
-    ) -> Result<(Vec<ConnectionId>, bool)> {
+    ) -> Result<(Vec<ConnectionId>, bool, &HashMap<OsString, usize>)> {
         let project = self.write_project(project_id, connection_id)?;
+        let connection_ids = project.connection_ids();
         let mut worktree = project.worktrees.entry(worktree_id).or_default();
         let metadata_changed = worktree_root_name != worktree.root_name;
         worktree.root_name = worktree_root_name.to_string();
@@ -602,8 +603,7 @@ impl Store {
             worktree.entries.insert(entry.id, entry.clone());
         }
         worktree.scan_id = scan_id;
-        let connection_ids = project.connection_ids();
-        Ok((connection_ids, metadata_changed))
+        Ok((connection_ids, metadata_changed, &worktree.extension_counts))
     }
 
     pub fn project_connection_ids(

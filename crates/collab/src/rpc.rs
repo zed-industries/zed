@@ -831,16 +831,28 @@ impl Server {
         request: TypedEnvelope<proto::UpdateWorktree>,
         response: Response<proto::UpdateWorktree>,
     ) -> Result<()> {
-        let (connection_ids, metadata_changed) = self.store_mut().await.update_worktree(
-            request.sender_id,
-            request.payload.project_id,
-            request.payload.worktree_id,
-            &request.payload.root_name,
-            &request.payload.removed_entries,
-            &request.payload.updated_entries,
-            request.payload.scan_id,
-        )?;
-        // TODO: log `extension_counts` from `Worktree`.
+        let (connection_ids, metadata_changed) = {
+            let mut store = self.store_mut().await;
+            let (connection_ids, metadata_changed, extension_counts) = store.update_worktree(
+                request.sender_id,
+                request.payload.project_id,
+                request.payload.worktree_id,
+                &request.payload.root_name,
+                &request.payload.removed_entries,
+                &request.payload.updated_entries,
+                request.payload.scan_id,
+            )?;
+            for (extension, count) in extension_counts {
+                tracing::info!(
+                    project_id = request.payload.project_id,
+                    worktree_id = request.payload.worktree_id,
+                    ?extension,
+                    %count,
+                    "worktree updated"
+                );
+            }
+            (connection_ids, metadata_changed)
+        };
 
         broadcast(request.sender_id, connection_ids, |connection_id| {
             self.peer
