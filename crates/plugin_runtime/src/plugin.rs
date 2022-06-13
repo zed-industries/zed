@@ -13,6 +13,7 @@ use wasmtime::{
 };
 use wasmtime_wasi::{Dir, WasiCtx, WasiCtxBuilder};
 
+/// Represents a resource currently managed by the plugin, like a file descriptor.
 pub struct PluginResource(u32);
 
 #[repr(C)]
@@ -34,6 +35,7 @@ impl WasiBuffer {
     }
 }
 
+/// Represents a typed WebAssembly function.
 pub struct WasiFn<A: Serialize, R: DeserializeOwned> {
     function: TypedFunc<u64, u64>,
     _function_type: PhantomData<fn(A) -> R>,
@@ -50,6 +52,10 @@ impl<A: Serialize, R: DeserializeOwned> Clone for WasiFn<A, R> {
     }
 }
 
+/// This struct is used to build a new [`Plugin`], using the builder pattern.
+/// Create a new default plugin with `PluginBuilder::new_with_default_ctx`,
+/// and add host-side exported functions using `host_function` and `host_function_async`.
+/// Finalize the plugin by calling [`init`].
 pub struct PluginBuilder {
     wasi_ctx: WasiCtx,
     engine: Engine,
@@ -57,6 +63,8 @@ pub struct PluginBuilder {
 }
 
 impl PluginBuilder {
+    /// Create a new [`PluginBuilder`] with the given WASI context.
+    /// Using the default context is a safe bet, see [`new_with_default_context`].
     pub fn new(wasi_ctx: WasiCtx) -> Result<Self, Error> {
         let mut config = Config::default();
         config.async_support(true);
@@ -71,89 +79,17 @@ impl PluginBuilder {
         })
     }
 
+    /// Create a new `PluginBuilder` that inherits the
+    /// host processes' access to `stdout` and `stderr`.
     pub fn new_with_default_ctx() -> Result<Self, Error> {
         let wasi_ctx = WasiCtxBuilder::new()
-            .inherit_stdin()
+            .inherit_stdout()
             .inherit_stderr()
             .build();
         Self::new(wasi_ctx)
     }
 
-    // pub fn host_function_async<A: DeserializeOwned + Send, R: Serialize, F, Fut>(
-    //     mut self,
-    //     name: &str,
-    //     function: impl Fn(A) -> Pin<Box<dyn Future<Output = R> + Send + Sync>> + Sync + Send + 'static,
-    // ) -> Result<Self, Error>
-    // where
-    //     A: DeserializeOwned + Send,
-    //     R: Serialize + Send,
-    // {
-    //     self.linker.func_wrap1_async(
-    //         "env",
-    //         &format!("__{}", name),
-    //         move |caller: Caller<'_, WasiCtxAlloc>, packed_buffer: u64| {
-    //             // let function = &function;
-    //             Box::new(async move {
-    //                 // grab a handle to the memory
-    //                 let mut plugin_memory = match caller.get_export("memory") {
-    //                     Some(Extern::Memory(mem)) => mem,
-    //                     _ => return Err(Trap::new("Could not grab slice of plugin memory"))?,
-    //                 };
-
-    //                 let buffer = WasiBuffer::from_u64(packed_buffer);
-
-    //                 // get the args passed from Guest
-    //                 let args = Wasi::buffer_to_type(&mut plugin_memory, &mut caller, &buffer)?;
-
-    //                 // Call the Host-side function
-    //                 let result: R = function(args).await;
-
-    //                 // Serialize the result back to guest
-    //                 let result = Wasi::serialize_to_bytes(result).map_err(|_| {
-    //                     Trap::new("Could not serialize value returned from function")
-    //                 })?;
-
-    //                 // Ok((buffer, plugin_memory, result))
-    //                 Wasi::buffer_to_free(caller.data().free_buffer(), &mut caller, buffer).await?;
-
-    //                 let buffer = Wasi::bytes_to_buffer(
-    //                     caller.data().alloc_buffer(),
-    //                     &mut plugin_memory,
-    //                     &mut caller,
-    //                     result,
-    //                 )
-    //                 .await?;
-
-    //                 Ok(buffer.into_u64())
-    //             })
-    //         },
-    //     )?;
-    //     Ok(self)
-    // }
-
-    // pub fn host_function_async<F>(mut self, name: &str, function: F) -> Result<Self, Error>
-    // where
-    //     F: Fn(u64) -> Pin<Box<dyn Future<Output = u64> + Send + Sync + 'static>>
-    //         + Send
-    //         + Sync
-    //         + 'static,
-    // {
-    //     self.linker.func_wrap1_async(
-    //         "env",
-    //         &format!("__{}", name),
-    //         move |_: Caller<'_, WasiCtxAlloc>, _: u64| {
-    //             // let function = &function;
-    //             Box::new(async {
-    //                 // let function = function;
-    //                 // Call the Host-side function
-    //                 let result: u64 = function(7).await;
-    //                 Ok(result)
-    //             })
-    //         },
-    //     )?;
-    //     Ok(self)
-    // }
-
+    /// Add an `async` host function. See [`host_function`] for details.
     pub fn host_function_async<F, A, R, Fut>(
         mut self,
         name: &str,
@@ -218,6 +154,22 @@ impl PluginBuilder {
         Ok(self)
     }
 
+    /// Add a new host function to the given `PluginBuilder`.
+    /// A host function is a function defined host-side, in Rust,
+    /// that is accessible guest-side, in WebAssembly.
+    /// You can specify host-side functions to import using
+    /// the `#[input]` macro attribute:
+    /// ```ignore
+    /// #[input]
+    /// fn total(counts: Vec<f64>) -> f64;
+    /// ```
+    /// When loading a plugin, you need to provide all host functions the plugin imports:
+    /// ```ignore
+    /// let plugin = PluginBuilder::new_with_default_context()
+    ///     .host_function("total", |counts| counts.iter().fold(0.0, |tot, n| tot + n))
+    ///     // and so on...
+    /// ```
+    /// And that's a wrap!
     pub fn host_function<A, R>(
         mut self,
         name: &str,
@@ -276,6 +228,8 @@ impl PluginBuilder {
         Ok(self)
     }
 
+    /// Initializes a [`Plugin`] from a given compiled Wasm module.
+    /// Both binary (`.wasm`) and text (`.wat`) module formats are supported.
     pub async fn init<T: AsRef<[u8]>>(self, module: T) -> Result<Plugin, Error> {
         Plugin::init(module.as_ref().to_vec(), self).await
     }
@@ -310,6 +264,8 @@ impl WasiCtxAlloc {
     }
 }
 
+/// Represents a WebAssembly plugin, with access to the WebAssembly System Inferface.
+/// Build a new plugin using [`PluginBuilder`].
 pub struct Plugin {
     engine: Engine,
     module: Module,
@@ -318,6 +274,8 @@ pub struct Plugin {
 }
 
 impl Plugin {
+    /// Dumps the *entirety* of Wasm linear memory to `stdout`.
+    /// Don't call this unless you're debugging a memory issue!
     pub fn dump_memory(data: &[u8]) {
         for (i, byte) in data.iter().enumerate() {
             if i % 32 == 0 {
@@ -400,6 +358,8 @@ impl Plugin {
     }
 
     /// Returns `true` if the resource existed and was removed.
+    /// Currently the only resource we support is adding scoped paths (e.g. folders and files)
+    /// to plugins using [`attach_path`].
     pub fn remove_resource(&mut self, resource: PluginResource) -> Result<(), Error> {
         self.store
             .data_mut()
@@ -409,16 +369,6 @@ impl Plugin {
             .ok_or_else(|| anyhow!("Resource did not exist, but a valid handle was passed in"))?;
         Ok(())
     }
-
-    // pub fn with_resource<T>(
-    //     &mut self,
-    //     resource: WasiResource,
-    //     callback: fn(&mut Self) -> Result<T, Error>,
-    // ) -> Result<T, Error> {
-    //     let result = callback(self);
-    //     self.remove_resource(resource)?;
-    //     return result;
-    // }
 
     // So this call function is kinda a dance, I figured it'd be a good idea to document it.
     // the high level is we take a serde type, serialize it to a byte array,
@@ -463,12 +413,14 @@ impl Plugin {
     // This isn't a problem because Wasm stops executing after the function returns,
     // so the heap is still valid for our inspection when we want to pull things out.
 
+    /// Serializes a given type to bytes.
     fn serialize_to_bytes<A: Serialize>(item: A) -> Result<Vec<u8>, Error> {
         // serialize the argument using bincode
         let bytes = bincode::serialize(&item)?;
         Ok(bytes)
     }
 
+    /// Deserializes a given type from bytes.
     fn deserialize_to_type<R: DeserializeOwned>(bytes: &[u8]) -> Result<R, Error> {
         // serialize the argument using bincode
         let bytes = bincode::deserialize(bytes)?;
@@ -522,6 +474,7 @@ impl Plugin {
         Ok(result)
     }
 
+    // TODO: don't allocate a new `Vec`!
     /// Takes a `(ptr, len)` pair and returns the corresponding deserialized buffer.
     fn buffer_to_bytes<'a>(
         plugin_memory: &'a Memory,
@@ -570,9 +523,6 @@ impl Plugin {
         handle: &WasiFn<A, R>,
         arg: A,
     ) -> Result<R, Error> {
-        // dbg!(&handle.name);
-        // dbg!(serde_json::to_string(&arg)).unwrap();
-
         let mut plugin_memory = self
             .instance
             .get_memory(&mut self.store, "memory")
