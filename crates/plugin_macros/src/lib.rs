@@ -2,7 +2,9 @@ use core::panic;
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, FnArg, ForeignItemFn, ItemFn, Type, Visibility};
+use syn::{
+    parse_macro_input, Block, FnArg, ForeignItemFn, Ident, ItemFn, Pat, PatIdent, Type, Visibility,
+};
 
 #[proc_macro_attribute]
 pub fn export(args: TokenStream, function: TokenStream) -> TokenStream {
@@ -32,7 +34,7 @@ pub fn export(args: TokenStream, function: TokenStream) -> TokenStream {
         .iter()
         .map(|x| match x {
             FnArg::Receiver(_) => {
-                panic!("all arguments must have specified types, no `self` allowed")
+                panic!("All arguments must have specified types, no `self` allowed")
             }
             FnArg::Typed(item) => *item.ty.clone(),
         })
@@ -91,70 +93,69 @@ pub fn import(args: TokenStream, function: TokenStream) -> TokenStream {
         panic!("Exported functions can not take generic parameters");
     }
 
-    dbg!(&fn_declare.sig);
+    // let inner_fn_name = format_ident!("{}", fn_declare.sig.ident);
+    let extern_fn_name = format_ident!("__{}", fn_declare.sig.ident);
 
-    // let inner_fn = ItemFn {
-    //     attrs: fn_declare.attrs,
-    //     vis: fn_declare.vis,
-    //     sig: fn_declare.sig,
-    //     block: todo!(),
-    // };
+    let (args, tys): (Vec<Ident>, Vec<Type>) = fn_declare
+        .sig
+        .inputs
+        .clone()
+        .into_iter()
+        .map(|x| match x {
+            FnArg::Receiver(_) => {
+                panic!("All arguments must have specified types, no `self` allowed")
+            }
+            FnArg::Typed(t) => {
+                if let Pat::Ident(i) = *t.pat {
+                    (i.ident, *t.ty)
+                } else {
+                    panic!("All function arguments must be identifiers");
+                }
+            }
+        })
+        .unzip();
 
-    let outer_fn_name = format_ident!("{}", fn_declare.sig.ident);
-    let inner_fn_name = format_ident!("__{}", outer_fn_name);
+    dbg!("hello");
 
-    //     let variadic = inner_fn.sig.inputs.len();
-    //     let i = (0..variadic).map(syn::Index::from);
-    //     let t: Vec<Type> = inner_fn
-    //         .sig
-    //         .inputs
-    //         .iter()
-    //         .map(|x| match x {
-    //             FnArg::Receiver(_) => {
-    //                 panic!("all arguments must have specified types, no `self` allowed")
-    //             }
-    //             FnArg::Typed(item) => *item.ty.clone(),
-    //         })
-    //         .collect();
+    let body = TokenStream::from(quote! {
+        {
+            // dbg!("executing imported function");
+            // setup
+            let data: (#( #tys ),*) = (#( #args ),*);
+            let data = ::plugin::bincode::serialize(&data).unwrap();
+            let buffer = unsafe { ::plugin::__Buffer::from_vec(data) };
 
-    //     // this is cursed...
-    //     let (args, ty) = if variadic != 1 {
-    //         (
-    //             quote! {
-    //                 #( data.#i ),*
-    //             },
-    //             quote! {
-    //                 ( #( #t ),* )
-    //             },
-    //         )
-    //     } else {
-    //         let ty = &t[0];
-    //         (quote! { data }, quote! { #ty })
-    //     };
+            // operation
+            let new_buffer = unsafe { #extern_fn_name(buffer.into_u64()) };
+            let new_data = unsafe { ::plugin::__Buffer::from_u64(new_buffer).to_vec() };
 
-    // TokenStream::from(quote! {
-    //     extern "C" {
-    //         fn #inner_fn_name(buffer: u64) -> u64;
-    //     }
+            // teardown
+            match ::plugin::bincode::deserialize(&new_data) {
+                Ok(d) => d,
+                Err(e) => panic!("Data returned from function not deserializable."),
+            }
+        }
+    });
 
-    //     #[no_mangle]
-    //     fn #outer_fn_name #args /* (string: &str) */ -> #return_type /* Option<Vec<u8>> */ {
-    //         dbg!("executing command: {}", string);
-    //         // setup
-    //         let data = #args_collect;
-    //         let data = ::plugin::bincode::serialize(&data).unwrap();
-    //         let buffer = unsafe { ::plugin::__Buffer::from_vec(data) };
+    dbg!("hello2");
 
-    //         // operation
-    //         let new_buffer = unsafe { #inner_fn_name(buffer.into_u64()) };
-    //         let new_data = unsafe { ::plugin::__Buffer::from_u64(new_buffer).to_vec() };
+    let block = parse_macro_input!(body as Block);
 
-    //         // teardown
-    //         match ::plugin::bincode::deserialize(&new_data) {
-    //             Ok(d) => d,
-    //             Err(e) => panic!("Data returned from function not deserializable."),
-    //         }
-    //     }
-    // })
-    todo!()
+    dbg!("hello {:?}", &block);
+
+    let inner_fn = ItemFn {
+        attrs: fn_declare.attrs,
+        vis: fn_declare.vis,
+        sig: fn_declare.sig,
+        block: Box::new(block),
+    };
+
+    TokenStream::from(quote! {
+        extern "C" {
+            fn #extern_fn_name(buffer: u64) -> u64;
+        }
+
+        #[no_mangle]
+        #inner_fn
+    })
 }
