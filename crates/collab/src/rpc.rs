@@ -220,9 +220,14 @@ impl Server {
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
                 let span = info_span!(
                     "handle message",
-                    payload_type = envelope.payload_type_name(),
-                    payload = format!("{:?}", envelope.payload).as_str(),
+                    payload_type = envelope.payload_type_name()
                 );
+                span.in_scope(|| {
+                    tracing::info!(
+                        payload = format!("{:?}", envelope.payload).as_str(),
+                        "message payload"
+                    );
+                });
                 let future = (handler)(server, *envelope);
                 async move {
                     if let Err(error) = future.await {
@@ -618,6 +623,7 @@ impl Server {
             guest_user_id = state.user_id_for_connection(request.sender_id)?;
         };
 
+        tracing::info!(project_id, %host_user_id, %host_connection_id, "join project");
         let has_contact = self
             .app_state
             .db
@@ -773,6 +779,12 @@ impl Server {
         {
             let mut store = self.store_mut().await;
             project = store.leave_project(sender_id, project_id)?;
+            tracing::info!(
+                project_id,
+                host_user_id = %project.host_user_id,
+                host_connection_id = %project.host_connection_id,
+                "leave project"
+            );
 
             if project.remove_collaborator {
                 broadcast(sender_id, project.connection_ids, |conn_id| {
@@ -837,15 +849,28 @@ impl Server {
         request: TypedEnvelope<proto::UpdateWorktree>,
         response: Response<proto::UpdateWorktree>,
     ) -> Result<()> {
-        let (connection_ids, metadata_changed) = self.store_mut().await.update_worktree(
-            request.sender_id,
-            request.payload.project_id,
-            request.payload.worktree_id,
-            &request.payload.root_name,
-            &request.payload.removed_entries,
-            &request.payload.updated_entries,
-            request.payload.scan_id,
-        )?;
+        let (connection_ids, metadata_changed) = {
+            let mut store = self.store_mut().await;
+            let (connection_ids, metadata_changed, extension_counts) = store.update_worktree(
+                request.sender_id,
+                request.payload.project_id,
+                request.payload.worktree_id,
+                &request.payload.root_name,
+                &request.payload.removed_entries,
+                &request.payload.updated_entries,
+                request.payload.scan_id,
+            )?;
+            for (extension, count) in extension_counts {
+                tracing::info!(
+                    project_id = request.payload.project_id,
+                    worktree_id = request.payload.worktree_id,
+                    ?extension,
+                    %count,
+                    "worktree updated"
+                );
+            }
+            (connection_ids, metadata_changed)
+        };
 
         broadcast(request.sender_id, connection_ids, |connection_id| {
             self.peer
