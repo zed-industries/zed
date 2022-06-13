@@ -70,8 +70,25 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
     Ok::<_, Error>(next.run(req).await)
 }
 
-async fn get_users(Extension(app): Extension<Arc<AppState>>) -> Result<Json<Vec<User>>> {
-    let users = app.db.get_all_users().await?;
+#[derive(Debug, Deserialize)]
+struct GetUsersQueryParams {
+    query: Option<String>,
+    page: Option<u32>,
+    limit: Option<u32>,
+}
+
+async fn get_users(
+    Query(params): Query<GetUsersQueryParams>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<Json<Vec<User>>> {
+    let limit = params.limit.unwrap_or(100);
+    let users = if let Some(query) = params.query {
+        app.db.fuzzy_search_users(&query, limit).await?
+    } else {
+        app.db
+            .get_all_users(params.page.unwrap_or(0), limit)
+            .await?
+    };
     Ok(Json(users))
 }
 

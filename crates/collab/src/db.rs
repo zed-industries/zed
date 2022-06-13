@@ -17,7 +17,7 @@ pub trait Db: Send + Sync {
         email_address: Option<&str>,
         admin: bool,
     ) -> Result<UserId>;
-    async fn get_all_users(&self) -> Result<Vec<User>>;
+    async fn get_all_users(&self, page: u32, limit: u32) -> Result<Vec<User>>;
     async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>>;
     async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>>;
     async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>>;
@@ -141,9 +141,13 @@ impl Db for PostgresDb {
             .map(UserId)?)
     }
 
-    async fn get_all_users(&self) -> Result<Vec<User>> {
-        let query = "SELECT * FROM users ORDER BY github_login ASC";
-        Ok(sqlx::query_as(query).fetch_all(&self.pool).await?)
+    async fn get_all_users(&self, page: u32, limit: u32) -> Result<Vec<User>> {
+        let query = "SELECT * FROM users ORDER BY github_login ASC LIMIT $1 OFFSET $2";
+        Ok(sqlx::query_as(query)
+            .bind(limit)
+            .bind(page * limit)
+            .fetch_all(&self.pool)
+            .await?)
     }
 
     async fn fuzzy_search_users(&self, name_query: &str, limit: u32) -> Result<Vec<User>> {
@@ -1665,7 +1669,7 @@ pub mod tests {
             }
         }
 
-        async fn get_all_users(&self) -> Result<Vec<User>> {
+        async fn get_all_users(&self, _page: u32, _limit: u32) -> Result<Vec<User>> {
             unimplemented!()
         }
 
