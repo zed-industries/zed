@@ -61,3 +61,11 @@ pub fn imports(x: u32) -> u32 {
     assert_eq!(x, b);
     a + b // should be 7 + x
 }
+
+#[import]
+fn import_half(a: u32) -> u32;
+
+#[export]
+pub fn half_async(a: u32) -> u32 {
+    import_half(a)
+}

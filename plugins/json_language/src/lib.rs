@@ -4,8 +4,8 @@ use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
 
-// #[import]
-// fn command(string: &str) -> Option<String>;
+#[import]
+fn command(string: &str) -> Option<String>;
 
 // #[no_mangle]
 // // TODO: switch len from usize to u32?
@@ -28,29 +28,29 @@ use std::path::PathBuf;
 //     return new_buffer.leak_to_heap();
 // }
 
-extern "C" {
-    fn __command(buffer: u64) -> u64;
-}
+// extern "C" {
+//     fn __command(buffer: u64) -> u64;
+// }
 
-#[no_mangle]
-fn command(string: &str) -> Option<Vec<u8>> {
-    dbg!("executing command: {}", string);
-    // setup
-    let data = string;
-    let data = ::plugin::bincode::serialize(&data).unwrap();
-    let buffer = unsafe { ::plugin::__Buffer::from_vec(data) };
+// #[no_mangle]
+// fn command(string: &str) -> Option<Vec<u8>> {
+//     dbg!("executing command: {}", string);
+//     // setup
+//     let data = string;
+//     let data = ::plugin::bincode::serialize(&data).unwrap();
+//     let buffer = unsafe { ::plugin::__Buffer::from_vec(data) };
 
-    // operation
-    let new_buffer = unsafe { __command(buffer.into_u64()) };
-    let new_data = unsafe { ::plugin::__Buffer::from_u64(new_buffer).to_vec() };
-    let new_data: Option<Vec<u8>> = match ::plugin::bincode::deserialize(&new_data) {
-        Ok(d) => d,
-        Err(e) => panic!("Data returned from function not deserializable."),
-    };
+//     // operation
+//     let new_buffer = unsafe { __command(buffer.into_u64()) };
+//     let new_data = unsafe { ::plugin::__Buffer::from_u64(new_buffer).to_vec() };
+//     let new_data: Option<Vec<u8>> = match ::plugin::bincode::deserialize(&new_data) {
+//         Ok(d) => d,
+//         Err(e) => panic!("Data returned from function not deserializable."),
+//     };
 
-    // teardown
-    return new_data;
-}
+//     // teardown
+//     return new_data;
+// }
 
 // TODO: some sort of macro to generate ABI bindings
 // extern "C" {

@@ -115,11 +115,8 @@ pub fn import(args: TokenStream, function: TokenStream) -> TokenStream {
         })
         .unzip();
 
-    dbg!("hello");
-
     let body = TokenStream::from(quote! {
         {
-            // dbg!("executing imported function");
             // setup
             let data: (#( #tys ),*) = (#( #args ),*);
             let data = ::plugin::bincode::serialize(&data).unwrap();
@@ -137,11 +134,7 @@ pub fn import(args: TokenStream, function: TokenStream) -> TokenStream {
         }
     });
 
-    dbg!("hello2");
-
     let block = parse_macro_input!(body as Block);
-
-    dbg!("hello {:?}", &block);
 
     let inner_fn = ItemFn {
         attrs: fn_declare.attrs,

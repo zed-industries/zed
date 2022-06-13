@@ -1,3 +1,5 @@
+use std::future::Future;
+use std::pin::Pin;
 use std::{fs::File, marker::PhantomData, path::Path};
 
 use anyhow::{anyhow, Error};
@@ -142,7 +144,7 @@ impl PluginBuilder {
     //         move |_: Caller<'_, WasiCtxAlloc>, _: u64| {
     //             // let function = &function;
     //             Box::new(async {
-    //                 let function = function;
+    //                 // let function = function;
     //                 // Call the Host-side function
     //                 let result: u64 = function(7).await;
     //                 Ok(result)
@@ -152,68 +154,69 @@ impl PluginBuilder {
     //     Ok(self)
     // }
 
-    // pub fn host_function_async<F, A, R>(mut self, name: &str, function: F) -> Result<Self, Error>
-    // where
-    //     F: Fn(A) -> Pin<Box<dyn Future<Output = R> + Send + 'static>> + Send + Sync + 'static,
-    //     A: DeserializeOwned + Send,
-    //     R: Serialize + Send + Sync,
-    // {
-    //     self.linker.func_wrap1_async(
-    //         "env",
-    //         &format!("__{}", name),
-    //         move |mut caller: Caller<'_, WasiCtxAlloc>, packed_buffer: u64| {
-    //             let function = |args: Vec<u8>| {
-    //                 let args = args;
-    //                 let args: A = Wasi::deserialize_to_type(&args)?;
-    //                 Ok(async {
-    //                     let result = function(args);
-    //                     Wasi::serialize_to_bytes(result.await).map_err(|_| {
-    //                         Trap::new("Could not serialize value returned from function").into()
-    //                     })
-    //                 })
-    //             };
+    pub fn host_function_async<F, A, R, Fut>(
+        mut self,
+        name: &str,
+        function: F,
+    ) -> Result<Self, Error>
+    where
+        F: Fn(A) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = R> + Send + 'static,
+        A: DeserializeOwned + Send + 'static,
+        R: Serialize + Send + Sync + 'static,
+    {
+        self.linker.func_wrap1_async(
+            "env",
+            &format!("__{}", name),
+            move |mut caller: Caller<'_, WasiCtxAlloc>, packed_buffer: u64| {
+                // TODO: use try block once avaliable
+                let result: Result<(WasiBuffer, Memory, _), Trap> = (|| {
+                    // grab a handle to the memory
+                    let mut plugin_memory = match caller.get_export("memory") {
+                        Some(Extern::Memory(mem)) => mem,
+                        _ => return Err(Trap::new("Could not grab slice of plugin memory"))?,
+                    };
 
-    //             // TODO: use try block once avaliable
-    //             let result: Result<(WasiBuffer, Memory, _), Trap> = (|| {
-    //                 // grab a handle to the memory
-    //                 let mut plugin_memory = match caller.get_export("memory") {
-    //                     Some(Extern::Memory(mem)) => mem,
-    //                     _ => return Err(Trap::new("Could not grab slice of plugin memory"))?,
-    //                 };
+                    let buffer = WasiBuffer::from_u64(packed_buffer);
 
-    //                 let buffer = WasiBuffer::from_u64(packed_buffer);
+                    // get the args passed from Guest
+                    let args = Plugin::buffer_to_bytes(&mut plugin_memory, &mut caller, &buffer)?;
 
-    //                 // get the args passed from Guest
-    //                 let args = Wasi::buffer_to_bytes(&mut plugin_memory, &mut caller, &buffer)?;
+                    let args: A = Plugin::deserialize_to_type(&args)?;
 
-    //                 // Call the Host-side function
-    //                 let result = function(args);
+                    // Call the Host-side function
+                    let result = function(args);
 
-    //                 Ok((buffer, plugin_memory, result))
-    //             })();
+                    Ok((buffer, plugin_memory, result))
+                })();
 
-    //             Box::new(async move {
-    //                 let (buffer, mut plugin_memory, thingo) = result?;
-    //                 let thingo: Result<_, Error> = thingo;
-    //                 let result: Result<Vec<u8>, Error> = thingo?.await;
+                Box::new(async move {
+                    let (buffer, mut plugin_memory, future) = result?;
 
-    //                 // Wasi::buffer_to_free(caller.data().free_buffer(), &mut caller, buffer).await?;
+                    let result: R = future.await;
+                    let result: Result<Vec<u8>, Error> = Plugin::serialize_to_bytes(result)
+                        .map_err(|_| {
+                            Trap::new("Could not serialize value returned from function").into()
+                        });
+                    let result = result?;
 
-    //                 // let buffer = Wasi::bytes_to_buffer(
-    //                 //     caller.data().alloc_buffer(),
-    //                 //     &mut plugin_memory,
-    //                 //     &mut caller,
-    //                 //     result,
-    //                 // )
-    //                 // .await?;
+                    Plugin::buffer_to_free(caller.data().free_buffer(), &mut caller, buffer)
+                        .await?;
 
-    //                 // Ok(buffer.into_u64())
-    //                 Ok(27)
-    //             })
-    //         },
-    //     )?;
-    //     Ok(self)
-    // }
+                    let buffer = Plugin::bytes_to_buffer(
+                        caller.data().alloc_buffer(),
+                        &mut plugin_memory,
+                        &mut caller,
+                        result,
+                    )
+                    .await?;
+
+                    Ok(buffer.into_u64())
+                })
+            },
+        )?;
+        Ok(self)
+    }
 
     pub fn host_function<A, R>(
         mut self,
