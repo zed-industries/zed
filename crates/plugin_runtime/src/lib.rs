@@ -1,10 +1,10 @@
-pub mod wasi;
-use pollster::FutureExt as _;
-pub use wasi::*;
+pub mod plugin;
+pub use plugin::*;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pollster::FutureExt as _;
 
     #[test]
     pub fn test_plugin() {
@@ -20,14 +20,12 @@ mod tests {
             imports: WasiFn<u32, u32>,
         }
 
-        async fn half(a: u32) -> u32 {
-            a / 2
-        }
-
-        let x = half;
+        // async fn half(a: u32) -> u32 {
+        //     a / 2
+        // }
 
         async {
-            let mut runtime = WasiPluginBuilder::new_with_default_ctx()
+            let mut runtime = PluginBuilder::new_with_default_ctx()
                 .unwrap()
                 .host_function("mystery_number", |input: u32| input + 7)
                 .unwrap()
