@@ -4,12 +4,12 @@ use futures::lock::Mutex;
 use futures::{future::BoxFuture, FutureExt};
 use gpui::executor::Background;
 use language::{LanguageServerName, LspAdapter};
-use plugin_runtime::{Wasi, WasiFn, WasiPluginBuilder};
+use plugin_runtime::{Plugin, PluginBuilder, WasiFn};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
 
 pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
-    let plugin = WasiPluginBuilder::new_with_default_ctx()?
+    let plugin = PluginBuilder::new_with_default_ctx()?
         .host_function("command", |command: String| {
             // TODO: actual thing
             dbg!(&command);
@@ -35,11 +35,11 @@ pub struct PluginLspAdapter {
     label_for_completion: WasiFn<String, Option<String>>,
     initialization_options: WasiFn<(), String>,
     executor: Arc<Background>,
-    runtime: Arc<Mutex<Wasi>>,
+    runtime: Arc<Mutex<Plugin>>,
 }
 
 impl PluginLspAdapter {
-    pub async fn new(mut plugin: Wasi, executor: Arc<Background>) -> Result<Self> {
+    pub async fn new(mut plugin: Plugin, executor: Arc<Background>) -> Result<Self> {
         Ok(Self {
             name: plugin.function("name")?,
             server_args: plugin.function("server_args")?,
