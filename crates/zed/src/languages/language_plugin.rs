@@ -10,16 +10,20 @@ use util::ResultExt;
 
 pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
     let plugin = PluginBuilder::new_with_default_ctx()?
-        .host_function("command", |command: String| {
+        .host_function_async("command", |command: String| async move {
             // TODO: actual thing
             dbg!(&command);
             let mut args = command.split(' ');
             let command = args.next().unwrap();
-            std::process::Command::new(command)
+            smol::process::Command::new(command)
                 .args(args)
                 .output()
+                .await
                 .log_err()
-                .map(|output| dbg!(output.stdout))
+                .map(|output| {
+                    dbg!("done running command");
+                    output.stdout
+                })
         })?
         .init(include_bytes!("../../../../plugins/bin/json_language.wasm"))
         .await?;
