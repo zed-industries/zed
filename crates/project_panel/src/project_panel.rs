@@ -426,7 +426,7 @@ impl ProjectPanel {
             let new_path = entry.path.join(&filename);
             edited_entry_id = NEW_ENTRY_ID;
             edit_task = self.project.update(cx, |project, cx| {
-                project.create_entry((edit_state.worktree_id, new_path), edit_state.is_dir, cx)
+                project.create_entry((worktree_id, new_path), is_dir, cx)
             })?;
         } else {
             let new_path = if let Some(parent) = entry.path.clone().parent() {
