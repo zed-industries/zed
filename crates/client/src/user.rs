@@ -45,7 +45,7 @@ pub struct Contact {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProjectMetadata {
     pub id: u64,
-    pub worktree_root_names: Vec<String>,
+    pub visible_worktree_root_names: Vec<String>,
     pub guests: BTreeSet<Arc<User>>,
 }
 
@@ -634,7 +634,7 @@ impl Contact {
             }
             projects.push(ProjectMetadata {
                 id: project.id,
-                worktree_root_names: project.worktree_root_names.clone(),
+                visible_worktree_root_names: project.visible_worktree_root_names.clone(),
                 guests,
             });
         }
@@ -648,7 +648,7 @@ impl Contact {
     pub fn non_empty_projects(&self) -> impl Iterator<Item = &ProjectMetadata> {
         self.projects
             .iter()
-            .filter(|project| !project.worktree_root_names.is_empty())
+            .filter(|project| !project.visible_worktree_root_names.is_empty())
     }
 }
 
