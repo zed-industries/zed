@@ -329,7 +329,7 @@ impl Server {
 
             {
                 let mut store = this.store_mut().await;
-                store.add_connection(connection_id, user_id);
+                store.add_connection(connection_id, user_id, user.admin);
                 this.peer.send(connection_id, store.build_initial_contacts_update(contacts))?;
 
                 if let Some((code, count)) = invite_code {

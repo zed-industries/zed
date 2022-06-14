@@ -25,6 +25,7 @@ pub struct Store {
 #[derive(Serialize)]
 struct ConnectionState {
     user_id: UserId,
+    admin: bool,
     projects: HashSet<u64>,
     requested_projects: HashSet<u64>,
     channels: HashSet<ChannelId>,
@@ -88,13 +89,17 @@ pub struct Metrics {
 
 impl Store {
     pub fn metrics(&self) -> Metrics {
-        let connections = self.connections.len();
+        let connections = self.connections.values().filter(|c| !c.admin).count();
         let mut registered_projects = 0;
         let mut shared_projects = 0;
         for project in self.projects.values() {
-            registered_projects += 1;
-            if !project.guests.is_empty() {
-                shared_projects += 1;
+            if let Some(connection) = self.connections.get(&project.host_connection_id) {
+                if !connection.admin {
+                    registered_projects += 1;
+                    if !project.guests.is_empty() {
+                        shared_projects += 1;
+                    }
+                }
             }
         }
 
@@ -106,11 +111,12 @@ impl Store {
     }
 
     #[instrument(skip(self))]
-    pub fn add_connection(&mut self, connection_id: ConnectionId, user_id: UserId) {
+    pub fn add_connection(&mut self, connection_id: ConnectionId, user_id: UserId, admin: bool) {
         self.connections.insert(
             connection_id,
             ConnectionState {
                 user_id,
+                admin,
                 projects: Default::default(),
                 requested_projects: Default::default(),
                 channels: Default::default(),
