@@ -289,14 +289,14 @@ impl ProjectPanel {
 
     fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
-            let expanded_dir_ids =
-                if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree.id()) {
-                    expanded_dir_ids
-                } else {
-                    return;
-                };
-
             if entry.is_dir() {
+                let expanded_dir_ids =
+                    if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree.id()) {
+                        expanded_dir_ids
+                    } else {
+                        return;
+                    };
+
                 match expanded_dir_ids.binary_search(&entry.id) {
                     Ok(_) => self.select_next(&SelectNext, cx),
                     Err(ix) => {
@@ -305,12 +305,6 @@ impl ProjectPanel {
                         cx.notify();
                     }
                 }
-            } else {
-                let event = Event::OpenedEntry {
-                    entry_id: entry.id,
-                    focus_opened_item: true,
-                };
-                cx.emit(event);
             }
         }
     }
@@ -392,6 +386,25 @@ impl ProjectPanel {
     }
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+        if let Some(task) = self.confirm_edit(cx) {
+            Some(task)
+        } else if let Some((_, entry)) = self.selected_entry(cx) {
+            if entry.is_file() {
+                self.open_entry(
+                    &Open {
+                        entry_id: entry.id,
+                        change_focus: true,
+                    },
+                    cx,
+                );
+            }
+            None
+        } else {
+            None
+        }
+    }
+
+    fn confirm_edit(&mut self, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
         let edit_state = self.edit_state.as_mut()?;
         cx.focus_self();
 
