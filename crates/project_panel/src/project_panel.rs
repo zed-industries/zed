@@ -396,6 +396,7 @@ impl ProjectPanel {
         cx.focus_self();
 
         let worktree_id = edit_state.worktree_id;
+        let is_new_entry = edit_state.is_new_entry;
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         let entry = worktree.read(cx).entry_for_id(edit_state.entry_id)?.clone();
         let filename = self.filename_editor.read(cx).text(cx);
@@ -403,7 +404,7 @@ impl ProjectPanel {
         let edit_task;
         let edited_entry_id;
 
-        if edit_state.is_new_entry {
+        if is_new_entry {
             self.selection = Some(Selection {
                 worktree_id,
                 entry_id: NEW_ENTRY_ID,
@@ -444,6 +445,15 @@ impl ProjectPanel {
                     }
                 }
                 this.update_visible_entries(None, cx);
+                if is_new_entry {
+                    this.open_entry(
+                        &Open {
+                            entry_id: new_entry.id,
+                            change_focus: true,
+                        },
+                        cx,
+                    );
+                }
                 cx.notify();
             });
             Ok(())
