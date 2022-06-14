@@ -410,6 +410,7 @@ impl ProjectPanel {
 
         let worktree_id = edit_state.worktree_id;
         let is_new_entry = edit_state.is_new_entry;
+        let is_dir = edit_state.is_dir;
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         let entry = worktree.read(cx).entry_for_id(edit_state.entry_id)?.clone();
         let filename = self.filename_editor.read(cx).text(cx);
@@ -458,7 +459,7 @@ impl ProjectPanel {
                     }
                 }
                 this.update_visible_entries(None, cx);
-                if is_new_entry {
+                if is_new_entry && !is_dir {
                     this.open_entry(
                         &Open {
                             entry_id: new_entry.id,
