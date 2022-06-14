@@ -289,14 +289,14 @@ impl ProjectPanel {
 
     fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
-            let expanded_dir_ids =
-                if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree.id()) {
-                    expanded_dir_ids
-                } else {
-                    return;
-                };
-
             if entry.is_dir() {
+                let expanded_dir_ids =
+                    if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree.id()) {
+                        expanded_dir_ids
+                    } else {
+                        return;
+                    };
+
                 match expanded_dir_ids.binary_search(&entry.id) {
                     Ok(_) => self.select_next(&SelectNext, cx),
                     Err(ix) => {
@@ -305,12 +305,6 @@ impl ProjectPanel {
                         cx.notify();
                     }
                 }
-            } else {
-                let event = Event::OpenedEntry {
-                    entry_id: entry.id,
-                    focus_opened_item: true,
-                };
-                cx.emit(event);
             }
         }
     }
@@ -392,10 +386,31 @@ impl ProjectPanel {
     }
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+        if let Some(task) = self.confirm_edit(cx) {
+            Some(task)
+        } else if let Some((_, entry)) = self.selected_entry(cx) {
+            if entry.is_file() {
+                self.open_entry(
+                    &Open {
+                        entry_id: entry.id,
+                        change_focus: true,
+                    },
+                    cx,
+                );
+            }
+            None
+        } else {
+            None
+        }
+    }
+
+    fn confirm_edit(&mut self, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
         let edit_state = self.edit_state.as_mut()?;
         cx.focus_self();
 
         let worktree_id = edit_state.worktree_id;
+        let is_new_entry = edit_state.is_new_entry;
+        let is_dir = edit_state.is_dir;
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         let entry = worktree.read(cx).entry_for_id(edit_state.entry_id)?.clone();
         let filename = self.filename_editor.read(cx).text(cx);
@@ -403,7 +418,7 @@ impl ProjectPanel {
         let edit_task;
         let edited_entry_id;
 
-        if edit_state.is_new_entry {
+        if is_new_entry {
             self.selection = Some(Selection {
                 worktree_id,
                 entry_id: NEW_ENTRY_ID,
@@ -411,7 +426,7 @@ impl ProjectPanel {
             let new_path = entry.path.join(&filename);
             edited_entry_id = NEW_ENTRY_ID;
             edit_task = self.project.update(cx, |project, cx| {
-                project.create_entry((edit_state.worktree_id, new_path), edit_state.is_dir, cx)
+                project.create_entry((worktree_id, new_path), is_dir, cx)
             })?;
         } else {
             let new_path = if let Some(parent) = entry.path.clone().parent() {
@@ -444,6 +459,15 @@ impl ProjectPanel {
                     }
                 }
                 this.update_visible_entries(None, cx);
+                if is_new_entry && !is_dir {
+                    this.open_entry(
+                        &Open {
+                            entry_id: new_entry.id,
+                            change_focus: true,
+                        },
+                        cx,
+                    );
+                }
                 cx.notify();
             });
             Ok(())
