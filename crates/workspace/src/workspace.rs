@@ -885,6 +885,13 @@ impl Workspace {
         self.project.read(cx).worktrees(cx)
     }
 
+    pub fn visible_worktrees<'a>(
+        &self,
+        cx: &'a AppContext,
+    ) -> impl 'a + Iterator<Item = ModelHandle<Worktree>> {
+        self.project.read(cx).visible_worktrees(cx)
+    }
+
     pub fn worktree_scans_complete(&self, cx: &AppContext) -> impl Future<Output = ()> + 'static {
         let futures = self
             .worktrees(cx)
@@ -974,6 +981,7 @@ impl Workspace {
     pub fn open_paths(
         &mut self,
         mut abs_paths: Vec<PathBuf>,
+        visible: bool,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>> {
         let fs = self.fs.clone();
@@ -984,9 +992,11 @@ impl Workspace {
             let mut entries = Vec::new();
             for path in &abs_paths {
                 entries.push(
-                    this.update(&mut cx, |this, cx| this.project_path_for_path(path, cx))
-                        .await
-                        .ok(),
+                    this.update(&mut cx, |this, cx| {
+                        this.project_path_for_path(path, visible, cx)
+                    })
+                    .await
+                    .log_err(),
                 );
             }
 
@@ -999,7 +1009,7 @@ impl Workspace {
                     cx.spawn(|mut cx| {
                         let fs = fs.clone();
                         async move {
-                            let project_path = project_path?;
+                            let (_worktree, project_path) = project_path?;
                             if fs.is_file(&abs_path).await {
                                 Some(
                                     this.update(&mut cx, |this, cx| {
@@ -1028,7 +1038,7 @@ impl Workspace {
         cx.spawn(|this, mut cx| async move {
             if let Some(paths) = paths.recv().await.flatten() {
                 let results = this
-                    .update(&mut cx, |this, cx| this.open_paths(paths, cx))
+                    .update(&mut cx, |this, cx| this.open_paths(paths, true, cx))
                     .await;
                 for result in results {
                     if let Some(result) = result {
@@ -1063,17 +1073,22 @@ impl Workspace {
     fn project_path_for_path(
         &self,
         abs_path: &Path,
+        visible: bool,
         cx: &mut ViewContext<Self>,
-    ) -> Task<Result<ProjectPath>> {
+    ) -> Task<Result<(ModelHandle<Worktree>, ProjectPath)>> {
         let entry = self.project().update(cx, |project, cx| {
-            project.find_or_create_local_worktree(abs_path, true, cx)
+            project.find_or_create_local_worktree(abs_path, visible, cx)
         });
         cx.spawn(|_, cx| async move {
             let (worktree, path) = entry.await?;
-            Ok(ProjectPath {
-                worktree_id: worktree.read_with(&cx, |t, _| t.id()),
-                path: path.into(),
-            })
+            let worktree_id = worktree.read_with(&cx, |t, _| t.id());
+            Ok((
+                worktree,
+                ProjectPath {
+                    worktree_id,
+                    path: path.into(),
+                },
+            ))
         })
     }
 
@@ -2444,7 +2459,9 @@ pub fn open_paths(
         };
 
         let items = workspace
-            .update(&mut cx, |workspace, cx| workspace.open_paths(abs_paths, cx))
+            .update(&mut cx, |workspace, cx| {
+                workspace.open_paths(abs_paths, true, cx)
+            })
             .await;
 
         if let Some(project) = new_project {

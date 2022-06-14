@@ -49,7 +49,7 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
 
             let opened = workspace
                 .update(&mut cx, |workspace, cx| {
-                    workspace.open_paths(vec![entry_path], cx)
+                    workspace.open_paths(vec![entry_path], true, cx)
                 })
                 .await;
 
