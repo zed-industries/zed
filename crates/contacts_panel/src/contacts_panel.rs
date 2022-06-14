@@ -462,7 +462,7 @@ impl ContactsPanel {
                 )
                 .with_child(
                     Label::new(
-                        project.worktree_root_names.join(", "),
+                        project.visible_worktree_root_names.join(", "),
                         row.name.text.clone(),
                     )
                     .aligned()
@@ -847,7 +847,7 @@ impl ContactsPanel {
                                                     p.read(cx).remote_id() == Some(project.id)
                                                 })
                                                 .map(|ix| open_projects.remove(ix).downgrade());
-                                            if project.worktree_root_names.is_empty() {
+                                            if project.visible_worktree_root_names.is_empty() {
                                                 None
                                             } else {
                                                 Some(ContactEntry::ContactProject(
@@ -872,7 +872,7 @@ impl ContactsPanel {
                                 self.entries.extend(
                                     contact.projects.iter().enumerate().filter_map(
                                         |(ix, project)| {
-                                            if project.worktree_root_names.is_empty() {
+                                            if project.visible_worktree_root_names.is_empty() {
                                                 None
                                             } else {
                                                 Some(ContactEntry::ContactProject(
@@ -1295,7 +1295,7 @@ mod tests {
                     should_notify: false,
                     projects: vec![proto::ProjectMetadata {
                         id: 101,
-                        worktree_root_names: vec!["dir1".to_string()],
+                        visible_worktree_root_names: vec!["dir1".to_string()],
                         guests: vec![2],
                     }],
                 },
@@ -1305,7 +1305,7 @@ mod tests {
                     should_notify: false,
                     projects: vec![proto::ProjectMetadata {
                         id: 102,
-                        worktree_root_names: vec!["dir2".to_string()],
+                        visible_worktree_root_names: vec!["dir2".to_string()],
                         guests: vec![2],
                     }],
                 },
@@ -1321,7 +1321,7 @@ mod tests {
                     should_notify: false,
                     projects: vec![proto::ProjectMetadata {
                         id: 103,
-                        worktree_root_names: vec!["dir3".to_string()],
+                        visible_worktree_root_names: vec!["dir3".to_string()],
                         guests: vec![3],
                     }],
                 },
@@ -1425,12 +1425,12 @@ mod tests {
                 projects: vec![
                     proto::ProjectMetadata {
                         id: 103,
-                        worktree_root_names: vec!["dir3".to_string()],
+                        visible_worktree_root_names: vec!["dir3".to_string()],
                         guests: vec![3],
                     },
                     proto::ProjectMetadata {
                         id: 200,
-                        worktree_root_names: vec!["private_dir".to_string()],
+                        visible_worktree_root_names: vec!["private_dir".to_string()],
                         guests: vec![3],
                     },
                 ],
@@ -1489,7 +1489,7 @@ mod tests {
                 should_notify: false,
                 projects: vec![proto::ProjectMetadata {
                     id: 103,
-                    worktree_root_names: vec!["dir3".to_string()],
+                    visible_worktree_root_names: vec!["dir3".to_string()],
                     guests: vec![3],
                 }],
             }],
@@ -1611,7 +1611,9 @@ mod tests {
                         .map(|project| project.read(cx));
                     format!(
                         "    {}{}",
-                        contact.projects[*project_ix].worktree_root_names.join(", "),
+                        contact.projects[*project_ix]
+                            .visible_worktree_root_names
+                            .join(", "),
                         if project.map_or(true, |project| project.is_online()) {
                             ""
                         } else {

@@ -322,7 +322,7 @@ fn open_config_file(
         workspace
             .update(&mut cx, |workspace, cx| {
                 if workspace.project().read(cx).is_local() {
-                    workspace.open_paths(vec![path.to_path_buf()], cx)
+                    workspace.open_paths(vec![path.to_path_buf()], false, cx)
                 } else {
                     let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
                         let mut workspace = Workspace::new(
@@ -341,7 +341,7 @@ fn open_config_file(
                         workspace
                     });
                     workspace.update(cx, |workspace, cx| {
-                        workspace.open_paths(vec![path.to_path_buf()], cx)
+                        workspace.open_paths(vec![path.to_path_buf()], false, cx)
                     })
                 }
             })
@@ -576,6 +576,7 @@ mod tests {
         fs.insert_file("/dir1/a.txt", "".into()).await;
         fs.insert_file("/dir2/b.txt", "".into()).await;
         fs.insert_file("/dir3/c.txt", "".into()).await;
+        fs.insert_file("/d.txt", "".into()).await;
 
         let project = Project::test(app_state.fs.clone(), ["/dir1".as_ref()], cx).await;
         let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
@@ -583,7 +584,7 @@ mod tests {
         // Open a file within an existing worktree.
         cx.update(|cx| {
             workspace.update(cx, |view, cx| {
-                view.open_paths(vec!["/dir1/a.txt".into()], cx)
+                view.open_paths(vec!["/dir1/a.txt".into()], true, cx)
             })
         })
         .await;
@@ -607,7 +608,7 @@ mod tests {
         // Open a file outside of any existing worktree.
         cx.update(|cx| {
             workspace.update(cx, |view, cx| {
-                view.open_paths(vec!["/dir2/b.txt".into()], cx)
+                view.open_paths(vec!["/dir2/b.txt".into()], true, cx)
             })
         })
         .await;
@@ -643,7 +644,7 @@ mod tests {
         // Ensure opening a directory and one of its children only adds one worktree.
         cx.update(|cx| {
             workspace.update(cx, |view, cx| {
-                view.open_paths(vec!["/dir3".into(), "/dir3/c.txt".into()], cx)
+                view.open_paths(vec!["/dir3".into(), "/dir3/c.txt".into()], true, cx)
             })
         })
         .await;
@@ -675,6 +676,56 @@ mod tests {
                 "c.txt"
             );
         });
+
+        // Ensure opening invisibly a file outside an existing worktree adds a new, invisible worktree.
+        cx.update(|cx| {
+            workspace.update(cx, |view, cx| {
+                view.open_paths(vec!["/d.txt".into()], false, cx)
+            })
+        })
+        .await;
+        cx.read(|cx| {
+            let worktree_roots = workspace
+                .read(cx)
+                .worktrees(cx)
+                .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
+                .collect::<HashSet<_>>();
+            assert_eq!(
+                worktree_roots,
+                vec!["/dir1", "/dir2/b.txt", "/dir3", "/d.txt"]
+                    .into_iter()
+                    .map(Path::new)
+                    .collect(),
+            );
+
+            let visible_worktree_roots = workspace
+                .read(cx)
+                .visible_worktrees(cx)
+                .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
+                .collect::<HashSet<_>>();
+            assert_eq!(
+                visible_worktree_roots,
+                vec!["/dir1", "/dir2/b.txt", "/dir3"]
+                    .into_iter()
+                    .map(Path::new)
+                    .collect(),
+            );
+
+            assert_eq!(
+                workspace
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .unwrap()
+                    .to_any()
+                    .downcast::<Editor>()
+                    .unwrap()
+                    .read(cx)
+                    .title(cx),
+                "d.txt"
+            );
+        });
     }
 
     #[gpui::test]
@@ -692,7 +743,7 @@ mod tests {
         // Open a file within an existing worktree.
         cx.update(|cx| {
             workspace.update(cx, |view, cx| {
-                view.open_paths(vec![PathBuf::from("/root/a.txt")], cx)
+                view.open_paths(vec![PathBuf::from("/root/a.txt")], true, cx)
             })
         })
         .await;

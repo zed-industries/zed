@@ -137,7 +137,7 @@ impl WaitingRoom {
                                                 login,
                                                 humanize_list(
                                                     &contact.projects[project_index]
-                                                        .worktree_root_names
+                                                        .visible_worktree_root_names
                                                 )
                                             )
                                         }
@@ -166,7 +166,7 @@ impl WaitingRoom {
             message: format!(
                 "Asking to join @{}'s copy of {}...",
                 contact.user.github_login,
-                humanize_list(&contact.projects[project_index].worktree_root_names)
+                humanize_list(&contact.projects[project_index].visible_worktree_root_names)
             ),
             waiting: true,
             client,

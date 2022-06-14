@@ -608,7 +608,7 @@ async fn test_offline_projects(
             store.contacts()[0].projects,
             &[ProjectMetadata {
                 id: project_id,
-                worktree_root_names: vec!["crate1".into(), "crate2".into()],
+                visible_worktree_root_names: vec!["crate1".into(), "crate2".into()],
                 guests: Default::default(),
             }]
         );
@@ -637,7 +637,7 @@ async fn test_offline_projects(
             store.contacts()[0].projects,
             &[ProjectMetadata {
                 id: project_id,
-                worktree_root_names: vec!["crate1".into(), "crate2".into()],
+                visible_worktree_root_names: vec!["crate1".into(), "crate2".into()],
                 guests: Default::default(),
             }]
         );
@@ -655,7 +655,11 @@ async fn test_offline_projects(
             store.contacts()[0].projects,
             &[ProjectMetadata {
                 id: project_id,
-                worktree_root_names: vec!["crate1".into(), "crate2".into(), "crate3".into()],
+                visible_worktree_root_names: vec![
+                    "crate1".into(),
+                    "crate2".into(),
+                    "crate3".into()
+                ],
                 guests: Default::default(),
             }]
         );
@@ -695,12 +699,16 @@ async fn test_offline_projects(
             &[
                 ProjectMetadata {
                     id: project_id,
-                    worktree_root_names: vec!["crate1".into(), "crate2".into(), "crate3".into()],
+                    visible_worktree_root_names: vec![
+                        "crate1".into(),
+                        "crate2".into(),
+                        "crate3".into()
+                    ],
                     guests: Default::default(),
                 },
                 ProjectMetadata {
                     id: project2_id,
-                    worktree_root_names: vec!["crate3".into()],
+                    visible_worktree_root_names: vec!["crate3".into()],
                     guests: Default::default(),
                 }
             ]
@@ -3515,7 +3523,7 @@ async fn test_contacts(
                     .iter()
                     .map(|p| {
                         (
-                            p.worktree_root_names[0].as_str(),
+                            p.visible_worktree_root_names[0].as_str(),
                             p.guests.iter().map(|p| p.github_login.as_str()).collect(),
                         )
                     })

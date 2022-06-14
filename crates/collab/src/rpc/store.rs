@@ -277,9 +277,10 @@ impl Store {
                 if project.host_user_id == user_id {
                     metadata.push(proto::ProjectMetadata {
                         id: project_id,
-                        worktree_root_names: project
+                        visible_worktree_root_names: project
                             .worktrees
                             .values()
+                            .filter(|worktree| worktree.visible)
                             .map(|worktree| worktree.root_name.clone())
                             .collect(),
                         guests: project

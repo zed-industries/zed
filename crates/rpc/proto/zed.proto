@@ -946,7 +946,7 @@ message Contact {
 
 message ProjectMetadata {
     uint64 id = 1;
-    repeated string worktree_root_names = 3;
+    repeated string visible_worktree_root_names = 3;
     repeated uint64 guests = 4;
 }
 
