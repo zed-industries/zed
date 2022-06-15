@@ -9,6 +9,7 @@ use std::{
     mem,
     path::{Path, PathBuf},
     str,
+    time::{Duration, Instant},
 };
 use tracing::instrument;
 
@@ -25,6 +26,7 @@ pub struct Store {
 #[derive(Serialize)]
 struct ConnectionState {
     user_id: UserId,
+    admin: bool,
     projects: HashSet<u64>,
     requested_projects: HashSet<u64>,
     channels: HashSet<ChannelId>,
@@ -40,6 +42,8 @@ pub struct Project {
     pub active_replica_ids: HashSet<ReplicaId>,
     pub worktrees: BTreeMap<u64, Worktree>,
     pub language_servers: Vec<proto::LanguageServer>,
+    #[serde(skip)]
+    last_activity: Option<Instant>,
 }
 
 #[derive(Default, Serialize)]
@@ -83,34 +87,45 @@ pub struct LeftProject {
 pub struct Metrics {
     pub connections: usize,
     pub registered_projects: usize,
+    pub active_projects: usize,
     pub shared_projects: usize,
 }
 
 impl Store {
     pub fn metrics(&self) -> Metrics {
-        let connections = self.connections.len();
+        let connections = self.connections.values().filter(|c| !c.admin).count();
         let mut registered_projects = 0;
+        let mut active_projects = 0;
         let mut shared_projects = 0;
         for project in self.projects.values() {
-            registered_projects += 1;
-            if !project.guests.is_empty() {
-                shared_projects += 1;
+            if let Some(connection) = self.connections.get(&project.host_connection_id) {
+                if !connection.admin {
+                    registered_projects += 1;
+                    if project.is_active() {
+                        active_projects += 1;
+                        if !project.guests.is_empty() {
+                            shared_projects += 1;
+                        }
+                    }
+                }
             }
         }
 
         Metrics {
             connections,
             registered_projects,
+            active_projects,
             shared_projects,
         }
     }
 
     #[instrument(skip(self))]
-    pub fn add_connection(&mut self, connection_id: ConnectionId, user_id: UserId) {
+    pub fn add_connection(&mut self, connection_id: ConnectionId, user_id: UserId, admin: bool) {
         self.connections.insert(
             connection_id,
             ConnectionState {
                 user_id,
+                admin,
                 projects: Default::default(),
                 requested_projects: Default::default(),
                 channels: Default::default(),
@@ -312,6 +327,7 @@ impl Store {
                 active_replica_ids: Default::default(),
                 worktrees: Default::default(),
                 language_servers: Default::default(),
+                last_activity: None,
             },
         );
         if let Some(connection) = self.connections.get_mut(&host_connection_id) {
@@ -454,6 +470,7 @@ impl Store {
             .get_mut(&project_id)
             .ok_or_else(|| anyhow!("no such project"))?;
         connection.requested_projects.insert(project_id);
+        project.last_activity = Some(Instant::now());
         project
             .join_requests
             .entry(requester_id)
@@ -478,6 +495,8 @@ impl Store {
             let requester_connection = self.connections.get_mut(&receipt.sender_id)?;
             requester_connection.requested_projects.remove(&project_id);
         }
+        project.last_activity = Some(Instant::now());
+
         Some(receipts)
     }
 
@@ -509,6 +528,7 @@ impl Store {
             receipts_with_replica_ids.push((receipt, replica_id));
         }
 
+        project.last_activity = Some(Instant::now());
         Some((receipts_with_replica_ids, project))
     }
 
@@ -558,6 +578,8 @@ impl Store {
                 worktree.entries.clear();
             }
         }
+
+        project.last_activity = Some(Instant::now());
 
         Ok(LeftProject {
             host_connection_id: project.host_connection_id,
@@ -645,6 +667,15 @@ impl Store {
         self.projects
             .get(&project_id)
             .ok_or_else(|| anyhow!("no such project"))
+    }
+
+    pub fn register_project_activity(
+        &mut self,
+        project_id: u64,
+        connection_id: ConnectionId,
+    ) -> Result<()> {
+        self.write_project(project_id, connection_id)?.last_activity = Some(Instant::now());
+        Ok(())
     }
 
     pub fn read_project(&self, project_id: u64, connection_id: ConnectionId) -> Result<&Project> {
@@ -752,6 +783,13 @@ impl Store {
 }
 
 impl Project {
+    fn is_active(&self) -> bool {
+        const ACTIVE_PROJECT_TIMEOUT: Duration = Duration::from_secs(60);
+        self.last_activity.map_or(false, |last_activity| {
+            last_activity.elapsed() < ACTIVE_PROJECT_TIMEOUT
+        })
+    }
+
     pub fn guest_connection_ids(&self) -> Vec<ConnectionId> {
         self.guests.keys().copied().collect()
     }
