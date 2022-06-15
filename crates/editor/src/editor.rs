@@ -1582,7 +1582,7 @@ impl Editor {
             }
         }
 
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+        self.change_selections(Some(Autoscroll::Newest), cx, |s| {
             if !add {
                 s.clear_disjoint();
             } else if click_count > 1 {
