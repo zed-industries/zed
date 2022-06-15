@@ -948,7 +948,7 @@ mod tests {
             (editor.downgrade(), buffer)
         });
 
-        cx.dispatch_action(window_id, pane::Split(SplitDirection::Right));
+        cx.dispatch_action(window_id, pane::SplitRight);
         let editor_2 = cx.update(|cx| {
             let pane_2 = workspace.read(cx).active_pane().clone();
             assert_ne!(pane_1, pane_2);
