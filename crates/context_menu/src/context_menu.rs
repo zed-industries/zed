@@ -94,7 +94,7 @@ impl View for ContextMenu {
 
         Overlay::new(expanded_menu)
             .hoverable(true)
-            .move_to_fit(true)
+            .fit_mode(OverlayFitMode::SnapToWindow)
             .with_abs_position(self.position)
             .boxed()
     }

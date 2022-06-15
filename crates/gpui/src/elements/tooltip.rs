@@ -1,6 +1,6 @@
 use super::{
     ContainerStyle, Element, ElementBox, Flex, KeystrokeLabel, MouseEventHandler, Overlay,
-    ParentElement, Text,
+    OverlayFitMode, ParentElement, Text,
 };
 use crate::{
     fonts::TextStyle,
@@ -79,7 +79,7 @@ impl Tooltip {
                         })
                         .boxed(),
                 )
-                .move_to_fit(true)
+                .fit_mode(OverlayFitMode::FlipAlignment)
                 .with_abs_position(state.position.get())
                 .boxed(),
             )
