@@ -1968,14 +1968,12 @@ impl Editor {
                 let pair_start: Arc<str> = pair.start.clone().into();
                 let pair_end: Arc<str> = pair.end.clone().into();
                 buffer.edit(
-                    selections
-                        .iter()
-                        .map(|s| (s.start.clone()..s.start.clone(), pair_start.clone()))
-                        .chain(
-                            selections
-                                .iter()
-                                .map(|s| (s.end.clone()..s.end.clone(), pair_end.clone())),
-                        ),
+                    selections.iter().flat_map(|s| {
+                        [
+                            (s.start.clone()..s.start.clone(), pair_start.clone()),
+                            (s.end.clone()..s.end.clone(), pair_end.clone()),
+                        ]
+                    }),
                     cx,
                 );
             });
@@ -8834,6 +8832,86 @@ mod tests {
             assert_eq!(
                 view.selections.display_ranges(cx),
                 [DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2)]
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                brackets: vec![BracketPair {
+                    start: "{".to_string(),
+                    end: "}".to_string(),
+                    close: true,
+                    newline: true,
+                }],
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        ));
+
+        let text = r#"
+            a
+            b
+            c
+            "#
+        .unindent();
+
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let (_, view) = cx.add_window(|cx| build_editor(buffer, cx));
+        view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
+            .await;
+
+        view.update(cx, |view, cx| {
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(2, 0)..DisplayPoint::new(2, 1),
+                ])
+            });
+
+            view.handle_input(&Input("{".to_string()), cx);
+            view.handle_input(&Input("{".to_string()), cx);
+            view.handle_input(&Input("{".to_string()), cx);
+            assert_eq!(
+                view.text(cx),
+                "
+                {{{a}}}
+                {{{b}}}
+                {{{c}}}
+                "
+                .unindent()
+            );
+            assert_eq!(
+                view.selections.display_ranges(cx),
+                [
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 4),
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 4),
+                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 4)
+                ]
+            );
+
+            view.undo(&Undo, cx);
+            assert_eq!(
+                view.text(cx),
+                "
+                a
+                b
+                c
+                "
+                .unindent()
+            );
+            assert_eq!(
+                view.selections.display_ranges(cx),
+                [
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(2, 0)..DisplayPoint::new(2, 1)
+                ]
             );
         });
     }
