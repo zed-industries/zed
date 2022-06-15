@@ -49,7 +49,7 @@ pub struct KeystrokeStyle {
 }
 
 impl Tooltip {
-    pub fn new<T: View>(
+    pub fn new<Tag: 'static, T: View>(
         id: usize,
         text: String,
         action: Option<Box<dyn Action>>,
@@ -57,7 +57,10 @@ impl Tooltip {
         child: ElementBox,
         cx: &mut RenderContext<T>,
     ) -> Self {
-        let state_handle = cx.element_state::<TooltipState, Rc<TooltipState>>(id);
+        struct ElementState<Tag>(Tag);
+        struct MouseEventHandlerState<Tag>(Tag);
+
+        let state_handle = cx.element_state::<ElementState<Tag>, Rc<TooltipState>>(id);
         let state = state_handle.read(cx).clone();
         let tooltip = if state.visible.get() {
             let mut collapsed_tooltip = Self::render_tooltip(
@@ -86,33 +89,34 @@ impl Tooltip {
         } else {
             None
         };
-        let child = MouseEventHandler::new::<Self, _, _>(id, cx, |_, _| child)
-            .on_hover(move |position, hover, cx| {
-                let window_id = cx.window_id();
-                if let Some(view_id) = cx.view_id() {
-                    if hover {
-                        if !state.visible.get() {
-                            state.position.set(position);
+        let child =
+            MouseEventHandler::new::<MouseEventHandlerState<Tag>, _, _>(id, cx, |_, _| child)
+                .on_hover(move |position, hover, cx| {
+                    let window_id = cx.window_id();
+                    if let Some(view_id) = cx.view_id() {
+                        if hover {
+                            if !state.visible.get() {
+                                state.position.set(position);
 
-                            let mut debounce = state.debounce.borrow_mut();
-                            if debounce.is_none() {
-                                *debounce = Some(cx.spawn({
-                                    let state = state.clone();
-                                    |mut cx| async move {
-                                        cx.background().timer(DEBOUNCE_TIMEOUT).await;
-                                        state.visible.set(true);
-                                        cx.update(|cx| cx.notify_view(window_id, view_id));
-                                    }
-                                }));
+                                let mut debounce = state.debounce.borrow_mut();
+                                if debounce.is_none() {
+                                    *debounce = Some(cx.spawn({
+                                        let state = state.clone();
+                                        |mut cx| async move {
+                                            cx.background().timer(DEBOUNCE_TIMEOUT).await;
+                                            state.visible.set(true);
+                                            cx.update(|cx| cx.notify_view(window_id, view_id));
+                                        }
+                                    }));
+                                }
                             }
+                        } else {
+                            state.visible.set(false);
+                            state.debounce.take();
                         }
-                    } else {
-                        state.visible.set(false);
-                        state.debounce.take();
                     }
-                }
-            })
-            .boxed();
+                })
+                .boxed();
         Self {
             child,
             tooltip,

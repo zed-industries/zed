@@ -1788,7 +1788,7 @@ impl Workspace {
                 Some(self.render_avatar(
                     collaborator.user.avatar.clone()?,
                     collaborator.replica_id,
-                    Some(collaborator.peer_id),
+                    Some((collaborator.peer_id, &collaborator.user.github_login)),
                     theme,
                     cx,
                 ))
@@ -1833,12 +1833,12 @@ impl Workspace {
         &self,
         avatar: Arc<ImageData>,
         replica_id: ReplicaId,
-        peer_id: Option<PeerId>,
+        peer: Option<(PeerId, &str)>,
         theme: &Theme,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         let replica_color = theme.editor.replica_selection_style(replica_id).cursor;
-        let is_followed = peer_id.map_or(false, |peer_id| {
+        let is_followed = peer.map_or(false, |(peer_id, _)| {
             self.follower_states_by_leader.contains_key(&peer_id)
         });
         let mut avatar_style = theme.workspace.titlebar.avatar;
@@ -1869,10 +1869,21 @@ impl Workspace {
             .with_margin_left(theme.workspace.titlebar.avatar_margin)
             .boxed();
 
-        if let Some(peer_id) = peer_id {
+        if let Some((peer_id, peer_github_login)) = peer {
             MouseEventHandler::new::<ToggleFollow, _, _>(replica_id.into(), cx, move |_, _| content)
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(move |_, _, cx| cx.dispatch_action(ToggleFollow(peer_id)))
+                .with_tooltip::<ToggleFollow, _>(
+                    peer_id.0 as usize,
+                    if is_followed {
+                        format!("Unfollow {}", peer_github_login)
+                    } else {
+                        format!("Follow {}", peer_github_login)
+                    },
+                    Some(Box::new(FollowNextCollaborator)),
+                    theme.tooltip.clone(),
+                    cx,
+                )
                 .boxed()
         } else {
             content

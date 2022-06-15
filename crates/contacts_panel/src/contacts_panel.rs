@@ -350,6 +350,8 @@ impl ContactsPanel {
         is_selected: bool,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
+        enum ToggleOnline {}
+
         let project = &contact.projects[project_index];
         let project_id = project.id;
         let is_host = Some(contact.user.id) == current_user_id;
@@ -445,7 +447,7 @@ impl ContactsPanel {
                                                 project: Some(open_project.clone()),
                                             })
                                         })
-                                        .with_tooltip(
+                                        .with_tooltip::<ToggleOnline, _>(
                                             project_id as usize,
                                             "Take project offline".to_string(),
                                             None,
@@ -565,7 +567,7 @@ impl ContactsPanel {
                                     project: Some(project.clone()),
                                 })
                             })
-                            .with_tooltip(
+                            .with_tooltip::<ToggleOnline, _>(
                                 project_id,
                                 "Take project online".to_string(),
                                 None,

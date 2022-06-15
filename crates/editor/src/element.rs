@@ -883,7 +883,7 @@ impl EditorElement {
                             })
                             .with_cursor_style(CursorStyle::PointingHand)
                             .on_click(move |_, _, cx| cx.dispatch_action(jump_action.clone()))
-                            .with_tooltip(
+                            .with_tooltip::<JumpIcon, _>(
                                 *key,
                                 "Jump to Buffer".to_string(),
                                 Some(Box::new(crate::OpenExcerpts)),
