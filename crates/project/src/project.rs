@@ -1780,6 +1780,10 @@ impl Project {
                         operations: vec![language::proto::serialize_operation(&operation)],
                     });
                     cx.background().spawn(request).detach_and_log_err(cx);
+                } else if let Some(project_id) = self.remote_id() {
+                    let _ = self
+                        .client
+                        .send(proto::RegisterProjectActivity { project_id });
                 }
             }
             BufferEvent::Edited { .. } => {

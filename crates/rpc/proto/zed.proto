@@ -36,6 +36,7 @@ message Envelope {
         OpenBufferForSymbolResponse open_buffer_for_symbol_response = 29;
 
         UpdateProject update_project = 30;
+        RegisterProjectActivity register_project_activity = 31;
         UpdateWorktree update_worktree = 32;
 
         CreateProjectEntry create_project_entry = 33;
@@ -133,6 +134,10 @@ message UnregisterProject {
 message UpdateProject {
     uint64 project_id = 1;
     repeated WorktreeMetadata worktrees = 2;
+}
+
+message RegisterProjectActivity {
+    uint64 project_id = 1;
 }
 
 message RequestJoinProject {

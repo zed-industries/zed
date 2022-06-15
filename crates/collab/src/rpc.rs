@@ -61,8 +61,10 @@ pub use store::{Store, Worktree};
 lazy_static! {
     static ref METRIC_CONNECTIONS: IntGauge =
         register_int_gauge!("connections", "number of connections").unwrap();
-    static ref METRIC_PROJECTS: IntGauge =
-        register_int_gauge!("projects", "number of open projects").unwrap();
+    static ref METRIC_REGISTERED_PROJECTS: IntGauge =
+        register_int_gauge!("registered_projects", "number of registered projects").unwrap();
+    static ref METRIC_ACTIVE_PROJECTS: IntGauge =
+        register_int_gauge!("active_projects", "number of active projects").unwrap();
     static ref METRIC_SHARED_PROJECTS: IntGauge = register_int_gauge!(
         "shared_projects",
         "number of open projects with one or more guests"
@@ -159,6 +161,7 @@ impl Server {
             .add_message_handler(Server::leave_project)
             .add_message_handler(Server::respond_to_join_project_request)
             .add_message_handler(Server::update_project)
+            .add_message_handler(Server::register_project_activity)
             .add_request_handler(Server::update_worktree)
             .add_message_handler(Server::start_language_server)
             .add_message_handler(Server::update_language_server)
@@ -844,6 +847,16 @@ impl Server {
         Ok(())
     }
 
+    async fn register_project_activity(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::RegisterProjectActivity>,
+    ) -> Result<()> {
+        self.store_mut()
+            .await
+            .register_project_activity(request.payload.project_id, request.sender_id)?;
+        Ok(())
+    }
+
     async fn update_worktree(
         self: Arc<Server>,
         request: TypedEnvelope<proto::UpdateWorktree>,
@@ -1001,10 +1014,12 @@ impl Server {
         request: TypedEnvelope<proto::UpdateBuffer>,
         response: Response<proto::UpdateBuffer>,
     ) -> Result<()> {
-        let receiver_ids = self
-            .store()
-            .await
-            .project_connection_ids(request.payload.project_id, request.sender_id)?;
+        let receiver_ids = {
+            let mut store = self.store_mut().await;
+            store.register_project_activity(request.payload.project_id, request.sender_id)?;
+            store.project_connection_ids(request.payload.project_id, request.sender_id)?
+        };
+
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
@@ -1065,14 +1080,18 @@ impl Server {
     ) -> Result<()> {
         let leader_id = ConnectionId(request.payload.leader_id);
         let follower_id = request.sender_id;
-        if !self
-            .store()
-            .await
-            .project_connection_ids(request.payload.project_id, follower_id)?
-            .contains(&leader_id)
         {
-            Err(anyhow!("no such peer"))?;
+            let mut store = self.store_mut().await;
+            if store
+                .project_connection_ids(request.payload.project_id, follower_id)?
+                .contains(&leader_id)
+            {
+                Err(anyhow!("no such peer"))?;
+            }
+
+            store.register_project_activity(request.payload.project_id, follower_id)?;
         }
+
         let mut response_payload = self
             .peer
             .forward_request(request.sender_id, leader_id, request.payload)
@@ -1086,14 +1105,14 @@ impl Server {
 
     async fn unfollow(self: Arc<Self>, request: TypedEnvelope<proto::Unfollow>) -> Result<()> {
         let leader_id = ConnectionId(request.payload.leader_id);
-        if !self
-            .store()
-            .await
+        let mut store = self.store_mut().await;
+        if !store
             .project_connection_ids(request.payload.project_id, request.sender_id)?
             .contains(&leader_id)
         {
             Err(anyhow!("no such peer"))?;
         }
+        store.register_project_activity(request.payload.project_id, request.sender_id)?;
         self.peer
             .forward_send(request.sender_id, leader_id, request.payload)?;
         Ok(())
@@ -1103,10 +1122,10 @@ impl Server {
         self: Arc<Self>,
         request: TypedEnvelope<proto::UpdateFollowers>,
     ) -> Result<()> {
-        let connection_ids = self
-            .store()
-            .await
-            .project_connection_ids(request.payload.project_id, request.sender_id)?;
+        let mut store = self.store_mut().await;
+        store.register_project_activity(request.payload.project_id, request.sender_id)?;
+        let connection_ids =
+            store.project_connection_ids(request.payload.project_id, request.sender_id)?;
         let leader_id = request
             .payload
             .variant
@@ -1574,12 +1593,14 @@ impl<'a> Drop for StoreWriteGuard<'a> {
         let metrics = self.metrics();
 
         METRIC_CONNECTIONS.set(metrics.connections as _);
-        METRIC_PROJECTS.set(metrics.registered_projects as _);
+        METRIC_REGISTERED_PROJECTS.set(metrics.registered_projects as _);
+        METRIC_ACTIVE_PROJECTS.set(metrics.active_projects as _);
         METRIC_SHARED_PROJECTS.set(metrics.shared_projects as _);
 
         tracing::info!(
             connections = metrics.connections,
             registered_projects = metrics.registered_projects,
+            active_projects = metrics.active_projects,
             shared_projects = metrics.shared_projects,
             "metrics"
         );
