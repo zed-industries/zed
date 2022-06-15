@@ -258,22 +258,10 @@
     {
         "context": "Pane",
         "bindings": {
-            "cmd-k up": [
-                "pane::Split",
-                "Up"
-            ],
-            "cmd-k down": [
-                "pane::Split",
-                "Down"
-            ],
-            "cmd-k left": [
-                "pane::Split",
-                "Left"
-            ],
-            "cmd-k right": [
-                "pane::Split",
-                "Right"
-            ]
+            "cmd-k up": "pane::SplitUp",
+            "cmd-k down": "pane::SplitDown",
+            "cmd-k left": "pane::SplitLeft",
+            "cmd-k right": "pane::SplitRight"
         }
     },
     // Bindings that should be unified with bindings for more general actions

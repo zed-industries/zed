@@ -25,11 +25,12 @@ actions!(
         ActivateNextItem,
         CloseActiveItem,
         CloseInactiveItems,
+        SplitLeft,
+        SplitUp,
+        SplitRight,
+        SplitDown,
     ]
 );
-
-#[derive(Clone, Deserialize, PartialEq)]
-pub struct Split(pub SplitDirection);
 
 #[derive(Clone, PartialEq)]
 pub struct CloseItem {
@@ -52,7 +53,7 @@ pub struct GoForward {
     pub pane: Option<WeakViewHandle<Pane>>,
 }
 
-impl_actions!(pane, [Split, GoBack, GoForward]);
+impl_actions!(pane, [GoBack, GoForward]);
 impl_internal_actions!(pane, [CloseItem, ActivateItem]);
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
@@ -77,9 +78,10 @@ pub fn init(cx: &mut MutableAppContext) {
             Ok(())
         }))
     });
-    cx.add_action(|pane: &mut Pane, action: &Split, cx| {
-        pane.split(action.0, cx);
-    });
+    cx.add_action(|pane: &mut Pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx));
+    cx.add_action(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx));
+    cx.add_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx));
+    cx.add_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx));
     cx.add_action(|workspace: &mut Workspace, action: &GoBack, cx| {
         Pane::go_back(
             workspace,
