@@ -1082,7 +1082,7 @@ impl Server {
         let follower_id = request.sender_id;
         {
             let mut store = self.store_mut().await;
-            if store
+            if !store
                 .project_connection_ids(request.payload.project_id, follower_id)?
                 .contains(&leader_id)
             {
