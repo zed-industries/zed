@@ -675,18 +675,8 @@ impl Store {
         project_id: u64,
         connection_id: ConnectionId,
     ) -> Result<()> {
-        let project = self
-            .projects
-            .get_mut(&project_id)
-            .ok_or_else(|| anyhow!("no such project"))?;
-        if project.host_connection_id == connection_id
-            || project.guests.contains_key(&connection_id)
-        {
-            project.last_activity = Some(Instant::now());
-            Ok(())
-        } else {
-            Err(anyhow!("no such project"))?
-        }
+        self.write_project(project_id, connection_id)?.last_activity = Some(Instant::now());
+        Ok(())
     }
 
     pub fn read_project(&self, project_id: u64, connection_id: ConnectionId) -> Result<&Project> {
