@@ -86,10 +86,11 @@ impl View for DiagnosticIndicator {
         enum Summary {}
         enum Message {}
 
+        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
         let in_progress = !self.in_progress_checks.is_empty();
         let mut element = Flex::row().with_child(
             MouseEventHandler::new::<Summary, _, _>(0, cx, |state, cx| {
-                let style = &cx
+                let style = cx
                     .global::<Settings>()
                     .theme
                     .workspace
@@ -161,6 +162,13 @@ impl View for DiagnosticIndicator {
             })
             .with_cursor_style(CursorStyle::PointingHand)
             .on_click(|_, _, cx| cx.dispatch_action(crate::Deploy))
+            .with_tooltip::<Summary, _>(
+                0,
+                "Project Diagnostics".to_string(),
+                Some(Box::new(crate::Deploy)),
+                tooltip_style,
+                cx,
+            )
             .aligned()
             .boxed(),
         );

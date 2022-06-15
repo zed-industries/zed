@@ -157,7 +157,7 @@ pub trait Element {
         FlexItem::new(self.boxed()).float()
     }
 
-    fn with_tooltip<T: View>(
+    fn with_tooltip<Tag: 'static, T: View>(
         self,
         id: usize,
         text: String,
@@ -168,7 +168,7 @@ pub trait Element {
     where
         Self: 'static + Sized,
     {
-        Tooltip::new(id, text, action, style, self.boxed(), cx)
+        Tooltip::new::<Tag, T>(id, text, action, style, self.boxed(), cx)
     }
 }
 

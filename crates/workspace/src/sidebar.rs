@@ -68,6 +68,7 @@ pub enum Side {
 
 struct Item {
     icon_path: &'static str,
+    tooltip: String,
     view: Rc<dyn SidebarItemHandle>,
     _subscriptions: [Subscription; 2],
 }
@@ -104,6 +105,7 @@ impl Sidebar {
     pub fn add_item<T: SidebarItem>(
         &mut self,
         icon_path: &'static str,
+        tooltip: String,
         view: ViewHandle<T>,
         cx: &mut ViewContext<Self>,
     ) {
@@ -123,6 +125,7 @@ impl Sidebar {
         ];
         self.items.push(Item {
             icon_path,
+            tooltip,
             view: Rc::new(view),
             _subscriptions: subscriptions,
         });
@@ -239,12 +242,9 @@ impl View for SidebarButtons {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &cx
-            .global::<Settings>()
-            .theme
-            .workspace
-            .status_bar
-            .sidebar_buttons;
+        let theme = &cx.global::<Settings>().theme;
+        let tooltip_style = theme.tooltip.clone();
+        let theme = &theme.workspace.status_bar.sidebar_buttons;
         let sidebar = self.sidebar.read(cx);
         let item_style = theme.item;
         let badge_style = theme.badge;
@@ -257,52 +257,56 @@ impl View for SidebarButtons {
         let items = sidebar
             .items
             .iter()
-            .map(|item| (item.icon_path, item.view.clone()))
+            .map(|item| (item.icon_path, item.tooltip.clone(), item.view.clone()))
             .collect::<Vec<_>>();
         Flex::row()
-            .with_children(
-                items
-                    .into_iter()
-                    .enumerate()
-                    .map(|(ix, (icon_path, item_view))| {
-                        MouseEventHandler::new::<Self, _, _>(ix, cx, move |state, cx| {
-                            let is_active = Some(ix) == active_ix;
-                            let style = item_style.style_for(state, is_active);
-                            Stack::new()
-                                .with_child(
-                                    Svg::new(icon_path).with_color(style.icon_color).boxed(),
+            .with_children(items.into_iter().enumerate().map(
+                |(ix, (icon_path, tooltip, item_view))| {
+                    let action = ToggleSidebarItem {
+                        side,
+                        item_index: ix,
+                    };
+                    MouseEventHandler::new::<Self, _, _>(ix, cx, move |state, cx| {
+                        let is_active = Some(ix) == active_ix;
+                        let style = item_style.style_for(state, is_active);
+                        Stack::new()
+                            .with_child(Svg::new(icon_path).with_color(style.icon_color).boxed())
+                            .with_children(if !is_active && item_view.should_show_badge(cx) {
+                                Some(
+                                    Empty::new()
+                                        .collapsed()
+                                        .contained()
+                                        .with_style(badge_style)
+                                        .aligned()
+                                        .bottom()
+                                        .right()
+                                        .boxed(),
                                 )
-                                .with_children(if !is_active && item_view.should_show_badge(cx) {
-                                    Some(
-                                        Empty::new()
-                                            .collapsed()
-                                            .contained()
-                                            .with_style(badge_style)
-                                            .aligned()
-                                            .bottom()
-                                            .right()
-                                            .boxed(),
-                                    )
-                                } else {
-                                    None
-                                })
-                                .constrained()
-                                .with_width(style.icon_size)
-                                .with_height(style.icon_size)
-                                .contained()
-                                .with_style(style.container)
-                                .boxed()
-                        })
-                        .with_cursor_style(CursorStyle::PointingHand)
-                        .on_click(move |_, _, cx| {
-                            cx.dispatch_action(ToggleSidebarItem {
-                                side,
-                                item_index: ix,
+                            } else {
+                                None
                             })
-                        })
-                        .boxed()
-                    }),
-            )
+                            .constrained()
+                            .with_width(style.icon_size)
+                            .with_height(style.icon_size)
+                            .contained()
+                            .with_style(style.container)
+                            .boxed()
+                    })
+                    .with_cursor_style(CursorStyle::PointingHand)
+                    .on_click({
+                        let action = action.clone();
+                        move |_, _, cx| cx.dispatch_action(action.clone())
+                    })
+                    .with_tooltip::<Self, _>(
+                        ix,
+                        tooltip,
+                        Some(Box::new(action)),
+                        tooltip_style.clone(),
+                        cx,
+                    )
+                    .boxed()
+                },
+            ))
             .contained()
             .with_style(group_style)
             .boxed()

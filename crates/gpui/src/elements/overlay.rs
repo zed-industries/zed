@@ -1,17 +1,23 @@
-use serde_json::json;
-
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::ToJson,
     DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, MouseRegion,
     PaintContext, SizeConstraint,
 };
+use serde_json::json;
 
 pub struct Overlay {
     child: ElementBox,
     abs_position: Option<Vector2F>,
-    move_to_fit: bool,
+    fit_mode: OverlayFitMode,
     hoverable: bool,
+}
+
+#[derive(Copy, Clone)]
+pub enum OverlayFitMode {
+    SnapToWindow,
+    FlipAlignment,
+    None,
 }
 
 impl Overlay {
@@ -19,7 +25,7 @@ impl Overlay {
         Self {
             child,
             abs_position: None,
-            move_to_fit: false,
+            fit_mode: OverlayFitMode::None,
             hoverable: false,
         }
     }
@@ -29,8 +35,8 @@ impl Overlay {
         self
     }
 
-    pub fn move_to_fit(mut self, align_to_fit: bool) -> Self {
-        self.move_to_fit = align_to_fit;
+    pub fn fit_mode(mut self, fit_mode: OverlayFitMode) -> Self {
+        self.fit_mode = fit_mode;
         self
     }
 
@@ -76,18 +82,32 @@ impl Element for Overlay {
             });
         }
 
-        if self.move_to_fit {
-            // Snap the right edge of the overlay to the right edge of the window if
-            // its horizontal bounds overflow.
-            if bounds.lower_right().x() > cx.window_size.x() {
-                bounds.set_origin_x((cx.window_size.x() - bounds.width()).max(0.));
-            }
+        match self.fit_mode {
+            OverlayFitMode::SnapToWindow => {
+                // Snap the right edge of the overlay to the right edge of the window if
+                // its horizontal bounds overflow.
+                if bounds.lower_right().x() > cx.window_size.x() {
+                    bounds.set_origin_x((cx.window_size.x() - bounds.width()).max(0.));
+                }
 
-            // Snap the bottom edge of the overlay to the bottom edge of the window if
-            // its vertical bounds overflow.
-            if bounds.lower_right().y() > cx.window_size.y() {
-                bounds.set_origin_y((cx.window_size.y() - bounds.height()).max(0.));
+                // Snap the bottom edge of the overlay to the bottom edge of the window if
+                // its vertical bounds overflow.
+                if bounds.lower_right().y() > cx.window_size.y() {
+                    bounds.set_origin_y((cx.window_size.y() - bounds.height()).max(0.));
+                }
             }
+            OverlayFitMode::FlipAlignment => {
+                // Right-align overlay if its horizontal bounds overflow.
+                if bounds.lower_right().x() > cx.window_size.x() {
+                    bounds.set_origin_x(bounds.origin_x() - bounds.width());
+                }
+
+                // Bottom-align overlay if its vertical bounds overflow.
+                if bounds.lower_right().y() > cx.window_size.y() {
+                    bounds.set_origin_y(bounds.origin_y() - bounds.height());
+                }
+            }
+            OverlayFitMode::None => {}
         }
 
         self.child.paint(bounds.origin(), bounds, cx);
