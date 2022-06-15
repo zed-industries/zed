@@ -191,10 +191,20 @@ pub fn initialize_workspace(
     });
 
     workspace.left_sidebar().update(cx, |sidebar, cx| {
-        sidebar.add_item("icons/folder-tree-solid-14.svg", project_panel.into(), cx)
+        sidebar.add_item(
+            "icons/folder-tree-solid-14.svg",
+            "Project Panel".to_string(),
+            project_panel.into(),
+            cx,
+        )
     });
     workspace.right_sidebar().update(cx, |sidebar, cx| {
-        sidebar.add_item("icons/contacts-solid-14.svg", contact_panel.into(), cx)
+        sidebar.add_item(
+            "icons/contacts-solid-14.svg",
+            "Contacts Panel".to_string(),
+            contact_panel.into(),
+            cx,
+        )
     });
 
     let diagnostic_summary =
