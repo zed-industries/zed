@@ -1670,10 +1670,10 @@ pub fn routes(server: Arc<Server>) -> Router<Body> {
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(server.app_state.clone()))
-                .layer(middleware::from_fn(auth::validate_header))
-                .layer(Extension(server)),
+                .layer(middleware::from_fn(auth::validate_header)),
         )
         .route("/metrics", get(handle_metrics))
+        .layer(Extension(server))
 }
 
 pub async fn handle_websocket_request(
@@ -1707,7 +1707,10 @@ pub async fn handle_websocket_request(
     })
 }
 
-pub async fn handle_metrics() -> axum::response::Response {
+pub async fn handle_metrics(Extension(server): Extension<Arc<Server>>) -> axum::response::Response {
+    // We call `store_mut` here for its side effects of updating metrics.
+    server.store_mut().await;
+
     let encoder = prometheus::TextEncoder::new();
     let metric_families = prometheus::gather();
     match encoder.encode_to_string(&metric_families) {

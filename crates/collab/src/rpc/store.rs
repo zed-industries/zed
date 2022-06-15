@@ -348,7 +348,6 @@ impl Store {
             .get_mut(&project_id)
             .ok_or_else(|| anyhow!("no such project"))?;
         if project.host_connection_id == connection_id {
-            project.last_activity = Some(Instant::now());
             let mut old_worktrees = mem::take(&mut project.worktrees);
             for worktree in worktrees {
                 if let Some(old_worktree) = old_worktrees.remove(&worktree.id) {
