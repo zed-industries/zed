@@ -1,12 +1,13 @@
 use crate::{
     active_match_index, match_index_for_direction, query_suggestion_for_editor, Direction,
-    SearchOption, SelectNextMatch, SelectPrevMatch,
+    SearchOption, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
+    ToggleWholeWord,
 };
 use collections::HashMap;
 use editor::{Anchor, Autoscroll, Editor};
 use gpui::{
-    actions, elements::*, impl_actions, impl_internal_actions, platform::CursorStyle, AppContext,
-    Entity, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
+    actions, elements::*, impl_actions, platform::CursorStyle, Action, AppContext, Entity,
+    MutableAppContext, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
     WeakViewHandle,
 };
 use language::OffsetRangeExt;
@@ -21,12 +22,8 @@ pub struct Deploy {
     pub focus: bool,
 }
 
-#[derive(Clone, PartialEq)]
-pub struct ToggleSearchOption(pub SearchOption);
-
 actions!(buffer_search, [Dismiss, FocusEditor]);
 impl_actions!(buffer_search, [Deploy]);
-impl_internal_actions!(buffer_search, [ToggleSearchOption]);
 
 pub enum Event {
     UpdateLocation,
@@ -36,12 +33,28 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(BufferSearchBar::deploy);
     cx.add_action(BufferSearchBar::dismiss);
     cx.add_action(BufferSearchBar::focus_editor);
-    cx.add_action(BufferSearchBar::toggle_search_option);
     cx.add_action(BufferSearchBar::select_next_match);
     cx.add_action(BufferSearchBar::select_prev_match);
     cx.add_action(BufferSearchBar::select_next_match_on_pane);
     cx.add_action(BufferSearchBar::select_prev_match_on_pane);
     cx.add_action(BufferSearchBar::handle_editor_cancel);
+    add_toggle_option_action::<ToggleCaseSensitive>(SearchOption::CaseSensitive, cx);
+    add_toggle_option_action::<ToggleWholeWord>(SearchOption::WholeWord, cx);
+    add_toggle_option_action::<ToggleRegex>(SearchOption::Regex, cx);
+}
+
+fn add_toggle_option_action<A: Action>(option: SearchOption, cx: &mut MutableAppContext) {
+    cx.add_action(move |pane: &mut Pane, _: &A, cx: &mut ViewContext<Pane>| {
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
+            if search_bar.update(cx, |search_bar, cx| search_bar.show(false, false, cx)) {
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.toggle_search_option(option, cx);
+                });
+                return;
+            }
+        }
+        cx.propagate_action();
+    });
 }
 
 pub struct BufferSearchBar {
@@ -215,16 +228,18 @@ impl BufferSearchBar {
         cx.notify();
     }
 
-    fn show(&mut self, focus: bool, cx: &mut ViewContext<Self>) -> bool {
+    fn show(&mut self, focus: bool, suggest_query: bool, cx: &mut ViewContext<Self>) -> bool {
         let editor = if let Some(editor) = self.active_editor.clone() {
             editor
         } else {
             return false;
         };
 
-        let text = query_suggestion_for_editor(&editor, cx);
-        if !text.is_empty() {
-            self.set_query(&text, cx);
+        if suggest_query {
+            let text = query_suggestion_for_editor(&editor, cx);
+            if !text.is_empty() {
+                self.set_query(&text, cx);
+            }
         }
 
         if focus {
@@ -253,11 +268,12 @@ impl BufferSearchBar {
     fn render_search_option(
         &self,
         icon: &str,
-        search_option: SearchOption,
+        option: SearchOption,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
-        let is_active = self.is_search_option_enabled(search_option);
-        MouseEventHandler::new::<Self, _, _>(search_option as usize, cx, |state, cx| {
+        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
+        let is_active = self.is_search_option_enabled(option);
+        MouseEventHandler::new::<Self, _, _>(option as usize, cx, |state, cx| {
             let style = &cx
                 .global::<Settings>()
                 .theme
@@ -269,8 +285,15 @@ impl BufferSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(move |_, _, cx| cx.dispatch_action(ToggleSearchOption(search_option)))
+        .on_click(move |_, _, cx| cx.dispatch_any_action(option.to_toggle_action()))
         .with_cursor_style(CursorStyle::PointingHand)
+        .with_tooltip::<Self, _>(
+            option as usize,
+            format!("Toggle {}", option.label()),
+            Some(option.to_toggle_action()),
+            tooltip_style,
+            cx,
+        )
         .boxed()
     }
 
@@ -280,6 +303,20 @@ impl BufferSearchBar {
         direction: Direction,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
+        let action: Box<dyn Action>;
+        let tooltip;
+        match direction {
+            Direction::Prev => {
+                action = Box::new(SelectPrevMatch);
+                tooltip = "Select Previous Match";
+            }
+            Direction::Next => {
+                action = Box::new(SelectNextMatch);
+                tooltip = "Select Next Match";
+            }
+        };
+        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
+
         enum NavButton {}
         MouseEventHandler::new::<NavButton, _, _>(direction as usize, cx, |state, cx| {
             let style = &cx
@@ -293,17 +330,24 @@ impl BufferSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(move |_, _, cx| match direction {
-            Direction::Prev => cx.dispatch_action(SelectPrevMatch),
-            Direction::Next => cx.dispatch_action(SelectNextMatch),
+        .on_click({
+            let action = action.boxed_clone();
+            move |_, _, cx| cx.dispatch_any_action(action.boxed_clone())
         })
         .with_cursor_style(CursorStyle::PointingHand)
+        .with_tooltip::<NavButton, _>(
+            direction as usize,
+            tooltip.to_string(),
+            Some(action),
+            tooltip_style,
+            cx,
+        )
         .boxed()
     }
 
     fn deploy(pane: &mut Pane, action: &Deploy, cx: &mut ViewContext<Pane>) {
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-            if search_bar.update(cx, |search_bar, cx| search_bar.show(action.focus, cx)) {
+            if search_bar.update(cx, |search_bar, cx| search_bar.show(action.focus, true, cx)) {
                 return;
             }
         }
@@ -334,18 +378,14 @@ impl BufferSearchBar {
         }
     }
 
-    fn toggle_search_option(
-        &mut self,
-        ToggleSearchOption(search_option): &ToggleSearchOption,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn toggle_search_option(&mut self, search_option: SearchOption, cx: &mut ViewContext<Self>) {
         let value = match search_option {
             SearchOption::WholeWord => &mut self.whole_word,
             SearchOption::CaseSensitive => &mut self.case_sensitive,
             SearchOption::Regex => &mut self.regex,
         };
         *value = !*value;
-        self.update_matches(true, cx);
+        self.update_matches(false, cx);
         cx.notify();
     }
 
@@ -591,7 +631,7 @@ mod tests {
         let search_bar = cx.add_view(Default::default(), |cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
-            search_bar.show(false, cx);
+            search_bar.show(false, true, cx);
             search_bar
         });
 
@@ -619,7 +659,7 @@ mod tests {
 
         // Switch to a case sensitive search.
         search_bar.update(cx, |search_bar, cx| {
-            search_bar.toggle_search_option(&ToggleSearchOption(SearchOption::CaseSensitive), cx);
+            search_bar.toggle_search_option(SearchOption::CaseSensitive, cx);
         });
         editor.next_notification(&cx).await;
         editor.update(cx, |editor, cx| {
@@ -676,7 +716,7 @@ mod tests {
 
         // Switch to a whole word search.
         search_bar.update(cx, |search_bar, cx| {
-            search_bar.toggle_search_option(&ToggleSearchOption(SearchOption::WholeWord), cx);
+            search_bar.toggle_search_option(SearchOption::WholeWord, cx);
         });
         editor.next_notification(&cx).await;
         editor.update(cx, |editor, cx| {

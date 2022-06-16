@@ -15,7 +15,7 @@
             "shift-cmd-}": "pane::ActivateNextItem",
             "cmd-w": "pane::CloseActiveItem",
             "cmd-shift-W": "workspace::CloseWindow",
-            "alt-cmd-w": "pane::CloseInactiveItems",
+            "alt-cmd-t": "pane::CloseInactiveItems",
             "cmd-s": "workspace::Save",
             "cmd-shift-S": "workspace::SaveAs",
             "cmd-=": "zed::IncreaseBufferFontSize",
@@ -142,20 +142,23 @@
         }
     },
     {
-        "context": "Pane",
-        "bindings": {
-            "cmd-f": "project_search::ToggleFocus",
-            "cmd-g": "search::SelectNextMatch",
-            "cmd-shift-G": "search::SelectPrevMatch"
-        }
-    },
-    {
         "context": "BufferSearchBar",
         "bindings": {
             "escape": "buffer_search::Dismiss",
             "cmd-f": "buffer_search::FocusEditor",
             "enter": "search::SelectNextMatch",
             "shift-enter": "search::SelectPrevMatch"
+        }
+    },
+    {
+        "context": "Pane",
+        "bindings": {
+            "cmd-f": "project_search::ToggleFocus",
+            "cmd-g": "search::SelectNextMatch",
+            "cmd-shift-G": "search::SelectPrevMatch",
+            "alt-cmd-c": "search::ToggleCaseSensitive",
+            "alt-cmd-w": "search::ToggleWholeWord",
+            "alt-cmd-r": "search::ToggleRegex"
         }
     },
     // Bindings from VS Code

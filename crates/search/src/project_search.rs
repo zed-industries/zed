@@ -1,13 +1,14 @@
 use crate::{
     active_match_index, match_index_for_direction, query_suggestion_for_editor, Direction,
-    SearchOption, SelectNextMatch, SelectPrevMatch, ToggleSearchOption,
+    SearchOption, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
+    ToggleWholeWord,
 };
 use collections::HashMap;
 use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll};
 use gpui::{
-    actions, elements::*, platform::CursorStyle, AppContext, ElementBox, Entity, ModelContext,
-    ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext,
-    ViewHandle, WeakModelHandle, WeakViewHandle,
+    actions, elements::*, platform::CursorStyle, Action, AppContext, ElementBox, Entity,
+    ModelContext, ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View,
+    ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, Project};
@@ -35,11 +36,26 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectSearchView::deploy);
     cx.add_action(ProjectSearchBar::search);
     cx.add_action(ProjectSearchBar::search_in_new);
-    cx.add_action(ProjectSearchBar::toggle_search_option);
     cx.add_action(ProjectSearchBar::select_next_match);
     cx.add_action(ProjectSearchBar::select_prev_match);
     cx.add_action(ProjectSearchBar::toggle_focus);
     cx.capture_action(ProjectSearchBar::tab);
+    add_toggle_option_action::<ToggleCaseSensitive>(SearchOption::CaseSensitive, cx);
+    add_toggle_option_action::<ToggleWholeWord>(SearchOption::WholeWord, cx);
+    add_toggle_option_action::<ToggleRegex>(SearchOption::Regex, cx);
+}
+
+fn add_toggle_option_action<A: Action>(option: SearchOption, cx: &mut MutableAppContext) {
+    cx.add_action(move |pane: &mut Pane, _: &A, cx: &mut ViewContext<Pane>| {
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<ProjectSearchBar>() {
+            if search_bar.update(cx, |search_bar, cx| {
+                search_bar.toggle_search_option(option, cx)
+            }) {
+                return;
+            }
+        }
+        cx.propagate_action();
+    });
 }
 
 struct ProjectSearch {
@@ -653,11 +669,7 @@ impl ProjectSearchBar {
         }
     }
 
-    fn toggle_search_option(
-        &mut self,
-        ToggleSearchOption(option): &ToggleSearchOption,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn toggle_search_option(&mut self, option: SearchOption, cx: &mut ViewContext<Self>) -> bool {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
                 let value = match option {
@@ -669,6 +681,9 @@ impl ProjectSearchBar {
                 search_view.search(cx);
             });
             cx.notify();
+            true
+        } else {
+            false
         }
     }
 
@@ -678,6 +693,20 @@ impl ProjectSearchBar {
         direction: Direction,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
+        let action: Box<dyn Action>;
+        let tooltip;
+        match direction {
+            Direction::Prev => {
+                action = Box::new(SelectPrevMatch);
+                tooltip = "Select Previous Match";
+            }
+            Direction::Next => {
+                action = Box::new(SelectNextMatch);
+                tooltip = "Select Next Match";
+            }
+        };
+        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
+
         enum NavButton {}
         MouseEventHandler::new::<NavButton, _, _>(direction as usize, cx, |state, cx| {
             let style = &cx
@@ -691,11 +720,18 @@ impl ProjectSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(move |_, _, cx| match direction {
-            Direction::Prev => cx.dispatch_action(SelectPrevMatch),
-            Direction::Next => cx.dispatch_action(SelectNextMatch),
+        .on_click({
+            let action = action.boxed_clone();
+            move |_, _, cx| cx.dispatch_any_action(action.boxed_clone())
         })
         .with_cursor_style(CursorStyle::PointingHand)
+        .with_tooltip::<NavButton, _>(
+            direction as usize,
+            tooltip.to_string(),
+            Some(action),
+            tooltip_style,
+            cx,
+        )
         .boxed()
     }
 
@@ -705,8 +741,9 @@ impl ProjectSearchBar {
         option: SearchOption,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
+        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
         let is_active = self.is_option_enabled(option, cx);
-        MouseEventHandler::new::<ProjectSearchBar, _, _>(option as usize, cx, |state, cx| {
+        MouseEventHandler::new::<Self, _, _>(option as usize, cx, |state, cx| {
             let style = &cx
                 .global::<Settings>()
                 .theme
@@ -718,8 +755,15 @@ impl ProjectSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(move |_, _, cx| cx.dispatch_action(ToggleSearchOption(option)))
+        .on_click(move |_, _, cx| cx.dispatch_any_action(option.to_toggle_action()))
         .with_cursor_style(CursorStyle::PointingHand)
+        .with_tooltip::<Self, _>(
+            option as usize,
+            format!("Toggle {}", option.label()),
+            Some(option.to_toggle_action()),
+            tooltip_style,
+            cx,
+        )
         .boxed()
     }
 
