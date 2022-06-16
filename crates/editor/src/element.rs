@@ -1264,7 +1264,7 @@ impl Element for EditorElement {
                 SizeConstraint {
                     min: Vector2F::zero(),
                     max: vec2f(
-                        f32::INFINITY,
+                        cx.window_size.x() * 0.7,
                         (12. * line_height).min((size.y() - line_height) / 2.),
                     ),
                 },
