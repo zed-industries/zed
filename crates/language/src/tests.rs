@@ -785,6 +785,47 @@ fn test_autoindent_with_edit_at_end_of_buffer(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
+fn test_autoindent_disabled(cx: &mut MutableAppContext) {
+    cx.add_model(|cx| {
+        let text = "
+            * one
+                - a
+                - b
+            * two
+        "
+        .unindent();
+
+        let mut buffer = Buffer::new(0, text, cx).with_language(
+            Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Markdown".into(),
+                    ..Default::default()
+                },
+                Some(tree_sitter_json::language()),
+            )),
+            cx,
+        );
+        buffer.edit_with_autoindent(
+            [(Point::new(3, 0)..Point::new(3, 0), "\n")],
+            IndentSize::spaces(4),
+            cx,
+        );
+        assert_eq!(
+            buffer.text(),
+            "
+            * one
+                - a
+                - b
+
+            * two
+            "
+            .unindent()
+        );
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_serialization(cx: &mut gpui::MutableAppContext) {
     let mut now = Instant::now();
 

@@ -9810,26 +9810,30 @@ mod tests {
     #[gpui::test]
     async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| cx.set_global(Settings::test(cx)));
-        let language = Arc::new(Language::new(
-            LanguageConfig {
-                brackets: vec![
-                    BracketPair {
-                        start: "{".to_string(),
-                        end: "}".to_string(),
-                        close: true,
-                        newline: true,
-                    },
-                    BracketPair {
-                        start: "/* ".to_string(),
-                        end: " */".to_string(),
-                        close: true,
-                        newline: true,
-                    },
-                ],
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::language()),
-        ));
+        let language = Arc::new(
+            Language::new(
+                LanguageConfig {
+                    brackets: vec![
+                        BracketPair {
+                            start: "{".to_string(),
+                            end: "}".to_string(),
+                            close: true,
+                            newline: true,
+                        },
+                        BracketPair {
+                            start: "/* ".to_string(),
+                            end: " */".to_string(),
+                            close: true,
+                            newline: true,
+                        },
+                    ],
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::language()),
+            )
+            .with_indents_query("")
+            .unwrap(),
+        );
 
         let text = concat!(
             "{   }\n",     // Suppress rustfmt

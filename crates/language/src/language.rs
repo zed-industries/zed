@@ -171,10 +171,10 @@ pub struct Language {
 
 pub struct Grammar {
     pub(crate) ts_language: tree_sitter::Language,
-    pub(crate) highlights_query: Query,
-    pub(crate) brackets_query: Query,
-    pub(crate) indents_query: Query,
-    pub(crate) outline_query: Query,
+    pub(crate) highlights_query: Option<Query>,
+    pub(crate) brackets_query: Option<Query>,
+    pub(crate) indents_query: Option<Query>,
+    pub(crate) outline_query: Option<Query>,
     pub(crate) highlight_map: Mutex<HighlightMap>,
 }
 
@@ -437,10 +437,10 @@ impl Language {
             config,
             grammar: ts_language.map(|ts_language| {
                 Arc::new(Grammar {
-                    brackets_query: Query::new(ts_language, "").unwrap(),
-                    highlights_query: Query::new(ts_language, "").unwrap(),
-                    indents_query: Query::new(ts_language, "").unwrap(),
-                    outline_query: Query::new(ts_language, "").unwrap(),
+                    highlights_query: None,
+                    brackets_query: None,
+                    indents_query: None,
+                    outline_query: None,
                     ts_language,
                     highlight_map: Default::default(),
                 })
@@ -457,43 +457,31 @@ impl Language {
     }
 
     pub fn with_highlights_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar
-            .as_mut()
-            .and_then(Arc::get_mut)
-            .ok_or_else(|| anyhow!("grammar does not exist or is already being used"))?;
-        grammar.highlights_query = Query::new(grammar.ts_language, source)?;
+        let grammar = self.grammar_mut();
+        grammar.highlights_query = Some(Query::new(grammar.ts_language, source)?);
         Ok(self)
     }
 
     pub fn with_brackets_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar
-            .as_mut()
-            .and_then(Arc::get_mut)
-            .ok_or_else(|| anyhow!("grammar does not exist or is already being used"))?;
-        grammar.brackets_query = Query::new(grammar.ts_language, source)?;
+        let grammar = self.grammar_mut();
+        grammar.brackets_query = Some(Query::new(grammar.ts_language, source)?);
         Ok(self)
     }
 
     pub fn with_indents_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar
-            .as_mut()
-            .and_then(Arc::get_mut)
-            .ok_or_else(|| anyhow!("grammar does not exist or is already being used"))?;
-        grammar.indents_query = Query::new(grammar.ts_language, source)?;
+        let grammar = self.grammar_mut();
+        grammar.indents_query = Some(Query::new(grammar.ts_language, source)?);
         Ok(self)
     }
 
     pub fn with_outline_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar
-            .as_mut()
-            .and_then(Arc::get_mut)
-            .ok_or_else(|| anyhow!("grammar does not exist or is already being used"))?;
-        grammar.outline_query = Query::new(grammar.ts_language, source)?;
+        let grammar = self.grammar_mut();
+        grammar.outline_query = Some(Query::new(grammar.ts_language, source)?);
         Ok(self)
+    }
+
+    fn grammar_mut(&mut self) -> &mut Grammar {
+        Arc::get_mut(self.grammar.as_mut().unwrap()).unwrap()
     }
 
     pub fn with_lsp_adapter(mut self, lsp_adapter: Arc<dyn LspAdapter>) -> Self {
@@ -586,8 +574,10 @@ impl Language {
 
     pub fn set_theme(&self, theme: &SyntaxTheme) {
         if let Some(grammar) = self.grammar.as_ref() {
-            *grammar.highlight_map.lock() =
-                HighlightMap::new(grammar.highlights_query.capture_names(), theme);
+            if let Some(highlights_query) = &grammar.highlights_query {
+                *grammar.highlight_map.lock() =
+                    HighlightMap::new(highlights_query.capture_names(), theme);
+            }
         }
     }
 
@@ -621,7 +611,10 @@ impl Grammar {
     }
 
     pub fn highlight_id_for_name(&self, name: &str) -> Option<HighlightId> {
-        let capture_id = self.highlights_query.capture_index_for_name(name)?;
+        let capture_id = self
+            .highlights_query
+            .as_ref()?
+            .capture_index_for_name(name)?;
         Some(self.highlight_map.lock().get(capture_id))
     }
 }

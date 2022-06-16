@@ -1523,16 +1523,17 @@ impl BufferSnapshot {
         // Get the "indentation ranges" that intersect this row range.
         let grammar = self.grammar()?;
         let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
+        let indents_query = grammar.indents_query.as_ref()?;
         let mut query_cursor = QueryCursorHandle::new();
-        let indent_capture_ix = grammar.indents_query.capture_index_for_name("indent");
-        let end_capture_ix = grammar.indents_query.capture_index_for_name("end");
+        let indent_capture_ix = indents_query.capture_index_for_name("indent");
+        let end_capture_ix = indents_query.capture_index_for_name("end");
         query_cursor.set_point_range(
             Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0).to_ts_point()
                 ..Point::new(row_range.end, 0).to_ts_point(),
         );
         let mut indentation_ranges = Vec::<Range<Point>>::new();
         for mat in query_cursor.matches(
-            &grammar.indents_query,
+            indents_query,
             self.tree.as_ref()?.root_node(),
             TextProvider(self.as_rope()),
         ) {
@@ -1787,20 +1788,20 @@ impl BufferSnapshot {
             .as_ref()
             .and_then(|language| language.grammar.as_ref())?;
 
+        let outline_query = grammar.outline_query.as_ref()?;
         let mut cursor = QueryCursorHandle::new();
         cursor.set_byte_range(range.clone());
         let matches = cursor.matches(
-            &grammar.outline_query,
+            outline_query,
             tree.root_node(),
             TextProvider(self.as_rope()),
         );
 
         let mut chunks = self.chunks(0..self.len(), true);
 
-        let item_capture_ix = grammar.outline_query.capture_index_for_name("item")?;
-        let name_capture_ix = grammar.outline_query.capture_index_for_name("name")?;
-        let context_capture_ix = grammar
-            .outline_query
+        let item_capture_ix = outline_query.capture_index_for_name("item")?;
+        let name_capture_ix = outline_query.capture_index_for_name("name")?;
+        let context_capture_ix = outline_query
             .capture_index_for_name("context")
             .unwrap_or(u32::MAX);
 
@@ -1892,14 +1893,15 @@ impl BufferSnapshot {
         range: Range<T>,
     ) -> Option<(Range<usize>, Range<usize>)> {
         let (grammar, tree) = self.grammar().zip(self.tree.as_ref())?;
-        let open_capture_ix = grammar.brackets_query.capture_index_for_name("open")?;
-        let close_capture_ix = grammar.brackets_query.capture_index_for_name("close")?;
+        let brackets_query = grammar.brackets_query.as_ref()?;
+        let open_capture_ix = brackets_query.capture_index_for_name("open")?;
+        let close_capture_ix = brackets_query.capture_index_for_name("close")?;
 
         // Find bracket pairs that *inclusively* contain the given range.
         let range = range.start.to_offset(self).saturating_sub(1)..range.end.to_offset(self) + 1;
         let mut cursor = QueryCursorHandle::new();
         let matches = cursor.set_byte_range(range).matches(
-            &grammar.brackets_query,
+            &brackets_query,
             tree.root_node(),
             TextProvider(self.as_rope()),
         );
@@ -2071,24 +2073,26 @@ impl<'a> BufferChunks<'a> {
     ) -> Self {
         let mut highlights = None;
         if let Some((grammar, tree)) = grammar.zip(tree) {
-            let mut query_cursor = QueryCursorHandle::new();
+            if let Some(highlights_query) = grammar.highlights_query.as_ref() {
+                let mut query_cursor = QueryCursorHandle::new();
 
-            // TODO - add a Tree-sitter API to remove the need for this.
-            let cursor = unsafe {
-                std::mem::transmute::<_, &'static mut QueryCursor>(query_cursor.deref_mut())
-            };
-            let captures = cursor.set_byte_range(range.clone()).captures(
-                &grammar.highlights_query,
-                tree.root_node(),
-                TextProvider(text),
-            );
-            highlights = Some(BufferChunkHighlights {
-                captures,
-                next_capture: None,
-                stack: Default::default(),
-                highlight_map: grammar.highlight_map(),
-                _query_cursor: query_cursor,
-            })
+                // TODO - add a Tree-sitter API to remove the need for this.
+                let cursor = unsafe {
+                    std::mem::transmute::<_, &'static mut QueryCursor>(query_cursor.deref_mut())
+                };
+                let captures = cursor.set_byte_range(range.clone()).captures(
+                    highlights_query,
+                    tree.root_node(),
+                    TextProvider(text),
+                );
+                highlights = Some(BufferChunkHighlights {
+                    captures,
+                    next_capture: None,
+                    stack: Default::default(),
+                    highlight_map: grammar.highlight_map(),
+                    _query_cursor: query_cursor,
+                })
+            }
         }
 
         let diagnostic_endpoints = diagnostic_endpoints.into_iter().peekable();
