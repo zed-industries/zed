@@ -147,24 +147,9 @@
             "cmd-f": "project_search::ToggleFocus",
             "cmd-g": "search::SelectNextMatch",
             "cmd-shift-G": "search::SelectPrevMatch",
-            "alt-cmd-c": [
-                "search::ToggleSearchOption",
-                {
-                    "option": "CaseSensitive"
-                }
-            ],
-            "alt-cmd-w": [
-                "search::ToggleSearchOption",
-                {
-                    "option": "WholeWord"
-                }
-            ],
-            "alt-cmd-r": [
-                "search::ToggleSearchOption",
-                {
-                    "option": "Regex"
-                }
-            ]
+            "alt-cmd-c": "search::ToggleCaseSensitive",
+            "alt-cmd-w": "search::ToggleWholeWord",
+            "alt-cmd-r": "search::ToggleRegex"
         }
     },
     {

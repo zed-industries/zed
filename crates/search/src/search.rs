@@ -1,8 +1,7 @@
 pub use buffer_search::BufferSearchBar;
 use editor::{display_map::ToDisplayPoint, Anchor, Bias, Editor, MultiBufferSnapshot};
-use gpui::{actions, impl_actions, MutableAppContext, ViewHandle};
+use gpui::{actions, Action, MutableAppContext, ViewHandle};
 pub use project_search::{ProjectSearchBar, ProjectSearchView};
-use serde::Deserialize;
 use std::{
     cmp::{self, Ordering},
     ops::Range,
@@ -16,15 +15,18 @@ pub fn init(cx: &mut MutableAppContext) {
     project_search::init(cx);
 }
 
-#[derive(Clone, PartialEq, Deserialize)]
-pub struct ToggleSearchOption {
-    pub option: SearchOption,
-}
+actions!(
+    search,
+    [
+        ToggleWholeWord,
+        ToggleCaseSensitive,
+        ToggleRegex,
+        SelectNextMatch,
+        SelectPrevMatch
+    ]
+);
 
-actions!(search, [SelectNextMatch, SelectPrevMatch]);
-impl_actions!(search, [ToggleSearchOption]);
-
-#[derive(Clone, Copy, PartialEq, Deserialize)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum SearchOption {
     WholeWord,
     CaseSensitive,
@@ -37,6 +39,14 @@ impl SearchOption {
             SearchOption::WholeWord => "Match Whole Word",
             SearchOption::CaseSensitive => "Match Case",
             SearchOption::Regex => "Use Regular Expression",
+        }
+    }
+
+    pub fn to_toggle_action(&self) -> Box<dyn Action> {
+        match self {
+            SearchOption::WholeWord => Box::new(ToggleWholeWord),
+            SearchOption::CaseSensitive => Box::new(ToggleCaseSensitive),
+            SearchOption::Regex => Box::new(ToggleRegex),
         }
     }
 }

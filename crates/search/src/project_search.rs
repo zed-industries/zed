@@ -1,13 +1,14 @@
 use crate::{
     active_match_index, match_index_for_direction, query_suggestion_for_editor, Direction,
-    SearchOption, SelectNextMatch, SelectPrevMatch, ToggleSearchOption,
+    SearchOption, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
+    ToggleWholeWord,
 };
 use collections::HashMap;
 use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll};
 use gpui::{
-    actions, elements::*, platform::CursorStyle, AppContext, ElementBox, Entity, ModelContext,
-    ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext,
-    ViewHandle, WeakModelHandle, WeakViewHandle,
+    actions, elements::*, platform::CursorStyle, Action, AppContext, ElementBox, Entity,
+    ModelContext, ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View,
+    ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, Project};
@@ -38,21 +39,23 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectSearchBar::select_next_match);
     cx.add_action(ProjectSearchBar::select_prev_match);
     cx.add_action(ProjectSearchBar::toggle_focus);
-    cx.add_action(
-        |pane: &mut Pane,
-         ToggleSearchOption { option }: &ToggleSearchOption,
-         cx: &mut ViewContext<Pane>| {
-            if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<ProjectSearchBar>() {
-                if search_bar.update(cx, |search_bar, cx| {
-                    search_bar.toggle_search_option(*option, cx)
-                }) {
-                    return;
-                }
-            }
-            cx.propagate_action();
-        },
-    );
     cx.capture_action(ProjectSearchBar::tab);
+    add_toggle_option_action::<ToggleCaseSensitive>(SearchOption::CaseSensitive, cx);
+    add_toggle_option_action::<ToggleWholeWord>(SearchOption::WholeWord, cx);
+    add_toggle_option_action::<ToggleRegex>(SearchOption::Regex, cx);
+}
+
+fn add_toggle_option_action<A: Action>(option: SearchOption, cx: &mut MutableAppContext) {
+    cx.add_action(move |pane: &mut Pane, _: &A, cx: &mut ViewContext<Pane>| {
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<ProjectSearchBar>() {
+            if search_bar.update(cx, |search_bar, cx| {
+                search_bar.toggle_search_option(option, cx)
+            }) {
+                return;
+            }
+        }
+        cx.propagate_action();
+    });
 }
 
 struct ProjectSearch {
@@ -731,12 +734,12 @@ impl ProjectSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(move |_, _, cx| cx.dispatch_action(ToggleSearchOption { option }))
+        .on_click(move |_, _, cx| cx.dispatch_any_action(option.to_toggle_action()))
         .with_cursor_style(CursorStyle::PointingHand)
         .with_tooltip::<Self, _>(
             option as usize,
             format!("Toggle {}", option.label()),
-            Some(Box::new(ToggleSearchOption { option })),
+            Some(option.to_toggle_action()),
             tooltip_style,
             cx,
         )
