@@ -16,6 +16,7 @@ clock = { path = "../clock" }
 collections = { path = "../collections" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
+menu = { path = "../menu" }
 project = { path = "../project" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }

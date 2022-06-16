@@ -186,6 +186,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     );
     cx.add_action(Workspace::toggle_sidebar_item);
     cx.add_action(Workspace::toggle_sidebar_item_focus);
+    cx.add_action(Workspace::focus_center);
     cx.add_action(|workspace: &mut Workspace, _: &ActivatePreviousPane, cx| {
         workspace.activate_previous_pane(cx)
     });
@@ -1278,6 +1279,11 @@ impl Workspace {
                 cx.focus(active_item.to_any());
             }
         }
+        cx.notify();
+    }
+
+    pub fn focus_center(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+        cx.focus_self();
         cx.notify();
     }
 

@@ -5980,6 +5980,7 @@ dependencies = [
  "gpui",
  "language",
  "log",
+ "menu",
  "parking_lot 0.11.2",
  "postage",
  "project",
