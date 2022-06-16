@@ -7633,6 +7633,32 @@ mod tests {
             completions[0].old_range.to_offset(&snapshot),
             text.len() - 3..text.len()
         );
+
+        let text = "let a = \"atoms/cmp\"";
+        buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
+        let completions = project.update(cx, |project, cx| {
+            project.completions(&buffer, text.len() - 1, cx)
+        });
+
+        fake_server
+            .handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+                Ok(Some(lsp::CompletionResponse::Array(vec![
+                    lsp::CompletionItem {
+                        label: "component".into(),
+                        ..Default::default()
+                    },
+                ])))
+            })
+            .next()
+            .await;
+        let completions = completions.await.unwrap();
+        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].new_text, "component");
+        assert_eq!(
+            completions[0].old_range.to_offset(&snapshot),
+            text.len() - 4..text.len() - 1
+        );
     }
 
     #[gpui::test(iterations = 10)]
