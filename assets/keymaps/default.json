@@ -142,6 +142,15 @@
         }
     },
     {
+        "context": "BufferSearchBar",
+        "bindings": {
+            "escape": "buffer_search::Dismiss",
+            "cmd-f": "buffer_search::FocusEditor",
+            "enter": "search::SelectNextMatch",
+            "shift-enter": "search::SelectPrevMatch"
+        }
+    },
+    {
         "context": "Pane",
         "bindings": {
             "cmd-f": "project_search::ToggleFocus",
@@ -150,15 +159,6 @@
             "alt-cmd-c": "search::ToggleCaseSensitive",
             "alt-cmd-w": "search::ToggleWholeWord",
             "alt-cmd-r": "search::ToggleRegex"
-        }
-    },
-    {
-        "context": "BufferSearchBar",
-        "bindings": {
-            "escape": "buffer_search::Dismiss",
-            "cmd-f": "buffer_search::FocusEditor",
-            "enter": "search::SelectNextMatch",
-            "shift-enter": "search::SelectPrevMatch"
         }
     },
     // Bindings from VS Code

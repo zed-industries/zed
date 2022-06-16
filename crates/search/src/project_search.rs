@@ -693,6 +693,20 @@ impl ProjectSearchBar {
         direction: Direction,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
+        let action: Box<dyn Action>;
+        let tooltip;
+        match direction {
+            Direction::Prev => {
+                action = Box::new(SelectPrevMatch);
+                tooltip = "Select Previous Match";
+            }
+            Direction::Next => {
+                action = Box::new(SelectNextMatch);
+                tooltip = "Select Next Match";
+            }
+        };
+        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
+
         enum NavButton {}
         MouseEventHandler::new::<NavButton, _, _>(direction as usize, cx, |state, cx| {
             let style = &cx
@@ -706,11 +720,18 @@ impl ProjectSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(move |_, _, cx| match direction {
-            Direction::Prev => cx.dispatch_action(SelectPrevMatch),
-            Direction::Next => cx.dispatch_action(SelectNextMatch),
+        .on_click({
+            let action = action.boxed_clone();
+            move |_, _, cx| cx.dispatch_any_action(action.boxed_clone())
         })
         .with_cursor_style(CursorStyle::PointingHand)
+        .with_tooltip::<NavButton, _>(
+            direction as usize,
+            tooltip.to_string(),
+            Some(action),
+            tooltip_style,
+            cx,
+        )
         .boxed()
     }
 
