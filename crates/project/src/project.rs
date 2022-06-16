@@ -18,10 +18,10 @@ use gpui::{
 use language::{
     point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
-    range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CodeAction, CodeLabel, Completion,
-    Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent, File as _, Language,
-    LanguageRegistry, LanguageServerName, LocalFile, LspAdapter, OffsetRangeExt, Operation, Patch,
-    PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
+    range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CharKind, CodeAction, CodeLabel,
+    Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent, File as _,
+    Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapter, OffsetRangeExt,
+    Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
 };
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer, LanguageString,
@@ -3182,9 +3182,12 @@ impl Project {
                                     let Range { start, end } = range_for_token
                                         .get_or_insert_with(|| {
                                             let offset = position.to_offset(&snapshot);
-                                            snapshot
-                                                .range_for_word_token_at(offset)
-                                                .unwrap_or_else(|| offset..offset)
+                                            let (range, kind) = snapshot.surrounding_word(offset);
+                                            if kind == Some(CharKind::Word) {
+                                                range
+                                            } else {
+                                                offset..offset
+                                            }
                                         })
                                         .clone();
                                     let text = lsp_completion
