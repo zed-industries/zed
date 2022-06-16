@@ -35,10 +35,23 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectSearchView::deploy);
     cx.add_action(ProjectSearchBar::search);
     cx.add_action(ProjectSearchBar::search_in_new);
-    cx.add_action(ProjectSearchBar::toggle_search_option);
     cx.add_action(ProjectSearchBar::select_next_match);
     cx.add_action(ProjectSearchBar::select_prev_match);
     cx.add_action(ProjectSearchBar::toggle_focus);
+    cx.add_action(
+        |pane: &mut Pane,
+         ToggleSearchOption { option }: &ToggleSearchOption,
+         cx: &mut ViewContext<Pane>| {
+            if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<ProjectSearchBar>() {
+                if search_bar.update(cx, |search_bar, cx| {
+                    search_bar.toggle_search_option(*option, cx)
+                }) {
+                    return;
+                }
+            }
+            cx.propagate_action();
+        },
+    );
     cx.capture_action(ProjectSearchBar::tab);
 }
 
@@ -653,11 +666,7 @@ impl ProjectSearchBar {
         }
     }
 
-    fn toggle_search_option(
-        &mut self,
-        ToggleSearchOption { option }: &ToggleSearchOption,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn toggle_search_option(&mut self, option: SearchOption, cx: &mut ViewContext<Self>) -> bool {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
                 let value = match option {
@@ -669,6 +678,9 @@ impl ProjectSearchBar {
                 search_view.search(cx);
             });
             cx.notify();
+            true
+        } else {
+            false
         }
     }
 
