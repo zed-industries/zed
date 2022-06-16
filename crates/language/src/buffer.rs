@@ -1667,32 +1667,33 @@ impl BufferSnapshot {
             .and_then(|language| language.grammar.as_ref())
     }
 
-    pub fn range_for_word_token_at<T: ToOffset + ToPoint>(
-        &self,
-        position: T,
-    ) -> Option<Range<usize>> {
-        let offset = position.to_offset(self);
+    pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {
+        let mut start = start.to_offset(self);
+        let mut end = start;
+        let mut next_chars = self.chars_at(start).peekable();
+        let mut prev_chars = self.reversed_chars_at(start).peekable();
+        let word_kind = cmp::max(
+            prev_chars.peek().copied().map(char_kind),
+            next_chars.peek().copied().map(char_kind),
+        );
 
-        // Find the first leaf node that touches the position.
-        let tree = self.tree.as_ref()?;
-        let mut cursor = tree.root_node().walk();
-        while cursor.goto_first_child_for_byte(offset).is_some() {}
-        let node = cursor.node();
-        if node.child_count() > 0 {
-            return None;
+        for ch in prev_chars {
+            if Some(char_kind(ch)) == word_kind && ch != '\n' {
+                start -= ch.len_utf8();
+            } else {
+                break;
+            }
         }
 
-        // Check that the leaf node contains word characters.
-        let range = node.byte_range();
-        if self
-            .text_for_range(range.clone())
-            .flat_map(str::chars)
-            .any(|c| c.is_alphanumeric())
-        {
-            return Some(range);
-        } else {
-            None
+        for ch in next_chars {
+            if Some(char_kind(ch)) == word_kind && ch != '\n' {
+                end += ch.len_utf8();
+            } else {
+                break;
+            }
         }
+
+        (start..end, word_kind)
     }
 
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {

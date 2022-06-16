@@ -18,10 +18,10 @@ use gpui::{
 use language::{
     point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
-    range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CodeAction, CodeLabel, Completion,
-    Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent, File as _, Language,
-    LanguageRegistry, LanguageServerName, LocalFile, LspAdapter, OffsetRangeExt, Operation, Patch,
-    PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
+    range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CharKind, CodeAction, CodeLabel,
+    Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent, File as _,
+    Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapter, OffsetRangeExt,
+    Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
 };
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer, LanguageString,
@@ -3182,9 +3182,12 @@ impl Project {
                                     let Range { start, end } = range_for_token
                                         .get_or_insert_with(|| {
                                             let offset = position.to_offset(&snapshot);
-                                            snapshot
-                                                .range_for_word_token_at(offset)
-                                                .unwrap_or_else(|| offset..offset)
+                                            let (range, kind) = snapshot.surrounding_word(offset);
+                                            if kind == Some(CharKind::Word) {
+                                                range
+                                            } else {
+                                                offset..offset
+                                            }
                                         })
                                         .clone();
                                     let text = lsp_completion
@@ -7632,6 +7635,32 @@ mod tests {
         assert_eq!(
             completions[0].old_range.to_offset(&snapshot),
             text.len() - 3..text.len()
+        );
+
+        let text = "let a = \"atoms/cmp\"";
+        buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
+        let completions = project.update(cx, |project, cx| {
+            project.completions(&buffer, text.len() - 1, cx)
+        });
+
+        fake_server
+            .handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+                Ok(Some(lsp::CompletionResponse::Array(vec![
+                    lsp::CompletionItem {
+                        label: "component".into(),
+                        ..Default::default()
+                    },
+                ])))
+            })
+            .next()
+            .await;
+        let completions = completions.await.unwrap();
+        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].new_text, "component");
+        assert_eq!(
+            completions[0].old_range.to_offset(&snapshot),
+            text.len() - 4..text.len() - 1
         );
     }
 
