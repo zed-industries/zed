@@ -2564,6 +2564,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "lsp_status"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "futures",
+ "gpui",
+ "language",
+ "project",
+ "settings",
+ "smallvec",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "malloc_buf"
 version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6048,6 +6063,7 @@ dependencies = [
  "libc",
  "log",
  "lsp",
+ "lsp_status",
  "num_cpus",
  "outline",
  "parking_lot 0.11.2",

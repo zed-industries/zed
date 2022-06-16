@@ -184,7 +184,7 @@ pub enum LanguageServerBinaryStatus {
     Downloading,
     Downloaded,
     Cached,
-    Failed,
+    Failed { error: String },
 }
 
 pub struct LanguageRegistry {
@@ -382,7 +382,7 @@ async fn get_server_binary_path(
         statuses.clone(),
     )
     .await;
-    if path.is_err() {
+    if let Err(error) = path.as_ref() {
         if let Some(cached_path) = adapter.cached_server_binary(container_dir).await {
             statuses
                 .broadcast((language.clone(), LanguageServerBinaryStatus::Cached))
@@ -390,7 +390,12 @@ async fn get_server_binary_path(
             return Ok(cached_path);
         } else {
             statuses
-                .broadcast((language.clone(), LanguageServerBinaryStatus::Failed))
+                .broadcast((
+                    language.clone(),
+                    LanguageServerBinaryStatus::Failed {
+                        error: format!("{:?}", error),
+                    },
+                ))
                 .await?;
         }
     }

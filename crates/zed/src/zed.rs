@@ -129,7 +129,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         },
     );
 
-    workspace::lsp_status::init(cx);
+    lsp_status::init(cx);
     settings::KeymapFileContent::load_defaults(cx);
 }
 
@@ -209,9 +209,7 @@ pub fn initialize_workspace(
 
     let diagnostic_summary =
         cx.add_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace.project(), cx));
-    let lsp_status = cx.add_view(|cx| {
-        workspace::lsp_status::LspStatus::new(workspace.project(), app_state.languages.clone(), cx)
-    });
+    let lsp_status = lsp_status::LspStatusItem::new(workspace, app_state.languages.clone(), cx);
     let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
     let auto_update = cx.add_view(|cx| auto_update::AutoUpdateIndicator::new(cx));
     let feedback_link = cx.add_view(|_| feedback::FeedbackLink);

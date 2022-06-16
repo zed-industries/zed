@@ -1,8 +1,8 @@
+use super::installation::{npm_install_packages, npm_package_latest_version};
 use anyhow::{anyhow, Context, Result};
 use client::http::HttpClient;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use language::{LanguageServerName, LspAdapter};
-use serde::Deserialize;
 use serde_json::json;
 use smol::fs;
 use std::{
@@ -33,25 +33,7 @@ impl LspAdapter for JsonLspAdapter {
         _: Arc<dyn HttpClient>,
     ) -> BoxFuture<'static, Result<Box<dyn 'static + Any + Send>>> {
         async move {
-            #[derive(Deserialize)]
-            struct NpmInfo {
-                versions: Vec<String>,
-            }
-
-            let output = smol::process::Command::new("npm")
-                .args(["info", "vscode-json-languageserver", "--json"])
-                .output()
-                .await?;
-            if !output.status.success() {
-                Err(anyhow!("failed to execute npm info"))?;
-            }
-            let mut info: NpmInfo = serde_json::from_slice(&output.stdout)?;
-
-            Ok(Box::new(
-                info.versions
-                    .pop()
-                    .ok_or_else(|| anyhow!("no versions found in npm info"))?,
-            ) as Box<_>)
+            Ok(Box::new(npm_package_latest_version("vscode-json-languageserver").await?) as Box<_>)
         }
         .boxed()
     }
@@ -71,16 +53,11 @@ impl LspAdapter for JsonLspAdapter {
             let binary_path = version_dir.join(Self::BIN_PATH);
 
             if fs::metadata(&binary_path).await.is_err() {
-                let output = smol::process::Command::new("npm")
-                    .current_dir(&version_dir)
-                    .arg("install")
-                    .arg(format!("vscode-json-languageserver@{}", version))
-                    .output()
-                    .await
-                    .context("failed to run npm install")?;
-                if !output.status.success() {
-                    Err(anyhow!("failed to install vscode-json-languageserver"))?;
-                }
+                npm_install_packages(
+                    [("vscode-json-languageserver", version.as_str())],
+                    &version_dir,
+                )
+                .await?;
 
                 if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
                     while let Some(entry) = entries.next().await {

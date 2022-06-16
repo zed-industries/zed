@@ -39,10 +39,12 @@ pub async fn npm_package_latest_version(name: &str) -> Result<String> {
     let output = smol::process::Command::new("npm")
         .args(["info", name, "--json"])
         .output()
-        .await?;
+        .await
+        .context("failed to run npm info")?;
     if !output.status.success() {
         Err(anyhow!(
-            "failed to execute npm info: {:?}",
+            "failed to execute npm info:\nstdout: {:?}\nstderr: {:?}",
+            String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         ))?;
     }
@@ -71,7 +73,8 @@ pub async fn npm_install_packages(
         .context("failed to run npm install")?;
     if !output.status.success() {
         Err(anyhow!(
-            "failed to execute npm install: {:?}",
+            "failed to execute npm install:\nstdout: {:?}\nstderr: {:?}",
+            String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         ))?;
     }
