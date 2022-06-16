@@ -361,7 +361,7 @@ impl BufferSearchBar {
             SearchOption::Regex => &mut self.regex,
         };
         *value = !*value;
-        self.update_matches(true, cx);
+        self.update_matches(false, cx);
         cx.notify();
     }
 
