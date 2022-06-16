@@ -1,7 +1,8 @@
 pub use buffer_search::BufferSearchBar;
 use editor::{display_map::ToDisplayPoint, Anchor, Bias, Editor, MultiBufferSnapshot};
-use gpui::{actions, impl_internal_actions, MutableAppContext, ViewHandle};
+use gpui::{actions, impl_actions, MutableAppContext, ViewHandle};
 pub use project_search::{ProjectSearchBar, ProjectSearchView};
+use serde::Deserialize;
 use std::{
     cmp::{self, Ordering},
     ops::Range,
@@ -15,17 +16,29 @@ pub fn init(cx: &mut MutableAppContext) {
     project_search::init(cx);
 }
 
-#[derive(Clone, PartialEq)]
-pub struct ToggleSearchOption(pub SearchOption);
+#[derive(Clone, PartialEq, Deserialize)]
+pub struct ToggleSearchOption {
+    pub option: SearchOption,
+}
 
 actions!(search, [SelectNextMatch, SelectPrevMatch]);
-impl_internal_actions!(search, [ToggleSearchOption]);
+impl_actions!(search, [ToggleSearchOption]);
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Deserialize)]
 pub enum SearchOption {
     WholeWord,
     CaseSensitive,
     Regex,
+}
+
+impl SearchOption {
+    pub fn label(&self) -> &'static str {
+        match self {
+            SearchOption::WholeWord => "Match Whole Word",
+            SearchOption::CaseSensitive => "Match Case",
+            SearchOption::Regex => "Use Regular Expression",
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

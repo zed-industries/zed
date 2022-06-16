@@ -15,7 +15,7 @@
             "shift-cmd-}": "pane::ActivateNextItem",
             "cmd-w": "pane::CloseActiveItem",
             "cmd-shift-W": "workspace::CloseWindow",
-            "alt-cmd-w": "pane::CloseInactiveItems",
+            "cmd-k alt-cmd-w": "pane::CloseInactiveItems",
             "cmd-s": "workspace::Save",
             "cmd-shift-S": "workspace::SaveAs",
             "cmd-=": "zed::IncreaseBufferFontSize",
@@ -146,7 +146,25 @@
         "bindings": {
             "cmd-f": "project_search::ToggleFocus",
             "cmd-g": "search::SelectNextMatch",
-            "cmd-shift-G": "search::SelectPrevMatch"
+            "cmd-shift-G": "search::SelectPrevMatch",
+            "alt-cmd-c": [
+                "search::ToggleSearchOption",
+                {
+                    "option": "CaseSensitive"
+                }
+            ],
+            "alt-cmd-w": [
+                "search::ToggleSearchOption",
+                {
+                    "option": "WholeWord"
+                }
+            ],
+            "alt-cmd-r": [
+                "search::ToggleSearchOption",
+                {
+                    "option": "Regex"
+                }
+            ]
         }
     },
     {

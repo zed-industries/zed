@@ -655,7 +655,7 @@ impl ProjectSearchBar {
 
     fn toggle_search_option(
         &mut self,
-        ToggleSearchOption(option): &ToggleSearchOption,
+        ToggleSearchOption { option }: &ToggleSearchOption,
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(search_view) = self.active_project_search.as_ref() {
@@ -705,8 +705,9 @@ impl ProjectSearchBar {
         option: SearchOption,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
+        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
         let is_active = self.is_option_enabled(option, cx);
-        MouseEventHandler::new::<ProjectSearchBar, _, _>(option as usize, cx, |state, cx| {
+        MouseEventHandler::new::<Self, _, _>(option as usize, cx, |state, cx| {
             let style = &cx
                 .global::<Settings>()
                 .theme
@@ -718,8 +719,15 @@ impl ProjectSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(move |_, _, cx| cx.dispatch_action(ToggleSearchOption(option)))
+        .on_click(move |_, _, cx| cx.dispatch_action(ToggleSearchOption { option }))
         .with_cursor_style(CursorStyle::PointingHand)
+        .with_tooltip::<Self, _>(
+            option as usize,
+            format!("Toggle {}", option.label()),
+            Some(Box::new(ToggleSearchOption { option })),
+            tooltip_style,
+            cx,
+        )
         .boxed()
     }
 
