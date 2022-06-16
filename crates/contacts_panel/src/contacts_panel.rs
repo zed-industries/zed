@@ -932,8 +932,17 @@ impl ContactsPanel {
     }
 
     fn clear_filter(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        self.filter_editor
-            .update(cx, |editor, cx| editor.set_text("", cx));
+        let did_clear = self.filter_editor.update(cx, |editor, cx| {
+            if editor.buffer().read(cx).len(cx) > 0 {
+                editor.set_text("", cx);
+                true
+            } else {
+                false
+            }
+        });
+        if !did_clear {
+            cx.propagate_action();
+        }
     }
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
