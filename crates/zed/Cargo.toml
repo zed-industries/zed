@@ -37,6 +37,7 @@ gpui = { path = "../gpui" }
 journal = { path = "../journal" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
+lsp_status = { path = "../lsp_status" }
 outline = { path = "../outline" }
 project = { path = "../project" }
 project_panel = { path = "../project_panel" }

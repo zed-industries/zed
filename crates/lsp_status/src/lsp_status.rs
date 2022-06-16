@@ -1,6 +1,6 @@
-use crate::{ItemHandle, StatusItemView};
+use editor::Editor;
 use futures::StreamExt;
-use gpui::{actions, AppContext, EventContext};
+use gpui::{actions, AppContext, EventContext, ViewHandle};
 use gpui::{
     elements::*, platform::CursorStyle, Entity, ModelHandle, MutableAppContext, RenderContext,
     View, ViewContext,
@@ -12,73 +12,100 @@ use smallvec::SmallVec;
 use std::cmp::Reverse;
 use std::fmt::Write;
 use std::sync::Arc;
+use util::ResultExt;
+use workspace::{ItemHandle, StatusItemView, Workspace};
 
-actions!(lsp_status, [DismissErrorMessage]);
+actions!(lsp_status, [ShowErrorMessage]);
 
-pub struct LspStatus {
-    checking_for_update: Vec<String>,
-    downloading: Vec<String>,
-    failed: Vec<String>,
+pub enum Event {
+    ShowError { lsp_name: Arc<str>, error: String },
+}
+
+pub struct LspStatusItem {
+    statuses: Vec<LspStatus>,
     project: ModelHandle<Project>,
 }
 
-pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(LspStatus::dismiss_error_message);
+struct LspStatus {
+    name: Arc<str>,
+    status: LanguageServerBinaryStatus,
 }
 
-impl LspStatus {
+pub fn init(cx: &mut MutableAppContext) {
+    cx.add_action(LspStatusItem::show_error_message);
+}
+
+impl LspStatusItem {
     pub fn new(
-        project: &ModelHandle<Project>,
+        workspace: &mut Workspace,
         languages: Arc<LanguageRegistry>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
-        let mut status_events = languages.language_server_binary_statuses();
-        cx.spawn_weak(|this, mut cx| async move {
-            while let Some((language, event)) = status_events.next().await {
-                if let Some(this) = this.upgrade(&cx) {
-                    this.update(&mut cx, |this, cx| {
-                        for vector in [
-                            &mut this.checking_for_update,
-                            &mut this.downloading,
-                            &mut this.failed,
-                        ] {
-                            vector.retain(|name| name != language.name().as_ref());
-                        }
+        cx: &mut ViewContext<Workspace>,
+    ) -> ViewHandle<LspStatusItem> {
+        let project = workspace.project().clone();
+        let this = cx.add_view(|cx: &mut ViewContext<Self>| {
+            let mut status_events = languages.language_server_binary_statuses();
+            cx.spawn_weak(|this, mut cx| async move {
+                while let Some((language, event)) = status_events.next().await {
+                    if let Some(this) = this.upgrade(&cx) {
+                        this.update(&mut cx, |this, cx| {
+                            this.statuses.retain(|s| s.name != language.name());
+                            this.statuses.push(LspStatus {
+                                name: language.name(),
+                                status: event,
+                            });
+                            cx.notify();
+                        });
+                    } else {
+                        break;
+                    }
+                }
+            })
+            .detach();
+            cx.observe(&project, |_, _, cx| cx.notify()).detach();
 
-                        match event {
-                            LanguageServerBinaryStatus::CheckingForUpdate => {
-                                this.checking_for_update.push(language.name().to_string());
-                            }
-                            LanguageServerBinaryStatus::Downloading => {
-                                this.downloading.push(language.name().to_string());
-                            }
-                            LanguageServerBinaryStatus::Failed => {
-                                this.failed.push(language.name().to_string());
-                            }
-                            LanguageServerBinaryStatus::Downloaded
-                            | LanguageServerBinaryStatus::Cached => {}
-                        }
-
-                        cx.notify();
+            Self {
+                statuses: Default::default(),
+                project: project.clone(),
+            }
+        });
+        cx.subscribe(&this, move |workspace, _, event, cx| match event {
+            Event::ShowError { lsp_name, error } => {
+                if let Some(buffer) = project
+                    .update(cx, |project, cx| project.create_buffer(&error, None, cx))
+                    .log_err()
+                {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.edit(
+                            [(0..0, format!("Language server error: {}\n\n", lsp_name))],
+                            cx,
+                        );
                     });
-                } else {
-                    break;
+                    workspace.add_item(
+                        Box::new(
+                            cx.add_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx)),
+                        ),
+                        cx,
+                    );
                 }
             }
         })
         .detach();
-        cx.observe(project, |_, _, cx| cx.notify()).detach();
-
-        Self {
-            checking_for_update: Default::default(),
-            downloading: Default::default(),
-            failed: Default::default(),
-            project: project.clone(),
-        }
+        this
     }
 
-    fn dismiss_error_message(&mut self, _: &DismissErrorMessage, cx: &mut ViewContext<Self>) {
-        self.failed.clear();
+    fn show_error_message(&mut self, _: &ShowErrorMessage, cx: &mut ViewContext<Self>) {
+        self.statuses.retain(|status| {
+            if let LanguageServerBinaryStatus::Failed { error } = &status.status {
+                cx.emit(Event::ShowError {
+                    lsp_name: status.name.clone(),
+                    error: error.clone(),
+                });
+                false
+            } else {
+                true
+            }
+        });
+
         cx.notify();
     }
 
@@ -107,11 +134,11 @@ impl LspStatus {
     }
 }
 
-impl Entity for LspStatus {
-    type Event = ();
+impl Entity for LspStatusItem {
+    type Event = Event;
 }
 
-impl View for LspStatus {
+impl View for LspStatusItem {
     fn ui_name() -> &'static str {
         "LspStatus"
     }
@@ -143,33 +170,51 @@ impl View for LspStatus {
         } else {
             drop(pending_work);
 
-            if !self.downloading.is_empty() {
+            let mut downloading = SmallVec::<[_; 3]>::new();
+            let mut checking_for_update = SmallVec::<[_; 3]>::new();
+            let mut failed = SmallVec::<[_; 3]>::new();
+            for status in &self.statuses {
+                match status.status {
+                    LanguageServerBinaryStatus::CheckingForUpdate => {
+                        checking_for_update.push(status.name.clone());
+                    }
+                    LanguageServerBinaryStatus::Downloading => {
+                        downloading.push(status.name.clone());
+                    }
+                    LanguageServerBinaryStatus::Failed { .. } => {
+                        failed.push(status.name.clone());
+                    }
+                    LanguageServerBinaryStatus::Downloaded | LanguageServerBinaryStatus::Cached => {
+                    }
+                }
+            }
+
+            if !downloading.is_empty() {
                 icon = Some("icons/download-solid-14.svg");
                 message = format!(
                     "Downloading {} language server{}...",
-                    self.downloading.join(", "),
-                    if self.downloading.len() > 1 { "s" } else { "" }
+                    downloading.join(", "),
+                    if downloading.len() > 1 { "s" } else { "" }
                 );
-            } else if !self.checking_for_update.is_empty() {
+            } else if !checking_for_update.is_empty() {
                 icon = Some("icons/download-solid-14.svg");
                 message = format!(
                     "Checking for updates to {} language server{}...",
-                    self.checking_for_update.join(", "),
-                    if self.checking_for_update.len() > 1 {
+                    checking_for_update.join(", "),
+                    if checking_for_update.len() > 1 {
                         "s"
                     } else {
                         ""
                     }
                 );
-            } else if !self.failed.is_empty() {
+            } else if !failed.is_empty() {
                 icon = Some("icons/warning-solid-14.svg");
                 message = format!(
-                    "Failed to download {} language server{}. Click to dismiss.",
-                    self.failed.join(", "),
-                    if self.failed.len() > 1 { "s" } else { "" }
+                    "Failed to download {} language server{}. Click to show error.",
+                    failed.join(", "),
+                    if failed.len() > 1 { "s" } else { "" }
                 );
-                handler =
-                    Some(|_, _, cx: &mut EventContext| cx.dispatch_action(DismissErrorMessage));
+                handler = Some(|_, _, cx: &mut EventContext| cx.dispatch_action(ShowErrorMessage));
             } else {
                 return Empty::new().boxed();
             }
@@ -217,6 +262,6 @@ impl View for LspStatus {
     }
 }
 
-impl StatusItemView for LspStatus {
+impl StatusItemView for LspStatusItem {
     fn set_active_pane_item(&mut self, _: Option<&dyn ItemHandle>, _: &mut ViewContext<Self>) {}
 }
