@@ -15,7 +15,7 @@
             "shift-cmd-}": "pane::ActivateNextItem",
             "cmd-w": "pane::CloseActiveItem",
             "cmd-shift-W": "workspace::CloseWindow",
-            "cmd-k alt-cmd-w": "pane::CloseInactiveItems",
+            "alt-cmd-t": "pane::CloseInactiveItems",
             "cmd-s": "workspace::Save",
             "cmd-shift-S": "workspace::SaveAs",
             "cmd-=": "zed::IncreaseBufferFontSize",
