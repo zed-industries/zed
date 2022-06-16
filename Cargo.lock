@@ -2567,17 +2567,13 @@ dependencies = [
 name = "lsp_status"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "collections",
  "editor",
  "futures",
  "gpui",
  "language",
- "postage",
  "project",
  "settings",
  "smallvec",
- "theme",
  "util",
  "workspace",
 ]

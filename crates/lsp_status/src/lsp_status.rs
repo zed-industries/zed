@@ -1,17 +1,14 @@
 use editor::Editor;
 use futures::StreamExt;
-use gpui::{actions, AppContext, EventContext, ViewHandle};
 use gpui::{
-    elements::*, platform::CursorStyle, Entity, ModelHandle, MutableAppContext, RenderContext,
-    View, ViewContext,
+    actions, elements::*, platform::CursorStyle, AppContext, Entity, EventContext, ModelHandle,
+    MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
 };
 use language::{LanguageRegistry, LanguageServerBinaryStatus};
 use project::{LanguageServerProgress, Project};
 use settings::Settings;
 use smallvec::SmallVec;
-use std::cmp::Reverse;
-use std::fmt::Write;
-use std::sync::Arc;
+use std::{cmp::Reverse, fmt::Write, sync::Arc};
 use util::ResultExt;
 use workspace::{ItemHandle, StatusItemView, Workspace};
 

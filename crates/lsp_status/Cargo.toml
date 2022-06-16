@@ -8,16 +8,12 @@ path = "src/lsp_status.rs"
 doctest = false
 
 [dependencies]
-collections = { path = "../collections" }
 editor = { path = "../editor" }
 language = { path = "../language" }
 gpui = { path = "../gpui" }
 project = { path = "../project" }
 settings = { path = "../settings" }
-theme = { path = "../theme" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
-anyhow = "1.0"
 futures = "0.3"
-postage = { version = "0.4", features = ["futures-traits"] }
 smallvec = { version = "1.6", features = ["union"] }
