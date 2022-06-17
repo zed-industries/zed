@@ -92,8 +92,8 @@ unsafe fn build_classes() {
         decl.add_method(sel!(dealloc), dealloc_view as extern "C" fn(&Object, Sel));
 
         decl.add_method(
-            sel!(keyDown:),
-            handle_view_event as extern "C" fn(&Object, Sel, id),
+            sel!(performKeyEquivalent:),
+            handle_key_equivalent as extern "C" fn(&Object, Sel, id) -> BOOL,
         );
         decl.add_method(
             sel!(mouseDown:),
@@ -528,6 +528,45 @@ extern "C" fn dealloc_view(this: &Object, _: Sel) {
     }
 }
 
+extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> BOOL {
+    let window_state = unsafe { get_window_state(this) };
+    let mut window_state_borrow = window_state.as_ref().borrow_mut();
+
+    let event = unsafe { Event::from_native(native_event, Some(window_state_borrow.size().y())) };
+    if let Some(event) = event {
+        match &event {
+            Event::KeyDown {
+                keystroke,
+                input,
+                is_held,
+            } => {
+                let keydown = (keystroke.clone(), input.clone());
+                // Ignore events from held-down keys after some of the initially-pressed keys
+                // were released.
+                if *is_held {
+                    if window_state_borrow.last_fresh_keydown.as_ref() != Some(&keydown) {
+                        return true;
+                    }
+                } else {
+                    window_state_borrow.last_fresh_keydown = Some(keydown);
+                }
+            }
+            _ => return false,
+        }
+
+        if let Some(mut callback) = window_state_borrow.event_callback.take() {
+            drop(window_state_borrow);
+            let handled = callback(event);
+            window_state.borrow_mut().event_callback = Some(callback);
+            handled
+        } else {
+            false
+        }
+    } else {
+        false
+    }
+}
+
 extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let window_state = unsafe { get_window_state(this) };
     let weak_window_state = Rc::downgrade(&window_state);
@@ -551,24 +590,6 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
             Event::LeftMouseUp { .. } => {
                 window_state_borrow.synthetic_drag_counter += 1;
             }
-
-            // Ignore events from held-down keys after some of the initially-pressed keys
-            // were released.
-            Event::KeyDown {
-                input,
-                keystroke,
-                is_held,
-            } => {
-                let keydown = (keystroke.clone(), input.clone());
-                if *is_held {
-                    if window_state_borrow.last_fresh_keydown.as_ref() != Some(&keydown) {
-                        return;
-                    }
-                } else {
-                    window_state_borrow.last_fresh_keydown = Some(keydown);
-                }
-            }
-
             _ => {}
         }
 
