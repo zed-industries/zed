@@ -4,7 +4,7 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     collections::{HashMap, HashSet},
-    fmt::Debug,
+    fmt::{Debug, Write},
 };
 use tree_sitter::{Language, Node, Parser};
 
@@ -318,28 +318,34 @@ impl Keystroke {
 impl std::fmt::Display for Keystroke {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.ctrl {
-            write!(f, "{}", "^")?;
+            f.write_char('^')?;
         }
         if self.alt {
-            write!(f, "{}", "⎇")?;
+            f.write_char('⎇')?;
         }
         if self.cmd {
-            write!(f, "{}", "⌘")?;
+            f.write_char('⌘')?;
         }
         if self.shift {
-            write!(f, "{}", "⇧")?;
+            f.write_char('⇧')?;
         }
         let key = match self.key.as_str() {
-            "backspace" => "⌫",
-            "up" => "↑",
-            "down" => "↓",
-            "left" => "←",
-            "right" => "→",
-            "tab" => "⇥",
-            "escape" => "⎋",
-            key => key,
+            "backspace" => '⌫',
+            "up" => '↑',
+            "down" => '↓',
+            "left" => '←',
+            "right" => '→',
+            "tab" => '⇥',
+            "escape" => '⎋',
+            key => {
+                if key.len() == 1 {
+                    key.chars().next().unwrap().to_ascii_uppercase()
+                } else {
+                    return f.write_str(key);
+                }
+            }
         };
-        write!(f, "{}", key)
+        f.write_char(key)
     }
 }
 

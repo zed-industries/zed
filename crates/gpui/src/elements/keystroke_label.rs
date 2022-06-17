@@ -40,13 +40,10 @@ impl Element for KeystrokeLabel {
         let mut element = if let Some(keystrokes) = cx.keystrokes_for_action(self.action.as_ref()) {
             Flex::row()
                 .with_children(keystrokes.iter().map(|keystroke| {
-                    Label::new(
-                        keystroke.to_string().to_uppercase(),
-                        self.text_style.clone(),
-                    )
-                    .contained()
-                    .with_style(self.container_style)
-                    .boxed()
+                    Label::new(keystroke.to_string(), self.text_style.clone())
+                        .contained()
+                        .with_style(self.container_style)
+                        .boxed()
                 }))
                 .boxed()
         } else {
