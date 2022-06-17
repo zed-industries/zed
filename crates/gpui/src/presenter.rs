@@ -224,7 +224,7 @@ impl Presenter {
         }
     }
 
-    pub fn dispatch_event(&mut self, event: Event, cx: &mut MutableAppContext) {
+    pub fn dispatch_event(&mut self, event: Event, cx: &mut MutableAppContext) -> bool {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
             let mut invalidated_views = Vec::new();
             let mut mouse_down_out_handlers = Vec::new();
@@ -366,7 +366,7 @@ impl Presenter {
             }
 
             if !handled {
-                event_cx.dispatch_event(root_view_id, &event);
+                handled = event_cx.dispatch_event(root_view_id, &event);
             }
 
             invalidated_views.extend(event_cx.invalidated_views);
@@ -384,6 +384,10 @@ impl Presenter {
                 }
                 cx.dispatch_action_any(self.window_id, &dispatch_path, directive.action.as_ref());
             }
+
+            handled
+        } else {
+            false
         }
     }
 

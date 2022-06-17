@@ -164,7 +164,7 @@ pub struct Window(Rc<RefCell<WindowState>>);
 struct WindowState {
     id: usize,
     native_window: id,
-    event_callback: Option<Box<dyn FnMut(Event)>>,
+    event_callback: Option<Box<dyn FnMut(Event) -> bool>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut()>>,
     close_callback: Option<Box<dyn FnOnce()>>,
@@ -331,7 +331,7 @@ impl platform::Window for Window {
         self
     }
 
-    fn on_event(&mut self, callback: Box<dyn FnMut(Event)>) {
+    fn on_event(&mut self, callback: Box<dyn FnMut(Event) -> bool>) {
         self.0.as_ref().borrow_mut().event_callback = Some(callback);
     }
 

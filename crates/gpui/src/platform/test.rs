@@ -34,7 +34,7 @@ pub struct Window {
     size: Vector2F,
     scale_factor: f32,
     current_scene: Option<crate::Scene>,
-    event_handlers: Vec<Box<dyn FnMut(super::Event)>>,
+    event_handlers: Vec<Box<dyn FnMut(super::Event) -> bool>>,
     resize_handlers: Vec<Box<dyn FnMut()>>,
     close_handlers: Vec<Box<dyn FnOnce()>>,
     pub(crate) title: Option<String>,
@@ -233,7 +233,7 @@ impl super::Window for Window {
         self
     }
 
-    fn on_event(&mut self, callback: Box<dyn FnMut(crate::Event)>) {
+    fn on_event(&mut self, callback: Box<dyn FnMut(crate::Event) -> bool>) {
         self.event_handlers.push(callback);
     }
 

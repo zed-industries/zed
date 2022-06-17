@@ -1774,11 +1774,13 @@ impl MutableAppContext {
                                 presenter.borrow().dispatch_path(cx.as_ref()),
                                 keystroke,
                             ) {
-                                return;
+                                return true;
                             }
                         }
 
-                        presenter.borrow_mut().dispatch_event(event, cx);
+                        presenter.borrow_mut().dispatch_event(event, cx)
+                    } else {
+                        false
                     }
                 })
             }));
