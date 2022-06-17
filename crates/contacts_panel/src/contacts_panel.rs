@@ -508,18 +508,12 @@ impl ContactsPanel {
     }
 
     fn render_offline_project(
-        project: WeakModelHandle<Project>,
+        project_handle: WeakModelHandle<Project>,
         theme: &theme::ContactsPanel,
         tooltip_style: &TooltipStyle,
         is_selected: bool,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
-        let project = if let Some(project) = project.upgrade(cx.deref_mut()) {
-            project
-        } else {
-            return Empty::new().boxed();
-        };
-
         let host_avatar_height = theme
             .contact_avatar
             .width
@@ -529,13 +523,17 @@ impl ContactsPanel {
         enum LocalProject {}
         enum ToggleOnline {}
 
-        let project_id = project.id();
+        let project_id = project_handle.id();
         MouseEventHandler::new::<LocalProject, _, _>(project_id, cx, |state, cx| {
             let row = theme.project_row.style_for(state, is_selected);
             let mut worktree_root_names = String::new();
-            let project_ = project.read(cx);
-            let is_going_online = project_.is_online();
-            for tree in project_.visible_worktrees(cx) {
+            let project = if let Some(project) = project_handle.upgrade(cx.deref_mut()) {
+                project.read(cx)
+            } else {
+                return Empty::new().boxed();
+            };
+            let is_going_online = project.is_online();
+            for tree in project.visible_worktrees(cx) {
                 if !worktree_root_names.is_empty() {
                     worktree_root_names.push_str(", ");
                 }
@@ -563,9 +561,8 @@ impl ContactsPanel {
                         button
                             .with_cursor_style(CursorStyle::PointingHand)
                             .on_click(move |_, _, cx| {
-                                cx.dispatch_action(ToggleProjectOnline {
-                                    project: Some(project.clone()),
-                                })
+                                let project = project_handle.upgrade(cx.deref_mut());
+                                cx.dispatch_action(ToggleProjectOnline { project })
                             })
                             .with_tooltip::<ToggleOnline, _>(
                                 project_id,
