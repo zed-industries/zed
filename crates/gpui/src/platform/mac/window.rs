@@ -545,25 +545,25 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
                 // were released.
                 if *is_held {
                     if window_state_borrow.last_fresh_keydown.as_ref() != Some(&keydown) {
-                        return true;
+                        return YES;
                     }
                 } else {
                     window_state_borrow.last_fresh_keydown = Some(keydown);
                 }
             }
-            _ => return false,
+            _ => return NO,
         }
 
         if let Some(mut callback) = window_state_borrow.event_callback.take() {
             drop(window_state_borrow);
             let handled = callback(event);
             window_state.borrow_mut().event_callback = Some(callback);
-            handled
+            handled as BOOL
         } else {
-            false
+            NO
         }
     } else {
-        false
+        NO
     }
 }
 
