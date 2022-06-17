@@ -4742,12 +4742,14 @@ impl Project {
             })
             .await;
 
-        let (saved_version, mtime) = buffer.update(&mut cx, |buffer, cx| buffer.save(cx)).await?;
+        let (saved_version, fingerprint, mtime) =
+            buffer.update(&mut cx, |buffer, cx| buffer.save(cx)).await?;
         Ok(proto::BufferSaved {
             project_id,
             buffer_id,
             version: serialize_version(&saved_version),
             mtime: Some(mtime.into()),
+            fingerprint,
         })
     }
 
@@ -5306,7 +5308,7 @@ impl Project {
                 .and_then(|buffer| buffer.upgrade(cx));
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.did_save(version, mtime, None, cx);
+                    buffer.did_save(version, envelope.payload.fingerprint, mtime, None, cx);
                 });
             }
             Ok(())
@@ -5332,7 +5334,7 @@ impl Project {
                 .and_then(|buffer| buffer.upgrade(cx));
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.did_reload(version, mtime, cx);
+                    buffer.did_reload(version, payload.fingerprint, mtime, cx);
                 });
             }
             Ok(())
@@ -8105,10 +8107,16 @@ mod tests {
             assert!(buffer.is_dirty());
             assert_eq!(
                 *events.borrow(),
-                &[language::Event::Edited, language::Event::Dirtied]
+                &[language::Event::Edited, language::Event::DirtyChanged]
             );
             events.borrow_mut().clear();
-            buffer.did_save(buffer.version(), buffer.file().unwrap().mtime(), None, cx);
+            buffer.did_save(
+                buffer.version(),
+                buffer.as_rope().summary().hex_fingerprint(),
+                buffer.file().unwrap().mtime(),
+                None,
+                cx,
+            );
         });
 
         // after saving, the buffer is not dirty, and emits a saved event.
@@ -8129,20 +8137,23 @@ mod tests {
                 *events.borrow(),
                 &[
                     language::Event::Edited,
-                    language::Event::Dirtied,
+                    language::Event::DirtyChanged,
                     language::Event::Edited,
                 ],
             );
             events.borrow_mut().clear();
 
-            // TODO - currently, after restoring the buffer to its
-            // previously-saved state, the is still considered dirty.
+            // After restoring the buffer to its previously-saved state,
+            // the buffer is not considered dirty anymore.
             buffer.edit([(1..3, "")], cx);
             assert!(buffer.text() == "ac");
-            assert!(buffer.is_dirty());
+            assert!(!buffer.is_dirty());
         });
 
-        assert_eq!(*events.borrow(), &[language::Event::Edited]);
+        assert_eq!(
+            *events.borrow(),
+            &[language::Event::Edited, language::Event::DirtyChanged]
+        );
 
         // When a file is deleted, the buffer is considered dirty.
         let events = Rc::new(RefCell::new(Vec::new()));
@@ -8164,7 +8175,10 @@ mod tests {
         buffer2.condition(&cx, |b, _| b.is_dirty()).await;
         assert_eq!(
             *events.borrow(),
-            &[language::Event::Dirtied, language::Event::FileHandleChanged]
+            &[
+                language::Event::DirtyChanged,
+                language::Event::FileHandleChanged
+            ]
         );
 
         // When a file is already dirty when deleted, we don't emit a Dirtied event.

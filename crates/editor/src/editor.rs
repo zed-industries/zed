@@ -5508,7 +5508,7 @@ impl Editor {
                 cx.emit(Event::BufferEdited);
             }
             language::Event::Reparsed => cx.emit(Event::Reparsed),
-            language::Event::Dirtied => cx.emit(Event::Dirtied),
+            language::Event::DirtyChanged => cx.emit(Event::Dirtied),
             language::Event::Saved => cx.emit(Event::Saved),
             language::Event::FileHandleChanged => cx.emit(Event::TitleChanged),
             language::Event::Reloaded => cx.emit(Event::TitleChanged),

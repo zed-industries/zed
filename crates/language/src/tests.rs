@@ -91,7 +91,7 @@ fn test_edit_events(cx: &mut gpui::MutableAppContext) {
             })
             .detach();
 
-            // An edit emits an edited event, followed by a dirtied event,
+            // An edit emits an edited event, followed by a dirty changed event,
             // since the buffer was previously in a clean state.
             buffer.edit([(2..4, "XYZ")], cx);
 
@@ -112,21 +112,46 @@ fn test_edit_events(cx: &mut gpui::MutableAppContext) {
     });
 
     // Incorporating a set of remote ops emits a single edited event,
-    // followed by a dirtied event.
+    // followed by a dirty changed event.
     buffer2.update(cx, |buffer, cx| {
         buffer
             .apply_ops(buffer1_ops.borrow_mut().drain(..), cx)
             .unwrap();
     });
-
-    let buffer_1_events = buffer_1_events.borrow();
     assert_eq!(
-        *buffer_1_events,
-        vec![Event::Edited, Event::Dirtied, Event::Edited, Event::Edited]
+        mem::take(&mut *buffer_1_events.borrow_mut()),
+        vec![
+            Event::Edited,
+            Event::DirtyChanged,
+            Event::Edited,
+            Event::Edited,
+        ]
+    );
+    assert_eq!(
+        mem::take(&mut *buffer_2_events.borrow_mut()),
+        vec![Event::Edited, Event::DirtyChanged]
     );
 
-    let buffer_2_events = buffer_2_events.borrow();
-    assert_eq!(*buffer_2_events, vec![Event::Edited, Event::Dirtied]);
+    buffer1.update(cx, |buffer, cx| {
+        // Undoing the first transaction emits edited event, followed by a
+        // dirty changed event, since the buffer is again in a clean state.
+        buffer.undo(cx);
+    });
+    // Incorporating the remote ops again emits a single edited event,
+    // followed by a dirty changed event.
+    buffer2.update(cx, |buffer, cx| {
+        buffer
+            .apply_ops(buffer1_ops.borrow_mut().drain(..), cx)
+            .unwrap();
+    });
+    assert_eq!(
+        mem::take(&mut *buffer_1_events.borrow_mut()),
+        vec![Event::Edited, Event::DirtyChanged,]
+    );
+    assert_eq!(
+        mem::take(&mut *buffer_2_events.borrow_mut()),
+        vec![Event::Edited, Event::DirtyChanged]
+    );
 }
 
 #[gpui::test]

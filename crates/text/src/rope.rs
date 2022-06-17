@@ -2,7 +2,7 @@ use crate::PointUtf16;
 
 use super::Point;
 use arrayvec::ArrayString;
-use bromberg_sl2::HashMatrix;
+use bromberg_sl2::{DigestString, HashMatrix};
 use smallvec::SmallVec;
 use std::{cmp, fmt, io, mem, ops::Range, str};
 use sum_tree::{Bias, Dimension, SumTree};
@@ -727,6 +727,12 @@ pub struct TextSummary {
     pub longest_row: u32,
     pub longest_row_chars: u32,
     pub fingerprint: HashMatrix,
+}
+
+impl TextSummary {
+    pub fn hex_fingerprint(&self) -> String {
+        self.fingerprint.to_hex()
+    }
 }
 
 impl<'a> From<&'a str> for TextSummary {

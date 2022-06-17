@@ -364,6 +364,7 @@ message BufferSaved {
     uint64 buffer_id = 2;
     repeated VectorClockEntry version = 3;
     Timestamp mtime = 4;
+    string fingerprint = 5;
 }
 
 message BufferReloaded {
@@ -371,6 +372,7 @@ message BufferReloaded {
     uint64 buffer_id = 2;
     repeated VectorClockEntry version = 3;
     Timestamp mtime = 4;
+    string fingerprint = 5;
 }
 
 message ReloadBuffers {
