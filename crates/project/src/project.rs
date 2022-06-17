@@ -8112,7 +8112,7 @@ mod tests {
             events.borrow_mut().clear();
             buffer.did_save(
                 buffer.version(),
-                buffer.as_rope().summary().hex_fingerprint(),
+                buffer.as_rope().fingerprint(),
                 buffer.file().unwrap().mtime(),
                 None,
                 cx,

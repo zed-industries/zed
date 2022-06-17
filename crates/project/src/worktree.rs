@@ -634,7 +634,7 @@ impl LocalWorktree {
     ) -> Task<Result<()>> {
         let buffer = buffer_handle.read(cx);
         let text = buffer.as_rope().clone();
-        let fingerprint = text.summary().hex_fingerprint();
+        let fingerprint = text.fingerprint();
         let version = buffer.version();
         let save = self.write_file(path, text, cx);
         let handle = cx.handle();
@@ -1708,7 +1708,7 @@ impl language::File for File {
             Worktree::Local(worktree) => {
                 let rpc = worktree.client.clone();
                 let project_id = worktree.share.as_ref().map(|share| share.project_id);
-                let fingerprint = text.summary().hex_fingerprint();
+                let fingerprint = text.fingerprint();
                 let save = worktree.write_file(self.path.clone(), text, cx);
                 cx.background().spawn(async move {
                     let entry = save.await?;

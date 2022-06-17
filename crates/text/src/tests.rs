@@ -226,7 +226,6 @@ fn test_text_summary_for_range() {
             last_line_chars: 0,
             longest_row: 0,
             longest_row_chars: 1,
-            fingerprint: bromberg_sl2::hash_strict(b"b\n")
         }
     );
     assert_eq!(
@@ -239,7 +238,6 @@ fn test_text_summary_for_range() {
             last_line_chars: 0,
             longest_row: 2,
             longest_row_chars: 4,
-            fingerprint: bromberg_sl2::hash_strict(b"b\nefg\nhklm\n")
         }
     );
     assert_eq!(
@@ -252,7 +250,6 @@ fn test_text_summary_for_range() {
             last_line_chars: 1,
             longest_row: 3,
             longest_row_chars: 6,
-            fingerprint: bromberg_sl2::hash_strict(b"ab\nefg\nhklm\nnopqrs\nt")
         }
     );
     assert_eq!(
@@ -265,7 +262,6 @@ fn test_text_summary_for_range() {
             last_line_chars: 3,
             longest_row: 3,
             longest_row_chars: 6,
-            fingerprint: bromberg_sl2::hash_strict(b"ab\nefg\nhklm\nnopqrs\ntuv")
         }
     );
     assert_eq!(
@@ -278,7 +274,6 @@ fn test_text_summary_for_range() {
             last_line_chars: 3,
             longest_row: 1,
             longest_row_chars: 6,
-            fingerprint: bromberg_sl2::hash_strict(b"hklm\nnopqrs\ntuv")
         }
     );
 }

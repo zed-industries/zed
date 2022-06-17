@@ -430,7 +430,7 @@ impl Buffer {
         Self {
             saved_mtime,
             saved_version: buffer.version(),
-            saved_version_fingerprint: buffer.text_summary().hex_fingerprint(),
+            saved_version_fingerprint: buffer.as_rope().fingerprint(),
             transaction_depth: 0,
             was_dirty_before_starting_transaction: None,
             text: buffer,
@@ -544,7 +544,7 @@ impl Buffer {
                     if let Some(transaction) = this.apply_diff(diff, cx).cloned() {
                         this.did_reload(
                             this.version(),
-                            this.text_summary().hex_fingerprint(),
+                            this.as_rope().fingerprint(),
                             new_mtime,
                             cx,
                         );
@@ -994,12 +994,12 @@ impl Buffer {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.saved_version_fingerprint != self.as_rope().summary().hex_fingerprint()
+        self.saved_version_fingerprint != self.as_rope().fingerprint()
             || self.file.as_ref().map_or(false, |file| file.is_deleted())
     }
 
     pub fn has_conflict(&self) -> bool {
-        self.saved_version_fingerprint != self.as_rope().summary().hex_fingerprint()
+        self.saved_version_fingerprint != self.as_rope().fingerprint()
             && self
                 .file
                 .as_ref()
