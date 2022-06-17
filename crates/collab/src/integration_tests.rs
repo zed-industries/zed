@@ -5364,7 +5364,7 @@ impl TestClient {
                             (buffer.version(), buffer.save(cx))
                         });
                         let save = cx.background().spawn(async move {
-                            let (saved_version, _) = save
+                            let (saved_version, _, _) = save
                                 .await
                                 .map_err(|err| anyhow!("save request failed: {:?}", err))?;
                             assert!(saved_version.observed_all(&requested_version));

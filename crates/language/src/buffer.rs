@@ -51,7 +51,10 @@ pub struct Buffer {
     text: TextBuffer,
     file: Option<Arc<dyn File>>,
     saved_version: clock::Global,
+    saved_version_fingerprint: String,
     saved_mtime: SystemTime,
+    transaction_depth: usize,
+    was_dirty_before_starting_transaction: Option<bool>,
     language: Option<Arc<Language>>,
     autoindent_requests: Vec<Arc<AutoindentRequest>>,
     pending_autoindent: Option<Task<()>>,
@@ -155,7 +158,7 @@ pub enum Operation {
 pub enum Event {
     Operation(Operation),
     Edited,
-    Dirtied,
+    DirtyChanged,
     Saved,
     FileHandleChanged,
     Reloaded,
@@ -192,7 +195,7 @@ pub trait File: Send + Sync {
         text: Rope,
         version: clock::Global,
         cx: &mut MutableAppContext,
-    ) -> Task<Result<(clock::Global, SystemTime)>>;
+    ) -> Task<Result<(clock::Global, String, SystemTime)>>;
 
     fn as_any(&self) -> &dyn Any;
 
@@ -209,6 +212,7 @@ pub trait LocalFile: File {
         &self,
         buffer_id: u64,
         version: &clock::Global,
+        fingerprint: String,
         mtime: SystemTime,
         cx: &mut MutableAppContext,
     );
@@ -426,6 +430,9 @@ impl Buffer {
         Self {
             saved_mtime,
             saved_version: buffer.version(),
+            saved_version_fingerprint: buffer.as_rope().fingerprint(),
+            transaction_depth: 0,
+            was_dirty_before_starting_transaction: None,
             text: buffer,
             file,
             syntax_tree: Mutex::new(None),
@@ -476,7 +483,7 @@ impl Buffer {
     pub fn save(
         &mut self,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<(clock::Global, SystemTime)>> {
+    ) -> Task<Result<(clock::Global, String, SystemTime)>> {
         let file = if let Some(file) = self.file.as_ref() {
             file
         } else {
@@ -486,11 +493,11 @@ impl Buffer {
         let version = self.version();
         let save = file.save(self.remote_id(), text, version, cx.as_mut());
         cx.spawn(|this, mut cx| async move {
-            let (version, mtime) = save.await?;
+            let (version, fingerprint, mtime) = save.await?;
             this.update(&mut cx, |this, cx| {
-                this.did_save(version.clone(), mtime, None, cx);
+                this.did_save(version.clone(), fingerprint.clone(), mtime, None, cx);
             });
-            Ok((version, mtime))
+            Ok((version, fingerprint, mtime))
         })
     }
 
@@ -507,12 +514,14 @@ impl Buffer {
     pub fn did_save(
         &mut self,
         version: clock::Global,
+        fingerprint: String,
         mtime: SystemTime,
         new_file: Option<Arc<dyn File>>,
         cx: &mut ModelContext<Self>,
     ) {
-        self.saved_mtime = mtime;
         self.saved_version = version;
+        self.saved_version_fingerprint = fingerprint;
+        self.saved_mtime = mtime;
         if let Some(new_file) = new_file {
             self.file = Some(new_file);
             self.file_update_count += 1;
@@ -533,7 +542,12 @@ impl Buffer {
                     .await;
                 this.update(&mut cx, |this, cx| {
                     if let Some(transaction) = this.apply_diff(diff, cx).cloned() {
-                        this.did_reload(this.version(), new_mtime, cx);
+                        this.did_reload(
+                            this.version(),
+                            this.as_rope().fingerprint(),
+                            new_mtime,
+                            cx,
+                        );
                         Ok(Some(transaction))
                     } else {
                         Ok(None)
@@ -548,13 +562,21 @@ impl Buffer {
     pub fn did_reload(
         &mut self,
         version: clock::Global,
+        fingerprint: String,
         mtime: SystemTime,
         cx: &mut ModelContext<Self>,
     ) {
-        self.saved_mtime = mtime;
         self.saved_version = version;
+        self.saved_version_fingerprint = fingerprint;
+        self.saved_mtime = mtime;
         if let Some(file) = self.file.as_ref().and_then(|f| f.as_local()) {
-            file.buffer_reloaded(self.remote_id(), &self.saved_version, self.saved_mtime, cx);
+            file.buffer_reloaded(
+                self.remote_id(),
+                &self.saved_version,
+                self.saved_version_fingerprint.clone(),
+                self.saved_mtime,
+                cx,
+            );
         }
         cx.emit(Event::Reloaded);
         cx.notify();
@@ -581,7 +603,7 @@ impl Buffer {
             if !old_file.is_deleted() {
                 file_changed = true;
                 if !self.is_dirty() {
-                    cx.emit(Event::Dirtied);
+                    cx.emit(Event::DirtyChanged);
                 }
             }
         } else {
@@ -972,12 +994,12 @@ impl Buffer {
     }
 
     pub fn is_dirty(&self) -> bool {
-        !self.saved_version.observed_all(&self.version)
+        self.saved_version_fingerprint != self.as_rope().fingerprint()
             || self.file.as_ref().map_or(false, |file| file.is_deleted())
     }
 
     pub fn has_conflict(&self) -> bool {
-        !self.saved_version.observed_all(&self.version)
+        self.saved_version_fingerprint != self.as_rope().fingerprint()
             && self
                 .file
                 .as_ref()
@@ -993,6 +1015,10 @@ impl Buffer {
     }
 
     pub fn start_transaction_at(&mut self, now: Instant) -> Option<TransactionId> {
+        self.transaction_depth += 1;
+        if self.was_dirty_before_starting_transaction.is_none() {
+            self.was_dirty_before_starting_transaction = Some(self.is_dirty());
+        }
         self.text.start_transaction_at(now)
     }
 
@@ -1005,8 +1031,14 @@ impl Buffer {
         now: Instant,
         cx: &mut ModelContext<Self>,
     ) -> Option<TransactionId> {
+        assert!(self.transaction_depth > 0);
+        self.transaction_depth -= 1;
+        let was_dirty = if self.transaction_depth == 0 {
+            self.was_dirty_before_starting_transaction.take().unwrap()
+        } else {
+            false
+        };
         if let Some((transaction_id, start_version)) = self.text.end_transaction_at(now) {
-            let was_dirty = start_version != self.saved_version;
             self.did_edit(&start_version, was_dirty, cx);
             Some(transaction_id)
         } else {
@@ -1217,8 +1249,8 @@ impl Buffer {
         self.reparse(cx);
 
         cx.emit(Event::Edited);
-        if !was_dirty {
-            cx.emit(Event::Dirtied);
+        if was_dirty != self.is_dirty() {
+            cx.emit(Event::DirtyChanged);
         }
         cx.notify();
     }

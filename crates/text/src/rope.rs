@@ -2,6 +2,7 @@ use crate::PointUtf16;
 
 use super::Point;
 use arrayvec::ArrayString;
+use bromberg_sl2::{DigestString, HashMatrix};
 use smallvec::SmallVec;
 use std::{cmp, fmt, io, mem, ops::Range, str};
 use sum_tree::{Bias, Dimension, SumTree};
@@ -115,7 +116,7 @@ impl Rope {
     }
 
     pub fn summary(&self) -> TextSummary {
-        self.chunks.summary().clone()
+        self.chunks.summary().text.clone()
     }
 
     pub fn len(&self) -> usize {
@@ -289,6 +290,10 @@ impl Rope {
     pub fn line_len(&self, row: u32) -> u32 {
         self.clip_point(Point::new(row, u32::MAX), Bias::Left)
             .column
+    }
+
+    pub fn fingerprint(&self) -> String {
+        self.chunks.summary().fingerprint.to_hex()
     }
 }
 
@@ -709,10 +714,34 @@ impl Chunk {
 }
 
 impl sum_tree::Item for Chunk {
-    type Summary = TextSummary;
+    type Summary = ChunkSummary;
 
     fn summary(&self) -> Self::Summary {
-        TextSummary::from(self.0.as_str())
+        ChunkSummary::from(self.0.as_str())
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ChunkSummary {
+    text: TextSummary,
+    fingerprint: HashMatrix,
+}
+
+impl<'a> From<&'a str> for ChunkSummary {
+    fn from(text: &'a str) -> Self {
+        Self {
+            text: TextSummary::from(text),
+            fingerprint: bromberg_sl2::hash_strict(text.as_bytes()),
+        }
+    }
+}
+
+impl sum_tree::Summary for ChunkSummary {
+    type Context = ();
+
+    fn add_summary(&mut self, summary: &Self, _: &()) {
+        self.text += &summary.text;
+        self.fingerprint = self.fingerprint * summary.fingerprint;
     }
 }
 
@@ -819,7 +848,7 @@ impl std::ops::AddAssign<Self> for TextSummary {
     }
 }
 
-pub trait TextDimension: 'static + for<'a> Dimension<'a, TextSummary> {
+pub trait TextDimension: 'static + for<'a> Dimension<'a, ChunkSummary> {
     fn from_text_summary(summary: &TextSummary) -> Self;
     fn add_assign(&mut self, other: &Self);
 }
@@ -838,6 +867,12 @@ impl<'a, D1: TextDimension, D2: TextDimension> TextDimension for (D1, D2) {
     }
 }
 
+impl<'a> sum_tree::Dimension<'a, ChunkSummary> for TextSummary {
+    fn add_summary(&mut self, summary: &'a ChunkSummary, _: &()) {
+        *self += &summary.text;
+    }
+}
+
 impl TextDimension for TextSummary {
     fn from_text_summary(summary: &TextSummary) -> Self {
         summary.clone()
@@ -848,9 +883,9 @@ impl TextDimension for TextSummary {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, TextSummary> for usize {
-    fn add_summary(&mut self, summary: &'a TextSummary, _: &()) {
-        *self += summary.bytes;
+impl<'a> sum_tree::Dimension<'a, ChunkSummary> for usize {
+    fn add_summary(&mut self, summary: &'a ChunkSummary, _: &()) {
+        *self += summary.text.bytes;
     }
 }
 
@@ -864,9 +899,9 @@ impl TextDimension for usize {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, TextSummary> for Point {
-    fn add_summary(&mut self, summary: &'a TextSummary, _: &()) {
-        *self += summary.lines;
+impl<'a> sum_tree::Dimension<'a, ChunkSummary> for Point {
+    fn add_summary(&mut self, summary: &'a ChunkSummary, _: &()) {
+        *self += summary.text.lines;
     }
 }
 
@@ -880,9 +915,9 @@ impl TextDimension for Point {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, TextSummary> for PointUtf16 {
-    fn add_summary(&mut self, summary: &'a TextSummary, _: &()) {
-        *self += summary.lines_utf16;
+impl<'a> sum_tree::Dimension<'a, ChunkSummary> for PointUtf16 {
+    fn add_summary(&mut self, summary: &'a ChunkSummary, _: &()) {
+        *self += summary.text.lines_utf16;
     }
 }
 

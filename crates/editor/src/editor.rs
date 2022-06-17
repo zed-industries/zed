@@ -5508,7 +5508,7 @@ impl Editor {
                 cx.emit(Event::BufferEdited);
             }
             language::Event::Reparsed => cx.emit(Event::Reparsed),
-            language::Event::Dirtied => cx.emit(Event::Dirtied),
+            language::Event::DirtyChanged => cx.emit(Event::DirtyChanged),
             language::Event::Saved => cx.emit(Event::Saved),
             language::Event::FileHandleChanged => cx.emit(Event::TitleChanged),
             language::Event::Reloaded => cx.emit(Event::TitleChanged),
@@ -5665,7 +5665,7 @@ pub enum Event {
     Edited,
     Reparsed,
     Blurred,
-    Dirtied,
+    DirtyChanged,
     Saved,
     TitleChanged,
     SelectionsChanged { local: bool },
@@ -6181,7 +6181,10 @@ mod tests {
             let events = events.clone();
             |cx| {
                 cx.subscribe(&cx.handle(), move |_, _, event, _| {
-                    if matches!(event, Event::Edited | Event::BufferEdited | Event::Dirtied) {
+                    if matches!(
+                        event,
+                        Event::Edited | Event::BufferEdited | Event::DirtyChanged
+                    ) {
                         events.borrow_mut().push(("editor1", *event));
                     }
                 })
@@ -6193,7 +6196,10 @@ mod tests {
             let events = events.clone();
             |cx| {
                 cx.subscribe(&cx.handle(), move |_, _, event, _| {
-                    if matches!(event, Event::Edited | Event::BufferEdited | Event::Dirtied) {
+                    if matches!(
+                        event,
+                        Event::Edited | Event::BufferEdited | Event::DirtyChanged
+                    ) {
                         events.borrow_mut().push(("editor2", *event));
                     }
                 })
@@ -6211,8 +6217,8 @@ mod tests {
                 ("editor1", Event::Edited),
                 ("editor1", Event::BufferEdited),
                 ("editor2", Event::BufferEdited),
-                ("editor1", Event::Dirtied),
-                ("editor2", Event::Dirtied)
+                ("editor1", Event::DirtyChanged),
+                ("editor2", Event::DirtyChanged)
             ]
         );
 
@@ -6235,6 +6241,8 @@ mod tests {
                 ("editor1", Event::Edited),
                 ("editor1", Event::BufferEdited),
                 ("editor2", Event::BufferEdited),
+                ("editor1", Event::DirtyChanged),
+                ("editor2", Event::DirtyChanged),
             ]
         );
 
@@ -6246,6 +6254,8 @@ mod tests {
                 ("editor1", Event::Edited),
                 ("editor1", Event::BufferEdited),
                 ("editor2", Event::BufferEdited),
+                ("editor1", Event::DirtyChanged),
+                ("editor2", Event::DirtyChanged),
             ]
         );
 
@@ -6257,6 +6267,8 @@ mod tests {
                 ("editor2", Event::Edited),
                 ("editor1", Event::BufferEdited),
                 ("editor2", Event::BufferEdited),
+                ("editor1", Event::DirtyChanged),
+                ("editor2", Event::DirtyChanged),
             ]
         );
 
@@ -6268,6 +6280,8 @@ mod tests {
                 ("editor2", Event::Edited),
                 ("editor1", Event::BufferEdited),
                 ("editor2", Event::BufferEdited),
+                ("editor1", Event::DirtyChanged),
+                ("editor2", Event::DirtyChanged),
             ]
         );
 

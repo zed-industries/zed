@@ -568,7 +568,10 @@ impl workspace::Item for ProjectDiagnosticsEditor {
     }
 
     fn should_update_tab_on_event(event: &Event) -> bool {
-        matches!(event, Event::Saved | Event::Dirtied | Event::TitleChanged)
+        matches!(
+            event,
+            Event::Saved | Event::DirtyChanged | Event::TitleChanged
+        )
     }
 
     fn set_nav_history(&mut self, nav_history: ItemNavHistory, cx: &mut ViewContext<Self>) {

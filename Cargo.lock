@@ -562,6 +562,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bromberg_sl2"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ed88064f69518b7e3ea50ecfc1b61d43f19248618a377b95ae5c8b611134d4d"
+dependencies = [
+ "digest 0.9.0",
+ "lazy_static",
+ "rayon",
+ "seq-macro",
+]
+
+[[package]]
 name = "bstr"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4157,6 +4169,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "seq-macro"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a9f47faea3cad316faa914d013d24f471cd90bfca1a0c70f05a3f42c6441e99"
+
+[[package]]
 name = "serde"
 version = "1.0.137"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4806,9 +4824,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrayvec 0.7.2",
+ "bromberg_sl2",
  "clock",
  "collections",
  "ctor",
+ "digest 0.9.0",
  "env_logger",
  "gpui",
  "lazy_static",

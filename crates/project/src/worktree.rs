@@ -634,6 +634,7 @@ impl LocalWorktree {
     ) -> Task<Result<()>> {
         let buffer = buffer_handle.read(cx);
         let text = buffer.as_rope().clone();
+        let fingerprint = text.fingerprint();
         let version = buffer.version();
         let save = self.write_file(path, text, cx);
         let handle = cx.handle();
@@ -648,7 +649,7 @@ impl LocalWorktree {
             };
 
             buffer_handle.update(&mut cx, |buffer, cx| {
-                buffer.did_save(version, file.mtime, Some(Arc::new(file)), cx);
+                buffer.did_save(version, fingerprint, file.mtime, Some(Arc::new(file)), cx);
             });
 
             Ok(())
@@ -1702,11 +1703,12 @@ impl language::File for File {
         text: Rope,
         version: clock::Global,
         cx: &mut MutableAppContext,
-    ) -> Task<Result<(clock::Global, SystemTime)>> {
+    ) -> Task<Result<(clock::Global, String, SystemTime)>> {
         self.worktree.update(cx, |worktree, cx| match worktree {
             Worktree::Local(worktree) => {
                 let rpc = worktree.client.clone();
                 let project_id = worktree.share.as_ref().map(|share| share.project_id);
+                let fingerprint = text.fingerprint();
                 let save = worktree.write_file(self.path.clone(), text, cx);
                 cx.background().spawn(async move {
                     let entry = save.await?;
@@ -1716,9 +1718,10 @@ impl language::File for File {
                             buffer_id,
                             version: serialize_version(&version),
                             mtime: Some(entry.mtime.into()),
+                            fingerprint: fingerprint.clone(),
                         })?;
                     }
-                    Ok((version, entry.mtime))
+                    Ok((version, fingerprint, entry.mtime))
                 })
             }
             Worktree::Remote(worktree) => {
@@ -1737,7 +1740,7 @@ impl language::File for File {
                         .mtime
                         .ok_or_else(|| anyhow!("missing mtime"))?
                         .into();
-                    Ok((version, mtime))
+                    Ok((version, response.fingerprint, mtime))
                 })
             }
         })
@@ -1779,6 +1782,7 @@ impl language::LocalFile for File {
         &self,
         buffer_id: u64,
         version: &clock::Global,
+        fingerprint: String,
         mtime: SystemTime,
         cx: &mut MutableAppContext,
     ) {
@@ -1791,6 +1795,7 @@ impl language::LocalFile for File {
                     buffer_id,
                     version: serialize_version(&version),
                     mtime: Some(mtime.into()),
+                    fingerprint,
                 })
                 .log_err();
         }
