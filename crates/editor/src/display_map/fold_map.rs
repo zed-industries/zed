@@ -370,22 +370,10 @@ impl FoldMap {
 
                     if fold.end > fold.start {
                         let output_text = "…";
-                        let chars = output_text.chars().count() as u32;
-                        let lines = Point::new(0, output_text.len() as u32);
-                        let lines_utf16 =
-                            PointUtf16::new(0, output_text.encode_utf16().count() as u32);
                         new_transforms.push(
                             Transform {
                                 summary: TransformSummary {
-                                    output: TextSummary {
-                                        bytes: output_text.len(),
-                                        lines,
-                                        lines_utf16,
-                                        first_line_chars: chars,
-                                        last_line_chars: chars,
-                                        longest_row: 0,
-                                        longest_row_chars: chars,
-                                    },
+                                    output: TextSummary::from(output_text),
                                     input: new_buffer.text_summary_for_range(fold.start..fold.end),
                                 },
                                 output_text: Some(output_text),

@@ -1923,15 +1923,7 @@ impl MultiBufferSnapshot {
             );
 
             if range.end > end_before_newline {
-                summary.add_assign(&D::from_text_summary(&TextSummary {
-                    bytes: 1,
-                    lines: Point::new(1 as u32, 0),
-                    lines_utf16: PointUtf16::new(1 as u32, 0),
-                    first_line_chars: 0,
-                    last_line_chars: 0,
-                    longest_row: 0,
-                    longest_row_chars: 0,
-                }));
+                summary.add_assign(&D::from_text_summary(&TextSummary::from("\n")));
             }
 
             cursor.next(&());
