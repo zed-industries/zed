@@ -127,89 +127,131 @@ impl MacForegroundPlatform {
         &self,
         menus: Vec<Menu>,
         delegate: id,
+        actions: &mut Vec<Box<dyn Action>>,
         keystroke_matcher: &keymap::Matcher,
     ) -> id {
-        let menu_bar = NSMenu::new(nil).autorelease();
-        menu_bar.setDelegate_(delegate);
-        let mut state = self.0.borrow_mut();
-
-        state.menu_actions.clear();
+        let application_menu = NSMenu::new(nil).autorelease();
+        application_menu.setDelegate_(delegate);
 
         for menu_config in menus {
-            let menu_bar_item = NSMenuItem::new(nil).autorelease();
             let menu = NSMenu::new(nil).autorelease();
-            let menu_name = menu_config.name;
-
-            menu.setTitle_(ns_string(menu_name));
+            menu.setTitle_(ns_string(menu_config.name));
             menu.setDelegate_(delegate);
 
             for item_config in menu_config.items {
-                let item;
-
-                match item_config {
-                    MenuItem::Separator => {
-                        item = NSMenuItem::separatorItem(nil);
-                    }
-                    MenuItem::Action { name, action } => {
-                        let mut keystroke = None;
-                        if let Some(binding) = keystroke_matcher
-                            .bindings_for_action_type(action.as_any().type_id())
-                            .find(|binding| binding.action().eq(action.as_ref()))
-                        {
-                            if binding.keystrokes().len() == 1 {
-                                keystroke = binding.keystrokes().first()
-                            }
-                        }
-
-                        if let Some(keystroke) = keystroke {
-                            let mut mask = NSEventModifierFlags::empty();
-                            for (modifier, flag) in &[
-                                (keystroke.cmd, NSEventModifierFlags::NSCommandKeyMask),
-                                (keystroke.ctrl, NSEventModifierFlags::NSControlKeyMask),
-                                (keystroke.alt, NSEventModifierFlags::NSAlternateKeyMask),
-                            ] {
-                                if *modifier {
-                                    mask |= *flag;
-                                }
-                            }
-
-                            item = NSMenuItem::alloc(nil)
-                                .initWithTitle_action_keyEquivalent_(
-                                    ns_string(name),
-                                    selector("handleGPUIMenuItem:"),
-                                    ns_string(key_to_native(&keystroke.key).as_ref()),
-                                )
-                                .autorelease();
-                            item.setKeyEquivalentModifierMask_(mask);
-                        } else {
-                            item = NSMenuItem::alloc(nil)
-                                .initWithTitle_action_keyEquivalent_(
-                                    ns_string(name),
-                                    selector("handleGPUIMenuItem:"),
-                                    ns_string(""),
-                                )
-                                .autorelease();
-                        }
-
-                        let tag = state.menu_actions.len() as NSInteger;
-                        let _: () = msg_send![item, setTag: tag];
-                        state.menu_actions.push(action);
-                    }
-                }
-
-                menu.addItem_(item);
+                menu.addItem_(self.create_menu_item(
+                    item_config,
+                    delegate,
+                    actions,
+                    keystroke_matcher,
+                ));
             }
 
-            menu_bar_item.setSubmenu_(menu);
-            menu_bar.addItem_(menu_bar_item);
+            let menu_item = NSMenuItem::new(nil).autorelease();
+            menu_item.setSubmenu_(menu);
+            application_menu.addItem_(menu_item);
 
-            if menu_name == "Window" {
+            if menu_config.name == "Window" {
                 let app: id = msg_send![APP_CLASS, sharedApplication];
                 app.setWindowsMenu_(menu);
             }
         }
 
-        menu_bar
+        application_menu
+    }
+
+    unsafe fn create_menu_item(
+        &self,
+        item: MenuItem,
+        delegate: id,
+        actions: &mut Vec<Box<dyn Action>>,
+        keystroke_matcher: &keymap::Matcher,
+    ) -> id {
+        match item {
+            MenuItem::Separator => NSMenuItem::separatorItem(nil),
+            MenuItem::Action { name, action } => {
+                let keystrokes = keystroke_matcher
+                    .bindings_for_action_type(action.as_any().type_id())
+                    .find(|binding| binding.action().eq(action.as_ref()))
+                    .map(|binding| binding.keystrokes());
+
+                let item;
+                if let Some(keystrokes) = keystrokes {
+                    if keystrokes.len() == 1 {
+                        let keystroke = &keystrokes[0];
+                        let mut mask = NSEventModifierFlags::empty();
+                        for (modifier, flag) in &[
+                            (keystroke.cmd, NSEventModifierFlags::NSCommandKeyMask),
+                            (keystroke.ctrl, NSEventModifierFlags::NSControlKeyMask),
+                            (keystroke.alt, NSEventModifierFlags::NSAlternateKeyMask),
+                        ] {
+                            if *modifier {
+                                mask |= *flag;
+                            }
+                        }
+
+                        item = NSMenuItem::alloc(nil)
+                            .initWithTitle_action_keyEquivalent_(
+                                ns_string(name),
+                                selector("handleGPUIMenuItem:"),
+                                ns_string(key_to_native(&keystroke.key).as_ref()),
+                            )
+                            .autorelease();
+                        item.setKeyEquivalentModifierMask_(mask);
+                    }
+                    // For multi-keystroke bindings, render the keystroke as part of the title.
+                    else {
+                        use std::fmt::Write;
+
+                        let mut name = format!("{name} [");
+                        for (i, keystroke) in keystrokes.iter().enumerate() {
+                            if i > 0 {
+                                name.push(' ');
+                            }
+                            write!(&mut name, "{}", keystroke).unwrap();
+                        }
+                        name.push(']');
+
+                        item = NSMenuItem::alloc(nil)
+                            .initWithTitle_action_keyEquivalent_(
+                                ns_string(&name),
+                                selector("handleGPUIMenuItem:"),
+                                ns_string(""),
+                            )
+                            .autorelease();
+                    }
+                } else {
+                    item = NSMenuItem::alloc(nil)
+                        .initWithTitle_action_keyEquivalent_(
+                            ns_string(name),
+                            selector("handleGPUIMenuItem:"),
+                            ns_string(""),
+                        )
+                        .autorelease();
+                }
+
+                let tag = actions.len() as NSInteger;
+                let _: () = msg_send![item, setTag: tag];
+                actions.push(action);
+                item
+            }
+            MenuItem::Submenu(Menu { name, items }) => {
+                let item = NSMenuItem::new(nil).autorelease();
+                let submenu = NSMenu::new(nil).autorelease();
+                submenu.setDelegate_(delegate);
+                for item in items {
+                    submenu.addItem_(self.create_menu_item(
+                        item,
+                        delegate,
+                        actions,
+                        keystroke_matcher,
+                    ));
+                }
+                item.setSubmenu_(submenu);
+                item.setTitle_(ns_string(name));
+                item
+            }
+        }
     }
 }
 
@@ -270,7 +312,14 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
     fn set_menus(&self, menus: Vec<Menu>, keystroke_matcher: &keymap::Matcher) {
         unsafe {
             let app: id = msg_send![APP_CLASS, sharedApplication];
-            app.setMainMenu_(self.create_menu_bar(menus, app.delegate(), keystroke_matcher));
+            let mut state = self.0.borrow_mut();
+            let actions = &mut state.menu_actions;
+            app.setMainMenu_(self.create_menu_bar(
+                menus,
+                app.delegate(),
+                actions,
+                keystroke_matcher,
+            ));
         }
     }
 

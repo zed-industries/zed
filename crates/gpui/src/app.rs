@@ -133,11 +133,12 @@ pub struct Menu<'a> {
 }
 
 pub enum MenuItem<'a> {
+    Separator,
+    Submenu(Menu<'a>),
     Action {
         name: &'a str,
         action: Box<dyn Action>,
     },
-    Separator,
 }
 
 #[derive(Clone)]
