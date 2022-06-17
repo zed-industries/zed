@@ -440,7 +440,10 @@ impl Item for Editor {
     }
 
     fn should_update_tab_on_event(event: &Event) -> bool {
-        matches!(event, Event::Saved | Event::Dirtied | Event::TitleChanged)
+        matches!(
+            event,
+            Event::Saved | Event::DirtyChanged | Event::TitleChanged
+        )
     }
 }
 
