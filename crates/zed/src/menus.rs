@@ -15,14 +15,23 @@ pub fn menus() -> Vec<Menu<'static>> {
                     action: Box::new(auto_update::Check),
                 },
                 MenuItem::Separator,
-                MenuItem::Action {
-                    name: "Open Settings",
-                    action: Box::new(super::OpenSettings),
-                },
-                MenuItem::Action {
-                    name: "Open Key Bindings",
-                    action: Box::new(super::OpenKeymap),
-                },
+                MenuItem::Submenu(Menu {
+                    name: "Preferences",
+                    items: vec![
+                        MenuItem::Action {
+                            name: "Open Settings",
+                            action: Box::new(super::OpenSettings),
+                        },
+                        MenuItem::Action {
+                            name: "Open Key Bindings",
+                            action: Box::new(super::OpenKeymap),
+                        },
+                        MenuItem::Action {
+                            name: "Select Theme",
+                            action: Box::new(theme_selector::Toggle),
+                        },
+                    ],
+                }),
                 MenuItem::Action {
                     name: "Install CLI",
                     action: Box::new(super::InstallCommandLineInterface),
