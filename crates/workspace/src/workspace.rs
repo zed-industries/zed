@@ -73,7 +73,7 @@ type FollowableItemBuilders = HashMap<
 >;
 
 #[derive(Clone, PartialEq)]
-pub struct RemoveFolderFromProject(pub WorktreeId);
+pub struct RemoveWorktreeFromProject(pub WorktreeId);
 
 actions!(
     workspace,
@@ -119,7 +119,7 @@ impl_internal_actions!(
         OpenPaths,
         ToggleFollow,
         JoinProject,
-        RemoveFolderFromProject
+        RemoveWorktreeFromProject
     ]
 );
 impl_actions!(workspace, [ToggleProjectOnline]);
@@ -1052,7 +1052,7 @@ impl Workspace {
 
     fn remove_folder_from_project(
         &mut self,
-        RemoveFolderFromProject(worktree_id): &RemoveFolderFromProject,
+        RemoveWorktreeFromProject(worktree_id): &RemoveWorktreeFromProject,
         cx: &mut ViewContext<Self>,
     ) {
         self.project

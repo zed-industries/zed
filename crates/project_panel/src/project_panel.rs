@@ -249,8 +249,8 @@ impl ProjectPanel {
                         ));
                         if is_root {
                             menu_entries.push(ContextMenuItem::item(
-                                "Remove Folder from Project",
-                                workspace::RemoveFolderFromProject(worktree_id),
+                                "Remove from Project",
+                                workspace::RemoveWorktreeFromProject(worktree_id),
                             ));
                         }
                     }
