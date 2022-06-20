@@ -2005,10 +2005,11 @@ impl Editor {
             let autoclose_pair = snapshot.language().and_then(|language| {
                 let first_selection_start = selections.first().unwrap().start;
                 let pair = language.brackets().iter().find(|pair| {
-                    snapshot.contains_str_at(
-                        first_selection_start.saturating_sub(pair.start.len()),
-                        &pair.start,
-                    )
+                    pair.close
+                        && snapshot.contains_str_at(
+                            first_selection_start.saturating_sub(pair.start.len()),
+                            &pair.start,
+                        )
                 });
                 pair.and_then(|pair| {
                     let should_autoclose = selections.iter().all(|selection| {
@@ -8719,6 +8720,12 @@ mod tests {
                         close: true,
                         newline: true,
                     },
+                    BracketPair {
+                        start: "[".to_string(),
+                        end: "]".to_string(),
+                        close: false,
+                        newline: true,
+                    },
                 ],
                 autoclose_before: "})]".to_string(),
                 ..Default::default()
@@ -8846,6 +8853,43 @@ mod tests {
             assert_eq!(
                 view.selections.display_ranges(cx),
                 [DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2)]
+            );
+
+            view.undo(&Undo, cx);
+            view.handle_input(&Input("[".to_string()), cx);
+            assert_eq!(
+                view.text(cx),
+                "
+                [a]
+                
+                /*
+                *
+                "
+                .unindent()
+            );
+            assert_eq!(
+                view.selections.display_ranges(cx),
+                [DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2)]
+            );
+
+            view.undo(&Undo, cx);
+            view.change_selections(None, cx, |s| {
+                s.select_display_ranges([DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)])
+            });
+            view.handle_input(&Input("[".to_string()), cx);
+            assert_eq!(
+                view.text(cx),
+                "
+                a[
+                
+                /*
+                *
+                "
+                .unindent()
+            );
+            assert_eq!(
+                view.selections.display_ranges(cx),
+                [DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2)]
             );
         });
     }
