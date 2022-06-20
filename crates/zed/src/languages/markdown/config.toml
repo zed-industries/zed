@@ -1,5 +1,5 @@
 name = "Markdown"
-path_suffixes = ["md"]
+path_suffixes = ["md", "mdx"]
 brackets = [
     { start = "{", end = "}", close = true, newline = true },
     { start = "[", end = "]", close = true, newline = true },
