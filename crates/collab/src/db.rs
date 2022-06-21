@@ -4,6 +4,7 @@ use crate::{Error, Result};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use axum::http::StatusCode;
+use collections::HashMap;
 use futures::StreamExt;
 use nanoid::nanoid;
 use serde::Serialize;
@@ -39,12 +40,26 @@ pub trait Db: Send + Sync {
         email_address: Option<&str>,
     ) -> Result<UserId>;
 
+    /// Registers a new project for the given user.
+    async fn register_project(&self, host_user_id: UserId) -> Result<ProjectId>;
+
+    /// Unregisters a project for the given project id.
+    async fn unregister_project(&self, project_id: ProjectId) -> Result<()>;
+
+    /// Create a new project for the given user.
+    async fn update_worktree_extensions(
+        &self,
+        project_id: ProjectId,
+        worktree_id: u64,
+        extensions: HashMap<String, usize>,
+    ) -> Result<()>;
+
     /// Record which users have been active in which projects during
     /// a given period of time.
     async fn record_project_activity(
         &self,
         time_period: Range<OffsetDateTime>,
-        active_projects: &[(UserId, u64)],
+        active_projects: &[(UserId, ProjectId)],
     ) -> Result<()>;
 
     /// Get the users that have been most active during the given time period,
@@ -429,12 +444,67 @@ impl Db for PostgresDb {
         Ok(invitee_id)
     }
 
-    // project activity
+    // projects
+
+    async fn register_project(&self, host_user_id: UserId) -> Result<ProjectId> {
+        Ok(sqlx::query_scalar(
+            "
+            INSERT INTO projects(host_user_id)
+            VALUES ($1)
+            RETURNING id
+            ",
+        )
+        .bind(host_user_id)
+        .fetch_one(&self.pool)
+        .await
+        .map(ProjectId)?)
+    }
+
+    async fn unregister_project(&self, project_id: ProjectId) -> Result<()> {
+        sqlx::query(
+            "
+            UPDATE projects
+            SET unregistered = 't'
+            WHERE project_id = $1
+            ",
+        )
+        .bind(project_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn update_worktree_extensions(
+        &self,
+        project_id: ProjectId,
+        worktree_id: u64,
+        extensions: HashMap<String, usize>,
+    ) -> Result<()> {
+        let mut query = QueryBuilder::new(
+            "INSERT INTO worktree_extensions (project_id, worktree_id, extension, count)",
+        );
+        query.push_values(extensions, |mut query, (extension, count)| {
+            query
+                .push_bind(project_id)
+                .push_bind(worktree_id as i32)
+                .push_bind(extension)
+                .push_bind(count as u32);
+        });
+        query.push(
+            "
+            ON CONFLICT (project_id, worktree_id, extension) DO UPDATE SET
+            count = excluded.count
+            ",
+        );
+        query.build().execute(&self.pool).await?;
+
+        Ok(())
+    }
 
     async fn record_project_activity(
         &self,
         time_period: Range<OffsetDateTime>,
-        projects: &[(UserId, u64)],
+        projects: &[(UserId, ProjectId)],
     ) -> Result<()> {
         let query = "
             INSERT INTO project_activity_periods
@@ -451,7 +521,7 @@ impl Db for PostgresDb {
                 .bind(time_period.end)
                 .bind(duration_millis)
                 .bind(user_id)
-                .bind(*project_id as i32)
+                .bind(project_id)
                 .execute(&mut tx)
                 .await?;
         }
@@ -488,7 +558,7 @@ impl Db for PostgresDb {
             ORDER BY user_id ASC, project_duration DESC
         ";
 
-        let mut rows = sqlx::query_as::<_, (UserId, String, i32, i64)>(query)
+        let mut rows = sqlx::query_as::<_, (UserId, String, ProjectId, i64)>(query)
             .bind(time_period.start)
             .bind(time_period.end)
             .bind(max_user_count as i32)
@@ -497,7 +567,7 @@ impl Db for PostgresDb {
         let mut result = Vec::<UserActivitySummary>::new();
         while let Some(row) = rows.next().await {
             let (user_id, github_login, project_id, duration_millis) = row?;
-            let project_id = project_id as u64;
+            let project_id = project_id;
             let duration = Duration::from_millis(duration_millis as u64);
             if let Some(last_summary) = result.last_mut() {
                 if last_summary.id == user_id {
@@ -1031,11 +1101,19 @@ pub struct User {
     pub connected_once: bool,
 }
 
+id_type!(ProjectId);
+#[derive(Clone, Debug, Default, FromRow, Serialize, PartialEq)]
+pub struct Project {
+    pub id: ProjectId,
+    pub host_user_id: UserId,
+    pub unregistered: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct UserActivitySummary {
     pub id: UserId,
     pub github_login: String,
-    pub project_activity: Vec<(u64, Duration)>,
+    pub project_activity: Vec<(ProjectId, Duration)>,
 }
 
 id_type!(OrgId);
@@ -1244,8 +1322,8 @@ pub mod tests {
         let user_1 = db.create_user("user_1", None, false).await.unwrap();
         let user_2 = db.create_user("user_2", None, false).await.unwrap();
         let user_3 = db.create_user("user_3", None, false).await.unwrap();
-        let project_1 = 101;
-        let project_2 = 102;
+        let project_1 = db.register_project(user_1).await.unwrap();
+        let project_2 = db.register_project(user_2).await.unwrap();
         let t0 = OffsetDateTime::now_utc() - Duration::from_secs(60 * 60);
 
         // User 2 opens a project
@@ -1895,6 +1973,8 @@ pub mod tests {
     pub struct FakeDb {
         background: Arc<Background>,
         pub users: Mutex<BTreeMap<UserId, User>>,
+        pub projects: Mutex<BTreeMap<ProjectId, Project>>,
+        pub worktree_extensions: Mutex<BTreeMap<(ProjectId, u64, String), usize>>,
         pub orgs: Mutex<BTreeMap<OrgId, Org>>,
         pub org_memberships: Mutex<BTreeMap<(OrgId, UserId), bool>>,
         pub channels: Mutex<BTreeMap<ChannelId, Channel>>,
@@ -1905,6 +1985,7 @@ pub mod tests {
         next_user_id: Mutex<i32>,
         next_org_id: Mutex<i32>,
         next_channel_id: Mutex<i32>,
+        next_project_id: Mutex<i32>,
     }
 
     #[derive(Debug)]
@@ -1921,6 +2002,9 @@ pub mod tests {
                 background,
                 users: Default::default(),
                 next_user_id: Mutex::new(1),
+                projects: Default::default(),
+                worktree_extensions: Default::default(),
+                next_project_id: Mutex::new(1),
                 orgs: Default::default(),
                 next_org_id: Mutex::new(1),
                 org_memberships: Default::default(),
@@ -2040,12 +2124,59 @@ pub mod tests {
             unimplemented!()
         }
 
-        // project activity
+        // projects
+
+        async fn register_project(&self, host_user_id: UserId) -> Result<ProjectId> {
+            self.background.simulate_random_delay().await;
+            if !self.users.lock().contains_key(&host_user_id) {
+                Err(anyhow!("no such user"))?;
+            }
+
+            let project_id = ProjectId(post_inc(&mut *self.next_project_id.lock()));
+            self.projects.lock().insert(
+                project_id,
+                Project {
+                    id: project_id,
+                    host_user_id,
+                    unregistered: false,
+                },
+            );
+            Ok(project_id)
+        }
+
+        async fn unregister_project(&self, project_id: ProjectId) -> Result<()> {
+            self.projects
+                .lock()
+                .get_mut(&project_id)
+                .ok_or_else(|| anyhow!("no such project"))?
+                .unregistered = true;
+            Ok(())
+        }
+
+        async fn update_worktree_extensions(
+            &self,
+            project_id: ProjectId,
+            worktree_id: u64,
+            extensions: HashMap<String, usize>,
+        ) -> Result<()> {
+            self.background.simulate_random_delay().await;
+            if !self.projects.lock().contains_key(&project_id) {
+                Err(anyhow!("no such project"))?;
+            }
+
+            for (extension, count) in extensions {
+                self.worktree_extensions
+                    .lock()
+                    .insert((project_id, worktree_id, extension), count);
+            }
+
+            Ok(())
+        }
 
         async fn record_project_activity(
             &self,
             _period: Range<OffsetDateTime>,
-            _active_projects: &[(UserId, u64)],
+            _active_projects: &[(UserId, ProjectId)],
         ) -> Result<()> {
             unimplemented!()
         }

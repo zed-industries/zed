@@ -1,11 +1,13 @@
-use crate::db::{self, ChannelId, UserId};
+use crate::db::{self, ChannelId, ProjectId, UserId};
 use anyhow::{anyhow, Result};
-use collections::{hash_map::Entry, BTreeMap, HashMap, HashSet};
+use collections::{
+    btree_map,
+    hash_map::{self, Entry},
+    BTreeMap, BTreeSet, HashMap, HashSet,
+};
 use rpc::{proto, ConnectionId, Receipt};
 use serde::Serialize;
 use std::{
-    collections::hash_map,
-    ffi::{OsStr, OsString},
     mem,
     path::{Path, PathBuf},
     str,
@@ -18,18 +20,17 @@ use tracing::instrument;
 pub struct Store {
     connections: HashMap<ConnectionId, ConnectionState>,
     connections_by_user_id: HashMap<UserId, HashSet<ConnectionId>>,
-    projects: HashMap<u64, Project>,
+    projects: BTreeMap<ProjectId, Project>,
     #[serde(skip)]
     channels: HashMap<ChannelId, Channel>,
-    next_project_id: u64,
 }
 
 #[derive(Serialize)]
 struct ConnectionState {
     user_id: UserId,
     admin: bool,
-    projects: HashSet<u64>,
-    requested_projects: HashSet<u64>,
+    projects: BTreeSet<ProjectId>,
+    requested_projects: HashSet<ProjectId>,
     channels: HashSet<ChannelId>,
 }
 
@@ -60,7 +61,7 @@ pub struct Worktree {
     #[serde(skip)]
     pub entries: HashMap<u64, proto::Entry>,
     #[serde(skip)]
-    pub extension_counts: HashMap<OsString, usize>,
+    pub extension_counts: HashMap<String, usize>,
     #[serde(skip)]
     pub diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
     pub scan_id: u64,
@@ -76,8 +77,8 @@ pub type ReplicaId = u16;
 #[derive(Default)]
 pub struct RemovedConnectionState {
     pub user_id: UserId,
-    pub hosted_projects: HashMap<u64, Project>,
-    pub guest_project_ids: HashSet<u64>,
+    pub hosted_projects: HashMap<ProjectId, Project>,
+    pub guest_project_ids: HashSet<ProjectId>,
     pub contact_ids: HashSet<UserId>,
 }
 
@@ -301,7 +302,7 @@ impl Store {
             if let Some(project) = self.projects.get(&project_id) {
                 if project.host.user_id == user_id {
                     metadata.push(proto::ProjectMetadata {
-                        id: project_id,
+                        id: project_id.to_proto(),
                         visible_worktree_root_names: project
                             .worktrees
                             .values()
@@ -324,15 +325,19 @@ impl Store {
     pub fn register_project(
         &mut self,
         host_connection_id: ConnectionId,
-        host_user_id: UserId,
-    ) -> u64 {
-        let project_id = self.next_project_id;
+        project_id: ProjectId,
+    ) -> Result<()> {
+        let connection = self
+            .connections
+            .get_mut(&host_connection_id)
+            .ok_or_else(|| anyhow!("no such connection"))?;
+        connection.projects.insert(project_id);
         self.projects.insert(
             project_id,
             Project {
                 host_connection_id,
                 host: Collaborator {
-                    user_id: host_user_id,
+                    user_id: connection.user_id,
                     replica_id: 0,
                     last_activity: None,
                 },
@@ -343,16 +348,12 @@ impl Store {
                 language_servers: Default::default(),
             },
         );
-        if let Some(connection) = self.connections.get_mut(&host_connection_id) {
-            connection.projects.insert(project_id);
-        }
-        self.next_project_id += 1;
-        project_id
+        Ok(())
     }
 
     pub fn update_project(
         &mut self,
-        project_id: u64,
+        project_id: ProjectId,
         worktrees: &[proto::WorktreeMetadata],
         connection_id: ConnectionId,
     ) -> Result<()> {
@@ -384,11 +385,11 @@ impl Store {
 
     pub fn unregister_project(
         &mut self,
-        project_id: u64,
+        project_id: ProjectId,
         connection_id: ConnectionId,
     ) -> Result<Project> {
         match self.projects.entry(project_id) {
-            hash_map::Entry::Occupied(e) => {
+            btree_map::Entry::Occupied(e) => {
                 if e.get().host_connection_id == connection_id {
                     let project = e.remove();
 
@@ -421,13 +422,13 @@ impl Store {
                     Err(anyhow!("no such project"))?
                 }
             }
-            hash_map::Entry::Vacant(_) => Err(anyhow!("no such project"))?,
+            btree_map::Entry::Vacant(_) => Err(anyhow!("no such project"))?,
         }
     }
 
     pub fn update_diagnostic_summary(
         &mut self,
-        project_id: u64,
+        project_id: ProjectId,
         worktree_id: u64,
         connection_id: ConnectionId,
         summary: proto::DiagnosticSummary,
@@ -452,7 +453,7 @@ impl Store {
 
     pub fn start_language_server(
         &mut self,
-        project_id: u64,
+        project_id: ProjectId,
         connection_id: ConnectionId,
         language_server: proto::LanguageServer,
     ) -> Result<Vec<ConnectionId>> {
@@ -471,7 +472,7 @@ impl Store {
     pub fn request_join_project(
         &mut self,
         requester_id: UserId,
-        project_id: u64,
+        project_id: ProjectId,
         receipt: Receipt<proto::JoinProject>,
     ) -> Result<()> {
         let connection = self
@@ -495,7 +496,7 @@ impl Store {
         &mut self,
         responder_connection_id: ConnectionId,
         requester_id: UserId,
-        project_id: u64,
+        project_id: ProjectId,
     ) -> Option<Vec<Receipt<proto::JoinProject>>> {
         let project = self.projects.get_mut(&project_id)?;
         if responder_connection_id != project.host_connection_id {
@@ -516,7 +517,7 @@ impl Store {
         &mut self,
         responder_connection_id: ConnectionId,
         requester_id: UserId,
-        project_id: u64,
+        project_id: ProjectId,
     ) -> Option<(Vec<(Receipt<proto::JoinProject>, ReplicaId)>, &Project)> {
         let project = self.projects.get_mut(&project_id)?;
         if responder_connection_id != project.host_connection_id {
@@ -552,7 +553,7 @@ impl Store {
     pub fn leave_project(
         &mut self,
         connection_id: ConnectionId,
-        project_id: u64,
+        project_id: ProjectId,
     ) -> Result<LeftProject> {
         let user_id = self.user_id_for_connection(connection_id)?;
         let project = self
@@ -608,13 +609,13 @@ impl Store {
     pub fn update_worktree(
         &mut self,
         connection_id: ConnectionId,
-        project_id: u64,
+        project_id: ProjectId,
         worktree_id: u64,
         worktree_root_name: &str,
         removed_entries: &[u64],
         updated_entries: &[proto::Entry],
         scan_id: u64,
-    ) -> Result<(Vec<ConnectionId>, bool, &HashMap<OsString, usize>)> {
+    ) -> Result<(Vec<ConnectionId>, bool, HashMap<String, usize>)> {
         let project = self.write_project(project_id, connection_id)?;
         let connection_ids = project.connection_ids();
         let mut worktree = project.worktrees.entry(worktree_id).or_default();
@@ -656,12 +657,16 @@ impl Store {
         }
 
         worktree.scan_id = scan_id;
-        Ok((connection_ids, metadata_changed, &worktree.extension_counts))
+        Ok((
+            connection_ids,
+            metadata_changed,
+            worktree.extension_counts.clone(),
+        ))
     }
 
     pub fn project_connection_ids(
         &self,
-        project_id: u64,
+        project_id: ProjectId,
         acting_connection_id: ConnectionId,
     ) -> Result<Vec<ConnectionId>> {
         Ok(self
@@ -677,7 +682,7 @@ impl Store {
             .connection_ids())
     }
 
-    pub fn project(&self, project_id: u64) -> Result<&Project> {
+    pub fn project(&self, project_id: ProjectId) -> Result<&Project> {
         self.projects
             .get(&project_id)
             .ok_or_else(|| anyhow!("no such project"))
@@ -685,7 +690,7 @@ impl Store {
 
     pub fn register_project_activity(
         &mut self,
-        project_id: u64,
+        project_id: ProjectId,
         connection_id: ConnectionId,
     ) -> Result<()> {
         let project = self
@@ -703,11 +708,15 @@ impl Store {
         Ok(())
     }
 
-    pub fn projects(&self) -> impl Iterator<Item = (&u64, &Project)> {
+    pub fn projects(&self) -> impl Iterator<Item = (&ProjectId, &Project)> {
         self.projects.iter()
     }
 
-    pub fn read_project(&self, project_id: u64, connection_id: ConnectionId) -> Result<&Project> {
+    pub fn read_project(
+        &self,
+        project_id: ProjectId,
+        connection_id: ConnectionId,
+    ) -> Result<&Project> {
         let project = self
             .projects
             .get(&project_id)
@@ -723,7 +732,7 @@ impl Store {
 
     fn write_project(
         &mut self,
-        project_id: u64,
+        project_id: ProjectId,
         connection_id: ConnectionId,
     ) -> Result<&mut Project> {
         let project = self
@@ -842,9 +851,10 @@ impl Channel {
     }
 }
 
-fn extension_for_entry(entry: &proto::Entry) -> Option<&OsStr> {
+fn extension_for_entry(entry: &proto::Entry) -> Option<&str> {
     str::from_utf8(&entry.path)
         .ok()
         .map(Path::new)
         .and_then(|p| p.extension())
+        .and_then(|e| e.to_str())
 }
