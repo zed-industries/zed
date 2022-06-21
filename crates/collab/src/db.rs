@@ -465,7 +465,7 @@ impl Db for PostgresDb {
             "
             UPDATE projects
             SET unregistered = 't'
-            WHERE project_id = $1
+            WHERE id = $1
             ",
         )
         .bind(project_id)

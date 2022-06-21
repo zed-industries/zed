@@ -452,11 +452,14 @@ impl Server {
     async fn sign_out(self: &mut Arc<Self>, connection_id: ConnectionId) -> Result<()> {
         self.peer.disconnect(connection_id);
 
-        let removed_user_id = {
+        let mut projects_to_unregister = Vec::new();
+        let removed_user_id;
+        {
             let mut store = self.store_mut().await;
             let removed_connection = store.remove_connection(connection_id)?;
 
             for (project_id, project) in removed_connection.hosted_projects {
+                projects_to_unregister.push(project_id);
                 broadcast(connection_id, project.guests.keys().copied(), |conn_id| {
                     self.peer.send(
                         conn_id,
@@ -506,10 +509,18 @@ impl Server {
                 }
             }
 
-            removed_connection.user_id
+            removed_user_id = removed_connection.user_id;
         };
 
-        self.update_user_contacts(removed_user_id).await?;
+        self.update_user_contacts(removed_user_id).await.trace_err();
+
+        for project_id in projects_to_unregister {
+            self.app_state
+                .db
+                .unregister_project(project_id)
+                .await
+                .trace_err();
+        }
 
         Ok(())
     }
@@ -594,14 +605,13 @@ impl Server {
         request: TypedEnvelope<proto::UnregisterProject>,
         response: Response<proto::UnregisterProject>,
     ) -> Result<()> {
+        let project_id = ProjectId::from_proto(request.payload.project_id);
         let (user_id, project) = {
             let mut state = self.store_mut().await;
-            let project = state.unregister_project(
-                ProjectId::from_proto(request.payload.project_id),
-                request.sender_id,
-            )?;
+            let project = state.unregister_project(project_id, request.sender_id)?;
             (state.user_id_for_connection(request.sender_id)?, project)
         };
+        self.app_state.db.unregister_project(project_id).await?;
 
         broadcast(
             request.sender_id,
@@ -610,7 +620,7 @@ impl Server {
                 self.peer.send(
                     conn_id,
                     proto::UnregisterProject {
-                        project_id: request.payload.project_id,
+                        project_id: project_id.to_proto(),
                     },
                 )
             },
