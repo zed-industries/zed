@@ -288,6 +288,57 @@ impl Server {
         })
     }
 
+    /// Start a long lived task that records which users are active in which projects.
+    pub fn start_recording_project_activity<E: 'static + Executor>(
+        self: &Arc<Self>,
+        interval: Duration,
+        executor: E,
+    ) {
+        executor.spawn_detached({
+            let this = Arc::downgrade(self);
+            let executor = executor.clone();
+            async move {
+                let mut period_start = OffsetDateTime::now_utc();
+                let mut active_projects = Vec::<(UserId, u64)>::new();
+                loop {
+                    let sleep = executor.sleep(interval);
+                    sleep.await;
+                    let this = if let Some(this) = this.upgrade() {
+                        this
+                    } else {
+                        break;
+                    };
+
+                    active_projects.clear();
+                    active_projects.extend(this.store().await.projects().flat_map(
+                        |(project_id, project)| {
+                            project.guests.values().chain([&project.host]).filter_map(
+                                |collaborator| {
+                                    if collaborator
+                                        .last_activity
+                                        .map_or(false, |activity| activity > period_start)
+                                    {
+                                        Some((collaborator.user_id, *project_id))
+                                    } else {
+                                        None
+                                    }
+                                },
+                            )
+                        },
+                    ));
+
+                    let period_end = OffsetDateTime::now_utc();
+                    this.app_state
+                        .db
+                        .record_project_activity(period_start..period_end, &active_projects)
+                        .await
+                        .trace_err();
+                    period_start = period_end;
+                }
+            }
+        });
+    }
+
     pub fn handle_connection<E: Executor>(
         self: &Arc<Self>,
         connection: Connection,
@@ -621,7 +672,7 @@ impl Server {
         {
             let state = self.store().await;
             let project = state.project(project_id)?;
-            host_user_id = project.host_user_id;
+            host_user_id = project.host.user_id;
             host_connection_id = project.host_connection_id;
             guest_user_id = state.user_id_for_connection(request.sender_id)?;
         };
@@ -665,7 +716,7 @@ impl Server {
                 Err(anyhow!("no such connection"))?;
             }
 
-            host_user_id = project.host_user_id;
+            host_user_id = project.host.user_id;
             let guest_user_id = UserId::from_proto(request.payload.requester_id);
 
             if !request.payload.allow {
@@ -697,7 +748,7 @@ impl Server {
             collaborators.push(proto::Collaborator {
                 peer_id: project.host_connection_id.0,
                 replica_id: 0,
-                user_id: project.host_user_id.to_proto(),
+                user_id: project.host.user_id.to_proto(),
             });
             let worktrees = project
                 .worktrees
@@ -720,15 +771,15 @@ impl Server {
                 .collect::<Vec<_>>();
 
             // Add all guests other than the requesting user's own connections as collaborators
-            for (peer_conn_id, (peer_replica_id, peer_user_id)) in &project.guests {
+            for (guest_conn_id, guest) in &project.guests {
                 if receipts_with_replica_ids
                     .iter()
-                    .all(|(receipt, _)| receipt.sender_id != *peer_conn_id)
+                    .all(|(receipt, _)| receipt.sender_id != *guest_conn_id)
                 {
                     collaborators.push(proto::Collaborator {
-                        peer_id: peer_conn_id.0,
-                        replica_id: *peer_replica_id as u32,
-                        user_id: peer_user_id.to_proto(),
+                        peer_id: guest_conn_id.0,
+                        replica_id: guest.replica_id as u32,
+                        user_id: guest.user_id.to_proto(),
                     });
                 }
             }

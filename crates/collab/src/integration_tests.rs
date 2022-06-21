@@ -4722,7 +4722,7 @@ impl TestServer {
         foreground: Rc<executor::Foreground>,
         background: Arc<executor::Background>,
     ) -> Self {
-        let test_db = TestDb::fake(background);
+        let test_db = TestDb::fake(background.clone());
         let app_state = Self::build_app_state(&test_db).await;
         let peer = Peer::new();
         let notifications = mpsc::unbounded();

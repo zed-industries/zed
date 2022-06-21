@@ -9,8 +9,9 @@ use std::{
     mem,
     path::{Path, PathBuf},
     str,
-    time::{Duration, Instant},
+    time::Duration,
 };
+use time::OffsetDateTime;
 use tracing::instrument;
 
 #[derive(Default, Serialize)]
@@ -35,15 +36,21 @@ struct ConnectionState {
 #[derive(Serialize)]
 pub struct Project {
     pub host_connection_id: ConnectionId,
-    pub host_user_id: UserId,
-    pub guests: HashMap<ConnectionId, (ReplicaId, UserId)>,
+    pub host: Collaborator,
+    pub guests: HashMap<ConnectionId, Collaborator>,
     #[serde(skip)]
     pub join_requests: HashMap<UserId, Vec<Receipt<proto::JoinProject>>>,
     pub active_replica_ids: HashSet<ReplicaId>,
     pub worktrees: BTreeMap<u64, Worktree>,
     pub language_servers: Vec<proto::LanguageServer>,
+}
+
+#[derive(Serialize)]
+pub struct Collaborator {
+    pub replica_id: ReplicaId,
+    pub user_id: UserId,
     #[serde(skip)]
-    last_activity: Option<Instant>,
+    pub last_activity: Option<OffsetDateTime>,
 }
 
 #[derive(Default, Serialize)]
@@ -93,6 +100,9 @@ pub struct Metrics {
 
 impl Store {
     pub fn metrics(&self) -> Metrics {
+        const ACTIVE_PROJECT_TIMEOUT: Duration = Duration::from_secs(60);
+        let active_window_start = OffsetDateTime::now_utc() - ACTIVE_PROJECT_TIMEOUT;
+
         let connections = self.connections.values().filter(|c| !c.admin).count();
         let mut registered_projects = 0;
         let mut active_projects = 0;
@@ -101,7 +111,7 @@ impl Store {
             if let Some(connection) = self.connections.get(&project.host_connection_id) {
                 if !connection.admin {
                     registered_projects += 1;
-                    if project.is_active() {
+                    if project.is_active_since(active_window_start) {
                         active_projects += 1;
                         if !project.guests.is_empty() {
                             shared_projects += 1;
@@ -289,7 +299,7 @@ impl Store {
         let mut metadata = Vec::new();
         for project_id in project_ids {
             if let Some(project) = self.projects.get(&project_id) {
-                if project.host_user_id == user_id {
+                if project.host.user_id == user_id {
                     metadata.push(proto::ProjectMetadata {
                         id: project_id,
                         visible_worktree_root_names: project
@@ -301,7 +311,7 @@ impl Store {
                         guests: project
                             .guests
                             .values()
-                            .map(|(_, user_id)| user_id.to_proto())
+                            .map(|guest| guest.user_id.to_proto())
                             .collect(),
                     });
                 }
@@ -321,13 +331,16 @@ impl Store {
             project_id,
             Project {
                 host_connection_id,
-                host_user_id,
+                host: Collaborator {
+                    user_id: host_user_id,
+                    replica_id: 0,
+                    last_activity: None,
+                },
                 guests: Default::default(),
                 join_requests: Default::default(),
                 active_replica_ids: Default::default(),
                 worktrees: Default::default(),
                 language_servers: Default::default(),
-                last_activity: None,
             },
         );
         if let Some(connection) = self.connections.get_mut(&host_connection_id) {
@@ -470,7 +483,6 @@ impl Store {
             .get_mut(&project_id)
             .ok_or_else(|| anyhow!("no such project"))?;
         connection.requested_projects.insert(project_id);
-        project.last_activity = Some(Instant::now());
         project
             .join_requests
             .entry(requester_id)
@@ -495,7 +507,7 @@ impl Store {
             let requester_connection = self.connections.get_mut(&receipt.sender_id)?;
             requester_connection.requested_projects.remove(&project_id);
         }
-        project.last_activity = Some(Instant::now());
+        project.host.last_activity = Some(OffsetDateTime::now_utc());
 
         Some(receipts)
     }
@@ -522,13 +534,18 @@ impl Store {
                 replica_id += 1;
             }
             project.active_replica_ids.insert(replica_id);
-            project
-                .guests
-                .insert(receipt.sender_id, (replica_id, requester_id));
+            project.guests.insert(
+                receipt.sender_id,
+                Collaborator {
+                    replica_id,
+                    user_id: requester_id,
+                    last_activity: Some(OffsetDateTime::now_utc()),
+                },
+            );
             receipts_with_replica_ids.push((receipt, replica_id));
         }
 
-        project.last_activity = Some(Instant::now());
+        project.host.last_activity = Some(OffsetDateTime::now_utc());
         Some((receipts_with_replica_ids, project))
     }
 
@@ -544,13 +561,12 @@ impl Store {
             .ok_or_else(|| anyhow!("no such project"))?;
 
         // If the connection leaving the project is a collaborator, remove it.
-        let remove_collaborator =
-            if let Some((replica_id, _)) = project.guests.remove(&connection_id) {
-                project.active_replica_ids.remove(&replica_id);
-                true
-            } else {
-                false
-            };
+        let remove_collaborator = if let Some(guest) = project.guests.remove(&connection_id) {
+            project.active_replica_ids.remove(&guest.replica_id);
+            true
+        } else {
+            false
+        };
 
         // If the connection leaving the project has a pending request, remove it.
         // If that user has no other pending requests on other connections, indicate that the request should be cancelled.
@@ -579,11 +595,9 @@ impl Store {
             }
         }
 
-        project.last_activity = Some(Instant::now());
-
         Ok(LeftProject {
             host_connection_id: project.host_connection_id,
-            host_user_id: project.host_user_id,
+            host_user_id: project.host.user_id,
             connection_ids,
             cancel_request,
             unshare,
@@ -674,8 +688,23 @@ impl Store {
         project_id: u64,
         connection_id: ConnectionId,
     ) -> Result<()> {
-        self.write_project(project_id, connection_id)?.last_activity = Some(Instant::now());
+        let project = self
+            .projects
+            .get_mut(&project_id)
+            .ok_or_else(|| anyhow!("no such project"))?;
+        let collaborator = if connection_id == project.host_connection_id {
+            &mut project.host
+        } else if let Some(guest) = project.guests.get_mut(&connection_id) {
+            guest
+        } else {
+            return Err(anyhow!("no such project"))?;
+        };
+        collaborator.last_activity = Some(OffsetDateTime::now_utc());
         Ok(())
+    }
+
+    pub fn projects(&self) -> impl Iterator<Item = (&u64, &Project)> {
+        self.projects.iter()
     }
 
     pub fn read_project(&self, project_id: u64, connection_id: ConnectionId) -> Result<&Project> {
@@ -768,7 +797,7 @@ impl Store {
                 project
                     .guests
                     .values()
-                    .map(|(replica_id, _)| *replica_id)
+                    .map(|guest| guest.replica_id)
                     .collect::<HashSet<_>>(),
             );
         }
@@ -783,11 +812,15 @@ impl Store {
 }
 
 impl Project {
-    fn is_active(&self) -> bool {
-        const ACTIVE_PROJECT_TIMEOUT: Duration = Duration::from_secs(60);
-        self.last_activity.map_or(false, |last_activity| {
-            last_activity.elapsed() < ACTIVE_PROJECT_TIMEOUT
-        })
+    fn is_active_since(&self, start_time: OffsetDateTime) -> bool {
+        self.guests
+            .values()
+            .chain([&self.host])
+            .any(|collaborator| {
+                collaborator
+                    .last_activity
+                    .map_or(false, |active_time| active_time > start_time)
+            })
     }
 
     pub fn guest_connection_ids(&self) -> Vec<ConnectionId> {

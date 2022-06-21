@@ -1,3 +1,5 @@
+use std::{ops::Range, time::Duration};
+
 use crate::{Error, Result};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
@@ -36,6 +38,22 @@ pub trait Db: Send + Sync {
         login: &str,
         email_address: Option<&str>,
     ) -> Result<UserId>;
+
+    /// Record which users have been active in which projects during
+    /// a given period of time.
+    async fn record_project_activity(
+        &self,
+        time_period: Range<OffsetDateTime>,
+        active_projects: &[(UserId, u64)],
+    ) -> Result<()>;
+
+    /// Get the users that have been most active during the given time period,
+    /// along with the amount of time they have been active in each project.
+    async fn summarize_project_activity(
+        &self,
+        time_period: Range<OffsetDateTime>,
+        max_user_count: usize,
+    ) -> Result<Vec<UserActivitySummary>>;
 
     async fn get_contacts(&self, id: UserId) -> Result<Vec<Contact>>;
     async fn has_contact(&self, user_id_a: UserId, user_id_b: UserId) -> Result<bool>;
@@ -150,7 +168,7 @@ impl Db for PostgresDb {
             .fetch_all(&self.pool)
             .await?)
     }
-  
+
     async fn create_users(&self, users: Vec<(String, String, usize)>) -> Result<Vec<UserId>> {
         let mut query = QueryBuilder::new(
             "INSERT INTO users (github_login, email_address, admin, invite_code, invite_count)",
@@ -409,6 +427,92 @@ impl Db for PostgresDb {
 
         tx.commit().await?;
         Ok(invitee_id)
+    }
+
+    // project activity
+
+    async fn record_project_activity(
+        &self,
+        time_period: Range<OffsetDateTime>,
+        projects: &[(UserId, u64)],
+    ) -> Result<()> {
+        let query = "
+            INSERT INTO project_activity_periods
+            (ended_at, duration_millis, user_id, project_id)
+            VALUES
+            ($1, $2, $3, $4);
+        ";
+
+        let mut tx = self.pool.begin().await?;
+        let duration_millis =
+            ((time_period.end - time_period.start).as_seconds_f64() * 1000.0) as i32;
+        for (user_id, project_id) in projects {
+            sqlx::query(query)
+                .bind(time_period.end)
+                .bind(duration_millis)
+                .bind(user_id)
+                .bind(*project_id as i32)
+                .execute(&mut tx)
+                .await?;
+        }
+        tx.commit().await?;
+
+        Ok(())
+    }
+
+    async fn summarize_project_activity(
+        &self,
+        time_period: Range<OffsetDateTime>,
+        max_user_count: usize,
+    ) -> Result<Vec<UserActivitySummary>> {
+        let query = "
+            WITH
+                project_durations AS (
+                    SELECT user_id, project_id, SUM(duration_millis) AS project_duration
+                    FROM project_activity_periods
+                    WHERE $1 <= ended_at AND ended_at <= $2
+                    GROUP BY user_id, project_id
+                ),
+                user_durations AS (
+                    SELECT user_id, SUM(project_duration) as total_duration
+                    FROM project_durations
+                    GROUP BY user_id
+                    ORDER BY total_duration DESC
+                    LIMIT $3
+                )
+            SELECT user_durations.user_id, users.github_login, project_id, project_duration
+            FROM user_durations, project_durations, users
+            WHERE
+                user_durations.user_id = project_durations.user_id AND
+                user_durations.user_id = users.id
+            ORDER BY user_id ASC, project_duration DESC
+        ";
+
+        let mut rows = sqlx::query_as::<_, (UserId, String, i32, i64)>(query)
+            .bind(time_period.start)
+            .bind(time_period.end)
+            .bind(max_user_count as i32)
+            .fetch(&self.pool);
+
+        let mut result = Vec::<UserActivitySummary>::new();
+        while let Some(row) = rows.next().await {
+            let (user_id, github_login, project_id, duration_millis) = row?;
+            let project_id = project_id as u64;
+            let duration = Duration::from_millis(duration_millis as u64);
+            if let Some(last_summary) = result.last_mut() {
+                if last_summary.id == user_id {
+                    last_summary.project_activity.push((project_id, duration));
+                    continue;
+                }
+            }
+            result.push(UserActivitySummary {
+                id: user_id,
+                project_activity: vec![(project_id, duration)],
+                github_login,
+            });
+        }
+
+        Ok(result)
     }
 
     // contacts
@@ -927,6 +1031,13 @@ pub struct User {
     pub connected_once: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct UserActivitySummary {
+    pub id: UserId,
+    pub github_login: String,
+    pub project_activity: Vec<(u64, Duration)>,
+}
+
 id_type!(OrgId);
 #[derive(FromRow)]
 pub struct Org {
@@ -1123,6 +1234,94 @@ pub mod tests {
         assert_ne!(invite_code_4, invite_code_1);
         assert_ne!(invite_code_4, invite_code_2);
         assert_ne!(invite_code_4, invite_code_3);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_project_activity() {
+        let test_db = TestDb::postgres().await;
+        let db = test_db.db();
+
+        let user_1 = db.create_user("user_1", None, false).await.unwrap();
+        let user_2 = db.create_user("user_2", None, false).await.unwrap();
+        let user_3 = db.create_user("user_3", None, false).await.unwrap();
+        let project_1 = 101;
+        let project_2 = 102;
+        let t0 = OffsetDateTime::now_utc() - Duration::from_secs(60 * 60);
+
+        // User 2 opens a project
+        let t1 = t0 + Duration::from_secs(10);
+        db.record_project_activity(t0..t1, &[(user_2, project_2)])
+            .await
+            .unwrap();
+
+        let t2 = t1 + Duration::from_secs(10);
+        db.record_project_activity(t1..t2, &[(user_2, project_2)])
+            .await
+            .unwrap();
+
+        // User 1 joins the project
+        let t3 = t2 + Duration::from_secs(10);
+        db.record_project_activity(t2..t3, &[(user_2, project_2), (user_1, project_2)])
+            .await
+            .unwrap();
+
+        // User 1 opens another project
+        let t4 = t3 + Duration::from_secs(10);
+        db.record_project_activity(
+            t3..t4,
+            &[
+                (user_2, project_2),
+                (user_1, project_2),
+                (user_1, project_1),
+            ],
+        )
+        .await
+        .unwrap();
+
+        // User 3 joins that project
+        let t5 = t4 + Duration::from_secs(10);
+        db.record_project_activity(
+            t4..t5,
+            &[
+                (user_2, project_2),
+                (user_1, project_2),
+                (user_1, project_1),
+                (user_3, project_1),
+            ],
+        )
+        .await
+        .unwrap();
+
+        // User 2 leaves
+        let t6 = t5 + Duration::from_secs(5);
+        db.record_project_activity(t5..t6, &[(user_1, project_1), (user_3, project_1)])
+            .await
+            .unwrap();
+
+        let summary = db.summarize_project_activity(t0..t6, 10).await.unwrap();
+        assert_eq!(
+            summary,
+            &[
+                UserActivitySummary {
+                    id: user_1,
+                    github_login: "user_1".to_string(),
+                    project_activity: vec![
+                        (project_2, Duration::from_secs(30)),
+                        (project_1, Duration::from_secs(25))
+                    ]
+                },
+                UserActivitySummary {
+                    id: user_2,
+                    github_login: "user_2".to_string(),
+                    project_activity: vec![(project_2, Duration::from_secs(50))]
+                },
+                UserActivitySummary {
+                    id: user_3,
+                    github_login: "user_3".to_string(),
+                    project_activity: vec![(project_1, Duration::from_secs(15))]
+                },
+            ]
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1838,6 +2037,24 @@ pub mod tests {
             _login: &str,
             _email_address: Option<&str>,
         ) -> Result<UserId> {
+            unimplemented!()
+        }
+
+        // project activity
+
+        async fn record_project_activity(
+            &self,
+            _period: Range<OffsetDateTime>,
+            _active_projects: &[(UserId, u64)],
+        ) -> Result<()> {
+            unimplemented!()
+        }
+
+        async fn summarize_project_activity(
+            &self,
+            _period: Range<OffsetDateTime>,
+            _limit: usize,
+        ) -> Result<Vec<UserActivitySummary>> {
             unimplemented!()
         }
 

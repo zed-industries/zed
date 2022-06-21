@@ -16,7 +16,8 @@ use axum::{
 };
 use axum_extra::response::ErasedJson;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
+use time::OffsetDateTime;
 use tower::ServiceBuilder;
 use tracing::instrument;
 
@@ -32,6 +33,10 @@ pub fn routes(rpc_server: &Arc<rpc::Server>, state: Arc<AppState>) -> Router<Bod
         .route("/invite_codes/:code", get(get_user_for_invite_code))
         .route("/panic", post(trace_panic))
         .route("/rpc_server_snapshot", get(get_rpc_server_snapshot))
+        .route(
+            "/project_activity_summary",
+            get(get_project_activity_summary),
+        )
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(state))
@@ -237,6 +242,21 @@ async fn get_rpc_server_snapshot(
     Extension(rpc_server): Extension<Arc<rpc::Server>>,
 ) -> Result<ErasedJson> {
     Ok(ErasedJson::pretty(rpc_server.snapshot().await))
+}
+
+#[derive(Deserialize)]
+struct GetProjectActivityParams {
+    duration_secs: u64,
+}
+
+async fn get_project_activity_summary(
+    Query(params): Query<GetProjectActivityParams>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<ErasedJson> {
+    let end = OffsetDateTime::now_utc();
+    let start = end - Duration::from_secs(params.duration_secs);
+    let summary = app.db.summarize_project_activity(start..end, 100).await?;
+    Ok(ErasedJson::pretty(summary))
 }
 
 #[derive(Deserialize)]
