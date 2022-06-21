@@ -592,11 +592,8 @@ impl LanguageServer {
         }
     }
 
-    pub fn fake(cx: AsyncAppContext) -> (Self, FakeLanguageServer) {
-        Self::fake_with_capabilities(Self::full_capabilities(), cx)
-    }
-
-    pub fn fake_with_capabilities(
+    pub fn fake(
+        name: String,
         capabilities: ServerCapabilities,
         cx: AsyncAppContext,
     ) -> (Self, FakeLanguageServer) {
@@ -631,9 +628,14 @@ impl LanguageServer {
             let capabilities = capabilities.clone();
             move |_, _| {
                 let capabilities = capabilities.clone();
+                let name = name.clone();
                 async move {
                     Ok(InitializeResult {
                         capabilities,
+                        server_info: Some(ServerInfo {
+                            name,
+                            ..Default::default()
+                        }),
                         ..Default::default()
                     })
                 }
@@ -740,7 +742,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_fake(cx: &mut TestAppContext) {
-        let (server, mut fake) = LanguageServer::fake(cx.to_async());
+        let (server, mut fake) =
+            LanguageServer::fake("the-lsp".to_string(), Default::default(), cx.to_async());
 
         let (message_tx, message_rx) = channel::unbounded();
         let (diagnostics_tx, diagnostics_rx) = channel::unbounded();
