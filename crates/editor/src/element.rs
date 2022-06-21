@@ -511,6 +511,8 @@ impl EditorElement {
                 cx,
             );
 
+            paint.context_menu_bounds = Some(RectF::new(list_origin, context_menu.size()));
+
             cx.scene.pop_stacking_context();
         }
 
@@ -1342,6 +1344,7 @@ impl Element for EditorElement {
             bounds,
             gutter_bounds,
             text_bounds,
+            context_menu_bounds: None,
             hover_bounds: None,
         };
 
@@ -1424,6 +1427,16 @@ impl Element for EditorElement {
             } => self.scroll(*position, *delta, *precise, layout, paint, cx),
             Event::KeyDown { input, .. } => self.key_down(input.as_deref(), cx),
             Event::MouseMoved { position, .. } => {
+                // Don't trigger hover popover if mouse is hovering over context menu
+                if paint
+                    .context_menu_bounds
+                    .map_or(false, |context_menu_bounds| {
+                        context_menu_bounds.contains_point(*position)
+                    })
+                {
+                    return false;
+                }
+
                 if paint
                     .hover_bounds
                     .map_or(false, |hover_bounds| hover_bounds.contains_point(*position))
@@ -1528,6 +1541,7 @@ pub struct PaintState {
     bounds: RectF,
     gutter_bounds: RectF,
     text_bounds: RectF,
+    context_menu_bounds: Option<RectF>,
     hover_bounds: Option<RectF>,
 }
 
