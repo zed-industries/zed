@@ -1427,6 +1427,7 @@ impl Element for EditorElement {
             } => self.scroll(*position, *delta, *precise, layout, paint, cx),
             Event::KeyDown { input, .. } => self.key_down(input.as_deref(), cx),
             Event::MouseMoved { position, .. } => {
+                // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
                 // Don't trigger hover popover if mouse is hovering over context menu
                 if paint
                     .context_menu_bounds
@@ -1443,7 +1444,7 @@ impl Element for EditorElement {
                 {
                     return false;
                 }
-
+                
                 let point = if paint.text_bounds.contains_point(*position) {
                     let (point, overshoot) =
                         paint.point_for_position(&self.snapshot(cx), layout, *position);
