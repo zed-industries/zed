@@ -226,7 +226,8 @@
             "cmd-p": "file_finder::Toggle",
             "cmd-shift-P": "command_palette::Toggle",
             "cmd-shift-M": "diagnostics::Deploy",
-            "cmd-alt-s": "workspace::SaveAll"
+            "cmd-alt-s": "workspace::SaveAll",
+            "shift-cmd-T": "terminal::Deploy"
         }
     },
     // Bindings from Sublime Text

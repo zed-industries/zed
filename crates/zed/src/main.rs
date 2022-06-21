@@ -181,6 +181,7 @@ fn main() {
         diagnostics::init(cx);
         search::init(cx);
         vim::init(cx);
+        terminal::init(cx);
 
         let db = cx.background().block(db);
         let (settings_file, keymap_file) = cx.background().block(config_files).unwrap();

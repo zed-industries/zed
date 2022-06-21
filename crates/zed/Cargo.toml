@@ -46,6 +46,7 @@ rpc = { path = "../rpc" }
 settings = { path = "../settings" }
 sum_tree = { path = "../sum_tree" }
 text = { path = "../text" }
+terminal = { path = "../terminal" }
 theme = { path = "../theme" }
 theme_selector = { path = "../theme_selector" }
 util = { path = "../util" }
