@@ -1256,6 +1256,18 @@ impl Project {
             });
         }
 
+        for (server_id, status) in &self.language_server_statuses {
+            self.client
+                .send(proto::StartLanguageServer {
+                    project_id,
+                    server: Some(proto::LanguageServer {
+                        id: *server_id as u64,
+                        name: status.name.clone(),
+                    }),
+                })
+                .log_err();
+        }
+
         cx.spawn(|this, mut cx| async move {
             for task in tasks {
                 task.await?;

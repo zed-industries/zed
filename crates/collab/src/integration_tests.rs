@@ -2945,6 +2945,110 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
 }
 
 #[gpui::test(iterations = 10)]
+async fn test_language_server_statuses(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+
+    cx_b.update(|cx| editor::init(cx));
+    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    // Set up a fake language server.
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+    let mut fake_language_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
+        name: "the-language-server",
+        ..Default::default()
+    });
+    client_a.language_registry.add(Arc::new(language));
+
+    client_a
+        .fs
+        .insert_tree(
+            "/dir",
+            json!({
+                "main.rs": "const ONE: usize = 1;",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+
+    let _buffer_a = project_a
+        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+        .await
+        .unwrap();
+
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+        token: lsp::NumberOrString::String("the-token".to_string()),
+        value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Report(
+            lsp::WorkDoneProgressReport {
+                message: Some("the-message".to_string()),
+                ..Default::default()
+            },
+        )),
+    });
+    deterministic.run_until_parked();
+    project_a.read_with(cx_a, |project, _| {
+        let status = project.language_server_statuses().next().unwrap();
+        assert_eq!(status.name, "the-language-server");
+        assert_eq!(status.pending_work.len(), 1);
+        assert_eq!(
+            status.pending_work["the-token"].message.as_ref().unwrap(),
+            "the-message"
+        );
+    });
+
+    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    project_b.read_with(cx_b, |project, _| {
+        let status = project.language_server_statuses().next().unwrap();
+        assert_eq!(status.name, "the-language-server");
+    });
+
+    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+        token: lsp::NumberOrString::String("the-token".to_string()),
+        value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Report(
+            lsp::WorkDoneProgressReport {
+                message: Some("the-message-2".to_string()),
+                ..Default::default()
+            },
+        )),
+    });
+    deterministic.run_until_parked();
+    project_a.read_with(cx_a, |project, _| {
+        let status = project.language_server_statuses().next().unwrap();
+        assert_eq!(status.name, "the-language-server");
+        assert_eq!(status.pending_work.len(), 1);
+        assert_eq!(
+            status.pending_work["the-token"].message.as_ref().unwrap(),
+            "the-message-2"
+        );
+    });
+    project_b.read_with(cx_b, |project, _| {
+        let status = project.language_server_statuses().next().unwrap();
+        assert_eq!(status.name, "the-language-server");
+        assert_eq!(status.pending_work.len(), 1);
+        assert_eq!(
+            status.pending_work["the-token"].message.as_ref().unwrap(),
+            "the-message-2"
+        );
+    });
+}
+
+#[gpui::test(iterations = 10)]
 async fn test_basic_chat(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;

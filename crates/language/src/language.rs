@@ -284,7 +284,8 @@ impl LanguageRegistry {
             let language = language.clone();
             return Some(cx.spawn(|cx| async move {
                 let (servers_tx, fake_adapter) = language.fake_adapter.as_ref().unwrap();
-                let (server, mut fake_server) = lsp::LanguageServer::fake_with_capabilities(
+                let (server, mut fake_server) = lsp::LanguageServer::fake(
+                    fake_adapter.name.to_string(),
                     fake_adapter.capabilities.clone(),
                     cx.clone(),
                 );
