@@ -16,7 +16,7 @@ use axum::{
 };
 use axum_extra::response::ErasedJson;
 use serde::{Deserialize, Serialize};
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use time::OffsetDateTime;
 use tower::ServiceBuilder;
 use tracing::instrument;
@@ -246,16 +246,20 @@ async fn get_rpc_server_snapshot(
 
 #[derive(Deserialize)]
 struct GetProjectActivityParams {
-    duration_secs: u64,
+    #[serde(with = "time::serde::iso8601")]
+    start: OffsetDateTime,
+    #[serde(with = "time::serde::iso8601")]
+    end: OffsetDateTime,
 }
 
 async fn get_project_activity_summary(
     Query(params): Query<GetProjectActivityParams>,
     Extension(app): Extension<Arc<AppState>>,
 ) -> Result<ErasedJson> {
-    let end = OffsetDateTime::now_utc();
-    let start = end - Duration::from_secs(params.duration_secs);
-    let summary = app.db.summarize_project_activity(start..end, 100).await?;
+    let summary = app
+        .db
+        .summarize_project_activity(params.start..params.end, 100)
+        .await?;
     Ok(ErasedJson::pretty(summary))
 }
 

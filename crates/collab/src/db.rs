@@ -178,8 +178,8 @@ impl Db for PostgresDb {
     async fn get_all_users(&self, page: u32, limit: u32) -> Result<Vec<User>> {
         let query = "SELECT * FROM users ORDER BY github_login ASC LIMIT $1 OFFSET $2";
         Ok(sqlx::query_as(query)
-            .bind(limit)
-            .bind(page * limit)
+            .bind(limit as i32)
+            .bind((page * limit) as i32)
             .fetch_all(&self.pool)
             .await?)
     }
@@ -196,7 +196,7 @@ impl Db for PostgresDb {
                     .push_bind(email_address)
                     .push_bind(false)
                     .push_bind(nanoid!(16))
-                    .push_bind(invite_count as u32);
+                    .push_bind(invite_count as i32);
             },
         );
         query.push(
@@ -231,7 +231,7 @@ impl Db for PostgresDb {
         Ok(sqlx::query_as(query)
             .bind(like_string)
             .bind(name_query)
-            .bind(limit)
+            .bind(limit as i32)
             .fetch_all(&self.pool)
             .await?)
     }
@@ -322,7 +322,7 @@ impl Db for PostgresDb {
             WHERE id = $2
             ",
         )
-        .bind(count)
+        .bind(count as i32)
         .bind(id)
         .execute(&mut tx)
         .await?;
@@ -488,7 +488,7 @@ impl Db for PostgresDb {
                 .push_bind(project_id)
                 .push_bind(worktree_id as i32)
                 .push_bind(extension)
-                .push_bind(count as u32);
+                .push_bind(count as i32);
         });
         query.push(
             "
@@ -825,7 +825,7 @@ impl Db for PostgresDb {
         sqlx::query(cleanup_query)
             .bind(user_id.0)
             .bind(access_token_hash)
-            .bind(max_access_token_count as u32)
+            .bind(max_access_token_count as i32)
             .execute(&mut tx)
             .await?;
         Ok(tx.commit().await?)

@@ -29,7 +29,7 @@ postage = { version = "0.4.1", features = ["futures-traits"] }
 rand = "0.8.3"
 smol = "1.2.5"
 thiserror = "1.0.29"
-time = "0.3"
+time = { version = "0.3", features = ["serde", "serde-well-known"] }
 tiny_http = "0.8"
 url = "2.2"
 

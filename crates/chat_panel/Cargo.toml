@@ -17,4 +17,4 @@ theme = { path = "../theme" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
 postage = { version = "0.4.1", features = ["futures-traits"] }
-time = "0.3"
+time = { version = "0.3", features = ["serde", "serde-well-known"] }
