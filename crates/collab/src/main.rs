@@ -14,6 +14,7 @@ use serde::Deserialize;
 use std::{
     net::{SocketAddr, TcpListener},
     sync::Arc,
+    time::Duration,
 };
 use tracing_log::LogTracer;
 use tracing_subscriber::{filter::EnvFilter, fmt::format::JsonFields, Layer};
@@ -65,6 +66,8 @@ async fn main() -> Result<()> {
     let listener = TcpListener::bind(&format!("0.0.0.0:{}", config.http_port))
         .expect("failed to bind TCP listener");
     let rpc_server = rpc::Server::new(state.clone(), None);
+
+    rpc_server.start_recording_project_activity(Duration::from_secs(5 * 60), rpc::RealExecutor);
 
     let app = Router::<Body>::new()
         .merge(api::routes(&rpc_server, state.clone()))

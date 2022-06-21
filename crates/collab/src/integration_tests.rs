@@ -1,5 +1,5 @@
 use crate::{
-    db::{tests::TestDb, UserId},
+    db::{tests::TestDb, ProjectId, UserId},
     rpc::{Executor, Server, Store},
     AppState,
 };
@@ -1447,7 +1447,7 @@ async fn test_collaborating_with_diagnostics(
     deterministic.run_until_parked();
     {
         let store = server.store.read().await;
-        let project = store.project(project_id).unwrap();
+        let project = store.project(ProjectId::from_proto(project_id)).unwrap();
         let worktree = project.worktrees.get(&worktree_id.to_proto()).unwrap();
         assert!(!worktree.diagnostic_summaries.is_empty());
     }
@@ -4722,7 +4722,7 @@ impl TestServer {
         foreground: Rc<executor::Foreground>,
         background: Arc<executor::Background>,
     ) -> Self {
-        let test_db = TestDb::fake(background);
+        let test_db = TestDb::fake(background.clone());
         let app_state = Self::build_app_state(&test_db).await;
         let peer = Peer::new();
         let notifications = mpsc::unbounded();

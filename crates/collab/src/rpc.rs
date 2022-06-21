@@ -2,7 +2,7 @@ mod store;
 
 use crate::{
     auth,
-    db::{self, ChannelId, MessageId, User, UserId},
+    db::{self, ChannelId, MessageId, ProjectId, User, UserId},
     AppState, Result,
 };
 use anyhow::anyhow;
@@ -288,6 +288,58 @@ impl Server {
         })
     }
 
+    /// Start a long lived task that records which users are active in which projects.
+    pub fn start_recording_project_activity<E: 'static + Executor>(
+        self: &Arc<Self>,
+        interval: Duration,
+        executor: E,
+    ) {
+        executor.spawn_detached({
+            let this = Arc::downgrade(self);
+            let executor = executor.clone();
+            async move {
+                let mut period_start = OffsetDateTime::now_utc();
+                let mut active_projects = Vec::<(UserId, ProjectId)>::new();
+                loop {
+                    let sleep = executor.sleep(interval);
+                    sleep.await;
+                    let this = if let Some(this) = this.upgrade() {
+                        this
+                    } else {
+                        break;
+                    };
+
+                    active_projects.clear();
+                    active_projects.extend(this.store().await.projects().flat_map(
+                        |(project_id, project)| {
+                            project.guests.values().chain([&project.host]).filter_map(
+                                |collaborator| {
+                                    if !collaborator.admin
+                                        && collaborator
+                                            .last_activity
+                                            .map_or(false, |activity| activity > period_start)
+                                    {
+                                        Some((collaborator.user_id, *project_id))
+                                    } else {
+                                        None
+                                    }
+                                },
+                            )
+                        },
+                    ));
+
+                    let period_end = OffsetDateTime::now_utc();
+                    this.app_state
+                        .db
+                        .record_project_activity(period_start..period_end, &active_projects)
+                        .await
+                        .trace_err();
+                    period_start = period_end;
+                }
+            }
+        });
+    }
+
     pub fn handle_connection<E: Executor>(
         self: &Arc<Self>,
         connection: Connection,
@@ -401,14 +453,21 @@ impl Server {
     async fn sign_out(self: &mut Arc<Self>, connection_id: ConnectionId) -> Result<()> {
         self.peer.disconnect(connection_id);
 
-        let removed_user_id = {
+        let mut projects_to_unregister = Vec::new();
+        let removed_user_id;
+        {
             let mut store = self.store_mut().await;
             let removed_connection = store.remove_connection(connection_id)?;
 
             for (project_id, project) in removed_connection.hosted_projects {
+                projects_to_unregister.push(project_id);
                 broadcast(connection_id, project.guests.keys().copied(), |conn_id| {
-                    self.peer
-                        .send(conn_id, proto::UnregisterProject { project_id })
+                    self.peer.send(
+                        conn_id,
+                        proto::UnregisterProject {
+                            project_id: project_id.to_proto(),
+                        },
+                    )
                 });
 
                 for (_, receipts) in project.join_requests {
@@ -433,7 +492,7 @@ impl Server {
                         self.peer.send(
                             conn_id,
                             proto::RemoveProjectCollaborator {
-                                project_id,
+                                project_id: project_id.to_proto(),
                                 peer_id: connection_id.0,
                             },
                         )
@@ -442,17 +501,27 @@ impl Server {
                         self.peer
                             .send(
                                 project.host_connection_id,
-                                proto::ProjectUnshared { project_id },
+                                proto::ProjectUnshared {
+                                    project_id: project_id.to_proto(),
+                                },
                             )
                             .trace_err();
                     }
                 }
             }
 
-            removed_connection.user_id
+            removed_user_id = removed_connection.user_id;
         };
 
-        self.update_user_contacts(removed_user_id).await?;
+        self.update_user_contacts(removed_user_id).await.trace_err();
+
+        for project_id in projects_to_unregister {
+            self.app_state
+                .db
+                .unregister_project(project_id)
+                .await
+                .trace_err();
+        }
 
         Ok(())
     }
@@ -516,14 +585,18 @@ impl Server {
         request: TypedEnvelope<proto::RegisterProject>,
         response: Response<proto::RegisterProject>,
     ) -> Result<()> {
-        let project_id;
-        {
-            let mut state = self.store_mut().await;
-            let user_id = state.user_id_for_connection(request.sender_id)?;
-            project_id = state.register_project(request.sender_id, user_id);
-        };
+        let user_id = self
+            .store()
+            .await
+            .user_id_for_connection(request.sender_id)?;
+        let project_id = self.app_state.db.register_project(user_id).await?;
+        self.store_mut()
+            .await
+            .register_project(request.sender_id, project_id)?;
 
-        response.send(proto::RegisterProjectResponse { project_id })?;
+        response.send(proto::RegisterProjectResponse {
+            project_id: project_id.to_proto(),
+        })?;
 
         Ok(())
     }
@@ -533,12 +606,13 @@ impl Server {
         request: TypedEnvelope<proto::UnregisterProject>,
         response: Response<proto::UnregisterProject>,
     ) -> Result<()> {
+        let project_id = ProjectId::from_proto(request.payload.project_id);
         let (user_id, project) = {
             let mut state = self.store_mut().await;
-            let project =
-                state.unregister_project(request.payload.project_id, request.sender_id)?;
+            let project = state.unregister_project(project_id, request.sender_id)?;
             (state.user_id_for_connection(request.sender_id)?, project)
         };
+        self.app_state.db.unregister_project(project_id).await?;
 
         broadcast(
             request.sender_id,
@@ -547,7 +621,7 @@ impl Server {
                 self.peer.send(
                     conn_id,
                     proto::UnregisterProject {
-                        project_id: request.payload.project_id,
+                        project_id: project_id.to_proto(),
                     },
                 )
             },
@@ -613,7 +687,7 @@ impl Server {
         request: TypedEnvelope<proto::JoinProject>,
         response: Response<proto::JoinProject>,
     ) -> Result<()> {
-        let project_id = request.payload.project_id;
+        let project_id = ProjectId::from_proto(request.payload.project_id);
 
         let host_user_id;
         let guest_user_id;
@@ -621,12 +695,12 @@ impl Server {
         {
             let state = self.store().await;
             let project = state.project(project_id)?;
-            host_user_id = project.host_user_id;
+            host_user_id = project.host.user_id;
             host_connection_id = project.host_connection_id;
             guest_user_id = state.user_id_for_connection(request.sender_id)?;
         };
 
-        tracing::info!(project_id, %host_user_id, %host_connection_id, "join project");
+        tracing::info!(%project_id, %host_user_id, %host_connection_id, "join project");
         let has_contact = self
             .app_state
             .db
@@ -644,7 +718,7 @@ impl Server {
         self.peer.send(
             host_connection_id,
             proto::RequestJoinProject {
-                project_id,
+                project_id: project_id.to_proto(),
                 requester_id: guest_user_id.to_proto(),
             },
         )?;
@@ -659,13 +733,13 @@ impl Server {
 
         {
             let mut state = self.store_mut().await;
-            let project_id = request.payload.project_id;
+            let project_id = ProjectId::from_proto(request.payload.project_id);
             let project = state.project(project_id)?;
             if project.host_connection_id != request.sender_id {
                 Err(anyhow!("no such connection"))?;
             }
 
-            host_user_id = project.host_user_id;
+            host_user_id = project.host.user_id;
             let guest_user_id = UserId::from_proto(request.payload.requester_id);
 
             if !request.payload.allow {
@@ -697,7 +771,7 @@ impl Server {
             collaborators.push(proto::Collaborator {
                 peer_id: project.host_connection_id.0,
                 replica_id: 0,
-                user_id: project.host_user_id.to_proto(),
+                user_id: project.host.user_id.to_proto(),
             });
             let worktrees = project
                 .worktrees
@@ -720,15 +794,15 @@ impl Server {
                 .collect::<Vec<_>>();
 
             // Add all guests other than the requesting user's own connections as collaborators
-            for (peer_conn_id, (peer_replica_id, peer_user_id)) in &project.guests {
+            for (guest_conn_id, guest) in &project.guests {
                 if receipts_with_replica_ids
                     .iter()
-                    .all(|(receipt, _)| receipt.sender_id != *peer_conn_id)
+                    .all(|(receipt, _)| receipt.sender_id != *guest_conn_id)
                 {
                     collaborators.push(proto::Collaborator {
-                        peer_id: peer_conn_id.0,
-                        replica_id: *peer_replica_id as u32,
-                        user_id: peer_user_id.to_proto(),
+                        peer_id: guest_conn_id.0,
+                        replica_id: guest.replica_id as u32,
+                        user_id: guest.user_id.to_proto(),
                     });
                 }
             }
@@ -739,7 +813,7 @@ impl Server {
                         self.peer.send(
                             conn_id,
                             proto::AddProjectCollaborator {
-                                project_id,
+                                project_id: project_id.to_proto(),
                                 collaborator: Some(proto::Collaborator {
                                     peer_id: receipt.sender_id.0,
                                     replica_id: *replica_id as u32,
@@ -777,13 +851,13 @@ impl Server {
         request: TypedEnvelope<proto::LeaveProject>,
     ) -> Result<()> {
         let sender_id = request.sender_id;
-        let project_id = request.payload.project_id;
+        let project_id = ProjectId::from_proto(request.payload.project_id);
         let project;
         {
             let mut store = self.store_mut().await;
             project = store.leave_project(sender_id, project_id)?;
             tracing::info!(
-                project_id,
+                %project_id,
                 host_user_id = %project.host_user_id,
                 host_connection_id = %project.host_connection_id,
                 "leave project"
@@ -794,7 +868,7 @@ impl Server {
                     self.peer.send(
                         conn_id,
                         proto::RemoveProjectCollaborator {
-                            project_id,
+                            project_id: project_id.to_proto(),
                             peer_id: sender_id.0,
                         },
                     )
@@ -805,7 +879,7 @@ impl Server {
                 self.peer.send(
                     project.host_connection_id,
                     proto::JoinProjectRequestCancelled {
-                        project_id,
+                        project_id: project_id.to_proto(),
                         requester_id: requester_id.to_proto(),
                     },
                 )?;
@@ -814,7 +888,9 @@ impl Server {
             if project.unshare {
                 self.peer.send(
                     project.host_connection_id,
-                    proto::ProjectUnshared { project_id },
+                    proto::ProjectUnshared {
+                        project_id: project_id.to_proto(),
+                    },
                 )?;
             }
         }
@@ -826,18 +902,15 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::UpdateProject>,
     ) -> Result<()> {
+        let project_id = ProjectId::from_proto(request.payload.project_id);
         let user_id;
         {
             let mut state = self.store_mut().await;
             user_id = state.user_id_for_connection(request.sender_id)?;
             let guest_connection_ids = state
-                .read_project(request.payload.project_id, request.sender_id)?
+                .read_project(project_id, request.sender_id)?
                 .guest_connection_ids();
-            state.update_project(
-                request.payload.project_id,
-                &request.payload.worktrees,
-                request.sender_id,
-            )?;
+            state.update_project(project_id, &request.payload.worktrees, request.sender_id)?;
             broadcast(request.sender_id, guest_connection_ids, |connection_id| {
                 self.peer
                     .forward_send(request.sender_id, connection_id, request.payload.clone())
@@ -851,9 +924,10 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::RegisterProjectActivity>,
     ) -> Result<()> {
-        self.store_mut()
-            .await
-            .register_project_activity(request.payload.project_id, request.sender_id)?;
+        self.store_mut().await.register_project_activity(
+            ProjectId::from_proto(request.payload.project_id),
+            request.sender_id,
+        )?;
         Ok(())
     }
 
@@ -862,28 +936,25 @@ impl Server {
         request: TypedEnvelope<proto::UpdateWorktree>,
         response: Response<proto::UpdateWorktree>,
     ) -> Result<()> {
-        let (connection_ids, metadata_changed) = {
+        let project_id = ProjectId::from_proto(request.payload.project_id);
+        let worktree_id = request.payload.worktree_id;
+        let (connection_ids, metadata_changed, extension_counts) = {
             let mut store = self.store_mut().await;
             let (connection_ids, metadata_changed, extension_counts) = store.update_worktree(
                 request.sender_id,
-                request.payload.project_id,
-                request.payload.worktree_id,
+                project_id,
+                worktree_id,
                 &request.payload.root_name,
                 &request.payload.removed_entries,
                 &request.payload.updated_entries,
                 request.payload.scan_id,
             )?;
-            for (extension, count) in extension_counts {
-                tracing::info!(
-                    project_id = request.payload.project_id,
-                    worktree_id = request.payload.worktree_id,
-                    ?extension,
-                    %count,
-                    "worktree updated"
-                );
-            }
-            (connection_ids, metadata_changed)
+            (connection_ids, metadata_changed, extension_counts.clone())
         };
+        self.app_state
+            .db
+            .update_worktree_extensions(project_id, worktree_id, extension_counts)
+            .await?;
 
         broadcast(request.sender_id, connection_ids, |connection_id| {
             self.peer
@@ -910,7 +981,7 @@ impl Server {
             .clone()
             .ok_or_else(|| anyhow!("invalid summary"))?;
         let receiver_ids = self.store_mut().await.update_diagnostic_summary(
-            request.payload.project_id,
+            ProjectId::from_proto(request.payload.project_id),
             request.payload.worktree_id,
             request.sender_id,
             summary,
@@ -928,7 +999,7 @@ impl Server {
         request: TypedEnvelope<proto::StartLanguageServer>,
     ) -> Result<()> {
         let receiver_ids = self.store_mut().await.start_language_server(
-            request.payload.project_id,
+            ProjectId::from_proto(request.payload.project_id),
             request.sender_id,
             request
                 .payload
@@ -947,10 +1018,10 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::UpdateLanguageServer>,
     ) -> Result<()> {
-        let receiver_ids = self
-            .store()
-            .await
-            .project_connection_ids(request.payload.project_id, request.sender_id)?;
+        let receiver_ids = self.store().await.project_connection_ids(
+            ProjectId::from_proto(request.payload.project_id),
+            request.sender_id,
+        )?;
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
@@ -969,7 +1040,10 @@ impl Server {
         let host_connection_id = self
             .store()
             .await
-            .read_project(request.payload.remote_entity_id(), request.sender_id)?
+            .read_project(
+                ProjectId::from_proto(request.payload.remote_entity_id()),
+                request.sender_id,
+            )?
             .host_connection_id;
 
         response.send(
@@ -985,10 +1059,11 @@ impl Server {
         request: TypedEnvelope<proto::SaveBuffer>,
         response: Response<proto::SaveBuffer>,
     ) -> Result<()> {
+        let project_id = ProjectId::from_proto(request.payload.project_id);
         let host = self
             .store()
             .await
-            .read_project(request.payload.project_id, request.sender_id)?
+            .read_project(project_id, request.sender_id)?
             .host_connection_id;
         let response_payload = self
             .peer
@@ -998,7 +1073,7 @@ impl Server {
         let mut guests = self
             .store()
             .await
-            .read_project(request.payload.project_id, request.sender_id)?
+            .read_project(project_id, request.sender_id)?
             .connection_ids();
         guests.retain(|guest_connection_id| *guest_connection_id != request.sender_id);
         broadcast(host, guests, |conn_id| {
@@ -1014,10 +1089,11 @@ impl Server {
         request: TypedEnvelope<proto::UpdateBuffer>,
         response: Response<proto::UpdateBuffer>,
     ) -> Result<()> {
+        let project_id = ProjectId::from_proto(request.payload.project_id);
         let receiver_ids = {
             let mut store = self.store_mut().await;
-            store.register_project_activity(request.payload.project_id, request.sender_id)?;
-            store.project_connection_ids(request.payload.project_id, request.sender_id)?
+            store.register_project_activity(project_id, request.sender_id)?;
+            store.project_connection_ids(project_id, request.sender_id)?
         };
 
         broadcast(request.sender_id, receiver_ids, |connection_id| {
@@ -1032,10 +1108,10 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::UpdateBufferFile>,
     ) -> Result<()> {
-        let receiver_ids = self
-            .store()
-            .await
-            .project_connection_ids(request.payload.project_id, request.sender_id)?;
+        let receiver_ids = self.store().await.project_connection_ids(
+            ProjectId::from_proto(request.payload.project_id),
+            request.sender_id,
+        )?;
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
@@ -1047,10 +1123,10 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::BufferReloaded>,
     ) -> Result<()> {
-        let receiver_ids = self
-            .store()
-            .await
-            .project_connection_ids(request.payload.project_id, request.sender_id)?;
+        let receiver_ids = self.store().await.project_connection_ids(
+            ProjectId::from_proto(request.payload.project_id),
+            request.sender_id,
+        )?;
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
@@ -1062,10 +1138,10 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::BufferSaved>,
     ) -> Result<()> {
-        let receiver_ids = self
-            .store()
-            .await
-            .project_connection_ids(request.payload.project_id, request.sender_id)?;
+        let receiver_ids = self.store().await.project_connection_ids(
+            ProjectId::from_proto(request.payload.project_id),
+            request.sender_id,
+        )?;
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
@@ -1078,18 +1154,19 @@ impl Server {
         request: TypedEnvelope<proto::Follow>,
         response: Response<proto::Follow>,
     ) -> Result<()> {
+        let project_id = ProjectId::from_proto(request.payload.project_id);
         let leader_id = ConnectionId(request.payload.leader_id);
         let follower_id = request.sender_id;
         {
             let mut store = self.store_mut().await;
             if !store
-                .project_connection_ids(request.payload.project_id, follower_id)?
+                .project_connection_ids(project_id, follower_id)?
                 .contains(&leader_id)
             {
                 Err(anyhow!("no such peer"))?;
             }
 
-            store.register_project_activity(request.payload.project_id, follower_id)?;
+            store.register_project_activity(project_id, follower_id)?;
         }
 
         let mut response_payload = self
@@ -1104,15 +1181,16 @@ impl Server {
     }
 
     async fn unfollow(self: Arc<Self>, request: TypedEnvelope<proto::Unfollow>) -> Result<()> {
+        let project_id = ProjectId::from_proto(request.payload.project_id);
         let leader_id = ConnectionId(request.payload.leader_id);
         let mut store = self.store_mut().await;
         if !store
-            .project_connection_ids(request.payload.project_id, request.sender_id)?
+            .project_connection_ids(project_id, request.sender_id)?
             .contains(&leader_id)
         {
             Err(anyhow!("no such peer"))?;
         }
-        store.register_project_activity(request.payload.project_id, request.sender_id)?;
+        store.register_project_activity(project_id, request.sender_id)?;
         self.peer
             .forward_send(request.sender_id, leader_id, request.payload)?;
         Ok(())
@@ -1122,10 +1200,10 @@ impl Server {
         self: Arc<Self>,
         request: TypedEnvelope<proto::UpdateFollowers>,
     ) -> Result<()> {
+        let project_id = ProjectId::from_proto(request.payload.project_id);
         let mut store = self.store_mut().await;
-        store.register_project_activity(request.payload.project_id, request.sender_id)?;
-        let connection_ids =
-            store.project_connection_ids(request.payload.project_id, request.sender_id)?;
+        store.register_project_activity(project_id, request.sender_id)?;
+        let connection_ids = store.project_connection_ids(project_id, request.sender_id)?;
         let leader_id = request
             .payload
             .variant

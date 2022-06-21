@@ -1,7 +1,10 @@
+use std::{ops::Range, time::Duration};
+
 use crate::{Error, Result};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use axum::http::StatusCode;
+use collections::HashMap;
 use futures::StreamExt;
 use nanoid::nanoid;
 use serde::Serialize;
@@ -36,6 +39,42 @@ pub trait Db: Send + Sync {
         login: &str,
         email_address: Option<&str>,
     ) -> Result<UserId>;
+
+    /// Registers a new project for the given user.
+    async fn register_project(&self, host_user_id: UserId) -> Result<ProjectId>;
+
+    /// Unregisters a project for the given project id.
+    async fn unregister_project(&self, project_id: ProjectId) -> Result<()>;
+
+    /// Update file counts by extension for the given project and worktree.
+    async fn update_worktree_extensions(
+        &self,
+        project_id: ProjectId,
+        worktree_id: u64,
+        extensions: HashMap<String, usize>,
+    ) -> Result<()>;
+
+    /// Get the file counts on the given project keyed by their worktree and extension.
+    async fn get_project_extensions(
+        &self,
+        project_id: ProjectId,
+    ) -> Result<HashMap<u64, HashMap<String, usize>>>;
+
+    /// Record which users have been active in which projects during
+    /// a given period of time.
+    async fn record_project_activity(
+        &self,
+        time_period: Range<OffsetDateTime>,
+        active_projects: &[(UserId, ProjectId)],
+    ) -> Result<()>;
+
+    /// Get the users that have been most active during the given time period,
+    /// along with the amount of time they have been active in each project.
+    async fn summarize_project_activity(
+        &self,
+        time_period: Range<OffsetDateTime>,
+        max_user_count: usize,
+    ) -> Result<Vec<UserActivitySummary>>;
 
     async fn get_contacts(&self, id: UserId) -> Result<Vec<Contact>>;
     async fn has_contact(&self, user_id_a: UserId, user_id_b: UserId) -> Result<bool>;
@@ -145,12 +184,12 @@ impl Db for PostgresDb {
     async fn get_all_users(&self, page: u32, limit: u32) -> Result<Vec<User>> {
         let query = "SELECT * FROM users ORDER BY github_login ASC LIMIT $1 OFFSET $2";
         Ok(sqlx::query_as(query)
-            .bind(limit)
-            .bind(page * limit)
+            .bind(limit as i32)
+            .bind((page * limit) as i32)
             .fetch_all(&self.pool)
             .await?)
     }
-  
+
     async fn create_users(&self, users: Vec<(String, String, usize)>) -> Result<Vec<UserId>> {
         let mut query = QueryBuilder::new(
             "INSERT INTO users (github_login, email_address, admin, invite_code, invite_count)",
@@ -163,7 +202,7 @@ impl Db for PostgresDb {
                     .push_bind(email_address)
                     .push_bind(false)
                     .push_bind(nanoid!(16))
-                    .push_bind(invite_count as u32);
+                    .push_bind(invite_count as i32);
             },
         );
         query.push(
@@ -198,7 +237,7 @@ impl Db for PostgresDb {
         Ok(sqlx::query_as(query)
             .bind(like_string)
             .bind(name_query)
-            .bind(limit)
+            .bind(limit as i32)
             .fetch_all(&self.pool)
             .await?)
     }
@@ -289,7 +328,7 @@ impl Db for PostgresDb {
             WHERE id = $2
             ",
         )
-        .bind(count)
+        .bind(count as i32)
         .bind(id)
         .execute(&mut tx)
         .await?;
@@ -409,6 +448,178 @@ impl Db for PostgresDb {
 
         tx.commit().await?;
         Ok(invitee_id)
+    }
+
+    // projects
+
+    async fn register_project(&self, host_user_id: UserId) -> Result<ProjectId> {
+        Ok(sqlx::query_scalar(
+            "
+            INSERT INTO projects(host_user_id)
+            VALUES ($1)
+            RETURNING id
+            ",
+        )
+        .bind(host_user_id)
+        .fetch_one(&self.pool)
+        .await
+        .map(ProjectId)?)
+    }
+
+    async fn unregister_project(&self, project_id: ProjectId) -> Result<()> {
+        sqlx::query(
+            "
+            UPDATE projects
+            SET unregistered = 't'
+            WHERE id = $1
+            ",
+        )
+        .bind(project_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn update_worktree_extensions(
+        &self,
+        project_id: ProjectId,
+        worktree_id: u64,
+        extensions: HashMap<String, usize>,
+    ) -> Result<()> {
+        let mut query = QueryBuilder::new(
+            "INSERT INTO worktree_extensions (project_id, worktree_id, extension, count)",
+        );
+        query.push_values(extensions, |mut query, (extension, count)| {
+            query
+                .push_bind(project_id)
+                .push_bind(worktree_id as i32)
+                .push_bind(extension)
+                .push_bind(count as i32);
+        });
+        query.push(
+            "
+            ON CONFLICT (project_id, worktree_id, extension) DO UPDATE SET
+            count = excluded.count
+            ",
+        );
+        query.build().execute(&self.pool).await?;
+
+        Ok(())
+    }
+
+    async fn get_project_extensions(
+        &self,
+        project_id: ProjectId,
+    ) -> Result<HashMap<u64, HashMap<String, usize>>> {
+        #[derive(Clone, Debug, Default, FromRow, Serialize, PartialEq)]
+        struct WorktreeExtension {
+            worktree_id: i32,
+            extension: String,
+            count: i32,
+        }
+
+        let query = "
+            SELECT worktree_id, extension, count
+            FROM worktree_extensions
+            WHERE project_id = $1
+        ";
+        let counts = sqlx::query_as::<_, WorktreeExtension>(query)
+            .bind(&project_id)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut extension_counts = HashMap::default();
+        for count in counts {
+            extension_counts
+                .entry(count.worktree_id as u64)
+                .or_insert(HashMap::default())
+                .insert(count.extension, count.count as usize);
+        }
+        Ok(extension_counts)
+    }
+
+    async fn record_project_activity(
+        &self,
+        time_period: Range<OffsetDateTime>,
+        projects: &[(UserId, ProjectId)],
+    ) -> Result<()> {
+        let query = "
+            INSERT INTO project_activity_periods
+            (ended_at, duration_millis, user_id, project_id)
+            VALUES
+            ($1, $2, $3, $4);
+        ";
+
+        let mut tx = self.pool.begin().await?;
+        let duration_millis =
+            ((time_period.end - time_period.start).as_seconds_f64() * 1000.0) as i32;
+        for (user_id, project_id) in projects {
+            sqlx::query(query)
+                .bind(time_period.end)
+                .bind(duration_millis)
+                .bind(user_id)
+                .bind(project_id)
+                .execute(&mut tx)
+                .await?;
+        }
+        tx.commit().await?;
+
+        Ok(())
+    }
+
+    async fn summarize_project_activity(
+        &self,
+        time_period: Range<OffsetDateTime>,
+        max_user_count: usize,
+    ) -> Result<Vec<UserActivitySummary>> {
+        let query = "
+            WITH
+                project_durations AS (
+                    SELECT user_id, project_id, SUM(duration_millis) AS project_duration
+                    FROM project_activity_periods
+                    WHERE $1 <= ended_at AND ended_at <= $2
+                    GROUP BY user_id, project_id
+                ),
+                user_durations AS (
+                    SELECT user_id, SUM(project_duration) as total_duration
+                    FROM project_durations
+                    GROUP BY user_id
+                    ORDER BY total_duration DESC
+                    LIMIT $3
+                )
+            SELECT user_durations.user_id, users.github_login, project_id, project_duration
+            FROM user_durations, project_durations, users
+            WHERE
+                user_durations.user_id = project_durations.user_id AND
+                user_durations.user_id = users.id
+            ORDER BY user_id ASC, project_duration DESC
+        ";
+
+        let mut rows = sqlx::query_as::<_, (UserId, String, ProjectId, i64)>(query)
+            .bind(time_period.start)
+            .bind(time_period.end)
+            .bind(max_user_count as i32)
+            .fetch(&self.pool);
+
+        let mut result = Vec::<UserActivitySummary>::new();
+        while let Some(row) = rows.next().await {
+            let (user_id, github_login, project_id, duration_millis) = row?;
+            let project_id = project_id;
+            let duration = Duration::from_millis(duration_millis as u64);
+            if let Some(last_summary) = result.last_mut() {
+                if last_summary.id == user_id {
+                    last_summary.project_activity.push((project_id, duration));
+                    continue;
+                }
+            }
+            result.push(UserActivitySummary {
+                id: user_id,
+                project_activity: vec![(project_id, duration)],
+                github_login,
+            });
+        }
+
+        Ok(result)
     }
 
     // contacts
@@ -651,7 +862,7 @@ impl Db for PostgresDb {
         sqlx::query(cleanup_query)
             .bind(user_id.0)
             .bind(access_token_hash)
-            .bind(max_access_token_count as u32)
+            .bind(max_access_token_count as i32)
             .execute(&mut tx)
             .await?;
         Ok(tx.commit().await?)
@@ -927,6 +1138,21 @@ pub struct User {
     pub connected_once: bool,
 }
 
+id_type!(ProjectId);
+#[derive(Clone, Debug, Default, FromRow, Serialize, PartialEq)]
+pub struct Project {
+    pub id: ProjectId,
+    pub host_user_id: UserId,
+    pub unregistered: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct UserActivitySummary {
+    pub id: UserId,
+    pub github_login: String,
+    pub project_activity: Vec<(ProjectId, Duration)>,
+}
+
 id_type!(OrgId);
 #[derive(FromRow)]
 pub struct Org {
@@ -1123,6 +1349,94 @@ pub mod tests {
         assert_ne!(invite_code_4, invite_code_1);
         assert_ne!(invite_code_4, invite_code_2);
         assert_ne!(invite_code_4, invite_code_3);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_project_activity() {
+        let test_db = TestDb::postgres().await;
+        let db = test_db.db();
+
+        let user_1 = db.create_user("user_1", None, false).await.unwrap();
+        let user_2 = db.create_user("user_2", None, false).await.unwrap();
+        let user_3 = db.create_user("user_3", None, false).await.unwrap();
+        let project_1 = db.register_project(user_1).await.unwrap();
+        let project_2 = db.register_project(user_2).await.unwrap();
+        let t0 = OffsetDateTime::now_utc() - Duration::from_secs(60 * 60);
+
+        // User 2 opens a project
+        let t1 = t0 + Duration::from_secs(10);
+        db.record_project_activity(t0..t1, &[(user_2, project_2)])
+            .await
+            .unwrap();
+
+        let t2 = t1 + Duration::from_secs(10);
+        db.record_project_activity(t1..t2, &[(user_2, project_2)])
+            .await
+            .unwrap();
+
+        // User 1 joins the project
+        let t3 = t2 + Duration::from_secs(10);
+        db.record_project_activity(t2..t3, &[(user_2, project_2), (user_1, project_2)])
+            .await
+            .unwrap();
+
+        // User 1 opens another project
+        let t4 = t3 + Duration::from_secs(10);
+        db.record_project_activity(
+            t3..t4,
+            &[
+                (user_2, project_2),
+                (user_1, project_2),
+                (user_1, project_1),
+            ],
+        )
+        .await
+        .unwrap();
+
+        // User 3 joins that project
+        let t5 = t4 + Duration::from_secs(10);
+        db.record_project_activity(
+            t4..t5,
+            &[
+                (user_2, project_2),
+                (user_1, project_2),
+                (user_1, project_1),
+                (user_3, project_1),
+            ],
+        )
+        .await
+        .unwrap();
+
+        // User 2 leaves
+        let t6 = t5 + Duration::from_secs(5);
+        db.record_project_activity(t5..t6, &[(user_1, project_1), (user_3, project_1)])
+            .await
+            .unwrap();
+
+        let summary = db.summarize_project_activity(t0..t6, 10).await.unwrap();
+        assert_eq!(
+            summary,
+            &[
+                UserActivitySummary {
+                    id: user_1,
+                    github_login: "user_1".to_string(),
+                    project_activity: vec![
+                        (project_2, Duration::from_secs(30)),
+                        (project_1, Duration::from_secs(25))
+                    ]
+                },
+                UserActivitySummary {
+                    id: user_2,
+                    github_login: "user_2".to_string(),
+                    project_activity: vec![(project_2, Duration::from_secs(50))]
+                },
+                UserActivitySummary {
+                    id: user_3,
+                    github_login: "user_3".to_string(),
+                    project_activity: vec![(project_1, Duration::from_secs(15))]
+                },
+            ]
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1696,6 +2010,8 @@ pub mod tests {
     pub struct FakeDb {
         background: Arc<Background>,
         pub users: Mutex<BTreeMap<UserId, User>>,
+        pub projects: Mutex<BTreeMap<ProjectId, Project>>,
+        pub worktree_extensions: Mutex<BTreeMap<(ProjectId, u64, String), usize>>,
         pub orgs: Mutex<BTreeMap<OrgId, Org>>,
         pub org_memberships: Mutex<BTreeMap<(OrgId, UserId), bool>>,
         pub channels: Mutex<BTreeMap<ChannelId, Channel>>,
@@ -1706,6 +2022,7 @@ pub mod tests {
         next_user_id: Mutex<i32>,
         next_org_id: Mutex<i32>,
         next_channel_id: Mutex<i32>,
+        next_project_id: Mutex<i32>,
     }
 
     #[derive(Debug)]
@@ -1722,6 +2039,9 @@ pub mod tests {
                 background,
                 users: Default::default(),
                 next_user_id: Mutex::new(1),
+                projects: Default::default(),
+                worktree_extensions: Default::default(),
+                next_project_id: Mutex::new(1),
                 orgs: Default::default(),
                 next_org_id: Mutex::new(1),
                 org_memberships: Default::default(),
@@ -1838,6 +2158,78 @@ pub mod tests {
             _login: &str,
             _email_address: Option<&str>,
         ) -> Result<UserId> {
+            unimplemented!()
+        }
+
+        // projects
+
+        async fn register_project(&self, host_user_id: UserId) -> Result<ProjectId> {
+            self.background.simulate_random_delay().await;
+            if !self.users.lock().contains_key(&host_user_id) {
+                Err(anyhow!("no such user"))?;
+            }
+
+            let project_id = ProjectId(post_inc(&mut *self.next_project_id.lock()));
+            self.projects.lock().insert(
+                project_id,
+                Project {
+                    id: project_id,
+                    host_user_id,
+                    unregistered: false,
+                },
+            );
+            Ok(project_id)
+        }
+
+        async fn unregister_project(&self, project_id: ProjectId) -> Result<()> {
+            self.projects
+                .lock()
+                .get_mut(&project_id)
+                .ok_or_else(|| anyhow!("no such project"))?
+                .unregistered = true;
+            Ok(())
+        }
+
+        async fn update_worktree_extensions(
+            &self,
+            project_id: ProjectId,
+            worktree_id: u64,
+            extensions: HashMap<String, usize>,
+        ) -> Result<()> {
+            self.background.simulate_random_delay().await;
+            if !self.projects.lock().contains_key(&project_id) {
+                Err(anyhow!("no such project"))?;
+            }
+
+            for (extension, count) in extensions {
+                self.worktree_extensions
+                    .lock()
+                    .insert((project_id, worktree_id, extension), count);
+            }
+
+            Ok(())
+        }
+
+        async fn get_project_extensions(
+            &self,
+            _project_id: ProjectId,
+        ) -> Result<HashMap<u64, HashMap<String, usize>>> {
+            unimplemented!()
+        }
+
+        async fn record_project_activity(
+            &self,
+            _period: Range<OffsetDateTime>,
+            _active_projects: &[(UserId, ProjectId)],
+        ) -> Result<()> {
+            unimplemented!()
+        }
+
+        async fn summarize_project_activity(
+            &self,
+            _period: Range<OffsetDateTime>,
+            _limit: usize,
+        ) -> Result<Vec<UserActivitySummary>> {
             unimplemented!()
         }
 
