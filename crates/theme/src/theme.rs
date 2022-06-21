@@ -65,7 +65,6 @@ pub struct Titlebar {
     pub avatar_margin: f32,
     pub avatar_ribbon: AvatarRibbon,
     pub offline_icon: OfflineIcon,
-    pub share_icon: Interactive<ShareIcon>,
     pub avatar: ImageStyle,
     pub sign_in_prompt: Interactive<ContainedText>,
     pub outdated_warning: ContainedText,
@@ -84,13 +83,6 @@ pub struct OfflineIcon {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub width: f32,
-    pub color: Color,
-}
-
-#[derive(Clone, Deserialize, Default)]
-pub struct ShareIcon {
-    #[serde(flatten)]
-    pub container: ContainerStyle,
     pub color: Color,
 }
 

@@ -318,16 +318,20 @@ impl Client {
                     let mut delay = Duration::from_millis(100);
                     while let Err(error) = this.authenticate_and_connect(true, &cx).await {
                         log::error!("failed to connect {}", error);
-                        this.set_status(
-                            Status::ReconnectionError {
-                                next_reconnection: Instant::now() + delay,
-                            },
-                            &cx,
-                        );
-                        cx.background().timer(delay).await;
-                        delay = delay
-                            .mul_f32(rng.gen_range(1.0..=2.0))
-                            .min(reconnect_interval);
+                        if matches!(*this.status().borrow(), Status::ConnectionError) {
+                            this.set_status(
+                                Status::ReconnectionError {
+                                    next_reconnection: Instant::now() + delay,
+                                },
+                                &cx,
+                            );
+                            cx.background().timer(delay).await;
+                            delay = delay
+                                .mul_f32(rng.gen_range(1.0..=2.0))
+                                .min(reconnect_interval);
+                        } else {
+                            break;
+                        }
                     }
                 }));
             }
