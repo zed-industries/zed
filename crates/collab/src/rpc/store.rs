@@ -52,6 +52,7 @@ pub struct Collaborator {
     pub user_id: UserId,
     #[serde(skip)]
     pub last_activity: Option<OffsetDateTime>,
+    pub admin: bool,
 }
 
 #[derive(Default, Serialize)]
@@ -340,6 +341,7 @@ impl Store {
                     user_id: connection.user_id,
                     replica_id: 0,
                     last_activity: None,
+                    admin: connection.admin,
                 },
                 guests: Default::default(),
                 join_requests: Default::default(),
@@ -541,6 +543,7 @@ impl Store {
                     replica_id,
                     user_id: requester_id,
                     last_activity: Some(OffsetDateTime::now_utc()),
+                    admin: requester_connection.admin,
                 },
             );
             receipts_with_replica_ids.push((receipt, replica_id));

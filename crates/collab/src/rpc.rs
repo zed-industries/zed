@@ -314,9 +314,10 @@ impl Server {
                         |(project_id, project)| {
                             project.guests.values().chain([&project.host]).filter_map(
                                 |collaborator| {
-                                    if collaborator
-                                        .last_activity
-                                        .map_or(false, |activity| activity > period_start)
+                                    if !collaborator.admin
+                                        && collaborator
+                                            .last_activity
+                                            .map_or(false, |activity| activity > period_start)
                                     {
                                         Some((collaborator.user_id, *project_id))
                                     } else {
