@@ -2992,9 +2992,6 @@ async fn test_language_server_statuses(
         .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
-
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
-
     fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-token".to_string()),
         value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Report(
@@ -3004,7 +3001,6 @@ async fn test_language_server_statuses(
             },
         )),
     });
-
     deterministic.run_until_parked();
     project_a.read_with(cx_a, |project, _| {
         let status = project.language_server_statuses().next().unwrap();
@@ -3015,13 +3011,39 @@ async fn test_language_server_statuses(
             "the-message"
         );
     });
+
+    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    project_b.read_with(cx_b, |project, _| {
+        let status = project.language_server_statuses().next().unwrap();
+        assert_eq!(status.name, "the-language-server");
+    });
+
+    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+        token: lsp::NumberOrString::String("the-token".to_string()),
+        value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Report(
+            lsp::WorkDoneProgressReport {
+                message: Some("the-message-2".to_string()),
+                ..Default::default()
+            },
+        )),
+    });
+    deterministic.run_until_parked();
+    project_a.read_with(cx_a, |project, _| {
+        let status = project.language_server_statuses().next().unwrap();
+        assert_eq!(status.name, "the-language-server");
+        assert_eq!(status.pending_work.len(), 1);
+        assert_eq!(
+            status.pending_work["the-token"].message.as_ref().unwrap(),
+            "the-message-2"
+        );
+    });
     project_b.read_with(cx_b, |project, _| {
         let status = project.language_server_statuses().next().unwrap();
         assert_eq!(status.name, "the-language-server");
         assert_eq!(status.pending_work.len(), 1);
         assert_eq!(
             status.pending_work["the-token"].message.as_ref().unwrap(),
-            "the-message"
+            "the-message-2"
         );
     });
 }
