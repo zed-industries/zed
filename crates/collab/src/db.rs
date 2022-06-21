@@ -46,13 +46,19 @@ pub trait Db: Send + Sync {
     /// Unregisters a project for the given project id.
     async fn unregister_project(&self, project_id: ProjectId) -> Result<()>;
 
-    /// Create a new project for the given user.
+    /// Update file counts by extension for the given project and worktree.
     async fn update_worktree_extensions(
         &self,
         project_id: ProjectId,
         worktree_id: u64,
         extensions: HashMap<String, usize>,
     ) -> Result<()>;
+
+    /// Get the file counts on the given project keyed by their worktree and extension.
+    async fn get_project_extensions(
+        &self,
+        project_id: ProjectId,
+    ) -> Result<HashMap<u64, HashMap<String, usize>>>;
 
     /// Record which users have been active in which projects during
     /// a given period of time.
@@ -499,6 +505,37 @@ impl Db for PostgresDb {
         query.build().execute(&self.pool).await?;
 
         Ok(())
+    }
+
+    async fn get_project_extensions(
+        &self,
+        project_id: ProjectId,
+    ) -> Result<HashMap<u64, HashMap<String, usize>>> {
+        #[derive(Clone, Debug, Default, FromRow, Serialize, PartialEq)]
+        struct WorktreeExtension {
+            worktree_id: i32,
+            extension: String,
+            count: i32,
+        }
+
+        let query = "
+            SELECT worktree_id, extension, count
+            FROM worktree_extensions
+            WHERE project_id = $1
+        ";
+        let counts = sqlx::query_as::<_, WorktreeExtension>(query)
+            .bind(&project_id)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut extension_counts = HashMap::default();
+        for count in counts {
+            extension_counts
+                .entry(count.worktree_id as u64)
+                .or_insert(HashMap::default())
+                .insert(count.extension, count.count as usize);
+        }
+        Ok(extension_counts)
     }
 
     async fn record_project_activity(
@@ -2171,6 +2208,13 @@ pub mod tests {
             }
 
             Ok(())
+        }
+
+        async fn get_project_extensions(
+            &self,
+            _project_id: ProjectId,
+        ) -> Result<HashMap<u64, HashMap<String, usize>>> {
+            unimplemented!()
         }
 
         async fn record_project_activity(

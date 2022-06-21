@@ -1,6 +1,6 @@
 use crate::{
     auth,
-    db::{User, UserId},
+    db::{ProjectId, User, UserId},
     rpc::{self, ResultExt},
     AppState, Error, Result,
 };
@@ -16,6 +16,7 @@ use axum::{
 };
 use axum_extra::response::ErasedJson;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::sync::Arc;
 use time::OffsetDateTime;
 use tower::ServiceBuilder;
@@ -37,6 +38,7 @@ pub fn routes(rpc_server: &Arc<rpc::Server>, state: Arc<AppState>) -> Router<Bod
             "/project_activity_summary",
             get(get_project_activity_summary),
         )
+        .route("/project_metadata", get(get_project_metadata))
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(state))
@@ -261,6 +263,22 @@ async fn get_project_activity_summary(
         .summarize_project_activity(params.start..params.end, 100)
         .await?;
     Ok(ErasedJson::pretty(summary))
+}
+
+#[derive(Deserialize)]
+struct GetProjectMetadataParams {
+    project_id: u64,
+}
+
+async fn get_project_metadata(
+    Query(params): Query<GetProjectMetadataParams>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<ErasedJson> {
+    let extensions = app
+        .db
+        .get_project_extensions(ProjectId::from_proto(params.project_id))
+        .await?;
+    Ok(ErasedJson::pretty(json!({ "extensions": extensions })))
 }
 
 #[derive(Deserialize)]
