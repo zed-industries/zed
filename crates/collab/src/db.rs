@@ -486,6 +486,10 @@ impl Db for PostgresDb {
         worktree_id: u64,
         extensions: HashMap<String, usize>,
     ) -> Result<()> {
+        if extensions.is_empty() {
+            return Ok(());
+        }
+
         let mut query = QueryBuilder::new(
             "INSERT INTO worktree_extensions (project_id, worktree_id, extension, count)",
         );
@@ -1349,6 +1353,31 @@ pub mod tests {
         assert_ne!(invite_code_4, invite_code_1);
         assert_ne!(invite_code_4, invite_code_2);
         assert_ne!(invite_code_4, invite_code_3);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_worktree_extensions() {
+        let test_db = TestDb::postgres().await;
+        let db = test_db.db();
+
+        let user = db.create_user("user_1", None, false).await.unwrap();
+        let project = db.register_project(user).await.unwrap();
+
+        db.update_worktree_extensions(project, 100, Default::default()).await.unwrap();
+        db.update_worktree_extensions(project, 100, [("rs".to_string(), 5), ("md".to_string(), 3)].into_iter().collect()).await.unwrap();
+        db.update_worktree_extensions(project, 100, [("rs".to_string(), 6), ("md".to_string(), 5)].into_iter().collect()).await.unwrap();
+        db.update_worktree_extensions(project, 101, [("ts".to_string(), 2), ("md".to_string(), 1)].into_iter().collect()).await.unwrap();
+
+        assert_eq!(db.get_project_extensions(project).await.unwrap(), [
+            (100, [
+                ("rs".into(), 6),
+                ("md".into(), 5),
+            ].into_iter().collect::<HashMap<_, _>>()),
+            (101, [
+                ("ts".into(), 2),
+                ("md".into(), 1),
+            ].into_iter().collect::<HashMap<_, _>>())
+        ].into_iter().collect());
     }
 
     #[tokio::test(flavor = "multi_thread")]
