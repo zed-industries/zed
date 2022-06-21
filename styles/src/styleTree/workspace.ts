@@ -39,6 +39,8 @@ export default function workspace(theme: Theme) {
     },
   };
 
+  const titlebarPadding = 6;
+
   return {
     background: backgroundColor(theme, 300),
     joiningProjectAvatar: {
@@ -78,7 +80,7 @@ export default function workspace(theme: Theme) {
       background: backgroundColor(theme, 100),
       padding: {
         left: 80,
-        right: 6,
+        right: titlebarPadding,
       },
       title: text(theme, "sans", "primary"),
       avatar: {
@@ -111,31 +113,20 @@ export default function workspace(theme: Theme) {
       offlineIcon: {
         color: iconColor(theme, "secondary"),
         width: 16,
+        margin: {
+          left: titlebarPadding,
+        },
         padding: {
           right: 4,
         },
-      },
-      shareIcon: {
-        cornerRadius: 6,
-        margin: { top: 3, bottom: 2, left: 6 },
-        color: iconColor(theme, "secondary"),
-        hover: {
-          background: backgroundColor(theme, 100, "hovered"),
-          color: iconColor(theme, "secondary"),
-        },
-        active: {
-          background: backgroundColor(theme, 100, "active"),
-          color: iconColor(theme, "active"),
-        },
-        activeHover: {
-          background: backgroundColor(theme, 100, "hovered"),
-          color: iconColor(theme, "active"),
-        }
       },
       outdatedWarning: {
         ...text(theme, "sans", "warning", { size: "xs" }),
         background: backgroundColor(theme, "warning"),
         border: border(theme, "warning"),
+        margin: {
+          left: titlebarPadding,
+        },
         padding: {
           left: 6,
           right: 6,
