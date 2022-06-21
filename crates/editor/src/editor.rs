@@ -5693,7 +5693,6 @@ impl View for Editor {
             map.set_font(style.text.font_id, style.text.font_size, cx)
         });
 
-        // If the
         if font_changed {
             let handle = self.handle.clone();
             cx.defer(move |cx| {
@@ -5740,6 +5739,7 @@ impl View for Editor {
         self.buffer
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
         self.hide_context_menu(cx);
+        hide_hover(self, cx);
         cx.emit(Event::Blurred);
         cx.notify();
     }
