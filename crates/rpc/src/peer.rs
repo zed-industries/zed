@@ -499,6 +499,13 @@ mod tests {
     use async_tungstenite::tungstenite::Message as WebSocketMessage;
     use gpui::TestAppContext;
 
+    #[ctor::ctor]
+    fn init_logger() {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::init();
+        }
+    }
+
     #[gpui::test(iterations = 50)]
     async fn test_request_response(cx: &mut TestAppContext) {
         let executor = cx.foreground();

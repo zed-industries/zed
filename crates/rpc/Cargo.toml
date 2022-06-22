@@ -38,3 +38,5 @@ collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 smol = "1.2.5"
 tempdir = "0.3.7"
+ctor = "0.1"
+env_logger = "0.9"
