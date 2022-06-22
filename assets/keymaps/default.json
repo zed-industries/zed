@@ -226,8 +226,7 @@
             "cmd-p": "file_finder::Toggle",
             "cmd-shift-P": "command_palette::Toggle",
             "cmd-shift-M": "diagnostics::Deploy",
-            "cmd-alt-s": "workspace::SaveAll",
-            "shift-cmd-T": "terminal::Deploy"
+            "cmd-alt-s": "workspace::SaveAll"
         }
     },
     // Bindings from Sublime Text
@@ -352,6 +351,21 @@
             "cmd-alt-c": "project_panel::CopyPath",
             "f2": "project_panel::Rename",
             "backspace": "project_panel::Delete"
+        }
+    },
+    {
+        "context": "Terminal",
+        "bindings": {
+            "ctrl-c": "terminal::SIGINT",
+            "escape": "terminal::ESCAPE",
+            "ctrl-d": "terminal::Quit",
+            "backspace": "terminal::DEL",
+            "enter": "terminal::RETURN",
+            "left": "terminal::LEFT",
+            "right": "terminal::RIGHT",
+            "up": "terminal::HistoryBack",
+            "down": "terminal::HistoryForward",
+            "tab": "terminal::AutoComplete"
         }
     }
 ]
