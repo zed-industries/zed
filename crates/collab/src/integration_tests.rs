@@ -4400,7 +4400,7 @@ async fn test_random_collaboration(
     deterministic: Arc<Deterministic>,
     rng: StdRng,
 ) {
-    cx.foreground().forbid_parking();
+    deterministic.forbid_parking();
     let max_peers = env::var("MAX_PEERS")
         .map(|i| i.parse().expect("invalid `MAX_PEERS` variable"))
         .unwrap_or(5);
@@ -4626,10 +4626,13 @@ async fn test_random_collaboration(
     while operations < max_operations {
         if operations == disconnect_host_at {
             server.disconnect_client(user_ids[0]);
-            cx.foreground().advance_clock(RECEIVE_TIMEOUT);
+            deterministic.advance_clock(RECEIVE_TIMEOUT);
             drop(op_start_signals);
+
+            deterministic.start_waiting();
             let mut clients = futures::future::join_all(clients).await;
-            cx.foreground().run_until_parked();
+            deterministic.finish_waiting();
+            deterministic.run_until_parked();
 
             let (host, host_project, mut host_cx, host_err) = clients.remove(0);
             if let Some(host_err) = host_err {
@@ -4681,6 +4684,8 @@ async fn test_random_collaboration(
                     cx.leak_detector(),
                     next_entity_id,
                 );
+
+                deterministic.start_waiting();
                 let guest = server.create_client(&mut guest_cx, &guest_username).await;
                 let guest_project = Project::remote(
                     host_project_id,
@@ -4693,6 +4698,8 @@ async fn test_random_collaboration(
                 )
                 .await
                 .unwrap();
+                deterministic.finish_waiting();
+
                 let op_start_signal = futures::channel::mpsc::unbounded();
                 user_ids.push(guest.current_user_id(&guest_cx));
                 op_start_signals.push(op_start_signal.0);
@@ -4715,8 +4722,10 @@ async fn test_random_collaboration(
                 op_start_signals.remove(guest_ix);
                 server.forbid_connections();
                 server.disconnect_client(removed_guest_id);
-                cx.foreground().advance_clock(RECEIVE_TIMEOUT);
+                deterministic.advance_clock(RECEIVE_TIMEOUT);
+                deterministic.start_waiting();
                 let (guest, guest_project, mut guest_cx, guest_err) = guest.await;
+                deterministic.finish_waiting();
                 server.allow_connections();
 
                 if let Some(guest_err) = guest_err {
@@ -4766,15 +4775,17 @@ async fn test_random_collaboration(
                 }
 
                 if rng.lock().gen_bool(0.8) {
-                    cx.foreground().run_until_parked();
+                    deterministic.run_until_parked();
                 }
             }
         }
     }
 
     drop(op_start_signals);
+    deterministic.start_waiting();
     let mut clients = futures::future::join_all(clients).await;
-    cx.foreground().run_until_parked();
+    deterministic.finish_waiting();
+    deterministic.run_until_parked();
 
     let (host_client, host_project, mut host_cx, host_err) = clients.remove(0);
     if let Some(host_err) = host_err {
