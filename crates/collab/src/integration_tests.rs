@@ -4353,17 +4353,7 @@ async fn test_peers_simultaneously_following_each_other(
     cx_a.update(editor::init);
     cx_b.update(editor::init);
 
-    client_a
-        .fs
-        .insert_tree(
-            "/a",
-            json!({
-                "1.txt": "one",
-                "2.txt": "two",
-                "3.txt": "three",
-            }),
-        )
-        .await;
+    client_a.fs.insert_tree("/a", json!({})).await;
     let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
     let workspace_a = client_a.build_workspace(&project_a, cx_a);
 
