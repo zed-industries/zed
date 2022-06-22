@@ -366,6 +366,14 @@ impl Deterministic {
         self.state.lock().now = new_now;
     }
 
+    pub fn start_waiting(&self) {
+        self.state.lock().waiting_backtrace = Some(backtrace::Backtrace::new_unresolved());
+    }
+
+    pub fn finish_waiting(&self) {
+        self.state.lock().waiting_backtrace.take();
+    }
+
     pub fn forbid_parking(&self) {
         use rand::prelude::*;
 
@@ -500,10 +508,7 @@ impl Foreground {
     #[cfg(any(test, feature = "test-support"))]
     pub fn start_waiting(&self) {
         match self {
-            Self::Deterministic { executor, .. } => {
-                executor.state.lock().waiting_backtrace =
-                    Some(backtrace::Backtrace::new_unresolved());
-            }
+            Self::Deterministic { executor, .. } => executor.start_waiting(),
             _ => panic!("this method can only be called on a deterministic executor"),
         }
     }
@@ -511,9 +516,7 @@ impl Foreground {
     #[cfg(any(test, feature = "test-support"))]
     pub fn finish_waiting(&self) {
         match self {
-            Self::Deterministic { executor, .. } => {
-                executor.state.lock().waiting_backtrace.take();
-            }
+            Self::Deterministic { executor, .. } => executor.finish_waiting(),
             _ => panic!("this method can only be called on a deterministic executor"),
         }
     }

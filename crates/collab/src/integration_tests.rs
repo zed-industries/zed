@@ -4336,13 +4336,71 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
     );
 }
 
+#[gpui::test(iterations = 10)]
+async fn test_peers_simultaneously_following_each_other(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+
+    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    client_a.fs.insert_tree("/a", json!({})).await;
+    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
+    let workspace_a = client_a.build_workspace(&project_a, cx_a);
+
+    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let workspace_b = client_b.build_workspace(&project_b, cx_b);
+
+    deterministic.run_until_parked();
+    let client_a_id = project_b.read_with(cx_b, |project, _| {
+        project.collaborators().values().next().unwrap().peer_id
+    });
+    let client_b_id = project_a.read_with(cx_a, |project, _| {
+        project.collaborators().values().next().unwrap().peer_id
+    });
+
+    let a_follow_b = workspace_a.update(cx_a, |workspace, cx| {
+        workspace
+            .toggle_follow(&ToggleFollow(client_b_id), cx)
+            .unwrap()
+    });
+    let b_follow_a = workspace_b.update(cx_b, |workspace, cx| {
+        workspace
+            .toggle_follow(&ToggleFollow(client_a_id), cx)
+            .unwrap()
+    });
+
+    futures::try_join!(a_follow_b, b_follow_a).unwrap();
+    workspace_a.read_with(cx_a, |workspace, _| {
+        assert_eq!(
+            workspace.leader_for_pane(&workspace.active_pane()),
+            Some(client_b_id)
+        );
+    });
+    workspace_b.read_with(cx_b, |workspace, _| {
+        assert_eq!(
+            workspace.leader_for_pane(&workspace.active_pane()),
+            Some(client_a_id)
+        );
+    });
+}
+
 #[gpui::test(iterations = 100)]
 async fn test_random_collaboration(
     cx: &mut TestAppContext,
     deterministic: Arc<Deterministic>,
     rng: StdRng,
 ) {
-    cx.foreground().forbid_parking();
+    deterministic.forbid_parking();
     let max_peers = env::var("MAX_PEERS")
         .map(|i| i.parse().expect("invalid `MAX_PEERS` variable"))
         .unwrap_or(5);
@@ -4568,10 +4626,13 @@ async fn test_random_collaboration(
     while operations < max_operations {
         if operations == disconnect_host_at {
             server.disconnect_client(user_ids[0]);
-            cx.foreground().advance_clock(RECEIVE_TIMEOUT);
+            deterministic.advance_clock(RECEIVE_TIMEOUT);
             drop(op_start_signals);
+
+            deterministic.start_waiting();
             let mut clients = futures::future::join_all(clients).await;
-            cx.foreground().run_until_parked();
+            deterministic.finish_waiting();
+            deterministic.run_until_parked();
 
             let (host, host_project, mut host_cx, host_err) = clients.remove(0);
             if let Some(host_err) = host_err {
@@ -4623,6 +4684,8 @@ async fn test_random_collaboration(
                     cx.leak_detector(),
                     next_entity_id,
                 );
+
+                deterministic.start_waiting();
                 let guest = server.create_client(&mut guest_cx, &guest_username).await;
                 let guest_project = Project::remote(
                     host_project_id,
@@ -4635,6 +4698,8 @@ async fn test_random_collaboration(
                 )
                 .await
                 .unwrap();
+                deterministic.finish_waiting();
+
                 let op_start_signal = futures::channel::mpsc::unbounded();
                 user_ids.push(guest.current_user_id(&guest_cx));
                 op_start_signals.push(op_start_signal.0);
@@ -4657,8 +4722,10 @@ async fn test_random_collaboration(
                 op_start_signals.remove(guest_ix);
                 server.forbid_connections();
                 server.disconnect_client(removed_guest_id);
-                cx.foreground().advance_clock(RECEIVE_TIMEOUT);
+                deterministic.advance_clock(RECEIVE_TIMEOUT);
+                deterministic.start_waiting();
                 let (guest, guest_project, mut guest_cx, guest_err) = guest.await;
+                deterministic.finish_waiting();
                 server.allow_connections();
 
                 if let Some(guest_err) = guest_err {
@@ -4708,15 +4775,17 @@ async fn test_random_collaboration(
                 }
 
                 if rng.lock().gen_bool(0.8) {
-                    cx.foreground().run_until_parked();
+                    deterministic.run_until_parked();
                 }
             }
         }
     }
 
     drop(op_start_signals);
+    deterministic.start_waiting();
     let mut clients = futures::future::join_all(clients).await;
-    cx.foreground().run_until_parked();
+    deterministic.finish_waiting();
+    deterministic.run_until_parked();
 
     let (host_client, host_project, mut host_cx, host_err) = clients.remove(0);
     if let Some(host_err) = host_err {
