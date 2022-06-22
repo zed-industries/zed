@@ -1343,6 +1343,15 @@ impl Project {
         {
             *sharing_has_stopped = true;
             self.collaborators.clear();
+            for worktree in &self.worktrees {
+                if let Some(worktree) = worktree.upgrade(cx) {
+                    worktree.update(cx, |worktree, _| {
+                        if let Some(worktree) = worktree.as_remote_mut() {
+                            worktree.disconnected_from_host();
+                        }
+                    });
+                }
+            }
             cx.notify();
         }
     }

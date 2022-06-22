@@ -81,7 +81,7 @@ pub struct RemoteWorktree {
     pub(crate) background_snapshot: Arc<Mutex<Snapshot>>,
     project_id: u64,
     client: Arc<Client>,
-    updates_tx: UnboundedSender<proto::UpdateWorktree>,
+    updates_tx: Option<UnboundedSender<proto::UpdateWorktree>>,
     last_scan_id_rx: watch::Receiver<usize>,
     replica_id: ReplicaId,
     diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
@@ -202,7 +202,7 @@ impl Worktree {
                 replica_id,
                 snapshot: snapshot.clone(),
                 background_snapshot: background_snapshot.clone(),
-                updates_tx,
+                updates_tx: Some(updates_tx),
                 last_scan_id_rx,
                 client: client.clone(),
                 diagnostic_summaries: TreeMap::from_ordered_entries(
@@ -1042,13 +1042,19 @@ impl RemoteWorktree {
         self.snapshot.clone()
     }
 
+    pub fn disconnected_from_host(&mut self) {
+        self.updates_tx.take();
+    }
+
     pub fn update_from_remote(
         &mut self,
         envelope: TypedEnvelope<proto::UpdateWorktree>,
     ) -> Result<()> {
-        self.updates_tx
-            .unbounded_send(envelope.payload)
-            .expect("consumer runs to completion");
+        if let Some(updates_tx) = &self.updates_tx {
+            updates_tx
+                .unbounded_send(envelope.payload)
+                .expect("consumer runs to completion");
+        }
         Ok(())
     }
 
