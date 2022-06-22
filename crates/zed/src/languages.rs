@@ -44,6 +44,11 @@ pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegi
             None, //
         ),
         (
+            "python",
+            tree_sitter_python::language(),
+            None, //
+        ),
+        (
             "rust",
             tree_sitter_rust::language(),
             Some(Arc::new(rust::RustLspAdapter)),

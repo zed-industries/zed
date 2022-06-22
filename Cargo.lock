@@ -5278,6 +5278,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-python"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0d315475c65416274539dd1db9fa2de94918a6ef399dc1287be7cb7bc83dd6d"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-rust"
 version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6030,6 +6040,7 @@ dependencies = [
  "tree-sitter-go",
  "tree-sitter-json 0.20.0",
  "tree-sitter-markdown",
+ "tree-sitter-python",
  "tree-sitter-rust",
  "tree-sitter-toml",
  "tree-sitter-typescript",
