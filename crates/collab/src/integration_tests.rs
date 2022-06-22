@@ -4722,7 +4722,7 @@ async fn test_random_collaboration(
                 op_start_signals.remove(guest_ix);
                 server.forbid_connections();
                 server.disconnect_client(removed_guest_id);
-                deterministic.advance_clock(RECEIVE_TIMEOUT);
+                deterministic.advance_clock(5 * RECEIVE_TIMEOUT);
                 deterministic.start_waiting();
                 let (guest, guest_project, mut guest_cx, guest_err) = guest.await;
                 deterministic.finish_waiting();
