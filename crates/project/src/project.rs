@@ -4088,16 +4088,17 @@ impl Project {
             self.worktrees
                 .push(WorktreeHandle::Strong(worktree.clone()));
         } else {
-            cx.observe_release(&worktree, |this, _, cx| {
-                this.worktrees
-                    .retain(|worktree| worktree.upgrade(cx).is_some());
-                cx.notify();
-            })
-            .detach();
             self.worktrees
                 .push(WorktreeHandle::Weak(worktree.downgrade()));
         }
+
         self.metadata_changed(true, cx);
+        cx.observe_release(&worktree, |this, worktree, cx| {
+            this.remove_worktree(worktree.id(), cx);
+            cx.notify();
+        })
+        .detach();
+
         cx.emit(Event::WorktreeAdded);
         cx.notify();
     }
