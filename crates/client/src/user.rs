@@ -230,11 +230,6 @@ impl UserStore {
                 Task::ready(Ok(()))
             }
             UpdateContacts::Update(message) => {
-                log::info!(
-                    "update contacts on client {}: {:?}",
-                    self.client.upgrade().unwrap().id,
-                    message
-                );
                 let mut user_ids = HashSet::default();
                 for contact in &message.contacts {
                     user_ids.insert(contact.user_id);
