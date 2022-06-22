@@ -33,7 +33,6 @@ pub struct Theme {
     pub contact_notification: ContactNotification,
     pub update_notification: UpdateNotification,
     pub tooltip: TooltipStyle,
-    // pub terminal: Terminal,
 }
 
 #[derive(Deserialize, Default)]
