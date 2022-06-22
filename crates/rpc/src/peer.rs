@@ -174,7 +174,13 @@ impl Peer {
                 loop {
                     tracing::debug!(%connection_id, "inner loop iteration start");
                     futures::select_biased! {
-                        outgoing = outgoing_rx.next().fuse() => match outgoing {
+                        // Handle the receive timeout first in the event of a tie. Otherwise, it may left
+                        // in its "fused" state, in which it is always pending, but not reset.
+                        _ = receive_timeout => {
+                            tracing::debug!(%connection_id, "receive timeout: delay between messages too long");
+                            Err(anyhow!("delay between messages too long"))?
+                        }
+                        outgoing = outgoing_rx.next() => match outgoing {
                             Some(outgoing) => {
                                 tracing::debug!(%connection_id, "outgoing rpc message: writing");
                                 if let Some(result) = writer.write(outgoing).timeout(WRITE_TIMEOUT).await {
@@ -192,6 +198,18 @@ impl Peer {
                                 return Ok(())
                             },
                         },
+                        _ = keepalive_timer => {
+                            tracing::debug!(%connection_id, "keepalive interval: pinging");
+                            if let Some(result) = writer.write(proto::Message::Ping).timeout(WRITE_TIMEOUT).await {
+                                tracing::debug!(%connection_id, "keepalive interval: done pinging");
+                                result.context("failed to send keepalive")?;
+                                tracing::debug!(%connection_id, "keepalive interval: resetting after pinging");
+                                keepalive_timer.set(create_timer(KEEPALIVE_INTERVAL).fuse());
+                            } else {
+                                tracing::debug!(%connection_id, "keepalive interval: pinging timed out");
+                                Err(anyhow!("timed out sending keepalive"))?;
+                            }
+                        }
                         incoming = read_message => {
                             let incoming = incoming.context("error reading rpc message from socket")?;
                             tracing::debug!(%connection_id, "incoming rpc message: received");
@@ -214,22 +232,6 @@ impl Peer {
                                 }
                             }
                             break;
-                        },
-                        _ = keepalive_timer => {
-                            tracing::debug!(%connection_id, "keepalive interval: pinging");
-                            if let Some(result) = writer.write(proto::Message::Ping).timeout(WRITE_TIMEOUT).await {
-                                tracing::debug!(%connection_id, "keepalive interval: done pinging");
-                                result.context("failed to send keepalive")?;
-                                tracing::debug!(%connection_id, "keepalive interval: resetting after pinging");
-                                keepalive_timer.set(create_timer(KEEPALIVE_INTERVAL).fuse());
-                            } else {
-                                tracing::debug!(%connection_id, "keepalive interval: pinging timed out");
-                                Err(anyhow!("timed out sending keepalive"))?;
-                            }
-                        }
-                        _ = receive_timeout => {
-                            tracing::debug!(%connection_id, "receive timeout: delay between messages too long");
-                            Err(anyhow!("delay between messages too long"))?
                         }
                     }
                 }
