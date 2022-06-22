@@ -4336,6 +4336,74 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
     );
 }
 
+#[gpui::test(iterations = 10)]
+async fn test_peers_simultaneously_following_each_other(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+
+    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    client_a
+        .fs
+        .insert_tree(
+            "/a",
+            json!({
+                "1.txt": "one",
+                "2.txt": "two",
+                "3.txt": "three",
+            }),
+        )
+        .await;
+    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
+    let workspace_a = client_a.build_workspace(&project_a, cx_a);
+
+    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let workspace_b = client_b.build_workspace(&project_b, cx_b);
+
+    deterministic.run_until_parked();
+    let client_a_id = project_b.read_with(cx_b, |project, _| {
+        project.collaborators().values().next().unwrap().peer_id
+    });
+    let client_b_id = project_a.read_with(cx_a, |project, _| {
+        project.collaborators().values().next().unwrap().peer_id
+    });
+
+    let a_follow_b = workspace_a.update(cx_a, |workspace, cx| {
+        workspace
+            .toggle_follow(&ToggleFollow(client_b_id), cx)
+            .unwrap()
+    });
+    let b_follow_a = workspace_b.update(cx_b, |workspace, cx| {
+        workspace
+            .toggle_follow(&ToggleFollow(client_a_id), cx)
+            .unwrap()
+    });
+
+    futures::try_join!(a_follow_b, b_follow_a).unwrap();
+    workspace_a.read_with(cx_a, |workspace, _| {
+        assert_eq!(
+            workspace.leader_for_pane(&workspace.active_pane()),
+            Some(client_b_id)
+        );
+    });
+    workspace_b.read_with(cx_b, |workspace, _| {
+        assert_eq!(
+            workspace.leader_for_pane(&workspace.active_pane()),
+            Some(client_a_id)
+        );
+    });
+}
+
 #[gpui::test(iterations = 100)]
 async fn test_random_collaboration(
     cx: &mut TestAppContext,
