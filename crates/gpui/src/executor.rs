@@ -532,10 +532,7 @@ impl Foreground {
     #[cfg(any(test, feature = "test-support"))]
     pub fn advance_clock(&self, duration: Duration) {
         match self {
-            Self::Deterministic { executor, .. } => {
-                executor.run_until_parked();
-                executor.advance_clock(duration);
-            }
+            Self::Deterministic { executor, .. } => executor.advance_clock(duration),
             _ => panic!("this method can only be called on a deterministic executor"),
         }
     }
