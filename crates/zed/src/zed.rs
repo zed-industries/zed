@@ -371,7 +371,9 @@ mod tests {
     use super::*;
     use assets::Assets;
     use editor::{Autoscroll, DisplayPoint, Editor};
-    use gpui::{AssetSource, MutableAppContext, TestAppContext, ViewHandle};
+    use gpui::{
+        executor::Deterministic, AssetSource, MutableAppContext, TestAppContext, ViewHandle,
+    };
     use project::ProjectPath;
     use serde_json::json;
     use std::{
@@ -437,6 +439,36 @@ mod tests {
         })
         .await;
         assert_eq!(cx.window_ids().len(), 2);
+    }
+
+    #[gpui::test]
+    async fn test_closing_window_via_mouse(executor: Arc<Deterministic>, cx: &mut TestAppContext) {
+        let app_state = init(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree("/root", json!({"a": "hey"}))
+            .await;
+
+        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, cx))
+            .await;
+        assert_eq!(cx.window_ids().len(), 1);
+
+        let workspace = cx.root_view::<Workspace>(cx.window_ids()[0]).unwrap();
+        let editor = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .unwrap()
+                .downcast::<Editor>()
+                .unwrap()
+        });
+        editor.update(cx, |editor, cx| editor.insert("EDIT", cx));
+
+        assert!(!cx.simulate_window_close(workspace.window_id()));
+        executor.run_until_parked();
+        cx.simulate_prompt_answer(workspace.window_id(), 1);
+        executor.run_until_parked();
+        assert_eq!(cx.window_ids().len(), 0);
     }
 
     #[gpui::test]

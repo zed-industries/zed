@@ -22,7 +22,7 @@ use smallvec::SmallVec;
 use smol::prelude::*;
 use std::{
     any::{type_name, Any, TypeId},
-    cell::RefCell,
+    cell::{RefCell, RefMut},
     collections::{hash_map::Entry, BTreeMap, HashMap, HashSet, VecDeque},
     fmt::{self, Debug},
     hash::{Hash, Hasher},
@@ -521,16 +521,8 @@ impl TestAppContext {
     pub fn simulate_prompt_answer(&self, window_id: usize, answer: usize) {
         use postage::prelude::Sink as _;
 
-        let mut state = self.cx.borrow_mut();
-        let (_, window) = state
-            .presenters_and_platform_windows
-            .get_mut(&window_id)
-            .unwrap();
-        let test_window = window
-            .as_any_mut()
-            .downcast_mut::<platform::test::Window>()
-            .unwrap();
-        let mut done_tx = test_window
+        let mut done_tx = self
+            .window_mut(window_id)
             .pending_prompts
             .borrow_mut()
             .pop_front()
@@ -539,30 +531,28 @@ impl TestAppContext {
     }
 
     pub fn has_pending_prompt(&self, window_id: usize) -> bool {
-        let mut state = self.cx.borrow_mut();
-        let (_, window) = state
-            .presenters_and_platform_windows
-            .get_mut(&window_id)
-            .unwrap();
-        let test_window = window
-            .as_any_mut()
-            .downcast_mut::<platform::test::Window>()
-            .unwrap();
-        let prompts = test_window.pending_prompts.borrow_mut();
+        let window = self.window_mut(window_id);
+        let prompts = window.pending_prompts.borrow_mut();
         !prompts.is_empty()
     }
 
     pub fn current_window_title(&self, window_id: usize) -> Option<String> {
-        let mut state = self.cx.borrow_mut();
-        let (_, window) = state
-            .presenters_and_platform_windows
-            .get_mut(&window_id)
-            .unwrap();
-        let test_window = window
-            .as_any_mut()
-            .downcast_mut::<platform::test::Window>()
-            .unwrap();
-        test_window.title.clone()
+        self.window_mut(window_id).title.clone()
+    }
+
+    pub fn simulate_window_close(&self, window_id: usize) -> bool {
+        let handler = self.window_mut(window_id).should_close_handler.take();
+        if let Some(mut handler) = handler {
+            let should_close = handler();
+            self.window_mut(window_id).should_close_handler = Some(handler);
+            should_close
+        } else {
+            false
+        }
+    }
+
+    pub fn is_window_edited(&self, window_id: usize) -> bool {
+        self.window_mut(window_id).edited
     }
 
     pub fn leak_detector(&self) -> Arc<Mutex<LeakDetector>> {
@@ -575,6 +565,20 @@ impl TestAppContext {
             .leak_detector()
             .lock()
             .assert_dropped(handle.id())
+    }
+
+    fn window_mut(&self, window_id: usize) -> RefMut<platform::test::Window> {
+        RefMut::map(self.cx.borrow_mut(), |state| {
+            let (_, window) = state
+                .presenters_and_platform_windows
+                .get_mut(&window_id)
+                .unwrap();
+            let test_window = window
+                .as_any_mut()
+                .downcast_mut::<platform::test::Window>()
+                .unwrap();
+            test_window
+        })
     }
 }
 

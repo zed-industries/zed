@@ -37,7 +37,7 @@ pub struct Window {
     event_handlers: Vec<Box<dyn FnMut(super::Event) -> bool>>,
     resize_handlers: Vec<Box<dyn FnMut()>>,
     close_handlers: Vec<Box<dyn FnOnce()>>,
-    should_close_handler: Option<Box<dyn FnMut() -> bool>>,
+    pub(crate) should_close_handler: Option<Box<dyn FnMut() -> bool>>,
     pub(crate) title: Option<String>,
     pub(crate) edited: bool,
     pub(crate) pending_prompts: RefCell<VecDeque<oneshot::Sender<usize>>>,
