@@ -3826,6 +3826,8 @@ dependencies = [
  "base64 0.13.0",
  "clock",
  "collections",
+ "ctor",
+ "env_logger",
  "futures",
  "gpui",
  "parking_lot 0.11.2",
