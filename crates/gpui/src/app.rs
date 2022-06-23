@@ -22,7 +22,7 @@ use smallvec::SmallVec;
 use smol::prelude::*;
 use std::{
     any::{type_name, Any, TypeId},
-    cell::{RefCell, RefMut},
+    cell::RefCell,
     collections::{hash_map::Entry, BTreeMap, HashMap, HashSet, VecDeque},
     fmt::{self, Debug},
     hash::{Hash, Hasher},
@@ -567,8 +567,8 @@ impl TestAppContext {
             .assert_dropped(handle.id())
     }
 
-    fn window_mut(&self, window_id: usize) -> RefMut<platform::test::Window> {
-        RefMut::map(self.cx.borrow_mut(), |state| {
+    fn window_mut(&self, window_id: usize) -> std::cell::RefMut<platform::test::Window> {
+        std::cell::RefMut::map(self.cx.borrow_mut(), |state| {
             let (_, window) = state
                 .presenters_and_platform_windows
                 .get_mut(&window_id)

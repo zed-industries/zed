@@ -462,7 +462,10 @@ mod tests {
                 .downcast::<Editor>()
                 .unwrap()
         });
+        assert!(!cx.is_window_edited(workspace.window_id()));
+
         editor.update(cx, |editor, cx| editor.insert("EDIT", cx));
+        assert!(cx.is_window_edited(workspace.window_id()));
 
         assert!(!cx.simulate_window_close(workspace.window_id()));
         executor.run_until_parked();

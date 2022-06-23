@@ -1482,6 +1482,9 @@ impl Workspace {
                     }
                     self.update_window_edited(cx);
                 }
+                pane::Event::RemoveItem => {
+                    self.update_window_edited(cx);
+                }
             }
         } else {
             error!("pane {} not found", pane_id);
