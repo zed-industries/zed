@@ -61,6 +61,13 @@ impl SelectionsCollection {
         self.buffer.read(cx).read(cx)
     }
 
+    pub fn set_state(&mut self, other: &SelectionsCollection) {
+        self.next_selection_id = other.next_selection_id;
+        self.line_mode = other.line_mode;
+        self.disjoint = other.disjoint.clone();
+        self.pending = other.pending.clone();
+    }
+
     pub fn count<'a>(&self) -> usize {
         let mut count = self.disjoint.len();
         if self.pending.is_some() {

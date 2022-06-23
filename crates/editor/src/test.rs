@@ -77,7 +77,7 @@ pub(crate) fn build_editor(
     buffer: ModelHandle<MultiBuffer>,
     cx: &mut ViewContext<Editor>,
 ) -> Editor {
-    Editor::new(EditorMode::Full, buffer, None, None, None, cx)
+    Editor::new(EditorMode::Full, buffer, None, None, cx)
 }
 
 pub struct EditorTestContext<'a> {
@@ -428,7 +428,7 @@ impl<'a> EditorLspTestContext<'a> {
             let (window_id, editor) = cx.add_window(Default::default(), |cx| {
                 let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
 
-                Editor::new(EditorMode::Full, buffer, Some(project), None, None, cx)
+                Editor::new(EditorMode::Full, buffer, Some(project), None, cx)
             });
 
             editor.update(cx, |_, cx| cx.focus_self());

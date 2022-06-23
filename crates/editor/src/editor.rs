@@ -892,14 +892,7 @@ impl Editor {
     ) -> Self {
         let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-        Self::new(
-            EditorMode::SingleLine,
-            buffer,
-            None,
-            field_editor_style,
-            None,
-            cx,
-        )
+        Self::new(EditorMode::SingleLine, buffer, None, field_editor_style, cx)
     }
 
     pub fn auto_height(
@@ -914,7 +907,6 @@ impl Editor {
             buffer,
             None,
             field_editor_style,
-            None,
             cx,
         )
     }
@@ -925,7 +917,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-        Self::new(EditorMode::Full, buffer, project, None, None, cx)
+        Self::new(EditorMode::Full, buffer, project, None, cx)
     }
 
     pub fn for_multibuffer(
@@ -933,7 +925,7 @@ impl Editor {
         project: Option<ModelHandle<Project>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        Self::new(EditorMode::Full, buffer, project, None, None, cx)
+        Self::new(EditorMode::Full, buffer, project, None, cx)
     }
 
     pub fn clone(&self, cx: &mut ViewContext<Self>) -> Self {
@@ -942,9 +934,15 @@ impl Editor {
             self.buffer.clone(),
             self.project.clone(),
             self.get_field_editor_theme,
-            Some(self.selections.clone()),
             cx,
         );
+        self.display_map.update(cx, |display_map, cx| {
+            let snapshot = display_map.snapshot(cx);
+            clone.display_map.update(cx, |display_map, cx| {
+                display_map.set_state(&snapshot, cx);
+            });
+        });
+        clone.selections.set_state(&self.selections);
         clone.scroll_position = self.scroll_position;
         clone.scroll_top_anchor = self.scroll_top_anchor.clone();
         clone.searchable = self.searchable;
@@ -956,7 +954,6 @@ impl Editor {
         buffer: ModelHandle<MultiBuffer>,
         project: Option<ModelHandle<Project>>,
         get_field_editor_theme: Option<GetFieldEditorTheme>,
-        selections: Option<SelectionsCollection>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let display_map = cx.add_model(|cx| {
@@ -977,8 +974,7 @@ impl Editor {
         cx.observe(&display_map, Self::on_display_map_changed)
             .detach();
 
-        let selections = selections
-            .unwrap_or_else(|| SelectionsCollection::new(display_map.clone(), buffer.clone()));
+        let selections = SelectionsCollection::new(display_map.clone(), buffer.clone());
 
         let mut this = Self {
             handle: cx.weak_handle(),
@@ -6468,23 +6464,55 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_clone_with_selections(cx: &mut gpui::MutableAppContext) {
+    fn test_clone(cx: &mut gpui::MutableAppContext) {
         let (text, selection_ranges) = marked_text_ranges(indoc! {"
-            The qu[ick brown
-            fox jum]ps over
-            the lazy dog
+            one
+            two
+            three[]
+            four
+            five[]
         "});
         cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&text, cx);
 
-        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
+        let (_, editor) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
 
-        let cloned_editor = view.update(cx, |view, cx| {
-            view.change_selections(None, cx, |s| s.select_ranges(selection_ranges.clone()));
-            view.clone(cx)
+        editor.update(cx, |editor, cx| {
+            editor.change_selections(None, cx, |s| s.select_ranges(selection_ranges.clone()));
+            editor.fold_ranges(
+                [
+                    Point::new(1, 0)..Point::new(2, 0),
+                    Point::new(3, 0)..Point::new(4, 0),
+                ],
+                cx,
+            );
         });
 
-        assert_set_eq!(cloned_editor.selections.ranges(cx), selection_ranges);
+        let (_, cloned_editor) = editor.update(cx, |editor, cx| {
+            cx.add_window(Default::default(), |cx| editor.clone(cx))
+        });
+
+        let snapshot = editor.update(cx, |e, cx| e.snapshot(cx));
+        let cloned_snapshot = cloned_editor.update(cx, |e, cx| e.snapshot(cx));
+
+        assert_eq!(
+            cloned_editor.update(cx, |e, cx| e.display_text(cx)),
+            editor.update(cx, |e, cx| e.display_text(cx))
+        );
+        assert_eq!(
+            cloned_snapshot
+                .folds_in_range(0..text.len())
+                .collect::<Vec<_>>(),
+            snapshot.folds_in_range(0..text.len()).collect::<Vec<_>>(),
+        );
+        assert_set_eq!(
+            cloned_editor.read(cx).selections.ranges::<Point>(cx),
+            editor.read(cx).selections.ranges(cx)
+        );
+        assert_set_eq!(
+            cloned_editor.update(cx, |e, cx| dbg!(e.selections.display_ranges(cx))),
+            editor.update(cx, |e, cx| dbg!(e.selections.display_ranges(cx)))
+        );
     }
 
     #[gpui::test]
