@@ -965,10 +965,9 @@ pub mod tests {
         );
         language.set_theme(&theme);
         cx.update(|cx| {
-            cx.set_global(Settings {
-                tab_size: 2,
-                ..Settings::test(cx)
-            })
+            let mut settings = Settings::test(cx);
+            settings.language_settings.tab_size = Some(2);
+            cx.set_global(settings);
         });
 
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));

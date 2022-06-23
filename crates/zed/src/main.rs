@@ -73,66 +73,66 @@ fn main() {
     let theme = themes.get(DEFAULT_THEME_NAME).unwrap();
     let default_settings = Settings::new("Zed Mono", &app.font_cache(), theme)
         .unwrap()
-        .with_overrides(
+        .with_language_defaults(
             languages::PLAIN_TEXT.name(),
-            settings::LanguageOverride {
+            settings::LanguageSettings {
                 soft_wrap: Some(settings::SoftWrap::PreferredLineLength),
                 ..Default::default()
             },
         )
-        .with_overrides(
+        .with_language_defaults(
             "C",
-            settings::LanguageOverride {
+            settings::LanguageSettings {
                 tab_size: Some(2),
                 ..Default::default()
             },
         )
-        .with_overrides(
+        .with_language_defaults(
             "C++",
-            settings::LanguageOverride {
+            settings::LanguageSettings {
                 tab_size: Some(2),
                 ..Default::default()
             },
         )
-        .with_overrides(
+        .with_language_defaults(
             "Go",
-            settings::LanguageOverride {
+            settings::LanguageSettings {
                 tab_size: Some(4),
                 hard_tabs: Some(true),
                 ..Default::default()
             },
         )
-        .with_overrides(
+        .with_language_defaults(
             "Markdown",
-            settings::LanguageOverride {
+            settings::LanguageSettings {
                 soft_wrap: Some(settings::SoftWrap::PreferredLineLength),
                 ..Default::default()
             },
         )
-        .with_overrides(
+        .with_language_defaults(
             "Rust",
-            settings::LanguageOverride {
+            settings::LanguageSettings {
                 tab_size: Some(4),
                 ..Default::default()
             },
         )
-        .with_overrides(
+        .with_language_defaults(
             "JavaScript",
-            settings::LanguageOverride {
+            settings::LanguageSettings {
                 tab_size: Some(2),
                 ..Default::default()
             },
         )
-        .with_overrides(
+        .with_language_defaults(
             "TypeScript",
-            settings::LanguageOverride {
+            settings::LanguageSettings {
                 tab_size: Some(2),
                 ..Default::default()
             },
         )
-        .with_overrides(
+        .with_language_defaults(
             "TSX",
-            settings::LanguageOverride {
+            settings::LanguageSettings {
                 tab_size: Some(2),
                 ..Default::default()
             },

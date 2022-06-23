@@ -24,18 +24,14 @@ pub struct Settings {
     pub buffer_font_size: f32,
     pub default_buffer_font_size: f32,
     pub vim_mode: bool,
-    pub tab_size: u32,
-    pub hard_tabs: bool,
-    pub soft_wrap: SoftWrap,
-    pub preferred_line_length: u32,
-    pub format_on_save: bool,
-    pub enable_language_server: bool,
-    pub language_overrides: HashMap<Arc<str>, LanguageOverride>,
+    pub language_settings: LanguageSettings,
+    pub language_defaults: HashMap<Arc<str>, LanguageSettings>,
+    pub language_overrides: HashMap<Arc<str>, LanguageSettings>,
     pub theme: Arc<Theme>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
-pub struct LanguageOverride {
+pub struct LanguageSettings {
     pub tab_size: Option<u32>,
     pub hard_tabs: Option<bool>,
     pub soft_wrap: Option<SoftWrap>,
@@ -67,9 +63,9 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub enable_language_server: Option<bool>,
     #[serde(flatten)]
-    pub editor: LanguageOverride,
+    pub editor: LanguageSettings,
     #[serde(default)]
-    pub language_overrides: HashMap<Arc<str>, LanguageOverride>,
+    pub language_overrides: HashMap<Arc<str>, LanguageSettings>,
     #[serde(default)]
     pub theme: Option<String>,
 }
@@ -85,68 +81,68 @@ impl Settings {
             buffer_font_size: 15.,
             default_buffer_font_size: 15.,
             vim_mode: false,
-            tab_size: 4,
-            hard_tabs: false,
-            soft_wrap: SoftWrap::None,
-            preferred_line_length: 80,
+            language_settings: Default::default(),
+            language_defaults: Default::default(),
             language_overrides: Default::default(),
-            format_on_save: true,
-            enable_language_server: true,
             projects_online_by_default: true,
             theme,
         })
     }
 
-    pub fn with_overrides(
+    pub fn with_language_defaults(
         mut self,
         language_name: impl Into<Arc<str>>,
-        overrides: LanguageOverride,
+        overrides: LanguageSettings,
     ) -> Self {
-        self.language_overrides
+        self.language_defaults
             .insert(language_name.into(), overrides);
         self
     }
 
     pub fn tab_size(&self, language: Option<&str>) -> u32 {
-        language
-            .and_then(|language| self.language_overrides.get(language))
-            .and_then(|settings| settings.tab_size)
-            .unwrap_or(self.tab_size)
+        self.language_setting(language, |settings| settings.tab_size)
+            .unwrap_or(4)
     }
 
     pub fn hard_tabs(&self, language: Option<&str>) -> bool {
-        language
-            .and_then(|language| self.language_overrides.get(language))
-            .and_then(|settings| settings.hard_tabs)
-            .unwrap_or(self.hard_tabs)
+        self.language_setting(language, |settings| settings.hard_tabs)
+            .unwrap_or(false)
     }
 
     pub fn soft_wrap(&self, language: Option<&str>) -> SoftWrap {
-        language
-            .and_then(|language| self.language_overrides.get(language))
-            .and_then(|settings| settings.soft_wrap)
-            .unwrap_or(self.soft_wrap)
+        self.language_setting(language, |settings| settings.soft_wrap)
+            .unwrap_or(SoftWrap::None)
     }
 
     pub fn preferred_line_length(&self, language: Option<&str>) -> u32 {
-        language
-            .and_then(|language| self.language_overrides.get(language))
-            .and_then(|settings| settings.preferred_line_length)
-            .unwrap_or(self.preferred_line_length)
+        self.language_setting(language, |settings| settings.preferred_line_length)
+            .unwrap_or(80)
     }
 
     pub fn format_on_save(&self, language: Option<&str>) -> bool {
-        language
-            .and_then(|language| self.language_overrides.get(language))
-            .and_then(|settings| settings.format_on_save)
-            .unwrap_or(self.format_on_save)
+        self.language_setting(language, |settings| settings.format_on_save)
+            .unwrap_or(true)
     }
 
     pub fn enable_language_server(&self, language: Option<&str>) -> bool {
-        language
-            .and_then(|language| self.language_overrides.get(language))
-            .and_then(|settings| settings.enable_language_server)
-            .unwrap_or(self.enable_language_server)
+        self.language_setting(language, |settings| settings.enable_language_server)
+            .unwrap_or(true)
+    }
+
+    fn language_setting<F, R>(&self, language: Option<&str>, f: F) -> Option<R>
+    where
+        F: Fn(&LanguageSettings) -> Option<R>,
+    {
+        let mut language_override = None;
+        let mut language_default = None;
+        if let Some(language) = language {
+            language_override = self.language_overrides.get(language).and_then(&f);
+            language_default = self.language_defaults.get(language).and_then(&f);
+        }
+
+        language_override
+            .or_else(|| f(&self.language_settings))
+            .or(language_default)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -156,12 +152,8 @@ impl Settings {
             buffer_font_size: 14.,
             default_buffer_font_size: 14.,
             vim_mode: false,
-            tab_size: 4,
-            hard_tabs: false,
-            soft_wrap: SoftWrap::None,
-            preferred_line_length: 80,
-            format_on_save: true,
-            enable_language_server: true,
+            language_settings: Default::default(),
+            language_defaults: Default::default(),
             language_overrides: Default::default(),
             projects_online_by_default: true,
             theme: gpui::fonts::with_font_cache(cx.font_cache().clone(), || Default::default()),
@@ -200,15 +192,18 @@ impl Settings {
         merge(&mut self.buffer_font_size, data.buffer_font_size);
         merge(&mut self.default_buffer_font_size, data.buffer_font_size);
         merge(&mut self.vim_mode, data.vim_mode);
-        merge(&mut self.format_on_save, data.format_on_save);
-        merge(
-            &mut self.enable_language_server,
+        merge_option(
+            &mut self.language_settings.format_on_save,
+            data.format_on_save,
+        );
+        merge_option(
+            &mut self.language_settings.enable_language_server,
             data.enable_language_server,
         );
-        merge(&mut self.soft_wrap, data.editor.soft_wrap);
-        merge(&mut self.tab_size, data.editor.tab_size);
-        merge(
-            &mut self.preferred_line_length,
+        merge_option(&mut self.language_settings.soft_wrap, data.editor.soft_wrap);
+        merge_option(&mut self.language_settings.tab_size, data.editor.tab_size);
+        merge_option(
+            &mut self.language_settings.preferred_line_length,
             data.editor.preferred_line_length,
         );
 
@@ -257,19 +252,19 @@ pub fn settings_file_json_schema(
         .definitions
         .insert("ThemeName".to_owned(), theme_names_schema);
 
-    // Construct language overrides reference type
-    let language_override_schema_reference = Schema::Object(SchemaObject {
-        reference: Some("#/definitions/LanguageOverride".to_owned()),
+    // Construct language settings reference type
+    let language_settings_schema_reference = Schema::Object(SchemaObject {
+        reference: Some("#/definitions/LanguageSettings".to_owned()),
         ..Default::default()
     });
-    let language_overrides_properties = language_names
+    let language_settings_properties = language_names
         .into_iter()
         .map(|name| {
             (
                 name,
                 Schema::Object(SchemaObject {
                     subschemas: Some(Box::new(SubschemaValidation {
-                        all_of: Some(vec![language_override_schema_reference.clone()]),
+                        all_of: Some(vec![language_settings_schema_reference.clone()]),
                         ..Default::default()
                     })),
                     ..Default::default()
@@ -280,7 +275,7 @@ pub fn settings_file_json_schema(
     let language_overrides_schema = Schema::Object(SchemaObject {
         instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
         object: Some(Box::new(ObjectValidation {
-            properties: language_overrides_properties,
+            properties: language_settings_properties,
             ..Default::default()
         })),
         ..Default::default()

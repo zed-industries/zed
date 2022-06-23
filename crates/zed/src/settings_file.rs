@@ -93,7 +93,7 @@ pub async fn watch_keymap_file(
 mod tests {
     use super::*;
     use project::FakeFs;
-    use settings::SoftWrap;
+    use settings::{LanguageSettings, SoftWrap};
 
     #[gpui::test]
     async fn test_settings_from_files(cx: &mut gpui::TestAppContext) {
@@ -106,8 +106,10 @@ mod tests {
             {
                 "buffer_font_size": 24,
                 "soft_wrap": "editor_width",
+                "tab_size": 8,
                 "language_overrides": {
                     "Markdown": {
+                        "tab_size": 2,
                         "preferred_line_length": 100,
                         "soft_wrap": "preferred_line_length"
                     }
@@ -123,20 +125,40 @@ mod tests {
         let source2 = WatchedJsonFile::new(fs.clone(), &executor, "/settings2.json".as_ref()).await;
         let source3 = WatchedJsonFile::new(fs.clone(), &executor, "/settings3.json".as_ref()).await;
 
+        let settings = cx.read(Settings::test).with_language_defaults(
+            "JavaScript",
+            LanguageSettings {
+                tab_size: Some(2),
+                ..Default::default()
+            },
+        );
         let mut settings_rx = settings_from_files(
-            cx.read(Settings::test),
+            settings,
             vec![source1, source2, source3],
             ThemeRegistry::new((), cx.font_cache()),
             cx.font_cache(),
         );
 
         let settings = settings_rx.next().await.unwrap();
-        let md_settings = settings.language_overrides.get("Markdown").unwrap();
-        assert_eq!(settings.soft_wrap, SoftWrap::EditorWidth);
         assert_eq!(settings.buffer_font_size, 24.0);
-        assert_eq!(settings.tab_size, 4);
-        assert_eq!(md_settings.soft_wrap, Some(SoftWrap::PreferredLineLength));
-        assert_eq!(md_settings.preferred_line_length, Some(100));
+
+        assert_eq!(settings.soft_wrap(None), SoftWrap::EditorWidth);
+        assert_eq!(
+            settings.soft_wrap(Some("Markdown")),
+            SoftWrap::PreferredLineLength
+        );
+        assert_eq!(
+            settings.soft_wrap(Some("JavaScript")),
+            SoftWrap::EditorWidth
+        );
+
+        assert_eq!(settings.preferred_line_length(None), 80);
+        assert_eq!(settings.preferred_line_length(Some("Markdown")), 100);
+        assert_eq!(settings.preferred_line_length(Some("JavaScript")), 80);
+
+        assert_eq!(settings.tab_size(None), 8);
+        assert_eq!(settings.tab_size(Some("Markdown")), 2);
+        assert_eq!(settings.tab_size(Some("JavaScript")), 8);
 
         fs.save(
             "/settings2.json".as_ref(),
@@ -157,18 +179,46 @@ mod tests {
         .unwrap();
 
         let settings = settings_rx.next().await.unwrap();
-        let md_settings = settings.language_overrides.get("Markdown").unwrap();
-        assert_eq!(settings.soft_wrap, SoftWrap::None);
         assert_eq!(settings.buffer_font_size, 24.0);
-        assert_eq!(settings.tab_size, 2);
-        assert_eq!(md_settings.soft_wrap, Some(SoftWrap::PreferredLineLength));
-        assert_eq!(md_settings.preferred_line_length, Some(120));
+
+        assert_eq!(settings.soft_wrap(None), SoftWrap::None);
+        assert_eq!(
+            settings.soft_wrap(Some("Markdown")),
+            SoftWrap::PreferredLineLength
+        );
+        assert_eq!(settings.soft_wrap(Some("JavaScript")), SoftWrap::None);
+
+        assert_eq!(settings.preferred_line_length(None), 80);
+        assert_eq!(settings.preferred_line_length(Some("Markdown")), 120);
+        assert_eq!(settings.preferred_line_length(Some("JavaScript")), 80);
+
+        assert_eq!(settings.tab_size(None), 2);
+        assert_eq!(settings.tab_size(Some("Markdown")), 2);
+        assert_eq!(settings.tab_size(Some("JavaScript")), 2);
 
         fs.remove_file("/settings2.json".as_ref(), Default::default())
             .await
             .unwrap();
 
         let settings = settings_rx.next().await.unwrap();
-        assert_eq!(settings.tab_size, 4);
+        assert_eq!(settings.buffer_font_size, 24.0);
+
+        assert_eq!(settings.soft_wrap(None), SoftWrap::EditorWidth);
+        assert_eq!(
+            settings.soft_wrap(Some("Markdown")),
+            SoftWrap::PreferredLineLength
+        );
+        assert_eq!(
+            settings.soft_wrap(Some("JavaScript")),
+            SoftWrap::EditorWidth
+        );
+
+        assert_eq!(settings.preferred_line_length(None), 80);
+        assert_eq!(settings.preferred_line_length(Some("Markdown")), 100);
+        assert_eq!(settings.preferred_line_length(Some("JavaScript")), 80);
+
+        assert_eq!(settings.tab_size(None), 8);
+        assert_eq!(settings.tab_size(Some("Markdown")), 2);
+        assert_eq!(settings.tab_size(Some("JavaScript")), 8);
     }
 }
