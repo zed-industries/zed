@@ -1,10 +1,6 @@
 use crate::db::{self, ChannelId, ProjectId, UserId};
 use anyhow::{anyhow, Result};
-use collections::{
-    btree_map,
-    hash_map::{self, Entry},
-    BTreeMap, BTreeSet, HashMap, HashSet,
-};
+use collections::{btree_map, hash_map::Entry, BTreeMap, BTreeSet, HashMap, HashSet};
 use rpc::{proto, ConnectionId, Receipt};
 use serde::Serialize;
 use std::{
@@ -18,11 +14,11 @@ use tracing::instrument;
 
 #[derive(Default, Serialize)]
 pub struct Store {
-    connections: HashMap<ConnectionId, ConnectionState>,
-    connections_by_user_id: HashMap<UserId, HashSet<ConnectionId>>,
+    connections: BTreeMap<ConnectionId, ConnectionState>,
+    connections_by_user_id: BTreeMap<UserId, HashSet<ConnectionId>>,
     projects: BTreeMap<ProjectId, Project>,
     #[serde(skip)]
-    channels: HashMap<ChannelId, Channel>,
+    channels: BTreeMap<ChannelId, Channel>,
 }
 
 #[derive(Serialize)]
@@ -60,7 +56,7 @@ pub struct Worktree {
     pub root_name: String,
     pub visible: bool,
     #[serde(skip)]
-    pub entries: HashMap<u64, proto::Entry>,
+    pub entries: BTreeMap<u64, proto::Entry>,
     #[serde(skip)]
     pub extension_counts: HashMap<String, usize>,
     #[serde(skip)]
@@ -210,7 +206,7 @@ impl Store {
     pub fn leave_channel(&mut self, connection_id: ConnectionId, channel_id: ChannelId) {
         if let Some(connection) = self.connections.get_mut(&connection_id) {
             connection.channels.remove(&channel_id);
-            if let hash_map::Entry::Occupied(mut entry) = self.channels.entry(channel_id) {
+            if let btree_map::Entry::Occupied(mut entry) = self.channels.entry(channel_id) {
                 entry.get_mut().connection_ids.remove(&connection_id);
                 if entry.get_mut().connection_ids.is_empty() {
                     entry.remove();
@@ -596,6 +592,7 @@ impl Store {
             for worktree in project.worktrees.values_mut() {
                 worktree.diagnostic_summaries.clear();
                 worktree.entries.clear();
+                worktree.extension_counts.clear();
             }
         }
 
