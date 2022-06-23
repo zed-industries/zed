@@ -3,7 +3,7 @@ mod fold_map;
 mod tab_map;
 mod wrap_map;
 
-use crate::{Anchor, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
+use crate::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
 use block_map::{BlockMap, BlockPoint};
 use collections::{HashMap, HashSet};
 use fold_map::FoldMap;
@@ -95,6 +95,15 @@ impl DisplayMap {
             text_highlights: self.text_highlights.clone(),
             clip_at_line_ends: self.clip_at_line_ends,
         }
+    }
+
+    pub fn set_state(&mut self, other: &DisplaySnapshot, cx: &mut ModelContext<Self>) {
+        self.fold(
+            other
+                .folds_in_range(0..other.buffer_snapshot.len())
+                .map(|fold| fold.to_offset(&other.buffer_snapshot)),
+            cx,
+        );
     }
 
     pub fn fold<T: ToOffset>(
