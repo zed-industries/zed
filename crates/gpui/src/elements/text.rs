@@ -1,5 +1,3 @@
-use std::{borrow::Cow, ops::Range, sync::Arc};
-
 use crate::{
     color::Color,
     fonts::{HighlightStyle, TextStyle},
@@ -13,6 +11,7 @@ use crate::{
     SizeConstraint, TextLayoutCache,
 };
 use serde_json::json;
+use std::{borrow::Cow, ops::Range, sync::Arc};
 
 pub struct Text {
     text: String,
@@ -101,7 +100,7 @@ impl Element for Text {
         let mut max_line_width = 0_f32;
         let mut wrap_boundaries = Vec::new();
         let mut wrapper = cx.font_cache.line_wrapper(font_id, self.style.font_size);
-        for (line, shaped_line) in self.text.lines().zip(&shaped_lines) {
+        for (line, shaped_line) in self.text.split('\n').zip(&shaped_lines) {
             if self.soft_wrap {
                 let boundaries = wrapper
                     .wrap_shaped_line(line, shaped_line, constraint.max.x())
@@ -257,4 +256,43 @@ pub fn layout_highlighted_chunks<'a>(
     }
 
     layouts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        elements::Empty, fonts, ElementBox, Entity, MutableAppContext, RenderContext, View,
+    };
+
+    #[crate::test(self)]
+    fn test_soft_wrapping_with_carriage_returns(cx: &mut MutableAppContext) {
+        let (window_id, _) = cx.add_window(Default::default(), |_| TestView);
+        let mut presenter = cx.build_presenter(window_id, Default::default());
+        fonts::with_font_cache(cx.font_cache().clone(), || {
+            let mut text = Text::new("Hello\r\n".into(), Default::default()).with_soft_wrap(true);
+            let (_, state) = text.layout(
+                SizeConstraint::new(Default::default(), vec2f(f32::INFINITY, f32::INFINITY)),
+                &mut presenter.build_layout_context(Default::default(), false, cx),
+            );
+            assert_eq!(state.shaped_lines.len(), 2);
+            assert_eq!(state.wrap_boundaries.len(), 2);
+        });
+    }
+
+    struct TestView;
+
+    impl Entity for TestView {
+        type Event = ();
+    }
+
+    impl View for TestView {
+        fn ui_name() -> &'static str {
+            "TestView"
+        }
+
+        fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+            Empty::new().boxed()
+        }
+    }
 }
