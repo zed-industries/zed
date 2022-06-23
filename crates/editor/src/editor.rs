@@ -55,6 +55,7 @@ use std::{
     borrow::Cow,
     cmp::{self, Ordering, Reverse},
     mem,
+    num::NonZeroU32,
     ops::{Deref, DerefMut, Range, RangeInclusive},
     sync::Arc,
     time::{Duration, Instant},
@@ -2793,9 +2794,10 @@ impl Editor {
                             IndentKind::Space => {
                                 cx.global::<Settings>().tab_size(language_name.as_deref())
                             }
-                            IndentKind::Tab => 1,
+                            IndentKind::Tab => NonZeroU32::new(1).unwrap(),
                         };
                         if old_head.column <= indent_size.len && old_head.column > 0 {
+                            let indent_len = indent_len.get();
                             new_head = cmp::min(
                                 new_head,
                                 Point::new(
@@ -2856,7 +2858,7 @@ impl Editor {
                         let tab_size = if settings.hard_tabs(language_name.as_deref()) {
                             IndentSize::tab()
                         } else {
-                            let tab_size = settings.tab_size(language_name.as_deref());
+                            let tab_size = settings.tab_size(language_name.as_deref()).get();
                             let char_column = buffer
                                 .read(cx)
                                 .text_for_range(Point::new(selection.start.row, 0)..selection.start)
@@ -2894,7 +2896,7 @@ impl Editor {
                 for selection in &mut selections {
                     let language_name = buffer.language_at(selection.start, cx).map(|l| l.name());
                     let settings = &cx.global::<Settings>();
-                    let tab_size = settings.tab_size(language_name.as_deref());
+                    let tab_size = settings.tab_size(language_name.as_deref()).get();
                     let indent_kind = if settings.hard_tabs(language_name.as_deref()) {
                         IndentKind::Tab
                     } else {
@@ -2973,7 +2975,10 @@ impl Editor {
             let snapshot = buffer.snapshot(cx);
             for selection in &selections {
                 let language_name = buffer.language_at(selection.start, cx).map(|l| l.name());
-                let tab_size = cx.global::<Settings>().tab_size(language_name.as_deref());
+                let tab_size = cx
+                    .global::<Settings>()
+                    .tab_size(language_name.as_deref())
+                    .get();
                 let mut rows = selection.spanned_rows(false, &display_map);
 
                 // Avoid re-outdenting a row that has already been outdented by a
@@ -7583,14 +7588,14 @@ mod tests {
                 .with_language_defaults(
                     "TOML",
                     LanguageSettings {
-                        tab_size: Some(2),
+                        tab_size: Some(2.try_into().unwrap()),
                         ..Default::default()
                     },
                 )
                 .with_language_defaults(
                     "Rust",
                     LanguageSettings {
-                        tab_size: Some(4),
+                        tab_size: Some(4.try_into().unwrap()),
                         ..Default::default()
                     },
                 ),
@@ -9163,7 +9168,7 @@ mod tests {
                 settings.language_overrides.insert(
                     "Rust".into(),
                     LanguageSettings {
-                        tab_size: Some(8),
+                        tab_size: Some(8.try_into().unwrap()),
                         ..Default::default()
                     },
                 );
@@ -9277,7 +9282,7 @@ mod tests {
                 settings.language_overrides.insert(
                     "Rust".into(),
                     LanguageSettings {
-                        tab_size: Some(8),
+                        tab_size: Some(8.try_into().unwrap()),
                         ..Default::default()
                     },
                 );

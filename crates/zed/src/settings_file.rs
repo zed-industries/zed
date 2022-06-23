@@ -128,7 +128,7 @@ mod tests {
         let settings = cx.read(Settings::test).with_language_defaults(
             "JavaScript",
             LanguageSettings {
-                tab_size: Some(2),
+                tab_size: Some(2.try_into().unwrap()),
                 ..Default::default()
             },
         );
@@ -156,9 +156,9 @@ mod tests {
         assert_eq!(settings.preferred_line_length(Some("Markdown")), 100);
         assert_eq!(settings.preferred_line_length(Some("JavaScript")), 80);
 
-        assert_eq!(settings.tab_size(None), 8);
-        assert_eq!(settings.tab_size(Some("Markdown")), 2);
-        assert_eq!(settings.tab_size(Some("JavaScript")), 8);
+        assert_eq!(settings.tab_size(None).get(), 8);
+        assert_eq!(settings.tab_size(Some("Markdown")).get(), 2);
+        assert_eq!(settings.tab_size(Some("JavaScript")).get(), 8);
 
         fs.save(
             "/settings2.json".as_ref(),
@@ -192,9 +192,9 @@ mod tests {
         assert_eq!(settings.preferred_line_length(Some("Markdown")), 120);
         assert_eq!(settings.preferred_line_length(Some("JavaScript")), 80);
 
-        assert_eq!(settings.tab_size(None), 2);
-        assert_eq!(settings.tab_size(Some("Markdown")), 2);
-        assert_eq!(settings.tab_size(Some("JavaScript")), 2);
+        assert_eq!(settings.tab_size(None).get(), 2);
+        assert_eq!(settings.tab_size(Some("Markdown")).get(), 2);
+        assert_eq!(settings.tab_size(Some("JavaScript")).get(), 2);
 
         fs.remove_file("/settings2.json".as_ref(), Default::default())
             .await
@@ -217,8 +217,8 @@ mod tests {
         assert_eq!(settings.preferred_line_length(Some("Markdown")), 100);
         assert_eq!(settings.preferred_line_length(Some("JavaScript")), 80);
 
-        assert_eq!(settings.tab_size(None), 8);
-        assert_eq!(settings.tab_size(Some("Markdown")), 2);
-        assert_eq!(settings.tab_size(Some("JavaScript")), 8);
+        assert_eq!(settings.tab_size(None).get(), 8);
+        assert_eq!(settings.tab_size(Some("Markdown")).get(), 2);
+        assert_eq!(settings.tab_size(Some("JavaScript")).get(), 8);
     }
 }

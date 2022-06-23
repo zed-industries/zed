@@ -83,21 +83,21 @@ fn main() {
         .with_language_defaults(
             "C",
             settings::LanguageSettings {
-                tab_size: Some(2),
+                tab_size: Some(2.try_into().unwrap()),
                 ..Default::default()
             },
         )
         .with_language_defaults(
             "C++",
             settings::LanguageSettings {
-                tab_size: Some(2),
+                tab_size: Some(2.try_into().unwrap()),
                 ..Default::default()
             },
         )
         .with_language_defaults(
             "Go",
             settings::LanguageSettings {
-                tab_size: Some(4),
+                tab_size: Some(4.try_into().unwrap()),
                 hard_tabs: Some(true),
                 ..Default::default()
             },
@@ -112,28 +112,28 @@ fn main() {
         .with_language_defaults(
             "Rust",
             settings::LanguageSettings {
-                tab_size: Some(4),
+                tab_size: Some(4.try_into().unwrap()),
                 ..Default::default()
             },
         )
         .with_language_defaults(
             "JavaScript",
             settings::LanguageSettings {
-                tab_size: Some(2),
+                tab_size: Some(2.try_into().unwrap()),
                 ..Default::default()
             },
         )
         .with_language_defaults(
             "TypeScript",
             settings::LanguageSettings {
-                tab_size: Some(2),
+                tab_size: Some(2.try_into().unwrap()),
                 ..Default::default()
             },
         )
         .with_language_defaults(
             "TSX",
             settings::LanguageSettings {
-                tab_size: Some(2),
+                tab_size: Some(2.try_into().unwrap()),
                 ..Default::default()
             },
         );

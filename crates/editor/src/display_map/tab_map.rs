@@ -5,14 +5,14 @@ use super::{
 use crate::MultiBufferSnapshot;
 use language::{rope, Chunk};
 use parking_lot::Mutex;
-use std::{cmp, mem, ops::Range};
+use std::{cmp, mem, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
 use text::Point;
 
 pub struct TabMap(Mutex<TabSnapshot>);
 
 impl TabMap {
-    pub fn new(input: FoldSnapshot, tab_size: u32) -> (Self, TabSnapshot) {
+    pub fn new(input: FoldSnapshot, tab_size: NonZeroU32) -> (Self, TabSnapshot) {
         let snapshot = TabSnapshot {
             fold_snapshot: input,
             tab_size,
@@ -24,7 +24,7 @@ impl TabMap {
         &self,
         fold_snapshot: FoldSnapshot,
         mut fold_edits: Vec<FoldEdit>,
-        tab_size: u32,
+        tab_size: NonZeroU32,
     ) -> (TabSnapshot, Vec<TabEdit>) {
         let mut old_snapshot = self.0.lock();
         let max_offset = old_snapshot.fold_snapshot.len();
@@ -88,7 +88,7 @@ impl TabMap {
 #[derive(Clone)]
 pub struct TabSnapshot {
     pub fold_snapshot: FoldSnapshot,
-    pub tab_size: u32,
+    pub tab_size: NonZeroU32,
 }
 
 impl TabSnapshot {
@@ -251,7 +251,11 @@ impl TabSnapshot {
             .to_buffer_point(&self.fold_snapshot)
     }
 
-    fn expand_tabs(chars: impl Iterator<Item = char>, column: usize, tab_size: u32) -> usize {
+    fn expand_tabs(
+        chars: impl Iterator<Item = char>,
+        column: usize,
+        tab_size: NonZeroU32,
+    ) -> usize {
         let mut expanded_chars = 0;
         let mut expanded_bytes = 0;
         let mut collapsed_bytes = 0;
@@ -260,7 +264,8 @@ impl TabSnapshot {
                 break;
             }
             if c == '\t' {
-                let tab_len = tab_size as usize - expanded_chars % tab_size as usize;
+                let tab_size = tab_size.get() as usize;
+                let tab_len = tab_size - expanded_chars % tab_size;
                 expanded_bytes += tab_len;
                 expanded_chars += tab_len;
             } else {
@@ -276,7 +281,7 @@ impl TabSnapshot {
         mut chars: impl Iterator<Item = char>,
         column: usize,
         bias: Bias,
-        tab_size: u32,
+        tab_size: NonZeroU32,
     ) -> (usize, usize, usize) {
         let mut expanded_bytes = 0;
         let mut expanded_chars = 0;
@@ -287,7 +292,8 @@ impl TabSnapshot {
             }
 
             if c == '\t' {
-                let tab_len = tab_size as usize - (expanded_chars % tab_size as usize);
+                let tab_size = tab_size.get() as usize;
+                let tab_len = tab_size - (expanded_chars % tab_size);
                 expanded_chars += tab_len;
                 expanded_bytes += tab_len;
                 if expanded_bytes > column {
@@ -400,7 +406,7 @@ pub struct TabChunks<'a> {
     column: usize,
     output_position: Point,
     max_output_position: Point,
-    tab_size: u32,
+    tab_size: NonZeroU32,
     skip_leading_tab: bool,
 }
 
@@ -432,7 +438,8 @@ impl<'a> Iterator for TabChunks<'a> {
                         });
                     } else {
                         self.chunk.text = &self.chunk.text[1..];
-                        let mut len = self.tab_size - self.column as u32 % self.tab_size;
+                        let tab_size = self.tab_size.get() as u32;
+                        let mut len = tab_size - self.column as u32 % tab_size;
                         let next_output_position = cmp::min(
                             self.output_position + Point::new(0, len),
                             self.max_output_position,
@@ -470,14 +477,23 @@ mod tests {
 
     #[test]
     fn test_expand_tabs() {
-        assert_eq!(TabSnapshot::expand_tabs("\t".chars(), 0, 4), 0);
-        assert_eq!(TabSnapshot::expand_tabs("\t".chars(), 1, 4), 4);
-        assert_eq!(TabSnapshot::expand_tabs("\ta".chars(), 2, 4), 5);
+        assert_eq!(
+            TabSnapshot::expand_tabs("\t".chars(), 0, 4.try_into().unwrap()),
+            0
+        );
+        assert_eq!(
+            TabSnapshot::expand_tabs("\t".chars(), 1, 4.try_into().unwrap()),
+            4
+        );
+        assert_eq!(
+            TabSnapshot::expand_tabs("\ta".chars(), 2, 4.try_into().unwrap()),
+            5
+        );
     }
 
     #[gpui::test(iterations = 100)]
     fn test_random_tabs(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
-        let tab_size = rng.gen_range(1..=4);
+        let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
         let len = rng.gen_range(0..30);
         let buffer = if rng.gen() {
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
@@ -529,7 +545,7 @@ mod tests {
             );
 
             let mut actual_summary = tabs_snapshot.text_summary_for_range(start..end);
-            if tab_size > 1 && folds_snapshot.text().contains('\t') {
+            if tab_size.get() > 1 && folds_snapshot.text().contains('\t') {
                 actual_summary.longest_row = expected_summary.longest_row;
                 actual_summary.longest_row_chars = expected_summary.longest_row_chars;
             }

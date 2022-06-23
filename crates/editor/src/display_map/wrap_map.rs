@@ -1033,7 +1033,7 @@ mod tests {
     use rand::prelude::*;
     use settings::Settings;
     use smol::stream::StreamExt;
-    use std::{cmp, env};
+    use std::{cmp, env, num::NonZeroU32};
     use text::Rope;
 
     #[gpui::test(iterations = 100)]
@@ -1052,7 +1052,7 @@ mod tests {
         } else {
             Some(rng.gen_range(0.0..=1000.0))
         };
-        let tab_size = rng.gen_range(1..=4);
+        let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
         let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
         let font_id = font_cache
             .select_font(family_id, &Default::default())
@@ -1194,7 +1194,7 @@ mod tests {
                     log::info!("{} summary: {:?}", ix, item.summary.output,);
                 }
 
-                if tab_size == 1
+                if tab_size.get() == 1
                     || !wrapped_snapshot
                         .tab_snapshot
                         .fold_snapshot

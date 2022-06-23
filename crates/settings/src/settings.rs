@@ -11,7 +11,7 @@ use schemars::{
 };
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, num::NonZeroU32, sync::Arc};
 use theme::{Theme, ThemeRegistry};
 use util::ResultExt as _;
 
@@ -32,7 +32,7 @@ pub struct Settings {
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct LanguageSettings {
-    pub tab_size: Option<u32>,
+    pub tab_size: Option<NonZeroU32>,
     pub hard_tabs: Option<bool>,
     pub soft_wrap: Option<SoftWrap>,
     pub preferred_line_length: Option<u32>,
@@ -99,9 +99,9 @@ impl Settings {
         self
     }
 
-    pub fn tab_size(&self, language: Option<&str>) -> u32 {
+    pub fn tab_size(&self, language: Option<&str>) -> NonZeroU32 {
         self.language_setting(language, |settings| settings.tab_size)
-            .unwrap_or(4)
+            .unwrap_or(4.try_into().unwrap())
     }
 
     pub fn hard_tabs(&self, language: Option<&str>) -> bool {
