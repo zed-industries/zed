@@ -171,6 +171,10 @@ export function createTheme(
       color: sample(ramps.cyan, 0.5),
       weight: fontWeights.normal,
     },
+    constructor: {
+      color: sample(ramps.blue, 0.5),
+      weight: fontWeights.normal,
+    },
     variant: {
       color: sample(ramps.blue, 0.5),
       weight: fontWeights.normal,

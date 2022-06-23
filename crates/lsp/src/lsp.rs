@@ -251,7 +251,7 @@ impl LanguageServer {
         let params = InitializeParams {
             process_id: Default::default(),
             root_path: Default::default(),
-            root_uri: Some(root_uri),
+            root_uri: Some(root_uri.clone()),
             initialization_options: options,
             capabilities: ClientCapabilities {
                 workspace: Some(WorkspaceClientCapabilities {
@@ -312,7 +312,10 @@ impl LanguageServer {
                 ..Default::default()
             },
             trace: Default::default(),
-            workspace_folders: Default::default(),
+            workspace_folders: Some(vec![WorkspaceFolder {
+                uri: root_uri,
+                name: Default::default(),
+            }]),
             client_info: Default::default(),
             locale: Default::default(),
         };

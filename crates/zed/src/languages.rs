@@ -7,6 +7,7 @@ mod c;
 mod go;
 mod installation;
 mod json;
+mod python;
 mod rust;
 mod typescript;
 
@@ -42,6 +43,11 @@ pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegi
             "markdown",
             tree_sitter_markdown::language(),
             None, //
+        ),
+        (
+            "python",
+            tree_sitter_python::language(),
+            Some(Arc::new(python::PythonLspAdapter)),
         ),
         (
             "rust",

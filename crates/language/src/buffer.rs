@@ -1902,7 +1902,7 @@ impl BufferSnapshot {
                 }
 
                 while stack.last().map_or(false, |prev_range| {
-                    !prev_range.contains(&item_range.start) || !prev_range.contains(&item_range.end)
+                    prev_range.start > item_range.start || prev_range.end < item_range.end
                 }) {
                     stack.pop();
                 }
