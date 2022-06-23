@@ -2848,7 +2848,7 @@ impl Project {
                         .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
                             text_document,
                             options: lsp::FormattingOptions {
-                                tab_size,
+                                tab_size: tab_size.into(),
                                 insert_spaces: true,
                                 insert_final_newline: Some(true),
                                 ..Default::default()
@@ -2870,7 +2870,7 @@ impl Project {
                                 text_document,
                                 range: lsp::Range::new(buffer_start, buffer_end),
                                 options: lsp::FormattingOptions {
-                                    tab_size,
+                                    tab_size: tab_size.into(),
                                     insert_spaces: true,
                                     insert_final_newline: Some(true),
                                     ..Default::default()

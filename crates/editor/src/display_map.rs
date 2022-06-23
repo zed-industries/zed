@@ -13,7 +13,7 @@ use gpui::{
 };
 use language::{Point, Subscription as BufferSubscription};
 use settings::Settings;
-use std::{any::TypeId, fmt::Debug, ops::Range, sync::Arc};
+use std::{any::TypeId, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
 use wrap_map::WrapMap;
@@ -203,7 +203,7 @@ impl DisplayMap {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
-    fn tab_size(buffer: &ModelHandle<MultiBuffer>, cx: &mut ModelContext<Self>) -> u32 {
+    fn tab_size(buffer: &ModelHandle<MultiBuffer>, cx: &mut ModelContext<Self>) -> NonZeroU32 {
         let language_name = buffer
             .read(cx)
             .as_singleton()
@@ -966,7 +966,7 @@ pub mod tests {
         language.set_theme(&theme);
         cx.update(|cx| {
             let mut settings = Settings::test(cx);
-            settings.language_settings.tab_size = Some(2);
+            settings.language_settings.tab_size = Some(2.try_into().unwrap());
             cx.set_global(settings);
         });
 

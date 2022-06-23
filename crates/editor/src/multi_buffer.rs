@@ -347,7 +347,7 @@ impl MultiBuffer {
                     let indent_size = if settings.hard_tabs(language_name.as_deref()) {
                         IndentSize::tab()
                     } else {
-                        IndentSize::spaces(settings.tab_size(language_name.as_deref()))
+                        IndentSize::spaces(settings.tab_size(language_name.as_deref()).get())
                     };
                     buffer.edit_with_autoindent(edits, indent_size, cx);
                 } else {
@@ -473,7 +473,7 @@ impl MultiBuffer {
                         let indent_size = if settings.hard_tabs(language_name.as_deref()) {
                             IndentSize::tab()
                         } else {
-                            IndentSize::spaces(settings.tab_size(language_name.as_deref()))
+                            IndentSize::spaces(settings.tab_size(language_name.as_deref()).get())
                         };
 
                         buffer.edit_with_autoindent(deletions, indent_size, cx);

@@ -166,6 +166,9 @@ pub fn initialize_workspace(
         let action_names = cx.all_action_names().collect::<Vec<_>>();
         project.set_language_server_settings(serde_json::json!({
             "json": {
+                "format": {
+                    "enable": true,
+                },
                 "schemas": [
                     {
                         "fileMatch": [".zed/settings.json"],
