@@ -1,5 +1,5 @@
 name = "Python"
-path_suffixes = ["py"]
+path_suffixes = ["py", "pyi"]
 line_comment = "# "
 autoclose_before = ";:.,=}])>"
 brackets = [
