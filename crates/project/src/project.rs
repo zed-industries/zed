@@ -2644,9 +2644,6 @@ impl Project {
         let (worktree, relative_path) = self
             .find_local_worktree(&abs_path, cx)
             .ok_or_else(|| anyhow!("no worktree found for diagnostics"))?;
-        if !worktree.read(cx).is_visible() {
-            return Ok(());
-        }
 
         let project_path = ProjectPath {
             worktree_id: worktree.read(cx).id(),
@@ -4011,13 +4008,15 @@ impl Project {
         abs_path: &Path,
         cx: &AppContext,
     ) -> Option<(ModelHandle<Worktree>, PathBuf)> {
-        for tree in self.worktrees(cx) {
-            if let Some(relative_path) = tree
-                .read(cx)
-                .as_local()
-                .and_then(|t| abs_path.strip_prefix(t.abs_path()).ok())
-            {
-                return Some((tree.clone(), relative_path.into()));
+        for tree in &self.worktrees {
+            if let Some(tree) = tree.upgrade(cx) {
+                if let Some(relative_path) = tree
+                    .read(cx)
+                    .as_local()
+                    .and_then(|t| abs_path.strip_prefix(t.abs_path()).ok())
+                {
+                    return Some((tree.clone(), relative_path.into()));
+                }
             }
         }
         None
