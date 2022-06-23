@@ -17,8 +17,8 @@
 
 ; Identifier naming conventions
 
-((identifier) @constructor
- (#match? @constructor "^[A-Z]"))
+((identifier) @type
+ (#match? @type "^[A-Z]"))
 
 ((identifier) @constant
  (#match? @constant "^[A-Z][A-Z_]*$"))
