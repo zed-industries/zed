@@ -222,6 +222,13 @@ pub fn initialize_workspace(
     });
 
     auto_update::notify_of_any_new_update(cx.weak_handle(), cx);
+
+    cx.on_window_should_close(|workspace, cx| {
+        if let Some(task) = workspace.close(&Default::default(), cx) {
+            task.detach_and_log_err(cx);
+        }
+        false
+    });
 }
 
 pub fn build_window_options() -> WindowOptions<'static> {
@@ -364,7 +371,9 @@ mod tests {
     use super::*;
     use assets::Assets;
     use editor::{Autoscroll, DisplayPoint, Editor};
-    use gpui::{AssetSource, MutableAppContext, TestAppContext, ViewHandle};
+    use gpui::{
+        executor::Deterministic, AssetSource, MutableAppContext, TestAppContext, ViewHandle,
+    };
     use project::ProjectPath;
     use serde_json::json;
     use std::{
@@ -430,6 +439,80 @@ mod tests {
         })
         .await;
         assert_eq!(cx.window_ids().len(), 2);
+    }
+
+    #[gpui::test]
+    async fn test_window_edit_state(executor: Arc<Deterministic>, cx: &mut TestAppContext) {
+        let app_state = init(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree("/root", json!({"a": "hey"}))
+            .await;
+
+        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, cx))
+            .await;
+        assert_eq!(cx.window_ids().len(), 1);
+
+        // When opening the workspace, the window is not in a edited state.
+        let workspace = cx.root_view::<Workspace>(cx.window_ids()[0]).unwrap();
+        let editor = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .unwrap()
+                .downcast::<Editor>()
+                .unwrap()
+        });
+        assert!(!cx.is_window_edited(workspace.window_id()));
+
+        // Editing a buffer marks the window as edited.
+        editor.update(cx, |editor, cx| editor.insert("EDIT", cx));
+        assert!(cx.is_window_edited(workspace.window_id()));
+
+        // Undoing the edit restores the window's edited state.
+        editor.update(cx, |editor, cx| editor.undo(&Default::default(), cx));
+        assert!(!cx.is_window_edited(workspace.window_id()));
+
+        // Redoing the edit marks the window as edited again.
+        editor.update(cx, |editor, cx| editor.redo(&Default::default(), cx));
+        assert!(cx.is_window_edited(workspace.window_id()));
+
+        // Closing the item restores the window's edited state.
+        let close = workspace.update(cx, |workspace, cx| {
+            drop(editor);
+            Pane::close_active_item(workspace, &Default::default(), cx).unwrap()
+        });
+        executor.run_until_parked();
+        cx.simulate_prompt_answer(workspace.window_id(), 1);
+        close.await.unwrap();
+        assert!(!cx.is_window_edited(workspace.window_id()));
+
+        // Opening the buffer again doesn't impact the window's edited state.
+        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, cx))
+            .await;
+        let editor = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .unwrap()
+                .downcast::<Editor>()
+                .unwrap()
+        });
+        assert!(!cx.is_window_edited(workspace.window_id()));
+
+        // Editing the buffer marks the window as edited.
+        editor.update(cx, |editor, cx| editor.insert("EDIT", cx));
+        assert!(cx.is_window_edited(workspace.window_id()));
+
+        // Ensure closing the window via the mouse gets preempted due to the
+        // buffer having unsaved changes.
+        assert!(!cx.simulate_window_close(workspace.window_id()));
+        executor.run_until_parked();
+        assert_eq!(cx.window_ids().len(), 1);
+
+        // The window is successfully closed after the user dismisses the prompt.
+        cx.simulate_prompt_answer(workspace.window_id(), 1);
+        executor.run_until_parked();
+        assert_eq!(cx.window_ids().len(), 0);
     }
 
     #[gpui::test]

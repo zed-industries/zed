@@ -37,7 +37,9 @@ pub struct Window {
     event_handlers: Vec<Box<dyn FnMut(super::Event) -> bool>>,
     resize_handlers: Vec<Box<dyn FnMut()>>,
     close_handlers: Vec<Box<dyn FnOnce()>>,
+    pub(crate) should_close_handler: Option<Box<dyn FnMut() -> bool>>,
     pub(crate) title: Option<String>,
+    pub(crate) edited: bool,
     pub(crate) pending_prompts: RefCell<VecDeque<oneshot::Sender<usize>>>,
 }
 
@@ -185,12 +187,14 @@ impl Window {
     fn new(size: Vector2F) -> Self {
         Self {
             size,
-            event_handlers: Vec::new(),
-            resize_handlers: Vec::new(),
-            close_handlers: Vec::new(),
+            event_handlers: Default::default(),
+            resize_handlers: Default::default(),
+            close_handlers: Default::default(),
+            should_close_handler: Default::default(),
             scale_factor: 1.0,
             current_scene: None,
             title: None,
+            edited: false,
             pending_prompts: Default::default(),
         }
     }
@@ -257,6 +261,14 @@ impl super::Window for Window {
 
     fn set_title(&mut self, title: &str) {
         self.title = Some(title.to_string())
+    }
+
+    fn set_edited(&mut self, edited: bool) {
+        self.edited = edited;
+    }
+
+    fn on_should_close(&mut self, callback: Box<dyn FnMut() -> bool>) {
+        self.should_close_handler = Some(callback);
     }
 }
 

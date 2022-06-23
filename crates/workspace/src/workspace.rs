@@ -731,6 +731,7 @@ pub struct Workspace {
     leader_state: LeaderState,
     follower_states_by_leader: FollowerStatesByLeader,
     last_leaders_by_pane: HashMap<WeakViewHandle<Pane>, PeerId>,
+    window_edited: bool,
     _observe_current_user: Task<()>,
 }
 
@@ -846,6 +847,7 @@ impl Workspace {
             leader_state: Default::default(),
             follower_states_by_leader: Default::default(),
             last_leaders_by_pane: Default::default(),
+            window_edited: false,
             _observe_current_user,
         };
         this.project_remote_id_changed(this.project.read(cx).remote_id(), cx);
@@ -905,7 +907,11 @@ impl Workspace {
         }
     }
 
-    fn close(&mut self, _: &CloseWindow, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+    pub fn close(
+        &mut self,
+        _: &CloseWindow,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
         let prepare = self.prepare_to_close(cx);
         Some(cx.spawn(|this, mut cx| async move {
             if prepare.await? {
@@ -1474,6 +1480,10 @@ impl Workspace {
                     if pane == self.active_pane {
                         self.active_item_path_changed(cx);
                     }
+                    self.update_window_edited(cx);
+                }
+                pane::Event::RemoveItem => {
+                    self.update_window_edited(cx);
                 }
             }
         } else {
@@ -1776,6 +1786,16 @@ impl Workspace {
             title = "empty project".to_string();
         }
         cx.set_window_title(&title);
+    }
+
+    fn update_window_edited(&mut self, cx: &mut ViewContext<Self>) {
+        let is_edited = self
+            .items(cx)
+            .any(|item| item.has_conflict(cx) || item.is_dirty(cx));
+        if is_edited != self.window_edited {
+            self.window_edited = is_edited;
+            cx.set_window_edited(self.window_edited)
+        }
     }
 
     fn render_collaborators(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> Vec<ElementBox> {

@@ -110,6 +110,7 @@ pub enum Event {
     Activate,
     ActivateItem { local: bool },
     Remove,
+    RemoveItem,
     Split(SplitDirection),
     ChangeItemTitle,
 }
@@ -575,6 +576,7 @@ impl Pane {
                         }
 
                         let item = pane.items.remove(item_ix);
+                        cx.emit(Event::RemoveItem);
                         if pane.items.is_empty() {
                             item.deactivated(cx);
                             pane.update_toolbar(cx);

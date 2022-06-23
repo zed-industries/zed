@@ -81,6 +81,10 @@ unsafe fn build_classes() {
             sel!(windowDidResignKey:),
             window_did_change_key_status as extern "C" fn(&Object, Sel, id),
         );
+        decl.add_method(
+            sel!(windowShouldClose:),
+            window_should_close as extern "C" fn(&Object, Sel, id) -> BOOL,
+        );
         decl.add_method(sel!(close), close_window as extern "C" fn(&Object, Sel));
         decl.register()
     };
@@ -167,6 +171,7 @@ struct WindowState {
     event_callback: Option<Box<dyn FnMut(Event) -> bool>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut()>>,
+    should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     synthetic_drag_counter: usize,
     executor: Rc<executor::Foreground>,
@@ -242,6 +247,7 @@ impl Window {
                 native_window,
                 event_callback: None,
                 resize_callback: None,
+                should_close_callback: None,
                 close_callback: None,
                 activate_callback: None,
                 synthetic_drag_counter: 0,
@@ -339,6 +345,10 @@ impl platform::Window for Window {
         self.0.as_ref().borrow_mut().resize_callback = Some(callback);
     }
 
+    fn on_should_close(&mut self, callback: Box<dyn FnMut() -> bool>) {
+        self.0.as_ref().borrow_mut().should_close_callback = Some(callback);
+    }
+
     fn on_close(&mut self, callback: Box<dyn FnOnce()>) {
         self.0.as_ref().borrow_mut().close_callback = Some(callback);
     }
@@ -396,6 +406,17 @@ impl platform::Window for Window {
             let title = ns_string(title);
             msg_send![app, changeWindowsItem:window title:title filename:false]
         }
+    }
+
+    fn set_edited(&mut self, edited: bool) {
+        unsafe {
+            let window = self.0.borrow().native_window;
+            msg_send![window, setDocumentEdited: edited as BOOL]
+        }
+
+        // Changing the document edited state resets the traffic light position,
+        // so we have to move it again.
+        self.0.borrow().move_traffic_light();
     }
 }
 
@@ -661,6 +682,19 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
             };
         })
         .detach();
+}
+
+extern "C" fn window_should_close(this: &Object, _: Sel, _: id) -> BOOL {
+    let window_state = unsafe { get_window_state(this) };
+    let mut window_state_borrow = window_state.as_ref().borrow_mut();
+    if let Some(mut callback) = window_state_borrow.should_close_callback.take() {
+        drop(window_state_borrow);
+        let should_close = callback();
+        window_state.borrow_mut().should_close_callback = Some(callback);
+        should_close as BOOL
+    } else {
+        YES
+    }
 }
 
 extern "C" fn close_window(this: &Object, _: Sel) {
