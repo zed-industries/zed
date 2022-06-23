@@ -6162,7 +6162,7 @@ mod tests {
     use language::{FakeLspAdapter, LanguageConfig};
     use lsp::FakeLanguageServer;
     use project::FakeFs;
-    use settings::LanguageOverride;
+    use settings::LanguageSettings;
     use std::{cell::RefCell, rc::Rc, time::Instant};
     use text::Point;
     use unindent::Unindent;
@@ -7499,7 +7499,7 @@ mod tests {
         let mut cx = EditorTestContext::new(cx).await;
         cx.update(|cx| {
             cx.update_global::<Settings, _, _>(|settings, _| {
-                settings.hard_tabs = true;
+                settings.language_settings.hard_tabs = Some(true);
             });
         });
 
@@ -7580,16 +7580,16 @@ mod tests {
     fn test_indent_outdent_with_excerpts(cx: &mut gpui::MutableAppContext) {
         cx.set_global(
             Settings::test(cx)
-                .with_overrides(
+                .with_language_defaults(
                     "TOML",
-                    LanguageOverride {
+                    LanguageSettings {
                         tab_size: Some(2),
                         ..Default::default()
                     },
                 )
-                .with_overrides(
+                .with_language_defaults(
                     "Rust",
-                    LanguageOverride {
+                    LanguageSettings {
                         tab_size: Some(4),
                         ..Default::default()
                     },
@@ -9162,7 +9162,7 @@ mod tests {
             cx.update_global::<Settings, _, _>(|settings, _| {
                 settings.language_overrides.insert(
                     "Rust".into(),
-                    LanguageOverride {
+                    LanguageSettings {
                         tab_size: Some(8),
                         ..Default::default()
                     },
@@ -9276,7 +9276,7 @@ mod tests {
             cx.update_global::<Settings, _, _>(|settings, _| {
                 settings.language_overrides.insert(
                     "Rust".into(),
-                    LanguageOverride {
+                    LanguageSettings {
                         tab_size: Some(8),
                         ..Default::default()
                     },

@@ -6673,7 +6673,7 @@ mod tests {
             cx.update_global(|settings: &mut Settings, _| {
                 settings.language_overrides.insert(
                     Arc::from("Rust"),
-                    settings::LanguageOverride {
+                    settings::LanguageSettings {
                         enable_language_server: Some(false),
                         ..Default::default()
                     },
@@ -6690,14 +6690,14 @@ mod tests {
             cx.update_global(|settings: &mut Settings, _| {
                 settings.language_overrides.insert(
                     Arc::from("Rust"),
-                    settings::LanguageOverride {
+                    settings::LanguageSettings {
                         enable_language_server: Some(true),
                         ..Default::default()
                     },
                 );
                 settings.language_overrides.insert(
                     Arc::from("JavaScript"),
-                    settings::LanguageOverride {
+                    settings::LanguageSettings {
                         enable_language_server: Some(false),
                         ..Default::default()
                     },
