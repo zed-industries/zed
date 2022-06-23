@@ -780,6 +780,7 @@ type GlobalObservationCallback = Box<dyn FnMut(&mut MutableAppContext)>;
 type ReleaseObservationCallback = Box<dyn FnOnce(&dyn Any, &mut MutableAppContext)>;
 type ActionObservationCallback = Box<dyn FnMut(TypeId, &mut MutableAppContext)>;
 type DeserializeActionCallback = fn(json: &str) -> anyhow::Result<Box<dyn Action>>;
+type WindowShouldCloseSubscriptionCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 
 pub struct MutableAppContext {
     weak_self: Option<rc::Weak<RefCell<Self>>>,
@@ -2004,6 +2005,12 @@ impl MutableAppContext {
                         Effect::ActionDispatchNotification { action_id } => {
                             self.handle_action_dispatch_notification_effect(action_id)
                         }
+                        Effect::WindowShouldCloseSubscription {
+                            window_id,
+                            callback,
+                        } => {
+                            self.handle_window_should_close_subscription_effect(window_id, callback)
+                        }
                     }
                     self.pending_notifications.clear();
                     self.remove_dropped_entities();
@@ -2451,6 +2458,17 @@ impl MutableAppContext {
         self.action_dispatch_observations.lock().extend(callbacks);
     }
 
+    fn handle_window_should_close_subscription_effect(
+        &mut self,
+        window_id: usize,
+        mut callback: WindowShouldCloseSubscriptionCallback,
+    ) {
+        let mut app = self.upgrade();
+        if let Some((_, window)) = self.presenters_and_platform_windows.get_mut(&window_id) {
+            window.on_should_close(Box::new(move || app.update(|cx| callback(cx))))
+        }
+    }
+
     pub fn focus(&mut self, window_id: usize, view_id: Option<usize>) {
         if let Some(pending_focus_index) = self.pending_focus_index {
             self.pending_effects.remove(pending_focus_index);
@@ -2828,6 +2846,10 @@ pub enum Effect {
     ActionDispatchNotification {
         action_id: TypeId,
     },
+    WindowShouldCloseSubscription {
+        window_id: usize,
+        callback: WindowShouldCloseSubscriptionCallback,
+    },
 }
 
 impl Debug for Effect {
@@ -2921,6 +2943,10 @@ impl Debug for Effect {
                 .field("is_active", is_active)
                 .finish(),
             Effect::RefreshWindows => f.debug_struct("Effect::FullViewRefresh").finish(),
+            Effect::WindowShouldCloseSubscription { window_id, .. } => f
+                .debug_struct("Effect::WindowShouldCloseSubscription")
+                .field("window_id", window_id)
+                .finish(),
         }
     }
 }
@@ -3344,6 +3370,25 @@ impl<'a, T: View> ViewContext<'a, T> {
         if let Some((_, window)) = self.presenters_and_platform_windows.get_mut(&window_id) {
             window.set_edited(edited);
         }
+    }
+
+    pub fn on_window_should_close<F>(&mut self, mut callback: F)
+    where
+        F: 'static + FnMut(&mut T, &mut ViewContext<T>) -> bool,
+    {
+        let window_id = self.window_id();
+        let view = self.weak_handle();
+        self.pending_effects
+            .push_back(Effect::WindowShouldCloseSubscription {
+                window_id,
+                callback: Box::new(move |cx| {
+                    if let Some(view) = view.upgrade(cx) {
+                        view.update(cx, |view, cx| callback(view, cx))
+                    } else {
+                        true
+                    }
+                }),
+            });
     }
 
     pub fn add_model<S, F>(&mut self, build_model: F) -> ModelHandle<S>
