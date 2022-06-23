@@ -3339,6 +3339,13 @@ impl<'a, T: View> ViewContext<'a, T> {
         }
     }
 
+    pub fn set_window_edited(&mut self, edited: bool) {
+        let window_id = self.window_id();
+        if let Some((_, window)) = self.presenters_and_platform_windows.get_mut(&window_id) {
+            window.set_edited(edited);
+        }
+    }
+
     pub fn add_model<S, F>(&mut self, build_model: F) -> ModelHandle<S>
     where
         S: Entity,

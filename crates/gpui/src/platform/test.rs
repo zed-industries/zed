@@ -38,6 +38,7 @@ pub struct Window {
     resize_handlers: Vec<Box<dyn FnMut()>>,
     close_handlers: Vec<Box<dyn FnOnce()>>,
     pub(crate) title: Option<String>,
+    pub(crate) edited: bool,
     pub(crate) pending_prompts: RefCell<VecDeque<oneshot::Sender<usize>>>,
 }
 
@@ -191,6 +192,7 @@ impl Window {
             scale_factor: 1.0,
             current_scene: None,
             title: None,
+            edited: false,
             pending_prompts: Default::default(),
         }
     }
@@ -257,6 +259,10 @@ impl super::Window for Window {
 
     fn set_title(&mut self, title: &str) {
         self.title = Some(title.to_string())
+    }
+
+    fn set_edited(&mut self, edited: bool) {
+        self.edited = edited;
     }
 }
 

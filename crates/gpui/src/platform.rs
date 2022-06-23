@@ -97,6 +97,7 @@ pub trait Window: WindowContext {
     fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize>;
     fn activate(&self);
     fn set_title(&mut self, title: &str);
+    fn set_edited(&mut self, edited: bool);
 }
 
 pub trait WindowContext {

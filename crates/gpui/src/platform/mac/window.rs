@@ -397,6 +397,17 @@ impl platform::Window for Window {
             msg_send![app, changeWindowsItem:window title:title filename:false]
         }
     }
+
+    fn set_edited(&mut self, edited: bool) {
+        unsafe {
+            let window = self.0.borrow().native_window;
+            msg_send![window, setDocumentEdited: edited as BOOL]
+        }
+
+        // Changing the document edited state resets the traffic light position,
+        // so we have to move it again.
+        self.0.borrow().move_traffic_light();
+    }
 }
 
 impl platform::WindowContext for Window {
