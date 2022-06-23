@@ -907,7 +907,11 @@ impl Workspace {
         }
     }
 
-    fn close(&mut self, _: &CloseWindow, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+    pub fn close(
+        &mut self,
+        _: &CloseWindow,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
         let prepare = self.prepare_to_close(cx);
         Some(cx.spawn(|this, mut cx| async move {
             if prepare.await? {

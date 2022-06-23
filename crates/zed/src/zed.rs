@@ -222,6 +222,13 @@ pub fn initialize_workspace(
     });
 
     auto_update::notify_of_any_new_update(cx.weak_handle(), cx);
+
+    cx.on_window_should_close(|workspace, cx| {
+        if let Some(task) = workspace.close(&Default::default(), cx) {
+            task.detach_and_log_err(cx);
+        }
+        false
+    });
 }
 
 pub fn build_window_options() -> WindowOptions<'static> {
