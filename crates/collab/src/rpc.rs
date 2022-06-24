@@ -228,8 +228,8 @@ impl Server {
                 );
                 span.in_scope(|| {
                     tracing::info!(
-                        payload = format!("{:?}", envelope.payload).as_str(),
-                        "message payload"
+                        payload_type = envelope.payload_type_name(),
+                        "message received"
                     );
                 });
                 let future = (handler)(server, *envelope);
