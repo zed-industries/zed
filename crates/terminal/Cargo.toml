@@ -19,3 +19,4 @@ project = { path = "../project" }
 smallvec = { version = "1.6", features = ["union"] }
 mio-extras = "2.0.6"
 futures = "0.3"
+ordered-float = "2.1.1"

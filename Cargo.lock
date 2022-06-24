@@ -4881,6 +4881,7 @@ dependencies = [
  "futures",
  "gpui",
  "mio-extras",
+ "ordered-float",
  "project",
  "settings",
  "smallvec",
