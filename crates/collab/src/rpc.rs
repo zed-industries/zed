@@ -1682,21 +1682,6 @@ impl<'a> Drop for StoreWriteGuard<'a> {
     fn drop(&mut self) {
         #[cfg(test)]
         self.check_invariants();
-
-        let metrics = self.metrics();
-
-        METRIC_CONNECTIONS.set(metrics.connections as _);
-        METRIC_REGISTERED_PROJECTS.set(metrics.registered_projects as _);
-        METRIC_ACTIVE_PROJECTS.set(metrics.active_projects as _);
-        METRIC_SHARED_PROJECTS.set(metrics.shared_projects as _);
-
-        tracing::info!(
-            connections = metrics.connections,
-            registered_projects = metrics.registered_projects,
-            active_projects = metrics.active_projects,
-            shared_projects = metrics.shared_projects,
-            "metrics"
-        );
     }
 }
 
@@ -1802,7 +1787,11 @@ pub async fn handle_websocket_request(
 
 pub async fn handle_metrics(Extension(server): Extension<Arc<Server>>) -> axum::response::Response {
     // We call `store_mut` here for its side effects of updating metrics.
-    server.store_mut().await;
+    let metrics = server.store().await.metrics();
+    METRIC_CONNECTIONS.set(metrics.connections as _);
+    METRIC_REGISTERED_PROJECTS.set(metrics.registered_projects as _);
+    METRIC_ACTIVE_PROJECTS.set(metrics.active_projects as _);
+    METRIC_SHARED_PROJECTS.set(metrics.shared_projects as _);
 
     let encoder = prometheus::TextEncoder::new();
     let metric_families = prometheus::gather();
