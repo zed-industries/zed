@@ -24,7 +24,7 @@ use std::{
 };
 use tracing::instrument;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize)]
 pub struct ConnectionId(pub u32);
 
 impl fmt::Display for ConnectionId {
