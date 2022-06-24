@@ -262,15 +262,17 @@ impl Db for PostgresDb {
     }
 
     async fn get_users_with_no_invites(&self, invited_by_another_user: bool) -> Result<Vec<User>> {
-        let query = "
+        let query = format!(
+            "
             SELECT users.*
             FROM users
             WHERE invite_count = 0
-            ";
-        Ok(sqlx::query_as(query)
-            .bind(&ids)
-            .fetch_all(&self.pool)
-            .await?)
+            AND inviter_id IS{} NULL
+            ",
+            if invited_by_another_user { " NOT" } else { "" }
+        );
+
+        Ok(sqlx::query_as(&query).fetch_all(&self.pool).await?)
     }
 
     async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
@@ -2186,6 +2188,10 @@ pub mod tests {
             self.background.simulate_random_delay().await;
             let users = self.users.lock();
             Ok(ids.iter().filter_map(|id| users.get(id).cloned()).collect())
+        }
+
+        async fn get_users_with_no_invites(&self, _: bool) -> Result<Vec<User>> {
+            unimplemented!()
         }
 
         async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {

@@ -229,6 +229,7 @@ async fn create_users(
     Ok(Json(users))
 }
 
+#[derive(Debug, Deserialize)]
 struct GetUsersWithNoInvites {
     invited_by_another_user: bool,
 }
