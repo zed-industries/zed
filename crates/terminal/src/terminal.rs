@@ -7,6 +7,7 @@ use alacritty_terminal::{
     event_loop::{EventLoop, Msg, Notifier},
     grid::Indexed,
     index::Point,
+    selection,
     sync::FairMutex,
     term::{
         cell::{Cell, Flags},
@@ -15,8 +16,10 @@ use alacritty_terminal::{
     },
     tty, Term,
 };
+use editor::CursorShape;
 use futures::{
     channel::mpsc::{unbounded, UnboundedSender},
+    future::select,
     StreamExt,
 };
 use gpui::{
@@ -492,6 +495,7 @@ impl Element for TerminalEl {
         ));
 
         let content = term.renderable_content();
+        let selection = content.selection;
 
         let cursor = RectF::new(
             vec2f(
@@ -510,6 +514,9 @@ impl Element for TerminalEl {
             color: Some(Color::white()),
             ..Default::default()
         };
+
+        let select_boxes = vec![];
+
         for cell in content.display_iter {
             let Indexed {
                 point: Point { line, .. },
@@ -518,6 +525,9 @@ impl Element for TerminalEl {
                 }, //TODO: Learn what 'CellExtra does'
             } = cell;
 
+            if let Some(selection) = selection {
+                selection.contains_cell(&cell, ???, CursorShape::Block);
+            }
             let new_highlight = make_style_from_cell(fg, flags);
             HighlightStyle {
                 color: Some(alac_color_to_gpui_color(fg)),
