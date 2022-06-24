@@ -241,7 +241,7 @@ impl EditorElement {
         if paint
             .context_menu_bounds
             .map_or(false, |context_menu_bounds| {
-                context_menu_bounds.contains_point(*position)
+                context_menu_bounds.contains_point(position)
             })
         {
             return false;
