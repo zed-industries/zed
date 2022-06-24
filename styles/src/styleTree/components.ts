@@ -1,8 +1,5 @@
-import chroma from "chroma-js";
-import { isIPv4 } from "net";
 import Theme, { BackgroundColorSet } from "../themes/common/theme";
-import { fontFamilies, fontSizes, FontWeight } from "../tokens";
-import { Color } from "../utils/color";
+import { fontFamilies, fontSizes, FontWeight } from "../common";
 
 export type TextColor = keyof Theme["textColor"];
 export function text(
@@ -15,16 +12,16 @@ export function text(
     underline?: boolean;
   }
 ) {
-  let size = fontSizes[properties?.size || "sm"].value;
+  let size = fontSizes[properties?.size || "sm"];
   return {
-    family: fontFamilies[fontFamily].value,
-    color: theme.textColor[color].value,
+    family: fontFamilies[fontFamily],
+    color: theme.textColor[color],
     ...properties,
     size,
   };
 }
 export function textColor(theme: Theme, color: TextColor) {
-  return theme.textColor[color].value;
+  return theme.textColor[color];
 }
 
 export type BorderColor = keyof Theme["borderColor"];
@@ -48,19 +45,19 @@ export function border(
   };
 }
 export function borderColor(theme: Theme, color: BorderColor) {
-  return theme.borderColor[color].value;
+  return theme.borderColor[color];
 }
 
 export type IconColor = keyof Theme["iconColor"];
 export function iconColor(theme: Theme, color: IconColor) {
-  return theme.iconColor[color].value;
+  return theme.iconColor[color];
 }
 
 export type PlayerIndex = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 export interface Player {
   selection: {
-    cursor: Color;
-    selection: Color;
+    cursor: string;
+    selection: string;
   };
 }
 export function player(
@@ -69,8 +66,8 @@ export function player(
 ): Player {
   return {
     selection: {
-      cursor: theme.player[playerNumber].cursorColor.value,
-      selection: theme.player[playerNumber].selectionColor.value,
+      cursor: theme.player[playerNumber].cursorColor,
+      selection: theme.player[playerNumber].selectionColor,
     },
   };
 }
@@ -81,14 +78,14 @@ export function backgroundColor(
   theme: Theme,
   name: BackgroundColor,
   state?: BackgroundState,
-): Color {
-  return theme.backgroundColor[name][state || "base"].value;
+): string {
+  return theme.backgroundColor[name][state || "base"];
 }
 
 export function modalShadow(theme: Theme) {
   return {
     blur: 16,
-    color: theme.shadow.value,
+    color: theme.shadow,
     offset: [0, 2],
   };
 }
@@ -96,7 +93,7 @@ export function modalShadow(theme: Theme) {
 export function popoverShadow(theme: Theme) {
   return {
     blur: 4,
-    color: theme.shadow.value,
+    color: theme.shadow,
     offset: [1, 2],
   };
 }

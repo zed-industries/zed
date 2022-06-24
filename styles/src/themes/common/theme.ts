@@ -1,21 +1,21 @@
-import { ColorToken, FontWeightToken, NumberToken } from "../../tokens";
+import { FontWeight } from "../../common";
 import { withOpacity } from "../../utils/color";
 
 export interface SyntaxHighlightStyle {
-  color: ColorToken;
-  weight?: FontWeightToken;
+  color: string;
+  weight?: FontWeight;
   underline?: boolean;
   italic?: boolean;
 }
 
 export interface Player {
-  baseColor: ColorToken;
-  cursorColor: ColorToken;
-  selectionColor: ColorToken;
-  borderColor: ColorToken;
+  baseColor: string;
+  cursorColor: string;
+  selectionColor: string;
+  borderColor: string;
 }
 export function buildPlayer(
-  color: ColorToken,
+  color: string,
   cursorOpacity?: number,
   selectionOpacity?: number,
   borderOpacity?: number
@@ -29,9 +29,9 @@ export function buildPlayer(
 }
 
 export interface BackgroundColorSet {
-  base: ColorToken;
-  hovered: ColorToken;
-  active: ColorToken;
+  base: string;
+  hovered: string;
+  active: string;
 }
 
 export interface Syntax {
@@ -81,64 +81,64 @@ export default interface Theme {
     info: BackgroundColorSet;
   };
   borderColor: {
-    primary: ColorToken;
-    secondary: ColorToken;
-    muted: ColorToken;
-    active: ColorToken;
+    primary: string;
+    secondary: string;
+    muted: string;
+    active: string;
     /**
      * Used for rendering borders on top of media like avatars, images, video, etc.
      */
-    onMedia: ColorToken;
-    ok: ColorToken;
-    error: ColorToken;
-    warning: ColorToken;
-    info: ColorToken;
+    onMedia: string;
+    ok: string;
+    error: string;
+    warning: string;
+    info: string;
   };
   textColor: {
-    primary: ColorToken;
-    secondary: ColorToken;
-    muted: ColorToken;
-    placeholder: ColorToken;
-    active: ColorToken;
-    feature: ColorToken;
-    ok: ColorToken;
-    error: ColorToken;
-    warning: ColorToken;
-    info: ColorToken;
-    onMedia: ColorToken;
+    primary: string;
+    secondary: string;
+    muted: string;
+    placeholder: string;
+    active: string;
+    feature: string;
+    ok: string;
+    error: string;
+    warning: string;
+    info: string;
+    onMedia: string;
   };
   iconColor: {
-    primary: ColorToken;
-    secondary: ColorToken;
-    muted: ColorToken;
-    placeholder: ColorToken;
-    active: ColorToken;
-    feature: ColorToken;
-    ok: ColorToken;
-    error: ColorToken;
-    warning: ColorToken;
-    info: ColorToken;
+    primary: string;
+    secondary: string;
+    muted: string;
+    placeholder: string;
+    active: string;
+    feature: string;
+    ok: string;
+    error: string;
+    warning: string;
+    info: string;
   };
   editor: {
-    background: ColorToken;
-    indent_guide: ColorToken;
-    indent_guide_active: ColorToken;
+    background: string;
+    indent_guide: string;
+    indent_guide_active: string;
     line: {
-      active: ColorToken;
-      highlighted: ColorToken;
+      active: string;
+      highlighted: string;
     };
     highlight: {
-      selection: ColorToken;
-      occurrence: ColorToken;
-      activeOccurrence: ColorToken;
-      matchingBracket: ColorToken;
-      match: ColorToken;
-      activeMatch: ColorToken;
-      related: ColorToken;
+      selection: string;
+      occurrence: string;
+      activeOccurrence: string;
+      matchingBracket: string;
+      match: string;
+      activeMatch: string;
+      related: string;
     };
     gutter: {
-      primary: ColorToken;
-      active: ColorToken;
+      primary: string;
+      active: string;
     };
   };
 
@@ -154,5 +154,5 @@ export default interface Theme {
     7: Player;
     8: Player;
   },
-  shadow: ColorToken;
+  shadow: string;
 }

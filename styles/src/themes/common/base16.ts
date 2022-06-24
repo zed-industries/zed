@@ -1,5 +1,5 @@
 import chroma, { Color, Scale } from "chroma-js";
-import { color, ColorToken, fontWeights, NumberToken } from "../../tokens";
+import { fontWeights, } from "../../common";
 import { withOpacity } from "../../utils/color";
 import Theme, { buildPlayer, Syntax } from "./theme";
 
@@ -26,10 +26,10 @@ export function createTheme(
 
   let blend = isLight ? 0.12 : 0.24;
 
-  function sample(ramp: Scale, index: number): ColorToken {
-    return color(ramp(index).hex());
+  function sample(ramp: Scale, index: number): string {
+    return ramp(index).hex();
   }
-  const darkest = color(ramps.neutral(isLight ? 7 : 0).hex());
+  const darkest = ramps.neutral(isLight ? 7 : 0).hex();
 
   const backgroundColor = {
     // Title bar
@@ -232,7 +232,7 @@ export function createTheme(
   };
 
   const shadow = withOpacity(
-    color(ramps.neutral(isLight ? 7 : 0).darken().hex()),
+    ramps.neutral(isLight ? 7 : 0).darken().hex(),
     blend);
 
   return {

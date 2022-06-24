@@ -446,6 +446,7 @@ pub struct Editor {
     pub code_actions_indicator: Color,
     pub unnecessary_code_fade: f32,
     pub hover_popover: HoverPopover,
+    pub link_definition: HighlightStyle,
     pub jump_icon: Interactive<IconButton>,
 }
 

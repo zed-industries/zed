@@ -6,9 +6,9 @@ use super::{
 use crate::{
     display_map::{BlockStyle, DisplaySnapshot, TransformBlock},
     hover_popover::HoverAt,
+    link_go_to_definition::{CmdChanged, GoToFetchedDefinition, UpdateGoToDefinitionLink},
     EditorStyle,
 };
-use crate::{hover_popover::HoverAt, link_go_to_definition::FetchDefinition};
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
 use gpui::{
@@ -105,7 +105,7 @@ impl EditorElement {
     fn mouse_down(
         &self,
         position: Vector2F,
-        _: bool,
+        cmd: bool,
         alt: bool,
         shift: bool,
         mut click_count: usize,
@@ -113,6 +113,14 @@ impl EditorElement {
         paint: &mut PaintState,
         cx: &mut EventContext,
     ) -> bool {
+        if cmd && paint.text_bounds.contains_point(position) {
+            let (point, overshoot) = paint.point_for_position(&self.snapshot(cx), layout, position);
+            if overshoot.is_zero() {
+                cx.dispatch_action(GoToFetchedDefinition { point });
+                return true;
+            }
+        }
+
         if paint.gutter_bounds.contains_point(position) {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
         } else if !paint.text_bounds.contains_point(position) {
@@ -204,6 +212,52 @@ impl EditorElement {
         }
     }
 
+    fn mouse_moved(
+        &self,
+        position: Vector2F,
+        cmd: bool,
+        layout: &LayoutState,
+        paint: &PaintState,
+        cx: &mut EventContext,
+    ) -> bool {
+        // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
+        // Don't trigger hover popover if mouse is hovering over context menu
+        let point = if paint.text_bounds.contains_point(position) {
+            let (point, overshoot) = paint.point_for_position(&self.snapshot(cx), layout, position);
+            if overshoot.is_zero() {
+                Some(point)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        cx.dispatch_action(UpdateGoToDefinitionLink {
+            point,
+            cmd_held: cmd,
+        });
+
+        if paint
+            .context_menu_bounds
+            .map_or(false, |context_menu_bounds| {
+                context_menu_bounds.contains_point(*position)
+            })
+        {
+            return false;
+        }
+
+        if paint
+            .hover_bounds
+            .map_or(false, |hover_bounds| hover_bounds.contains_point(position))
+        {
+            return false;
+        }
+
+        cx.dispatch_action(HoverAt { point });
+        true
+    }
+
     fn key_down(&self, input: Option<&str>, cx: &mut EventContext) -> bool {
         let view = self.view.upgrade(cx.app).unwrap();
 
@@ -217,6 +271,11 @@ impl EditorElement {
         } else {
             false
         }
+    }
+
+    fn modifiers_changed(&self, cmd: bool, cx: &mut EventContext) -> bool {
+        cx.dispatch_action(CmdChanged { cmd_down: cmd });
+        false
     }
 
     fn scroll(
@@ -1427,45 +1486,11 @@ impl Element for EditorElement {
                 precise,
             } => self.scroll(*position, *delta, *precise, layout, paint, cx),
             Event::KeyDown { input, .. } => self.key_down(input.as_deref(), cx),
+            Event::ModifiersChanged { cmd, .. } => self.modifiers_changed(*cmd, cx),
             Event::MouseMoved { position, cmd, .. } => {
-                // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
-                // Don't trigger hover popover if mouse is hovering over context menu
-
-                let point = if paint.text_bounds.contains_point(*position) {
-                    let (point, overshoot) =
-                        paint.point_for_position(&self.snapshot(cx), layout, *position);
-                    if overshoot.is_zero() {
-                        Some(point)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                if *cmd {
-                    cx.dispatch_action(FetchDefinition { point });
-                }
-
-                if paint
-                    .context_menu_bounds
-                    .map_or(false, |context_menu_bounds| {
-                        context_menu_bounds.contains_point(*position)
-                    })
-                {
-                    return false;
-                }
-
-                if paint
-                    .hover_bounds
-                    .map_or(false, |hover_bounds| hover_bounds.contains_point(*position))
-                {
-                    return false;
-                }
-
-                cx.dispatch_action(HoverAt { point });
-                true
+                self.mouse_moved(*position, *cmd, layout, paint, cx)
             }
+
             _ => false,
         }
     }

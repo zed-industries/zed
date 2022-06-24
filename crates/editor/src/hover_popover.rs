@@ -1,5 +1,3 @@
-use std::{ops::Range, time::Duration};
-
 use gpui::{
     actions,
     elements::{Flex, MouseEventHandler, Padding, Text},
@@ -9,6 +7,7 @@ use gpui::{
 };
 use language::Bias;
 use project::{HoverBlock, Project};
+use std::{ops::Range, time::Duration};
 use util::TryFutureExt;
 
 use crate::{

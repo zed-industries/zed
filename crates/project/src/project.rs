@@ -202,13 +202,13 @@ pub struct DiagnosticSummary {
     pub warning_count: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Location {
     pub buffer: ModelHandle<Buffer>,
     pub range: Range<language::Anchor>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LocationLink {
     pub origin: Option<Location>,
     pub target: Location,

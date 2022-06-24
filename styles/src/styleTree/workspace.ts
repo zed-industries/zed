@@ -147,7 +147,7 @@ export default function workspace(theme: Theme) {
     },
     disconnectedOverlay: {
       ...text(theme, "sans", "active"),
-      background: withOpacity(theme.backgroundColor[500].base, 0.8).value,
+      background: withOpacity(theme.backgroundColor[500].base, 0.8),
     },
     notification: {
       margin: { top: 10 },

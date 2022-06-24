@@ -45,7 +45,7 @@ pub use multi_buffer::{
     ToPoint,
 };
 use ordered_float::OrderedFloat;
-use project::{Project, ProjectPath, ProjectTransaction};
+use project::{LocationLink, Project, ProjectPath, ProjectTransaction};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -4602,33 +4602,41 @@ impl Editor {
         cx.spawn(|workspace, mut cx| async move {
             let definitions = definitions.await?;
             workspace.update(&mut cx, |workspace, cx| {
-                let nav_history = workspace.active_pane().read(cx).nav_history().clone();
-                for definition in definitions {
-                    let range = definition
-                        .target
-                        .range
-                        .to_offset(definition.target.buffer.read(cx));
-
-                    let target_editor_handle =
-                        workspace.open_project_item(definition.target.buffer, cx);
-                    target_editor_handle.update(cx, |target_editor, cx| {
-                        // When selecting a definition in a different buffer, disable the nav history
-                        // to avoid creating a history entry at the previous cursor location.
-                        if editor_handle != target_editor_handle {
-                            nav_history.borrow_mut().disable();
-                        }
-                        target_editor.change_selections(Some(Autoscroll::Center), cx, |s| {
-                            s.select_ranges([range]);
-                        });
-
-                        nav_history.borrow_mut().enable();
-                    });
-                }
+                Editor::navigate_to_definitions(workspace, editor_handle, definitions, cx);
             });
 
             Ok::<(), anyhow::Error>(())
         })
         .detach_and_log_err(cx);
+    }
+
+    pub fn navigate_to_definitions(
+        workspace: &mut Workspace,
+        editor_handle: ViewHandle<Editor>,
+        definitions: Vec<LocationLink>,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let nav_history = workspace.active_pane().read(cx).nav_history().clone();
+        for definition in definitions {
+            let range = definition
+                .target
+                .range
+                .to_offset(definition.target.buffer.read(cx));
+
+            let target_editor_handle = workspace.open_project_item(definition.target.buffer, cx);
+            target_editor_handle.update(cx, |target_editor, cx| {
+                // When selecting a definition in a different buffer, disable the nav history
+                // to avoid creating a history entry at the previous cursor location.
+                if editor_handle != target_editor_handle {
+                    nav_history.borrow_mut().disable();
+                }
+                target_editor.change_selections(Some(Autoscroll::Center), cx, |s| {
+                    s.select_ranges([range]);
+                });
+
+                nav_history.borrow_mut().enable();
+            });
+        }
     }
 
     pub fn find_all_references(

@@ -25,7 +25,7 @@ export default function search(theme: Theme) {
   };
 
   return {
-    matchBackground: theme.editor.highlight.match.value,
+    matchBackground: theme.editor.highlight.match,
     tabIconSpacing: 8,
     tabIconWidth: 14,
     optionButton: {

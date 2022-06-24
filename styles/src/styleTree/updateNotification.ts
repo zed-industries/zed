@@ -13,7 +13,7 @@ export default function updateNotification(theme: Theme): Object {
       ...text(theme, "sans", "secondary", { size: "xs" }),
       margin: { left: headerPadding, top: 6, bottom: 6 },
       hover: {
-        color: theme.textColor["active"].value
+        color: theme.textColor["active"]
       }
     },
     dismissButton: {

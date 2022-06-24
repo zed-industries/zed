@@ -7,19 +7,20 @@ use futures::StreamExt;
 use indoc::indoc;
 
 use collections::BTreeMap;
-use gpui::{keymap::Keystroke, AppContext, ModelHandle, ViewContext, ViewHandle};
+use gpui::{json, keymap::Keystroke, AppContext, ModelHandle, ViewContext, ViewHandle};
 use language::{point_to_lsp, FakeLspAdapter, Language, LanguageConfig, Selection};
-use project::{FakeFs, Project};
+use project::Project;
 use settings::Settings;
 use util::{
-    set_eq,
+    assert_set_eq, set_eq,
     test::{marked_text, marked_text_ranges, marked_text_ranges_by, SetEqError},
 };
+use workspace::{pane, AppState, Workspace, WorkspaceHandle};
 
 use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     multi_buffer::ToPointUtf16,
-    Autoscroll, DisplayPoint, Editor, EditorMode, MultiBuffer, ToPoint,
+    AnchorRangeExt, Autoscroll, DisplayPoint, Editor, EditorMode, MultiBuffer, ToPoint,
 };
 
 #[cfg(test)]
@@ -215,6 +216,24 @@ impl<'a> EditorTestContext<'a> {
         )
     }
 
+    pub fn assert_editor_text_highlights<Tag: ?Sized + 'static>(&mut self, marked_text: &str) {
+        let (unmarked, mut ranges) = marked_text_ranges_by(marked_text, vec![('[', ']').into()]);
+        assert_eq!(unmarked, self.buffer_text());
+
+        let asserted_ranges = ranges.remove(&('[', ']').into()).unwrap();
+        let snapshot = self.update_editor(|editor, cx| editor.snapshot(cx));
+        let actual_ranges: Vec<Range<usize>> = snapshot
+            .display_snapshot
+            .highlight_ranges::<Tag>()
+            .map(|ranges| ranges.as_ref().clone().1)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|range| range.to_offset(&snapshot.buffer_snapshot))
+            .collect();
+
+        assert_set_eq!(asserted_ranges, actual_ranges);
+    }
+
     pub fn assert_editor_selections(&mut self, expected_selections: Vec<Selection<usize>>) {
         let mut empty_selections = Vec::new();
         let mut reverse_selections = Vec::new();
@@ -390,6 +409,7 @@ impl<'a> DerefMut for EditorTestContext<'a> {
 pub struct EditorLspTestContext<'a> {
     pub cx: EditorTestContext<'a>,
     pub lsp: lsp::FakeLanguageServer,
+    pub workspace: ViewHandle<Workspace>,
 }
 
 impl<'a> EditorLspTestContext<'a> {
@@ -398,8 +418,17 @@ impl<'a> EditorLspTestContext<'a> {
         capabilities: lsp::ServerCapabilities,
         cx: &'a mut gpui::TestAppContext,
     ) -> EditorLspTestContext<'a> {
+        use json::json;
+
+        cx.update(|cx| {
+            crate::init(cx);
+            pane::init(cx);
+        });
+
+        let params = cx.update(AppState::test);
+
         let file_name = format!(
-            "/file.{}",
+            "file.{}",
             language
                 .path_suffixes()
                 .first()
@@ -411,30 +440,36 @@ impl<'a> EditorLspTestContext<'a> {
             ..Default::default()
         });
 
-        let fs = FakeFs::new(cx.background().clone());
-        fs.insert_file(file_name.clone(), "".to_string()).await;
-
-        let project = Project::test(fs, [file_name.as_ref()], cx).await;
+        let project = Project::test(params.fs.clone(), [], cx).await;
         project.update(cx, |project, _| project.languages().add(Arc::new(language)));
-        let buffer = project
-            .update(cx, |project, cx| project.open_local_buffer(file_name, cx))
+
+        params
+            .fs
+            .as_fake()
+            .insert_tree("/root", json!({ "dir": { file_name: "" }}))
+            .await;
+
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/root", true, cx)
+            })
             .await
             .unwrap();
+        cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
+            .await;
 
-        let (window_id, editor) = cx.update(|cx| {
-            cx.set_global(Settings::test(cx));
-            crate::init(cx);
+        let file = cx.read(|cx| workspace.file_project_paths(cx)[0].clone());
+        let item = workspace
+            .update(cx, |workspace, cx| workspace.open_path(file, true, cx))
+            .await
+            .expect("Could not open test file");
 
-            let (window_id, editor) = cx.add_window(Default::default(), |cx| {
-                let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-
-                Editor::new(EditorMode::Full, buffer, Some(project), None, cx)
-            });
-
-            editor.update(cx, |_, cx| cx.focus_self());
-
-            (window_id, editor)
+        let editor = cx.update(|cx| {
+            item.act_as::<Editor>(cx)
+                .expect("Opened test file wasn't an editor")
         });
+        editor.update(cx, |_, cx| cx.focus_self());
 
         let lsp = fake_servers.next().await.unwrap();
 
@@ -445,6 +480,7 @@ impl<'a> EditorLspTestContext<'a> {
                 editor,
             },
             lsp,
+            workspace,
         }
     }
 
@@ -492,6 +528,13 @@ impl<'a> EditorLspTestContext<'a> {
 
             lsp::Range { start, end }
         })
+    }
+
+    pub fn update_workspace<F, T>(&mut self, update: F) -> T
+    where
+        F: FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
+    {
+        self.workspace.update(self.cx.cx, update)
     }
 }
 

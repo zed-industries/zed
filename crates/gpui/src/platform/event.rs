@@ -13,6 +13,16 @@ pub enum Event {
         input: Option<String>,
         is_held: bool,
     },
+    KeyUp {
+        keystroke: Keystroke,
+        input: Option<String>,
+    },
+    ModifiersChanged {
+        ctrl: bool,
+        alt: bool,
+        shift: bool,
+        cmd: bool,
+    },
     ScrollWheel {
         position: Vector2F,
         delta: Vector2F,
@@ -76,6 +86,8 @@ impl Event {
     pub fn position(&self) -> Option<Vector2F> {
         match self {
             Event::KeyDown { .. } => None,
+            Event::KeyUp { .. } => None,
+            Event::ModifiersChanged { .. } => None,
             Event::ScrollWheel { position, .. }
             | Event::LeftMouseDown { position, .. }
             | Event::LeftMouseUp { position, .. }

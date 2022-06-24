@@ -4,7 +4,6 @@ import {
   backgroundColor,
   border,
   player,
-  modalShadow,
   text,
   TextColor,
   popoverShadow
@@ -80,15 +79,15 @@ export default function chatPanel(theme: Theme) {
       ...message,
       body: {
         ...message.body,
-        color: theme.textColor.muted.value,
+        color: theme.textColor.muted,
       },
       sender: {
         ...message.sender,
-        color: theme.textColor.muted.value,
+        color: theme.textColor.muted,
       },
       timestamp: {
         ...message.timestamp,
-        color: theme.textColor.muted.value,
+        color: theme.textColor.muted,
       },
     },
     inputEditor: {
