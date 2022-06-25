@@ -427,9 +427,14 @@ impl EditorElement {
         let content_origin = bounds.origin() + vec2f(layout.gutter_margin, 0.);
 
         cx.scene.push_layer(Some(bounds));
+
         cx.scene.push_cursor_region(CursorRegion {
             bounds,
-            style: CursorStyle::IBeam,
+            style: if !view.link_go_to_definition_state.definitions.is_empty() {
+                CursorStyle::PointingHand
+            } else {
+                CursorStyle::IBeam
+            },
         });
 
         for (range, color) in &layout.highlighted_ranges {

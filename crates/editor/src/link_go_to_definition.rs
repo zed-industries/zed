@@ -237,8 +237,11 @@ pub fn show_link_definition(
 }
 
 pub fn hide_link_definition(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
-    if editor.link_go_to_definition_state.symbol_range.is_some() {
+    if editor.link_go_to_definition_state.symbol_range.is_some()
+        || !editor.link_go_to_definition_state.definitions.is_empty()
+    {
         editor.link_go_to_definition_state.symbol_range.take();
+        editor.link_go_to_definition_state.definitions.clear();
         cx.notify();
     }
 
