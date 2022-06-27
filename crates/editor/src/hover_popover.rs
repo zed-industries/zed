@@ -7,6 +7,7 @@ use gpui::{
 };
 use language::Bias;
 use project::{HoverBlock, Project};
+use settings::Settings;
 use std::{ops::Range, time::Duration};
 use util::TryFutureExt;
 
@@ -40,10 +41,12 @@ pub fn hover(editor: &mut Editor, _: &Hover, cx: &mut ViewContext<Editor>) {
 /// The internal hover action dispatches between `show_hover` or `hide_hover`
 /// depending on whether a point to hover over is provided.
 pub fn hover_at(editor: &mut Editor, action: &HoverAt, cx: &mut ViewContext<Editor>) {
-    if let Some(point) = action.point {
-        show_hover(editor, point, false, cx);
-    } else {
-        hide_hover(editor, cx);
+    if cx.global::<Settings>().hover_popover_enabled {
+        if let Some(point) = action.point {
+            show_hover(editor, point, false, cx);
+        } else {
+            hide_hover(editor, cx);
+        }
     }
 }
 
