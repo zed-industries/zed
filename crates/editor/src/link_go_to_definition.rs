@@ -266,14 +266,10 @@ pub fn go_to_fetched_definition(
         return;
     };
 
-    let mut definitions = Vec::new();
-
-    editor_handle.update(cx, |editor, cx| {
+    let definitions = editor_handle.update(cx, |editor, cx| {
+        let definitions = editor.link_go_to_definition_state.definitions.clone();
         hide_link_definition(editor, cx);
-        std::mem::swap(
-            &mut editor.link_go_to_definition_state.definitions,
-            &mut definitions,
-        );
+        definitions
     });
 
     if !definitions.is_empty() {
