@@ -23,6 +23,7 @@ pub struct Settings {
     pub buffer_font_family: FamilyId,
     pub buffer_font_size: f32,
     pub default_buffer_font_size: f32,
+    pub hover_popover_enabled: bool,
     pub vim_mode: bool,
     pub language_settings: LanguageSettings,
     pub language_defaults: HashMap<Arc<str>, LanguageSettings>,
@@ -57,6 +58,8 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub buffer_font_size: Option<f32>,
     #[serde(default)]
+    pub hover_popover_enabled: Option<bool>,
+    #[serde(default)]
     pub vim_mode: Option<bool>,
     #[serde(default)]
     pub format_on_save: Option<bool>,
@@ -80,6 +83,7 @@ impl Settings {
             buffer_font_family: font_cache.load_family(&[buffer_font_family])?,
             buffer_font_size: 15.,
             default_buffer_font_size: 15.,
+            hover_popover_enabled: true,
             vim_mode: false,
             language_settings: Default::default(),
             language_defaults: Default::default(),
@@ -151,6 +155,7 @@ impl Settings {
             buffer_font_family: cx.font_cache().load_family(&["Monaco"]).unwrap(),
             buffer_font_size: 14.,
             default_buffer_font_size: 14.,
+            hover_popover_enabled: true,
             vim_mode: false,
             language_settings: Default::default(),
             language_defaults: Default::default(),
@@ -191,6 +196,7 @@ impl Settings {
         );
         merge(&mut self.buffer_font_size, data.buffer_font_size);
         merge(&mut self.default_buffer_font_size, data.buffer_font_size);
+        merge(&mut self.hover_popover_enabled, data.hover_popover_enabled);
         merge(&mut self.vim_mode, data.vim_mode);
         merge_option(
             &mut self.language_settings.format_on_save,

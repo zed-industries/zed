@@ -10,6 +10,7 @@ use crate::{
     DebugContext, Element, Event, EventContext, FontCache, LayoutContext, PaintContext,
     SizeConstraint, TextLayoutCache,
 };
+use log::warn;
 use serde_json::json;
 use std::{borrow::Cow, ops::Range, sync::Arc};
 
@@ -62,6 +63,7 @@ impl Element for Text {
         cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
         // Convert the string and highlight ranges into an iterator of highlighted chunks.
+        
         let mut offset = 0;
         let mut highlight_ranges = self.highlights.iter().peekable();
         let chunks = std::iter::from_fn(|| {
@@ -70,10 +72,17 @@ impl Element for Text {
                 if offset < range.start {
                     result = Some((&self.text[offset..range.start], None));
                     offset = range.start;
-                } else {
+                } else if range.end <= self.text.len() {
                     result = Some((&self.text[range.clone()], Some(*highlight_style)));
                     highlight_ranges.next();
                     offset = range.end;
+                } else {
+                    warn!(
+                        "Highlight out of text range. Text len: {}, Highlight range: {}..{}",
+                        self.text.len(),
+                        range.start,
+                        range.end);
+                    result = None;
                 }
             } else if offset < self.text.len() {
                 result = Some((&self.text[offset..], None));
