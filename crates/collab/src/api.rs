@@ -31,6 +31,7 @@ pub fn routes(rpc_server: &Arc<rpc::Server>, state: Arc<AppState>) -> Router<Bod
         )
         .route("/users/:id/access_tokens", post(create_access_token))
         .route("/bulk_users", post(create_users))
+        .route("/users_with_no_invites", get(get_users_with_no_invites))
         .route("/invite_codes/:code", get(get_user_for_invite_code))
         .route("/panic", post(trace_panic))
         .route("/rpc_server_snapshot", get(get_rpc_server_snapshot))
@@ -226,6 +227,22 @@ async fn create_users(
         .await?;
     let users = app.db.get_users_by_ids(user_ids).await?;
     Ok(Json(users))
+}
+
+#[derive(Debug, Deserialize)]
+struct GetUsersWithNoInvites {
+    invited_by_another_user: bool,
+}
+
+async fn get_users_with_no_invites(
+    Query(params): Query<GetUsersWithNoInvites>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<Json<Vec<User>>> {
+    Ok(Json(
+        app.db
+            .get_users_with_no_invites(params.invited_by_another_user)
+            .await?,
+    ))
 }
 
 #[derive(Debug, Deserialize)]

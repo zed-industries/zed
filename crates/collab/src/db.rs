@@ -25,6 +25,7 @@ pub trait Db: Send + Sync {
     async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>>;
     async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>>;
     async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>>;
+    async fn get_users_with_no_invites(&self, invited_by_another_user: bool) -> Result<Vec<User>>;
     async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>>;
     async fn set_user_is_admin(&self, id: UserId, is_admin: bool) -> Result<()>;
     async fn set_user_connected_once(&self, id: UserId, connected_once: bool) -> Result<()>;
@@ -258,6 +259,20 @@ impl Db for PostgresDb {
             .bind(&ids)
             .fetch_all(&self.pool)
             .await?)
+    }
+
+    async fn get_users_with_no_invites(&self, invited_by_another_user: bool) -> Result<Vec<User>> {
+        let query = format!(
+            "
+            SELECT users.*
+            FROM users
+            WHERE invite_count = 0
+            AND inviter_id IS{} NULL
+            ",
+            if invited_by_another_user { " NOT" } else { "" }
+        );
+
+        Ok(sqlx::query_as(&query).fetch_all(&self.pool).await?)
     }
 
     async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
@@ -1363,21 +1378,56 @@ pub mod tests {
         let user = db.create_user("user_1", None, false).await.unwrap();
         let project = db.register_project(user).await.unwrap();
 
-        db.update_worktree_extensions(project, 100, Default::default()).await.unwrap();
-        db.update_worktree_extensions(project, 100, [("rs".to_string(), 5), ("md".to_string(), 3)].into_iter().collect()).await.unwrap();
-        db.update_worktree_extensions(project, 100, [("rs".to_string(), 6), ("md".to_string(), 5)].into_iter().collect()).await.unwrap();
-        db.update_worktree_extensions(project, 101, [("ts".to_string(), 2), ("md".to_string(), 1)].into_iter().collect()).await.unwrap();
+        db.update_worktree_extensions(project, 100, Default::default())
+            .await
+            .unwrap();
+        db.update_worktree_extensions(
+            project,
+            100,
+            [("rs".to_string(), 5), ("md".to_string(), 3)]
+                .into_iter()
+                .collect(),
+        )
+        .await
+        .unwrap();
+        db.update_worktree_extensions(
+            project,
+            100,
+            [("rs".to_string(), 6), ("md".to_string(), 5)]
+                .into_iter()
+                .collect(),
+        )
+        .await
+        .unwrap();
+        db.update_worktree_extensions(
+            project,
+            101,
+            [("ts".to_string(), 2), ("md".to_string(), 1)]
+                .into_iter()
+                .collect(),
+        )
+        .await
+        .unwrap();
 
-        assert_eq!(db.get_project_extensions(project).await.unwrap(), [
-            (100, [
-                ("rs".into(), 6),
-                ("md".into(), 5),
-            ].into_iter().collect::<HashMap<_, _>>()),
-            (101, [
-                ("ts".into(), 2),
-                ("md".into(), 1),
-            ].into_iter().collect::<HashMap<_, _>>())
-        ].into_iter().collect());
+        assert_eq!(
+            db.get_project_extensions(project).await.unwrap(),
+            [
+                (
+                    100,
+                    [("rs".into(), 6), ("md".into(), 5),]
+                        .into_iter()
+                        .collect::<HashMap<_, _>>()
+                ),
+                (
+                    101,
+                    [("ts".into(), 2), ("md".into(), 1),]
+                        .into_iter()
+                        .collect::<HashMap<_, _>>()
+                )
+            ]
+            .into_iter()
+            .collect()
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2138,6 +2188,10 @@ pub mod tests {
             self.background.simulate_random_delay().await;
             let users = self.users.lock();
             Ok(ids.iter().filter_map(|id| users.get(id).cloned()).collect())
+        }
+
+        async fn get_users_with_no_invites(&self, _: bool) -> Result<Vec<User>> {
+            unimplemented!()
         }
 
         async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
