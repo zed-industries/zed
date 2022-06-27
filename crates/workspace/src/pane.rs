@@ -83,7 +83,9 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx));
     cx.add_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx));
     cx.add_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx));
-    cx.add_action(Pane::reopen_closed_item);
+    cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
+        Pane::reopen_closed_item(workspace, cx).detach();
+    });
     cx.add_action(|workspace: &mut Workspace, action: &GoBack, cx| {
         Pane::go_back(
             workspace,
@@ -207,16 +209,14 @@ impl Pane {
 
     pub fn reopen_closed_item(
         workspace: &mut Workspace,
-        _: &ReopenClosedItem,
         cx: &mut ViewContext<Workspace>,
-    ) {
+    ) -> Task<()> {
         Self::navigate_history(
             workspace,
             workspace.active_pane().clone(),
             NavigationMode::ReopeningClosed,
             cx,
         )
-        .detach();
     }
 
     fn navigate_history(
