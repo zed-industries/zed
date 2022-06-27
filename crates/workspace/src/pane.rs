@@ -25,6 +25,7 @@ actions!(
         ActivateNextItem,
         CloseActiveItem,
         CloseInactiveItems,
+        ReopenClosedItem,
         SplitLeft,
         SplitUp,
         SplitRight,
@@ -82,6 +83,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx));
     cx.add_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx));
     cx.add_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx));
+    cx.add_action(Pane::reopen_closed_item);
     cx.add_action(|workspace: &mut Workspace, action: &GoBack, cx| {
         Pane::go_back(
             workspace,
@@ -133,6 +135,7 @@ pub struct NavHistory {
     mode: NavigationMode,
     backward_stack: VecDeque<NavigationEntry>,
     forward_stack: VecDeque<NavigationEntry>,
+    closed_stack: VecDeque<NavigationEntry>,
     paths_by_item: HashMap<usize, ProjectPath>,
 }
 
@@ -141,6 +144,8 @@ enum NavigationMode {
     Normal,
     GoingBack,
     GoingForward,
+    ClosingItem,
+    ReopeningClosed,
     Disabled,
 }
 
@@ -200,6 +205,20 @@ impl Pane {
         )
     }
 
+    pub fn reopen_closed_item(
+        workspace: &mut Workspace,
+        _: &ReopenClosedItem,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        Self::navigate_history(
+            workspace,
+            workspace.active_pane().clone(),
+            NavigationMode::ReopeningClosed,
+            cx,
+        )
+        .detach();
+    }
+
     fn navigate_history(
         workspace: &mut Workspace,
         pane: ViewHandle<Pane>,
@@ -240,7 +259,7 @@ impl Pane {
                 else {
                     break pane
                         .nav_history
-                        .borrow_mut()
+                        .borrow()
                         .paths_by_item
                         .get(&entry.item.id())
                         .cloned()
@@ -256,10 +275,13 @@ impl Pane {
             cx.spawn(|workspace, mut cx| async move {
                 let task = task.await;
                 if let Some(pane) = pane.upgrade(&cx) {
+                    let mut navigated = false;
                     if let Some((project_entry_id, build_item)) = task.log_err() {
-                        pane.update(&mut cx, |pane, _| {
+                        let prev_active_item_id = pane.update(&mut cx, |pane, _| {
                             pane.nav_history.borrow_mut().set_mode(mode);
+                            pane.active_item().map(|p| p.id())
                         });
+
                         let item = workspace.update(&mut cx, |workspace, cx| {
                             Self::open_item(
                                 workspace,
@@ -270,15 +292,19 @@ impl Pane {
                                 build_item,
                             )
                         });
+
                         pane.update(&mut cx, |pane, cx| {
+                            navigated |= Some(item.id()) != prev_active_item_id;
                             pane.nav_history
                                 .borrow_mut()
                                 .set_mode(NavigationMode::Normal);
                             if let Some(data) = entry.data {
-                                item.navigate(data, cx);
+                                navigated |= item.navigate(data, cx);
                             }
                         });
-                    } else {
+                    }
+
+                    if !navigated {
                         workspace
                             .update(&mut cx, |workspace, cx| {
                                 Self::navigate_history(workspace, pane, mode, cx)
@@ -587,7 +613,15 @@ impl Pane {
                             pane.active_item_index -= 1;
                         }
 
-                        let mut nav_history = pane.nav_history.borrow_mut();
+                        pane.nav_history
+                            .borrow_mut()
+                            .set_mode(NavigationMode::ClosingItem);
+                        item.deactivated(cx);
+                        pane.nav_history
+                            .borrow_mut()
+                            .set_mode(NavigationMode::Normal);
+
+                        let mut nav_history = pane.nav_history().borrow_mut();
                         if let Some(path) = item.project_path(cx) {
                             nav_history.paths_by_item.insert(item.id(), path);
                         } else {
@@ -925,11 +959,16 @@ impl NavHistory {
         self.forward_stack.pop_back()
     }
 
+    pub fn pop_closed(&mut self) -> Option<NavigationEntry> {
+        self.closed_stack.pop_back()
+    }
+
     fn pop(&mut self, mode: NavigationMode) -> Option<NavigationEntry> {
         match mode {
-            NavigationMode::Normal | NavigationMode::Disabled => None,
+            NavigationMode::Normal | NavigationMode::Disabled | NavigationMode::ClosingItem => None,
             NavigationMode::GoingBack => self.pop_backward(),
             NavigationMode::GoingForward => self.pop_forward(),
+            NavigationMode::ReopeningClosed => self.pop_closed(),
         }
     }
 
@@ -940,7 +979,7 @@ impl NavHistory {
     pub fn push<D: 'static + Any>(&mut self, data: Option<D>, item: Rc<dyn WeakItemHandle>) {
         match self.mode {
             NavigationMode::Disabled => {}
-            NavigationMode::Normal => {
+            NavigationMode::Normal | NavigationMode::ReopeningClosed => {
                 if self.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
                     self.backward_stack.pop_front();
                 }
@@ -964,6 +1003,15 @@ impl NavHistory {
                     self.backward_stack.pop_front();
                 }
                 self.backward_stack.push_back(NavigationEntry {
+                    item,
+                    data: data.map(|data| Box::new(data) as Box<dyn Any>),
+                });
+            }
+            NavigationMode::ClosingItem => {
+                if self.closed_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
+                    self.closed_stack.pop_front();
+                }
+                self.closed_stack.push_back(NavigationEntry {
                     item,
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
                 });
