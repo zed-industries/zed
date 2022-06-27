@@ -2152,9 +2152,13 @@ impl BackgroundScanner {
             };
             let child_name = child_abs_path.file_name().unwrap();
             let child_path: Arc<Path> = job.path.join(child_name).into();
-            let child_metadata = match self.fs.metadata(&child_abs_path).await? {
-                Some(metadata) => metadata,
-                None => continue,
+            let child_metadata = match self.fs.metadata(&child_abs_path).await {
+                Ok(Some(metadata)) => metadata,
+                Ok(None) => continue,
+                Err(err) => {
+                    log::error!("error processing {:?}: {:?}", child_abs_path, err);
+                    continue;
+                }
             };
 
             // If we find a .gitignore, add it to the stack of ignores used to determine which paths are ignored
