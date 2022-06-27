@@ -43,28 +43,28 @@ export default function editor(theme: Theme) {
   for (const syntaxKey in theme.syntax) {
     const style = theme.syntax[syntaxKey];
     syntax[syntaxKey] = {
-      color: style.color.value,
-      weight: style.weight.value,
+      color: style.color,
+      weight: style.weight,
       underline: style.underline,
       italic: style.italic,
     };
   }
 
   return {
-    textColor: theme.syntax.primary.color.value,
+    textColor: theme.syntax.primary.color,
     background: backgroundColor(theme, 500),
-    activeLineBackground: theme.editor.line.active.value,
+    activeLineBackground: theme.editor.line.active,
     codeActionsIndicator: iconColor(theme, "muted"),
     diffBackgroundDeleted: backgroundColor(theme, "error"),
     diffBackgroundInserted: backgroundColor(theme, "ok"),
-    documentHighlightReadBackground: theme.editor.highlight.occurrence.value,
-    documentHighlightWriteBackground: theme.editor.highlight.activeOccurrence.value,
-    errorColor: theme.textColor.error.value,
+    documentHighlightReadBackground: theme.editor.highlight.occurrence,
+    documentHighlightWriteBackground: theme.editor.highlight.activeOccurrence,
+    errorColor: theme.textColor.error,
     gutterBackground: backgroundColor(theme, 500),
     gutterPaddingFactor: 3.5,
-    highlightedLineBackground: theme.editor.line.highlighted.value,
-    lineNumber: theme.editor.gutter.primary.value,
-    lineNumberActive: theme.editor.gutter.active.value,
+    highlightedLineBackground: theme.editor.line.highlighted,
+    lineNumber: theme.editor.gutter.primary,
+    lineNumberActive: theme.editor.gutter.active,
     renameFade: 0.6,
     unnecessaryCodeFade: 0.5,
     selection: player(theme, 1).selection,
@@ -120,7 +120,7 @@ export default function editor(theme: Theme) {
       },
     },
     diagnosticPathHeader: {
-      background: theme.editor.line.active.value,
+      background: theme.editor.line.active,
       textScaleFactor: 0.857,
       filename: text(theme, "mono", "primary", { size: "sm" }),
       path: {
@@ -139,6 +139,10 @@ export default function editor(theme: Theme) {
     invalidInformationDiagnostic: diagnostic(theme, "muted"),
     invalidWarningDiagnostic: diagnostic(theme, "muted"),
     hover_popover: hoverPopover(theme),
+    link_definition: {
+      color: theme.syntax.linkUri.color,
+      underline: theme.syntax.linkUri.underline,
+    },
     jumpIcon: {
       color: iconColor(theme, "muted"),
       iconWidth: 20,

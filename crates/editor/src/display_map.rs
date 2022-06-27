@@ -474,6 +474,14 @@ impl DisplaySnapshot {
     pub fn longest_row(&self) -> u32 {
         self.blocks_snapshot.longest_row()
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn highlight_ranges<Tag: ?Sized + 'static>(
+        &self,
+    ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
+        let type_id = TypeId::of::<Tag>();
+        self.text_highlights.get(&Some(type_id)).cloned()
+    }
 }
 
 #[derive(Copy, Clone, Default, Eq, Ord, PartialOrd, PartialEq)]

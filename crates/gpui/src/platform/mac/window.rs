@@ -136,6 +136,10 @@ unsafe fn build_classes() {
             handle_view_event as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
+            sel!(flagsChanged:),
+            handle_view_event as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
             sel!(cancelOperation:),
             cancel_operation as extern "C" fn(&Object, Sel, id),
         );
@@ -181,6 +185,7 @@ struct WindowState {
     last_fresh_keydown: Option<(Keystroke, Option<String>)>,
     layer: id,
     traffic_light_position: Option<Vector2F>,
+    previous_modifiers_changed_event: Option<Event>,
 }
 
 impl Window {
@@ -263,6 +268,7 @@ impl Window {
                 last_fresh_keydown: None,
                 layer,
                 traffic_light_position: options.traffic_light_position,
+                previous_modifiers_changed_event: None,
             })));
 
             (*native_window).set_ivar(
@@ -597,7 +603,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
 
     if let Some(event) = event {
         match &event {
-            Event::LeftMouseDragged { position } => {
+            Event::LeftMouseDragged { position, .. } => {
                 window_state_borrow.synthetic_drag_counter += 1;
                 window_state_borrow
                     .executor
@@ -610,6 +616,31 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
             }
             Event::LeftMouseUp { .. } => {
                 window_state_borrow.synthetic_drag_counter += 1;
+            }
+            Event::ModifiersChanged {
+                ctrl,
+                alt,
+                shift,
+                cmd,
+            } => {
+                // Only raise modifiers changed event when they have actually changed
+                if let Some(Event::ModifiersChanged {
+                    ctrl: prev_ctrl,
+                    alt: prev_alt,
+                    shift: prev_shift,
+                    cmd: prev_cmd,
+                }) = &window_state_borrow.previous_modifiers_changed_event
+                {
+                    if prev_ctrl == ctrl
+                        && prev_alt == alt
+                        && prev_shift == shift
+                        && prev_cmd == cmd
+                    {
+                        return;
+                    }
+                }
+
+                window_state_borrow.previous_modifiers_changed_event = Some(event.clone());
             }
             _ => {}
         }
@@ -805,7 +836,14 @@ async fn synthetic_drag(
             if window_state_borrow.synthetic_drag_counter == drag_id {
                 if let Some(mut callback) = window_state_borrow.event_callback.take() {
                     drop(window_state_borrow);
-                    callback(Event::LeftMouseDragged { position });
+                    callback(Event::LeftMouseDragged {
+                        // TODO: Make sure empty modifiers is correct for this
+                        position,
+                        shift: false,
+                        ctrl: false,
+                        alt: false,
+                        cmd: false,
+                    });
                     window_state.borrow_mut().event_callback = Some(callback);
                 }
             } else {

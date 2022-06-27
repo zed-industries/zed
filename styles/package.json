@@ -5,8 +5,7 @@
     "main": "index.js",
     "scripts": {
         "build": "npm run build-themes && npm run build-tokens",
-        "build-themes": "ts-node ./src/buildThemes.ts",
-        "build-tokens": "ts-node ./src/buildTokens.ts"
+        "build-themes": "ts-node ./src/buildThemes.ts"
     },
     "author": "",
     "license": "ISC",

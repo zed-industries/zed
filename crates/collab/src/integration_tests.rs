@@ -1980,13 +1980,13 @@ async fn test_definition(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_b.read(|cx| {
         assert_eq!(definitions_1.len(), 1);
         assert_eq!(project_b.read(cx).worktrees(cx).count(), 2);
-        let target_buffer = definitions_1[0].buffer.read(cx);
+        let target_buffer = definitions_1[0].target.buffer.read(cx);
         assert_eq!(
             target_buffer.text(),
             "const TWO: usize = 2;\nconst THREE: usize = 3;"
         );
         assert_eq!(
-            definitions_1[0].range.to_point(target_buffer),
+            definitions_1[0].target.range.to_point(target_buffer),
             Point::new(0, 6)..Point::new(0, 9)
         );
     });
@@ -2009,17 +2009,20 @@ async fn test_definition(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_b.read(|cx| {
         assert_eq!(definitions_2.len(), 1);
         assert_eq!(project_b.read(cx).worktrees(cx).count(), 2);
-        let target_buffer = definitions_2[0].buffer.read(cx);
+        let target_buffer = definitions_2[0].target.buffer.read(cx);
         assert_eq!(
             target_buffer.text(),
             "const TWO: usize = 2;\nconst THREE: usize = 3;"
         );
         assert_eq!(
-            definitions_2[0].range.to_point(target_buffer),
+            definitions_2[0].target.range.to_point(target_buffer),
             Point::new(1, 6)..Point::new(1, 11)
         );
     });
-    assert_eq!(definitions_1[0].buffer, definitions_2[0].buffer);
+    assert_eq!(
+        definitions_1[0].target.buffer,
+        definitions_2[0].target.buffer
+    );
 }
 
 #[gpui::test(iterations = 10)]
@@ -2554,7 +2557,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
     let buffer_b2 = buffer_b2.await.unwrap();
     let definitions = definitions.await.unwrap();
     assert_eq!(definitions.len(), 1);
-    assert_eq!(definitions[0].buffer, buffer_b2);
+    assert_eq!(definitions[0].target.buffer, buffer_b2);
 }
 
 #[gpui::test(iterations = 10)]
@@ -5593,9 +5596,9 @@ impl TestClient {
                             log::info!("{}: detaching definitions request", guest_username);
                             cx.update(|cx| definitions.detach_and_log_err(cx));
                         } else {
-                            client
-                                .buffers
-                                .extend(definitions.await?.into_iter().map(|loc| loc.buffer));
+                            client.buffers.extend(
+                                definitions.await?.into_iter().map(|loc| loc.target.buffer),
+                            );
                         }
                     }
                     50..=54 => {

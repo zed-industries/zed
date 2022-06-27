@@ -52,6 +52,20 @@ impl Event {
         }
 
         match event_type {
+            NSEventType::NSFlagsChanged => {
+                let modifiers = native_event.modifierFlags();
+                let ctrl = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
+                let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
+                let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
+                let cmd = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
+
+                Some(Self::ModifiersChanged {
+                    ctrl,
+                    alt,
+                    shift,
+                    cmd,
+                })
+            }
             NSEventType::NSKeyDown => {
                 let modifiers = native_event.modifierFlags();
                 let ctrl = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
@@ -60,71 +74,7 @@ impl Event {
                 let cmd = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
                 let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask);
 
-                let unmodified_chars = CStr::from_ptr(
-                    native_event.charactersIgnoringModifiers().UTF8String() as *mut c_char,
-                )
-                .to_str()
-                .unwrap();
-
-                let mut input = None;
-                let unmodified_chars = if let Some(first_char) = unmodified_chars.chars().next() {
-                    use cocoa::appkit::*;
-                    const BACKSPACE_KEY: u16 = 0x7f;
-                    const ENTER_KEY: u16 = 0x0d;
-                    const ESCAPE_KEY: u16 = 0x1b;
-                    const TAB_KEY: u16 = 0x09;
-                    const SHIFT_TAB_KEY: u16 = 0x19;
-                    const SPACE_KEY: u16 = b' ' as u16;
-
-                    #[allow(non_upper_case_globals)]
-                    match first_char as u16 {
-                        SPACE_KEY => {
-                            input = Some(" ".to_string());
-                            "space"
-                        }
-                        BACKSPACE_KEY => "backspace",
-                        ENTER_KEY => "enter",
-                        ESCAPE_KEY => "escape",
-                        TAB_KEY => "tab",
-                        SHIFT_TAB_KEY => "tab",
-
-                        NSUpArrowFunctionKey => "up",
-                        NSDownArrowFunctionKey => "down",
-                        NSLeftArrowFunctionKey => "left",
-                        NSRightArrowFunctionKey => "right",
-                        NSPageUpFunctionKey => "pageup",
-                        NSPageDownFunctionKey => "pagedown",
-                        NSDeleteFunctionKey => "delete",
-                        NSF1FunctionKey => "f1",
-                        NSF2FunctionKey => "f2",
-                        NSF3FunctionKey => "f3",
-                        NSF4FunctionKey => "f4",
-                        NSF5FunctionKey => "f5",
-                        NSF6FunctionKey => "f6",
-                        NSF7FunctionKey => "f7",
-                        NSF8FunctionKey => "f8",
-                        NSF9FunctionKey => "f9",
-                        NSF10FunctionKey => "f10",
-                        NSF11FunctionKey => "f11",
-                        NSF12FunctionKey => "f12",
-
-                        _ => {
-                            if !cmd && !ctrl && !function {
-                                input = Some(
-                                    CStr::from_ptr(
-                                        native_event.characters().UTF8String() as *mut c_char
-                                    )
-                                    .to_str()
-                                    .unwrap()
-                                    .into(),
-                                );
-                            }
-                            unmodified_chars
-                        }
-                    }
-                } else {
-                    return None;
-                };
+                let (unmodified_chars, input) = get_key_text(native_event, cmd, ctrl, function)?;
 
                 Some(Self::KeyDown {
                     keystroke: Keystroke {
@@ -136,6 +86,27 @@ impl Event {
                     },
                     input,
                     is_held: native_event.isARepeat() == YES,
+                })
+            }
+            NSEventType::NSKeyUp => {
+                let modifiers = native_event.modifierFlags();
+                let ctrl = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
+                let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
+                let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
+                let cmd = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
+                let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask);
+
+                let (unmodified_chars, input) = get_key_text(native_event, cmd, ctrl, function)?;
+
+                Some(Self::KeyUp {
+                    keystroke: Keystroke {
+                        ctrl,
+                        alt,
+                        shift,
+                        cmd,
+                        key: unmodified_chars.into(),
+                    },
+                    input,
                 })
             }
             NSEventType::NSLeftMouseDown => {
@@ -218,14 +189,19 @@ impl Event {
                     direction,
                 })
             }
-            NSEventType::NSLeftMouseDragged => {
-                window_height.map(|window_height| Self::LeftMouseDragged {
+            NSEventType::NSLeftMouseDragged => window_height.map(|window_height| {
+                let modifiers = native_event.modifierFlags();
+                Self::LeftMouseDragged {
                     position: vec2f(
                         native_event.locationInWindow().x as f32,
                         window_height - native_event.locationInWindow().y as f32,
                     ),
-                })
-            }
+                    ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
+                    alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
+                    shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
+                    cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
+                }
+            }),
             NSEventType::NSScrollWheel => window_height.map(|window_height| Self::ScrollWheel {
                 position: vec2f(
                     native_event.locationInWindow().x as f32,
@@ -237,14 +213,90 @@ impl Event {
                 ),
                 precise: native_event.hasPreciseScrollingDeltas() == YES,
             }),
-            NSEventType::NSMouseMoved => window_height.map(|window_height| Self::MouseMoved {
-                position: vec2f(
-                    native_event.locationInWindow().x as f32,
-                    window_height - native_event.locationInWindow().y as f32,
-                ),
-                left_mouse_down: NSEvent::pressedMouseButtons(nil) & 1 != 0,
+            NSEventType::NSMouseMoved => window_height.map(|window_height| {
+                let modifiers = native_event.modifierFlags();
+                Self::MouseMoved {
+                    position: vec2f(
+                        native_event.locationInWindow().x as f32,
+                        window_height - native_event.locationInWindow().y as f32,
+                    ),
+                    left_mouse_down: NSEvent::pressedMouseButtons(nil) & 1 != 0,
+                    ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
+                    alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
+                    shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
+                    cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
+                }
             }),
             _ => None,
         }
     }
+}
+
+unsafe fn get_key_text(
+    native_event: id,
+    cmd: bool,
+    ctrl: bool,
+    function: bool,
+) -> Option<(&'static str, Option<String>)> {
+    let unmodified_chars =
+        CStr::from_ptr(native_event.charactersIgnoringModifiers().UTF8String() as *mut c_char)
+            .to_str()
+            .unwrap();
+
+    let mut input = None;
+    let first_char = unmodified_chars.chars().next()?;
+    use cocoa::appkit::*;
+    const BACKSPACE_KEY: u16 = 0x7f;
+    const ENTER_KEY: u16 = 0x0d;
+    const ESCAPE_KEY: u16 = 0x1b;
+    const TAB_KEY: u16 = 0x09;
+    const SHIFT_TAB_KEY: u16 = 0x19;
+    const SPACE_KEY: u16 = b' ' as u16;
+
+    #[allow(non_upper_case_globals)]
+    let unmodified_chars = match first_char as u16 {
+        SPACE_KEY => {
+            input = Some(" ".to_string());
+            "space"
+        }
+        BACKSPACE_KEY => "backspace",
+        ENTER_KEY => "enter",
+        ESCAPE_KEY => "escape",
+        TAB_KEY => "tab",
+        SHIFT_TAB_KEY => "tab",
+
+        NSUpArrowFunctionKey => "up",
+        NSDownArrowFunctionKey => "down",
+        NSLeftArrowFunctionKey => "left",
+        NSRightArrowFunctionKey => "right",
+        NSPageUpFunctionKey => "pageup",
+        NSPageDownFunctionKey => "pagedown",
+        NSDeleteFunctionKey => "delete",
+        NSF1FunctionKey => "f1",
+        NSF2FunctionKey => "f2",
+        NSF3FunctionKey => "f3",
+        NSF4FunctionKey => "f4",
+        NSF5FunctionKey => "f5",
+        NSF6FunctionKey => "f6",
+        NSF7FunctionKey => "f7",
+        NSF8FunctionKey => "f8",
+        NSF9FunctionKey => "f9",
+        NSF10FunctionKey => "f10",
+        NSF11FunctionKey => "f11",
+        NSF12FunctionKey => "f12",
+
+        _ => {
+            if !cmd && !ctrl && !function {
+                input = Some(
+                    CStr::from_ptr(native_event.characters().UTF8String() as *mut c_char)
+                        .to_str()
+                        .unwrap()
+                        .into(),
+                );
+            }
+            unmodified_chars
+        }
+    };
+
+    Some((unmodified_chars, input))
 }
