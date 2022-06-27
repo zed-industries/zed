@@ -92,7 +92,7 @@ impl super::LspAdapter for GoLspAdapter {
                 .output()
                 .await?;
             if !install_output.status.success() {
-                Err(anyhow!("failed to install gopls"))?;
+                Err(anyhow!("failed to install gopls. Is go installed?"))?;
             }
 
             let installed_binary_path = gobin_dir.join("gopls");

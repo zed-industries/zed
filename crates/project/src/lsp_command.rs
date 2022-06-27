@@ -932,7 +932,9 @@ impl LspCommand for GetHover {
                             }
                             Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(new_language))) => {
                                 if !current_text.is_empty() {
-                                    let text = std::mem::replace(&mut current_text, String::new());
+                                    let text = std::mem::replace(&mut current_text, String::new())
+                                        .trim()
+                                        .to_string();
                                     contents.push(HoverBlock { text, language });
                                 }
 
@@ -948,9 +950,10 @@ impl LspCommand for GetHover {
                             | Event::End(Tag::BlockQuote)
                             | Event::HardBreak => {
                                 if !current_text.is_empty() {
-                                    let text = std::mem::replace(&mut current_text, String::new());
+                                    let text = std::mem::replace(&mut current_text, String::new())
+                                        .trim()
+                                        .to_string();
                                     contents.push(HoverBlock { text, language });
-                                    current_text.clear();
                                 }
                                 language = None;
                             }
@@ -958,7 +961,7 @@ impl LspCommand for GetHover {
                         }
                     }
 
-                    if !current_text.is_empty() {
+                    if !current_text.trim().is_empty() {
                         contents.push(HoverBlock {
                             text: current_text,
                             language,
