@@ -7,7 +7,7 @@ use settings::Settings;
 use util::TryFutureExt;
 use workspace::Workspace;
 
-use crate::{Anchor, DisplayPoint, Editor, GoToDefinition};
+use crate::{Anchor, DisplayPoint, Editor, EditorSnapshot, GoToDefinition, Select, SelectPhase};
 
 #[derive(Clone, PartialEq)]
 pub struct UpdateGoToDefinitionLink {
@@ -38,8 +38,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
 #[derive(Default)]
 pub struct LinkGoToDefinitionState {
-    pub last_mouse_point: Option<DisplayPoint>,
-    pub triggered_from: Option<Anchor>,
+    pub last_mouse_location: Option<Anchor>,
     pub symbol_range: Option<Range<Anchor>>,
     pub definitions: Vec<LocationLink>,
     pub task: Option<Task<Option<()>>>,
@@ -50,10 +49,28 @@ pub fn update_go_to_definition_link(
     &UpdateGoToDefinitionLink { point, cmd_held }: &UpdateGoToDefinitionLink,
     cx: &mut ViewContext<Editor>,
 ) {
-    editor.link_go_to_definition_state.last_mouse_point = point;
+    // Store new mouse point as an anchor
+    let snapshot = editor.snapshot(cx);
+    let point = point.map(|point| {
+        snapshot
+            .buffer_snapshot
+            .anchor_before(point.to_offset(&snapshot.display_snapshot, Bias::Left))
+    });
+
+    // If the new point is the same as the previously stored one, return early
+    if let (Some(a), Some(b)) = (
+        &point,
+        &editor.link_go_to_definition_state.last_mouse_location,
+    ) {
+        if a.cmp(&b, &snapshot.buffer_snapshot).is_eq() {
+            return;
+        }
+    }
+
+    editor.link_go_to_definition_state.last_mouse_location = point.clone();
     if cmd_held {
         if let Some(point) = point {
-            show_link_definition(editor, point, cx);
+            show_link_definition(editor, point, snapshot, cx);
             return;
         }
     }
@@ -66,9 +83,14 @@ pub fn cmd_changed(
     &CmdChanged { cmd_down }: &CmdChanged,
     cx: &mut ViewContext<Editor>,
 ) {
-    if let Some(point) = editor.link_go_to_definition_state.last_mouse_point {
+    if let Some(point) = editor
+        .link_go_to_definition_state
+        .last_mouse_location
+        .clone()
+    {
         if cmd_down {
-            show_link_definition(editor, point, cx);
+            let snapshot = editor.snapshot(cx);
+            show_link_definition(editor, point.clone(), snapshot, cx);
         } else {
             hide_link_definition(editor, cx)
         }
@@ -77,20 +99,18 @@ pub fn cmd_changed(
 
 pub fn show_link_definition(
     editor: &mut Editor,
-    point: DisplayPoint,
+    trigger_point: Anchor,
+    snapshot: EditorSnapshot,
     cx: &mut ViewContext<Editor>,
 ) {
     if editor.pending_rename.is_some() {
         return;
     }
 
-    let snapshot = editor.snapshot(cx);
-    let multibuffer_offset = point.to_offset(&snapshot.display_snapshot, Bias::Left);
-
     let (buffer, buffer_position) = if let Some(output) = editor
         .buffer
         .read(cx)
-        .text_anchor_for_position(multibuffer_offset, cx)
+        .text_anchor_for_position(trigger_point.clone(), cx)
     {
         output
     } else {
@@ -100,7 +120,7 @@ pub fn show_link_definition(
     let excerpt_id = if let Some((excerpt_id, _, _)) = editor
         .buffer()
         .read(cx)
-        .excerpt_containing(multibuffer_offset, cx)
+        .excerpt_containing(trigger_point.clone(), cx)
     {
         excerpt_id
     } else {
@@ -113,31 +133,16 @@ pub fn show_link_definition(
         return;
     };
 
-    // Get input anchor
-    let anchor = snapshot
-        .buffer_snapshot
-        .anchor_at(multibuffer_offset, Bias::Left);
-
     // Don't request again if the location is within the symbol region of a previous request
     if let Some(symbol_range) = &editor.link_go_to_definition_state.symbol_range {
         if symbol_range
             .start
-            .cmp(&anchor, &snapshot.buffer_snapshot)
+            .cmp(&trigger_point, &snapshot.buffer_snapshot)
             .is_le()
             && symbol_range
                 .end
-                .cmp(&anchor, &snapshot.buffer_snapshot)
+                .cmp(&trigger_point, &snapshot.buffer_snapshot)
                 .is_ge()
-        {
-            return;
-        }
-    }
-
-    // Don't request from the exact same location again
-    if let Some(triggered_from) = &editor.link_go_to_definition_state.triggered_from {
-        if triggered_from
-            .cmp(&anchor, &snapshot.buffer_snapshot)
-            .is_eq()
         {
             return;
         }
@@ -174,7 +179,6 @@ pub fn show_link_definition(
                 this.update(&mut cx, |this, cx| {
                     // Clear any existing highlights
                     this.clear_text_highlights::<LinkGoToDefinitionState>(cx);
-                    this.link_go_to_definition_state.triggered_from = Some(anchor.clone());
                     this.link_go_to_definition_state.symbol_range = result
                         .as_ref()
                         .and_then(|(symbol_range, _)| symbol_range.clone());
@@ -208,7 +212,7 @@ pub fn show_link_definition(
                             // If no symbol range returned from language server, use the surrounding word.
                             let highlight_range = symbol_range.unwrap_or_else(|| {
                                 let snapshot = &snapshot.buffer_snapshot;
-                                let (offset_range, _) = snapshot.surrounding_word(anchor);
+                                let (offset_range, _) = snapshot.surrounding_word(trigger_point);
 
                                 snapshot.anchor_before(offset_range.start)
                                     ..snapshot.anchor_after(offset_range.end)
@@ -245,7 +249,6 @@ pub fn hide_link_definition(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
         cx.notify();
     }
 
-    editor.link_go_to_definition_state.triggered_from = None;
     editor.link_go_to_definition_state.task = None;
 
     editor.clear_text_highlights::<LinkGoToDefinitionState>(cx);
@@ -276,7 +279,14 @@ pub fn go_to_fetched_definition(
         Editor::navigate_to_definitions(workspace, editor_handle, definitions, cx);
     } else {
         editor_handle.update(cx, |editor, cx| {
-            editor.change_selections(None, cx, |s| s.select_display_ranges(vec![*point..*point]));
+            editor.select(
+                &Select(SelectPhase::Begin {
+                    position: point.clone(),
+                    add: false,
+                    click_count: 1,
+                }),
+                cx,
+            );
         });
 
         Editor::go_to_definition(workspace, &GoToDefinition, cx);
@@ -375,6 +385,7 @@ mod tests {
                 test();"});
 
         // Response without source range still highlights word
+        cx.update_editor(|editor, _| editor.link_go_to_definition_state.last_mouse_location = None);
         let mut requests =
             cx.lsp
                 .handle_request::<lsp::request::GotoDefinition, _, _>(move |_, _| async move {
@@ -400,6 +411,8 @@ mod tests {
         });
         requests.next().await;
         cx.foreground().run_until_parked();
+
+        println!("tag");
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
             fn test()
                 [do_work]();

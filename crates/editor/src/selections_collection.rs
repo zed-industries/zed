@@ -536,6 +536,7 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.select_anchors(selections)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn select_display_ranges<T>(&mut self, ranges: T)
     where
         T: IntoIterator<Item = Range<DisplayPoint>>,
