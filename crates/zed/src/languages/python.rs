@@ -151,3 +151,103 @@ impl LspAdapter for PythonLspAdapter {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use gpui::{ModelContext, MutableAppContext};
+    use language::{Buffer, IndentSize};
+    use std::sync::Arc;
+
+    #[gpui::test]
+    fn test_python_autoindent(cx: &mut MutableAppContext) {
+        cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
+        let language = crate::languages::language("python", tree_sitter_python::language(), None);
+
+        cx.add_model(|cx| {
+            let mut buffer = Buffer::new(0, "", cx).with_language(Arc::new(language), cx);
+            let size = IndentSize::spaces(2);
+            let append = |buffer: &mut Buffer, text: &str, cx: &mut ModelContext<Buffer>| {
+                let ix = buffer.len();
+                buffer.edit_with_autoindent([(ix..ix, text)], size, cx);
+            };
+
+            // indent after "def():"
+            append(&mut buffer, "def a():\n", cx);
+            assert_eq!(buffer.text(), "def a():\n  ");
+
+            // preserve indent after blank line
+            append(&mut buffer, "\n  ", cx);
+            assert_eq!(buffer.text(), "def a():\n  \n  ");
+
+            // indent after "if"
+            append(&mut buffer, "if a:\n  ", cx);
+            assert_eq!(buffer.text(), "def a():\n  \n  if a:\n    ");
+
+            // preserve indent after statement
+            append(&mut buffer, "b()\n", cx);
+            assert_eq!(buffer.text(), "def a():\n  \n  if a:\n    b()\n    ");
+
+            // preserve indent after statement
+            append(&mut buffer, "else", cx);
+            assert_eq!(buffer.text(), "def a():\n  \n  if a:\n    b()\n    else");
+
+            // dedent "else""
+            append(&mut buffer, ":", cx);
+            assert_eq!(buffer.text(), "def a():\n  \n  if a:\n    b()\n  else:");
+
+            // indent lines after else
+            append(&mut buffer, "\n", cx);
+            assert_eq!(
+                buffer.text(),
+                "def a():\n  \n  if a:\n    b()\n  else:\n    "
+            );
+
+            // indent after an open paren. the closing  paren is not indented
+            // because there is another token before it on the same line.
+            append(&mut buffer, "foo(\n1)", cx);
+            assert_eq!(
+                buffer.text(),
+                "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n      1)"
+            );
+
+            // dedent the closing paren if it is shifted to the beginning of the line
+            let argument_ix = buffer.text().find("1").unwrap();
+            buffer.edit_with_autoindent([(argument_ix..argument_ix + 1, "")], size, cx);
+            assert_eq!(
+                buffer.text(),
+                "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n    )"
+            );
+
+            // preserve indent after the close paren
+            append(&mut buffer, "\n", cx);
+            assert_eq!(
+                buffer.text(),
+                "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n    )\n    "
+            );
+
+            // manually outdent the last line
+            let end_whitespace_ix = buffer.len() - 4;
+            buffer.edit_with_autoindent([(end_whitespace_ix..buffer.len(), "")], size, cx);
+            assert_eq!(
+                buffer.text(),
+                "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n    )\n"
+            );
+
+            // preserve the newly reduced indentation on the next newline
+            append(&mut buffer, "\n", cx);
+            assert_eq!(
+                buffer.text(),
+                "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n    )\n\n"
+            );
+
+            // reset to a simple if statement
+            buffer.edit([(0..buffer.len(), "if a:\n  b(\n  )")], cx);
+
+            // dedent "else" on the line after a closing paren
+            append(&mut buffer, "\n  else:\n", cx);
+            assert_eq!(buffer.text(), "if a:\n  b(\n  )\nelse:\n  ");
+
+            buffer
+        });
+    }
+}

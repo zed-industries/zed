@@ -270,7 +270,7 @@ impl LspAdapter for RustLspAdapter {
 mod tests {
     use super::*;
     use crate::languages::{language, LspAdapter};
-    use gpui::color::Color;
+    use gpui::{color::Color, MutableAppContext};
     use theme::SyntaxTheme;
 
     #[test]
@@ -431,5 +431,43 @@ mod tests {
                 runs: vec![(0..4, highlight_keyword), (5..10, highlight_type)],
             })
         );
+    }
+
+    #[gpui::test]
+    fn test_rust_autoindent(cx: &mut MutableAppContext) {
+        cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
+        let language = crate::languages::language("rust", tree_sitter_rust::language(), None);
+
+        cx.add_model(|cx| {
+            let mut buffer = Buffer::new(0, "", cx).with_language(Arc::new(language), cx);
+            let size = IndentSize::spaces(2);
+
+            // start with empty function
+            buffer.edit_with_autoindent([(0..0, "fn a() {}")], size, cx);
+
+            // indent between braces
+            let ix = buffer.len() - 1;
+            buffer.edit_with_autoindent([(ix..ix, "\n\n")], size, cx);
+            assert_eq!(buffer.text(), "fn a() {\n  \n}");
+
+            // indent field expression
+            let ix = buffer.len() - 2;
+            buffer.edit_with_autoindent([(ix..ix, "b\n.c")], size, cx);
+            assert_eq!(buffer.text(), "fn a() {\n  b\n    .c\n}");
+
+            // indent chained field expression preceded by blank line
+            let ix = buffer.len() - 2;
+            buffer.edit_with_autoindent([(ix..ix, "\n\n.d")], size, cx);
+            assert_eq!(buffer.text(), "fn a() {\n  b\n    .c\n    \n    .d\n}");
+
+            // dedent line after the field expression
+            let ix = buffer.len() - 2;
+            buffer.edit_with_autoindent([(ix..ix, ";\ne")], size, cx);
+            assert_eq!(
+                buffer.text(),
+                "fn a() {\n  b\n    .c\n    \n    .d;\n  e\n}"
+            );
+            buffer
+        });
     }
 }
