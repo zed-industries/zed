@@ -1,3 +1,4 @@
+use collections::HashSet;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions,
@@ -9,6 +10,11 @@ use picker::{Picker, PickerDelegate};
 use settings::Settings;
 use std::cmp;
 use workspace::Workspace;
+
+#[derive(Default)]
+pub struct CommandPaletteFilter {
+    pub filtered_namespaces: HashSet<&'static str>,
+}
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(CommandPalette::toggle);
@@ -45,14 +51,24 @@ impl CommandPalette {
         let this = cx.weak_handle();
         let actions = cx
             .available_actions(cx.window_id(), focused_view_id)
-            .map(|(name, action, bindings)| Command {
-                name: humanize_action_name(name),
-                action,
-                keystrokes: bindings
-                    .last()
-                    .map_or(Vec::new(), |binding| binding.keystrokes().to_vec()),
+            .filter_map(|(name, action, bindings)| {
+                if cx.has_global::<CommandPaletteFilter>() {
+                    let filter = cx.global::<CommandPaletteFilter>();
+                    if filter.filtered_namespaces.contains(action.namespace()) {
+                        return None;
+                    }
+                }
+
+                Some(Command {
+                    name: humanize_action_name(name),
+                    action,
+                    keystrokes: bindings
+                        .last()
+                        .map_or(Vec::new(), |binding| binding.keystrokes().to_vec()),
+                })
             })
             .collect();
+
         let picker = cx.add_view(|cx| Picker::new(this, cx));
         Self {
             picker,
@@ -368,5 +384,34 @@ mod tests {
         editor.read_with(cx, |editor, cx| {
             assert_eq!(editor.text(cx), "ab");
         });
+
+        // Add namespace filter, and redeploy the palette
+        cx.update(|cx| {
+            cx.update_default_global::<CommandPaletteFilter, _, _>(|filter, _| {
+                filter.filtered_namespaces.insert("editor");
+            })
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            CommandPalette::toggle(workspace, &Toggle, cx);
+        });
+
+        // Assert editor command not present
+        let palette = workspace.read_with(cx, |workspace, _| {
+            workspace
+                .modal()
+                .unwrap()
+                .clone()
+                .downcast::<CommandPalette>()
+                .unwrap()
+        });
+
+        palette
+            .update(cx, |palette, cx| {
+                palette.update_matches("bcksp".to_string(), cx)
+            })
+            .await;
+
+        palette.update(cx, |palette, _| assert!(palette.matches.is_empty()));
     }
 }
