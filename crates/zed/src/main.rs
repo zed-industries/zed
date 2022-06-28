@@ -36,6 +36,7 @@ use std::{
     thread,
     time::Duration,
 };
+use terminal;
 use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
 use util::{ResultExt, TryFutureExt};
 use workspace::{self, AppState, NewFile, OpenPaths};

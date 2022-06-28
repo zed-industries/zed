@@ -366,7 +366,8 @@
             "up": "terminal::UP",
             "down": "terminal::DOWN",
             "tab": "terminal::TAB",
-            "cmd-k": "terminal::Clear"
+            "cmd-k": "terminal::Clear",
+            "cmd-v": "terminal::Paste"
         }
     }
 ]

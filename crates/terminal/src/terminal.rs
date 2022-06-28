@@ -1,46 +1,28 @@
-use std::sync::Arc;
-
 use alacritty_terminal::{
-    ansi::Color as AnsiColor,
     config::{Config, Program, PtyConfig},
     event::{Event as AlacTermEvent, EventListener, Notify},
     event_loop::{EventLoop, Msg, Notifier},
-    grid::Indexed,
-    index::Point,
-    selection,
+    grid::Scroll,
     sync::FairMutex,
-    term::{
-        cell::{Cell, Flags},
-        color::Rgb,
-        SizeInfo,
-    },
+    term::{color::Rgb, SizeInfo},
     tty, Term,
 };
-use editor::CursorShape;
+
 use futures::{
     channel::mpsc::{unbounded, UnboundedSender},
-    future::select,
     StreamExt,
 };
 use gpui::{
-    actions,
-    color::Color,
-    elements::*,
-    fonts::{with_font_cache, HighlightStyle, TextStyle, Underline},
-    geometry::{rect::RectF, vector::vec2f},
-    impl_internal_actions,
-    json::json,
-    platform::CursorStyle,
-    text_layout::Line,
-    ClipboardItem, Entity,
-    Event::KeyDown,
-    MutableAppContext, Quad, View, ViewContext,
+    actions, elements::*, impl_internal_actions, platform::CursorStyle, ClipboardItem, Entity,
+    MutableAppContext, View, ViewContext,
 };
-use ordered_float::OrderedFloat;
 use project::{Project, ProjectPath};
 use settings::Settings;
 use smallvec::SmallVec;
+use std::sync::Arc;
 use workspace::{Item, Workspace};
+
+use crate::element::TerminalEl;
 
 //ASCII Control characters on a keyboard
 //Consts -> Structs -> Impls -> Functions, Vaguely in order of importance
@@ -53,15 +35,17 @@ const LEFT_SEQ: &str = "\x1b[D";
 const RIGHT_SEQ: &str = "\x1b[C";
 const UP_SEQ: &str = "\x1b[A";
 const DOWN_SEQ: &str = "\x1b[B";
-const CLEAR_SEQ: &str = "\x1b[2J";
+const CLEAR_SEQ: &str = "\x1b[H\x1b[2J";
 const DEFAULT_TITLE: &str = "Terminal";
 
+pub mod element;
+
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
-struct Input(String);
+pub struct Input(pub String);
 
 actions!(
     terminal,
-    [Deploy, SIGINT, ESCAPE, Quit, DEL, RETURN, LEFT, RIGHT, UP, DOWN, TAB, Clear]
+    [SIGINT, ESCAPE, DEL, RETURN, LEFT, RIGHT, UP, DOWN, TAB, Clear, Paste, Deploy, Quit]
 );
 impl_internal_actions!(terminal, [Input]);
 
@@ -79,6 +63,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Terminal::down);
     cx.add_action(Terminal::tab);
     cx.add_action(Terminal::clear);
+    cx.add_action(Terminal::paste);
 }
 
 #[derive(Clone)]
@@ -128,20 +113,18 @@ impl Terminal {
         })
         .detach();
 
-        //TODO: Load from settings
         let pty_config = PtyConfig {
             shell: Some(Program::Just("zsh".to_string())),
             working_directory: None,
             hold: false,
         };
 
-        //TODO: Properly configure this
         let config = Config {
             pty_config: pty_config.clone(),
             ..Default::default()
         };
 
-        //TODO: derive this
+        //TODO figure out how to derive this better
         let size_info = SizeInfo::new(400., 100.0, 5., 5., 0., 0., false);
 
         //Set up the terminal...
@@ -189,16 +172,11 @@ impl Terminal {
                 }
             }
             AlacTermEvent::PtyWrite(out) => self.write_to_pty(&Input(out), cx),
-            //TODO:
-            //What this is supposed to do is check the cursor state, then set it on the platform.
-            //See Processor::reset_mouse_cursor() and Processor::cursor_state() in alacritty/src/input.rs
-            //to see how this is Calculated. Question: Does this flow make sense with how GPUI hadles
-            //the mouse?
             AlacTermEvent::MouseCursorDirty => {
                 //Calculate new cursor style.
+                //TODO
                 //Check on correctly handling mouse events for terminals
                 cx.platform().set_cursor_style(CursorStyle::Arrow); //???
-                println!("Mouse cursor dirty")
             }
             AlacTermEvent::Title(title) => {
                 self.title = title;
@@ -251,9 +229,16 @@ impl Terminal {
         cx.emit(ZedTermEvent::CloseTerminal);
     }
 
+    fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
+        if let Some(item) = cx.read_from_clipboard() {
+            self.write_to_pty(&Input(item.text().to_owned()), cx);
+        }
+    }
+
     fn write_to_pty(&mut self, input: &Input, cx: &mut ViewContext<Self>) {
         //iTerm bell behavior, bell stays until terminal is interacted with
         self.has_bell = false;
+        self.term.lock().scroll_display(Scroll::Bottom);
         cx.emit(ZedTermEvent::TitleChanged);
         self.pty_tx.notify(input.0.clone().into_bytes());
     }
@@ -313,7 +298,10 @@ impl View for Terminal {
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
         let _theme = cx.global::<Settings>().theme.clone();
 
-        TerminalEl::new(self.term.clone())
+        //TODO: derive this
+        let size_info = SizeInfo::new(400., 100.0, 5., 5., 0., 0., false);
+
+        TerminalEl::new(self.term.clone(), self.pty_tx.0.clone(), size_info)
             .contained()
             // .with_style(theme.terminal.container)
             .boxed()
@@ -409,279 +397,5 @@ impl Item for Terminal {
 
     fn should_close_item_on_event(event: &Self::Event) -> bool {
         matches!(event, &ZedTermEvent::CloseTerminal)
-    }
-}
-
-struct TerminalEl {
-    term: Arc<FairMutex<Term<ZedListener>>>,
-}
-
-impl TerminalEl {
-    fn new(term: Arc<FairMutex<Term<ZedListener>>>) -> TerminalEl {
-        TerminalEl { term }
-    }
-}
-
-struct LayoutState {
-    lines: Vec<Line>,
-    line_height: f32,
-    cursor: RectF,
-}
-/* TODO point calculation for selection
- * take the current point's x:
- * - subtract padding
- * - divide by cell width
- * - take the minimum of the x coord and the last colum of the size info
- * Take the current point's y:
- * - Subtract padding
- * - Divide by cell height
- * - Take the minimum of the y coord and the last line
- *
- * With this x and y, pass to term::viewport_to_point (module function)
- * Also pass in the display offset from the term.grid().display_offset()
- * (Display offset is for scrolling)
- */
-
-/* TODO Selection
- * 1. On click, calculate the single, double, and triple click based on timings
- * 2. Convert mouse location to a terminal point
- * 3. Generate each of the three kinds of selection needed
- * 4. Assign a selection to the terminal's selection variable
- * How to render?
- * 1. On mouse moved, calculate a terminal point
- * 2. if (lmb_pressed || rmb_pressed) && (self.ctx.modifiers().shift()  || !self.ctx.mouse_mode()
- * 3. Take the selection from the terminal, call selection.update(), and put it back
- */
-
-/* TODO Scroll
- * 1. Convert scroll to a pixel delta (alacritty/src/input > Processor::mouse_wheel_input)
- * 2. Divide by cell height
- * 3. Create an alacritty_terminal::Scroll::Delta() object and call `self.terminal.scroll_display(scroll);`
- * 4. Maybe do a cx.notify, just in case.
- * 5. Also update the selected area, just check out for the logic alacritty/src/event.rs > ActionContext::scroll
- */
-impl Element for TerminalEl {
-    type LayoutState = LayoutState;
-    type PaintState = ();
-
-    fn layout(
-        &mut self,
-        constraint: gpui::SizeConstraint,
-        cx: &mut gpui::LayoutContext,
-    ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
-        let size = constraint.max;
-        //Get terminal content
-        let mut term = self.term.lock();
-
-        //Set up text rendering
-
-        let text_style = with_font_cache(cx.font_cache.clone(), || TextStyle {
-            color: Color::white(),
-            ..Default::default()
-        });
-        let line_height = cx.font_cache.line_height(text_style.font_size);
-        let em_width = cx
-            .font_cache()
-            .em_width(text_style.font_id, text_style.font_size);
-
-        term.resize(SizeInfo::new(
-            size.x(),
-            size.y(),
-            em_width,
-            line_height,
-            0.,
-            0.,
-            false,
-        ));
-
-        let content = term.renderable_content();
-        let selection = content.selection;
-
-        let cursor = RectF::new(
-            vec2f(
-                content.cursor.point.column.0 as f32 * em_width,
-                content.cursor.point.line.0 as f32 * line_height,
-            ),
-            vec2f(em_width, line_height),
-        );
-
-        let mut lines: Vec<(String, Option<HighlightStyle>)> = vec![];
-        let mut last_line = 0;
-
-        let mut cur_chunk = String::new();
-
-        let mut cur_highlight = HighlightStyle {
-            color: Some(Color::white()),
-            ..Default::default()
-        };
-
-        let select_boxes = vec![];
-
-        for cell in content.display_iter {
-            let Indexed {
-                point: Point { line, .. },
-                cell: Cell {
-                    c, fg, flags, .. // TODO: Add bg and flags
-                }, //TODO: Learn what 'CellExtra does'
-            } = cell;
-
-            if let Some(selection) = selection {
-                selection.contains_cell(&cell, ???, CursorShape::Block);
-            }
-            let new_highlight = make_style_from_cell(fg, flags);
-            HighlightStyle {
-                color: Some(alac_color_to_gpui_color(fg)),
-                ..Default::default()
-            };
-
-            if line != last_line {
-                cur_chunk.push('\n');
-                last_line = line.0;
-            }
-
-            if new_highlight != cur_highlight {
-                lines.push((cur_chunk.clone(), Some(cur_highlight.clone())));
-                cur_chunk.clear();
-                cur_highlight = new_highlight;
-            }
-            cur_chunk.push(*c)
-        }
-        lines.push((cur_chunk, Some(cur_highlight)));
-
-        let shaped_lines = layout_highlighted_chunks(
-            lines.iter().map(|(text, style)| (text.as_str(), *style)),
-            &text_style,
-            cx.text_layout_cache,
-            &cx.font_cache,
-            usize::MAX,
-            last_line as usize,
-        );
-
-        (
-            constraint.max,
-            LayoutState {
-                lines: shaped_lines,
-                line_height,
-                cursor,
-            },
-        )
-    }
-
-    fn paint(
-        &mut self,
-        bounds: gpui::geometry::rect::RectF,
-        visible_bounds: gpui::geometry::rect::RectF,
-        layout: &mut Self::LayoutState,
-        cx: &mut gpui::PaintContext,
-    ) -> Self::PaintState {
-        let mut origin = bounds.origin();
-
-        for line in &layout.lines {
-            let boundaries = RectF::new(origin, vec2f(bounds.width(), layout.line_height));
-
-            if boundaries.intersects(visible_bounds) {
-                line.paint(origin, visible_bounds, layout.line_height, cx);
-            }
-
-            origin.set_y(boundaries.max_y());
-        }
-
-        let new_origin = bounds.origin() + layout.cursor.origin();
-        let new_cursor = RectF::new(new_origin, layout.cursor.size());
-
-        cx.scene.push_quad(Quad {
-            bounds: new_cursor,
-            background: Some(Color::red()),
-            border: Default::default(),
-            corner_radius: 0.,
-        });
-    }
-
-    fn dispatch_event(
-        &mut self,
-        event: &gpui::Event,
-        _bounds: gpui::geometry::rect::RectF,
-        _visible_bounds: gpui::geometry::rect::RectF,
-        _layout: &mut Self::LayoutState,
-        _paint: &mut Self::PaintState,
-        cx: &mut gpui::EventContext,
-    ) -> bool {
-        match event {
-            KeyDown {
-                input: Some(input), ..
-            } => {
-                cx.dispatch_action(Input(input.to_string()));
-                true
-            }
-            _ => false,
-        }
-    }
-
-    fn debug(
-        &self,
-        _bounds: gpui::geometry::rect::RectF,
-        _layout: &Self::LayoutState,
-        _paint: &Self::PaintState,
-        _cx: &gpui::DebugContext,
-    ) -> gpui::serde_json::Value {
-        json!({
-            "type": "TerminalElement",
-        })
-    }
-}
-
-fn make_style_from_cell(fg: &AnsiColor, flags: &Flags) -> HighlightStyle {
-    let fg = Some(alac_color_to_gpui_color(fg));
-    let underline = if flags.contains(Flags::UNDERLINE) {
-        Some(Underline {
-            color: fg,
-            squiggly: false,
-            thickness: OrderedFloat(1.),
-        })
-    } else {
-        None
-    };
-    HighlightStyle {
-        color: fg,
-        underline,
-        ..Default::default()
-    }
-}
-
-fn alac_color_to_gpui_color(allac_color: &AnsiColor) -> Color {
-    match allac_color {
-        alacritty_terminal::ansi::Color::Named(n) => match n {
-            alacritty_terminal::ansi::NamedColor::Black => Color::black(),
-            alacritty_terminal::ansi::NamedColor::Red => Color::red(),
-            alacritty_terminal::ansi::NamedColor::Green => Color::green(),
-            alacritty_terminal::ansi::NamedColor::Yellow => Color::yellow(),
-            alacritty_terminal::ansi::NamedColor::Blue => Color::blue(),
-            alacritty_terminal::ansi::NamedColor::Magenta => Color::new(188, 63, 188, 1),
-            alacritty_terminal::ansi::NamedColor::Cyan => Color::new(17, 168, 205, 1),
-            alacritty_terminal::ansi::NamedColor::White => Color::white(),
-            alacritty_terminal::ansi::NamedColor::BrightBlack => Color::new(102, 102, 102, 1),
-            alacritty_terminal::ansi::NamedColor::BrightRed => Color::new(102, 102, 102, 1),
-            alacritty_terminal::ansi::NamedColor::BrightGreen => Color::new(35, 209, 139, 1),
-            alacritty_terminal::ansi::NamedColor::BrightYellow => Color::new(245, 245, 67, 1),
-            alacritty_terminal::ansi::NamedColor::BrightBlue => Color::new(59, 142, 234, 1),
-            alacritty_terminal::ansi::NamedColor::BrightMagenta => Color::new(214, 112, 214, 1),
-            alacritty_terminal::ansi::NamedColor::BrightCyan => Color::new(41, 184, 219, 1),
-            alacritty_terminal::ansi::NamedColor::BrightWhite => Color::new(229, 229, 229, 1),
-            alacritty_terminal::ansi::NamedColor::Foreground => Color::white(),
-            alacritty_terminal::ansi::NamedColor::Background => Color::black(),
-            alacritty_terminal::ansi::NamedColor::Cursor => Color::white(),
-            alacritty_terminal::ansi::NamedColor::DimBlack => Color::white(),
-            alacritty_terminal::ansi::NamedColor::DimRed => Color::white(),
-            alacritty_terminal::ansi::NamedColor::DimGreen => Color::white(),
-            alacritty_terminal::ansi::NamedColor::DimYellow => Color::white(),
-            alacritty_terminal::ansi::NamedColor::DimBlue => Color::white(),
-            alacritty_terminal::ansi::NamedColor::DimMagenta => Color::white(),
-            alacritty_terminal::ansi::NamedColor::DimCyan => Color::white(),
-            alacritty_terminal::ansi::NamedColor::DimWhite => Color::white(),
-            alacritty_terminal::ansi::NamedColor::BrightForeground => Color::white(),
-            alacritty_terminal::ansi::NamedColor::DimForeground => Color::white(),
-        }, //Theme defined
-        alacritty_terminal::ansi::Color::Spec(rgb) => Color::new(rgb.r, rgb.g, rgb.b, 1),
-        alacritty_terminal::ansi::Color::Indexed(_) => Color::white(), //Color cube weirdness
     }
 }
