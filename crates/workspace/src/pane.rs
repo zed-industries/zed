@@ -147,7 +147,7 @@ enum NavigationMode {
     GoingBack,
     GoingForward,
     ClosingItem,
-    ReopeningClosed,
+    ReopeningClosedItem,
     Disabled,
 }
 
@@ -214,7 +214,7 @@ impl Pane {
         Self::navigate_history(
             workspace,
             workspace.active_pane().clone(),
-            NavigationMode::ReopeningClosed,
+            NavigationMode::ReopeningClosedItem,
             cx,
         )
     }
@@ -968,7 +968,7 @@ impl NavHistory {
             NavigationMode::Normal | NavigationMode::Disabled | NavigationMode::ClosingItem => None,
             NavigationMode::GoingBack => self.pop_backward(),
             NavigationMode::GoingForward => self.pop_forward(),
-            NavigationMode::ReopeningClosed => self.pop_closed(),
+            NavigationMode::ReopeningClosedItem => self.pop_closed(),
         }
     }
 
@@ -979,7 +979,7 @@ impl NavHistory {
     pub fn push<D: 'static + Any>(&mut self, data: Option<D>, item: Rc<dyn WeakItemHandle>) {
         match self.mode {
             NavigationMode::Disabled => {}
-            NavigationMode::Normal | NavigationMode::ReopeningClosed => {
+            NavigationMode::Normal | NavigationMode::ReopeningClosedItem => {
                 if self.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
                     self.backward_stack.pop_front();
                 }
