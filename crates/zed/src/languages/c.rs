@@ -256,3 +256,41 @@ impl super::LspAdapter for CLspAdapter {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use gpui::MutableAppContext;
+    use language::{Buffer, IndentSize};
+    use std::sync::Arc;
+
+    #[gpui::test]
+    fn test_c_autoindent(cx: &mut MutableAppContext) {
+        cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
+        let language = crate::languages::language("c", tree_sitter_c::language(), None);
+
+        cx.add_model(|cx| {
+            let mut buffer = Buffer::new(0, "", cx).with_language(Arc::new(language), cx);
+            let size = IndentSize::spaces(2);
+
+            // empty function
+            buffer.edit_with_autoindent([(0..0, "int main() {}")], size, cx);
+
+            // indent inside braces
+            let ix = buffer.len() - 1;
+            buffer.edit_with_autoindent([(ix..ix, "\n\n")], size, cx);
+            assert_eq!(buffer.text(), "int main() {\n  \n}");
+
+            // indent body of single-statement if statement
+            let ix = buffer.len() - 2;
+            buffer.edit_with_autoindent([(ix..ix, "if (a)\nb;")], size, cx);
+            assert_eq!(buffer.text(), "int main() {\n  if (a)\n    b;\n}");
+
+            // indent inside field expression
+            let ix = buffer.len() - 3;
+            buffer.edit_with_autoindent([(ix..ix, "\n.c")], size, cx);
+            assert_eq!(buffer.text(), "int main() {\n  if (a)\n    b\n      .c;\n}");
+
+            buffer
+        });
+    }
+}

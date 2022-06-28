@@ -237,7 +237,7 @@ struct AutoindentRequest {
 #[derive(Debug)]
 struct IndentSuggestion {
     basis_row: u32,
-    indent: bool,
+    delta: Ordering,
 }
 
 pub(crate) struct TextProvider<'a>(pub(crate) &'a Rope);
@@ -812,19 +812,23 @@ impl Buffer {
                         .into_iter()
                         .flatten();
                     for (old_row, suggestion) in old_edited_range.zip(suggestions) {
-                        let mut suggested_indent = old_to_new_rows
-                            .get(&suggestion.basis_row)
-                            .and_then(|from_row| old_suggestions.get(from_row).copied())
-                            .unwrap_or_else(|| {
-                                request
-                                    .before_edit
-                                    .indent_size_for_line(suggestion.basis_row)
-                            });
-                        if suggestion.indent {
-                            suggested_indent += request.indent_size;
+                        if let Some(suggestion) = suggestion {
+                            let mut suggested_indent = old_to_new_rows
+                                .get(&suggestion.basis_row)
+                                .and_then(|from_row| old_suggestions.get(from_row).copied())
+                                .unwrap_or_else(|| {
+                                    request
+                                        .before_edit
+                                        .indent_size_for_line(suggestion.basis_row)
+                                });
+                            if suggestion.delta.is_gt() {
+                                suggested_indent += request.indent_size;
+                            } else if suggestion.delta.is_lt() {
+                                suggested_indent -= request.indent_size;
+                            }
+                            old_suggestions
+                                .insert(*old_to_new_rows.get(&old_row).unwrap(), suggested_indent);
                         }
-                        old_suggestions
-                            .insert(*old_to_new_rows.get(&old_row).unwrap(), suggested_indent);
                     }
                     yield_now().await;
                 }
@@ -839,18 +843,26 @@ impl Buffer {
                         .into_iter()
                         .flatten();
                     for (new_row, suggestion) in new_edited_row_range.zip(suggestions) {
-                        let mut suggested_indent = indent_sizes
-                            .get(&suggestion.basis_row)
-                            .copied()
-                            .unwrap_or_else(|| snapshot.indent_size_for_line(suggestion.basis_row));
-                        if suggestion.indent {
-                            suggested_indent += request.indent_size;
-                        }
-                        if old_suggestions
-                            .get(&new_row)
-                            .map_or(true, |old_indentation| suggested_indent != *old_indentation)
-                        {
-                            indent_sizes.insert(new_row, suggested_indent);
+                        if let Some(suggestion) = suggestion {
+                            let mut suggested_indent = indent_sizes
+                                .get(&suggestion.basis_row)
+                                .copied()
+                                .unwrap_or_else(|| {
+                                    snapshot.indent_size_for_line(suggestion.basis_row)
+                                });
+                            if suggestion.delta.is_gt() {
+                                suggested_indent += request.indent_size;
+                            } else if suggestion.delta.is_lt() {
+                                suggested_indent -= request.indent_size;
+                            }
+                            if old_suggestions
+                                .get(&new_row)
+                                .map_or(true, |old_indentation| {
+                                    suggested_indent != *old_indentation
+                                })
+                            {
+                                indent_sizes.insert(new_row, suggested_indent);
+                            }
                         }
                     }
                     yield_now().await;
@@ -870,16 +882,20 @@ impl Buffer {
                             .into_iter()
                             .flatten();
                         for (row, suggestion) in inserted_row_range.zip(suggestions) {
-                            let mut suggested_indent = indent_sizes
-                                .get(&suggestion.basis_row)
-                                .copied()
-                                .unwrap_or_else(|| {
-                                    snapshot.indent_size_for_line(suggestion.basis_row)
-                                });
-                            if suggestion.indent {
-                                suggested_indent += request.indent_size;
+                            if let Some(suggestion) = suggestion {
+                                let mut suggested_indent = indent_sizes
+                                    .get(&suggestion.basis_row)
+                                    .copied()
+                                    .unwrap_or_else(|| {
+                                        snapshot.indent_size_for_line(suggestion.basis_row)
+                                    });
+                                if suggestion.delta.is_gt() {
+                                    suggested_indent += request.indent_size;
+                                } else if suggestion.delta.is_lt() {
+                                    suggested_indent -= request.indent_size;
+                                }
+                                indent_sizes.insert(row, suggested_indent);
                             }
-                            indent_sizes.insert(row, suggested_indent);
                         }
                         yield_now().await;
                     }
@@ -1551,10 +1567,13 @@ impl BufferSnapshot {
     fn suggest_autoindents<'a>(
         &'a self,
         row_range: Range<u32>,
-    ) -> Option<impl Iterator<Item = IndentSuggestion> + 'a> {
-        // Get the "indentation ranges" that intersect this row range.
-        let grammar = self.grammar()?;
+    ) -> Option<impl Iterator<Item = Option<IndentSuggestion>> + 'a> {
+        let language = self.language.as_ref()?;
+        let grammar = language.grammar.as_ref()?;
+        let config = &language.config;
         let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
+
+        // Find the suggested indentation ranges based on the syntax tree.
         let indents_query = grammar.indents_query.as_ref()?;
         let mut query_cursor = QueryCursorHandle::new();
         let indent_capture_ix = indents_query.capture_index_for_name("indent");
@@ -1563,6 +1582,7 @@ impl BufferSnapshot {
             Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0).to_ts_point()
                 ..Point::new(row_range.end, 0).to_ts_point(),
         );
+
         let mut indentation_ranges = Vec::<Range<Point>>::new();
         for mat in query_cursor.matches(
             indents_query,
@@ -1596,48 +1616,98 @@ impl BufferSnapshot {
             }
         }
 
-        let mut prev_row = prev_non_blank_row.unwrap_or(0);
+        // Find the suggested indentation increases and decreased based on regexes.
+        let mut indent_changes = Vec::<(u32, Ordering)>::new();
+        self.for_each_line(
+            Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0)
+                ..Point::new(row_range.end, 0),
+            |row, line| {
+                if config
+                    .decrease_indent_pattern
+                    .as_ref()
+                    .map_or(false, |regex| regex.is_match(line))
+                {
+                    indent_changes.push((row, Ordering::Less));
+                }
+                if config
+                    .increase_indent_pattern
+                    .as_ref()
+                    .map_or(false, |regex| regex.is_match(line))
+                {
+                    indent_changes.push((row + 1, Ordering::Greater));
+                }
+            },
+        );
+
+        let mut indent_changes = indent_changes.into_iter().peekable();
+        let mut prev_row = row_range.start.saturating_sub(1);
+        let mut prev_row_start = Point::new(prev_row, self.indent_size_for_line(prev_row).len);
         Some(row_range.map(move |row| {
             let row_start = Point::new(row, self.indent_size_for_line(row).len);
 
             let mut indent_from_prev_row = false;
+            let mut outdent_from_prev_row = false;
             let mut outdent_to_row = u32::MAX;
+
+            while let Some((indent_row, delta)) = indent_changes.peek() {
+                if *indent_row == row {
+                    match delta {
+                        Ordering::Less => outdent_from_prev_row = true,
+                        Ordering::Greater => indent_from_prev_row = true,
+                        _ => {}
+                    }
+                } else if *indent_row > row {
+                    break;
+                }
+                indent_changes.next();
+            }
+
             for range in &indentation_ranges {
                 if range.start.row >= row {
                     break;
                 }
-
                 if range.start.row == prev_row && range.end > row_start {
                     indent_from_prev_row = true;
                 }
-                if range.end.row >= prev_row && range.end <= row_start {
+                if range.end > prev_row_start && range.end <= row_start {
                     outdent_to_row = outdent_to_row.min(range.start.row);
                 }
             }
 
-            let suggestion = if outdent_to_row == prev_row {
-                IndentSuggestion {
+            let suggestion = if outdent_to_row == prev_row
+                || (outdent_from_prev_row && indent_from_prev_row)
+            {
+                Some(IndentSuggestion {
                     basis_row: prev_row,
-                    indent: false,
-                }
+                    delta: Ordering::Equal,
+                })
             } else if indent_from_prev_row {
-                IndentSuggestion {
+                Some(IndentSuggestion {
                     basis_row: prev_row,
-                    indent: true,
-                }
+                    delta: Ordering::Greater,
+                })
             } else if outdent_to_row < prev_row {
-                IndentSuggestion {
+                Some(IndentSuggestion {
                     basis_row: outdent_to_row,
-                    indent: false,
-                }
-            } else {
-                IndentSuggestion {
+                    delta: Ordering::Equal,
+                })
+            } else if outdent_from_prev_row {
+                Some(IndentSuggestion {
                     basis_row: prev_row,
-                    indent: false,
-                }
+                    delta: Ordering::Less,
+                })
+            } else if config.auto_indent_using_last_non_empty_line || !self.is_line_blank(prev_row)
+            {
+                Some(IndentSuggestion {
+                    basis_row: prev_row,
+                    delta: Ordering::Equal,
+                })
+            } else {
+                None
             };
 
             prev_row = row;
+            prev_row_start = row_start;
             suggestion
         }))
     }
@@ -1688,6 +1758,25 @@ impl BufferSnapshot {
             self.grammar(),
             diagnostic_endpoints,
         )
+    }
+
+    pub fn for_each_line<'a>(&'a self, range: Range<Point>, mut callback: impl FnMut(u32, &str)) {
+        let mut line = String::new();
+        let mut row = range.start.row;
+        for chunk in self
+            .as_rope()
+            .chunks_in_range(range.to_offset(self))
+            .chain(["\n"])
+        {
+            for (newline_ix, text) in chunk.split('\n').enumerate() {
+                if newline_ix > 0 {
+                    callback(row, &line);
+                    row += 1;
+                    line.clear();
+                }
+                line.push_str(text);
+            }
+        }
     }
 
     pub fn language(&self) -> Option<&Arc<Language>> {
@@ -2407,6 +2496,14 @@ impl std::ops::AddAssign for IndentSize {
             *self = other;
         } else if self.kind == other.kind {
             self.len += other.len;
+        }
+    }
+}
+
+impl std::ops::SubAssign for IndentSize {
+    fn sub_assign(&mut self, other: IndentSize) {
+        if self.kind == other.kind && self.len >= other.len {
+            self.len -= other.len;
         }
     }
 }

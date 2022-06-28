@@ -17,7 +17,8 @@ use gpui::{MutableAppContext, Task};
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock};
-use serde::Deserialize;
+use regex::Regex;
+use serde::{de, Deserialize, Deserializer};
 use serde_json::Value;
 use std::{
     any::Any,
@@ -49,10 +50,7 @@ lazy_static! {
     pub static ref PLAIN_TEXT: Arc<Language> = Arc::new(Language::new(
         LanguageConfig {
             name: "Plain Text".into(),
-            path_suffixes: Default::default(),
-            brackets: Default::default(),
-            autoclose_before: Default::default(),
-            line_comment: None,
+            ..Default::default()
         },
         None,
     ));
@@ -123,6 +121,12 @@ pub struct LanguageConfig {
     pub name: Arc<str>,
     pub path_suffixes: Vec<String>,
     pub brackets: Vec<BracketPair>,
+    #[serde(default = "auto_indent_using_last_non_empty_line_default")]
+    pub auto_indent_using_last_non_empty_line: bool,
+    #[serde(default, deserialize_with = "deserialize_regex")]
+    pub increase_indent_pattern: Option<Regex>,
+    #[serde(default, deserialize_with = "deserialize_regex")]
+    pub decrease_indent_pattern: Option<Regex>,
     #[serde(default)]
     pub autoclose_before: String,
     pub line_comment: Option<String>,
@@ -134,9 +138,25 @@ impl Default for LanguageConfig {
             name: "".into(),
             path_suffixes: Default::default(),
             brackets: Default::default(),
+            auto_indent_using_last_non_empty_line: auto_indent_using_last_non_empty_line_default(),
+            increase_indent_pattern: Default::default(),
+            decrease_indent_pattern: Default::default(),
             autoclose_before: Default::default(),
             line_comment: Default::default(),
         }
+    }
+}
+
+fn auto_indent_using_last_non_empty_line_default() -> bool {
+    true
+}
+
+fn deserialize_regex<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Regex>, D::Error> {
+    let source = Option::<String>::deserialize(d)?;
+    if let Some(source) = source {
+        Ok(Some(regex::Regex::new(&source).map_err(de::Error::custom)?))
+    } else {
+        Ok(None)
     }
 }
 
