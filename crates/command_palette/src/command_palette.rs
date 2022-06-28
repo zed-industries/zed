@@ -384,5 +384,34 @@ mod tests {
         editor.read_with(cx, |editor, cx| {
             assert_eq!(editor.text(cx), "ab");
         });
+
+        // Add namespace filter, and redeploy the palette
+        cx.update(|cx| {
+            cx.update_default_global::<CommandPaletteFilter, _, _>(|filter, _| {
+                filter.filtered_namespaces.insert("editor");
+            })
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            CommandPalette::toggle(workspace, &Toggle, cx);
+        });
+
+        // Assert editor command not present
+        let palette = workspace.read_with(cx, |workspace, _| {
+            workspace
+                .modal()
+                .unwrap()
+                .clone()
+                .downcast::<CommandPalette>()
+                .unwrap()
+        });
+
+        palette
+            .update(cx, |palette, cx| {
+                palette.update_matches("bcksp".to_string(), cx)
+            })
+            .await;
+
+        palette.update(cx, |palette, _| assert!(palette.matches.is_empty()));
     }
 }
