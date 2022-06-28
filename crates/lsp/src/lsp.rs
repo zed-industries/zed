@@ -655,6 +655,14 @@ impl FakeLanguageServer {
         self.server.notify::<T>(params).ok();
     }
 
+    pub async fn request<T>(&self, params: T::Params) -> Result<T::Result>
+    where
+        T: request::Request,
+        T::Result: 'static + Send,
+    {
+        self.server.request::<T>(params).await
+    }
+
     pub async fn receive_notification<T: notification::Notification>(&mut self) -> T::Params {
         self.try_receive_notification::<T>().await.unwrap()
     }
@@ -708,14 +716,20 @@ impl FakeLanguageServer {
         self.server.remove_request_handler::<T>();
     }
 
-    pub async fn start_progress(&mut self, token: impl Into<String>) {
+    pub async fn start_progress(&self, token: impl Into<String>) {
+        let token = token.into();
+        self.request::<request::WorkDoneProgressCreate>(WorkDoneProgressCreateParams {
+            token: NumberOrString::String(token.clone()),
+        })
+        .await
+        .unwrap();
         self.notify::<notification::Progress>(ProgressParams {
-            token: NumberOrString::String(token.into()),
+            token: NumberOrString::String(token),
             value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(Default::default())),
         });
     }
 
-    pub async fn end_progress(&mut self, token: impl Into<String>) {
+    pub fn end_progress(&self, token: impl Into<String>) {
         self.notify::<notification::Progress>(ProgressParams {
             token: NumberOrString::String(token.into()),
             value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(Default::default())),

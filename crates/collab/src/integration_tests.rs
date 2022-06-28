@@ -2995,6 +2995,7 @@ async fn test_language_server_statuses(
         .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
+    fake_language_server.start_progress("the-token").await;
     fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-token".to_string()),
         value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Report(
