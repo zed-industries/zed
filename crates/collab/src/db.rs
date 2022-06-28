@@ -7,7 +7,7 @@ use axum::http::StatusCode;
 use collections::HashMap;
 use futures::StreamExt;
 use nanoid::nanoid;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 pub use sqlx::postgres::PgPoolOptions as DbOptions;
 use sqlx::{types::Uuid, FromRow, QueryBuilder, Row};
 use time::{OffsetDateTime, PrimitiveDateTime};
@@ -63,7 +63,7 @@ pub trait Db: Send + Sync {
 
     /// Record which users have been active in which projects during
     /// a given period of time.
-    async fn record_project_activity(
+    async fn record_user_activity(
         &self,
         time_period: Range<OffsetDateTime>,
         active_projects: &[(UserId, ProjectId)],
@@ -71,18 +71,18 @@ pub trait Db: Send + Sync {
 
     /// Get the users that have been most active during the given time period,
     /// along with the amount of time they have been active in each project.
-    async fn summarize_project_activity(
+    async fn get_top_users_activity_summary(
         &self,
         time_period: Range<OffsetDateTime>,
         max_user_count: usize,
     ) -> Result<Vec<UserActivitySummary>>;
 
     /// Get the project activity for the given user and time period.
-    async fn summarize_user_activity(
+    async fn get_user_activity_timeline(
         &self,
-        user_id: UserId,
         time_period: Range<OffsetDateTime>,
-    ) -> Result<Vec<UserActivityDuration>>;
+        user_id: UserId,
+    ) -> Result<Vec<UserActivityPeriod>>;
 
     async fn get_contacts(&self, id: UserId) -> Result<Vec<Contact>>;
     async fn has_contact(&self, user_id_a: UserId, user_id_b: UserId) -> Result<bool>;
@@ -564,7 +564,7 @@ impl Db for PostgresDb {
         Ok(extension_counts)
     }
 
-    async fn record_project_activity(
+    async fn record_user_activity(
         &self,
         time_period: Range<OffsetDateTime>,
         projects: &[(UserId, ProjectId)],
@@ -593,7 +593,7 @@ impl Db for PostgresDb {
         Ok(())
     }
 
-    async fn summarize_project_activity(
+    async fn get_top_users_activity_summary(
         &self,
         time_period: Range<OffsetDateTime>,
         max_user_count: usize,
@@ -648,11 +648,11 @@ impl Db for PostgresDb {
         Ok(result)
     }
 
-    async fn summarize_user_activity(
+    async fn get_user_activity_timeline(
         &self,
-        user_id: UserId,
         time_period: Range<OffsetDateTime>,
-    ) -> Result<Vec<UserActivityDuration>> {
+        user_id: UserId,
+    ) -> Result<Vec<UserActivityPeriod>> {
         const COALESCE_THRESHOLD: Duration = Duration::from_secs(5);
 
         let query = "
@@ -689,19 +689,19 @@ impl Db for PostgresDb {
         .bind(time_period.end)
         .fetch(&self.pool);
 
-        let mut durations: HashMap<ProjectId, Vec<UserActivityDuration>> = Default::default();
+        let mut time_periods: HashMap<ProjectId, Vec<UserActivityPeriod>> = Default::default();
         while let Some(row) = rows.next().await {
             let (ended_at, duration_millis, project_id, extension, extension_count) = row?;
             let ended_at = ended_at.assume_utc();
             let duration = Duration::from_millis(duration_millis as u64);
             let started_at = ended_at - duration;
-            let project_durations = durations.entry(project_id).or_default();
+            let project_time_periods = time_periods.entry(project_id).or_default();
 
-            if let Some(prev_duration) = project_durations.last_mut() {
+            if let Some(prev_duration) = project_time_periods.last_mut() {
                 if started_at - prev_duration.end <= COALESCE_THRESHOLD {
                     prev_duration.end = ended_at;
                 } else {
-                    project_durations.push(UserActivityDuration {
+                    project_time_periods.push(UserActivityPeriod {
                         project_id,
                         start: started_at,
                         end: ended_at,
@@ -709,7 +709,7 @@ impl Db for PostgresDb {
                     });
                 }
             } else {
-                project_durations.push(UserActivityDuration {
+                project_time_periods.push(UserActivityPeriod {
                     project_id,
                     start: started_at,
                     end: ended_at,
@@ -718,7 +718,7 @@ impl Db for PostgresDb {
             }
 
             if let Some((extension, extension_count)) = extension.zip(extension_count) {
-                project_durations
+                project_time_periods
                     .last_mut()
                     .unwrap()
                     .extensions
@@ -726,7 +726,7 @@ impl Db for PostgresDb {
             }
         }
 
-        let mut durations = durations.into_values().flatten().collect::<Vec<_>>();
+        let mut durations = time_periods.into_values().flatten().collect::<Vec<_>>();
         durations.sort_unstable_by_key(|duration| duration.start);
         Ok(durations)
     }
@@ -1206,7 +1206,18 @@ impl Db for PostgresDb {
 macro_rules! id_type {
     ($name:ident) => {
         #[derive(
-            Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, sqlx::Type, Serialize,
+            Clone,
+            Copy,
+            Debug,
+            Default,
+            PartialEq,
+            Eq,
+            PartialOrd,
+            Ord,
+            Hash,
+            sqlx::Type,
+            Serialize,
+            Deserialize,
         )]
         #[sqlx(transparent)]
         #[serde(transparent)]
@@ -1263,7 +1274,7 @@ pub struct UserActivitySummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct UserActivityDuration {
+pub struct UserActivityPeriod {
     project_id: ProjectId,
     start: OffsetDateTime,
     end: OffsetDateTime,
@@ -1549,24 +1560,24 @@ pub mod tests {
 
         // User 2 opens a project
         let t1 = t0 + Duration::from_secs(10);
-        db.record_project_activity(t0..t1, &[(user_2, project_2)])
+        db.record_user_activity(t0..t1, &[(user_2, project_2)])
             .await
             .unwrap();
 
         let t2 = t1 + Duration::from_secs(10);
-        db.record_project_activity(t1..t2, &[(user_2, project_2)])
+        db.record_user_activity(t1..t2, &[(user_2, project_2)])
             .await
             .unwrap();
 
         // User 1 joins the project
         let t3 = t2 + Duration::from_secs(10);
-        db.record_project_activity(t2..t3, &[(user_2, project_2), (user_1, project_2)])
+        db.record_user_activity(t2..t3, &[(user_2, project_2), (user_1, project_2)])
             .await
             .unwrap();
 
         // User 1 opens another project
         let t4 = t3 + Duration::from_secs(10);
-        db.record_project_activity(
+        db.record_user_activity(
             t3..t4,
             &[
                 (user_2, project_2),
@@ -1579,7 +1590,7 @@ pub mod tests {
 
         // User 3 joins that project
         let t5 = t4 + Duration::from_secs(10);
-        db.record_project_activity(
+        db.record_user_activity(
             t4..t5,
             &[
                 (user_2, project_2),
@@ -1593,18 +1604,18 @@ pub mod tests {
 
         // User 2 leaves
         let t6 = t5 + Duration::from_secs(5);
-        db.record_project_activity(t5..t6, &[(user_1, project_1), (user_3, project_1)])
+        db.record_user_activity(t5..t6, &[(user_1, project_1), (user_3, project_1)])
             .await
             .unwrap();
 
         let t7 = t6 + Duration::from_secs(60);
         let t8 = t7 + Duration::from_secs(10);
-        db.record_project_activity(t7..t8, &[(user_1, project_1)])
+        db.record_user_activity(t7..t8, &[(user_1, project_1)])
             .await
             .unwrap();
 
         assert_eq!(
-            db.summarize_project_activity(t0..t6, 10).await.unwrap(),
+            db.get_top_users_activity_summary(t0..t6, 10).await.unwrap(),
             &[
                 UserActivitySummary {
                     id: user_1,
@@ -1627,15 +1638,15 @@ pub mod tests {
             ]
         );
         assert_eq!(
-            db.summarize_user_activity(user_1, t3..t6).await.unwrap(),
+            db.get_user_activity_timeline(t3..t6, user_1).await.unwrap(),
             &[
-                UserActivityDuration {
+                UserActivityPeriod {
                     project_id: project_1,
                     start: t3,
                     end: t6,
                     extensions: HashMap::from_iter([("rs".to_string(), 5), ("md".to_string(), 7)]),
                 },
-                UserActivityDuration {
+                UserActivityPeriod {
                     project_id: project_2,
                     start: t3,
                     end: t5,
@@ -1644,21 +1655,21 @@ pub mod tests {
             ]
         );
         assert_eq!(
-            db.summarize_user_activity(user_1, t0..t8).await.unwrap(),
+            db.get_user_activity_timeline(t0..t8, user_1).await.unwrap(),
             &[
-                UserActivityDuration {
+                UserActivityPeriod {
                     project_id: project_2,
                     start: t2,
                     end: t5,
                     extensions: Default::default(),
                 },
-                UserActivityDuration {
+                UserActivityPeriod {
                     project_id: project_1,
                     start: t3,
                     end: t6,
                     extensions: HashMap::from_iter([("rs".to_string(), 5), ("md".to_string(), 7)]),
                 },
-                UserActivityDuration {
+                UserActivityPeriod {
                     project_id: project_1,
                     start: t7,
                     end: t8,
@@ -2450,27 +2461,27 @@ pub mod tests {
             unimplemented!()
         }
 
-        async fn record_project_activity(
+        async fn record_user_activity(
             &self,
-            _period: Range<OffsetDateTime>,
+            _time_period: Range<OffsetDateTime>,
             _active_projects: &[(UserId, ProjectId)],
         ) -> Result<()> {
             unimplemented!()
         }
 
-        async fn summarize_project_activity(
+        async fn get_top_users_activity_summary(
             &self,
-            _period: Range<OffsetDateTime>,
+            _time_period: Range<OffsetDateTime>,
             _limit: usize,
         ) -> Result<Vec<UserActivitySummary>> {
             unimplemented!()
         }
 
-        async fn summarize_user_activity(
+        async fn get_user_activity_timeline(
             &self,
-            _user_id: UserId,
             _time_period: Range<OffsetDateTime>,
-        ) -> Result<Vec<UserActivityDuration>> {
+            _user_id: UserId,
+        ) -> Result<Vec<UserActivityPeriod>> {
             unimplemented!()
         }
 

@@ -332,7 +332,7 @@ impl Server {
                     let period_end = OffsetDateTime::now_utc();
                     this.app_state
                         .db
-                        .record_project_activity(period_start..period_end, &active_projects)
+                        .record_user_activity(period_start..period_end, &active_projects)
                         .await
                         .trace_err();
                     period_start = period_end;
