@@ -442,31 +442,56 @@ mod tests {
             let mut buffer = Buffer::new(0, "", cx).with_language(Arc::new(language), cx);
             let size = IndentSize::spaces(2);
 
-            // start with empty function
-            buffer.edit_with_autoindent([(0..0, "fn a() {}")], size, cx);
-
             // indent between braces
+            buffer.set_text("fn a() {}", cx);
             let ix = buffer.len() - 1;
             buffer.edit_with_autoindent([(ix..ix, "\n\n")], size, cx);
             assert_eq!(buffer.text(), "fn a() {\n  \n}");
 
-            // indent field expression
+            // indent between braces, even after empty lines
+            buffer.set_text("fn a() {\n\n\n}", cx);
+            let ix = buffer.len() - 2;
+            buffer.edit_with_autoindent([(ix..ix, "\n")], size, cx);
+            assert_eq!(buffer.text(), "fn a() {\n\n\n  \n}");
+
+            // indent a line that continues a field expression
+            buffer.set_text("fn a() {\n  \n}", cx);
             let ix = buffer.len() - 2;
             buffer.edit_with_autoindent([(ix..ix, "b\n.c")], size, cx);
             assert_eq!(buffer.text(), "fn a() {\n  b\n    .c\n}");
 
-            // indent chained field expression preceded by blank line
+            // indent further lines that continue the field expression, even after empty lines
             let ix = buffer.len() - 2;
             buffer.edit_with_autoindent([(ix..ix, "\n\n.d")], size, cx);
             assert_eq!(buffer.text(), "fn a() {\n  b\n    .c\n    \n    .d\n}");
 
-            // dedent line after the field expression
+            // dedent the line after the field expression
             let ix = buffer.len() - 2;
             buffer.edit_with_autoindent([(ix..ix, ";\ne")], size, cx);
             assert_eq!(
                 buffer.text(),
                 "fn a() {\n  b\n    .c\n    \n    .d;\n  e\n}"
             );
+
+            // indent inside a struct within a call
+            buffer.set_text("const a: B = c(D {});", cx);
+            let ix = buffer.len() - 3;
+            buffer.edit_with_autoindent([(ix..ix, "\n\n")], size, cx);
+            assert_eq!(buffer.text(), "const a: B = c(D {\n  \n});");
+
+            // indent further inside a nested call
+            let ix = buffer.len() - 4;
+            buffer.edit_with_autoindent([(ix..ix, "e: f(\n\n)")], size, cx);
+            assert_eq!(buffer.text(), "const a: B = c(D {\n  e: f(\n    \n  )\n});");
+
+            // keep that indent after an empty line
+            let ix = buffer.len() - 8;
+            buffer.edit_with_autoindent([(ix..ix, "\n")], size, cx);
+            assert_eq!(
+                buffer.text(),
+                "const a: B = c(D {\n  e: f(\n    \n    \n  )\n});"
+            );
+
             buffer
         });
     }
