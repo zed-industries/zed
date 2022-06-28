@@ -1583,7 +1583,7 @@ impl BufferSnapshot {
                 ..Point::new(row_range.end, 0).to_ts_point(),
         );
 
-        let mut indentation_ranges = Vec::<Range<Point>>::new();
+        let mut indent_ranges = Vec::<Range<Point>>::new();
         for mat in query_cursor.matches(
             indents_query,
             self.tree.as_ref()?.root_node(),
@@ -1606,10 +1606,10 @@ impl BufferSnapshot {
                 }
 
                 let range = start..end;
-                match indentation_ranges.binary_search_by_key(&range.start, |r| r.start) {
-                    Err(ix) => indentation_ranges.insert(ix, range),
+                match indent_ranges.binary_search_by_key(&range.start, |r| r.start) {
+                    Err(ix) => indent_ranges.insert(ix, range),
                     Ok(ix) => {
-                        let prev_range = &mut indentation_ranges[ix];
+                        let prev_range = &mut indent_ranges[ix];
                         prev_range.end = prev_range.end.max(range.end);
                     }
                 }
@@ -1617,7 +1617,7 @@ impl BufferSnapshot {
         }
 
         // Find the suggested indentation increases and decreased based on regexes.
-        let mut indent_changes = Vec::<(u32, Ordering)>::new();
+        let mut indent_change_rows = Vec::<(u32, Ordering)>::new();
         self.for_each_line(
             Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0)
                 ..Point::new(row_range.end, 0),
@@ -1627,20 +1627,24 @@ impl BufferSnapshot {
                     .as_ref()
                     .map_or(false, |regex| regex.is_match(line))
                 {
-                    indent_changes.push((row, Ordering::Less));
+                    indent_change_rows.push((row, Ordering::Less));
                 }
                 if config
                     .increase_indent_pattern
                     .as_ref()
                     .map_or(false, |regex| regex.is_match(line))
                 {
-                    indent_changes.push((row + 1, Ordering::Greater));
+                    indent_change_rows.push((row + 1, Ordering::Greater));
                 }
             },
         );
 
-        let mut indent_changes = indent_changes.into_iter().peekable();
-        let mut prev_row = row_range.start.saturating_sub(1);
+        let mut indent_changes = indent_change_rows.into_iter().peekable();
+        let mut prev_row = if config.auto_indent_using_last_non_empty_line {
+            prev_non_blank_row.unwrap_or(0)
+        } else {
+            row_range.start.saturating_sub(1)
+        };
         let mut prev_row_start = Point::new(prev_row, self.indent_size_for_line(prev_row).len);
         Some(row_range.map(move |row| {
             let row_start = Point::new(row, self.indent_size_for_line(row).len);
@@ -1662,7 +1666,7 @@ impl BufferSnapshot {
                 indent_changes.next();
             }
 
-            for range in &indentation_ranges {
+            for range in &indent_ranges {
                 if range.start.row >= row {
                     break;
                 }
