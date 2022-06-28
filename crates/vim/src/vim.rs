@@ -10,6 +10,7 @@ mod utils;
 mod visual;
 
 use collections::HashMap;
+use command_palette::CommandPaletteFilter;
 use editor::{Bias, CursorShape, Editor, Input};
 use gpui::{impl_actions, MutableAppContext, Subscription, ViewContext, WeakViewHandle};
 use serde::Deserialize;
@@ -124,6 +125,13 @@ impl Vim {
             if enabled {
                 self.state.mode = Mode::Normal;
             }
+            cx.update_default_global::<CommandPaletteFilter, _, _>(|filter, _| {
+                if enabled {
+                    filter.filtered_namespaces.remove("vim");
+                } else {
+                    filter.filtered_namespaces.insert("vim");
+                }
+            });
             self.sync_editor_options(cx);
         }
     }

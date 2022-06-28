@@ -10,6 +10,7 @@ doctest = false
 [dependencies]
 assets = { path = "../assets" }
 collections = { path = "../collections" }
+command_palette = { path = "../command_palette" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }

@@ -917,6 +917,7 @@ checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
 name = "command_palette"
 version = "0.1.0"
 dependencies = [
+ "collections",
  "ctor",
  "editor",
  "env_logger",
@@ -5601,6 +5602,7 @@ version = "0.1.0"
 dependencies = [
  "assets",
  "collections",
+ "command_palette",
  "editor",
  "gpui",
  "indoc",

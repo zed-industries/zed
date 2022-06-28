@@ -2,6 +2,7 @@ use std::any::{Any, TypeId};
 
 pub trait Action: 'static {
     fn id(&self) -> TypeId;
+    fn namespace(&self) -> &'static str;
     fn name(&self) -> &'static str;
     fn as_any(&self) -> &dyn Any;
     fn boxed_clone(&self) -> Box<dyn Action>;
@@ -80,6 +81,10 @@ macro_rules! impl_internal_actions {
 macro_rules! __impl_action {
     ($namespace:path, $name:ident, $from_json_fn:item) => {
         impl $crate::action::Action for $name {
+            fn namespace(&self) -> &'static str {
+                stringify!($namespace)
+            }
+
             fn name(&self) -> &'static str {
                 stringify!($name)
             }
