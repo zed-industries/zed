@@ -1338,6 +1338,170 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_reopening_closed_items(cx: &mut TestAppContext) {
+        let app_state = init(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "a": {
+                        "file1": "",
+                        "file2": "",
+                        "file3": "",
+                        "file4": "",
+                    },
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let entries = cx.read(|cx| workspace.file_project_paths(cx));
+        let file1 = entries[0].clone();
+        let file2 = entries[1].clone();
+        let file3 = entries[2].clone();
+        let file4 = entries[3].clone();
+
+        let file1_item_id = workspace
+            .update(cx, |w, cx| w.open_path(file1.clone(), true, cx))
+            .await
+            .unwrap()
+            .id();
+        let file2_item_id = workspace
+            .update(cx, |w, cx| w.open_path(file2.clone(), true, cx))
+            .await
+            .unwrap()
+            .id();
+        let file3_item_id = workspace
+            .update(cx, |w, cx| w.open_path(file3.clone(), true, cx))
+            .await
+            .unwrap()
+            .id();
+        let file4_item_id = workspace
+            .update(cx, |w, cx| w.open_path(file4.clone(), true, cx))
+            .await
+            .unwrap()
+            .id();
+        assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
+
+        // Close all the pane items in some arbitrary order.
+        workspace
+            .update(cx, |workspace, cx| {
+                Pane::close_item(workspace, pane.clone(), file1_item_id, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
+
+        workspace
+            .update(cx, |workspace, cx| {
+                Pane::close_item(workspace, pane.clone(), file4_item_id, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
+
+        workspace
+            .update(cx, |workspace, cx| {
+                Pane::close_item(workspace, pane.clone(), file2_item_id, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
+
+        workspace
+            .update(cx, |workspace, cx| {
+                Pane::close_item(workspace, pane.clone(), file3_item_id, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(active_path(&workspace, cx), None);
+
+        // Reopen all the closed items, ensuring they are reopened in the same order
+        // in which they were closed.
+        workspace
+            .update(cx, |workspace, cx| Pane::reopen_closed_item(workspace, cx))
+            .await;
+        assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
+
+        workspace
+            .update(cx, |workspace, cx| Pane::reopen_closed_item(workspace, cx))
+            .await;
+        assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
+
+        workspace
+            .update(cx, |workspace, cx| Pane::reopen_closed_item(workspace, cx))
+            .await;
+        assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
+
+        workspace
+            .update(cx, |workspace, cx| Pane::reopen_closed_item(workspace, cx))
+            .await;
+        assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
+
+        // Reopening past the last closed item is a no-op.
+        workspace
+            .update(cx, |workspace, cx| Pane::reopen_closed_item(workspace, cx))
+            .await;
+        assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
+
+        // Reopening closed items doesn't interfere with navigation history.
+        workspace
+            .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
+            .await;
+        assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
+
+        workspace
+            .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
+            .await;
+        assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
+
+        workspace
+            .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
+            .await;
+        assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
+
+        workspace
+            .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
+            .await;
+        assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
+
+        workspace
+            .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
+            .await;
+        assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
+
+        workspace
+            .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
+            .await;
+        assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
+
+        workspace
+            .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
+            .await;
+        assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
+
+        workspace
+            .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
+            .await;
+        assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
+
+        fn active_path(
+            workspace: &ViewHandle<Workspace>,
+            cx: &TestAppContext,
+        ) -> Option<ProjectPath> {
+            workspace.read_with(cx, |workspace, cx| {
+                let item = workspace.active_item(cx)?;
+                item.project_path(cx)
+            })
+        }
+    }
+
+    #[gpui::test]
     fn test_bundled_themes(cx: &mut MutableAppContext) {
         let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
 

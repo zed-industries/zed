@@ -212,6 +212,7 @@
         "bindings": {
             "ctrl--": "pane::GoBack",
             "shift-ctrl-_": "pane::GoForward",
+            "cmd-shift-T": "pane::ReopenClosedItem",
             "cmd-shift-F": "project_search::ToggleFocus"
         }
     },
