@@ -39,6 +39,10 @@ pub fn routes(rpc_server: &Arc<rpc::Server>, state: Arc<AppState>) -> Router<Bod
             "/user_activity/summary",
             get(get_top_users_activity_summary),
         )
+        .route(
+            "/user_activity/timeline/:user_id",
+            get(get_user_activity_timeline),
+        )
         .route("/project_metadata", get(get_project_metadata))
         .layer(
             ServiceBuilder::new()
@@ -278,6 +282,18 @@ async fn get_top_users_activity_summary(
     let summary = app
         .db
         .get_top_users_activity_summary(params.start..params.end, 100)
+        .await?;
+    Ok(ErasedJson::pretty(summary))
+}
+
+async fn get_user_activity_timeline(
+    Path(user_id): Path<i32>,
+    Query(params): Query<TimePeriodParams>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<ErasedJson> {
+    let summary = app
+        .db
+        .get_user_activity_timeline(params.start..params.end, UserId(user_id))
         .await?;
     Ok(ErasedJson::pretty(summary))
 }
