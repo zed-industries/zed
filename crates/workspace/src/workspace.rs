@@ -995,9 +995,9 @@ impl Workspace {
         // Sort the paths to ensure we add worktrees for parents before their children.
         abs_paths.sort_unstable();
         cx.spawn(|this, mut cx| async move {
-            let mut entries = Vec::new();
+            let mut project_paths = Vec::new();
             for path in &abs_paths {
-                entries.push(
+                project_paths.push(
                     this.update(&mut cx, |this, cx| {
                         this.project_path_for_path(path, visible, cx)
                     })
@@ -1009,7 +1009,7 @@ impl Workspace {
             let tasks = abs_paths
                 .iter()
                 .cloned()
-                .zip(entries.into_iter())
+                .zip(project_paths.into_iter())
                 .map(|(abs_path, project_path)| {
                     let this = this.clone();
                     cx.spawn(|mut cx| {

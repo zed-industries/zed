@@ -4257,7 +4257,7 @@ impl Project {
         &'a self,
         cx: &'a AppContext,
     ) -> impl Iterator<Item = (ProjectPath, DiagnosticSummary)> + 'a {
-        self.worktrees(cx).flat_map(move |worktree| {
+        self.visible_worktrees(cx).flat_map(move |worktree| {
             let worktree = worktree.read(cx);
             let worktree_id = worktree.id();
             worktree
@@ -6407,6 +6407,80 @@ mod tests {
                     (" = 2;", None),
                 ]
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_hidden_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "dir": {
+                    "a.rs": "let a = 1;",
+                },
+                "other.rs": "let b = c;"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/root/dir".as_ref()], cx).await;
+
+        let (worktree, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/root/other.rs", false, cx)
+            })
+            .await
+            .unwrap();
+        let worktree_id = worktree.read_with(cx, |tree, _| tree.id());
+
+        project.update(cx, |project, cx| {
+            project
+                .update_diagnostics(
+                    0,
+                    lsp::PublishDiagnosticsParams {
+                        uri: Url::from_file_path("/root/other.rs").unwrap(),
+                        version: None,
+                        diagnostics: vec![lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 8),
+                                lsp::Position::new(0, 9),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::ERROR),
+                            message: "unknown variable 'c'".to_string(),
+                            ..Default::default()
+                        }],
+                    },
+                    &[],
+                    cx,
+                )
+                .unwrap();
+        });
+
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer((worktree_id, ""), cx))
+            .await
+            .unwrap();
+        buffer.read_with(cx, |buffer, _| {
+            let chunks = chunks_with_diagnostics(&buffer, 0..buffer.len());
+            assert_eq!(
+                chunks
+                    .iter()
+                    .map(|(s, d)| (s.as_str(), *d))
+                    .collect::<Vec<_>>(),
+                &[
+                    ("let b = ", None),
+                    ("c", Some(DiagnosticSeverity::ERROR)),
+                    (";", None),
+                ]
+            );
+        });
+
+        project.read_with(cx, |project, cx| {
+            assert_eq!(project.diagnostic_summaries(cx).next(), None);
+            assert_eq!(project.diagnostic_summary(cx).error_count, 0);
         });
     }
 
