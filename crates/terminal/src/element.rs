@@ -6,7 +6,7 @@ use alacritty_terminal::{
     sync::FairMutex,
     term::{
         cell::{Cell, Flags},
-        RenderableCursor, SizeInfo,
+        SizeInfo,
     },
     Term,
 };
@@ -17,7 +17,7 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     json::json,
     text_layout::Line,
-    Event, PaintContext, Quad,
+    Event, Quad,
 };
 use mio_extras::channel::Sender;
 use ordered_float::OrderedFloat;
@@ -26,7 +26,6 @@ use std::sync::Arc;
 
 use crate::{Input, ZedListener};
 
-const DEBUG_GRID: bool = false;
 const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
 
 pub struct TerminalEl {
@@ -105,7 +104,6 @@ impl Element for TerminalEl {
         //Start rendering
         let content = term.renderable_content();
 
-        let mut cursor = None;
         let mut lines: Vec<(String, Option<HighlightStyle>)> = vec![];
         let mut last_line = 0;
         let mut line_count = 1;
@@ -123,10 +121,6 @@ impl Element for TerminalEl {
                     c, fg, flags, .. // TODO: Add bg and flags
                 }, //TODO: Learn what 'CellExtra does'
             } = cell;
-
-            if cell.point == content.cursor.point {
-                cursor = make_cursor(em_width, line_height, content.cursor);
-            }
 
             let new_highlight = make_style_from_cell(fg, flags);
 
@@ -154,6 +148,20 @@ impl Element for TerminalEl {
             line_count,
         );
 
+        let cursor_line = content.cursor.point.line.0 + content.display_offset as i32;
+        let mut cursor = None;
+        if let Some(layout_line) = cursor_line
+            .try_into()
+            .ok()
+            .and_then(|cursor_line: usize| shaped_lines.get(cursor_line))
+        {
+            let cursor_x = layout_line.x_for_index(content.cursor.point.column.0);
+            cursor = Some(RectF::new(
+                vec2f(cursor_x, cursor_line as f32 * line_height),
+                vec2f(em_width, line_height),
+            ));
+        }
+
         (
             constraint.max,
             LayoutState {
@@ -172,6 +180,7 @@ impl Element for TerminalEl {
         layout: &mut Self::LayoutState,
         cx: &mut gpui::PaintContext,
     ) -> Self::PaintState {
+        cx.scene.push_layer(Some(visible_bounds));
         let origin = bounds.origin() + vec2f(layout.em_width, 0.);
 
         let mut line_origin = origin;
@@ -190,15 +199,13 @@ impl Element for TerminalEl {
             let new_cursor = RectF::new(new_origin, c.size());
             cx.scene.push_quad(Quad {
                 bounds: new_cursor,
-                background: Some(Color::red()),
+                background: Some(Color::white()),
                 border: Default::default(),
                 corner_radius: 0.,
             });
         }
 
-        if DEBUG_GRID {
-            draw_debug_grid(bounds, layout, cx);
-        }
+        cx.scene.pop_layer();
     }
 
     fn dispatch_event(
@@ -294,38 +301,5 @@ fn alac_color_to_gpui_color(allac_color: &AnsiColor) -> Color {
         }, //Theme defined
         alacritty_terminal::ansi::Color::Spec(rgb) => Color::new(rgb.r, rgb.g, rgb.b, 1),
         alacritty_terminal::ansi::Color::Indexed(_) => Color::white(), //Color cube weirdness
-    }
-}
-
-fn make_cursor(em_width: f32, line_height: f32, cursor: RenderableCursor) -> Option<RectF> {
-    Some(RectF::new(
-        vec2f(
-            cursor.point.column.0 as f32 * em_width,
-            cursor.point.line.0 as f32 * line_height,
-        ),
-        vec2f(em_width, line_height),
-    ))
-}
-
-fn draw_debug_grid(bounds: RectF, layout: &mut LayoutState, cx: &mut PaintContext) {
-    for col in 0..(bounds.0[2] / layout.em_width) as usize {
-        let rect_origin = bounds.origin() + vec2f(col as f32 * layout.em_width, 0.);
-        let line = RectF::new(rect_origin, vec2f(1., bounds.0[3]));
-        cx.scene.push_quad(Quad {
-            bounds: line,
-            background: Some(Color::green()),
-            border: Default::default(),
-            corner_radius: 0.,
-        });
-    }
-    for row in 0..(bounds.0[3] / layout.line_height) as usize {
-        let rect_origin = bounds.origin() + vec2f(0., row as f32 * layout.line_height);
-        let line = RectF::new(rect_origin, vec2f(bounds.0[2], 1.));
-        cx.scene.push_quad(Quad {
-            bounds: line,
-            background: Some(Color::green()),
-            border: Default::default(),
-            corner_radius: 0.,
-        });
     }
 }
