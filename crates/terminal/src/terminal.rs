@@ -1,4 +1,5 @@
 use alacritty_terminal::{
+    ansi::{ClearMode, Handler},
     config::{Config, Program, PtyConfig},
     event::{Event as AlacTermEvent, EventListener, Notify},
     event_loop::{EventLoop, Msg, Notifier},
@@ -35,7 +36,6 @@ const LEFT_SEQ: &str = "\x1b[D";
 const RIGHT_SEQ: &str = "\x1b[C";
 const UP_SEQ: &str = "\x1b[A";
 const DOWN_SEQ: &str = "\x1b[B";
-const CLEAR_SEQ: &str = "\x1b[H\x1b[2J";
 const DEFAULT_TITLE: &str = "Terminal";
 
 pub mod element;
@@ -62,7 +62,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Terminal::up);
     cx.add_action(Terminal::down);
     cx.add_action(Terminal::tab);
-    cx.add_action(Terminal::clear);
     cx.add_action(Terminal::paste);
 }
 
@@ -278,10 +277,6 @@ impl Terminal {
 
     fn right(&mut self, _: &RIGHT, cx: &mut ViewContext<Self>) {
         self.write_to_pty(&Input(RIGHT_SEQ.to_string()), cx);
-    }
-
-    fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
-        self.write_to_pty(&Input(CLEAR_SEQ.to_string()), cx);
     }
 }
 
