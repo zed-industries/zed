@@ -1,4 +1,4 @@
-use std::{ops::Range, time::Duration};
+use std::{cmp, ops::Range, time::Duration};
 
 use crate::{Error, Result};
 use anyhow::{anyhow, Context};
@@ -653,7 +653,7 @@ impl Db for PostgresDb {
         time_period: Range<OffsetDateTime>,
         user_id: UserId,
     ) -> Result<Vec<UserActivityPeriod>> {
-        const COALESCE_THRESHOLD: Duration = Duration::from_secs(5);
+        const COALESCE_THRESHOLD: Duration = Duration::from_secs(30);
 
         let query = "
             SELECT
@@ -698,8 +698,10 @@ impl Db for PostgresDb {
             let project_time_periods = time_periods.entry(project_id).or_default();
 
             if let Some(prev_duration) = project_time_periods.last_mut() {
-                if started_at - prev_duration.end <= COALESCE_THRESHOLD {
-                    prev_duration.end = ended_at;
+                if started_at <= prev_duration.end + COALESCE_THRESHOLD
+                    && ended_at >= prev_duration.start
+                {
+                    prev_duration.end = cmp::max(prev_duration.end, ended_at);
                 } else {
                     project_time_periods.push(UserActivityPeriod {
                         project_id,
@@ -1276,7 +1278,9 @@ pub struct UserActivitySummary {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct UserActivityPeriod {
     project_id: ProjectId,
+    #[serde(with = "time::serde::iso8601")]
     start: OffsetDateTime,
+    #[serde(with = "time::serde::iso8601")]
     end: OffsetDateTime,
     extensions: HashMap<String, usize>,
 }
