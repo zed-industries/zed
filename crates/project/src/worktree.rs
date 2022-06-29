@@ -105,6 +105,7 @@ pub struct LocalSnapshot {
     removed_entry_ids: HashMap<u64, ProjectEntryId>,
     next_entry_id: Arc<AtomicUsize>,
     snapshot: Snapshot,
+    extension_counts: HashMap<OsString, usize>,
 }
 
 impl Deref for LocalSnapshot {
@@ -450,6 +451,7 @@ impl LocalWorktree {
                     entries_by_id: Default::default(),
                     scan_id: 0,
                 },
+                extension_counts: Default::default(),
             };
             if let Some(metadata) = metadata {
                 let entry = Entry::new(
@@ -1438,7 +1440,7 @@ impl LocalSnapshot {
         self.reuse_entry_id(&mut entry);
         self.entries_by_path.insert_or_replace(entry.clone(), &());
         let scan_id = self.scan_id;
-        self.entries_by_id.insert_or_replace(
+        let removed_entry = self.entries_by_id.insert_or_replace(
             PathEntry {
                 id: entry.id,
                 path: entry.path.clone(),
@@ -1447,6 +1449,12 @@ impl LocalSnapshot {
             },
             &(),
         );
+
+        if let Some(removed_entry) = removed_entry {
+            self.dec_extension_count(&removed_entry.path);
+        }
+        self.inc_extension_count(&entry.path);
+
         entry
     }
 
@@ -1482,6 +1490,7 @@ impl LocalSnapshot {
 
         for mut entry in entries {
             self.reuse_entry_id(&mut entry);
+            self.inc_extension_count(&entry.path);
             entries_by_id_edits.push(Edit::Insert(PathEntry {
                 id: entry.id,
                 path: entry.path.clone(),
@@ -1492,7 +1501,29 @@ impl LocalSnapshot {
         }
 
         self.entries_by_path.edit(entries_by_path_edits, &());
-        self.entries_by_id.edit(entries_by_id_edits, &());
+        let removed_entries = self.entries_by_id.edit(entries_by_id_edits, &());
+
+        for removed_entry in removed_entries {
+            self.dec_extension_count(&removed_entry.path);
+        }
+    }
+
+    fn inc_extension_count(&mut self, path: &Path) {
+        if let Some(extension) = path.extension() {
+            if let Some(count) = self.extension_counts.get_mut(extension) {
+                *count += 1;
+            } else {
+                self.extension_counts.insert(extension.into(), 1);
+            }
+        }
+    }
+
+    fn dec_extension_count(&mut self, path: &Path) {
+        if let Some(extension) = path.extension() {
+            if let Some(count) = self.extension_counts.get_mut(extension) {
+                *count -= 1;
+            }
+        }
     }
 
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
@@ -1522,6 +1553,7 @@ impl LocalSnapshot {
                 .or_insert(entry.id);
             *removed_entry_id = cmp::max(*removed_entry_id, entry.id);
             entries_by_id_edits.push(Edit::Remove(entry.id));
+            self.dec_extension_count(&entry.path);
         }
         self.entries_by_id.edit(entries_by_id_edits, &());
 
@@ -2932,6 +2964,7 @@ mod tests {
                 root_char_bag: Default::default(),
                 scan_id: 0,
             },
+            extension_counts: Default::default(),
         };
         initial_snapshot.insert_entry(
             Entry::new(
@@ -3211,6 +3244,15 @@ mod tests {
                     .entry_for_path(ignore_parent_path.join(&*GITIGNORE))
                     .is_some());
             }
+
+            // Ensure extension counts are correct.
+            let mut expected_extension_counts = HashMap::default();
+            for extension in self.entries(false).filter_map(|e| e.path.extension()) {
+                *expected_extension_counts
+                    .entry(extension.into())
+                    .or_insert(0) += 1;
+            }
+            assert_eq!(self.extension_counts, expected_extension_counts);
         }
 
         fn to_vec(&self, include_ignored: bool) -> Vec<(&Path, u64, bool)> {
