@@ -22,7 +22,7 @@ use smallvec::SmallVec;
 use std::sync::Arc;
 use workspace::{Item, Workspace};
 
-use crate::element::TerminalEl;
+use crate::terminal_element::TerminalEl;
 
 //ASCII Control characters on a keyboard
 //Consts -> Structs -> Impls -> Functions, Vaguely in order of importance
@@ -37,16 +37,19 @@ const UP_SEQ: &str = "\x1b[A";
 const DOWN_SEQ: &str = "\x1b[B";
 const DEFAULT_TITLE: &str = "Terminal";
 
-pub mod element;
+pub mod terminal_element;
 
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct Input(pub String);
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScrollTerminal(pub i32);
+
 actions!(
     terminal,
-    [SIGINT, ESCAPE, DEL, RETURN, LEFT, RIGHT, UP, DOWN, TAB, Clear, Paste, Deploy, Quit]
+    [Sigint, Escape, Del, Return, Left, Right, Up, Down, Tab, Clear, Paste, Deploy, Quit]
 );
-impl_internal_actions!(terminal, [Input]);
+impl_internal_actions!(terminal, [Input, ScrollTerminal]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Terminal::deploy);
@@ -62,6 +65,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Terminal::down);
     cx.add_action(Terminal::tab);
     cx.add_action(Terminal::paste);
+    cx.add_action(Terminal::scroll_terminal);
 }
 
 #[derive(Clone)]
@@ -74,15 +78,16 @@ impl EventListener for ZedListener {
 }
 
 ///A terminal renderer.
-struct Terminal {
+pub struct Terminal {
     pty_tx: Notifier,
     term: Arc<FairMutex<Term<ZedListener>>>,
     title: String,
     has_new_content: bool,
     has_bell: bool, //Currently using iTerm bell, show bell emoji in tab until input is received
+    cur_size: SizeInfo,
 }
 
-enum Event {
+pub enum Event {
     TitleChanged,
     CloseTerminal,
     Activate,
@@ -124,7 +129,7 @@ impl Terminal {
         };
 
         //TODO figure out how to derive this better
-        let size_info = SizeInfo::new(400., 100.0, 5., 5., 0., 0., false);
+        let size_info = SizeInfo::new(200., 100.0, 5., 5., 0., 0., false);
 
         //Set up the terminal...
         let term = Term::new(&config, size_info, ZedListener(events_tx.clone()));
@@ -151,6 +156,7 @@ impl Terminal {
             pty_tx,
             has_new_content: false,
             has_bell: false,
+            cur_size: size_info,
         }
     }
 
@@ -214,6 +220,18 @@ impl Terminal {
         }
     }
 
+    fn set_size(&mut self, new_size: SizeInfo) {
+        if new_size != self.cur_size {
+            self.pty_tx.0.send(Msg::Resize(new_size)).ok();
+            self.term.lock().resize(new_size);
+            self.cur_size = new_size;
+        }
+    }
+
+    fn scroll_terminal(&mut self, scroll: &ScrollTerminal, _: &mut ViewContext<Self>) {
+        self.term.lock().scroll_display(Scroll::Delta(scroll.0));
+    }
+
     ///Create a new Terminal
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         workspace.add_item(Box::new(cx.add_view(|cx| Terminal::new(cx))), cx);
@@ -242,39 +260,39 @@ impl Terminal {
         self.pty_tx.notify(input.0.clone().into_bytes());
     }
 
-    fn up(&mut self, _: &UP, cx: &mut ViewContext<Self>) {
+    fn up(&mut self, _: &Up, cx: &mut ViewContext<Self>) {
         self.write_to_pty(&Input(UP_SEQ.to_string()), cx);
     }
 
-    fn down(&mut self, _: &DOWN, cx: &mut ViewContext<Self>) {
+    fn down(&mut self, _: &Down, cx: &mut ViewContext<Self>) {
         self.write_to_pty(&Input(DOWN_SEQ.to_string()), cx);
     }
 
-    fn tab(&mut self, _: &TAB, cx: &mut ViewContext<Self>) {
+    fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
         self.write_to_pty(&Input(TAB_CHAR.to_string()), cx);
     }
 
-    fn send_sigint(&mut self, _: &SIGINT, cx: &mut ViewContext<Self>) {
+    fn send_sigint(&mut self, _: &Sigint, cx: &mut ViewContext<Self>) {
         self.write_to_pty(&Input(ETX_CHAR.to_string()), cx);
     }
 
-    fn escape(&mut self, _: &ESCAPE, cx: &mut ViewContext<Self>) {
+    fn escape(&mut self, _: &Escape, cx: &mut ViewContext<Self>) {
         self.write_to_pty(&Input(ESC_CHAR.to_string()), cx);
     }
 
-    fn del(&mut self, _: &DEL, cx: &mut ViewContext<Self>) {
+    fn del(&mut self, _: &Del, cx: &mut ViewContext<Self>) {
         self.write_to_pty(&Input(DEL_CHAR.to_string()), cx);
     }
 
-    fn carriage_return(&mut self, _: &RETURN, cx: &mut ViewContext<Self>) {
+    fn carriage_return(&mut self, _: &Return, cx: &mut ViewContext<Self>) {
         self.write_to_pty(&Input(CARRIAGE_RETURN_CHAR.to_string()), cx);
     }
 
-    fn left(&mut self, _: &LEFT, cx: &mut ViewContext<Self>) {
+    fn left(&mut self, _: &Left, cx: &mut ViewContext<Self>) {
         self.write_to_pty(&Input(LEFT_SEQ.to_string()), cx);
     }
 
-    fn right(&mut self, _: &RIGHT, cx: &mut ViewContext<Self>) {
+    fn right(&mut self, _: &Right, cx: &mut ViewContext<Self>) {
         self.write_to_pty(&Input(RIGHT_SEQ.to_string()), cx);
     }
 }
@@ -291,20 +309,10 @@ impl View for Terminal {
     }
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
-        let _theme = cx.global::<Settings>().theme.clone();
-
-        //TODO: derive this
-        let size_info = SizeInfo::new(400., 100.0, 5., 5., 0., 0., false);
-
-        TerminalEl::new(
-            self.term.clone(),
-            self.pty_tx.0.clone(),
-            size_info,
-            cx.view_id(),
-        )
-        .contained()
-        // .with_style(theme.terminal.container)
-        .boxed()
+        TerminalEl::new(cx.handle())
+            .contained()
+            // .with_style(theme.terminal.container)
+            .boxed()
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
@@ -402,5 +410,34 @@ impl Item for Terminal {
 
     fn should_activate_item_on_event(event: &Self::Event) -> bool {
         matches!(event, &Event::Activate)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::terminal_element::build_chunks;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    async fn test_terminal(cx: &mut TestAppContext) {
+        let terminal = cx.add_view(Default::default(), |cx| Terminal::new(cx));
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_to_pty(&Input(("expr 3 + 4".to_string()).to_string()), cx);
+            terminal.carriage_return(&Return, cx);
+        });
+
+        terminal
+            .condition(cx, |terminal, _cx| {
+                let term = terminal.term.clone();
+                let (chunks, _) = build_chunks(
+                    term.lock().renderable_content().display_iter,
+                    &Default::default(),
+                );
+                let content = chunks.iter().map(|e| e.0.trim()).collect::<String>();
+                content.contains("7")
+            })
+            .await;
     }
 }

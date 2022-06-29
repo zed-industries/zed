@@ -356,16 +356,16 @@
     {
         "context": "Terminal",
         "bindings": {
-            "ctrl-c": "terminal::SIGINT",
-            "escape": "terminal::ESCAPE",
+            "ctrl-c": "terminal::Sigint",
+            "escape": "terminal::Escape",
             "ctrl-d": "terminal::Quit",
-            "backspace": "terminal::DEL",
-            "enter": "terminal::RETURN",
-            "left": "terminal::LEFT",
-            "right": "terminal::RIGHT",
-            "up": "terminal::UP",
-            "down": "terminal::DOWN",
-            "tab": "terminal::TAB",
+            "backspace": "terminal::Del",
+            "enter": "terminal::Return",
+            "left": "terminal::Left",
+            "right": "terminal::Right",
+            "up": "terminal::Up",
+            "down": "terminal::Down",
+            "tab": "terminal::Tab",
             "cmd-v": "terminal::Paste"
         }
     }

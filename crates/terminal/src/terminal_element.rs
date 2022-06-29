@@ -1,14 +1,11 @@
 use alacritty_terminal::{
     ansi::Color as AnsiColor,
-    event_loop::Msg,
-    grid::{Indexed, Scroll},
+    grid::{GridIterator, Indexed},
     index::Point,
-    sync::FairMutex,
     term::{
         cell::{Cell, Flags},
         SizeInfo,
     },
-    Term,
 };
 use gpui::{
     color::Color,
@@ -17,38 +14,28 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     json::json,
     text_layout::Line,
-    Event, MouseRegion, Quad,
+    Event, MouseRegion, PaintContext, Quad, WeakViewHandle,
 };
-use mio_extras::channel::Sender;
 use ordered_float::OrderedFloat;
 use settings::Settings;
-use std::{rc::Rc, sync::Arc};
+use std::rc::Rc;
 use theme::TerminalStyle;
 
-use crate::{Input, ZedListener};
+use crate::{Input, ScrollTerminal, Terminal};
 
 const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
+const MAGIC_VISUAL_WIDTH_MULTIPLIER: f32 = 1.28; //1/8th + .003 so we bias long instead of short
+
+#[cfg(debug_assertions)]
+const DEBUG_GRID: bool = false;
 
 pub struct TerminalEl {
-    term: Arc<FairMutex<Term<ZedListener>>>,
-    pty_tx: Sender<Msg>,
-    size: SizeInfo,
-    view_id: usize,
+    view: WeakViewHandle<Terminal>,
 }
 
 impl TerminalEl {
-    pub fn new(
-        term: Arc<FairMutex<Term<ZedListener>>>,
-        pty_tx: Sender<Msg>,
-        size: SizeInfo,
-        view_id: usize,
-    ) -> TerminalEl {
-        TerminalEl {
-            term,
-            pty_tx,
-            size,
-            view_id,
-        }
+    pub fn new(view: WeakViewHandle<Terminal>) -> TerminalEl {
+        TerminalEl { view }
     }
 }
 
@@ -57,6 +44,7 @@ pub struct LayoutState {
     line_height: f32,
     em_width: f32,
     cursor: Option<RectF>,
+    cur_size: SizeInfo,
 }
 
 impl Element for TerminalEl {
@@ -68,88 +56,56 @@ impl Element for TerminalEl {
         constraint: gpui::SizeConstraint,
         cx: &mut gpui::LayoutContext,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
+        let view = self.view.upgrade(cx).unwrap();
         let size = constraint.max;
         let settings = cx.global::<Settings>();
         let editor_theme = &settings.theme.editor;
-        let terminal_theme = &settings.theme.terminal;
-        //Get terminal
-        let mut term = self.term.lock();
 
         //Set up text rendering
-        let font_cache = cx.font_cache();
-
-        let font_family_id = settings.buffer_font_family;
-        let font_family_name = cx.font_cache().family_name(font_family_id).unwrap();
-        let font_properties = Default::default();
-        let font_id = font_cache
-            .select_font(font_family_id, &font_properties)
-            .unwrap();
-        let font_size = settings.buffer_font_size;
-
         let text_style = TextStyle {
             color: editor_theme.text_color,
             font_family_id: settings.buffer_font_family,
-            font_family_name,
-            font_id,
-            font_size,
+            font_family_name: cx
+                .font_cache()
+                .family_name(settings.buffer_font_family)
+                .unwrap(),
+            font_id: cx
+                .font_cache()
+                .select_font(settings.buffer_font_family, &Default::default())
+                .unwrap(),
+            font_size: settings.buffer_font_size,
             font_properties: Default::default(),
             underline: Default::default(),
         };
 
         let line_height = cx.font_cache.line_height(text_style.font_size);
-        let em_width = cx
+        let cell_width = cx
             .font_cache()
             .em_width(text_style.font_id, text_style.font_size)
-            + 2.;
+            * MAGIC_VISUAL_WIDTH_MULTIPLIER;
 
-        //Resize terminal
-        let new_size = SizeInfo::new(size.x(), size.y(), em_width, line_height, 0., 0., false);
-        if !new_size.eq(&self.size) {
-            self.pty_tx.send(Msg::Resize(new_size)).ok();
-            term.resize(new_size);
-            self.size = new_size;
-        }
+        let new_size = SizeInfo::new(
+            size.x() - cell_width, //Padding. Really should make this more explicit
+            size.y(),
+            cell_width,
+            line_height,
+            0.,
+            0.,
+            false,
+        );
+        view.update(cx.app, |view, _cx| {
+            view.set_size(new_size);
+        });
 
-        //Start rendering
+        let settings = cx.global::<Settings>();
+        let terminal_theme = &settings.theme.terminal;
+        let term = view.read(cx).term.lock();
+
         let content = term.renderable_content();
-
-        let mut lines: Vec<(String, Option<HighlightStyle>)> = vec![];
-        let mut last_line = 0;
-        let mut line_count = 1;
-        let mut cur_chunk = String::new();
-
-        let mut cur_highlight = HighlightStyle {
-            color: Some(Color::white()),
-            ..Default::default()
-        };
-
-        for cell in content.display_iter {
-            let Indexed {
-                point: Point { line, .. },
-                cell: Cell {
-                    c, fg, flags, .. // TODO: Add bg and flags
-                }, //TODO: Learn what 'CellExtra does'
-            } = cell;
-
-            let new_highlight = make_style_from_cell(fg, flags, &terminal_theme);
-
-            if line != last_line {
-                line_count += 1;
-                cur_chunk.push('\n');
-                last_line = line.0;
-            }
-
-            if new_highlight != cur_highlight {
-                lines.push((cur_chunk.clone(), Some(cur_highlight.clone())));
-                cur_chunk.clear();
-                cur_highlight = new_highlight;
-            }
-            cur_chunk.push(*c)
-        }
-        lines.push((cur_chunk, Some(cur_highlight)));
+        let (chunks, line_count) = build_chunks(content.display_iter, &terminal_theme);
 
         let shaped_lines = layout_highlighted_chunks(
-            lines.iter().map(|(text, style)| (text.as_str(), *style)),
+            chunks.iter().map(|(text, style)| (text.as_str(), *style)),
             &text_style,
             cx.text_layout_cache,
             &cx.font_cache,
@@ -167,7 +123,7 @@ impl Element for TerminalEl {
             let cursor_x = layout_line.x_for_index(content.cursor.point.column.0);
             cursor = Some(RectF::new(
                 vec2f(cursor_x, cursor_line as f32 * line_height),
-                vec2f(em_width, line_height),
+                vec2f(cell_width, line_height),
             ));
         }
 
@@ -176,8 +132,9 @@ impl Element for TerminalEl {
             LayoutState {
                 lines: shaped_lines,
                 line_height,
-                em_width,
+                em_width: cell_width,
                 cursor,
+                cur_size: new_size,
             },
         )
     }
@@ -192,7 +149,7 @@ impl Element for TerminalEl {
         cx.scene.push_layer(Some(visible_bounds));
 
         cx.scene.push_mouse_region(MouseRegion {
-            view_id: self.view_id,
+            view_id: self.view.id(),
             discriminant: None,
             bounds: visible_bounds,
             hover: None,
@@ -205,7 +162,7 @@ impl Element for TerminalEl {
             right_mouse_down_out: None,
         });
 
-        let origin = bounds.origin() + vec2f(layout.em_width, 0.);
+        let origin = bounds.origin() + vec2f(layout.em_width, 0.); //Padding
 
         let mut line_origin = origin;
         for line in &layout.lines {
@@ -229,6 +186,11 @@ impl Element for TerminalEl {
             });
         }
 
+        #[cfg(debug_assertions)]
+        if DEBUG_GRID {
+            draw_debug_grid(bounds, layout, cx);
+        }
+
         cx.scene.pop_layer();
     }
 
@@ -248,8 +210,7 @@ impl Element for TerminalEl {
                 if visible_bounds.contains_point(*position) {
                     let vertical_scroll =
                         (delta.y() / layout.line_height) * ALACRITTY_SCROLL_MULTIPLIER;
-                    let scroll = Scroll::Delta(vertical_scroll.round() as i32);
-                    self.term.lock().scroll_display(scroll);
+                    cx.dispatch_action(ScrollTerminal(vertical_scroll.round() as i32));
                     true
                 } else {
                     false
@@ -280,6 +241,47 @@ impl Element for TerminalEl {
             "type": "TerminalElement",
         })
     }
+}
+
+pub(crate) fn build_chunks(
+    grid_iterator: GridIterator<Cell>,
+    theme: &TerminalStyle,
+) -> (Vec<(String, Option<HighlightStyle>)>, usize) {
+    let mut lines: Vec<(String, Option<HighlightStyle>)> = vec![];
+    let mut last_line = 0;
+    let mut line_count = 1;
+    let mut cur_chunk = String::new();
+
+    let mut cur_highlight = HighlightStyle {
+        color: Some(Color::white()),
+        ..Default::default()
+    };
+
+    for cell in grid_iterator {
+        let Indexed {
+          point: Point { line, .. },
+          cell: Cell {
+              c, fg, flags, .. // TODO: Add bg and flags
+          }, //TODO: Learn what 'CellExtra does'
+      } = cell;
+
+        let new_highlight = make_style_from_cell(fg, flags, theme);
+
+        if line != last_line {
+            line_count += 1;
+            cur_chunk.push('\n');
+            last_line = line.0;
+        }
+
+        if new_highlight != cur_highlight {
+            lines.push((cur_chunk.clone(), Some(cur_highlight.clone())));
+            cur_chunk.clear();
+            cur_highlight = new_highlight;
+        }
+        cur_chunk.push(*c)
+    }
+    lines.push((cur_chunk, Some(cur_highlight)));
+    (lines, line_count)
 }
 
 fn make_style_from_cell(fg: &AnsiColor, flags: &Flags, style: &TerminalStyle) -> HighlightStyle {
@@ -335,5 +337,34 @@ fn alac_color_to_gpui_color(allac_color: &AnsiColor, style: &TerminalStyle) -> C
         }, //Theme defined
         alacritty_terminal::ansi::Color::Spec(rgb) => Color::new(rgb.r, rgb.g, rgb.b, 1),
         alacritty_terminal::ansi::Color::Indexed(_) => Color::white(), //Color cube weirdness
+    }
+}
+
+#[cfg(debug_assertions)]
+fn draw_debug_grid(bounds: RectF, layout: &mut LayoutState, cx: &mut PaintContext) {
+    let width = layout.cur_size.width();
+    let height = layout.cur_size.height();
+    //Alacritty uses 'as usize', so shall we.
+    for col in 0..(width / layout.em_width).round() as usize {
+        cx.scene.push_quad(Quad {
+            bounds: RectF::new(
+                bounds.origin() + vec2f((col + 1) as f32 * layout.em_width, 0.),
+                vec2f(1., height),
+            ),
+            background: Some(Color::green()),
+            border: Default::default(),
+            corner_radius: 0.,
+        });
+    }
+    for row in 0..((height / layout.line_height) + 1.0).round() as usize {
+        cx.scene.push_quad(Quad {
+            bounds: RectF::new(
+                bounds.origin() + vec2f(layout.em_width, row as f32 * layout.line_height),
+                vec2f(width, 1.),
+            ),
+            background: Some(Color::green()),
+            border: Default::default(),
+            corner_radius: 0.,
+        });
     }
 }
