@@ -17,12 +17,12 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     json::json,
     text_layout::Line,
-    Event, Quad,
+    Event, MouseRegion, Quad,
 };
 use mio_extras::channel::Sender;
 use ordered_float::OrderedFloat;
 use settings::Settings;
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 use theme::TerminalStyle;
 
 use crate::{Input, ZedListener};
@@ -33,6 +33,7 @@ pub struct TerminalEl {
     term: Arc<FairMutex<Term<ZedListener>>>,
     pty_tx: Sender<Msg>,
     size: SizeInfo,
+    view_id: usize,
 }
 
 impl TerminalEl {
@@ -40,8 +41,14 @@ impl TerminalEl {
         term: Arc<FairMutex<Term<ZedListener>>>,
         pty_tx: Sender<Msg>,
         size: SizeInfo,
+        view_id: usize,
     ) -> TerminalEl {
-        TerminalEl { term, pty_tx, size }
+        TerminalEl {
+            term,
+            pty_tx,
+            size,
+            view_id,
+        }
     }
 }
 
@@ -183,6 +190,21 @@ impl Element for TerminalEl {
         cx: &mut gpui::PaintContext,
     ) -> Self::PaintState {
         cx.scene.push_layer(Some(visible_bounds));
+
+        cx.scene.push_mouse_region(MouseRegion {
+            view_id: self.view_id,
+            discriminant: None,
+            bounds: visible_bounds,
+            hover: None,
+            mouse_down: Some(Rc::new(|_, cx| cx.focus_parent_view())),
+            click: None,
+            right_mouse_down: None,
+            right_click: None,
+            drag: None,
+            mouse_down_out: None,
+            right_mouse_down_out: None,
+        });
+
         let origin = bounds.origin() + vec2f(layout.em_width, 0.);
 
         let mut line_origin = origin;
@@ -214,24 +236,34 @@ impl Element for TerminalEl {
         &mut self,
         event: &gpui::Event,
         _bounds: gpui::geometry::rect::RectF,
-        _visible_bounds: gpui::geometry::rect::RectF,
+        visible_bounds: gpui::geometry::rect::RectF,
         layout: &mut Self::LayoutState,
         _paint: &mut Self::PaintState,
         cx: &mut gpui::EventContext,
     ) -> bool {
         match event {
-            Event::ScrollWheel { delta, .. } => {
-                let vertical_scroll =
-                    (delta.y() / layout.line_height) * ALACRITTY_SCROLL_MULTIPLIER;
-                let scroll = Scroll::Delta(vertical_scroll.round() as i32);
-                self.term.lock().scroll_display(scroll);
-                true
+            Event::ScrollWheel {
+                delta, position, ..
+            } => {
+                if visible_bounds.contains_point(*position) {
+                    let vertical_scroll =
+                        (delta.y() / layout.line_height) * ALACRITTY_SCROLL_MULTIPLIER;
+                    let scroll = Scroll::Delta(vertical_scroll.round() as i32);
+                    self.term.lock().scroll_display(scroll);
+                    true
+                } else {
+                    false
+                }
             }
             Event::KeyDown {
                 input: Some(input), ..
             } => {
-                cx.dispatch_action(Input(input.to_string()));
-                true
+                if cx.is_parent_view_focused() {
+                    cx.dispatch_action(Input(input.to_string()));
+                    true
+                } else {
+                    false
+                }
             }
             _ => false,
         }

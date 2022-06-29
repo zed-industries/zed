@@ -84,13 +84,14 @@ struct Terminal {
     has_bell: bool, //Currently using iTerm bell, show bell emoji in tab until input is received
 }
 
-enum ZedTermEvent {
+enum Event {
     TitleChanged,
     CloseTerminal,
+    Activate,
 }
 
 impl Entity for Terminal {
-    type Event = ZedTermEvent;
+    type Event = Event;
 }
 
 impl Terminal {
@@ -166,7 +167,7 @@ impl Terminal {
                 if !cx.is_self_focused() {
                     //Need to figure out how to trigger a redraw when not in focus
                     self.has_new_content = true; //Change tab content
-                    cx.emit(ZedTermEvent::TitleChanged);
+                    cx.emit(Event::TitleChanged);
                 } else {
                     cx.notify()
                 }
@@ -180,11 +181,11 @@ impl Terminal {
             }
             AlacTermEvent::Title(title) => {
                 self.title = title;
-                cx.emit(ZedTermEvent::TitleChanged);
+                cx.emit(Event::TitleChanged);
             }
             AlacTermEvent::ResetTitle => {
                 self.title = DEFAULT_TITLE.to_string();
-                cx.emit(ZedTermEvent::TitleChanged);
+                cx.emit(Event::TitleChanged);
             }
             AlacTermEvent::ClipboardStore(_, data) => {
                 cx.write_to_clipboard(ClipboardItem::new(data))
@@ -209,7 +210,7 @@ impl Terminal {
             }
             AlacTermEvent::Bell => {
                 self.has_bell = true;
-                cx.emit(ZedTermEvent::TitleChanged);
+                cx.emit(Event::TitleChanged);
             }
             AlacTermEvent::Exit => self.quit(&Quit, cx),
         }
@@ -226,7 +227,7 @@ impl Terminal {
     }
 
     fn quit(&mut self, _: &Quit, cx: &mut ViewContext<Self>) {
-        cx.emit(ZedTermEvent::CloseTerminal);
+        cx.emit(Event::CloseTerminal);
     }
 
     fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
@@ -239,7 +240,7 @@ impl Terminal {
         //iTerm bell behavior, bell stays until terminal is interacted with
         self.has_bell = false;
         self.term.lock().scroll_display(Scroll::Bottom);
-        cx.emit(ZedTermEvent::TitleChanged);
+        cx.emit(Event::TitleChanged);
         self.pty_tx.notify(input.0.clone().into_bytes());
     }
 
@@ -301,13 +302,19 @@ impl View for Terminal {
         //TODO: derive this
         let size_info = SizeInfo::new(400., 100.0, 5., 5., 0., 0., false);
 
-        TerminalEl::new(self.term.clone(), self.pty_tx.0.clone(), size_info)
-            .contained()
-            // .with_style(theme.terminal.container)
-            .boxed()
+        TerminalEl::new(
+            self.term.clone(),
+            self.pty_tx.0.clone(),
+            size_info,
+            cx.view_id(),
+        )
+        .contained()
+        // .with_style(theme.terminal.container)
+        .boxed()
     }
 
-    fn on_focus(&mut self, _: &mut ViewContext<Self>) {
+    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::Activate);
         self.has_new_content = false;
     }
 }
@@ -392,10 +399,14 @@ impl Item for Terminal {
     }
 
     fn should_update_tab_on_event(event: &Self::Event) -> bool {
-        matches!(event, &ZedTermEvent::TitleChanged)
+        matches!(event, &Event::TitleChanged)
     }
 
     fn should_close_item_on_event(event: &Self::Event) -> bool {
-        matches!(event, &ZedTermEvent::CloseTerminal)
+        matches!(event, &Event::CloseTerminal)
+    }
+
+    fn should_activate_item_on_event(event: &Self::Event) -> bool {
+        matches!(event, &Event::Activate)
     }
 }
