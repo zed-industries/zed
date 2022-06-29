@@ -31,7 +31,7 @@ use postage::prelude::Stream;
 use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, ProjectStore, Worktree, WorktreeId};
 use serde::Deserialize;
 use settings::Settings;
-use sidebar::{Side, Sidebar, SidebarButtons, ToggleSidebarItem, ToggleSidebarItemFocus};
+use sidebar::{Side, Sidebar, SidebarButtons, ToggleSidebarItem};
 use smallvec::SmallVec;
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
@@ -90,6 +90,8 @@ actions!(
         ActivatePreviousPane,
         ActivateNextPane,
         FollowNextCollaborator,
+        ToggleLeftSidebar,
+        ToggleRightSidebar,
     ]
 );
 
@@ -103,6 +105,9 @@ pub struct ToggleProjectOnline {
     #[serde(skip_deserializing)]
     pub project: Option<ModelHandle<Project>>,
 }
+
+#[derive(Clone, Deserialize, PartialEq)]
+pub struct ActivatePane(pub usize);
 
 #[derive(Clone, PartialEq)]
 pub struct ToggleFollow(pub PeerId);
@@ -122,7 +127,7 @@ impl_internal_actions!(
         RemoveWorktreeFromProject
     ]
 );
-impl_actions!(workspace, [ToggleProjectOnline]);
+impl_actions!(workspace, [ToggleProjectOnline, ActivatePane]);
 
 pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     pane::init(cx);
@@ -185,7 +190,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
         },
     );
     cx.add_action(Workspace::toggle_sidebar_item);
-    cx.add_action(Workspace::toggle_sidebar_item_focus);
     cx.add_action(Workspace::focus_center);
     cx.add_action(|workspace: &mut Workspace, _: &ActivatePreviousPane, cx| {
         workspace.activate_previous_pane(cx)
@@ -193,6 +197,13 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_action(|workspace: &mut Workspace, _: &ActivateNextPane, cx| {
         workspace.activate_next_pane(cx)
     });
+    cx.add_action(|workspace: &mut Workspace, _: &ToggleLeftSidebar, cx| {
+        workspace.toggle_sidebar(Side::Left, cx);
+    });
+    cx.add_action(|workspace: &mut Workspace, _: &ToggleRightSidebar, cx| {
+        workspace.toggle_sidebar(Side::Right, cx);
+    });
+    cx.add_action(Workspace::activate_pane_at_index);
 
     let client = &app_state.client;
     client.add_view_request_handler(Workspace::handle_follow);
@@ -1248,17 +1259,39 @@ impl Workspace {
         }
     }
 
+    pub fn toggle_sidebar(&mut self, side: Side, cx: &mut ViewContext<Self>) {
+        let sidebar = match side {
+            Side::Left => &mut self.left_sidebar,
+            Side::Right => &mut self.right_sidebar,
+        };
+        sidebar.update(cx, |sidebar, cx| {
+            sidebar.set_open(!sidebar.is_open(), cx);
+        });
+        cx.focus_self();
+        cx.notify();
+    }
+
     pub fn toggle_sidebar_item(&mut self, action: &ToggleSidebarItem, cx: &mut ViewContext<Self>) {
         let sidebar = match action.side {
             Side::Left => &mut self.left_sidebar,
             Side::Right => &mut self.right_sidebar,
         };
         let active_item = sidebar.update(cx, |sidebar, cx| {
-            sidebar.toggle_item(action.item_index, cx);
-            sidebar.active_item().map(|item| item.to_any())
+            if sidebar.is_open() && sidebar.active_item_ix() == action.item_index {
+                sidebar.set_open(false, cx);
+                None
+            } else {
+                sidebar.set_open(true, cx);
+                sidebar.activate_item(action.item_index, cx);
+                sidebar.active_item().cloned()
+            }
         });
         if let Some(active_item) = active_item {
-            cx.focus(active_item);
+            if active_item.is_focused(cx) {
+                cx.focus_self();
+            } else {
+                cx.focus(active_item.to_any());
+            }
         } else {
             cx.focus_self();
         }
@@ -1267,15 +1300,17 @@ impl Workspace {
 
     pub fn toggle_sidebar_item_focus(
         &mut self,
-        action: &ToggleSidebarItemFocus,
+        side: Side,
+        item_index: usize,
         cx: &mut ViewContext<Self>,
     ) {
-        let sidebar = match action.side {
+        let sidebar = match side {
             Side::Left => &mut self.left_sidebar,
             Side::Right => &mut self.right_sidebar,
         };
         let active_item = sidebar.update(cx, |sidebar, cx| {
-            sidebar.activate_item(action.item_index, cx);
+            sidebar.set_open(true, cx);
+            sidebar.activate_item(item_index, cx);
             sidebar.active_item().cloned()
         });
         if let Some(active_item) = active_item {
@@ -1402,6 +1437,15 @@ impl Workspace {
             true
         } else {
             false
+        }
+    }
+
+    fn activate_pane_at_index(&mut self, action: &ActivatePane, cx: &mut ViewContext<Self>) {
+        let panes = self.center.panes();
+        if let Some(pane) = panes.get(action.0).map(|p| (*p).clone()) {
+            self.activate_pane(pane, cx);
+        } else {
+            self.split_pane(self.active_pane.clone(), SplitDirection::Right, cx);
         }
     }
 
@@ -2481,13 +2525,7 @@ pub fn open_paths(
                 let mut workspace = Workspace::new(project, cx);
                 (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
                 if contains_directory {
-                    workspace.toggle_sidebar_item(
-                        &ToggleSidebarItem {
-                            side: Side::Left,
-                            item_index: 0,
-                        },
-                        cx,
-                    );
+                    workspace.toggle_sidebar(Side::Left, cx);
                 }
                 workspace
             })

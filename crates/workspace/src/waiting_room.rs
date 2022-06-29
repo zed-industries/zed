@@ -1,7 +1,4 @@
-use crate::{
-    sidebar::{Side, ToggleSidebarItem},
-    AppState, ToggleFollow, Workspace,
-};
+use crate::{sidebar::Side, AppState, ToggleFollow, Workspace};
 use anyhow::Result;
 use client::{proto, Client, Contact};
 use gpui::{
@@ -104,13 +101,7 @@ impl WaitingRoom {
                                             &app_state,
                                             cx,
                                         );
-                                        workspace.toggle_sidebar_item(
-                                            &ToggleSidebarItem {
-                                                side: Side::Left,
-                                                item_index: 0,
-                                            },
-                                            cx,
-                                        );
+                                        workspace.toggle_sidebar(Side::Left, cx);
                                         if let Some((host_peer_id, _)) =
                                             workspace.project.read(cx).collaborators().iter().find(
                                                 |(_, collaborator)| collaborator.replica_id == 0,
