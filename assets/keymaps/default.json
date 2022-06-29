@@ -13,6 +13,8 @@
             "ctrl-c": "menu::Cancel",
             "shift-cmd-{": "pane::ActivatePrevItem",
             "shift-cmd-}": "pane::ActivateNextItem",
+            "alt-cmd-left": "pane::ActivatePrevItem",
+            "alt-cmd-right": "pane::ActivateNextItem",
             "cmd-w": "pane::CloseActiveItem",
             "cmd-shift-W": "workspace::CloseWindow",
             "alt-cmd-t": "pane::CloseInactiveItems",
