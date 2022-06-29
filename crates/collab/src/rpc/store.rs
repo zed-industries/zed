@@ -32,6 +32,7 @@ struct ConnectionState {
 
 #[derive(Serialize)]
 pub struct Project {
+    pub online: bool,
     pub host_connection_id: ConnectionId,
     pub host: Collaborator,
     pub guests: HashMap<ConnectionId, Collaborator>,
@@ -86,6 +87,11 @@ pub struct LeftProject {
     pub remove_collaborator: bool,
     pub cancel_request: Option<UserId>,
     pub unshare: bool,
+}
+
+pub struct UnsharedProject {
+    pub guests: HashMap<ConnectionId, Collaborator>,
+    pub pending_join_requests: HashMap<UserId, Vec<Receipt<proto::JoinProject>>>,
 }
 
 #[derive(Copy, Clone)]
@@ -297,7 +303,7 @@ impl Store {
         let mut metadata = Vec::new();
         for project_id in project_ids {
             if let Some(project) = self.projects.get(&project_id) {
-                if project.host.user_id == user_id {
+                if project.host.user_id == user_id && project.online {
                     metadata.push(proto::ProjectMetadata {
                         id: project_id.to_proto(),
                         visible_worktree_root_names: project
@@ -323,6 +329,7 @@ impl Store {
         &mut self,
         host_connection_id: ConnectionId,
         project_id: ProjectId,
+        online: bool,
     ) -> Result<()> {
         let connection = self
             .connections
@@ -332,6 +339,7 @@ impl Store {
         self.projects.insert(
             project_id,
             Project {
+                online,
                 host_connection_id,
                 host: Collaborator {
                     user_id: connection.user_id,
@@ -353,8 +361,9 @@ impl Store {
         &mut self,
         project_id: ProjectId,
         worktrees: &[proto::WorktreeMetadata],
+        online: bool,
         connection_id: ConnectionId,
-    ) -> Result<()> {
+    ) -> Result<Option<UnsharedProject>> {
         let project = self
             .projects
             .get_mut(&project_id)
@@ -375,7 +384,34 @@ impl Store {
                     );
                 }
             }
-            Ok(())
+
+            if online != project.online {
+                project.online = online;
+                if project.online {
+                    Ok(None)
+                } else {
+                    for connection_id in project.guest_connection_ids() {
+                        if let Some(connection) = self.connections.get_mut(&connection_id) {
+                            connection.projects.remove(&project_id);
+                        }
+                    }
+
+                    project.active_replica_ids.clear();
+                    project.language_servers.clear();
+                    for worktree in project.worktrees.values_mut() {
+                        worktree.diagnostic_summaries.clear();
+                        worktree.entries.clear();
+                        worktree.extension_counts.clear();
+                    }
+
+                    Ok(Some(UnsharedProject {
+                        guests: mem::take(&mut project.guests),
+                        pending_join_requests: mem::take(&mut project.join_requests),
+                    }))
+                }
+            } else {
+                Ok(None)
+            }
         } else {
             Err(anyhow!("no such project"))?
         }
@@ -481,13 +517,17 @@ impl Store {
             .projects
             .get_mut(&project_id)
             .ok_or_else(|| anyhow!("no such project"))?;
-        connection.requested_projects.insert(project_id);
-        project
-            .join_requests
-            .entry(requester_id)
-            .or_default()
-            .push(receipt);
-        Ok(())
+        if project.online {
+            connection.requested_projects.insert(project_id);
+            project
+                .join_requests
+                .entry(requester_id)
+                .or_default()
+                .push(receipt);
+            Ok(())
+        } else {
+            Err(anyhow!("no such project"))
+        }
     }
 
     pub fn deny_join_project_request(

@@ -484,14 +484,20 @@ async fn test_offline_projects(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
 ) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
     let user_a = UserId::from_proto(client_a.user_id().unwrap());
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .make_contacts(vec![
+            (&client_a, cx_a),
+            (&client_b, cx_b),
+            (&client_c, cx_c),
+        ])
         .await;
 
     // Set up observers of the project and user stores. Any time either of
@@ -585,7 +591,8 @@ async fn test_offline_projects(
         .await
         .unwrap();
 
-    // When a project is offline, no information about it is sent to the server.
+    // When a project is offline, we still create it on the server but is invisible
+    // to other users.
     deterministic.run_until_parked();
     assert!(server
         .store
@@ -593,7 +600,10 @@ async fn test_offline_projects(
         .await
         .project_metadata_for_user(user_a)
         .is_empty());
-    assert!(project.read_with(cx_a, |project, _| project.remote_id().is_none()));
+    project.read_with(cx_a, |project, _| {
+        assert!(project.remote_id().is_some());
+        assert!(!project.is_online());
+    });
     assert!(client_b
         .user_store
         .read_with(cx_b, |store, _| { store.contacts()[0].projects.is_empty() }));
@@ -667,7 +677,7 @@ async fn test_offline_projects(
 
     // Build another project using a directory which was previously part of
     // an online project. Restore the project's state from the host's database.
-    let project2 = cx_a.update(|cx| {
+    let project2_a = cx_a.update(|cx| {
         Project::local(
             false,
             client_a.client.clone(),
@@ -678,21 +688,21 @@ async fn test_offline_projects(
             cx,
         )
     });
-    project2
+    project2_a
         .update(cx_a, |p, cx| {
             p.find_or_create_local_worktree("/code/crate3", true, cx)
         })
         .await
         .unwrap();
-    project2
+    project2_a
         .update(cx_a, |project, cx| project.restore_state(cx))
         .await
         .unwrap();
 
     // This project is now online, because its directory was previously online.
-    project2.read_with(cx_a, |project, _| assert!(project.is_online()));
+    project2_a.read_with(cx_a, |project, _| assert!(project.is_online()));
     deterministic.run_until_parked();
-    let project2_id = project2.read_with(cx_a, |p, _| p.remote_id()).unwrap();
+    let project2_id = project2_a.read_with(cx_a, |p, _| p.remote_id()).unwrap();
     client_b.user_store.read_with(cx_b, |store, _| {
         assert_eq!(
             store.contacts()[0].projects,
@@ -712,6 +722,41 @@ async fn test_offline_projects(
                     guests: Default::default(),
                 }
             ]
+        );
+    });
+
+    let project2_b = client_b.build_remote_project(&project2_a, cx_a, cx_b).await;
+    let project2_c = cx_c.foreground().spawn(Project::remote(
+        project2_id,
+        client_c.client.clone(),
+        client_c.user_store.clone(),
+        client_c.project_store.clone(),
+        client_c.language_registry.clone(),
+        FakeFs::new(cx_c.background()),
+        cx_c.to_async(),
+    ));
+    deterministic.run_until_parked();
+
+    // Taking a project offline unshares the project, rejects any pending join request and
+    // disconnects existing guests.
+    project2_a.update(cx_a, |project, cx| project.set_online(false, cx));
+    deterministic.run_until_parked();
+    project2_a.read_with(cx_a, |project, _| assert!(!project.is_shared()));
+    project2_b.read_with(cx_b, |project, _| assert!(project.is_read_only()));
+    project2_c.await.unwrap_err();
+
+    client_b.user_store.read_with(cx_b, |store, _| {
+        assert_eq!(
+            store.contacts()[0].projects,
+            &[ProjectMetadata {
+                id: project_id,
+                visible_worktree_root_names: vec![
+                    "crate1".into(),
+                    "crate2".into(),
+                    "crate3".into()
+                ],
+                guests: Default::default(),
+            },]
         );
     });
 

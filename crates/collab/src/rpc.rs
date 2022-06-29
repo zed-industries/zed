@@ -605,9 +605,11 @@ impl Server {
             .await
             .user_id_for_connection(request.sender_id)?;
         let project_id = self.app_state.db.register_project(user_id).await?;
-        self.store_mut()
-            .await
-            .register_project(request.sender_id, project_id)?;
+        self.store_mut().await.register_project(
+            request.sender_id,
+            project_id,
+            request.payload.online,
+        )?;
 
         response.send(proto::RegisterProjectResponse {
             project_id: project_id.to_proto(),
@@ -925,12 +927,53 @@ impl Server {
             let guest_connection_ids = state
                 .read_project(project_id, request.sender_id)?
                 .guest_connection_ids();
-            state.update_project(project_id, &request.payload.worktrees, request.sender_id)?;
-            broadcast(request.sender_id, guest_connection_ids, |connection_id| {
-                self.peer
-                    .forward_send(request.sender_id, connection_id, request.payload.clone())
-            });
+            let unshared_project = state.update_project(
+                project_id,
+                &request.payload.worktrees,
+                request.payload.online,
+                request.sender_id,
+            )?;
+
+            if let Some(unshared_project) = unshared_project {
+                broadcast(
+                    request.sender_id,
+                    unshared_project.guests.keys().copied(),
+                    |conn_id| {
+                        self.peer.send(
+                            conn_id,
+                            proto::UnregisterProject {
+                                project_id: project_id.to_proto(),
+                            },
+                        )
+                    },
+                );
+                for (_, receipts) in unshared_project.pending_join_requests {
+                    for receipt in receipts {
+                        self.peer.respond(
+                            receipt,
+                            proto::JoinProjectResponse {
+                                variant: Some(proto::join_project_response::Variant::Decline(
+                                    proto::join_project_response::Decline {
+                                        reason:
+                                            proto::join_project_response::decline::Reason::Closed
+                                                as i32,
+                                    },
+                                )),
+                            },
+                        )?;
+                    }
+                }
+            } else {
+                broadcast(request.sender_id, guest_connection_ids, |connection_id| {
+                    self.peer.forward_send(
+                        request.sender_id,
+                        connection_id,
+                        request.payload.clone(),
+                    )
+                });
+            }
         };
+
         self.update_user_contacts(user_id).await?;
         Ok(())
     }

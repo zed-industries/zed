@@ -121,7 +121,9 @@ message Test {
     uint64 id = 1;
 }
 
-message RegisterProject {}
+message RegisterProject {
+    bool online = 1;
+}
 
 message RegisterProjectResponse {
     uint64 project_id = 1;
@@ -134,6 +136,7 @@ message UnregisterProject {
 message UpdateProject {
     uint64 project_id = 1;
     repeated WorktreeMetadata worktrees = 2;
+    bool online = 3;
 }
 
 message RegisterProjectActivity {
