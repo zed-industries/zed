@@ -618,7 +618,7 @@ impl Db for PostgresDb {
             WHERE
                 user_durations.user_id = project_durations.user_id AND
                 user_durations.user_id = users.id
-            ORDER BY user_id ASC, project_duration DESC
+            ORDER BY total_duration DESC, user_id ASC
         ";
 
         let mut rows = sqlx::query_as::<_, (UserId, String, ProjectId, i64)>(query)
@@ -1625,8 +1625,8 @@ pub mod tests {
                     id: user_1,
                     github_login: "user_1".to_string(),
                     project_activity: vec![
+                        (project_1, Duration::from_secs(25)),
                         (project_2, Duration::from_secs(30)),
-                        (project_1, Duration::from_secs(25))
                     ]
                 },
                 UserActivitySummary {
