@@ -1455,9 +1455,9 @@ impl LocalSnapshot {
         );
 
         if let Some(removed_entry) = removed_entry {
-            self.dec_extension_count(&removed_entry.path);
+            self.dec_extension_count(&removed_entry.path, removed_entry.is_ignored);
         }
-        self.inc_extension_count(&entry.path);
+        self.inc_extension_count(&entry.path, entry.is_ignored);
 
         entry
     }
@@ -1494,7 +1494,7 @@ impl LocalSnapshot {
 
         for mut entry in entries {
             self.reuse_entry_id(&mut entry);
-            self.inc_extension_count(&entry.path);
+            self.inc_extension_count(&entry.path, entry.is_ignored);
             entries_by_id_edits.push(Edit::Insert(PathEntry {
                 id: entry.id,
                 path: entry.path.clone(),
@@ -1508,24 +1508,28 @@ impl LocalSnapshot {
         let removed_entries = self.entries_by_id.edit(entries_by_id_edits, &());
 
         for removed_entry in removed_entries {
-            self.dec_extension_count(&removed_entry.path);
+            self.dec_extension_count(&removed_entry.path, removed_entry.is_ignored);
         }
     }
 
-    fn inc_extension_count(&mut self, path: &Path) {
-        if let Some(extension) = path.extension() {
-            if let Some(count) = self.extension_counts.get_mut(extension) {
-                *count += 1;
-            } else {
-                self.extension_counts.insert(extension.into(), 1);
+    fn inc_extension_count(&mut self, path: &Path, ignored: bool) {
+        if !ignored {
+            if let Some(extension) = path.extension() {
+                if let Some(count) = self.extension_counts.get_mut(extension) {
+                    *count += 1;
+                } else {
+                    self.extension_counts.insert(extension.into(), 1);
+                }
             }
         }
     }
 
-    fn dec_extension_count(&mut self, path: &Path) {
-        if let Some(extension) = path.extension() {
-            if let Some(count) = self.extension_counts.get_mut(extension) {
-                *count -= 1;
+    fn dec_extension_count(&mut self, path: &Path, ignored: bool) {
+        if !ignored {
+            if let Some(extension) = path.extension() {
+                if let Some(count) = self.extension_counts.get_mut(extension) {
+                    *count -= 1;
+                }
             }
         }
     }
@@ -1557,7 +1561,7 @@ impl LocalSnapshot {
                 .or_insert(entry.id);
             *removed_entry_id = cmp::max(*removed_entry_id, entry.id);
             entries_by_id_edits.push(Edit::Remove(entry.id));
-            self.dec_extension_count(&entry.path);
+            self.dec_extension_count(&entry.path, entry.is_ignored);
         }
         self.entries_by_id.edit(entries_by_id_edits, &());
 
