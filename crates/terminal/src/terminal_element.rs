@@ -24,10 +24,9 @@ use theme::TerminalStyle;
 use crate::{Input, ScrollTerminal, Terminal};
 
 const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
-const MAGIC_VISUAL_WIDTH_MULTIPLIER: f32 = 1.28; //1/8th + .003 so we bias long instead of short
 
 #[cfg(debug_assertions)]
-const DEBUG_GRID: bool = false;
+const DEBUG_GRID: bool = true;
 
 pub struct TerminalEl {
     view: WeakViewHandle<Terminal>,
@@ -60,17 +59,14 @@ impl Element for TerminalEl {
         let size = constraint.max;
         let settings = cx.global::<Settings>();
         let editor_theme = &settings.theme.editor;
+        let font_cache = cx.font_cache();
 
         //Set up text rendering
         let text_style = TextStyle {
             color: editor_theme.text_color,
             font_family_id: settings.buffer_font_family,
-            font_family_name: cx
-                .font_cache()
-                .family_name(settings.buffer_font_family)
-                .unwrap(),
-            font_id: cx
-                .font_cache()
+            font_family_name: font_cache.family_name(settings.buffer_font_family).unwrap(),
+            font_id: font_cache
                 .select_font(settings.buffer_font_family, &Default::default())
                 .unwrap(),
             font_size: settings.buffer_font_size,
@@ -78,14 +74,11 @@ impl Element for TerminalEl {
             underline: Default::default(),
         };
 
-        let line_height = cx.font_cache.line_height(text_style.font_size);
-        let cell_width = cx
-            .font_cache()
-            .em_width(text_style.font_id, text_style.font_size)
-            * MAGIC_VISUAL_WIDTH_MULTIPLIER;
+        let line_height = font_cache.line_height(text_style.font_size);
+        let cell_width = font_cache.em_advance(text_style.font_id, text_style.font_size);
 
         let new_size = SizeInfo::new(
-            size.x() - cell_width, //Padding. Really should make this more explicit
+            size.x() - cell_width,
             size.y(),
             cell_width,
             line_height,
