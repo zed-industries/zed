@@ -52,7 +52,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
         Arc,
     },
-    time::{Duration, Instant},
+    time::Instant,
 };
 use thiserror::Error;
 use util::{post_inc, ResultExt, TryFutureExt as _};
@@ -403,20 +403,11 @@ impl Project {
             });
 
             let (online_tx, online_rx) = watch::channel_with(online);
-            let mut send_extension_counts = None;
             let _maintain_online_status = cx.spawn_weak({
                 let mut online_rx = online_rx.clone();
                 move |this, mut cx| async move {
                     while let Some(online) = online_rx.recv().await {
                         let this = this.upgrade(&cx)?;
-                        if online {
-                            send_extension_counts = Some(
-                                this.update(&mut cx, |this, cx| this.send_extension_counts(cx)),
-                            );
-                        } else {
-                            send_extension_counts.take();
-                        }
-
                         this.update(&mut cx, |this, cx| {
                             if !online {
                                 this.unshared(cx);
@@ -468,40 +459,6 @@ impl Project {
                 next_language_server_id: 0,
                 nonce: StdRng::from_entropy().gen(),
                 initialized_persistent_state: false,
-            }
-        })
-    }
-
-    fn send_extension_counts(&self, cx: &mut ModelContext<Self>) -> Task<Option<()>> {
-        cx.spawn_weak(|this, cx| async move {
-            loop {
-                let this = this.upgrade(&cx)?;
-                this.read_with(&cx, |this, cx| {
-                    if let Some(project_id) = this.remote_id() {
-                        for worktree in this.visible_worktrees(cx) {
-                            if let Some(worktree) = worktree.read(cx).as_local() {
-                                let mut extensions = Vec::new();
-                                let mut counts = Vec::new();
-
-                                for (extension, count) in worktree.extension_counts() {
-                                    extensions.push(extension.to_string_lossy().to_string());
-                                    counts.push(*count as u32);
-                                }
-
-                                this.client
-                                    .send(proto::UpdateWorktreeExtensions {
-                                        project_id,
-                                        worktree_id: worktree.id().to_proto(),
-                                        extensions,
-                                        counts,
-                                    })
-                                    .log_err();
-                            }
-                        }
-                    }
-                });
-
-                cx.background().timer(Duration::from_secs(60 * 5)).await;
             }
         })
     }
@@ -1015,13 +972,38 @@ impl Project {
                 Default::default()
             };
             if let Some(project_id) = *remote_id_rx.borrow() {
+                let online = *online_rx.borrow();
                 self.client
                     .send(proto::UpdateProject {
                         project_id,
                         worktrees,
-                        online: *online_rx.borrow(),
+                        online,
                     })
                     .log_err();
+
+                if online {
+                    let worktrees = self.visible_worktrees(cx).collect::<Vec<_>>();
+                    let scans_complete =
+                        futures::future::join_all(worktrees.iter().filter_map(|worktree| {
+                            Some(worktree.read(cx).as_local()?.scan_complete())
+                        }));
+
+                    let worktrees = worktrees.into_iter().map(|handle| handle.downgrade());
+                    cx.spawn_weak(move |_, cx| async move {
+                        scans_complete.await;
+                        cx.read(|cx| {
+                            for worktree in worktrees {
+                                if let Some(worktree) = worktree
+                                    .upgrade(cx)
+                                    .and_then(|worktree| worktree.read(cx).as_local())
+                                {
+                                    worktree.send_extension_counts(project_id);
+                                }
+                            }
+                        })
+                    })
+                    .detach();
+                }
             }
 
             self.project_store.update(cx, |_, cx| cx.notify());

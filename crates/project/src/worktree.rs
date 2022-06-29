@@ -1037,6 +1037,25 @@ impl LocalWorktree {
             }
         }
     }
+
+    pub fn send_extension_counts(&self, project_id: u64) {
+        let mut extensions = Vec::new();
+        let mut counts = Vec::new();
+
+        for (extension, count) in self.extension_counts() {
+            extensions.push(extension.to_string_lossy().to_string());
+            counts.push(*count as u32);
+        }
+
+        self.client
+            .send(proto::UpdateWorktreeExtensions {
+                project_id,
+                worktree_id: self.id().to_proto(),
+                extensions,
+                counts,
+            })
+            .log_err();
+    }
 }
 
 impl RemoteWorktree {

@@ -890,7 +890,7 @@ impl LspCommand for GetHover {
         message: Option<lsp::Hover>,
         _: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
-        mut cx: AsyncAppContext,
+        cx: AsyncAppContext,
     ) -> Result<Self::Response> {
         Ok(message.and_then(|hover| {
             let range = hover.range.map(|range| {
