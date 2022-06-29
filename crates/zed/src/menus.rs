@@ -194,6 +194,27 @@ pub fn menus() -> Vec<Menu<'static>> {
                     name: "Toggle Right Sidebar",
                     action: Box::new(workspace::ToggleRightSidebar),
                 },
+                MenuItem::Submenu(Menu {
+                    name: "Editor Layout",
+                    items: vec![
+                        MenuItem::Action {
+                            name: "Split Up",
+                            action: Box::new(workspace::SplitUp),
+                        },
+                        MenuItem::Action {
+                            name: "Split Down",
+                            action: Box::new(workspace::SplitDown),
+                        },
+                        MenuItem::Action {
+                            name: "Split Left",
+                            action: Box::new(workspace::SplitLeft),
+                        },
+                        MenuItem::Action {
+                            name: "Split Right",
+                            action: Box::new(workspace::SplitRight),
+                        },
+                    ],
+                }),
                 MenuItem::Separator,
                 MenuItem::Action {
                     name: "Project Panel",
