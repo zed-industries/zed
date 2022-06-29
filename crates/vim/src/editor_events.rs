@@ -13,7 +13,7 @@ pub fn init(cx: &mut MutableAppContext) {
 fn editor_created(EditorCreated(editor): &EditorCreated, cx: &mut MutableAppContext) {
     cx.update_default_global(|vim: &mut Vim, cx| {
         vim.editors.insert(editor.id(), editor.downgrade());
-        vim.sync_editor_options(cx);
+        vim.sync_vim_settings(cx);
     })
 }
 
@@ -42,7 +42,7 @@ fn editor_blurred(EditorBlurred(editor): &EditorBlurred, cx: &mut MutableAppCont
                 vim.active_editor = None;
             }
         }
-        vim.sync_editor_options(cx);
+        vim.sync_vim_settings(cx);
     })
 }
 
