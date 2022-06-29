@@ -1243,6 +1243,10 @@ impl Project {
     }
 
     fn share(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        if !self.is_online() {
+            return Task::ready(Err(anyhow!("can't share an offline project")));
+        }
+
         let project_id;
         if let ProjectClientState::Local {
             remote_id_rx,
@@ -1358,11 +1362,17 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(project_id) = self.remote_id() {
-            let share = self.share(cx);
+            let share = if self.is_online() && allow {
+                Some(self.share(cx))
+            } else {
+                None
+            };
             let client = self.client.clone();
             cx.foreground()
                 .spawn(async move {
-                    share.await?;
+                    if let Some(share) = share {
+                        share.await?;
+                    }
                     client.send(proto::RespondToJoinProjectRequest {
                         requester_id,
                         project_id,

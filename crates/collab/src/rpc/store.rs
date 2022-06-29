@@ -657,6 +657,10 @@ impl Store {
         scan_id: u64,
     ) -> Result<(Vec<ConnectionId>, bool, HashMap<String, usize>)> {
         let project = self.write_project(project_id, connection_id)?;
+        if !project.online {
+            return Err(anyhow!("project is not online"));
+        }
+
         let connection_ids = project.connection_ids();
         let mut worktree = project.worktrees.entry(worktree_id).or_default();
         let metadata_changed = worktree_root_name != worktree.root_name;
