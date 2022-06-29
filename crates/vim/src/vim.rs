@@ -51,6 +51,10 @@ pub fn init(cx: &mut MutableAppContext) {
         }
     });
 
+    // Sync initial settings with the rest of the app
+    Vim::update(cx, |state, cx| state.sync_vim_settings(cx));
+
+    // Any time settings change, update vim mode to match
     cx.observe_global::<Settings, _>(|cx| {
         Vim::update(cx, |state, cx| {
             state.set_enabled(cx.global::<Settings>().vim_mode, cx)
@@ -95,23 +99,23 @@ impl Vim {
     fn switch_mode(&mut self, mode: Mode, cx: &mut MutableAppContext) {
         self.state.mode = mode;
         self.state.operator_stack.clear();
-        self.sync_editor_options(cx);
+        self.sync_vim_settings(cx);
     }
 
     fn push_operator(&mut self, operator: Operator, cx: &mut MutableAppContext) {
         self.state.operator_stack.push(operator);
-        self.sync_editor_options(cx);
+        self.sync_vim_settings(cx);
     }
 
     fn pop_operator(&mut self, cx: &mut MutableAppContext) -> Operator {
         let popped_operator = self.state.operator_stack.pop().expect("Operator popped when no operator was on the stack. This likely means there is an invalid keymap config");
-        self.sync_editor_options(cx);
+        self.sync_vim_settings(cx);
         popped_operator
     }
 
     fn clear_operator(&mut self, cx: &mut MutableAppContext) {
         self.state.operator_stack.clear();
-        self.sync_editor_options(cx);
+        self.sync_vim_settings(cx);
     }
 
     fn active_operator(&self) -> Option<Operator> {
@@ -125,20 +129,21 @@ impl Vim {
             if enabled {
                 self.state.mode = Mode::Normal;
             }
-            cx.update_default_global::<CommandPaletteFilter, _, _>(|filter, _| {
-                if enabled {
-                    filter.filtered_namespaces.remove("vim");
-                } else {
-                    filter.filtered_namespaces.insert("vim");
-                }
-            });
-            self.sync_editor_options(cx);
+            self.sync_vim_settings(cx);
         }
     }
 
-    fn sync_editor_options(&self, cx: &mut MutableAppContext) {
+    fn sync_vim_settings(&self, cx: &mut MutableAppContext) {
         let state = &self.state;
         let cursor_shape = state.cursor_shape();
+
+        cx.update_default_global::<CommandPaletteFilter, _, _>(|filter, _| {
+            if self.enabled {
+                filter.filtered_namespaces.remove("vim");
+            } else {
+                filter.filtered_namespaces.insert("vim");
+            }
+        });
 
         for editor in self.editors.values() {
             if let Some(editor) = editor.upgrade(cx) {

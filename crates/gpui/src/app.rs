@@ -1634,14 +1634,10 @@ impl MutableAppContext {
     pub fn default_global<T: 'static + Default>(&mut self) -> &T {
         let type_id = TypeId::of::<T>();
         self.update(|this| {
-            if !this.globals.contains_key(&type_id) {
+            if let Entry::Vacant(entry) = this.cx.globals.entry(type_id) {
+                entry.insert(Box::new(T::default()));
                 this.notify_global(type_id);
             }
-
-            this.cx
-                .globals
-                .entry(type_id)
-                .or_insert_with(|| Box::new(T::default()));
         });
         self.globals.get(&type_id).unwrap().downcast_ref().unwrap()
     }
