@@ -162,6 +162,7 @@ messages!(
     (UpdateLanguageServer, Foreground),
     (UpdateProject, Foreground),
     (UpdateWorktree, Foreground),
+    (UpdateWorktreeExtensions, Background),
 );
 
 request_messages!(
@@ -254,6 +255,7 @@ entity_messages!(
     UpdateLanguageServer,
     UpdateProject,
     UpdateWorktree,
+    UpdateWorktreeExtensions,
 );
 
 entity_messages!(channel_id, ChannelMessageSent);

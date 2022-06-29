@@ -3,12 +3,7 @@ use anyhow::{anyhow, Result};
 use collections::{btree_map, hash_map::Entry, BTreeMap, BTreeSet, HashMap, HashSet};
 use rpc::{proto, ConnectionId, Receipt};
 use serde::Serialize;
-use std::{
-    mem,
-    path::{Path, PathBuf},
-    str,
-    time::Duration,
-};
+use std::{mem, path::PathBuf, str, time::Duration};
 use time::OffsetDateTime;
 use tracing::instrument;
 
@@ -58,8 +53,6 @@ pub struct Worktree {
     pub visible: bool,
     #[serde(skip)]
     pub entries: BTreeMap<u64, proto::Entry>,
-    #[serde(skip)]
-    pub extension_counts: HashMap<String, usize>,
     #[serde(skip)]
     pub diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
     pub scan_id: u64,
@@ -401,7 +394,6 @@ impl Store {
                     for worktree in project.worktrees.values_mut() {
                         worktree.diagnostic_summaries.clear();
                         worktree.entries.clear();
-                        worktree.extension_counts.clear();
                     }
 
                     Ok(Some(UnsharedProject {
@@ -632,7 +624,6 @@ impl Store {
             for worktree in project.worktrees.values_mut() {
                 worktree.diagnostic_summaries.clear();
                 worktree.entries.clear();
-                worktree.extension_counts.clear();
             }
         }
 
@@ -655,7 +646,7 @@ impl Store {
         removed_entries: &[u64],
         updated_entries: &[proto::Entry],
         scan_id: u64,
-    ) -> Result<(Vec<ConnectionId>, bool, HashMap<String, usize>)> {
+    ) -> Result<(Vec<ConnectionId>, bool)> {
         let project = self.write_project(project_id, connection_id)?;
         if !project.online {
             return Err(anyhow!("project is not online"));
@@ -667,45 +658,15 @@ impl Store {
         worktree.root_name = worktree_root_name.to_string();
 
         for entry_id in removed_entries {
-            if let Some(entry) = worktree.entries.remove(&entry_id) {
-                if !entry.is_ignored {
-                    if let Some(extension) = extension_for_entry(&entry) {
-                        if let Some(count) = worktree.extension_counts.get_mut(extension) {
-                            *count = count.saturating_sub(1);
-                        }
-                    }
-                }
-            }
+            worktree.entries.remove(&entry_id);
         }
 
         for entry in updated_entries {
-            if let Some(old_entry) = worktree.entries.insert(entry.id, entry.clone()) {
-                if !old_entry.is_ignored {
-                    if let Some(extension) = extension_for_entry(&old_entry) {
-                        if let Some(count) = worktree.extension_counts.get_mut(extension) {
-                            *count = count.saturating_sub(1);
-                        }
-                    }
-                }
-            }
-
-            if !entry.is_ignored {
-                if let Some(extension) = extension_for_entry(&entry) {
-                    if let Some(count) = worktree.extension_counts.get_mut(extension) {
-                        *count += 1;
-                    } else {
-                        worktree.extension_counts.insert(extension.into(), 1);
-                    }
-                }
-            }
+            worktree.entries.insert(entry.id, entry.clone());
         }
 
         worktree.scan_id = scan_id;
-        Ok((
-            connection_ids,
-            metadata_changed,
-            worktree.extension_counts.clone(),
-        ))
+        Ok((connection_ids, metadata_changed))
     }
 
     pub fn project_connection_ids(
@@ -893,12 +854,4 @@ impl Channel {
     fn connection_ids(&self) -> Vec<ConnectionId> {
         self.connection_ids.iter().copied().collect()
     }
-}
-
-fn extension_for_entry(entry: &proto::Entry) -> Option<&str> {
-    str::from_utf8(&entry.path)
-        .ok()
-        .map(Path::new)
-        .and_then(|p| p.extension())
-        .and_then(|e| e.to_str())
 }

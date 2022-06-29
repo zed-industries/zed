@@ -1327,6 +1327,10 @@ impl LocalSnapshot {
         &self.abs_path
     }
 
+    pub fn extension_counts(&self) -> &HashMap<OsString, usize> {
+        &self.extension_counts
+    }
+
     #[cfg(test)]
     pub(crate) fn to_proto(
         &self,

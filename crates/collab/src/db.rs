@@ -52,7 +52,7 @@ pub trait Db: Send + Sync {
         &self,
         project_id: ProjectId,
         worktree_id: u64,
-        extensions: HashMap<String, usize>,
+        extensions: HashMap<String, u32>,
     ) -> Result<()>;
 
     /// Get the file counts on the given project keyed by their worktree and extension.
@@ -506,7 +506,7 @@ impl Db for PostgresDb {
         &self,
         project_id: ProjectId,
         worktree_id: u64,
-        extensions: HashMap<String, usize>,
+        extensions: HashMap<String, u32>,
     ) -> Result<()> {
         if extensions.is_empty() {
             return Ok(());
@@ -2255,7 +2255,7 @@ pub mod tests {
         background: Arc<Background>,
         pub users: Mutex<BTreeMap<UserId, User>>,
         pub projects: Mutex<BTreeMap<ProjectId, Project>>,
-        pub worktree_extensions: Mutex<BTreeMap<(ProjectId, u64, String), usize>>,
+        pub worktree_extensions: Mutex<BTreeMap<(ProjectId, u64, String), u32>>,
         pub orgs: Mutex<BTreeMap<OrgId, Org>>,
         pub org_memberships: Mutex<BTreeMap<(OrgId, UserId), bool>>,
         pub channels: Mutex<BTreeMap<ChannelId, Channel>>,
@@ -2442,7 +2442,7 @@ pub mod tests {
             &self,
             project_id: ProjectId,
             worktree_id: u64,
-            extensions: HashMap<String, usize>,
+            extensions: HashMap<String, u32>,
         ) -> Result<()> {
             self.background.simulate_random_delay().await;
             if !self.projects.lock().contains_key(&project_id) {
