@@ -23,6 +23,7 @@ use mio_extras::channel::Sender;
 use ordered_float::OrderedFloat;
 use settings::Settings;
 use std::sync::Arc;
+use theme::TerminalStyle;
 
 use crate::{Input, ZedListener};
 
@@ -62,7 +63,8 @@ impl Element for TerminalEl {
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         let size = constraint.max;
         let settings = cx.global::<Settings>();
-        let theme = &settings.theme.editor;
+        let editor_theme = &settings.theme.editor;
+        let terminal_theme = &settings.theme.terminal;
         //Get terminal
         let mut term = self.term.lock();
 
@@ -78,7 +80,7 @@ impl Element for TerminalEl {
         let font_size = settings.buffer_font_size;
 
         let text_style = TextStyle {
-            color: theme.text_color,
+            color: editor_theme.text_color,
             font_family_id: settings.buffer_font_family,
             font_family_name,
             font_id,
@@ -122,7 +124,7 @@ impl Element for TerminalEl {
                 }, //TODO: Learn what 'CellExtra does'
             } = cell;
 
-            let new_highlight = make_style_from_cell(fg, flags);
+            let new_highlight = make_style_from_cell(fg, flags, &terminal_theme);
 
             if line != last_line {
                 line_count += 1;
@@ -248,8 +250,8 @@ impl Element for TerminalEl {
     }
 }
 
-fn make_style_from_cell(fg: &AnsiColor, flags: &Flags) -> HighlightStyle {
-    let fg = Some(alac_color_to_gpui_color(fg));
+fn make_style_from_cell(fg: &AnsiColor, flags: &Flags, style: &TerminalStyle) -> HighlightStyle {
+    let fg = Some(alac_color_to_gpui_color(fg, style));
     let underline = if flags.contains(Flags::UNDERLINE) {
         Some(Underline {
             color: fg,
@@ -266,38 +268,38 @@ fn make_style_from_cell(fg: &AnsiColor, flags: &Flags) -> HighlightStyle {
     }
 }
 
-fn alac_color_to_gpui_color(allac_color: &AnsiColor) -> Color {
+fn alac_color_to_gpui_color(allac_color: &AnsiColor, style: &TerminalStyle) -> Color {
     match allac_color {
         alacritty_terminal::ansi::Color::Named(n) => match n {
-            alacritty_terminal::ansi::NamedColor::Black => Color::black(),
-            alacritty_terminal::ansi::NamedColor::Red => Color::red(),
-            alacritty_terminal::ansi::NamedColor::Green => Color::green(),
-            alacritty_terminal::ansi::NamedColor::Yellow => Color::yellow(),
-            alacritty_terminal::ansi::NamedColor::Blue => Color::blue(),
-            alacritty_terminal::ansi::NamedColor::Magenta => Color::new(188, 63, 188, 1),
-            alacritty_terminal::ansi::NamedColor::Cyan => Color::new(17, 168, 205, 1),
-            alacritty_terminal::ansi::NamedColor::White => Color::white(),
-            alacritty_terminal::ansi::NamedColor::BrightBlack => Color::new(102, 102, 102, 1),
-            alacritty_terminal::ansi::NamedColor::BrightRed => Color::new(102, 102, 102, 1),
-            alacritty_terminal::ansi::NamedColor::BrightGreen => Color::new(35, 209, 139, 1),
-            alacritty_terminal::ansi::NamedColor::BrightYellow => Color::new(245, 245, 67, 1),
-            alacritty_terminal::ansi::NamedColor::BrightBlue => Color::new(59, 142, 234, 1),
-            alacritty_terminal::ansi::NamedColor::BrightMagenta => Color::new(214, 112, 214, 1),
-            alacritty_terminal::ansi::NamedColor::BrightCyan => Color::new(41, 184, 219, 1),
-            alacritty_terminal::ansi::NamedColor::BrightWhite => Color::new(229, 229, 229, 1),
-            alacritty_terminal::ansi::NamedColor::Foreground => Color::white(),
-            alacritty_terminal::ansi::NamedColor::Background => Color::black(),
-            alacritty_terminal::ansi::NamedColor::Cursor => Color::white(),
-            alacritty_terminal::ansi::NamedColor::DimBlack => Color::white(),
-            alacritty_terminal::ansi::NamedColor::DimRed => Color::white(),
-            alacritty_terminal::ansi::NamedColor::DimGreen => Color::white(),
-            alacritty_terminal::ansi::NamedColor::DimYellow => Color::white(),
-            alacritty_terminal::ansi::NamedColor::DimBlue => Color::white(),
-            alacritty_terminal::ansi::NamedColor::DimMagenta => Color::white(),
-            alacritty_terminal::ansi::NamedColor::DimCyan => Color::white(),
-            alacritty_terminal::ansi::NamedColor::DimWhite => Color::white(),
-            alacritty_terminal::ansi::NamedColor::BrightForeground => Color::white(),
-            alacritty_terminal::ansi::NamedColor::DimForeground => Color::white(),
+            alacritty_terminal::ansi::NamedColor::Black => style.black,
+            alacritty_terminal::ansi::NamedColor::Red => style.red,
+            alacritty_terminal::ansi::NamedColor::Green => style.green,
+            alacritty_terminal::ansi::NamedColor::Yellow => style.yellow,
+            alacritty_terminal::ansi::NamedColor::Blue => style.blue,
+            alacritty_terminal::ansi::NamedColor::Magenta => style.magenta,
+            alacritty_terminal::ansi::NamedColor::Cyan => style.cyan,
+            alacritty_terminal::ansi::NamedColor::White => style.white,
+            alacritty_terminal::ansi::NamedColor::BrightBlack => style.bright_black,
+            alacritty_terminal::ansi::NamedColor::BrightRed => style.bright_red,
+            alacritty_terminal::ansi::NamedColor::BrightGreen => style.bright_green,
+            alacritty_terminal::ansi::NamedColor::BrightYellow => style.bright_yellow,
+            alacritty_terminal::ansi::NamedColor::BrightBlue => style.bright_blue,
+            alacritty_terminal::ansi::NamedColor::BrightMagenta => style.bright_magenta,
+            alacritty_terminal::ansi::NamedColor::BrightCyan => style.bright_cyan,
+            alacritty_terminal::ansi::NamedColor::BrightWhite => style.bright_white,
+            alacritty_terminal::ansi::NamedColor::Foreground => style.foreground,
+            alacritty_terminal::ansi::NamedColor::Background => style.background,
+            alacritty_terminal::ansi::NamedColor::Cursor => style.cursor,
+            alacritty_terminal::ansi::NamedColor::DimBlack => style.dim_black,
+            alacritty_terminal::ansi::NamedColor::DimRed => style.dim_red,
+            alacritty_terminal::ansi::NamedColor::DimGreen => style.dim_green,
+            alacritty_terminal::ansi::NamedColor::DimYellow => style.dim_yellow,
+            alacritty_terminal::ansi::NamedColor::DimBlue => style.dim_blue,
+            alacritty_terminal::ansi::NamedColor::DimMagenta => style.dim_magenta,
+            alacritty_terminal::ansi::NamedColor::DimCyan => style.dim_cyan,
+            alacritty_terminal::ansi::NamedColor::DimWhite => style.dim_white,
+            alacritty_terminal::ansi::NamedColor::BrightForeground => style.bright_foreground,
+            alacritty_terminal::ansi::NamedColor::DimForeground => style.dim_foreground,
         }, //Theme defined
         alacritty_terminal::ansi::Color::Spec(rgb) => Color::new(rgb.r, rgb.g, rgb.b, 1),
         alacritty_terminal::ansi::Color::Indexed(_) => Color::white(), //Color cube weirdness

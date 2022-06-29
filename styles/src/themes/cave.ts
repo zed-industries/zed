@@ -26,3 +26,6 @@ const ramps = {
 
 export const dark = createTheme(`${name}-dark`, false, ramps);
 export const light = createTheme(`${name}-light`, true, ramps);
+
+console.log(JSON.stringify(dark.ramps.neutral.domain()))
+console.log(JSON.stringify(light.ramps.neutral.domain()))
