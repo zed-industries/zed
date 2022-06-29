@@ -34,7 +34,7 @@ use std::{
 };
 use util::ResultExt;
 pub use workspace;
-use workspace::{AppState, Workspace};
+use workspace::{sidebar::Side, AppState, Workspace};
 
 #[derive(Deserialize, Clone, PartialEq)]
 struct OpenBrowser {
@@ -126,6 +126,16 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
                     cx,
                 );
             }
+        },
+    );
+    cx.add_action(
+        |workspace: &mut Workspace, _: &project_panel::Toggle, cx: &mut ViewContext<Workspace>| {
+            workspace.toggle_sidebar_item_focus(Side::Left, 0, cx);
+        },
+    );
+    cx.add_action(
+        |workspace: &mut Workspace, _: &contacts_panel::Toggle, cx: &mut ViewContext<Workspace>| {
+            workspace.toggle_sidebar_item_focus(Side::Right, 0, cx);
         },
     );
 
@@ -429,7 +439,7 @@ mod tests {
         let workspace_1 = cx.root_view::<Workspace>(cx.window_ids()[0]).unwrap();
         workspace_1.update(cx, |workspace, cx| {
             assert_eq!(workspace.worktrees(cx).count(), 2);
-            assert!(workspace.left_sidebar().read(cx).active_item().is_some());
+            assert!(workspace.left_sidebar().read(cx).is_open());
             assert!(workspace.active_pane().is_focused(cx));
         });
 

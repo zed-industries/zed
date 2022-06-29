@@ -187,11 +187,21 @@ pub fn menus() -> Vec<Menu<'static>> {
                 },
                 MenuItem::Separator,
                 MenuItem::Action {
-                    name: "Project Browser",
-                    action: Box::new(workspace::sidebar::ToggleSidebarItemFocus {
-                        side: workspace::sidebar::Side::Left,
-                        item_index: 0,
-                    }),
+                    name: "Toggle Left Sidebar",
+                    action: Box::new(workspace::ToggleLeftSidebar),
+                },
+                MenuItem::Action {
+                    name: "Toggle Right Sidebar",
+                    action: Box::new(workspace::ToggleRightSidebar),
+                },
+                MenuItem::Separator,
+                MenuItem::Action {
+                    name: "Project Panel",
+                    action: Box::new(project_panel::Toggle),
+                },
+                MenuItem::Action {
+                    name: "Contacts Panel",
+                    action: Box::new(contacts_panel::Toggle),
                 },
                 MenuItem::Action {
                     name: "Command Palette",
