@@ -3,6 +3,22 @@
 version = 3
 
 [[package]]
+name = "activity_indicator"
+version = "0.1.0"
+dependencies = [
+ "auto_update",
+ "editor",
+ "futures",
+ "gpui",
+ "language",
+ "project",
+ "settings",
+ "smallvec",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2564,21 +2580,6 @@ dependencies = [
  "serde_json",
  "serde_repr",
  "url",
-]
-
-[[package]]
-name = "lsp_status"
-version = "0.1.0"
-dependencies = [
- "editor",
- "futures",
- "gpui",
- "language",
- "project",
- "settings",
- "smallvec",
- "util",
- "workspace",
 ]
 
 [[package]]
@@ -5971,6 +5972,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 name = "zed"
 version = "0.42.0"
 dependencies = [
+ "activity_indicator",
  "anyhow",
  "assets",
  "async-compression",
@@ -6011,7 +6013,6 @@ dependencies = [
  "libc",
  "log",
  "lsp",
- "lsp_status",
  "num_cpus",
  "outline",
  "parking_lot 0.11.2",
