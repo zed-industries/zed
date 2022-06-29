@@ -1,5 +1,4 @@
 use alacritty_terminal::{
-    ansi::{ClearMode, Handler},
     config::{Config, Program, PtyConfig},
     event::{Event as AlacTermEvent, EventListener, Notify},
     event_loop::{EventLoop, Msg, Notifier},
