@@ -26,7 +26,7 @@ use crate::{Input, ScrollTerminal, Terminal};
 const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
 
 #[cfg(debug_assertions)]
-const DEBUG_GRID: bool = true;
+const DEBUG_GRID: bool = false;
 
 pub struct TerminalEl {
     view: WeakViewHandle<Terminal>,

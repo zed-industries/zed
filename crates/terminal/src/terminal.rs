@@ -19,7 +19,7 @@ use gpui::{
 use project::{Project, ProjectPath};
 use settings::Settings;
 use smallvec::SmallVec;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 use workspace::{Item, Workspace};
 
 use crate::terminal_element::TerminalEl;
@@ -99,7 +99,7 @@ impl Entity for Terminal {
 
 impl Terminal {
     ///Create a new Terminal view. This spawns a task, a thread, and opens the TTY devices
-    fn new(cx: &mut ViewContext<Self>) -> Self {
+    fn new(cx: &mut ViewContext<Self>, working_directory: Option<PathBuf>) -> Self {
         //Spawn a task so the Alacritty EventLoop can communicate with us in a view context
         let (events_tx, mut events_rx) = unbounded();
         cx.spawn_weak(|this, mut cx| async move {
@@ -119,7 +119,7 @@ impl Terminal {
 
         let pty_config = PtyConfig {
             shell: Some(Program::Just("zsh".to_string())),
-            working_directory: None,
+            working_directory,
             hold: false,
         };
 
@@ -128,7 +128,7 @@ impl Terminal {
             ..Default::default()
         };
 
-        //TODO figure out how to derive this better
+        //The details here don't matter, the terminal will be resized on layout
         let size_info = SizeInfo::new(200., 100.0, 5., 5., 0., 0., false);
 
         //Set up the terminal...
@@ -234,7 +234,14 @@ impl Terminal {
 
     ///Create a new Terminal
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
-        workspace.add_item(Box::new(cx.add_view(|cx| Terminal::new(cx))), cx);
+        let project = workspace.project().read(cx);
+        let abs_path = project
+            .active_entry()
+            .and_then(|entry_id| project.worktree_for_entry(entry_id, cx))
+            .and_then(|worktree_handle| worktree_handle.read(cx).as_local())
+            .map(|wt| wt.abs_path().to_path_buf());
+
+        workspace.add_item(Box::new(cx.add_view(|cx| Terminal::new(cx, abs_path))), cx);
     }
 
     ///Send the shutdown message to Alacritty
@@ -421,7 +428,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_terminal(cx: &mut TestAppContext) {
-        let terminal = cx.add_view(Default::default(), |cx| Terminal::new(cx));
+        let terminal = cx.add_view(Default::default(), |cx| Terminal::new(cx, None));
 
         terminal.update(cx, |terminal, cx| {
             terminal.write_to_pty(&Input(("expr 3 + 4".to_string()).to_string()), cx);
