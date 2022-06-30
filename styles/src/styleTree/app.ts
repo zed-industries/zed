@@ -14,6 +14,7 @@ import projectDiagnostics from "./projectDiagnostics";
 import contactNotification from "./contactNotification";
 import updateNotification from "./updateNotification";
 import tooltip from "./tooltip";
+import terminal from "./terminal";
 
 export const panel = {
   padding: { top: 12, bottom: 12 },
@@ -41,5 +42,6 @@ export default function app(theme: Theme): Object {
     contactNotification: contactNotification(theme),
     updateNotification: updateNotification(theme),
     tooltip: tooltip(theme),
+    terminal: terminal(theme),
   };
 }

@@ -1,3 +1,4 @@
+import { Scale } from "chroma-js";
 import { FontWeight } from "../../common";
 import { withOpacity } from "../../utils/color";
 
@@ -60,6 +61,7 @@ export interface Syntax {
 
 export default interface Theme {
   name: string;
+  isLight: boolean,
   backgroundColor: {
     // Basically just Title Bar
     // Lowest background level
@@ -155,4 +157,5 @@ export default interface Theme {
     8: Player;
   },
   shadow: string;
+  ramps: { [rampName: string]: Scale };
 }

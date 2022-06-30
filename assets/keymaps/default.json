@@ -403,5 +403,21 @@
             "f2": "project_panel::Rename",
             "backspace": "project_panel::Delete"
         }
+    },
+    {
+        "context": "Terminal",
+        "bindings": {
+            "ctrl-c": "terminal::Sigint",
+            "escape": "terminal::Escape",
+            "ctrl-d": "terminal::Quit",
+            "backspace": "terminal::Del",
+            "enter": "terminal::Return",
+            "left": "terminal::Left",
+            "right": "terminal::Right",
+            "up": "terminal::Up",
+            "down": "terminal::Down",
+            "tab": "terminal::Tab",
+            "cmd-v": "terminal::Paste"
+        }
     }
 ]
