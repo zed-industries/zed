@@ -4447,6 +4447,7 @@ impl Project {
                         diagnostic_summaries: Default::default(),
                         visible: worktree.visible,
                         scan_id: 0,
+                        is_complete: false,
                     };
                     let (worktree, load_task) =
                         Worktree::remote(remote_id, replica_id, worktree, client.clone(), cx);

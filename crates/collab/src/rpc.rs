@@ -804,6 +804,7 @@ impl Server {
                             .collect(),
                         visible: worktree.visible,
                         scan_id: shared_worktree.scan_id,
+                        is_complete: worktree.is_complete,
                     })
                 })
                 .collect::<Vec<_>>();
@@ -963,6 +964,7 @@ impl Server {
                 &request.payload.removed_entries,
                 &request.payload.updated_entries,
                 request.payload.scan_id,
+                request.payload.is_last_update,
             )?;
             (connection_ids, metadata_changed, extension_counts.clone())
         };

@@ -195,6 +195,7 @@ message UpdateWorktree {
     repeated Entry updated_entries = 4;
     repeated uint64 removed_entries = 5;
     uint64 scan_id = 6;
+    bool is_last_update = 7;
 }
 
 message CreateProjectEntry {
@@ -772,6 +773,7 @@ message Worktree {
     repeated DiagnosticSummary diagnostic_summaries = 4;
     bool visible = 5;
     uint64 scan_id = 6;
+    bool is_complete = 7;
 }
 
 message File {
