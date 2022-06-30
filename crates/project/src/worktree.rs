@@ -2718,10 +2718,11 @@ async fn send_worktree_update(
     #[cfg(not(any(test, feature = "test-support")))]
     const MAX_CHUNK_SIZE: usize = 256;
 
-    loop {
+    let mut is_last_update = false;
+    while !is_last_update {
         let chunk_size = cmp::min(update.updated_entries.len(), MAX_CHUNK_SIZE);
         let updated_entries = update.updated_entries.drain(..chunk_size).collect();
-        let is_last_update = update.updated_entries.is_empty();
+        is_last_update = update.updated_entries.is_empty();
         client
             .request(proto::UpdateWorktree {
                 project_id: update.project_id,
@@ -2733,9 +2734,6 @@ async fn send_worktree_update(
                 is_last_update,
             })
             .await?;
-        if is_last_update {
-            break;
-        }
     }
 
     Ok(())

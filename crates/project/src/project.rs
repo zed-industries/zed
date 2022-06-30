@@ -1332,12 +1332,13 @@ impl Project {
             let client = self.client.clone();
             cx.foreground()
                 .spawn(async move {
-                    share.await?;
                     client.send(proto::RespondToJoinProjectRequest {
                         requester_id,
                         project_id,
                         allow,
-                    })
+                    })?;
+                    share.await?;
+                    anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
         }
