@@ -125,7 +125,10 @@ impl DerefMut for LocalSnapshot {
 #[derive(Clone, Debug)]
 enum ScanState {
     Idle,
-    Scanning,
+    /// The worktree is performing its initial scan of the filesystem.
+    Initializing,
+    /// The worktree is updating in response to filesystem events.
+    Updating,
     Err(Arc<anyhow::Error>),
 }
 
@@ -334,7 +337,7 @@ impl Worktree {
             Self::Local(worktree) => {
                 let is_fake_fs = worktree.fs.is_fake();
                 worktree.snapshot = worktree.background_snapshot.lock().clone();
-                if worktree.is_scanning() {
+                if matches!(worktree.scan_state(), ScanState::Initializing) {
                     if worktree.poll_task.is_none() {
                         worktree.poll_task = Some(cx.spawn_weak(|this, mut cx| async move {
                             if is_fake_fs {
@@ -390,7 +393,8 @@ impl LocalWorktree {
             .context("failed to stat worktree path")?;
 
         let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
-        let (mut last_scan_state_tx, last_scan_state_rx) = watch::channel_with(ScanState::Scanning);
+        let (mut last_scan_state_tx, last_scan_state_rx) =
+            watch::channel_with(ScanState::Initializing);
         let tree = cx.add_model(move |cx: &mut ModelContext<Worktree>| {
             let mut snapshot = LocalSnapshot {
                 abs_path,
@@ -527,18 +531,14 @@ impl LocalWorktree {
         let mut scan_state_rx = self.last_scan_state_rx.clone();
         async move {
             let mut scan_state = Some(scan_state_rx.borrow().clone());
-            while let Some(ScanState::Scanning) = scan_state {
+            while let Some(ScanState::Initializing | ScanState::Updating) = scan_state {
                 scan_state = scan_state_rx.recv().await;
             }
         }
     }
 
-    fn is_scanning(&self) -> bool {
-        if let ScanState::Scanning = *self.last_scan_state_rx.borrow() {
-            true
-        } else {
-            false
-        }
+    fn scan_state(&self) -> ScanState {
+        self.last_scan_state_rx.borrow().clone()
     }
 
     pub fn snapshot(&self) -> LocalSnapshot {
@@ -947,7 +947,7 @@ impl LocalWorktree {
 
     fn broadcast_snapshot(&self) -> impl Future<Output = ()> {
         let mut to_send = None;
-        if !self.is_scanning() {
+        if matches!(self.scan_state(), ScanState::Idle) {
             if let Some(share) = self.share.as_ref() {
                 to_send = Some((self.snapshot(), share.snapshots_tx.clone()));
             }
@@ -1975,7 +1975,7 @@ impl BackgroundScanner {
     }
 
     async fn run(mut self, events_rx: impl Stream<Item = Vec<fsevent::Event>>) {
-        if self.notify.unbounded_send(ScanState::Scanning).is_err() {
+        if self.notify.unbounded_send(ScanState::Initializing).is_err() {
             return;
         }
 
@@ -2000,7 +2000,7 @@ impl BackgroundScanner {
                 events.extend(additional_events);
             }
 
-            if self.notify.unbounded_send(ScanState::Scanning).is_err() {
+            if self.notify.unbounded_send(ScanState::Updating).is_err() {
                 break;
             }
 
