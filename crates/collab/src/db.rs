@@ -2117,7 +2117,7 @@ pub mod tests {
             Self {
                 background,
                 users: Default::default(),
-                next_user_id: Mutex::new(1),
+                next_user_id: Mutex::new(0),
                 projects: Default::default(),
                 worktree_extensions: Default::default(),
                 next_project_id: Mutex::new(1),

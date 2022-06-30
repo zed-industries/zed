@@ -4426,8 +4426,16 @@ async fn test_random_collaboration(
     let mut server = TestServer::start(cx.foreground(), cx.background()).await;
     let db = server.app_state.db.clone();
     let host_user_id = db.create_user("host", None, false).await.unwrap();
-    for username in ["guest-1", "guest-2", "guest-3", "guest-4"] {
+    let mut available_guests = vec![
+        "guest-1".to_string(),
+        "guest-2".to_string(),
+        "guest-3".to_string(),
+        "guest-4".to_string(),
+    ];
+
+    for username in &available_guests {
         let guest_user_id = db.create_user(username, None, false).await.unwrap();
+        assert_eq!(*username, format!("guest-{}", guest_user_id));
         server
             .app_state
             .db
@@ -4621,12 +4629,7 @@ async fn test_random_collaboration(
     } else {
         max_operations
     };
-    let mut available_guests = vec![
-        "guest-1".to_string(),
-        "guest-2".to_string(),
-        "guest-3".to_string(),
-        "guest-4".to_string(),
-    ];
+
     let mut operations = 0;
     while operations < max_operations {
         if operations == disconnect_host_at {
@@ -4729,6 +4732,7 @@ async fn test_random_collaboration(
                 server.disconnect_client(removed_guest_id);
                 deterministic.advance_clock(RECEIVE_TIMEOUT);
                 deterministic.start_waiting();
+                log::info!("Waiting for guest {} to exit...", removed_guest_id);
                 let (guest, guest_project, mut guest_cx, guest_err) = guest.await;
                 deterministic.finish_waiting();
                 server.allow_connections();
@@ -4945,6 +4949,7 @@ impl TestServer {
 
         Arc::get_mut(&mut client)
             .unwrap()
+            .set_id(user_id.0 as usize)
             .override_authenticate(move |cx| {
                 cx.spawn(|_| async move {
                     let access_token = "the-token".to_string();
