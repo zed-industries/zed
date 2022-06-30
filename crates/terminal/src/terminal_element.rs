@@ -411,6 +411,7 @@ fn draw_debug_grid(bounds: RectF, layout: &mut LayoutState, cx: &mut PaintContex
     }
 }
 
+#[cfg(test)]
 mod tests {
     #[test]
     fn test_rgb_for_index() {
