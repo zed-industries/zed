@@ -412,8 +412,6 @@ fn draw_debug_grid(bounds: RectF, layout: &mut LayoutState, cx: &mut PaintContex
 }
 
 mod tests {
-    use crate::terminal_element::rgb_for_index;
-
     #[test]
     fn test_rgb_for_index() {
         //Test every possible value in the color cube
