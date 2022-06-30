@@ -808,13 +808,11 @@ impl Project {
         &self.fs
     }
 
-    pub fn set_online(&mut self, online: bool, cx: &mut ModelContext<Self>) {
+    pub fn set_online(&mut self, online: bool, _: &mut ModelContext<Self>) {
         if let ProjectClientState::Local { online_tx, .. } = &mut self.client_state {
             let mut online_tx = online_tx.borrow_mut();
             if *online_tx != online {
                 *online_tx = online;
-                drop(online_tx);
-                self.metadata_changed(true, cx);
             }
         }
     }
@@ -958,7 +956,7 @@ impl Project {
             ..
         } = &self.client_state
         {
-            // Broadcast worktrees only if the project is public.
+            // Broadcast worktrees only if the project is online.
             let worktrees = if *online_rx.borrow() {
                 self.worktrees
                     .iter()
