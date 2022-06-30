@@ -1472,6 +1472,7 @@ async fn test_collaborating_with_diagnostics(
 
     // Join project as client C and observe the diagnostics.
     let project_c = client_c.build_remote_project(&project_a, cx_a, cx_c).await;
+    deterministic.run_until_parked();
     project_c.read_with(cx_c, |project, cx| {
         assert_eq!(
             project.diagnostic_summaries(cx).collect::<Vec<_>>(),

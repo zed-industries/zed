@@ -487,10 +487,9 @@ impl Project {
 
         let mut worktrees = Vec::new();
         for worktree in response.worktrees {
-            let (worktree, load_task) = cx
+            let worktree = cx
                 .update(|cx| Worktree::remote(remote_id, replica_id, worktree, client.clone(), cx));
             worktrees.push(worktree);
-            load_task.detach();
         }
 
         let (opened_buffer_tx, opened_buffer_rx) = watch::channel();
@@ -4441,19 +4440,9 @@ impl Project {
                 {
                     this.worktrees.push(WorktreeHandle::Strong(old_worktree));
                 } else {
-                    let worktree = proto::Worktree {
-                        id: worktree.id,
-                        root_name: worktree.root_name,
-                        entries: Default::default(),
-                        diagnostic_summaries: Default::default(),
-                        visible: worktree.visible,
-                        scan_id: 0,
-                        is_complete: false,
-                    };
-                    let (worktree, load_task) =
+                    let worktree =
                         Worktree::remote(remote_id, replica_id, worktree, client.clone(), cx);
                     this.add_worktree(&worktree, cx);
-                    load_task.detach();
                 }
             }
 
@@ -4477,8 +4466,8 @@ impl Project {
             if let Some(worktree) = this.worktree_for_id(worktree_id, cx) {
                 worktree.update(cx, |worktree, _| {
                     let worktree = worktree.as_remote_mut().unwrap();
-                    worktree.update_from_remote(envelope)
-                })?;
+                    worktree.update_from_remote(envelope.payload);
+                });
             }
             Ok(())
         })
@@ -7996,7 +7985,10 @@ mod tests {
     }
 
     #[gpui::test(retries = 5)]
-    async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
+    async fn test_rescan_and_remote_updates(
+        deterministic: Arc<Deterministic>,
+        cx: &mut gpui::TestAppContext,
+    ) {
         let dir = temp_tree(json!({
             "a": {
                 "file1": "",
@@ -8040,17 +8032,24 @@ mod tests {
         // Create a remote copy of this worktree.
         let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
         let initial_snapshot = tree.read_with(cx, |tree, _| tree.as_local().unwrap().snapshot());
-        let (remote, load_task) = cx.update(|cx| {
+        let remote = cx.update(|cx| {
             Worktree::remote(
                 1,
                 1,
-                initial_snapshot.to_proto(&Default::default(), true),
+                proto::WorktreeMetadata {
+                    id: initial_snapshot.id().to_proto(),
+                    root_name: initial_snapshot.root_name().into(),
+                    visible: true,
+                },
                 rpc.clone(),
                 cx,
             )
         });
-        // tree
-        load_task.await;
+        remote.update(cx, |remote, _| {
+            let update = initial_snapshot.build_initial_update(1);
+            remote.as_remote_mut().unwrap().update_from_remote(update);
+        });
+        deterministic.run_until_parked();
 
         cx.read(|cx| {
             assert!(!buffer2.read(cx).is_dirty());
@@ -8116,19 +8115,16 @@ mod tests {
         // Update the remote worktree. Check that it becomes consistent with the
         // local worktree.
         remote.update(cx, |remote, cx| {
-            let update_message = tree.read(cx).as_local().unwrap().snapshot().build_update(
+            let update = tree.read(cx).as_local().unwrap().snapshot().build_update(
                 &initial_snapshot,
                 1,
                 1,
                 true,
             );
-            remote
-                .as_remote_mut()
-                .unwrap()
-                .snapshot
-                .apply_remote_update(update_message)
-                .unwrap();
-
+            remote.as_remote_mut().unwrap().update_from_remote(update);
+        });
+        deterministic.run_until_parked();
+        remote.read_with(cx, |remote, _| {
             assert_eq!(
                 remote
                     .paths()

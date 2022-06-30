@@ -791,21 +791,10 @@ impl Server {
             let worktrees = project
                 .worktrees
                 .iter()
-                .filter_map(|(id, shared_worktree)| {
-                    let worktree = project.worktrees.get(&id)?;
-                    Some(proto::Worktree {
-                        id: *id,
-                        root_name: worktree.root_name.clone(),
-                        entries: shared_worktree.entries.values().cloned().collect(),
-                        diagnostic_summaries: shared_worktree
-                            .diagnostic_summaries
-                            .values()
-                            .cloned()
-                            .collect(),
-                        visible: worktree.visible,
-                        scan_id: shared_worktree.scan_id,
-                        is_complete: worktree.is_complete,
-                    })
+                .map(|(id, worktree)| proto::WorktreeMetadata {
+                    id: *id,
+                    root_name: worktree.root_name.clone(),
+                    visible: worktree.visible,
                 })
                 .collect::<Vec<_>>();
 
@@ -841,20 +830,58 @@ impl Server {
                 }
             }
 
-            for (receipt, replica_id) in receipts_with_replica_ids {
+            // First, we send the metadata associated with each worktree.
+            for (receipt, replica_id) in &receipts_with_replica_ids {
                 self.peer.respond(
-                    receipt,
+                    receipt.clone(),
                     proto::JoinProjectResponse {
                         variant: Some(proto::join_project_response::Variant::Accept(
                             proto::join_project_response::Accept {
                                 worktrees: worktrees.clone(),
-                                replica_id: replica_id as u32,
+                                replica_id: *replica_id as u32,
                                 collaborators: collaborators.clone(),
                                 language_servers: project.language_servers.clone(),
                             },
                         )),
                     },
                 )?;
+            }
+
+            for (worktree_id, worktree) in &project.worktrees {
+                #[cfg(any(test, feature = "test-support"))]
+                const MAX_CHUNK_SIZE: usize = 2;
+                #[cfg(not(any(test, feature = "test-support")))]
+                const MAX_CHUNK_SIZE: usize = 256;
+
+                // Stream this worktree's entries.
+                let message = proto::UpdateWorktree {
+                    project_id: project_id.to_proto(),
+                    worktree_id: *worktree_id,
+                    root_name: worktree.root_name.clone(),
+                    updated_entries: worktree.entries.values().cloned().collect(),
+                    removed_entries: Default::default(),
+                    scan_id: worktree.scan_id,
+                    is_last_update: worktree.is_complete,
+                };
+                for update in proto::split_worktree_update(message, MAX_CHUNK_SIZE) {
+                    for (receipt, _) in &receipts_with_replica_ids {
+                        self.peer.send(receipt.sender_id, update.clone())?;
+                    }
+                }
+
+                // Stream this worktree's diagnostics.
+                for summary in worktree.diagnostic_summaries.values() {
+                    for (receipt, _) in &receipts_with_replica_ids {
+                        self.peer.send(
+                            receipt.sender_id,
+                            proto::UpdateDiagnosticSummary {
+                                project_id: project_id.to_proto(),
+                                worktree_id: *worktree_id,
+                                summary: Some(summary.clone()),
+                            },
+                        )?;
+                    }
+                }
             }
         }
 
