@@ -4,7 +4,7 @@ use alacritty_terminal::{
     event_loop::{EventLoop, Msg, Notifier},
     grid::Scroll,
     sync::FairMutex,
-    term::{color::Rgb, SizeInfo},
+    term::{color::Rgb as AlacRgb, SizeInfo},
     tty, Term,
 };
 
@@ -13,8 +13,8 @@ use futures::{
     StreamExt,
 };
 use gpui::{
-    actions, elements::*, impl_internal_actions, platform::CursorStyle, ClipboardItem, Entity,
-    MutableAppContext, View, ViewContext,
+    actions, color::Color, elements::*, impl_internal_actions, platform::CursorStyle,
+    ClipboardItem, Entity, MutableAppContext, View, ViewContext,
 };
 use project::{Project, ProjectPath};
 use settings::Settings;
@@ -22,7 +22,7 @@ use smallvec::SmallVec;
 use std::{path::PathBuf, sync::Arc};
 use workspace::{Item, Workspace};
 
-use crate::terminal_element::TerminalEl;
+use crate::terminal_element::{get_color_at_index, TerminalEl};
 
 //ASCII Control characters on a keyboard
 //Consts -> Structs -> Impls -> Functions, Vaguely in order of importance
@@ -203,9 +203,26 @@ impl Terminal {
                 cx,
             ),
             AlacTermEvent::ColorRequest(index, format) => {
-                //TODO test this as well
-                //TODO: change to getting the display colors, like alacrityy, instead of a default
-                let color = self.term.lock().colors()[index].unwrap_or(Rgb::default());
+                let color = self.term.lock().colors()[index].unwrap_or_else(|| {
+                    let term_style = &cx.global::<Settings>().theme.terminal;
+                    match index {
+                        0..=255 => to_alac_rgb(get_color_at_index(&(index as u8), term_style)),
+                        256 => to_alac_rgb(term_style.foreground),
+                        257 => to_alac_rgb(term_style.background),
+                        258 => to_alac_rgb(term_style.cursor),
+                        259 => to_alac_rgb(term_style.dim_black),
+                        260 => to_alac_rgb(term_style.dim_red),
+                        261 => to_alac_rgb(term_style.dim_green),
+                        262 => to_alac_rgb(term_style.dim_yellow),
+                        263 => to_alac_rgb(term_style.dim_blue),
+                        264 => to_alac_rgb(term_style.dim_magenta),
+                        265 => to_alac_rgb(term_style.dim_cyan),
+                        266 => to_alac_rgb(term_style.dim_white),
+                        267 => to_alac_rgb(term_style.bright_foreground),
+                        268 => to_alac_rgb(term_style.black), //Dim Background, non-standard
+                        _ => AlacRgb { r: 0, g: 0, b: 0 },
+                    }
+                });
                 self.write_to_pty(&Input(format(color)), cx)
             }
             AlacTermEvent::CursorBlinkingChange => {
@@ -417,6 +434,14 @@ impl Item for Terminal {
 
     fn should_activate_item_on_event(event: &Self::Event) -> bool {
         matches!(event, &Event::Activate)
+    }
+}
+
+fn to_alac_rgb(color: Color) -> AlacRgb {
+    AlacRgb {
+        r: color.r,
+        g: color.g,
+        b: color.g,
     }
 }
 

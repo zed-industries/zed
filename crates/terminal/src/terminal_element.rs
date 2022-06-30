@@ -329,8 +329,57 @@ fn alac_color_to_gpui_color(allac_color: &AnsiColor, style: &TerminalStyle) -> C
             alacritty_terminal::ansi::NamedColor::DimForeground => style.dim_foreground,
         }, //Theme defined
         alacritty_terminal::ansi::Color::Spec(rgb) => Color::new(rgb.r, rgb.g, rgb.b, 1),
-        alacritty_terminal::ansi::Color::Indexed(_) => Color::white(), //Color cube weirdness
+        alacritty_terminal::ansi::Color::Indexed(i) => get_color_at_index(i, style), //Color cube weirdness
     }
+}
+
+pub fn get_color_at_index(index: &u8, style: &TerminalStyle) -> Color {
+    match index {
+        0 => style.black,
+        1 => style.red,
+        2 => style.green,
+        3 => style.yellow,
+        4 => style.blue,
+        5 => style.magenta,
+        6 => style.cyan,
+        7 => style.white,
+        8 => style.bright_black,
+        9 => style.bright_red,
+        10 => style.bright_green,
+        11 => style.bright_yellow,
+        12 => style.bright_blue,
+        13 => style.bright_magenta,
+        14 => style.bright_cyan,
+        15 => style.bright_white,
+        16..=231 => {
+            let (r, g, b) = rgb_for_index(index); //Split the index into it's rgb components
+            let step = (u8::MAX as f32 / 5.).round() as u8; //Split the GPUI range into 5 chunks
+            Color::new(r * step, g * step, b * step, 1) //Map the rgb components to GPUI's range
+        }
+        //Grayscale from black to white, 0 to 24
+        232..=255 => {
+            let i = 24 - (index - 232); //Align index to 24..0
+            let step = (u8::MAX as f32 / 24.).round() as u8; //Split the 256 range grayscale into 24 chunks
+            Color::new(i * step, i * step, i * step, 1) //Map the rgb components to GPUI's range
+        }
+    }
+}
+
+///Generates the rgb channels in [0, 5] for a given index into the 6x6x6 ANSI color cube
+///See: [8 bit ansi color](https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit).
+///
+///Wikipedia gives a formula for calculating the index for a given color:
+///
+///index = 16 + 36 × r + 6 × g + b (0 ≤ r, g, b ≤ 5)
+///
+///This function does the reverse, calculating the r, g, and b components from a given index.
+fn rgb_for_index(i: &u8) -> (u8, u8, u8) {
+    debug_assert!(i >= &16 && i <= &231);
+    let i = i - 16;
+    let r = (i - (i % 36)) / 36;
+    let g = ((i % 36) - (i % 6)) / 6;
+    let b = (i % 36) % 6;
+    (r, g, b)
 }
 
 #[cfg(debug_assertions)]
@@ -359,5 +408,18 @@ fn draw_debug_grid(bounds: RectF, layout: &mut LayoutState, cx: &mut PaintContex
             border: Default::default(),
             corner_radius: 0.,
         });
+    }
+}
+
+mod tests {
+    use crate::terminal_element::rgb_for_index;
+
+    #[test]
+    fn test_rgb_for_index() {
+        //Test every possible value in the color cube
+        for i in 16..=231 {
+            let (r, g, b) = rgb_for_index(&(i as u8));
+            assert_eq!(i, 16 + 36 * r + 6 * g + b);
+        }
     }
 }
