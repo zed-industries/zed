@@ -1081,7 +1081,7 @@ impl Project {
                     .ok_or_else(|| anyhow!("missing entry in response"))?;
                 worktree
                     .update(&mut cx, |worktree, cx| {
-                        worktree.as_remote().unwrap().insert_entry(
+                        worktree.as_remote_mut().unwrap().insert_entry(
                             entry,
                             response.worktree_scan_id as usize,
                             cx,
@@ -1124,7 +1124,7 @@ impl Project {
                     .ok_or_else(|| anyhow!("missing entry in response"))?;
                 worktree
                     .update(&mut cx, |worktree, cx| {
-                        worktree.as_remote().unwrap().insert_entry(
+                        worktree.as_remote_mut().unwrap().insert_entry(
                             entry,
                             response.worktree_scan_id as usize,
                             cx,
@@ -1167,7 +1167,7 @@ impl Project {
                     .ok_or_else(|| anyhow!("missing entry in response"))?;
                 worktree
                     .update(&mut cx, |worktree, cx| {
-                        worktree.as_remote().unwrap().insert_entry(
+                        worktree.as_remote_mut().unwrap().insert_entry(
                             entry,
                             response.worktree_scan_id as usize,
                             cx,
@@ -1200,7 +1200,7 @@ impl Project {
                     .await?;
                 worktree
                     .update(&mut cx, move |worktree, cx| {
-                        worktree.as_remote().unwrap().delete_entry(
+                        worktree.as_remote_mut().unwrap().delete_entry(
                             entry_id,
                             response.worktree_scan_id as usize,
                             cx,
