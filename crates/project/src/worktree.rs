@@ -970,6 +970,7 @@ impl RemoteWorktree {
 
     pub fn disconnected_from_host(&mut self) {
         self.updates_tx.take();
+        self.snapshot_subscriptions.clear();
     }
 
     pub fn update_from_remote(&mut self, update: proto::UpdateWorktree) {
