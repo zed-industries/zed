@@ -980,7 +980,11 @@ impl LocalWorktree {
                         }
                     }
 
-                    while let Ok(snapshot) = snapshots_to_send_rx.recv().await {
+                    while let Ok(mut snapshot) = snapshots_to_send_rx.recv().await {
+                        while let Ok(newer_snapshot) = snapshots_to_send_rx.try_recv() {
+                            snapshot = newer_snapshot;
+                        }
+
                         let message =
                             snapshot.build_update(&prev_snapshot, project_id, worktree_id, true);
                         rpc.request(message).await?;
