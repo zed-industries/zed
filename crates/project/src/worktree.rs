@@ -45,6 +45,7 @@ use std::{
     os::unix::prelude::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
+    task::Poll,
     time::{Duration, SystemTime},
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap};
@@ -2073,7 +2074,12 @@ impl BackgroundScanner {
         }
 
         futures::pin_mut!(events_rx);
-        while let Some(events) = events_rx.next().await {
+
+        while let Some(mut events) = events_rx.next().await {
+            while let Poll::Ready(Some(additional_events)) = futures::poll!(events_rx.next()) {
+                events.extend(additional_events);
+            }
+
             if self.notify.unbounded_send(ScanState::Scanning).is_err() {
                 break;
             }
