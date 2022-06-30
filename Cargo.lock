@@ -5768,6 +5768,7 @@ dependencies = [
  "language",
  "log",
  "project",
+ "search",
  "serde",
  "settings",
  "util",

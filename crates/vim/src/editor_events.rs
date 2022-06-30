@@ -29,8 +29,17 @@ fn editor_focused(EditorFocused(editor): &EditorFocused, cx: &mut MutableAppCont
             }
         }));
 
-        if editor.read(cx).mode() != EditorMode::Full {
-            vim.switch_mode(Mode::Insert, cx);
+        if !vim.enabled {
+            return;
+        }
+
+        let editor = editor.read(cx);
+        if editor.selections.newest::<usize>(cx).is_empty() {
+            if editor.mode() != EditorMode::Full {
+                vim.switch_mode(Mode::Insert, cx);
+            }
+        } else {
+            vim.switch_mode(Mode::Visual { line: false }, cx);
         }
     });
 }

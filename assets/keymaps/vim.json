@@ -37,16 +37,12 @@
                     "ignorePunctuation": true
                 }
             ],
-            "escape": [
-                "vim::SwitchMode",
-                "Normal"
-            ]
+            "escape": "editor::Cancel"
         }
     },
     {
-        "context": "Editor && vim_mode == normal",
+        "context": "Editor && vim_mode == normal && vim_operator == none",
         "bindings": {
-            "escape": "editor::Cancel",
             "c": [
                 "vim::PushOperator",
                 "Change"
@@ -92,7 +88,13 @@
             "p": "vim::Paste",
             "u": "editor::Undo",
             "ctrl-r": "editor::Redo",
-            "ctrl-o": "pane::GoBack"
+            "ctrl-o": "pane::GoBack",
+            "/": [
+                "buffer_search::Deploy",
+                {
+                    "focus": true
+                }
+            ]
         }
     },
     {
@@ -145,12 +147,6 @@
         "bindings": {
             "escape": "vim::NormalBefore",
             "ctrl-c": "vim::NormalBefore"
-        }
-    },
-    {
-        "context": "Editor && mode == singleline",
-        "bindings": {
-            "escape": "editor::Cancel"
         }
     }
 ]
