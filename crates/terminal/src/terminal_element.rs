@@ -42,8 +42,9 @@ pub struct LayoutState {
     lines: Vec<Line>,
     line_height: f32,
     em_width: f32,
-    cursor: Option<RectF>,
+    cursor: Option<(RectF, Color)>,
     cur_size: SizeInfo,
+    background_color: Color,
 }
 
 impl Element for TerminalEl {
@@ -114,9 +115,12 @@ impl Element for TerminalEl {
             .and_then(|cursor_line: usize| shaped_lines.get(cursor_line))
         {
             let cursor_x = layout_line.x_for_index(content.cursor.point.column.0);
-            cursor = Some(RectF::new(
-                vec2f(cursor_x, cursor_line as f32 * line_height),
-                vec2f(cell_width, line_height),
+            cursor = Some((
+                RectF::new(
+                    vec2f(cursor_x, cursor_line as f32 * line_height),
+                    vec2f(cell_width, line_height),
+                ),
+                terminal_theme.cursor,
             ));
         }
 
@@ -128,6 +132,7 @@ impl Element for TerminalEl {
                 em_width: cell_width,
                 cursor,
                 cur_size: new_size,
+                background_color: terminal_theme.background,
             },
         )
     }
@@ -155,6 +160,14 @@ impl Element for TerminalEl {
             right_mouse_down_out: None,
         });
 
+        //Background
+        cx.scene.push_quad(Quad {
+            bounds: visible_bounds,
+            background: Some(layout.background_color),
+            border: Default::default(),
+            corner_radius: 0.,
+        });
+
         let origin = bounds.origin() + vec2f(layout.em_width, 0.); //Padding
 
         let mut line_origin = origin;
@@ -168,12 +181,12 @@ impl Element for TerminalEl {
             line_origin.set_y(boundaries.max_y());
         }
 
-        if let Some(c) = layout.cursor {
+        if let Some((c, color)) = layout.cursor {
             let new_origin = origin + c.origin();
             let new_cursor = RectF::new(new_origin, c.size());
             cx.scene.push_quad(Quad {
                 bounds: new_cursor,
-                background: Some(Color::white()),
+                background: Some(color),
                 border: Default::default(),
                 corner_radius: 0.,
             });
