@@ -97,6 +97,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_action({
         let app_state = app_state.clone();
         move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
+            println!("open settings");
             open_config_file(&SETTINGS_PATH, app_state.clone(), cx);
         }
     });

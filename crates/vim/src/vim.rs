@@ -11,7 +11,7 @@ mod visual;
 
 use collections::HashMap;
 use command_palette::CommandPaletteFilter;
-use editor::{Bias, CursorShape, Editor, Input};
+use editor::{Bias, Cancel, CursorShape, Editor, Input};
 use gpui::{impl_actions, MutableAppContext, Subscription, ViewContext, WeakViewHandle};
 use serde::Deserialize;
 
@@ -34,6 +34,7 @@ pub fn init(cx: &mut MutableAppContext) {
     insert::init(cx);
     motion::init(cx);
 
+    // Vim Actions
     cx.add_action(|_: &mut Workspace, &SwitchMode(mode): &SwitchMode, cx| {
         Vim::update(cx, |vim, cx| vim.switch_mode(mode, cx))
     });
@@ -42,12 +43,30 @@ pub fn init(cx: &mut MutableAppContext) {
             Vim::update(cx, |vim, cx| vim.push_operator(operator, cx))
         },
     );
+
+    // Editor Actions
     cx.add_action(|_: &mut Editor, _: &Input, cx| {
+        // If we have an unbound input with an active operator, cancel that operator. Otherwise forward
+        // the input to the editor
         if Vim::read(cx).active_operator().is_some() {
             // Defer without updating editor
             MutableAppContext::defer(cx, |cx| Vim::update(cx, |vim, cx| vim.clear_operator(cx)))
         } else {
             cx.propagate_action()
+        }
+    });
+    cx.add_action(|_: &mut Editor, _: &Cancel, cx| {
+        // If we are in a non normal mode or have an active operator, swap to normal mode
+        // Otherwise forward cancel on to the editor
+        let vim = Vim::read(cx);
+        if vim.state.mode != Mode::Normal || vim.active_operator().is_some() {
+            MutableAppContext::defer(cx, |cx| {
+                Vim::update(cx, |state, cx| {
+                    state.switch_mode(Mode::Normal, cx);
+                });
+            });
+        } else {
+            cx.propagate_action();
         }
     });
 
@@ -97,9 +116,46 @@ impl Vim {
     }
 
     fn switch_mode(&mut self, mode: Mode, cx: &mut MutableAppContext) {
+        let previous_mode = self.state.mode;
         self.state.mode = mode;
         self.state.operator_stack.clear();
+
+        // Sync editor settings like clip mode
         self.sync_vim_settings(cx);
+
+        // Adjust selections
+        for editor in self.editors.values() {
+            if let Some(editor) = editor.upgrade(cx) {
+                editor.update(cx, |editor, cx| {
+                    editor.change_selections(None, cx, |s| {
+                        s.move_with(|map, selection| {
+                            // If empty selections
+                            if self.state.empty_selections_only() {
+                                let new_head = map.clip_point(selection.head(), Bias::Left);
+                                selection.collapse_to(new_head, selection.goal)
+                            } else {
+                                if matches!(mode, Mode::Visual { line: false })
+                                    && !matches!(previous_mode, Mode::Visual { .. })
+                                    && !selection.reversed
+                                    && !selection.is_empty()
+                                {
+                                    // Mode wasn't visual mode before, but is now. We need to move the end
+                                    // back by one character so that the region to be modifed stays the same
+                                    *selection.end.column_mut() =
+                                        selection.end.column().saturating_sub(1);
+                                    selection.end = map.clip_point(selection.end, Bias::Left);
+                                }
+
+                                selection.set_head(
+                                    map.clip_point(selection.head(), Bias::Left),
+                                    selection.goal,
+                                );
+                            }
+                        });
+                    })
+                })
+            }
+        }
     }
 
     fn push_operator(&mut self, operator: Operator, cx: &mut MutableAppContext) {
@@ -127,7 +183,7 @@ impl Vim {
             self.enabled = enabled;
             self.state = Default::default();
             if enabled {
-                self.state.mode = Mode::Normal;
+                self.switch_mode(Mode::Normal, cx);
             }
             self.sync_vim_settings(cx);
         }
@@ -156,17 +212,6 @@ impl Vim {
                             matches!(state.mode, Mode::Visual { line: true });
                         let context_layer = state.keymap_context_layer();
                         editor.set_keymap_context_layer::<Self>(context_layer);
-                        editor.change_selections(None, cx, |s| {
-                            s.move_with(|map, selection| {
-                                selection.set_head(
-                                    map.clip_point(selection.head(), Bias::Left),
-                                    selection.goal,
-                                );
-                                if state.empty_selections_only() {
-                                    selection.collapse_to(selection.head(), selection.goal)
-                                }
-                            });
-                        })
                     } else {
                         editor.set_cursor_shape(CursorShape::Bar, cx);
                         editor.set_clip_at_line_ends(false, cx);
@@ -182,6 +227,9 @@ impl Vim {
 
 #[cfg(test)]
 mod test {
+    use indoc::indoc;
+    use search::BufferSearchBar;
+
     use crate::{state::Mode, vim_test_context::VimTestContext};
 
     #[gpui::test]
@@ -225,5 +273,35 @@ mod test {
         cx.disable_vim();
         cx.enable_vim();
         assert_eq!(cx.mode(), Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_buffer_search_switches_mode(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+            The quick brown
+            fox ju|mps over
+            the lazy dog"},
+            Mode::Normal,
+        );
+        cx.simulate_keystroke("/");
+
+        assert_eq!(cx.mode(), Mode::Visual { line: false });
+
+        let search_bar = cx.workspace(|workspace, cx| {
+            workspace
+                .active_pane()
+                .read(cx)
+                .toolbar()
+                .read(cx)
+                .item_of_type::<BufferSearchBar>()
+                .expect("Buffer search bar should be deployed")
+        });
+
+        search_bar.read_with(cx.cx, |bar, cx| {
+            assert_eq!(bar.query_editor.read(cx).text(cx), "jumps");
+        })
     }
 }
