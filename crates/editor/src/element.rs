@@ -490,7 +490,7 @@ impl EditorElement {
                         }
 
                         let block_text =
-                            if matches!(self.cursor_shape, CursorShape::Block) {
+                            if let CursorShape::Block = self.cursor_shape {
                                 layout.snapshot.chars_at(cursor_position).next().and_then(
                                     |character| {
                                         let font_id =

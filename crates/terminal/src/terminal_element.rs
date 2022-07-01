@@ -17,7 +17,7 @@ use gpui::{
         vector::{vec2f, Vector2F},
     },
     json::json,
-    text_layout::Line,
+    text_layout::{Line, RunStyle},
     Event, FontCache, MouseRegion, PaintContext, Quad, SizeConstraint, WeakViewHandle,
 };
 use itertools::Itertools;
@@ -78,7 +78,7 @@ pub struct LayoutState {
     lines: Vec<Line>,
     line_height: LineHeight,
     em_width: CellWidth,
-    cursor: Option<(Vector2F, Color)>,
+    cursor: Option<(Vector2F, Color, Option<Line>)>,
     cur_size: SizeInfo,
     background_color: Color,
     background_rects: Vec<(RectF, Color)>, //Vec index == Line index for the LineSpan
@@ -120,7 +120,13 @@ impl Element for TerminalEl {
         let terminal_theme = &(cx.global::<Settings>()).theme.terminal;
         let term = view_handle.read(cx).term.lock();
 
-        dbg!(term.grid());
+        // let cursor_char = term.grid().cursor_cell().c.to_string();
+
+        let cursor_text = {
+            let grid = term.grid();
+            let cursor_point = grid.cursor.point;
+            grid[cursor_point.line][cursor_point.column].c.to_string()
+        };
 
         let content = term.renderable_content();
 
@@ -145,13 +151,25 @@ impl Element for TerminalEl {
             .collect();
         let background_rects = make_background_rects(backgrounds, &shaped_lines, &line_height);
 
+        let block_text = cx.text_layout_cache.layout_str(
+            &cursor_text,
+            text_style.font_size,
+            &[(
+                cursor_text.len(),
+                RunStyle {
+                    font_id: text_style.font_id,
+                    color: terminal_theme.background,
+                    underline: Default::default(),
+                },
+            )],
+        );
         let cursor = get_cursor_position(
             content.cursor.point,
             &shaped_lines,
             content.display_offset,
             &line_height,
         )
-        .map(|cursor_rect| (cursor_rect, terminal_theme.cursor));
+        .map(|cursor_rect| (cursor_rect, terminal_theme.cursor, Some(block_text)));
 
         (
             constraint.max,
@@ -188,6 +206,7 @@ impl Element for TerminalEl {
         let origin = bounds.origin() + vec2f(layout.em_width.0, 0.);
 
         //Start us off with a nice simple background color
+        cx.scene.push_layer(Some(visible_bounds));
         cx.scene.push_quad(Quad {
             bounds: RectF::new(bounds.origin(), bounds.size()),
             background: Some(layout.background_color),
@@ -205,8 +224,10 @@ impl Element for TerminalEl {
                 corner_radius: 0.,
             })
         }
+        cx.scene.pop_layer();
 
         //Draw text
+        cx.scene.push_layer(Some(visible_bounds));
         let mut line_origin = origin.clone();
         for line in &layout.lines {
             let boundaries = RectF::new(line_origin, vec2f(bounds.width(), layout.line_height.0));
@@ -215,20 +236,23 @@ impl Element for TerminalEl {
             }
             line_origin.set_y(boundaries.max_y());
         }
+        cx.scene.pop_layer();
 
         //Draw cursor
-        if let Some((c, color)) = layout.cursor {
+        cx.scene.push_layer(Some(visible_bounds));
+        if let Some((c, color, block_text)) = &layout.cursor {
             let editor_cursor = Cursor::new(
-                origin + c,
+                origin + *c,
                 layout.em_width.0,
                 layout.line_height.0,
-                color,
+                *color,
                 CursorShape::Block,
-                None, //TODO fix this
+                block_text.clone(), //TODO fix this
             );
 
             editor_cursor.paint(cx);
         }
+        cx.scene.pop_layer();
 
         #[cfg(debug_assertions)]
         if DEBUG_GRID {
