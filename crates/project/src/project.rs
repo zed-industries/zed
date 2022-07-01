@@ -2125,7 +2125,7 @@ impl Project {
 
                         this.update(&mut cx, |this, cx| {
                             // If the language server for this key doesn't match the server id, don't store the
-                            // server.
+                            // server. Which will cause it to be dropped, killing the process
                             if this
                                 .language_server_ids
                                 .get(&key)
@@ -2135,6 +2135,8 @@ impl Project {
                                 return None;
                             }
 
+                            // Update language_servers collection with Running variant of LanguageServerState
+                            // indicating that the server is up and running and ready
                             this.language_servers.insert(
                                 server_id,
                                 LanguageServerState::Running {
