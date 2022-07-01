@@ -42,20 +42,21 @@ pub struct TerminalEl {
 ///Represents a span of cells in a single line in the terminal's grid.
 ///This is used for drawing background rectangles
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
-pub struct LineSpan {
+pub struct RectSpan {
     start: i32,
     end: i32,
     line: usize,
     color: Color,
 }
 
-impl LineSpan {
+///A background color span
+impl RectSpan {
     ///Creates a new LineSpan. `start` must be <= `end`.
     ///If `start` == `end`, then this span is considered to be over a
     /// single cell
-    fn new(start: i32, end: i32, line: usize, color: Color) -> LineSpan {
+    fn new(start: i32, end: i32, line: usize, color: Color) -> RectSpan {
         debug_assert!(start <= end);
-        LineSpan {
+        RectSpan {
             start,
             end,
             line,
@@ -64,6 +65,7 @@ impl LineSpan {
     }
 }
 
+///Helper types so I don't mix these two up
 struct CellWidth(f32);
 struct LineHeight(f32);
 
@@ -117,11 +119,7 @@ impl Element for TerminalEl {
 
         //And we're off! Begin layouting
         let (chunks, line_count) = build_chunks(content.display_iter, &terminal_theme);
-        let backgrounds = chunks
-            .iter()
-            .filter(|(_, _, line_span)| line_span != &LineSpan::default())
-            .map(|(_, _, line_span)| *line_span)
-            .collect();
+
         let shaped_lines = layout_highlighted_chunks(
             chunks
                 .iter()
@@ -133,6 +131,11 @@ impl Element for TerminalEl {
             line_count,
         );
 
+        let backgrounds = chunks
+            .iter()
+            .filter(|(_, _, line_span)| line_span != &RectSpan::default())
+            .map(|(_, _, line_span)| *line_span)
+            .collect();
         let background_rects = make_background_rects(backgrounds, &shaped_lines, &line_height);
 
         let cursor = make_cursor_rect(
@@ -165,8 +168,10 @@ impl Element for TerminalEl {
         layout: &mut Self::LayoutState,
         cx: &mut gpui::PaintContext,
     ) -> Self::PaintState {
+        //Setup element stuff
         cx.scene.push_layer(Some(visible_bounds));
 
+        //Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
         cx.scene.push_mouse_region(MouseRegion {
             view_id: self.view.id(),
             mouse_down: Some(Rc::new(|_, cx| cx.focus_parent_view())),
@@ -236,26 +241,22 @@ impl Element for TerminalEl {
         match event {
             Event::ScrollWheel {
                 delta, position, ..
-            } => {
-                if visible_bounds.contains_point(*position) {
+            } => visible_bounds
+                .contains_point(*position)
+                .then(|| {
                     let vertical_scroll =
                         (delta.y() / layout.line_height.0) * ALACRITTY_SCROLL_MULTIPLIER;
                     cx.dispatch_action(ScrollTerminal(vertical_scroll.round() as i32));
-                    true
-                } else {
-                    false
-                }
-            }
+                })
+                .is_some(),
             Event::KeyDown {
                 input: Some(input), ..
-            } => {
-                if cx.is_parent_view_focused() {
+            } => cx
+                .is_parent_view_focused()
+                .then(|| {
                     cx.dispatch_action(Input(input.to_string()));
-                    true
-                } else {
-                    false
-                }
-            }
+                })
+                .is_some(),
             _ => false,
         }
     }
@@ -303,11 +304,15 @@ fn make_new_size(
     )
 }
 
+///In a single pass, this function generates the background and foreground color info for every item in the grid.
 pub(crate) fn build_chunks(
     grid_iterator: GridIterator<Cell>,
     theme: &TerminalStyle,
-) -> (Vec<(String, Option<HighlightStyle>, LineSpan)>, usize) {
+) -> (Vec<(String, Option<HighlightStyle>, RectSpan)>, usize) {
     let mut line_count: usize = 0;
+    //Every `group_by()` -> `into_iter()` pair needs to be seperated by a local variable so
+    //rust knows where to put everything.
+    //Start by grouping by lines
     let lines = grid_iterator.group_by(|i| i.point.line.0);
     let result = lines
         .into_iter()
@@ -315,10 +320,12 @@ pub(crate) fn build_chunks(
             line_count += 1;
             let mut col_index = 0;
 
+            //Then group by style
             let chunks = line.group_by(|i| cell_style(&i, theme));
             chunks
                 .into_iter()
                 .map(|(style, fragment)| {
+                    //And assemble the styled fragment into it's background and foreground information
                     let str_fragment = fragment.map(|indexed| indexed.c).collect::<String>();
                     let start = col_index;
                     let end = start + str_fragment.len() as i32;
@@ -326,25 +333,30 @@ pub(crate) fn build_chunks(
                     (
                         str_fragment,
                         Some(style.0),
-                        LineSpan::new(start, end, line_count - 1, style.1), //Line count -> Line index
+                        RectSpan::new(start, end, line_count - 1, style.1), //Line count -> Line index
                     )
                 })
+                //Add a \n to the end, as we're using text layouting rather than grid layouts
                 .chain(iter::once(("\n".to_string(), None, Default::default())))
-                .collect::<Vec<(String, Option<HighlightStyle>, LineSpan)>>()
+                .collect::<Vec<(String, Option<HighlightStyle>, RectSpan)>>()
         })
+        //We have a Vec<Vec<>> (Vec of lines of styled chunks), flatten to just Vec<> (the styled chunks)
         .flatten()
-        .collect::<Vec<(String, Option<HighlightStyle>, LineSpan)>>();
+        .collect::<Vec<(String, Option<HighlightStyle>, RectSpan)>>();
     (result, line_count)
 }
 
+///Convert a RectSpan in terms of character offsets, into RectFs of exact offsets
 fn make_background_rects(
-    backgrounds: Vec<LineSpan>,
+    backgrounds: Vec<RectSpan>,
     shaped_lines: &Vec<Line>,
     line_height: &LineHeight,
 ) -> Vec<(RectF, Color)> {
     backgrounds
         .into_iter()
         .map(|line_span| {
+            //This should always be safe, as the shaped lines and backgrounds where derived
+            //At the same time earlier
             let line = shaped_lines
                 .get(line_span.line)
                 .expect("Background line_num did not correspond to a line number");
@@ -361,6 +373,7 @@ fn make_background_rects(
         .collect::<Vec<(RectF, Color)>>()
 }
 
+///Create the rectangle for a cursor, exactly positioned according to the text
 fn make_cursor_rect(
     cursor_point: Point,
     shaped_lines: &Vec<Line>,
@@ -378,10 +391,11 @@ fn make_cursor_rect(
     })
 }
 
+///Convert the Alacritty cell styles to GPUI text styles and background color
 fn cell_style(indexed: &Indexed<&Cell>, style: &TerminalStyle) -> (HighlightStyle, Color) {
     let flags = indexed.cell.flags;
-    let fg = Some(alac_color_to_gpui_color(&indexed.cell.fg, style));
-    let bg = alac_color_to_gpui_color(&indexed.cell.bg, style);
+    let fg = Some(convert_color(&indexed.cell.fg, style));
+    let bg = convert_color(&indexed.cell.bg, style);
 
     let underline = flags.contains(Flags::UNDERLINE).then(|| Underline {
         color: fg,
@@ -399,8 +413,10 @@ fn cell_style(indexed: &Indexed<&Cell>, style: &TerminalStyle) -> (HighlightStyl
     )
 }
 
-fn alac_color_to_gpui_color(alac_color: &AnsiColor, style: &TerminalStyle) -> Color {
+///Converts a 2, 8, or 24 bit color ANSI color to the GPUI equivalent
+fn convert_color(alac_color: &AnsiColor, style: &TerminalStyle) -> Color {
     match alac_color {
+        //Named and theme defined colors
         alacritty_terminal::ansi::Color::Named(n) => match n {
             alacritty_terminal::ansi::NamedColor::Black => style.black,
             alacritty_terminal::ansi::NamedColor::Red => style.red,
@@ -431,14 +447,18 @@ fn alac_color_to_gpui_color(alac_color: &AnsiColor, style: &TerminalStyle) -> Co
             alacritty_terminal::ansi::NamedColor::DimWhite => style.dim_white,
             alacritty_terminal::ansi::NamedColor::BrightForeground => style.bright_foreground,
             alacritty_terminal::ansi::NamedColor::DimForeground => style.dim_foreground,
-        }, //Theme defined
+        },
+        //'True' colors
         alacritty_terminal::ansi::Color::Spec(rgb) => Color::new(rgb.r, rgb.g, rgb.b, u8::MAX),
-        alacritty_terminal::ansi::Color::Indexed(i) => get_color_at_index(i, style), //Color cube weirdness
+        //8 bit, indexed colors
+        alacritty_terminal::ansi::Color::Indexed(i) => get_color_at_index(i, style),
     }
 }
 
+///Converts an 8 bit ANSI color to it's GPUI equivalent.
 pub fn get_color_at_index(index: &u8, style: &TerminalStyle) -> Color {
     match index {
+        //0-15 are the same as the named colors above
         0 => style.black,
         1 => style.red,
         2 => style.green,
@@ -455,16 +475,17 @@ pub fn get_color_at_index(index: &u8, style: &TerminalStyle) -> Color {
         13 => style.bright_magenta,
         14 => style.bright_cyan,
         15 => style.bright_white,
+        //16-231 are mapped to their RGB colors on a 0-5 range per channel
         16..=231 => {
-            let (r, g, b) = rgb_for_index(index); //Split the index into it's rgb components
-            let step = (u8::MAX as f32 / 5.).floor() as u8; //Split the 256 channel range into 5 chunks
-            Color::new(r * step, g * step, b * step, u8::MAX) //Map the [0, 5] rgb components to the [0, 256] channel range
+            let (r, g, b) = rgb_for_index(index); //Split the index into it's ANSI-RGB components
+            let step = (u8::MAX as f32 / 5.).floor() as u8; //Split the RGB range into 5 chunks, with floor so no overflow
+            Color::new(r * step, g * step, b * step, u8::MAX) //Map the ANSI-RGB components to an RGB color
         }
-        //Grayscale from black to white, 0 to 24
+        //232-255 are a 24 step grayscale from black to white
         232..=255 => {
             let i = index - 232; //Align index to 0..24
-            let step = (u8::MAX as f32 / 24.).floor() as u8; //Split the [0,256] range grayscale values into 24 chunks
-            Color::new(i * step, i * step, i * step, u8::MAX) //Map the rgb components to the grayscale range
+            let step = (u8::MAX as f32 / 24.).floor() as u8; //Split the RGB grayscale values into 24 chunks
+            Color::new(i * step, i * step, i * step, u8::MAX) //Map the ANSI-grayscale components to the RGB-grayscale
         }
     }
 }
@@ -486,6 +507,8 @@ fn rgb_for_index(i: &u8) -> (u8, u8, u8) {
     (r, g, b)
 }
 
+///Draws the grid as Alacritty sees it. Useful for checking if there is an inconsistency between
+///Display and conceptual grid.
 #[cfg(debug_assertions)]
 fn draw_debug_grid(bounds: RectF, layout: &mut LayoutState, cx: &mut PaintContext) {
     let width = layout.cur_size.width();
