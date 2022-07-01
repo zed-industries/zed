@@ -1,12 +1,15 @@
 use anyhow::{anyhow, Result};
 use client::http::HttpClient;
 use futures::lock::Mutex;
+use futures::Future;
 use futures::{future::BoxFuture, FutureExt};
 use gpui::executor::Background;
 use language::{LanguageServerName, LspAdapter};
 use plugin_runtime::{Plugin, PluginBuilder, WasiFn};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
+
+use future_wrap::*;
 
 pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
     let plugin = PluginBuilder::new_with_default_ctx()?
@@ -15,15 +18,20 @@ pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
             dbg!(&command);
             let mut args = command.split(' ');
             let command = args.next().unwrap();
-            smol::process::Command::new(command)
-                .args(args)
-                .output()
-                .await
-                .log_err()
-                .map(|output| {
-                    dbg!("done running command");
-                    output.stdout
-                })
+            dbg!("Running command");
+            let future = smol::process::Command::new(command).args(args).output();
+            let future = future.wrap(|fut, cx| {
+                dbg!("Poll command start");
+                let res = fut.poll(cx);
+                dbg!("Poll command end");
+                res
+            });
+            dbg!("blocked on future");
+            let future = smol::block_on(future);
+            future.log_err().map(|output| {
+                dbg!("done running command");
+                output.stdout
+            })
         })?
         .init(include_bytes!("../../../../plugins/bin/json_language.wasm"))
         .await?;

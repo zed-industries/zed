@@ -6,6 +6,15 @@ use syn::{
     parse_macro_input, Block, FnArg, ForeignItemFn, Ident, ItemFn, Pat, PatIdent, Type, Visibility,
 };
 
+/// Attribute macro to be used guest-side within a plugin.
+/// ```ignore
+/// #[export]
+/// pub fn say_hello() -> String {
+///     "Hello from Wasm".into()
+/// }
+/// ```
+/// This macro makes a function defined guest-side avaliable host-side.
+/// Note that all arguments and return types must be `serde`.
 #[proc_macro_attribute]
 pub fn export(args: TokenStream, function: TokenStream) -> TokenStream {
     if !args.is_empty() {
@@ -81,6 +90,14 @@ pub fn export(args: TokenStream, function: TokenStream) -> TokenStream {
     })
 }
 
+/// Attribute macro to be used guest-side within a plugin.
+/// ```ignore
+/// #[import]
+/// pub fn operating_system_name() -> String;
+/// ```
+/// This macro makes a function defined host-side avaliable guest-side.
+/// Note that all arguments and return types must be `serde`.
+/// All that's provided is a signature, as the function is implemented host-side.
 #[proc_macro_attribute]
 pub fn import(args: TokenStream, function: TokenStream) -> TokenStream {
     if !args.is_empty() {

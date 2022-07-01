@@ -69,3 +69,15 @@ fn import_half(a: u32) -> u32;
 pub fn half_async(a: u32) -> u32 {
     import_half(a)
 }
+
+#[import]
+fn command_async(command: String) -> Option<Vec<u8>>;
+
+#[export]
+pub fn echo_async(message: String) -> String {
+    let command = dbg!(format!("echo {}", message));
+    let result = command_async(command);
+    dbg!(&result);
+    let result = result.expect("Could not run command");
+    String::from_utf8_lossy(&result).to_string()
+}
