@@ -11,7 +11,7 @@ use serde_json::{json, value::RawValue, Value};
 use smol::{
     channel,
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    process,
+    process::{self, Child},
 };
 use std::{
     future::Future,
@@ -44,6 +44,7 @@ pub struct LanguageServer {
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     root_path: PathBuf,
+    _server: Option<Child>,
 }
 
 pub struct Subscription {
@@ -118,11 +119,20 @@ impl LanguageServer {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
+            .kill_on_drop(true)
             .spawn()?;
+
         let stdin = server.stdin.take().unwrap();
-        let stdout = server.stdout.take().unwrap();
-        let mut server =
-            Self::new_internal(server_id, stdin, stdout, root_path, cx, |notification| {
+        let stout = server.stdout.take().unwrap();
+
+        let mut server = Self::new_internal(
+            server_id,
+            stdin,
+            stout,
+            Some(server),
+            root_path,
+            cx,
+            |notification| {
                 log::info!(
                     "unhandled notification {}:\n{}",
                     notification.method,
@@ -131,7 +141,8 @@ impl LanguageServer {
                     )
                     .unwrap()
                 );
-            });
+            },
+        );
         if let Some(name) = binary_path.file_name() {
             server.name = name.to_string_lossy().to_string();
         }
@@ -142,6 +153,7 @@ impl LanguageServer {
         server_id: usize,
         stdin: Stdin,
         stdout: Stdout,
+        server: Option<Child>,
         root_path: &Path,
         cx: AsyncAppContext,
         mut on_unhandled_notification: F,
@@ -242,6 +254,7 @@ impl LanguageServer {
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             root_path: root_path.to_path_buf(),
+            _server: server,
         }
     }
 
@@ -480,6 +493,10 @@ impl LanguageServer {
         self.server_id
     }
 
+    pub fn root_path(&self) -> &PathBuf {
+        &self.root_path
+    }
+
     pub fn request<T: request::Request>(
         &self,
         params: T::Params,
@@ -608,6 +625,7 @@ impl LanguageServer {
             0,
             stdin_writer,
             stdout_reader,
+            None,
             Path::new("/"),
             cx.clone(),
             |_| {},
@@ -617,6 +635,7 @@ impl LanguageServer {
                 0,
                 stdout_writer,
                 stdin_reader,
+                None,
                 Path::new("/"),
                 cx.clone(),
                 move |msg| {

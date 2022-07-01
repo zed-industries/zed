@@ -242,7 +242,7 @@ impl LspCommand for PerformRename {
                 .read_with(&cx, |project, cx| {
                     project
                         .language_server_for_buffer(buffer.read(cx), cx)
-                        .cloned()
+                        .map(|(adapter, server)| (adapter.clone(), server.clone()))
                 })
                 .ok_or_else(|| anyhow!("no language server found for buffer"))?;
             Project::deserialize_workspace_edit(
@@ -359,7 +359,7 @@ impl LspCommand for GetDefinition {
             .read_with(&cx, |project, cx| {
                 project
                     .language_server_for_buffer(buffer.read(cx), cx)
-                    .cloned()
+                    .map(|(adapter, server)| (adapter.clone(), server.clone()))
             })
             .ok_or_else(|| anyhow!("no language server found for buffer"))?;
 
@@ -388,8 +388,8 @@ impl LspCommand for GetDefinition {
                     .update(&mut cx, |this, cx| {
                         this.open_local_buffer_via_lsp(
                             target_uri,
-                            lsp_adapter.clone(),
-                            language_server.clone(),
+                            language_server.server_id(),
+                            lsp_adapter.name(),
                             cx,
                         )
                     })
@@ -599,7 +599,7 @@ impl LspCommand for GetReferences {
             .read_with(&cx, |project, cx| {
                 project
                     .language_server_for_buffer(buffer.read(cx), cx)
-                    .cloned()
+                    .map(|(adapter, server)| (adapter.clone(), server.clone()))
             })
             .ok_or_else(|| anyhow!("no language server found for buffer"))?;
 
@@ -609,8 +609,8 @@ impl LspCommand for GetReferences {
                     .update(&mut cx, |this, cx| {
                         this.open_local_buffer_via_lsp(
                             lsp_location.uri,
-                            lsp_adapter.clone(),
-                            language_server.clone(),
+                            language_server.server_id(),
+                            lsp_adapter.name(),
                             cx,
                         )
                     })
