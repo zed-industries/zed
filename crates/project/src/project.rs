@@ -2249,6 +2249,9 @@ impl Project {
     ) -> Task<()> {
         let key = (worktree_id, adapter_name);
         if let Some(server_id) = self.language_server_ids.remove(&key) {
+            self.language_server_statuses.remove(&server_id);
+            cx.notify();
+
             let server_state = self.language_servers.remove(&server_id);
             cx.spawn_weak(|this, mut cx| async move {
                 let server = match server_state {
