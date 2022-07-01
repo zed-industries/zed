@@ -464,7 +464,7 @@ fn to_alac_rgb(color: Color) -> AlacRgb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal_element::build_chunks;
+    use crate::terminal_element::{build_chunks, BuiltChunks};
     use gpui::TestAppContext;
 
     ///Basic integration test, can we get the terminal to show up, execute a command,
@@ -481,9 +481,10 @@ mod tests {
         terminal
             .condition(cx, |terminal, _cx| {
                 let term = terminal.term.clone();
-                let (chunks, _) = build_chunks(
+                let BuiltChunks { chunks, .. } = build_chunks(
                     term.lock().renderable_content().display_iter,
                     &Default::default(),
+                    Default::default(),
                 );
                 let content = chunks.iter().map(|e| e.0.trim()).collect::<String>();
                 content.contains("7")
