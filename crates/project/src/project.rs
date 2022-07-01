@@ -65,19 +65,25 @@ pub trait Item: Entity {
     fn entry_id(&self, cx: &AppContext) -> Option<ProjectEntryId>;
 }
 
-pub enum LanguageServerState {
-    Starting(Task<Option<Arc<LanguageServer>>>),
-    Running {
-        adapter: Arc<dyn LspAdapter>,
-        server: Arc<LanguageServer>,
-    },
-}
-
 pub struct ProjectStore {
     db: Arc<Db>,
     projects: Vec<WeakModelHandle<Project>>,
 }
 
+// Language server state is stored across 3 collections:
+//     language_servers =>
+//         a mapping from unique server id to LanguageServerState which can either be a task for a
+//         server in the process of starting, or a running server with adapter and language server arcs
+//     language_server_ids => a mapping from worktreeId and server name to the unique server id
+//     language_server_statuses => a mapping from unique server id to the current server status
+//
+// Multiple worktrees can map to the same language server for example when you jump to the definition
+// of a file in the standard library. So language_server_ids is used to look up which server is active
+// for a given worktree and language server name
+//
+// When starting a language server, first the id map is checked to make sure a server isn't already available
+// for that worktree. If there is one, it finishes early. Otherwise, a new id is allocated and and
+// the Starting variant of LanguageServerState is stored in the language_servers map.
 pub struct Project {
     worktrees: Vec<WorktreeHandle>,
     active_entry: Option<ProjectEntryId>,
@@ -180,12 +186,20 @@ pub enum Event {
     ContactCancelledJoinRequest(Arc<User>),
 }
 
+pub enum LanguageServerState {
+    Starting(Task<Option<Arc<LanguageServer>>>),
+    Running {
+        adapter: Arc<dyn LspAdapter>,
+        server: Arc<LanguageServer>,
+    },
+}
+
 #[derive(Serialize)]
 pub struct LanguageServerStatus {
     pub name: String,
     pub pending_work: BTreeMap<String, LanguageServerProgress>,
     pub has_pending_diagnostic_updates: bool,
-    pub progress_tokens: HashSet<String>,
+    progress_tokens: HashSet<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
