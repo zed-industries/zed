@@ -2241,23 +2241,33 @@ impl Project {
             });
     }
 
+    // Returns a list of all of the worktrees which no longer have a language server and the root path
+    // for the stopped server
     fn stop_language_server(
         &mut self,
         worktree_id: WorktreeId,
         adapter_name: LanguageServerName,
         cx: &mut ModelContext<Self>,
-    ) -> Task<()> {
+    ) -> Task<(Option<PathBuf>, Vec<WorktreeId>)> {
         let key = (worktree_id, adapter_name);
         if let Some(server_id) = self.language_server_ids.remove(&key) {
-            // Remove other entries for this language server
-            self.language_server_ids
-                .retain(|_, other_id| other_id != &server_id);
+            // Remove other entries for this language server as well
+            let mut orphaned_worktrees = vec![worktree_id];
+            let other_keys = self.language_server_ids.keys().cloned().collect::<Vec<_>>();
+            for other_key in other_keys {
+                if self.language_server_ids.get(&other_key) == Some(&server_id) {
+                    self.language_server_ids.remove(&other_key);
+                    orphaned_worktrees.push(other_key.0);
+                }
+            }
 
             self.language_server_statuses.remove(&server_id);
             cx.notify();
 
             let server_state = self.language_servers.remove(&server_id);
             cx.spawn_weak(|this, mut cx| async move {
+                let mut root_path = None;
+
                 let server = match server_state {
                     Some(LanguageServerState::Starting(started_language_server)) => {
                         started_language_server.await
@@ -2267,6 +2277,7 @@ impl Project {
                 };
 
                 if let Some(server) = server {
+                    root_path = Some(server.root_path().clone());
                     if let Some(shutdown) = server.shutdown() {
                         shutdown.await;
                     }
@@ -2278,9 +2289,11 @@ impl Project {
                         cx.notify();
                     });
                 }
+
+                (root_path, orphaned_worktrees)
             })
         } else {
-            Task::ready(())
+            Task::ready((None, Vec::new()))
         }
     }
 
@@ -2311,7 +2324,7 @@ impl Project {
     fn restart_language_server(
         &mut self,
         worktree_id: WorktreeId,
-        worktree_path: Arc<Path>,
+        fallback_path: Arc<Path>,
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
@@ -2321,12 +2334,33 @@ impl Project {
             return;
         };
 
-        let stop = self.stop_language_server(worktree_id, adapter.name(), cx);
+        let server_name = adapter.name();
+        let stop = self.stop_language_server(worktree_id, server_name.clone(), cx);
         cx.spawn_weak(|this, mut cx| async move {
-            stop.await;
+            let (original_root_path, orphaned_worktrees) = stop.await;
             if let Some(this) = this.upgrade(&cx) {
                 this.update(&mut cx, |this, cx| {
-                    this.start_language_server(worktree_id, worktree_path, language, cx);
+                    // Attempt to restart using original server path. Fallback to passed in
+                    // path if we could not retrieve the root path
+                    let root_path = original_root_path
+                        .map(|path_buf| Arc::from(path_buf.as_path()))
+                        .unwrap_or(fallback_path);
+
+                    this.start_language_server(worktree_id, root_path, language, cx);
+
+                    // Lookup new server id and set it for each of the orphaned worktrees
+                    if let Some(new_server_id) = this
+                        .language_server_ids
+                        .get(&(worktree_id, server_name.clone()))
+                        .cloned()
+                    {
+                        for orphaned_worktree in orphaned_worktrees {
+                            this.language_server_ids.insert(
+                                (orphaned_worktree, server_name.clone()),
+                                new_server_id.clone(),
+                            );
+                        }
+                    }
                 });
             }
         })

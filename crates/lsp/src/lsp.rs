@@ -493,6 +493,10 @@ impl LanguageServer {
         self.server_id
     }
 
+    pub fn root_path(&self) -> &PathBuf {
+        &self.root_path
+    }
+
     pub fn request<T: request::Request>(
         &self,
         params: T::Params,
