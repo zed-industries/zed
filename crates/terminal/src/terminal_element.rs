@@ -7,13 +7,17 @@ use alacritty_terminal::{
         SizeInfo,
     },
 };
+use editor::{Cursor, CursorShape};
 use gpui::{
     color::Color,
     elements::*,
     fonts::{HighlightStyle, TextStyle, Underline},
-    geometry::{rect::RectF, vector::vec2f},
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
     json::json,
-    text_layout::Line,
+    text_layout::{Line, RunStyle},
     Event, FontCache, MouseRegion, PaintContext, Quad, SizeConstraint, WeakViewHandle,
 };
 use itertools::Itertools;
@@ -74,7 +78,7 @@ pub struct LayoutState {
     lines: Vec<Line>,
     line_height: LineHeight,
     em_width: CellWidth,
-    cursor: Option<(RectF, Color)>,
+    cursor: Option<Cursor>,
     cur_size: SizeInfo,
     background_color: Color,
     background_rects: Vec<(RectF, Color)>, //Vec index == Line index for the LineSpan
@@ -115,10 +119,19 @@ impl Element for TerminalEl {
         //Now that we're done with the mutable portion, grab the immutable settings and view again
         let terminal_theme = &(cx.global::<Settings>()).theme.terminal;
         let term = view_handle.read(cx).term.lock();
+
+        let grid = term.grid();
+        let cursor_point = grid.cursor.point;
+        let cursor_text = grid[cursor_point.line][cursor_point.column].c.to_string();
+
         let content = term.renderable_content();
 
         //And we're off! Begin layouting
-        let (chunks, line_count) = build_chunks(content.display_iter, &terminal_theme);
+        let BuiltChunks {
+            chunks,
+            line_count,
+            cursor_index,
+        } = build_chunks(content.display_iter, &terminal_theme, cursor_point);
 
         let shaped_lines = layout_highlighted_chunks(
             chunks
@@ -138,14 +151,42 @@ impl Element for TerminalEl {
             .collect();
         let background_rects = make_background_rects(backgrounds, &shaped_lines, &line_height);
 
-        let cursor = make_cursor_rect(
-            content.cursor.point,
+        let block_text = cx.text_layout_cache.layout_str(
+            &cursor_text,
+            text_style.font_size,
+            &[(
+                cursor_text.len(),
+                RunStyle {
+                    font_id: text_style.font_id,
+                    color: terminal_theme.background,
+                    underline: Default::default(),
+                },
+            )],
+        );
+
+        let cursor = get_cursor_position(
+            content.cursor.point.line.0 as usize,
+            cursor_index,
             &shaped_lines,
             content.display_offset,
             &line_height,
-            &cell_width,
         )
-        .map(|cursor_rect| (cursor_rect, terminal_theme.cursor));
+        .map(move |(cursor_position, block_width)| {
+            let block_width = if block_width != 0.0 {
+                block_width
+            } else {
+                cell_width.0
+            };
+
+            Cursor::new(
+                cursor_position,
+                block_width,
+                line_height.0,
+                terminal_theme.cursor,
+                CursorShape::Block,
+                Some(block_text.clone()),
+            )
+        });
 
         (
             constraint.max,
@@ -182,6 +223,7 @@ impl Element for TerminalEl {
         let origin = bounds.origin() + vec2f(layout.em_width.0, 0.);
 
         //Start us off with a nice simple background color
+        cx.scene.push_layer(Some(visible_bounds));
         cx.scene.push_quad(Quad {
             bounds: RectF::new(bounds.origin(), bounds.size()),
             background: Some(layout.background_color),
@@ -199,8 +241,10 @@ impl Element for TerminalEl {
                 corner_radius: 0.,
             })
         }
+        cx.scene.pop_layer();
 
         //Draw text
+        cx.scene.push_layer(Some(visible_bounds));
         let mut line_origin = origin.clone();
         for line in &layout.lines {
             let boundaries = RectF::new(line_origin, vec2f(bounds.width(), layout.line_height.0));
@@ -209,16 +253,13 @@ impl Element for TerminalEl {
             }
             line_origin.set_y(boundaries.max_y());
         }
+        cx.scene.pop_layer();
 
         //Draw cursor
-        if let Some((c, color)) = layout.cursor {
-            let new_origin = origin + c.origin();
-            cx.scene.push_quad(Quad {
-                bounds: RectF::new(new_origin, c.size()),
-                background: Some(color),
-                border: Default::default(),
-                corner_radius: 0.,
-            });
+        if let Some(cursor) = &layout.cursor {
+            cx.scene.push_layer(Some(visible_bounds));
+            cursor.paint(origin, cx);
+            cx.scene.pop_layer();
         }
 
         #[cfg(debug_assertions)]
@@ -274,6 +315,7 @@ impl Element for TerminalEl {
     }
 }
 
+///Configures a text style from the current settings.
 fn make_text_style(font_cache: &FontCache, settings: &Settings) -> TextStyle {
     TextStyle {
         color: settings.theme.editor.text_color,
@@ -288,6 +330,7 @@ fn make_text_style(font_cache: &FontCache, settings: &Settings) -> TextStyle {
     }
 }
 
+///Configures a size info object from the given information.
 fn make_new_size(
     constraint: SizeConstraint,
     cell_width: &CellWidth,
@@ -304,21 +347,30 @@ fn make_new_size(
     )
 }
 
+pub struct BuiltChunks {
+    pub chunks: Vec<(String, Option<HighlightStyle>, RectSpan)>,
+    pub line_count: usize,
+    pub cursor_index: usize,
+}
+
 ///In a single pass, this function generates the background and foreground color info for every item in the grid.
 pub(crate) fn build_chunks(
     grid_iterator: GridIterator<Cell>,
     theme: &TerminalStyle,
-) -> (Vec<(String, Option<HighlightStyle>, RectSpan)>, usize) {
+    cursor_point: Point,
+) -> BuiltChunks {
     let mut line_count: usize = 0;
+    let mut cursor_index: usize = 0;
     //Every `group_by()` -> `into_iter()` pair needs to be seperated by a local variable so
     //rust knows where to put everything.
     //Start by grouping by lines
     let lines = grid_iterator.group_by(|i| i.point.line.0);
     let result = lines
         .into_iter()
-        .map(|(_, line)| {
+        .map(|(_line_grid_index, line)| {
             line_count += 1;
             let mut col_index = 0;
+            //Setup a variable
 
             //Then group by style
             let chunks = line.group_by(|i| cell_style(&i, theme));
@@ -326,9 +378,20 @@ pub(crate) fn build_chunks(
                 .into_iter()
                 .map(|(style, fragment)| {
                     //And assemble the styled fragment into it's background and foreground information
-                    let str_fragment = fragment.map(|indexed| indexed.c).collect::<String>();
+                    let mut str_fragment = String::new();
+                    for indexed_cell in fragment {
+                        if cursor_point.line.0 == indexed_cell.point.line.0
+                            && indexed_cell.point.column < cursor_point.column.0
+                        {
+                            cursor_index += indexed_cell.c.to_string().len();
+                        }
+                        str_fragment.push(indexed_cell.c);
+                    }
+
                     let start = col_index;
                     let end = start + str_fragment.len() as i32;
+
+                    //munge it here
                     col_index = end;
                     (
                         str_fragment,
@@ -340,10 +403,15 @@ pub(crate) fn build_chunks(
                 .chain(iter::once(("\n".to_string(), None, Default::default())))
                 .collect::<Vec<(String, Option<HighlightStyle>, RectSpan)>>()
         })
-        //We have a Vec<Vec<>> (Vec of lines of styled chunks), flatten to just Vec<> (the styled chunks)
         .flatten()
+        //We have a Vec<Vec<>> (Vec of lines of styled chunks), flatten to just Vec<> (the styled chunks)
         .collect::<Vec<(String, Option<HighlightStyle>, RectSpan)>>();
-    (result, line_count)
+
+    BuiltChunks {
+        chunks: result,
+        line_count,
+        cursor_index,
+    }
 }
 
 ///Convert a RectSpan in terms of character offsets, into RectFs of exact offsets
@@ -373,20 +441,22 @@ fn make_background_rects(
         .collect::<Vec<(RectF, Color)>>()
 }
 
-///Create the rectangle for a cursor, exactly positioned according to the text
-fn make_cursor_rect(
-    cursor_point: Point,
+// Compute the cursor position and expected block width, may return a zero width if x_for_index returns
+// the same position for sequential indexes. Use em_width instead
+fn get_cursor_position(
+    line: usize,
+    line_index: usize,
     shaped_lines: &Vec<Line>,
     display_offset: usize,
     line_height: &LineHeight,
-    cell_width: &CellWidth,
-) -> Option<RectF> {
-    let cursor_line = cursor_point.line.0 as usize + display_offset;
+) -> Option<(Vector2F, f32)> {
+    let cursor_line = line + display_offset;
     shaped_lines.get(cursor_line).map(|layout_line| {
-        let cursor_x = layout_line.x_for_index(cursor_point.column.0);
-        RectF::new(
+        let cursor_x = layout_line.x_for_index(line_index);
+        let next_char_x = layout_line.x_for_index(line_index + 1);
+        (
             vec2f(cursor_x, cursor_line as f32 * line_height.0),
-            vec2f(cell_width.0, line_height.0),
+            next_char_x - cursor_x,
         )
     })
 }

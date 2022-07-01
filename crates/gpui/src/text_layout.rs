@@ -164,7 +164,7 @@ impl<'a> Hash for CacheKeyRef<'a> {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct Line {
     layout: Arc<LineLayout>,
     style_runs: SmallVec<[(u32, Color, Underline); 32]>,
