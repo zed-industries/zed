@@ -4881,6 +4881,7 @@ dependencies = [
  "editor",
  "futures",
  "gpui",
+ "itertools",
  "mio-extras",
  "ordered-float",
  "project",

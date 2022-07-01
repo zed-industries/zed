@@ -25,7 +25,6 @@ use workspace::{Item, Workspace};
 use crate::terminal_element::{get_color_at_index, TerminalEl};
 
 //ASCII Control characters on a keyboard
-//Consts -> Structs -> Impls -> Functions, Vaguely in order of importance
 const ETX_CHAR: char = 3_u8 as char; //'End of text', the control code for 'ctrl-c'
 const TAB_CHAR: char = 9_u8 as char;
 const CARRIAGE_RETURN_CHAR: char = 13_u8 as char;
@@ -39,9 +38,11 @@ const DEFAULT_TITLE: &str = "Terminal";
 
 pub mod terminal_element;
 
+///Action for carrying the input to the PTY
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct Input(pub String);
 
+///Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScrollTerminal(pub i32);
 
@@ -51,6 +52,7 @@ actions!(
 );
 impl_internal_actions!(terminal, [Input, ScrollTerminal]);
 
+///Initialize and register all of our action handlers
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Terminal::deploy);
     cx.add_action(Terminal::write_to_pty);
@@ -68,6 +70,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Terminal::scroll_terminal);
 }
 
+///A translation struct for Alacritty to communicate with us from their event loop
 #[derive(Clone)]
 pub struct ZedListener(UnboundedSender<AlacTermEvent>);
 
@@ -77,7 +80,7 @@ impl EventListener for ZedListener {
     }
 }
 
-///A terminal renderer.
+///A terminal view, maintains the PTY's file handles and communicates with the terminal
 pub struct Terminal {
     pty_tx: Notifier,
     term: Arc<FairMutex<Term<ZedListener>>>,
@@ -87,6 +90,7 @@ pub struct Terminal {
     cur_size: SizeInfo,
 }
 
+///Upward flowing events, for changing the title and such
 pub enum Event {
     TitleChanged,
     CloseTerminal,
@@ -128,7 +132,8 @@ impl Terminal {
             ..Default::default()
         };
 
-        //The details here don't matter, the terminal will be resized on layout
+        //The details here don't matter, the terminal will be resized on the first layout
+        //Set to something small for easier debugging
         let size_info = SizeInfo::new(200., 100.0, 5., 5., 0., 0., false);
 
         //Set up the terminal...
@@ -169,7 +174,6 @@ impl Terminal {
         match event {
             AlacTermEvent::Wakeup => {
                 if !cx.is_self_focused() {
-                    //Need to figure out how to trigger a redraw when not in focus
                     self.has_new_content = true; //Change tab content
                     cx.emit(Event::TitleChanged);
                 } else {
@@ -207,6 +211,7 @@ impl Terminal {
                     let term_style = &cx.global::<Settings>().theme.terminal;
                     match index {
                         0..=255 => to_alac_rgb(get_color_at_index(&(index as u8), term_style)),
+                        //These additional values are required to match the Alacritty Colors object's behavior
                         256 => to_alac_rgb(term_style.foreground),
                         257 => to_alac_rgb(term_style.background),
                         258 => to_alac_rgb(term_style.cursor),
@@ -226,8 +231,7 @@ impl Terminal {
                 self.write_to_pty(&Input(format(color)), cx)
             }
             AlacTermEvent::CursorBlinkingChange => {
-                //So, it's our job to set a timer and cause the cursor to blink here
-                //Which means that I'm going to put this off until someone @ Zed looks at it
+                //TODO: Set a timer to blink the cursor on and off
             }
             AlacTermEvent::Bell => {
                 self.has_bell = true;
@@ -237,6 +241,7 @@ impl Terminal {
         }
     }
 
+    ///Resize the terminal and the PTY. This locks the terminal.
     fn set_size(&mut self, new_size: SizeInfo) {
         if new_size != self.cur_size {
             self.pty_tx.0.send(Msg::Resize(new_size)).ok();
@@ -245,18 +250,20 @@ impl Terminal {
         }
     }
 
+    ///Scroll the terminal. This locks the terminal
     fn scroll_terminal(&mut self, scroll: &ScrollTerminal, _: &mut ViewContext<Self>) {
         self.term.lock().scroll_display(Scroll::Delta(scroll.0));
     }
 
-    ///Create a new Terminal
+    ///Create a new Terminal in the current working directory or the user's home directory
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         let project = workspace.project().read(cx);
         let abs_path = project
             .active_entry()
             .and_then(|entry_id| project.worktree_for_entry(entry_id, cx))
             .and_then(|worktree_handle| worktree_handle.read(cx).as_local())
-            .map(|wt| wt.abs_path().to_path_buf());
+            .map(|wt| wt.abs_path().to_path_buf())
+            .or_else(|| Some("~".into()));
 
         workspace.add_item(Box::new(cx.add_view(|cx| Terminal::new(cx, abs_path))), cx);
     }
@@ -266,16 +273,19 @@ impl Terminal {
         self.pty_tx.0.send(Msg::Shutdown).ok();
     }
 
+    ///Tell Zed to close us
     fn quit(&mut self, _: &Quit, cx: &mut ViewContext<Self>) {
         cx.emit(Event::CloseTerminal);
     }
 
+    ///Attempt to paste the clipboard into the terminal
     fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
         if let Some(item) = cx.read_from_clipboard() {
             self.write_to_pty(&Input(item.text().to_owned()), cx);
         }
     }
 
+    ///Write the Input payload to the tty. This locks the terminal so we can scroll it.
     fn write_to_pty(&mut self, input: &Input, cx: &mut ViewContext<Self>) {
         //iTerm bell behavior, bell stays until terminal is interacted with
         self.has_bell = false;
@@ -284,38 +294,47 @@ impl Terminal {
         self.pty_tx.notify(input.0.clone().into_bytes());
     }
 
+    ///Send the `up` key
     fn up(&mut self, _: &Up, cx: &mut ViewContext<Self>) {
         self.write_to_pty(&Input(UP_SEQ.to_string()), cx);
     }
 
+    ///Send the `down` key
     fn down(&mut self, _: &Down, cx: &mut ViewContext<Self>) {
         self.write_to_pty(&Input(DOWN_SEQ.to_string()), cx);
     }
 
+    ///Send the `tab` key
     fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
         self.write_to_pty(&Input(TAB_CHAR.to_string()), cx);
     }
 
+    ///Send `SIGINT` (`ctrl-c`)
     fn send_sigint(&mut self, _: &Sigint, cx: &mut ViewContext<Self>) {
         self.write_to_pty(&Input(ETX_CHAR.to_string()), cx);
     }
 
+    ///Send the `escape` key
     fn escape(&mut self, _: &Escape, cx: &mut ViewContext<Self>) {
         self.write_to_pty(&Input(ESC_CHAR.to_string()), cx);
     }
 
+    ///Send the `delete` key. TODO: Difference between this and backspace?
     fn del(&mut self, _: &Del, cx: &mut ViewContext<Self>) {
         self.write_to_pty(&Input(DEL_CHAR.to_string()), cx);
     }
 
+    ///Send a carriage return. TODO: May need to check the terminal mode.
     fn carriage_return(&mut self, _: &Return, cx: &mut ViewContext<Self>) {
         self.write_to_pty(&Input(CARRIAGE_RETURN_CHAR.to_string()), cx);
     }
 
+    //Send the `left` key
     fn left(&mut self, _: &Left, cx: &mut ViewContext<Self>) {
         self.write_to_pty(&Input(LEFT_SEQ.to_string()), cx);
     }
 
+    //Send the `right` key
     fn right(&mut self, _: &Right, cx: &mut ViewContext<Self>) {
         self.write_to_pty(&Input(RIGHT_SEQ.to_string()), cx);
     }
@@ -333,10 +352,7 @@ impl View for Terminal {
     }
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
-        TerminalEl::new(cx.handle())
-            .contained()
-            // .with_style(theme.terminal.container)
-            .boxed()
+        TerminalEl::new(cx.handle()).contained().boxed()
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
@@ -354,7 +370,7 @@ impl Item for Terminal {
 
         if self.has_bell {
             flex.add_child(
-                Svg::new("icons/zap.svg")
+                Svg::new("icons/zap.svg") //TODO: Swap out for a better icon, or at least resize this
                     .with_color(tab_theme.label.text.color)
                     .constrained()
                     .with_width(search_theme.tab_icon_width)
@@ -437,6 +453,7 @@ impl Item for Terminal {
     }
 }
 
+//Convenience method for less lines
 fn to_alac_rgb(color: Color) -> AlacRgb {
     AlacRgb {
         r: color.r,
@@ -451,6 +468,8 @@ mod tests {
     use crate::terminal_element::build_chunks;
     use gpui::TestAppContext;
 
+    ///Basic integration test, can we get the terminal to show up, execute a command,
+    //and produce noticable output?
     #[gpui::test]
     async fn test_terminal(cx: &mut TestAppContext) {
         let terminal = cx.add_view(Default::default(), |cx| Terminal::new(cx, None));
