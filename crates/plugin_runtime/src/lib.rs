@@ -19,6 +19,7 @@ mod tests {
             and_back: WasiFn<u32, u32>,
             imports: WasiFn<u32, u32>,
             half_async: WasiFn<u32, u32>,
+            echo_async: WasiFn<String, String>,
         }
 
         async {
@@ -33,6 +34,22 @@ mod tests {
                 .host_function("import_swap", |(a, b): (u32, u32)| (b, a))
                 .unwrap()
                 .host_function_async("import_half", |a: u32| async move { a / 2 })
+                .unwrap()
+                .host_function_async("command_async", |command: String| async move {
+                    // TODO: actual thing
+                    dbg!(&command);
+                    let mut args = command.split(' ');
+                    let command = args.next().unwrap();
+                    smol::process::Command::new(command)
+                        .args(args)
+                        .output()
+                        .await
+                        .ok()
+                        .map(|output| {
+                            dbg!("Did run command!");
+                            output.stdout
+                        })
+                })
                 .unwrap()
                 .init(include_bytes!("../../../plugins/bin/test_plugin.wasm"))
                 .await
@@ -49,6 +66,7 @@ mod tests {
                 and_back: runtime.function("and_back").unwrap(),
                 imports: runtime.function("imports").unwrap(),
                 half_async: runtime.function("half_async").unwrap(),
+                echo_async: runtime.function("echo_async").unwrap(),
             };
 
             let unsorted = vec![1, 3, 4, 2, 5];
@@ -64,6 +82,13 @@ mod tests {
             assert_eq!(runtime.call(&plugin.and_back, 1).await.unwrap(), 8);
             assert_eq!(runtime.call(&plugin.imports, 1).await.unwrap(), 8);
             assert_eq!(runtime.call(&plugin.half_async, 4).await.unwrap(), 2);
+            assert_eq!(
+                runtime
+                    .call(&plugin.echo_async, "eko".into())
+                    .await
+                    .unwrap(),
+                "eko\n"
+            );
 
             // dbg!("{}", runtime.call(&plugin.and_back, 1).await.unwrap());
         }
