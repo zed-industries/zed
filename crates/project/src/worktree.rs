@@ -569,7 +569,6 @@ impl LocalWorktree {
                         .refresh_entry(path, abs_path, None, cx)
                 })
                 .await?;
-            this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
             Ok((
                 File {
                     entry_id: Some(entry.id),
@@ -710,10 +709,6 @@ impl LocalWorktree {
                     )
                 })
                 .await?;
-            this.update(&mut cx, |this, cx| {
-                let this = this.as_local_mut().unwrap();
-                this.poll_snapshot(cx);
-            });
             Ok(entry)
         }))
     }
@@ -749,10 +744,6 @@ impl LocalWorktree {
                     )
                 })
                 .await?;
-            this.update(&mut cx, |this, cx| {
-                let this = this.as_local_mut().unwrap();
-                this.poll_snapshot(cx);
-            });
             Ok(entry)
         }))
     }
@@ -786,10 +777,6 @@ impl LocalWorktree {
                         .refresh_entry(path, abs_path, None, cx)
                 })
                 .await?;
-            this.update(&mut cx, |this, cx| {
-                let this = this.as_local_mut().unwrap();
-                this.poll_snapshot(cx);
-            });
             Ok(entry)
         })
     }
