@@ -262,8 +262,7 @@ impl Terminal {
             .active_entry()
             .and_then(|entry_id| project.worktree_for_entry(entry_id, cx))
             .and_then(|worktree_handle| worktree_handle.read(cx).as_local())
-            .map(|wt| wt.abs_path().to_path_buf())
-            .or_else(|| Some("~".into()));
+            .map(|wt| wt.abs_path().to_path_buf());
 
         workspace.add_item(Box::new(cx.add_view(|cx| Terminal::new(cx, abs_path))), cx);
     }

@@ -7,11 +7,15 @@ use alacritty_terminal::{
         SizeInfo,
     },
 };
+use editor::{Cursor, CursorShape};
 use gpui::{
     color::Color,
     elements::*,
     fonts::{HighlightStyle, TextStyle, Underline},
-    geometry::{rect::RectF, vector::vec2f},
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
     json::json,
     text_layout::Line,
     Event, FontCache, MouseRegion, PaintContext, Quad, SizeConstraint, WeakViewHandle,
@@ -74,7 +78,7 @@ pub struct LayoutState {
     lines: Vec<Line>,
     line_height: LineHeight,
     em_width: CellWidth,
-    cursor: Option<(RectF, Color)>,
+    cursor: Option<(Vector2F, Color)>,
     cur_size: SizeInfo,
     background_color: Color,
     background_rects: Vec<(RectF, Color)>, //Vec index == Line index for the LineSpan
@@ -138,12 +142,11 @@ impl Element for TerminalEl {
             .collect();
         let background_rects = make_background_rects(backgrounds, &shaped_lines, &line_height);
 
-        let cursor = make_cursor_rect(
+        let cursor = get_cursor_position(
             content.cursor.point,
             &shaped_lines,
             content.display_offset,
             &line_height,
-            &cell_width,
         )
         .map(|cursor_rect| (cursor_rect, terminal_theme.cursor));
 
@@ -179,6 +182,16 @@ impl Element for TerminalEl {
             ..Default::default()
         });
 
+        //TODO: Implement cursor region based styling
+        // cx.scene.push_cursor_region(CursorRegion {
+        //     bounds,
+        //     style: if !view.link_go_to_definition_state.definitions.is_empty() {
+        //         CursorStyle::PointingHand
+        //     } else {
+        //         CursorStyle::IBeam
+        //     },
+        // });
+
         let origin = bounds.origin() + vec2f(layout.em_width.0, 0.);
 
         //Start us off with a nice simple background color
@@ -212,13 +225,16 @@ impl Element for TerminalEl {
 
         //Draw cursor
         if let Some((c, color)) = layout.cursor {
-            let new_origin = origin + c.origin();
-            cx.scene.push_quad(Quad {
-                bounds: RectF::new(new_origin, c.size()),
-                background: Some(color),
-                border: Default::default(),
-                corner_radius: 0.,
-            });
+            let editor_cursor = Cursor::new(
+                origin + c,
+                layout.em_width.0,
+                layout.line_height.0,
+                color,
+                CursorShape::Block,
+                None, //TODO fix this
+            );
+
+            editor_cursor.paint(cx);
         }
 
         #[cfg(debug_assertions)]
@@ -374,20 +390,16 @@ fn make_background_rects(
 }
 
 ///Create the rectangle for a cursor, exactly positioned according to the text
-fn make_cursor_rect(
+fn get_cursor_position(
     cursor_point: Point,
     shaped_lines: &Vec<Line>,
     display_offset: usize,
     line_height: &LineHeight,
-    cell_width: &CellWidth,
-) -> Option<RectF> {
+) -> Option<Vector2F> {
     let cursor_line = cursor_point.line.0 as usize + display_offset;
     shaped_lines.get(cursor_line).map(|layout_line| {
         let cursor_x = layout_line.x_for_index(cursor_point.column.0);
-        RectF::new(
-            vec2f(cursor_x, cursor_line as f32 * line_height.0),
-            vec2f(cell_width.0, line_height.0),
-        )
+        vec2f(cursor_x, cursor_line as f32 * line_height.0)
     })
 }
 

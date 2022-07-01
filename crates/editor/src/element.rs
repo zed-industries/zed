@@ -1630,7 +1630,7 @@ impl Default for CursorShape {
     }
 }
 
-struct Cursor {
+pub struct Cursor {
     origin: Vector2F,
     block_width: f32,
     line_height: f32,
@@ -1640,7 +1640,25 @@ struct Cursor {
 }
 
 impl Cursor {
-    fn paint(&self, cx: &mut PaintContext) {
+    pub fn new(
+        origin: Vector2F,
+        block_width: f32,
+        line_height: f32,
+        color: Color,
+        shape: CursorShape,
+        block_text: Option<Line>,
+    ) -> Cursor {
+        Cursor {
+            origin,
+            block_width,
+            line_height,
+            color,
+            shape,
+            block_text,
+        }
+    }
+
+    pub fn paint(&self, cx: &mut PaintContext) {
         let bounds = match self.shape {
             CursorShape::Bar => RectF::new(self.origin, vec2f(2.0, self.line_height)),
             CursorShape::Block => {
