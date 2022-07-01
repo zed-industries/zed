@@ -7743,6 +7743,10 @@ mod tests {
             .await
             .unwrap();
 
+        // Assert no new language server started
+        cx.foreground().run_until_parked();
+        assert!(fake_servers.try_next().is_err());
+
         assert_eq!(definitions.len(), 1);
         let definition = definitions.pop().unwrap();
         cx.update(|cx| {
