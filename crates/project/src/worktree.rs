@@ -495,10 +495,10 @@ impl LocalWorktree {
     }
 
     fn poll_snapshot(&mut self, cx: &mut ModelContext<Worktree>) {
+        self.poll_task.take();
+        self.snapshot = self.background_snapshot.lock().clone();
         match self.scan_state() {
             ScanState::Idle => {
-                self.poll_task.take();
-                self.snapshot = self.background_snapshot.lock().clone();
                 if let Some(share) = self.share.as_mut() {
                     *share.snapshots_tx.borrow_mut() = self.snapshot.clone();
                 }
@@ -516,10 +516,7 @@ impl LocalWorktree {
                             smol::Timer::after(Duration::from_millis(100)).await;
                         }
                         if let Some(this) = this.upgrade(&cx) {
-                            this.update(&mut cx, |this, cx| {
-                                this.as_local_mut().unwrap().poll_task = None;
-                                this.poll_snapshot(cx);
-                            });
+                            this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
                         }
                     }));
                 }
