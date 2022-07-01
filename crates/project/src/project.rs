@@ -2249,6 +2249,10 @@ impl Project {
     ) -> Task<()> {
         let key = (worktree_id, adapter_name);
         if let Some(server_id) = self.language_server_ids.remove(&key) {
+            // Remove other entries for this language server
+            self.language_server_ids
+                .retain(|_, other_id| other_id != &server_id);
+
             self.language_server_statuses.remove(&server_id);
             cx.notify();
 
