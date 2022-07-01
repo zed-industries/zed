@@ -5803,12 +5803,12 @@ impl Entity for Project {
         let shutdown_futures = self
             .language_servers
             .drain()
-            .filter_map(|(_, server_state)| {
-                // TODO: Handle starting servers?
-                if let LanguageServerState::Running { server, .. } = server_state {
-                    server.shutdown()
-                } else {
-                    None
+            .map(|(_, server_state)| async {
+                match server_state {
+                    LanguageServerState::Running { server, .. } => server.shutdown()?.await,
+                    LanguageServerState::Starting(starting_server) => {
+                        starting_server.await?.shutdown()?.await
+                    }
                 }
             })
             .collect::<Vec<_>>();
