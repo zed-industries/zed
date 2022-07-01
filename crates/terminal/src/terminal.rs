@@ -484,7 +484,6 @@ mod tests {
                 let (chunks, _) = build_chunks(
                     term.lock().renderable_content().display_iter,
                     &Default::default(),
-                    0.,
                 );
                 let content = chunks.iter().map(|e| e.0.trim()).collect::<String>();
                 content.contains("7")

@@ -1,6 +1,6 @@
 use alacritty_terminal::{
     ansi::Color as AnsiColor,
-    grid::{Dimensions, GridIterator, Indexed},
+    grid::{GridIterator, Indexed},
     index::Point,
     term::{
         cell::{Cell, Flags},
@@ -121,13 +121,8 @@ impl Element for TerminalEl {
         let term = view_handle.read(cx).term.lock();
         let content = term.renderable_content();
 
-        //TODO: Remove
-        // dbg!("*******");
-        // dbg!(cur_size.columns());
-
         //And we're off! Begin layouting
-        let (chunks, line_count) =
-            build_chunks(content.display_iter, &terminal_theme, cell_width.0);
+        let (chunks, line_count) = build_chunks(content.display_iter, &terminal_theme);
 
         let shaped_lines = layout_highlighted_chunks(
             chunks
@@ -139,11 +134,6 @@ impl Element for TerminalEl {
             usize::MAX,
             line_count,
         );
-
-        //TODO: Remove
-        // for shaped_line in &shaped_lines {
-        //     dbg!(shaped_line.width());
-        // }
 
         let backgrounds = chunks
             .iter()
@@ -191,16 +181,6 @@ impl Element for TerminalEl {
             bounds: visible_bounds,
             ..Default::default()
         });
-
-        //TODO: Implement cursor region based styling
-        // cx.scene.push_cursor_region(CursorRegion {
-        //     bounds,
-        //     style: if !view.link_go_to_definition_state.definitions.is_empty() {
-        //         CursorStyle::PointingHand
-        //     } else {
-        //         CursorStyle::IBeam
-        //     },
-        // });
 
         let origin = bounds.origin() + vec2f(layout.em_width.0, 0.);
 
@@ -336,7 +316,6 @@ fn make_new_size(
 pub(crate) fn build_chunks(
     grid_iterator: GridIterator<Cell>,
     theme: &TerminalStyle,
-    em_width: f32,
 ) -> (Vec<(String, Option<HighlightStyle>, RectSpan)>, usize) {
     let mut line_count: usize = 0;
     //Every `group_by()` -> `into_iter()` pair needs to be seperated by a local variable so
@@ -369,14 +348,6 @@ pub(crate) fn build_chunks(
                 .chain(iter::once(("\n".to_string(), None, Default::default())))
                 .collect::<Vec<(String, Option<HighlightStyle>, RectSpan)>>()
         })
-        //TODO: Remove
-        // .inspect(|line_chunks| {
-        //     let mut line_len = 0;
-        //     for chunk in line_chunks {
-        //         line_len += chunk.0.len();
-        //     }
-        //     dbg!((line_len, line_len as f32 * em_width));
-        // })
         .flatten()
         //We have a Vec<Vec<>> (Vec of lines of styled chunks), flatten to just Vec<> (the styled chunks)
         .collect::<Vec<(String, Option<HighlightStyle>, RectSpan)>>();
