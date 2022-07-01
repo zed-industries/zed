@@ -91,38 +91,41 @@ struct Versions {
 // I wish there was high-level instrumentation for this...
 // - it's totally a deadlock, the proof is in the pudding
 
-macro_rules! call_block {
-    ($self:ident, $name:expr, $arg:expr) => {
-        $self.executor.block(async {
-            dbg!("starting to block on something");
-            let locked = $self.runtime.lock();
-            dbg!("locked runtime");
-            // TODO: No blocking calls!
-            let mut awaited = locked.await;
-            dbg!("awaited lock");
-            let called = awaited.call($name, $arg);
-            dbg!("called function");
-            let result = called.await;
-            dbg!("awaited result");
-            result
-        })
-    };
-}
+// macro_rules! call_block {
+//     ($self:ident, $name:expr, $arg:expr) => {
+//         $self.executor.block(async {
+//             dbg!("starting to block on something");
+//             let locked = $self.runtime.lock();
+//             dbg!("locked runtime");
+//             // TODO: No blocking calls!
+//             let mut awaited = locked.await;
+//             dbg!("awaited lock");
+//             let called = awaited.call($name, $arg);
+//             dbg!("called function");
+//             let result = called.await;
+//             dbg!("awaited result");
+//             result
+//         })
+//     };
+// }
 
+// TODO: convert to async trait
+
+#[async_trait]
 impl LspAdapter for PluginLspAdapter {
-    fn name(&self) -> LanguageServerName {
+    async fn name(&self) -> LanguageServerName {
         let name: String = call_block!(self, &self.name, ()).unwrap();
         LanguageServerName(name.into())
     }
 
-    fn server_args<'a>(&'a self) -> Vec<String> {
+    async fn server_args<'a>(&'a self) -> Vec<String> {
         call_block!(self, &self.server_args, ()).unwrap()
     }
 
-    fn fetch_latest_server_version(
+    async fn fetch_latest_server_version(
         &self,
         _: Arc<dyn HttpClient>,
-    ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>> {
+    ) -> Result<Box<dyn 'static + Send + Any>> {
         // let versions: Result<Option<String>> = call_block!(self, "fetch_latest_server_version", ());
         let runtime = self.runtime.clone();
         let function = self.fetch_latest_server_version;

@@ -63,48 +63,62 @@ pub trait ToLspPosition {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LanguageServerName(pub Arc<str>);
 
+use async_trait::async_trait;
+
+#[async_trait]
 pub trait LspAdapter: 'static + Send + Sync {
-    fn name(&self) -> LanguageServerName;
-    fn fetch_latest_server_version(
+    async fn name(&self) -> LanguageServerName;
+    async fn fetch_latest_server_version(
         &self,
         http: Arc<dyn HttpClient>,
-    ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>>;
-    fn fetch_server_binary(
+    ) -> Result<Box<dyn 'static + Send + Any>>;
+    async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
         http: Arc<dyn HttpClient>,
-        container_dir: Arc<Path>,
-    ) -> BoxFuture<'static, Result<PathBuf>>;
-    fn cached_server_binary(&self, container_dir: Arc<Path>)
-        -> BoxFuture<'static, Option<PathBuf>>;
+        container_dir: PathBuf,
+    ) -> Result<PathBuf>;
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+    ) -> BoxFuture<'static, Option<PathBuf>>;
 
-    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
+    async fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
-    fn label_for_completion(&self, _: &lsp::CompletionItem, _: &Language) -> Option<CodeLabel> {
+    async fn label_for_completion(
+        &self,
+        _: &lsp::CompletionItem,
+        _: &Language,
+    ) -> Option<CodeLabel> {
         None
     }
 
-    fn label_for_symbol(&self, _: &str, _: lsp::SymbolKind, _: &Language) -> Option<CodeLabel> {
+    async fn label_for_symbol(
+        &self,
+        _: &str,
+        _: lsp::SymbolKind,
+        _: &Language,
+    ) -> Option<CodeLabel> {
         None
     }
 
-    fn server_args(&self) -> Vec<String> {
+    async fn server_args(&self) -> Vec<String> {
         Vec::new()
     }
 
-    fn initialization_options(&self) -> Option<Value> {
+    async fn initialization_options(&self) -> Option<Value> {
         None
     }
 
-    fn disk_based_diagnostic_sources(&self) -> &'static [&'static str] {
+    async fn disk_based_diagnostic_sources(&self) -> &'static [&'static str] {
         Default::default()
     }
 
-    fn disk_based_diagnostics_progress_token(&self) -> Option<&'static str> {
+    async fn disk_based_diagnostics_progress_token(&self) -> Option<&'static str> {
         None
     }
 
-    fn id_for_language(&self, _name: &str) -> Option<String> {
+    async fn id_for_language(&self, _name: &str) -> Option<String> {
         None
     }
 }
