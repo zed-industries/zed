@@ -410,10 +410,7 @@ impl LocalWorktree {
                 while let Some(scan_state) = scan_states_rx.next().await {
                     if let Some(this) = this.upgrade(&cx) {
                         last_scan_state_tx.blocking_send(scan_state).ok();
-                        this.update(&mut cx, |this, cx| {
-                            this.poll_snapshot(cx);
-                            this.as_local_mut().unwrap().broadcast_snapshot()
-                        });
+                        this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
                     } else {
                         break;
                     }
@@ -500,8 +497,11 @@ impl LocalWorktree {
     fn poll_snapshot(&mut self, cx: &mut ModelContext<Worktree>) {
         match self.scan_state() {
             ScanState::Idle => {
-                self.snapshot = self.background_snapshot.lock().clone();
                 self.poll_task.take();
+                self.snapshot = self.background_snapshot.lock().clone();
+                if let Some(share) = self.share.as_mut() {
+                    *share.snapshots_tx.borrow_mut() = self.snapshot.clone();
+                }
                 cx.emit(Event::UpdatedEntries);
             }
             ScanState::Initializing => {
@@ -677,7 +677,6 @@ impl LocalWorktree {
                     snapshot.delete_entry(entry_id);
                 }
                 this.poll_snapshot(cx);
-                this.broadcast_snapshot();
             });
             Ok(())
         }))
@@ -717,7 +716,6 @@ impl LocalWorktree {
             this.update(&mut cx, |this, cx| {
                 let this = this.as_local_mut().unwrap();
                 this.poll_snapshot(cx);
-                this.broadcast_snapshot();
             });
             Ok(entry)
         }))
@@ -757,7 +755,6 @@ impl LocalWorktree {
             this.update(&mut cx, |this, cx| {
                 let this = this.as_local_mut().unwrap();
                 this.poll_snapshot(cx);
-                this.broadcast_snapshot()
             });
             Ok(entry)
         }))
@@ -795,7 +792,6 @@ impl LocalWorktree {
             this.update(&mut cx, |this, cx| {
                 let this = this.as_local_mut().unwrap();
                 this.poll_snapshot(cx);
-                this.broadcast_snapshot();
             });
             Ok(entry)
         })
@@ -844,7 +840,6 @@ impl LocalWorktree {
                     snapshot.scan_id += 1;
                 }
                 this.poll_snapshot(cx);
-                this.broadcast_snapshot();
                 Ok(inserted_entry)
             })
         })
@@ -935,15 +930,6 @@ impl LocalWorktree {
 
     pub fn is_shared(&self) -> bool {
         self.share.is_some()
-    }
-
-    fn broadcast_snapshot(&mut self) {
-        if matches!(self.scan_state(), ScanState::Idle) {
-            let snapshot = self.snapshot();
-            if let Some(share) = self.share.as_mut() {
-                *share.snapshots_tx.borrow_mut() = snapshot;
-            }
-        }
     }
 }
 
