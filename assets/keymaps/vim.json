@@ -37,6 +37,7 @@
                     "ignorePunctuation": true
                 }
             ],
+            "shift-%": "vim::Matching",
             "escape": "editor::Cancel"
         }
     },
