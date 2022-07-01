@@ -6,6 +6,7 @@ use futures::{future::BoxFuture, FutureExt};
 use gpui::executor::Background;
 use language::{LanguageServerName, LspAdapter};
 use plugin_runtime::{Plugin, PluginBuilder, WasiFn};
+use std::task::Poll;
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
 
@@ -20,14 +21,22 @@ pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
             let command = args.next().unwrap();
             dbg!("Running command");
             let future = smol::process::Command::new(command).args(args).output();
+            dbg!("Awaiting command");
+
+            #[no_mangle]
+            fn heck_point() {
+                dbg!("command awaited");
+            }
+
             let future = future.wrap(|fut, cx| {
-                dbg!("Poll command start");
+                dbg!("Poll command!");
+
                 let res = fut.poll(cx);
-                dbg!("Poll command end");
                 res
             });
+            let future = future.await;
+            heck_point();
             dbg!("blocked on future");
-            let future = smol::block_on(future);
             future.log_err().map(|output| {
                 dbg!("done running command");
                 output.stdout
@@ -71,11 +80,32 @@ struct Versions {
     server_version: String,
 }
 
+// TODO: is this the root cause?
+// sketch:
+// - smol command is run, hits await, switches
+// - name is run, blocked on
+// - smol command is still pending
+// - name is stuck for some reason(?)
+// - no progress made...
+// - deadlock!!!?
+// I wish there was high-level instrumentation for this...
+// - it's totally a deadlock, the proof is in the pudding
+
 macro_rules! call_block {
     ($self:ident, $name:expr, $arg:expr) => {
-        $self
-            .executor
-            .block(async { $self.runtime.lock().await.call($name, $arg).await })
+        $self.executor.block(async {
+            dbg!("starting to block on something");
+            let locked = $self.runtime.lock();
+            dbg!("locked runtime");
+            // TODO: No blocking calls!
+            let mut awaited = locked.await;
+            dbg!("awaited lock");
+            let called = awaited.call($name, $arg);
+            dbg!("called function");
+            let result = called.await;
+            dbg!("awaited result");
+            result
+        })
     };
 }
 
