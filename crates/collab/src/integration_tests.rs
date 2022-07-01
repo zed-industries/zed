@@ -50,7 +50,6 @@ use std::{
     time::Duration,
 };
 use theme::ThemeRegistry;
-use tokio::sync::RwLockReadGuard;
 use workspace::{Item, SplitDirection, ToggleFollow, Workspace};
 
 #[ctor::ctor]
@@ -589,7 +588,7 @@ async fn test_offline_projects(
     deterministic.run_until_parked();
     assert!(server
         .store
-        .read()
+        .lock()
         .await
         .project_metadata_for_user(user_a)
         .is_empty());
@@ -620,7 +619,7 @@ async fn test_offline_projects(
     cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
     assert!(server
         .store
-        .read()
+        .lock()
         .await
         .project_metadata_for_user(user_a)
         .is_empty());
@@ -1446,7 +1445,7 @@ async fn test_collaborating_with_diagnostics(
     // Wait for server to see the diagnostics update.
     deterministic.run_until_parked();
     {
-        let store = server.store.read().await;
+        let store = server.store.lock().await;
         let project = store.project(ProjectId::from_proto(project_id)).unwrap();
         let worktree = project.worktrees.get(&worktree_id.to_proto()).unwrap();
         assert!(!worktree.diagnostic_summaries.is_empty());
@@ -3172,7 +3171,7 @@ async fn test_basic_chat(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
 
     assert_eq!(
         server
-            .state()
+            .store()
             .await
             .channel(channel_id)
             .unwrap()
@@ -4660,7 +4659,7 @@ async fn test_random_collaboration(
                     .unwrap();
                 let contacts = server
                     .store
-                    .read()
+                    .lock()
                     .await
                     .build_initial_contacts_update(contacts)
                     .contacts;
@@ -4745,7 +4744,7 @@ async fn test_random_collaboration(
                     let contacts = server.app_state.db.get_contacts(*user_id).await.unwrap();
                     let contacts = server
                         .store
-                        .read()
+                        .lock()
                         .await
                         .build_initial_contacts_update(contacts)
                         .contacts;
@@ -5077,10 +5076,6 @@ impl TestServer {
         })
     }
 
-    async fn state<'a>(&'a self) -> RwLockReadGuard<'a, Store> {
-        self.server.store.read().await
-    }
-
     async fn condition<F>(&mut self, mut predicate: F)
     where
         F: FnMut(&Store) -> bool,
@@ -5089,7 +5084,7 @@ impl TestServer {
             self.foreground.parking_forbidden(),
             "you must call forbid_parking to use server conditions so we don't block indefinitely"
         );
-        while !(predicate)(&*self.server.store.read().await) {
+        while !(predicate)(&*self.server.store.lock().await) {
             self.foreground.start_waiting();
             self.notifications.next().await;
             self.foreground.finish_waiting();
