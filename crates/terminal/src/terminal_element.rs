@@ -119,6 +119,9 @@ impl Element for TerminalEl {
         //Now that we're done with the mutable portion, grab the immutable settings and view again
         let terminal_theme = &(cx.global::<Settings>()).theme.terminal;
         let term = view_handle.read(cx).term.lock();
+
+        dbg!(term.grid());
+
         let content = term.renderable_content();
 
         //And we're off! Begin layouting
@@ -390,7 +393,7 @@ fn get_cursor_position(
 ) -> Option<Vector2F> {
     let cursor_line = cursor_point.line.0 as usize + display_offset;
     shaped_lines.get(cursor_line).map(|layout_line| {
-        let cursor_x = layout_line.x_for_index(cursor_point.column.0 + 3);
+        let cursor_x = layout_line.x_for_index(cursor_point.column.0);
         vec2f(cursor_x, cursor_line as f32 * line_height.0)
     })
 }
