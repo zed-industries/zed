@@ -3,12 +3,7 @@ use anyhow::{anyhow, Result};
 use collections::{btree_map, hash_map::Entry, BTreeMap, BTreeSet, HashMap, HashSet};
 use rpc::{proto, ConnectionId, Receipt};
 use serde::Serialize;
-use std::{
-    mem,
-    path::{Path, PathBuf},
-    str,
-    time::Duration,
-};
+use std::{mem, path::PathBuf, str, time::Duration};
 use time::OffsetDateTime;
 use tracing::instrument;
 
@@ -32,6 +27,7 @@ struct ConnectionState {
 
 #[derive(Serialize)]
 pub struct Project {
+    pub online: bool,
     pub host_connection_id: ConnectionId,
     pub host: Collaborator,
     pub guests: HashMap<ConnectionId, Collaborator>,
@@ -57,8 +53,6 @@ pub struct Worktree {
     pub visible: bool,
     #[serde(skip)]
     pub entries: BTreeMap<u64, proto::Entry>,
-    #[serde(skip)]
-    pub extension_counts: HashMap<String, usize>,
     #[serde(skip)]
     pub diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
     pub scan_id: u64,
@@ -87,6 +81,11 @@ pub struct LeftProject {
     pub remove_collaborator: bool,
     pub cancel_request: Option<UserId>,
     pub unshare: bool,
+}
+
+pub struct UnsharedProject {
+    pub guests: HashMap<ConnectionId, Collaborator>,
+    pub pending_join_requests: HashMap<UserId, Vec<Receipt<proto::JoinProject>>>,
 }
 
 #[derive(Copy, Clone)]
@@ -298,7 +297,7 @@ impl Store {
         let mut metadata = Vec::new();
         for project_id in project_ids {
             if let Some(project) = self.projects.get(&project_id) {
-                if project.host.user_id == user_id {
+                if project.host.user_id == user_id && project.online {
                     metadata.push(proto::ProjectMetadata {
                         id: project_id.to_proto(),
                         visible_worktree_root_names: project
@@ -324,6 +323,7 @@ impl Store {
         &mut self,
         host_connection_id: ConnectionId,
         project_id: ProjectId,
+        online: bool,
     ) -> Result<()> {
         let connection = self
             .connections
@@ -333,6 +333,7 @@ impl Store {
         self.projects.insert(
             project_id,
             Project {
+                online,
                 host_connection_id,
                 host: Collaborator {
                     user_id: connection.user_id,
@@ -354,8 +355,9 @@ impl Store {
         &mut self,
         project_id: ProjectId,
         worktrees: &[proto::WorktreeMetadata],
+        online: bool,
         connection_id: ConnectionId,
-    ) -> Result<()> {
+    ) -> Result<Option<UnsharedProject>> {
         let project = self
             .projects
             .get_mut(&project_id)
@@ -376,7 +378,33 @@ impl Store {
                     );
                 }
             }
-            Ok(())
+
+            if online != project.online {
+                project.online = online;
+                if project.online {
+                    Ok(None)
+                } else {
+                    for connection_id in project.guest_connection_ids() {
+                        if let Some(connection) = self.connections.get_mut(&connection_id) {
+                            connection.projects.remove(&project_id);
+                        }
+                    }
+
+                    project.active_replica_ids.clear();
+                    project.language_servers.clear();
+                    for worktree in project.worktrees.values_mut() {
+                        worktree.diagnostic_summaries.clear();
+                        worktree.entries.clear();
+                    }
+
+                    Ok(Some(UnsharedProject {
+                        guests: mem::take(&mut project.guests),
+                        pending_join_requests: mem::take(&mut project.join_requests),
+                    }))
+                }
+            } else {
+                Ok(None)
+            }
         } else {
             Err(anyhow!("no such project"))?
         }
@@ -482,13 +510,17 @@ impl Store {
             .projects
             .get_mut(&project_id)
             .ok_or_else(|| anyhow!("no such project"))?;
-        connection.requested_projects.insert(project_id);
-        project
-            .join_requests
-            .entry(requester_id)
-            .or_default()
-            .push(receipt);
-        Ok(())
+        if project.online {
+            connection.requested_projects.insert(project_id);
+            project
+                .join_requests
+                .entry(requester_id)
+                .or_default()
+                .push(receipt);
+            Ok(())
+        } else {
+            Err(anyhow!("no such project"))
+        }
     }
 
     pub fn deny_join_project_request(
@@ -593,7 +625,6 @@ impl Store {
             for worktree in project.worktrees.values_mut() {
                 worktree.diagnostic_summaries.clear();
                 worktree.entries.clear();
-                worktree.extension_counts.clear();
             }
         }
 
@@ -617,54 +648,28 @@ impl Store {
         updated_entries: &[proto::Entry],
         scan_id: u64,
         is_last_update: bool,
-    ) -> Result<(Vec<ConnectionId>, bool, HashMap<String, usize>)> {
+    ) -> Result<(Vec<ConnectionId>, bool)> {
         let project = self.write_project(project_id, connection_id)?;
+        if !project.online {
+            return Err(anyhow!("project is not online"));
+        }
+
         let connection_ids = project.connection_ids();
         let mut worktree = project.worktrees.entry(worktree_id).or_default();
         let metadata_changed = worktree_root_name != worktree.root_name;
         worktree.root_name = worktree_root_name.to_string();
 
         for entry_id in removed_entries {
-            if let Some(entry) = worktree.entries.remove(&entry_id) {
-                if !entry.is_ignored {
-                    if let Some(extension) = extension_for_entry(&entry) {
-                        if let Some(count) = worktree.extension_counts.get_mut(extension) {
-                            *count = count.saturating_sub(1);
-                        }
-                    }
-                }
-            }
+            worktree.entries.remove(&entry_id);
         }
 
         for entry in updated_entries {
-            if let Some(old_entry) = worktree.entries.insert(entry.id, entry.clone()) {
-                if !old_entry.is_ignored {
-                    if let Some(extension) = extension_for_entry(&old_entry) {
-                        if let Some(count) = worktree.extension_counts.get_mut(extension) {
-                            *count = count.saturating_sub(1);
-                        }
-                    }
-                }
-            }
-
-            if !entry.is_ignored {
-                if let Some(extension) = extension_for_entry(&entry) {
-                    if let Some(count) = worktree.extension_counts.get_mut(extension) {
-                        *count += 1;
-                    } else {
-                        worktree.extension_counts.insert(extension.into(), 1);
-                    }
-                }
-            }
+            worktree.entries.insert(entry.id, entry.clone());
         }
 
         worktree.scan_id = scan_id;
         worktree.is_complete = is_last_update;
-        Ok((
-            connection_ids,
-            metadata_changed,
-            worktree.extension_counts.clone(),
-        ))
+        Ok((connection_ids, metadata_changed))
     }
 
     pub fn project_connection_ids(
@@ -852,12 +857,4 @@ impl Channel {
     fn connection_ids(&self) -> Vec<ConnectionId> {
         self.connection_ids.iter().copied().collect()
     }
-}
-
-fn extension_for_entry(entry: &proto::Entry) -> Option<&str> {
-    str::from_utf8(&entry.path)
-        .ok()
-        .map(Path::new)
-        .and_then(|p| p.extension())
-        .and_then(|e| e.to_str())
 }

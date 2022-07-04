@@ -592,7 +592,7 @@ impl AsyncAppContext {
         self.0.borrow().foreground.spawn(f(self.clone()))
     }
 
-    pub fn read<T, F: FnOnce(&AppContext) -> T>(&mut self, callback: F) -> T {
+    pub fn read<T, F: FnOnce(&AppContext) -> T>(&self, callback: F) -> T {
         callback(self.0.borrow().as_ref())
     }
 

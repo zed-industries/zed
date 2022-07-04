@@ -36,8 +36,12 @@ pub fn routes(rpc_server: &Arc<rpc::Server>, state: Arc<AppState>) -> Router<Bod
         .route("/panic", post(trace_panic))
         .route("/rpc_server_snapshot", get(get_rpc_server_snapshot))
         .route(
-            "/project_activity_summary",
-            get(get_project_activity_summary),
+            "/user_activity/summary",
+            get(get_top_users_activity_summary),
+        )
+        .route(
+            "/user_activity/timeline/:user_id",
+            get(get_user_activity_timeline),
         )
         .route("/project_metadata", get(get_project_metadata))
         .layer(
@@ -264,20 +268,32 @@ async fn get_rpc_server_snapshot(
 }
 
 #[derive(Deserialize)]
-struct GetProjectActivityParams {
+struct TimePeriodParams {
     #[serde(with = "time::serde::iso8601")]
     start: OffsetDateTime,
     #[serde(with = "time::serde::iso8601")]
     end: OffsetDateTime,
 }
 
-async fn get_project_activity_summary(
-    Query(params): Query<GetProjectActivityParams>,
+async fn get_top_users_activity_summary(
+    Query(params): Query<TimePeriodParams>,
     Extension(app): Extension<Arc<AppState>>,
 ) -> Result<ErasedJson> {
     let summary = app
         .db
-        .summarize_project_activity(params.start..params.end, 100)
+        .get_top_users_activity_summary(params.start..params.end, 100)
+        .await?;
+    Ok(ErasedJson::pretty(summary))
+}
+
+async fn get_user_activity_timeline(
+    Path(user_id): Path<i32>,
+    Query(params): Query<TimePeriodParams>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<ErasedJson> {
+    let summary = app
+        .db
+        .get_user_activity_timeline(params.start..params.end, UserId(user_id))
         .await?;
     Ok(ErasedJson::pretty(summary))
 }

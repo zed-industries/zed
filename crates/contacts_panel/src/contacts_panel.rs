@@ -1263,6 +1263,13 @@ mod tests {
             .detach();
         });
 
+        let request = server.receive::<proto::RegisterProject>().await.unwrap();
+        server
+            .respond(
+                request.receipt(),
+                proto::RegisterProjectResponse { project_id: 200 },
+            )
+            .await;
         let get_users_request = server.receive::<proto::GetUsers>().await.unwrap();
         server
             .respond(
@@ -1340,6 +1347,19 @@ mod tests {
             ..Default::default()
         });
 
+        assert_eq!(
+            server
+                .receive::<proto::UpdateProject>()
+                .await
+                .unwrap()
+                .payload,
+            proto::UpdateProject {
+                project_id: 200,
+                online: false,
+                worktrees: vec![]
+            },
+        );
+
         cx.foreground().run_until_parked();
         assert_eq!(
             cx.read(|cx| render_to_strings(&panel, cx)),
@@ -1383,36 +1403,6 @@ mod tests {
             ]
         );
 
-        // The server responds, assigning the project a remote id. It still appears
-        // as loading, because the server hasn't yet sent out the updated contact
-        // state for the current user.
-        let request = server.receive::<proto::RegisterProject>().await.unwrap();
-        server
-            .respond(
-                request.receipt(),
-                proto::RegisterProjectResponse { project_id: 200 },
-            )
-            .await;
-        cx.foreground().run_until_parked();
-        assert_eq!(
-            cx.read(|cx| render_to_strings(&panel, cx)),
-            &[
-                "v Requests",
-                "  incoming user_one",
-                "  outgoing user_two",
-                "v Online",
-                "  the_current_user",
-                "    dir3",
-                "    🔒 private_dir (going online...)",
-                "  user_four",
-                "    dir2",
-                "  user_three",
-                "    dir1",
-                "v Offline",
-                "  user_five",
-            ]
-        );
-
         // The server receives the project's metadata and updates the contact metadata
         // for the current user. Now the project appears as online.
         assert_eq!(
@@ -1420,14 +1410,22 @@ mod tests {
                 .receive::<proto::UpdateProject>()
                 .await
                 .unwrap()
-                .payload
-                .worktrees,
-            &[proto::WorktreeMetadata {
-                id: worktree_id,
-                root_name: "private_dir".to_string(),
-                visible: true,
-            }],
+                .payload,
+            proto::UpdateProject {
+                project_id: 200,
+                online: true,
+                worktrees: vec![proto::WorktreeMetadata {
+                    id: worktree_id,
+                    root_name: "private_dir".to_string(),
+                    visible: true,
+                }]
+            },
         );
+        server
+            .receive::<proto::UpdateWorktreeExtensions>()
+            .await
+            .unwrap();
+
         server.send(proto::UpdateContacts {
             contacts: vec![proto::Contact {
                 user_id: current_user_id,
@@ -1492,7 +1490,19 @@ mod tests {
 
         // The server receives the unregister request and updates the contact
         // metadata for the current user. The project is now offline.
-        let request = server.receive::<proto::UnregisterProject>().await.unwrap();
+        assert_eq!(
+            server
+                .receive::<proto::UpdateProject>()
+                .await
+                .unwrap()
+                .payload,
+            proto::UpdateProject {
+                project_id: 200,
+                online: false,
+                worktrees: vec![]
+            },
+        );
+
         server.send(proto::UpdateContacts {
             contacts: vec![proto::Contact {
                 user_id: current_user_id,
@@ -1506,28 +1516,6 @@ mod tests {
             }],
             ..Default::default()
         });
-        cx.foreground().run_until_parked();
-        assert_eq!(
-            cx.read(|cx| render_to_strings(&panel, cx)),
-            &[
-                "v Requests",
-                "  incoming user_one",
-                "  outgoing user_two",
-                "v Online",
-                "  the_current_user",
-                "    dir3",
-                "    🔒 private_dir",
-                "  user_four",
-                "    dir2",
-                "  user_three",
-                "    dir1",
-                "v Offline",
-                "  user_five",
-            ]
-        );
-
-        // The server responds to the unregister request.
-        server.respond(request.receipt(), proto::Ack {}).await;
         cx.foreground().run_until_parked();
         assert_eq!(
             cx.read(|cx| render_to_strings(&panel, cx)),

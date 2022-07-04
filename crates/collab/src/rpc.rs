@@ -159,6 +159,7 @@ impl Server {
             .add_message_handler(Server::update_project)
             .add_message_handler(Server::register_project_activity)
             .add_request_handler(Server::update_worktree)
+            .add_message_handler(Server::update_worktree_extensions)
             .add_message_handler(Server::start_language_server)
             .add_message_handler(Server::update_language_server)
             .add_message_handler(Server::update_diagnostic_summary)
@@ -327,7 +328,7 @@ impl Server {
                     let period_end = OffsetDateTime::now_utc();
                     this.app_state
                         .db
-                        .record_project_activity(period_start..period_end, &active_projects)
+                        .record_user_activity(period_start..period_end, &active_projects)
                         .await
                         .trace_err();
                     period_start = period_end;
@@ -600,9 +601,11 @@ impl Server {
             .await
             .user_id_for_connection(request.sender_id)?;
         let project_id = self.app_state.db.register_project(user_id).await?;
-        self.store()
-            .await
-            .register_project(request.sender_id, project_id)?;
+        self.store().await.register_project(
+            request.sender_id,
+            project_id,
+            request.payload.online,
+        )?;
 
         response.send(proto::RegisterProjectResponse {
             project_id: project_id.to_proto(),
@@ -948,12 +951,53 @@ impl Server {
             let guest_connection_ids = state
                 .read_project(project_id, request.sender_id)?
                 .guest_connection_ids();
-            state.update_project(project_id, &request.payload.worktrees, request.sender_id)?;
-            broadcast(request.sender_id, guest_connection_ids, |connection_id| {
-                self.peer
-                    .forward_send(request.sender_id, connection_id, request.payload.clone())
-            });
+            let unshared_project = state.update_project(
+                project_id,
+                &request.payload.worktrees,
+                request.payload.online,
+                request.sender_id,
+            )?;
+
+            if let Some(unshared_project) = unshared_project {
+                broadcast(
+                    request.sender_id,
+                    unshared_project.guests.keys().copied(),
+                    |conn_id| {
+                        self.peer.send(
+                            conn_id,
+                            proto::UnregisterProject {
+                                project_id: project_id.to_proto(),
+                            },
+                        )
+                    },
+                );
+                for (_, receipts) in unshared_project.pending_join_requests {
+                    for receipt in receipts {
+                        self.peer.respond(
+                            receipt,
+                            proto::JoinProjectResponse {
+                                variant: Some(proto::join_project_response::Variant::Decline(
+                                    proto::join_project_response::Decline {
+                                        reason:
+                                            proto::join_project_response::decline::Reason::Closed
+                                                as i32,
+                                    },
+                                )),
+                            },
+                        )?;
+                    }
+                }
+            } else {
+                broadcast(request.sender_id, guest_connection_ids, |connection_id| {
+                    self.peer.forward_send(
+                        request.sender_id,
+                        connection_id,
+                        request.payload.clone(),
+                    )
+                });
+            }
         };
+
         self.update_user_contacts(user_id).await?;
         Ok(())
     }
@@ -976,9 +1020,9 @@ impl Server {
     ) -> Result<()> {
         let project_id = ProjectId::from_proto(request.payload.project_id);
         let worktree_id = request.payload.worktree_id;
-        let (connection_ids, metadata_changed, extension_counts) = {
+        let (connection_ids, metadata_changed) = {
             let mut store = self.store().await;
-            let (connection_ids, metadata_changed, extension_counts) = store.update_worktree(
+            let (connection_ids, metadata_changed) = store.update_worktree(
                 request.sender_id,
                 project_id,
                 worktree_id,
@@ -988,12 +1032,8 @@ impl Server {
                 request.payload.scan_id,
                 request.payload.is_last_update,
             )?;
-            (connection_ids, metadata_changed, extension_counts.clone())
+            (connection_ids, metadata_changed)
         };
-        self.app_state
-            .db
-            .update_worktree_extensions(project_id, worktree_id, extension_counts)
-            .await?;
 
         broadcast(request.sender_id, connection_ids, |connection_id| {
             self.peer
@@ -1007,6 +1047,25 @@ impl Server {
             self.update_user_contacts(user_id).await?;
         }
         response.send(proto::Ack {})?;
+        Ok(())
+    }
+
+    async fn update_worktree_extensions(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::UpdateWorktreeExtensions>,
+    ) -> Result<()> {
+        let project_id = ProjectId::from_proto(request.payload.project_id);
+        let worktree_id = request.payload.worktree_id;
+        let extensions = request
+            .payload
+            .extensions
+            .into_iter()
+            .zip(request.payload.counts)
+            .collect();
+        self.app_state
+            .db
+            .update_worktree_extensions(project_id, worktree_id, extensions)
+            .await?;
         Ok(())
     }
 
