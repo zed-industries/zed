@@ -758,7 +758,15 @@ extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
     let mut window_state_borrow = window_state.as_ref().borrow_mut();
 
     unsafe {
-        let _: () = msg_send![window_state_borrow.layer, setContentsScale: window_state_borrow.scale_factor() as f64];
+        let scale_factor = window_state_borrow.scale_factor() as f64;
+        let size = window_state_borrow.size();
+        let drawable_size: NSSize = NSSize {
+            width: size.x() as f64 * scale_factor,
+            height: size.y() as f64 * scale_factor,
+        };
+
+        let _: () = msg_send![window_state_borrow.layer, setContentsScale: scale_factor];
+        let _: () = msg_send![window_state_borrow.layer, setDrawableSize: drawable_size];
     }
 
     if let Some(mut callback) = window_state_borrow.resize_callback.take() {
