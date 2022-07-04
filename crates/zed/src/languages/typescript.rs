@@ -23,22 +23,23 @@ struct Versions {
     server_version: String,
 }
 
+#[async_trait]
 impl LspAdapter for TypeScriptLspAdapter {
-    fn name(&self) -> LanguageServerName {
+    async fn name(&self) -> LanguageServerName {
         LanguageServerName("typescript-language-server".into())
     }
 
-    fn server_args(&self) -> Vec<String> {
+    async fn server_args(&self) -> Vec<String> {
         ["--stdio", "--tsserver-path", "node_modules/typescript/lib"]
             .into_iter()
             .map(str::to_string)
             .collect()
     }
 
-    fn fetch_latest_server_version(
+    async fn fetch_latest_server_version(
         &self,
         _: Arc<dyn HttpClient>,
-    ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>> {
+    ) -> Result<Box<dyn 'static + Send + Any>> {
         async move {
             Ok(Box::new(Versions {
                 typescript_version: npm_package_latest_version("typescript").await?,
@@ -48,12 +49,12 @@ impl LspAdapter for TypeScriptLspAdapter {
         .boxed()
     }
 
-    fn fetch_server_binary(
+    async fn fetch_server_binary(
         &self,
         versions: Box<dyn 'static + Send + Any>,
         _: Arc<dyn HttpClient>,
-        container_dir: Arc<Path>,
-    ) -> BoxFuture<'static, Result<PathBuf>> {
+        container_dir: PathBuf,
+    ) -> Result<PathBuf> {
         let versions = versions.downcast::<Versions>().unwrap();
         async move {
             let version_dir = container_dir.join(&format!(
@@ -95,10 +96,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         .boxed()
     }
 
-    fn cached_server_binary(
-        &self,
-        container_dir: Arc<Path>,
-    ) -> BoxFuture<'static, Option<PathBuf>> {
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
         async move {
             let mut last_version_dir = None;
             let mut entries = fs::read_dir(&container_dir).await?;
@@ -123,7 +121,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         .boxed()
     }
 
-    fn label_for_completion(
+    async fn label_for_completion(
         &self,
         item: &lsp::CompletionItem,
         language: &language::Language,
@@ -146,7 +144,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         })
     }
 
-    fn initialization_options(&self) -> Option<serde_json::Value> {
+    async fn initialization_options(&self) -> Option<serde_json::Value> {
         Some(json!({
             "provideFormatter": true
         }))

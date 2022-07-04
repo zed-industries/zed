@@ -22,19 +22,20 @@ lazy_static! {
     static ref GOPLS_VERSION_REGEX: Regex = Regex::new(r"\d+\.\d+\.\d+").unwrap();
 }
 
+#[async_trait]
 impl super::LspAdapter for GoLspAdapter {
-    fn name(&self) -> LanguageServerName {
+    async fn name(&self) -> LanguageServerName {
         LanguageServerName("gopls".into())
     }
 
-    fn server_args(&self) -> &[&str] {
-        &["-mode=stdio"]
+    async fn server_args(&self) -> Vec<String> {
+        vec!["-mode=stdio".into()]
     }
 
-    fn fetch_latest_server_version(
+    async fn fetch_latest_server_version(
         &self,
         http: Arc<dyn HttpClient>,
-    ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>> {
+    ) -> Result<Box<dyn 'static + Send + Any>> {
         async move {
             let release = latest_github_release("golang/tools", http).await?;
             let version: Option<String> = release.name.strip_prefix("gopls/v").map(str::to_string);
@@ -49,12 +50,12 @@ impl super::LspAdapter for GoLspAdapter {
         .boxed()
     }
 
-    fn fetch_server_binary(
+    async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
         _: Arc<dyn HttpClient>,
-        container_dir: Arc<Path>,
-    ) -> BoxFuture<'static, Result<PathBuf>> {
+        container_dir: PathBuf,
+    ) -> Result<PathBuf> {
         let version = version.downcast::<Option<String>>().unwrap();
         let this = *self;
 
@@ -115,10 +116,7 @@ impl super::LspAdapter for GoLspAdapter {
         .boxed()
     }
 
-    fn cached_server_binary(
-        &self,
-        container_dir: Arc<Path>,
-    ) -> BoxFuture<'static, Option<PathBuf>> {
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
         async move {
             let mut last_binary_path = None;
             let mut entries = fs::read_dir(&container_dir).await?;
@@ -144,7 +142,7 @@ impl super::LspAdapter for GoLspAdapter {
         .boxed()
     }
 
-    fn label_for_completion(
+    async fn label_for_completion(
         &self,
         completion: &lsp::CompletionItem,
         language: &Language,
@@ -244,7 +242,7 @@ impl super::LspAdapter for GoLspAdapter {
         None
     }
 
-    fn label_for_symbol(
+    async fn label_for_symbol(
         &self,
         name: &str,
         kind: lsp::SymbolKind,

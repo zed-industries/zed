@@ -31,8 +31,8 @@ use language::{
     Transaction,
 };
 use lsp::{
-    DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer, LanguageString,
-    MarkedString,
+    CompletionList, DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer,
+    LanguageString, MarkedString,
 };
 use lsp_command::*;
 use parking_lot::Mutex;
@@ -708,7 +708,7 @@ impl Project {
         })
     }
 
-    async fn on_settings_changed(&mut self, cx: &mut ModelContext<'_, Self>) {
+    fn on_settings_changed(&mut self, cx: &mut ModelContext<'_, Self>) {
         let settings = cx.global::<Settings>();
 
         let mut language_servers_to_start = Vec::new();
@@ -3302,15 +3302,15 @@ impl Project {
                                 path = relativize_path(&worktree_abs_path, &abs_path);
                             }
 
-                            let label = this
-                                .languages
-                                .select_language(&path)
-                                .and_then(|language| {
+                            let label = match this.languages.select_language(&path) {
+                                Some(language) => {
                                     language
                                         .label_for_symbol(&lsp_symbol.name, lsp_symbol.kind)
                                         .await
-                                })
-                                .unwrap_or_else(|| CodeLabel::plain(lsp_symbol.name.clone(), None));
+                                }
+                                None => None,
+                            }
+                            .unwrap_or_else(|| CodeLabel::plain(lsp_symbol.name.clone(), None));
                             let signature = this.symbol_signature(worktree_id, &path);
 
                             Some(Symbol {
@@ -3550,15 +3550,18 @@ impl Project {
                             Some(Completion {
                                 old_range,
                                 new_text,
-                                label: language
-                                    .as_ref()
-                                    .and_then(|l| l.label_for_completion(&lsp_completion).await)
+                                label: {
+                                    match language.as_ref() {
+                                        Some(l) => l.label_for_completion(&lsp_completion).await,
+                                        None => None,
+                                    }
                                     .unwrap_or_else(|| {
                                         CodeLabel::plain(
                                             lsp_completion.label.clone(),
                                             lsp_completion.filter_text.as_deref(),
                                         )
-                                    }),
+                                    })
+                                },
                                 lsp_completion,
                             })
                         })
@@ -3582,13 +3585,14 @@ impl Project {
                     })
                     .await;
 
-                response
-                    .completions
-                    .into_iter()
-                    .map(|completion| {
-                        language::proto::deserialize_completion(completion, language.as_ref()).await
-                    })
-                    .collect()
+                let completions = Vec::new();
+                for completion in response.completions.into_iter() {
+                    completions.push(
+                        language::proto::deserialize_completion(completion, language.as_ref())
+                            .await,
+                    );
+                }
+                completions.into_iter().collect()
             })
         } else {
             Task::ready(Ok(Default::default()))
@@ -5189,7 +5193,7 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ApplyCompletionAdditionalEditsResponse> {
-        let apply_additional_edits = this.update(&mut cx, |this, cx| {
+        let (buffer, completion) = this.update(&mut cx, |this, cx| {
             let buffer = this
                 .opened_buffers
                 .get(&envelope.payload.buffer_id)
@@ -5202,12 +5206,15 @@ impl Project {
                     .completion
                     .ok_or_else(|| anyhow!("invalid completion"))?,
                 language,
-            )
-            .await?;
-            Ok::<_, anyhow::Error>(
-                this.apply_additional_edits_for_completion(buffer, completion, false, cx),
-            )
+            );
+            Ok::<_, anyhow::Error>((buffer, completion))
         })?;
+
+        let completion = completion.await?;
+
+        let apply_additional_edits = this.update(&mut cx, |this, cx| {
+            this.apply_additional_edits_for_completion(buffer, completion, false, cx)
+        });
 
         Ok(proto::ApplyCompletionAdditionalEditsResponse {
             transaction: apply_additional_edits
@@ -5390,8 +5397,10 @@ impl Project {
             .payload
             .symbol
             .ok_or_else(|| anyhow!("invalid symbol"))?;
+        let symbol = this
+            .read_with(&cx, |this, _| this.deserialize_symbol(symbol))
+            .await?;
         let symbol = this.read_with(&cx, |this, _| {
-            let symbol = this.deserialize_symbol(symbol).await?;
             let signature = this.symbol_signature(symbol.worktree_id, &symbol.path);
             if signature == symbol.signature {
                 Ok(symbol)

@@ -13,15 +13,16 @@ use util::{ResultExt, TryFutureExt};
 
 pub struct CLspAdapter;
 
+#[async_trait]
 impl super::LspAdapter for CLspAdapter {
-    fn name(&self) -> LanguageServerName {
+    async fn name(&self) -> LanguageServerName {
         LanguageServerName("clangd".into())
     }
 
-    fn fetch_latest_server_version(
+    async fn fetch_latest_server_version(
         &self,
         http: Arc<dyn HttpClient>,
-    ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>> {
+    ) -> Result<Box<dyn 'static + Send + Any>> {
         async move {
             let release = latest_github_release("clangd/clangd", http).await?;
             let asset_name = format!("clangd-mac-{}.zip", release.name);
@@ -39,12 +40,12 @@ impl super::LspAdapter for CLspAdapter {
         .boxed()
     }
 
-    fn fetch_server_binary(
+    async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
         http: Arc<dyn HttpClient>,
-        container_dir: Arc<Path>,
-    ) -> BoxFuture<'static, Result<PathBuf>> {
+        container_dir: PathBuf,
+    ) -> Result<PathBuf> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         async move {
             let zip_path = container_dir.join(format!("clangd_{}.zip", version.name));
@@ -92,10 +93,7 @@ impl super::LspAdapter for CLspAdapter {
         .boxed()
     }
 
-    fn cached_server_binary(
-        &self,
-        container_dir: Arc<Path>,
-    ) -> BoxFuture<'static, Option<PathBuf>> {
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
         async move {
             let mut last_clangd_dir = None;
             let mut entries = fs::read_dir(&container_dir).await?;
@@ -120,7 +118,7 @@ impl super::LspAdapter for CLspAdapter {
         .boxed()
     }
 
-    fn label_for_completion(
+    async fn label_for_completion(
         &self,
         completion: &lsp::CompletionItem,
         language: &Language,
@@ -197,7 +195,7 @@ impl super::LspAdapter for CLspAdapter {
         Some(CodeLabel::plain(label.to_string(), None))
     }
 
-    fn label_for_symbol(
+    async fn label_for_symbol(
         &self,
         name: &str,
         kind: lsp::SymbolKind,

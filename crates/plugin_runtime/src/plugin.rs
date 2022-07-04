@@ -66,15 +66,11 @@ impl PluginBuilder {
     /// Create a new [`PluginBuilder`] with the given WASI context.
     /// Using the default context is a safe bet, see [`new_with_default_context`].
     pub fn new(wasi_ctx: WasiCtx) -> Result<Self, Error> {
-        dbg!("new plugin");
         let mut config = Config::default();
         config.async_support(true);
-        dbg!("Creating engine");
-        let start = std::time::Instant::now();
+        config.epoch_interruption(true);
         let engine = Engine::new(&config)?;
-        dbg!(start.elapsed());
         let linker = Linker::new(&engine);
-        dbg!(start.elapsed());
 
         Ok(PluginBuilder {
             // host_functions: HashMap::new(),
@@ -317,6 +313,7 @@ impl Plugin {
                 alloc: None,
             },
         );
+        // store.epoch_deadline_async_yield_and_update(todo!());
         let module = Module::new(&engine, module)?;
 
         // load the provided module into the asynchronous runtime

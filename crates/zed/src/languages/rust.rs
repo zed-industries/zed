@@ -20,14 +20,14 @@ use util::{ResultExt, TryFutureExt};
 pub struct RustLspAdapter;
 
 impl LspAdapter for RustLspAdapter {
-    fn name(&self) -> LanguageServerName {
+    async fn name(&self) -> LanguageServerName {
         LanguageServerName("rust-analyzer".into())
     }
 
-    fn fetch_latest_server_version(
+    async fn fetch_latest_server_version(
         &self,
         http: Arc<dyn HttpClient>,
-    ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>> {
+    ) -> Result<Box<dyn 'static + Send + Any>> {
         async move {
             let release = latest_github_release("rust-analyzer/rust-analyzer", http).await?;
             let asset_name = format!("rust-analyzer-{}-apple-darwin.gz", consts::ARCH);
@@ -45,12 +45,12 @@ impl LspAdapter for RustLspAdapter {
         .boxed()
     }
 
-    fn fetch_server_binary(
+    async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
         http: Arc<dyn HttpClient>,
-        container_dir: Arc<Path>,
-    ) -> BoxFuture<'static, Result<PathBuf>> {
+        container_dir: PathBuf,
+    ) -> Result<PathBuf> {
         async move {
             let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
             let destination_path = container_dir.join(format!("rust-analyzer-{}", version.name));
@@ -86,9 +86,9 @@ impl LspAdapter for RustLspAdapter {
         .boxed()
     }
 
-    fn cached_server_binary(
+    async fn cached_server_binary(
         &self,
-        container_dir: Arc<Path>,
+        container_dir: PathBuf,
     ) -> BoxFuture<'static, Option<PathBuf>> {
         async move {
             let mut last = None;
@@ -102,15 +102,15 @@ impl LspAdapter for RustLspAdapter {
         .boxed()
     }
 
-    fn disk_based_diagnostic_sources(&self) -> &'static [&'static str] {
-        &["rustc"]
+    async fn disk_based_diagnostic_sources(&self) -> Vec<String> {
+        vec!["rustc".into()]
     }
 
-    fn disk_based_diagnostics_progress_token(&self) -> Option<&'static str> {
-        Some("rustAnalyzer/cargo check")
+    async fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
+        Some("rustAnalyzer/cargo check".into())
     }
 
-    fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
+    async fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
         lazy_static! {
             static ref REGEX: Regex = Regex::new("(?m)`([^`]+)\n`$").unwrap();
         }
@@ -130,7 +130,7 @@ impl LspAdapter for RustLspAdapter {
         }
     }
 
-    fn label_for_completion(
+    async fn label_for_completion(
         &self,
         completion: &lsp::CompletionItem,
         language: &Language,
@@ -206,7 +206,7 @@ impl LspAdapter for RustLspAdapter {
         None
     }
 
-    fn label_for_symbol(
+    async fn label_for_symbol(
         &self,
         name: &str,
         kind: lsp::SymbolKind,

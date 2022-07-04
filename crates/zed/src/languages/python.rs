@@ -17,28 +17,29 @@ impl PythonLspAdapter {
     const BIN_PATH: &'static str = "node_modules/pyright/langserver.index.js";
 }
 
+#[async_trait]
 impl LspAdapter for PythonLspAdapter {
-    fn name(&self) -> LanguageServerName {
+    async fn name(&self) -> LanguageServerName {
         LanguageServerName("pyright".into())
     }
 
-    fn server_args(&self) -> &[&str] {
-        &["--stdio"]
+    async fn server_args(&self) -> Vec<String> {
+        vec!["--stdio".into()]
     }
 
-    fn fetch_latest_server_version(
+    async fn fetch_latest_server_version(
         &self,
         _: Arc<dyn HttpClient>,
-    ) -> BoxFuture<'static, Result<Box<dyn 'static + Any + Send>>> {
+    ) -> Result<Box<dyn 'static + Any + Send>> {
         async move { Ok(Box::new(npm_package_latest_version("pyright").await?) as Box<_>) }.boxed()
     }
 
-    fn fetch_server_binary(
+    async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
         _: Arc<dyn HttpClient>,
-        container_dir: Arc<Path>,
-    ) -> BoxFuture<'static, Result<PathBuf>> {
+        container_dir: PathBuf,
+    ) -> Result<PathBuf> {
         let version = version.downcast::<String>().unwrap();
         async move {
             let version_dir = container_dir.join(version.as_str());
@@ -67,10 +68,7 @@ impl LspAdapter for PythonLspAdapter {
         .boxed()
     }
 
-    fn cached_server_binary(
-        &self,
-        container_dir: Arc<Path>,
-    ) -> BoxFuture<'static, Option<PathBuf>> {
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
         async move {
             let mut last_version_dir = None;
             let mut entries = fs::read_dir(&container_dir).await?;
@@ -95,7 +93,7 @@ impl LspAdapter for PythonLspAdapter {
         .boxed()
     }
 
-    fn label_for_completion(
+    async fn label_for_completion(
         &self,
         item: &lsp::CompletionItem,
         language: &language::Language,
@@ -116,7 +114,7 @@ impl LspAdapter for PythonLspAdapter {
         })
     }
 
-    fn label_for_symbol(
+    async fn label_for_symbol(
         &self,
         name: &str,
         kind: lsp::SymbolKind,
