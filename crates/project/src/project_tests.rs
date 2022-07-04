@@ -2363,7 +2363,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     fs.remove_file("/dir/file2".as_ref(), Default::default())
         .await
         .unwrap();
-    buffer2.condition(&cx, |b, _| b.is_dirty()).await;
+    cx.foreground().run_until_parked();
     assert_eq!(
         *events.borrow(),
         &[
@@ -2393,9 +2393,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     fs.remove_file("/dir/file3".as_ref(), Default::default())
         .await
         .unwrap();
-    buffer3
-        .condition(&cx, |_, _| !events.borrow().is_empty())
-        .await;
+    cx.foreground().run_until_parked();
     assert_eq!(*events.borrow(), &[language::Event::FileHandleChanged]);
     cx.read(|cx| assert!(buffer3.read(cx).is_dirty()));
 }
@@ -2439,10 +2437,7 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     // Because the buffer was not modified, it is reloaded from disk. Its
     // contents are edited according to the diff between the old and new
     // file contents.
-    buffer
-        .condition(&cx, |buffer, _| buffer.text() == new_contents)
-        .await;
-
+    cx.foreground().run_until_parked();
     buffer.update(cx, |buffer, _| {
         assert_eq!(buffer.text(), new_contents);
         assert!(!buffer.is_dirty());
@@ -2476,9 +2471,70 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
 
     // Because the buffer is modified, it doesn't reload from disk, but is
     // marked as having a conflict.
-    buffer
-        .condition(&cx, |buffer, _| buffer.has_conflict())
-        .await;
+    cx.foreground().run_until_parked();
+    buffer.read_with(cx, |buffer, _| {
+        assert!(buffer.has_conflict());
+    });
+}
+
+#[gpui::test]
+async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
+    let fs = FakeFs::new(cx.background());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "file1": "a\nb\nc\n",
+            "file2": "one\r\ntwo\r\nthree\r\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let buffer1 = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
+        .await
+        .unwrap();
+    let buffer2 = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/file2", cx))
+        .await
+        .unwrap();
+
+    buffer1.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "a\nb\nc\n");
+        assert_eq!(buffer.newline_style(), NewlineStyle::Unix);
+    });
+    buffer2.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "one\ntwo\nthree\n");
+        assert_eq!(buffer.newline_style(), NewlineStyle::Windows);
+    });
+
+    // Change a file's line endings on disk from unix to windows. The buffer's
+    // state updates correctly.
+    fs.save(
+        "/dir/file1".as_ref(),
+        &"aaa\nb\nc\n".into(),
+        NewlineStyle::Windows,
+    )
+    .await
+    .unwrap();
+    cx.foreground().run_until_parked();
+    buffer1.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "aaa\nb\nc\n");
+        assert_eq!(buffer.newline_style(), NewlineStyle::Windows);
+    });
+
+    // Save a file with windows line endings. The file is written correctly.
+    buffer2
+        .update(cx, |buffer, cx| {
+            buffer.set_text("one\ntwo\nthree\nfour\n", cx);
+            buffer.save(cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.load("/dir/file2".as_ref()).await.unwrap(),
+        "one\r\ntwo\r\nthree\r\nfour\r\n",
+    );
 }
 
 #[gpui::test]

@@ -98,7 +98,7 @@ pub enum IndentKind {
     Tab,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Debug, Clone, PartialEq, Eq)]
 pub enum NewlineStyle {
     Unix,
     Windows,
@@ -283,6 +283,7 @@ pub(crate) struct Diff {
     base_version: clock::Global,
     new_text: Arc<str>,
     changes: Vec<(ChangeTag, usize)>,
+    newline_style: NewlineStyle,
     start_offset: usize,
 }
 
@@ -973,6 +974,7 @@ impl Buffer {
         let base_version = self.version();
         cx.background().spawn(async move {
             let old_text = old_text.to_string();
+            let newline_style = NewlineStyle::detect(&new_text);
             let new_text = new_text.replace("\r\n", "\n").replace('\r', "\n");
             let changes = TextDiff::from_lines(old_text.as_str(), new_text.as_str())
                 .iter_all_changes()
@@ -982,6 +984,7 @@ impl Buffer {
                 base_version,
                 new_text: new_text.into(),
                 changes,
+                newline_style,
                 start_offset: 0,
             }
         })
@@ -995,6 +998,7 @@ impl Buffer {
         if self.version == diff.base_version {
             self.finalize_last_transaction();
             self.start_transaction();
+            self.newline_style = diff.newline_style;
             let mut offset = diff.start_offset;
             for (tag, len) in diff.changes {
                 let range = offset..(offset + len);
