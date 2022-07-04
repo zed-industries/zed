@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use fsevent::EventStream;
 use futures::{Stream, StreamExt};
-use language::NewlineStyle;
+use language::LineEnding;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::{
     io,
@@ -22,7 +22,7 @@ pub trait Fs: Send + Sync {
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>>;
     async fn load(&self, path: &Path) -> Result<String>;
-    async fn save(&self, path: &Path, text: &Rope, newline_style: NewlineStyle) -> Result<()>;
+    async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
     async fn is_file(&self, path: &Path) -> bool;
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>>;
@@ -170,7 +170,7 @@ impl Fs for RealFs {
         Ok(text)
     }
 
-    async fn save(&self, path: &Path, text: &Rope, newline_style: NewlineStyle) -> Result<()> {
+    async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
         let buffer_size = text.summary().bytes.min(10 * 1024);
         let file = smol::fs::File::create(path).await?;
         let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
@@ -178,7 +178,7 @@ impl Fs for RealFs {
         for chunk in text.chunks() {
             for line in chunk.split('\n') {
                 if newline {
-                    writer.write_all(newline_style.as_str().as_bytes()).await?;
+                    writer.write_all(line_ending.as_str().as_bytes()).await?;
                 }
                 writer.write_all(line.as_bytes()).await?;
                 newline = true;
@@ -654,7 +654,7 @@ impl Fs for FakeFs {
         Ok(text.clone())
     }
 
-    async fn save(&self, path: &Path, text: &Rope, newline_style: NewlineStyle) -> Result<()> {
+    async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
         self.simulate_random_delay().await;
         let mut state = self.state.lock().await;
         let path = normalize_path(path);
@@ -665,7 +665,7 @@ impl Fs for FakeFs {
             } else {
                 entry.content = Some(
                     text.chunks()
-                        .map(|chunk| chunk.replace('\n', newline_style.as_str()))
+                        .map(|chunk| chunk.replace('\n', line_ending.as_str()))
                         .collect(),
                 );
                 entry.metadata.mtime = SystemTime::now();

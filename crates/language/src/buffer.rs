@@ -53,7 +53,7 @@ pub struct Buffer {
     saved_version: clock::Global,
     saved_version_fingerprint: String,
     saved_mtime: SystemTime,
-    newline_style: NewlineStyle,
+    line_ending: LineEnding,
     transaction_depth: usize,
     was_dirty_before_starting_transaction: Option<bool>,
     language: Option<Arc<Language>>,
@@ -99,7 +99,7 @@ pub enum IndentKind {
 }
 
 #[derive(Copy, Debug, Clone, PartialEq, Eq)]
-pub enum NewlineStyle {
+pub enum LineEnding {
     Unix,
     Windows,
 }
@@ -201,7 +201,7 @@ pub trait File: Send + Sync {
         buffer_id: u64,
         text: Rope,
         version: clock::Global,
-        newline_style: NewlineStyle,
+        line_ending: LineEnding,
         cx: &mut MutableAppContext,
     ) -> Task<Result<(clock::Global, String, SystemTime)>>;
 
@@ -283,7 +283,7 @@ pub(crate) struct Diff {
     base_version: clock::Global,
     new_text: Arc<str>,
     changes: Vec<(ChangeTag, usize)>,
-    newline_style: NewlineStyle,
+    line_ending: LineEnding,
     start_offset: usize,
 }
 
@@ -319,11 +319,11 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let history = History::new(base_text.into());
-        let newline_style = NewlineStyle::detect(&history.base_text);
+        let line_ending = LineEnding::detect(&history.base_text);
         Self::build(
             TextBuffer::new(replica_id, cx.model_id() as u64, history),
             None,
-            newline_style,
+            line_ending,
         )
     }
 
@@ -334,11 +334,11 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let history = History::new(base_text.into());
-        let newline_style = NewlineStyle::detect(&history.base_text);
+        let line_ending = LineEnding::detect(&history.base_text);
         Self::build(
             TextBuffer::new(replica_id, cx.model_id() as u64, history),
             Some(file),
-            newline_style,
+            line_ending,
         )
     }
 
@@ -353,9 +353,9 @@ impl Buffer {
             message.id,
             History::new(Arc::from(message.base_text)),
         );
-        let newline_style = proto::NewlineStyle::from_i32(message.newline_style)
-            .ok_or_else(|| anyhow!("missing newline_style"))?;
-        let mut this = Self::build(buffer, file, NewlineStyle::from_proto(newline_style));
+        let line_ending = proto::LineEnding::from_i32(message.line_ending)
+            .ok_or_else(|| anyhow!("missing line_ending"))?;
+        let mut this = Self::build(buffer, file, LineEnding::from_proto(line_ending));
         let ops = message
             .operations
             .into_iter()
@@ -420,7 +420,7 @@ impl Buffer {
             diagnostics: proto::serialize_diagnostics(self.diagnostics.iter()),
             diagnostics_timestamp: self.diagnostics_timestamp.value,
             completion_triggers: self.completion_triggers.clone(),
-            newline_style: self.newline_style.to_proto() as i32,
+            line_ending: self.line_ending.to_proto() as i32,
         }
     }
 
@@ -429,7 +429,7 @@ impl Buffer {
         self
     }
 
-    fn build(buffer: TextBuffer, file: Option<Arc<dyn File>>, newline_style: NewlineStyle) -> Self {
+    fn build(buffer: TextBuffer, file: Option<Arc<dyn File>>, line_ending: LineEnding) -> Self {
         let saved_mtime;
         if let Some(file) = file.as_ref() {
             saved_mtime = file.mtime();
@@ -445,7 +445,7 @@ impl Buffer {
             was_dirty_before_starting_transaction: None,
             text: buffer,
             file,
-            newline_style,
+            line_ending,
             syntax_tree: Mutex::new(None),
             parsing_in_background: false,
             parse_count: 0,
@@ -506,7 +506,7 @@ impl Buffer {
             self.remote_id(),
             text,
             version,
-            self.newline_style,
+            self.line_ending,
             cx.as_mut(),
         );
         cx.spawn(|this, mut cx| async move {
@@ -974,7 +974,7 @@ impl Buffer {
         let base_version = self.version();
         cx.background().spawn(async move {
             let old_text = old_text.to_string();
-            let newline_style = NewlineStyle::detect(&new_text);
+            let line_ending = LineEnding::detect(&new_text);
             let new_text = new_text.replace("\r\n", "\n").replace('\r', "\n");
             let changes = TextDiff::from_lines(old_text.as_str(), new_text.as_str())
                 .iter_all_changes()
@@ -984,7 +984,7 @@ impl Buffer {
                 base_version,
                 new_text: new_text.into(),
                 changes,
-                newline_style,
+                line_ending,
                 start_offset: 0,
             }
         })
@@ -998,7 +998,7 @@ impl Buffer {
         if self.version == diff.base_version {
             self.finalize_last_transaction();
             self.start_transaction();
-            self.newline_style = diff.newline_style;
+            self.line_ending = diff.line_ending;
             let mut offset = diff.start_offset;
             for (tag, len) in diff.changes {
                 let range = offset..(offset + len);
@@ -1514,8 +1514,8 @@ impl Buffer {
         &self.completion_triggers
     }
 
-    pub fn newline_style(&self) -> NewlineStyle {
-        self.newline_style
+    pub fn line_ending(&self) -> LineEnding {
+        self.line_ending
     }
 }
 
@@ -2537,11 +2537,11 @@ impl std::ops::SubAssign for IndentSize {
     }
 }
 
-impl NewlineStyle {
-    fn from_proto(style: proto::NewlineStyle) -> Self {
+impl LineEnding {
+    fn from_proto(style: proto::LineEnding) -> Self {
         match style {
-            proto::NewlineStyle::Unix => Self::Unix,
-            proto::NewlineStyle::Windows => Self::Windows,
+            proto::LineEnding::Unix => Self::Unix,
+            proto::LineEnding::Windows => Self::Windows,
         }
     }
 
@@ -2560,20 +2560,20 @@ impl NewlineStyle {
 
     pub fn as_str(self) -> &'static str {
         match self {
-            NewlineStyle::Unix => "\n",
-            NewlineStyle::Windows => "\r\n",
+            LineEnding::Unix => "\n",
+            LineEnding::Windows => "\r\n",
         }
     }
 
-    fn to_proto(self) -> proto::NewlineStyle {
+    fn to_proto(self) -> proto::LineEnding {
         match self {
-            NewlineStyle::Unix => proto::NewlineStyle::Unix,
-            NewlineStyle::Windows => proto::NewlineStyle::Windows,
+            LineEnding::Unix => proto::LineEnding::Unix,
+            LineEnding::Windows => proto::LineEnding::Windows,
         }
     }
 }
 
-impl Default for NewlineStyle {
+impl Default for LineEnding {
     fn default() -> Self {
         #[cfg(unix)]
         return Self::Unix;

@@ -4,7 +4,7 @@ use futures::{future, StreamExt};
 use gpui::{executor::Deterministic, test::subscribe};
 use language::{
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
-    NewlineStyle, OffsetRangeExt, Point, ToPoint,
+    LineEnding, OffsetRangeExt, Point, ToPoint,
 };
 use lsp::Url;
 use serde_json::json;
@@ -2429,7 +2429,7 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     fs.save(
         "/dir/the-file".as_ref(),
         &new_contents.into(),
-        NewlineStyle::Unix,
+        LineEnding::Unix,
     )
     .await
     .unwrap();
@@ -2464,7 +2464,7 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     fs.save(
         "/dir/the-file".as_ref(),
         &"\n\n\nAAAA\naaa\nBB\nbbbbb\n".into(),
-        NewlineStyle::Unix,
+        LineEnding::Unix,
     )
     .await
     .unwrap();
@@ -2501,11 +2501,11 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
 
     buffer1.read_with(cx, |buffer, _| {
         assert_eq!(buffer.text(), "a\nb\nc\n");
-        assert_eq!(buffer.newline_style(), NewlineStyle::Unix);
+        assert_eq!(buffer.line_ending(), LineEnding::Unix);
     });
     buffer2.read_with(cx, |buffer, _| {
         assert_eq!(buffer.text(), "one\ntwo\nthree\n");
-        assert_eq!(buffer.newline_style(), NewlineStyle::Windows);
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
     });
 
     // Change a file's line endings on disk from unix to windows. The buffer's
@@ -2513,14 +2513,14 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
     fs.save(
         "/dir/file1".as_ref(),
         &"aaa\nb\nc\n".into(),
-        NewlineStyle::Windows,
+        LineEnding::Windows,
     )
     .await
     .unwrap();
     cx.foreground().run_until_parked();
     buffer1.read_with(cx, |buffer, _| {
         assert_eq!(buffer.text(), "aaa\nb\nc\n");
-        assert_eq!(buffer.newline_style(), NewlineStyle::Windows);
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
     });
 
     // Save a file with windows line endings. The file is written correctly.

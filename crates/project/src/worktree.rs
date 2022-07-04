@@ -24,7 +24,7 @@ use gpui::{
 };
 use language::{
     proto::{deserialize_version, serialize_version},
-    Buffer, DiagnosticEntry, NewlineStyle, PointUtf16, Rope,
+    Buffer, DiagnosticEntry, LineEnding, PointUtf16, Rope,
 };
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
@@ -595,7 +595,7 @@ impl LocalWorktree {
         let text = buffer.as_rope().clone();
         let fingerprint = text.fingerprint();
         let version = buffer.version();
-        let save = self.write_file(path, text, buffer.newline_style(), cx);
+        let save = self.write_file(path, text, buffer.line_ending(), cx);
         let handle = cx.handle();
         cx.as_mut().spawn(|mut cx| async move {
             let entry = save.await?;
@@ -636,10 +636,10 @@ impl LocalWorktree {
         &self,
         path: impl Into<Arc<Path>>,
         text: Rope,
-        newline_style: NewlineStyle,
+        line_ending: LineEnding,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<Entry>> {
-        self.write_entry_internal(path, Some((text, newline_style)), cx)
+        self.write_entry_internal(path, Some((text, line_ending)), cx)
     }
 
     pub fn delete_entry(
@@ -755,7 +755,7 @@ impl LocalWorktree {
     fn write_entry_internal(
         &self,
         path: impl Into<Arc<Path>>,
-        text_if_file: Option<(Rope, NewlineStyle)>,
+        text_if_file: Option<(Rope, LineEnding)>,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<Entry>> {
         let path = path.into();
@@ -764,8 +764,8 @@ impl LocalWorktree {
             let fs = self.fs.clone();
             let abs_path = abs_path.clone();
             async move {
-                if let Some((text, newline_style)) = text_if_file {
-                    fs.save(&abs_path, &text, newline_style).await
+                if let Some((text, line_ending)) = text_if_file {
+                    fs.save(&abs_path, &text, line_ending).await
                 } else {
                     fs.create_dir(&abs_path).await
                 }
@@ -1654,7 +1654,7 @@ impl language::File for File {
         buffer_id: u64,
         text: Rope,
         version: clock::Global,
-        newline_style: NewlineStyle,
+        line_ending: LineEnding,
         cx: &mut MutableAppContext,
     ) -> Task<Result<(clock::Global, String, SystemTime)>> {
         self.worktree.update(cx, |worktree, cx| match worktree {
@@ -1662,7 +1662,7 @@ impl language::File for File {
                 let rpc = worktree.client.clone();
                 let project_id = worktree.share.as_ref().map(|share| share.project_id);
                 let fingerprint = text.fingerprint();
-                let save = worktree.write_file(self.path.clone(), text, newline_style, cx);
+                let save = worktree.write_file(self.path.clone(), text, line_ending, cx);
                 cx.background().spawn(async move {
                     let entry = save.await?;
                     if let Some(project_id) = project_id {
