@@ -33,6 +33,7 @@ pub struct Theme {
     pub contact_notification: ContactNotification,
     pub update_notification: UpdateNotification,
     pub tooltip: TooltipStyle,
+    pub terminal: TerminalStyle,
 }
 
 #[derive(Deserialize, Default)]
@@ -632,4 +633,37 @@ pub struct HoverPopover {
     pub block_style: ContainerStyle,
     pub prose: TextStyle,
     pub highlight: Color,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct TerminalStyle {
+    pub black: Color,
+    pub red: Color,
+    pub green: Color,
+    pub yellow: Color,
+    pub blue: Color,
+    pub magenta: Color,
+    pub cyan: Color,
+    pub white: Color,
+    pub bright_black: Color,
+    pub bright_red: Color,
+    pub bright_green: Color,
+    pub bright_yellow: Color,
+    pub bright_blue: Color,
+    pub bright_magenta: Color,
+    pub bright_cyan: Color,
+    pub bright_white: Color,
+    pub foreground: Color,
+    pub background: Color,
+    pub cursor: Color,
+    pub dim_black: Color,
+    pub dim_red: Color,
+    pub dim_green: Color,
+    pub dim_yellow: Color,
+    pub dim_blue: Color,
+    pub dim_magenta: Color,
+    pub dim_cyan: Color,
+    pub dim_white: Color,
+    pub bright_foreground: Color,
+    pub dim_foreground: Color,
 }

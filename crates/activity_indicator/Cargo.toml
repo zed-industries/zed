@@ -1,13 +1,14 @@
 [package]
-name = "lsp_status"
+name = "activity_indicator"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-path = "src/lsp_status.rs"
+path = "src/activity_indicator.rs"
 doctest = false
 
 [dependencies]
+auto_update = { path = "../auto_update" }
 editor = { path = "../editor" }
 language = { path = "../language" }
 gpui = { path = "../gpui" }

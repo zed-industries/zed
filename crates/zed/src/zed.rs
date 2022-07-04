@@ -34,7 +34,7 @@ use std::{
 };
 use util::ResultExt;
 pub use workspace;
-use workspace::{AppState, Workspace};
+use workspace::{sidebar::Side, AppState, Workspace};
 
 #[derive(Deserialize, Clone, PartialEq)]
 struct OpenBrowser {
@@ -97,6 +97,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_action({
         let app_state = app_state.clone();
         move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
+            println!("open settings");
             open_config_file(&SETTINGS_PATH, app_state.clone(), cx);
         }
     });
@@ -128,8 +129,18 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
             }
         },
     );
+    cx.add_action(
+        |workspace: &mut Workspace, _: &project_panel::Toggle, cx: &mut ViewContext<Workspace>| {
+            workspace.toggle_sidebar_item_focus(Side::Left, 0, cx);
+        },
+    );
+    cx.add_action(
+        |workspace: &mut Workspace, _: &contacts_panel::Toggle, cx: &mut ViewContext<Workspace>| {
+            workspace.toggle_sidebar_item_focus(Side::Right, 0, cx);
+        },
+    );
 
-    lsp_status::init(cx);
+    activity_indicator::init(cx);
     settings::KeymapFileContent::load_defaults(cx);
 }
 
@@ -212,15 +223,14 @@ pub fn initialize_workspace(
 
     let diagnostic_summary =
         cx.add_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace.project(), cx));
-    let lsp_status = lsp_status::LspStatusItem::new(workspace, app_state.languages.clone(), cx);
+    let activity_indicator =
+        activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
     let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
-    let auto_update = cx.add_view(|cx| auto_update::AutoUpdateIndicator::new(cx));
     let feedback_link = cx.add_view(|_| feedback::FeedbackLink);
     workspace.status_bar().update(cx, |status_bar, cx| {
         status_bar.add_left_item(diagnostic_summary, cx);
-        status_bar.add_left_item(lsp_status, cx);
+        status_bar.add_left_item(activity_indicator, cx);
         status_bar.add_right_item(cursor_position, cx);
-        status_bar.add_right_item(auto_update, cx);
         status_bar.add_right_item(feedback_link, cx);
     });
 
@@ -429,7 +439,7 @@ mod tests {
         let workspace_1 = cx.root_view::<Workspace>(cx.window_ids()[0]).unwrap();
         workspace_1.update(cx, |workspace, cx| {
             assert_eq!(workspace.worktrees(cx).count(), 2);
-            assert!(workspace.left_sidebar().read(cx).active_item().is_some());
+            assert!(workspace.left_sidebar().read(cx).is_open());
             assert!(workspace.active_pane().is_focused(cx));
         });
 

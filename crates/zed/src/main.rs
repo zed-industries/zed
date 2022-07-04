@@ -36,6 +36,7 @@ use std::{
     thread,
     time::Duration,
 };
+use terminal;
 use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
 use util::{ResultExt, TryFutureExt};
 use workspace::{self, AppState, NewFile, OpenPaths};
@@ -181,6 +182,7 @@ fn main() {
         diagnostics::init(cx);
         search::init(cx);
         vim::init(cx);
+        terminal::init(cx);
 
         let db = cx.background().block(db);
         let (settings_file, keymap_file) = cx.background().block(config_files).unwrap();

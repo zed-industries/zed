@@ -18,11 +18,15 @@ use settings::Settings;
 use std::{any::Any, cell::RefCell, mem, path::Path, rc::Rc};
 use util::ResultExt;
 
+#[derive(Clone, Deserialize, PartialEq)]
+pub struct ActivateItem(pub usize);
+
 actions!(
     pane,
     [
         ActivatePrevItem,
         ActivateNextItem,
+        ActivateLastItem,
         CloseActiveItem,
         CloseInactiveItems,
         ReopenClosedItem,
@@ -40,9 +44,6 @@ pub struct CloseItem {
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
-pub struct ActivateItem(pub usize);
-
-#[derive(Clone, Deserialize, PartialEq)]
 pub struct GoBack {
     #[serde(skip_deserializing)]
     pub pane: Option<WeakViewHandle<Pane>>,
@@ -54,14 +55,17 @@ pub struct GoForward {
     pub pane: Option<WeakViewHandle<Pane>>,
 }
 
-impl_actions!(pane, [GoBack, GoForward]);
-impl_internal_actions!(pane, [CloseItem, ActivateItem]);
+impl_actions!(pane, [GoBack, GoForward, ActivateItem]);
+impl_internal_actions!(pane, [CloseItem]);
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
         pane.activate_item(action.0, true, true, cx);
+    });
+    cx.add_action(|pane: &mut Pane, _: &ActivateLastItem, cx| {
+        pane.activate_item(pane.items.len() - 1, true, true, cx);
     });
     cx.add_action(|pane: &mut Pane, _: &ActivatePrevItem, cx| {
         pane.activate_prev_item(cx);

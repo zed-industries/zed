@@ -703,6 +703,20 @@ impl<'a> EventContext<'a> {
         self.view_stack.last().copied()
     }
 
+    pub fn is_parent_view_focused(&self) -> bool {
+        if let Some(parent_view_id) = self.view_stack.last() {
+            self.app.focused_view_id(self.window_id) == Some(*parent_view_id)
+        } else {
+            false
+        }
+    }
+
+    pub fn focus_parent_view(&mut self) {
+        if let Some(parent_view_id) = self.view_stack.last() {
+            self.app.focus(self.window_id, Some(*parent_view_id))
+        }
+    }
+
     pub fn dispatch_any_action(&mut self, action: Box<dyn Action>) {
         self.dispatched_actions.push(DispatchDirective {
             dispatcher_view_id: self.view_stack.last().copied(),

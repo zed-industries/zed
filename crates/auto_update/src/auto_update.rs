@@ -3,19 +3,15 @@ mod update_notification;
 use anyhow::{anyhow, Context, Result};
 use client::{http::HttpClient, ZED_SECRET_CLIENT_TOKEN};
 use gpui::{
-    actions,
-    elements::{Empty, MouseEventHandler, Text},
-    platform::AppVersion,
-    AppContext, AsyncAppContext, Element, Entity, ModelContext, ModelHandle, MutableAppContext,
-    Task, View, ViewContext, WeakViewHandle,
+    actions, platform::AppVersion, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
+    MutableAppContext, Task, WeakViewHandle,
 };
 use lazy_static::lazy_static;
 use serde::Deserialize;
-use settings::Settings;
 use smol::{fs::File, io::AsyncReadExt, process::Command};
 use std::{env, ffi::OsString, path::PathBuf, sync::Arc, time::Duration};
 use update_notification::UpdateNotification;
-use workspace::{ItemHandle, StatusItemView, Workspace};
+use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &'static str =
     "auto-updater-should-show-updated-notification";
@@ -30,7 +26,7 @@ lazy_static! {
 
 actions!(auto_update, [Check, DismissErrorMessage, ViewReleaseNotes]);
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AutoUpdateStatus {
     Idle,
     Checking,
@@ -47,10 +43,6 @@ pub struct AutoUpdater {
     pending_poll: Option<Task<()>>,
     db: Arc<project::Db>,
     server_url: String,
-}
-
-pub struct AutoUpdateIndicator {
-    updater: Option<ModelHandle<AutoUpdater>>,
 }
 
 #[derive(Deserialize)]
@@ -84,7 +76,6 @@ pub fn init(
         cx.add_global_action(move |_: &ViewReleaseNotes, cx| {
             cx.platform().open_url(&format!("{server_url}/releases"));
         });
-        cx.add_action(AutoUpdateIndicator::dismiss_error_message);
         cx.add_action(UpdateNotification::dismiss);
     }
 }
@@ -120,7 +111,7 @@ pub fn notify_of_any_new_update(
 }
 
 impl AutoUpdater {
-    fn get(cx: &mut MutableAppContext) -> Option<ModelHandle<Self>> {
+    pub fn get(cx: &mut MutableAppContext) -> Option<ModelHandle<Self>> {
         cx.default_global::<Option<ModelHandle<Self>>>().clone()
     }
 
@@ -168,6 +159,15 @@ impl AutoUpdater {
                 }
             });
         }));
+    }
+
+    pub fn status(&self) -> AutoUpdateStatus {
+        self.status
+    }
+
+    pub fn dismiss_error(&mut self, cx: &mut ModelContext<Self>) {
+        self.status = AutoUpdateStatus::Idle;
+        cx.notify();
     }
 
     async fn update(this: ModelHandle<Self>, mut cx: AsyncAppContext) -> Result<()> {
@@ -297,81 +297,5 @@ impl AutoUpdater {
         cx.background().spawn(async move {
             Ok(db.read([(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)])?[0].is_some())
         })
-    }
-}
-
-impl Entity for AutoUpdateIndicator {
-    type Event = ();
-}
-
-impl View for AutoUpdateIndicator {
-    fn ui_name() -> &'static str {
-        "AutoUpdateIndicator"
-    }
-
-    fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
-        if let Some(updater) = &self.updater {
-            let theme = &cx.global::<Settings>().theme.workspace.status_bar;
-            match &updater.read(cx).status {
-                AutoUpdateStatus::Checking => Text::new(
-                    "Checking for updates…".to_string(),
-                    theme.auto_update_progress_message.clone(),
-                )
-                .boxed(),
-                AutoUpdateStatus::Downloading => Text::new(
-                    "Downloading update…".to_string(),
-                    theme.auto_update_progress_message.clone(),
-                )
-                .boxed(),
-                AutoUpdateStatus::Installing => Text::new(
-                    "Installing update…".to_string(),
-                    theme.auto_update_progress_message.clone(),
-                )
-                .boxed(),
-                AutoUpdateStatus::Updated => Text::new(
-                    "Restart to update Zed".to_string(),
-                    theme.auto_update_done_message.clone(),
-                )
-                .boxed(),
-                AutoUpdateStatus::Errored => {
-                    MouseEventHandler::new::<Self, _, _>(0, cx, |_, cx| {
-                        let theme = &cx.global::<Settings>().theme.workspace.status_bar;
-                        Text::new(
-                            "Auto update failed".to_string(),
-                            theme.auto_update_done_message.clone(),
-                        )
-                        .boxed()
-                    })
-                    .on_click(|_, _, cx| cx.dispatch_action(DismissErrorMessage))
-                    .boxed()
-                }
-                AutoUpdateStatus::Idle => Empty::new().boxed(),
-            }
-        } else {
-            Empty::new().boxed()
-        }
-    }
-}
-
-impl StatusItemView for AutoUpdateIndicator {
-    fn set_active_pane_item(&mut self, _: Option<&dyn ItemHandle>, _: &mut ViewContext<Self>) {}
-}
-
-impl AutoUpdateIndicator {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let updater = AutoUpdater::get(cx);
-        if let Some(updater) = &updater {
-            cx.observe(updater, |_, _, cx| cx.notify()).detach();
-        }
-        Self { updater }
-    }
-
-    fn dismiss_error_message(&mut self, _: &DismissErrorMessage, cx: &mut ViewContext<Self>) {
-        if let Some(updater) = &self.updater {
-            updater.update(cx, |updater, cx| {
-                updater.status = AutoUpdateStatus::Idle;
-                cx.notify();
-            });
-        }
     }
 }

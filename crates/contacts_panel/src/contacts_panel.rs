@@ -8,6 +8,7 @@ use contact_notification::ContactNotification;
 use editor::{Cancel, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
+    actions,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     impl_actions, impl_internal_actions,
@@ -23,6 +24,8 @@ use settings::Settings;
 use std::{ops::DerefMut, sync::Arc};
 use theme::IconButton;
 use workspace::{sidebar::SidebarItem, JoinProject, ToggleProjectOnline, Workspace};
+
+actions!(contacts_panel, [Toggle]);
 
 impl_actions!(
     contacts_panel,

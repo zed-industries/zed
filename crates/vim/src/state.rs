@@ -37,7 +37,14 @@ pub struct VimState {
 impl VimState {
     pub fn cursor_shape(&self) -> CursorShape {
         match self.mode {
-            Mode::Normal | Mode::Visual { .. } => CursorShape::Block,
+            Mode::Normal => {
+                if self.operator_stack.is_empty() {
+                    CursorShape::Block
+                } else {
+                    CursorShape::Underscore
+                }
+            }
+            Mode::Visual { .. } => CursorShape::Block,
             Mode::Insert => CursorShape::Bar,
         }
     }
@@ -73,20 +80,20 @@ impl VimState {
             context.set.insert("VimControl".to_string());
         }
 
-        if let Some(operator) = &self.operator_stack.last() {
-            operator.set_context(&mut context);
-        }
+        Operator::set_context(self.operator_stack.last(), &mut context);
+
         context
     }
 }
 
 impl Operator {
-    pub fn set_context(&self, context: &mut Context) {
-        let operator_context = match self {
-            Operator::Namespace(Namespace::G) => "g",
-            Operator::Change => "c",
-            Operator::Delete => "d",
-            Operator::Yank => "y",
+    pub fn set_context(operator: Option<&Operator>, context: &mut Context) {
+        let operator_context = match operator {
+            Some(Operator::Namespace(Namespace::G)) => "g",
+            Some(Operator::Change) => "c",
+            Some(Operator::Delete) => "d",
+            Some(Operator::Yank) => "y",
+            None => "none",
         }
         .to_owned();
 

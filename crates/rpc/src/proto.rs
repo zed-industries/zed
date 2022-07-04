@@ -5,6 +5,7 @@ use futures::{SinkExt as _, StreamExt as _};
 use prost::Message as _;
 use serde::Serialize;
 use std::any::{Any, TypeId};
+use std::{cmp, iter, mem};
 use std::{
     fmt::Debug,
     io,
@@ -390,6 +391,31 @@ impl From<Nonce> for u128 {
         let lower_half = nonce.lower_half as u128;
         upper_half | lower_half
     }
+}
+
+pub fn split_worktree_update(
+    mut message: UpdateWorktree,
+    max_chunk_size: usize,
+) -> impl Iterator<Item = UpdateWorktree> {
+    let mut done = false;
+    iter::from_fn(move || {
+        if done {
+            return None;
+        }
+
+        let chunk_size = cmp::min(message.updated_entries.len(), max_chunk_size);
+        let updated_entries = message.updated_entries.drain(..chunk_size).collect();
+        done = message.updated_entries.is_empty();
+        Some(UpdateWorktree {
+            project_id: message.project_id,
+            worktree_id: message.worktree_id,
+            root_name: message.root_name.clone(),
+            updated_entries,
+            removed_entries: mem::take(&mut message.removed_entries),
+            scan_id: message.scan_id,
+            is_last_update: done && message.is_last_update,
+        })
+    })
 }
 
 #[cfg(test)]

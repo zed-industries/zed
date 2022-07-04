@@ -1,14 +1,16 @@
 use std::ops::{Deref, DerefMut};
 
 use editor::test::EditorTestContext;
-use gpui::json::json;
+use gpui::{json::json, AppContext, ViewHandle};
 use project::Project;
+use search::{BufferSearchBar, ProjectSearchBar};
 use workspace::{pane, AppState, WorkspaceHandle};
 
 use crate::{state::Operator, *};
 
 pub struct VimTestContext<'a> {
     cx: EditorTestContext<'a>,
+    workspace: ViewHandle<Workspace>,
 }
 
 impl<'a> VimTestContext<'a> {
@@ -16,6 +18,7 @@ impl<'a> VimTestContext<'a> {
         cx.update(|cx| {
             editor::init(cx);
             pane::init(cx);
+            search::init(cx);
             crate::init(cx);
 
             settings::KeymapFileContent::load("keymaps/vim.json", cx).unwrap();
@@ -37,6 +40,19 @@ impl<'a> VimTestContext<'a> {
             .await;
 
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+
+        // Setup search toolbars
+        workspace.update(cx, |workspace, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.toolbar().update(cx, |toolbar, cx| {
+                    let buffer_search_bar = cx.add_view(|cx| BufferSearchBar::new(cx));
+                    toolbar.add_item(buffer_search_bar, cx);
+                    let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
+                    toolbar.add_item(project_search_bar, cx);
+                })
+            });
+        });
+
         project
             .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/root", true, cx)
@@ -64,7 +80,15 @@ impl<'a> VimTestContext<'a> {
                 window_id,
                 editor,
             },
+            workspace,
         }
+    }
+
+    pub fn workspace<F, T>(&mut self, read: F) -> T
+    where
+        F: FnOnce(&Workspace, &AppContext) -> T,
+    {
+        self.workspace.read_with(self.cx.cx, read)
     }
 
     pub fn enable_vim(&mut self) {

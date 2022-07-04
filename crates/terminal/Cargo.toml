@@ -1,0 +1,27 @@
+[package]
+name = "terminal"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/terminal.rs"
+doctest = false
+
+[dependencies]
+alacritty_terminal = "0.16.1"
+editor = { path = "../editor" }
+util = { path = "../util" }
+gpui = { path = "../gpui" }
+theme = { path = "../theme" }
+settings = { path = "../settings" }
+workspace = { path = "../workspace" }
+project = { path = "../project" }
+smallvec = { version = "1.6", features = ["union"] }
+mio-extras = "2.0.6"
+futures = "0.3"
+ordered-float = "2.1.1"
+itertools = "0.10"
+
+
+[dev-dependencies]
+gpui = { path = "../gpui", features = ["test-support"] }

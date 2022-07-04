@@ -56,6 +56,7 @@ pub struct Worktree {
     #[serde(skip)]
     pub diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
     pub scan_id: u64,
+    pub is_complete: bool,
 }
 
 #[derive(Default)]
@@ -646,6 +647,7 @@ impl Store {
         removed_entries: &[u64],
         updated_entries: &[proto::Entry],
         scan_id: u64,
+        is_last_update: bool,
     ) -> Result<(Vec<ConnectionId>, bool)> {
         let project = self.write_project(project_id, connection_id)?;
         if !project.online {
@@ -666,6 +668,7 @@ impl Store {
         }
 
         worktree.scan_id = scan_id;
+        worktree.is_complete = is_last_update;
         Ok((connection_ids, metadata_changed))
     }
 

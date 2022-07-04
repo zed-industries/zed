@@ -2282,7 +2282,7 @@ pub mod tests {
             Self {
                 background,
                 users: Default::default(),
-                next_user_id: Mutex::new(1),
+                next_user_id: Mutex::new(0),
                 projects: Default::default(),
                 worktree_extensions: Default::default(),
                 next_project_id: Mutex::new(1),
@@ -2346,6 +2346,7 @@ pub mod tests {
         }
 
         async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>> {
+            self.background.simulate_random_delay().await;
             Ok(self.get_users_by_ids(vec![id]).await?.into_iter().next())
         }
 
@@ -2360,6 +2361,7 @@ pub mod tests {
         }
 
         async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
+            self.background.simulate_random_delay().await;
             Ok(self
                 .users
                 .lock()
@@ -2393,6 +2395,7 @@ pub mod tests {
         }
 
         async fn get_invite_code_for_user(&self, _id: UserId) -> Result<Option<(String, u32)>> {
+            self.background.simulate_random_delay().await;
             Ok(None)
         }
 
@@ -2430,6 +2433,7 @@ pub mod tests {
         }
 
         async fn unregister_project(&self, project_id: ProjectId) -> Result<()> {
+            self.background.simulate_random_delay().await;
             self.projects
                 .lock()
                 .get_mut(&project_id)
@@ -2543,6 +2547,7 @@ pub mod tests {
             requester_id: UserId,
             responder_id: UserId,
         ) -> Result<()> {
+            self.background.simulate_random_delay().await;
             let mut contacts = self.contacts.lock();
             for contact in contacts.iter_mut() {
                 if contact.requester_id == requester_id && contact.responder_id == responder_id {
@@ -2572,6 +2577,7 @@ pub mod tests {
         }
 
         async fn remove_contact(&self, requester_id: UserId, responder_id: UserId) -> Result<()> {
+            self.background.simulate_random_delay().await;
             self.contacts.lock().retain(|contact| {
                 !(contact.requester_id == requester_id && contact.responder_id == responder_id)
             });
@@ -2583,6 +2589,7 @@ pub mod tests {
             user_id: UserId,
             contact_user_id: UserId,
         ) -> Result<()> {
+            self.background.simulate_random_delay().await;
             let mut contacts = self.contacts.lock();
             for contact in contacts.iter_mut() {
                 if contact.requester_id == contact_user_id
@@ -2609,6 +2616,7 @@ pub mod tests {
             requester_id: UserId,
             accept: bool,
         ) -> Result<()> {
+            self.background.simulate_random_delay().await;
             let mut contacts = self.contacts.lock();
             for (ix, contact) in contacts.iter_mut().enumerate() {
                 if contact.requester_id == requester_id && contact.responder_id == responder_id {
@@ -2804,6 +2812,7 @@ pub mod tests {
             count: usize,
             before_id: Option<MessageId>,
         ) -> Result<Vec<ChannelMessage>> {
+            self.background.simulate_random_delay().await;
             let mut messages = self
                 .channel_messages
                 .lock()

@@ -13,7 +13,7 @@ pub fn init(cx: &mut MutableAppContext) {
 fn editor_created(EditorCreated(editor): &EditorCreated, cx: &mut MutableAppContext) {
     cx.update_default_global(|vim: &mut Vim, cx| {
         vim.editors.insert(editor.id(), editor.downgrade());
-        vim.sync_editor_options(cx);
+        vim.sync_vim_settings(cx);
     })
 }
 
@@ -29,8 +29,17 @@ fn editor_focused(EditorFocused(editor): &EditorFocused, cx: &mut MutableAppCont
             }
         }));
 
-        if editor.read(cx).mode() != EditorMode::Full {
-            vim.switch_mode(Mode::Insert, cx);
+        if !vim.enabled {
+            return;
+        }
+
+        let editor = editor.read(cx);
+        if editor.selections.newest::<usize>(cx).is_empty() {
+            if editor.mode() != EditorMode::Full {
+                vim.switch_mode(Mode::Insert, cx);
+            }
+        } else {
+            vim.switch_mode(Mode::Visual { line: false }, cx);
         }
     });
 }
@@ -42,7 +51,7 @@ fn editor_blurred(EditorBlurred(editor): &EditorBlurred, cx: &mut MutableAppCont
                 vim.active_editor = None;
             }
         }
-        vim.sync_editor_options(cx);
+        vim.sync_vim_settings(cx);
     })
 }
 

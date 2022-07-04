@@ -58,7 +58,7 @@ fn add_toggle_option_action<A: Action>(option: SearchOption, cx: &mut MutableApp
 }
 
 pub struct BufferSearchBar {
-    query_editor: ViewHandle<Editor>,
+    pub query_editor: ViewHandle<Editor>,
     active_editor: Option<ViewHandle<Editor>>,
     active_match_index: Option<usize>,
     active_editor_subscription: Option<Subscription>,

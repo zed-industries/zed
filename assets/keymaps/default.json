@@ -13,6 +13,8 @@
             "ctrl-c": "menu::Cancel",
             "shift-cmd-{": "pane::ActivatePrevItem",
             "shift-cmd-}": "pane::ActivateNextItem",
+            "alt-cmd-left": "pane::ActivatePrevItem",
+            "alt-cmd-right": "pane::ActivateNextItem",
             "cmd-w": "pane::CloseActiveItem",
             "cmd-shift-W": "workspace::CloseWindow",
             "alt-cmd-t": "pane::CloseInactiveItems",
@@ -210,6 +212,43 @@
     {
         "context": "Pane",
         "bindings": {
+            "ctrl-1": [
+                "pane::ActivateItem",
+                0
+            ],
+            "ctrl-2": [
+                "pane::ActivateItem",
+                1
+            ],
+            "ctrl-3": [
+                "pane::ActivateItem",
+                2
+            ],
+            "ctrl-4": [
+                "pane::ActivateItem",
+                3
+            ],
+            "ctrl-5": [
+                "pane::ActivateItem",
+                4
+            ],
+            "ctrl-6": [
+                "pane::ActivateItem",
+                5
+            ],
+            "ctrl-7": [
+                "pane::ActivateItem",
+                6
+            ],
+            "ctrl-8": [
+                "pane::ActivateItem",
+                7
+            ],
+            "ctrl-9": [
+                "pane::ActivateItem",
+                8
+            ],
+            "ctrl-0": "pane::ActivateLastItem",
             "ctrl--": "pane::GoBack",
             "shift-ctrl-_": "pane::GoForward",
             "cmd-shift-T": "pane::ReopenClosedItem",
@@ -219,6 +258,43 @@
     {
         "context": "Workspace",
         "bindings": {
+            "cmd-1": [
+                "workspace::ActivatePane",
+                0
+            ],
+            "cmd-2": [
+                "workspace::ActivatePane",
+                1
+            ],
+            "cmd-3": [
+                "workspace::ActivatePane",
+                2
+            ],
+            "cmd-4": [
+                "workspace::ActivatePane",
+                3
+            ],
+            "cmd-5": [
+                "workspace::ActivatePane",
+                4
+            ],
+            "cmd-6": [
+                "workspace::ActivatePane",
+                5
+            ],
+            "cmd-7": [
+                "workspace::ActivatePane",
+                6
+            ],
+            "cmd-8": [
+                "workspace::ActivatePane",
+                7
+            ],
+            "cmd-9": [
+                "workspace::ActivatePane",
+                8
+            ],
+            "cmd-b": "workspace::ToggleLeftSidebar",
             "cmd-shift-F": "project_search::Deploy",
             "cmd-k cmd-t": "theme_selector::Toggle",
             "cmd-k cmd-s": "zed::OpenKeymap",
@@ -226,6 +302,7 @@
             "cmd-p": "file_finder::Toggle",
             "cmd-shift-P": "command_palette::Toggle",
             "cmd-shift-M": "diagnostics::Deploy",
+            "cmd-shift-E": "project_panel::Toggle",
             "cmd-alt-s": "workspace::SaveAll"
         }
     },
@@ -310,34 +387,8 @@
     {
         "context": "Workspace",
         "bindings": {
-            "cmd-1": [
-                "workspace::ToggleSidebarItemFocus",
-                {
-                    "side": "Left",
-                    "item_index": 0
-                }
-            ],
-            "cmd-shift-!": [
-                "workspace::ToggleSidebarItem",
-                {
-                    "side": "Left",
-                    "item_index": 0
-                }
-            ],
-            "cmd-9": [
-                "workspace::ToggleSidebarItemFocus",
-                {
-                    "side": "Right",
-                    "item_index": 0
-                }
-            ],
-            "cmd-shift-(": [
-                "workspace::ToggleSidebarItem",
-                {
-                    "side": "Right",
-                    "item_index": 0
-                }
-            ]
+            "cmd-shift-C": "contacts_panel::Toggle",
+            "cmd-shift-B": "workspace::ToggleRightSidebar"
         }
     },
     {
@@ -351,6 +402,22 @@
             "cmd-alt-c": "project_panel::CopyPath",
             "f2": "project_panel::Rename",
             "backspace": "project_panel::Delete"
+        }
+    },
+    {
+        "context": "Terminal",
+        "bindings": {
+            "ctrl-c": "terminal::Sigint",
+            "escape": "terminal::Escape",
+            "ctrl-d": "terminal::Quit",
+            "backspace": "terminal::Del",
+            "enter": "terminal::Return",
+            "left": "terminal::Left",
+            "right": "terminal::Right",
+            "up": "terminal::Up",
+            "down": "terminal::Down",
+            "tab": "terminal::Tab",
+            "cmd-v": "terminal::Paste"
         }
     }
 ]

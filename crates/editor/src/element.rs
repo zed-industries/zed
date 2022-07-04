@@ -490,7 +490,7 @@ impl EditorElement {
                         }
 
                         let block_text =
-                            if matches!(self.cursor_shape, CursorShape::Block) {
+                            if let CursorShape::Block = self.cursor_shape {
                                 layout.snapshot.chars_at(cursor_position).next().and_then(
                                     |character| {
                                         let font_id =
@@ -520,7 +520,7 @@ impl EditorElement {
                         cursors.push(Cursor {
                             color: selection_style.cursor,
                             block_width,
-                            origin: content_origin + vec2f(x, y),
+                            origin: vec2f(x, y),
                             line_height: layout.line_height,
                             shape: self.cursor_shape,
                             block_text,
@@ -546,13 +546,12 @@ impl EditorElement {
 
         cx.scene.push_layer(Some(bounds));
         for cursor in cursors {
-            cursor.paint(cx);
+            cursor.paint(content_origin, cx);
         }
         cx.scene.pop_layer();
 
         if let Some((position, context_menu)) = layout.context_menu.as_mut() {
             cx.scene.push_stacking_context(None);
-
             let cursor_row_layout = &layout.line_layouts[(position.row() - start_row) as usize];
             let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_left;
             let y = (position.row() + 1) as f32 * layout.line_height - scroll_top;
@@ -1630,7 +1629,7 @@ impl Default for CursorShape {
     }
 }
 
-struct Cursor {
+pub struct Cursor {
     origin: Vector2F,
     block_width: f32,
     line_height: f32,
@@ -1640,14 +1639,33 @@ struct Cursor {
 }
 
 impl Cursor {
-    fn paint(&self, cx: &mut PaintContext) {
+    pub fn new(
+        origin: Vector2F,
+        block_width: f32,
+        line_height: f32,
+        color: Color,
+        shape: CursorShape,
+        block_text: Option<Line>,
+    ) -> Cursor {
+        Cursor {
+            origin,
+            block_width,
+            line_height,
+            color,
+            shape,
+            block_text,
+        }
+    }
+
+    pub fn paint(&self, origin: Vector2F, cx: &mut PaintContext) {
         let bounds = match self.shape {
-            CursorShape::Bar => RectF::new(self.origin, vec2f(2.0, self.line_height)),
-            CursorShape::Block => {
-                RectF::new(self.origin, vec2f(self.block_width, self.line_height))
-            }
+            CursorShape::Bar => RectF::new(self.origin + origin, vec2f(2.0, self.line_height)),
+            CursorShape::Block => RectF::new(
+                self.origin + origin,
+                vec2f(self.block_width, self.line_height),
+            ),
             CursorShape::Underscore => RectF::new(
-                self.origin + Vector2F::new(0.0, self.line_height - 2.0),
+                self.origin + origin + Vector2F::new(0.0, self.line_height - 2.0),
                 vec2f(self.block_width, 2.0),
             ),
         };
@@ -1660,7 +1678,7 @@ impl Cursor {
         });
 
         if let Some(block_text) = &self.block_text {
-            block_text.paint(self.origin, bounds, self.line_height, cx);
+            block_text.paint(self.origin + origin, bounds, self.line_height, cx);
         }
     }
 }

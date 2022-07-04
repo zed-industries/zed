@@ -28,10 +28,7 @@ use std::{
     convert::TryFrom,
     fmt::Write as _,
     future::Future,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc, Weak,
-    },
+    sync::{Arc, Weak},
     time::{Duration, Instant},
 };
 use thiserror::Error;
@@ -232,12 +229,8 @@ impl Drop for Subscription {
 
 impl Client {
     pub fn new(http: Arc<dyn HttpClient>) -> Arc<Self> {
-        lazy_static! {
-            static ref NEXT_CLIENT_ID: AtomicUsize = AtomicUsize::default();
-        }
-
         Arc::new(Self {
-            id: NEXT_CLIENT_ID.fetch_add(1, Ordering::SeqCst),
+            id: 0,
             peer: Peer::new(),
             http,
             state: Default::default(),
@@ -255,6 +248,12 @@ impl Client {
 
     pub fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http.clone()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_id(&mut self, id: usize) -> &Self {
+        self.id = id;
+        self
     }
 
     #[cfg(any(test, feature = "test-support"))]

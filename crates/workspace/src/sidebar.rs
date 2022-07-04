@@ -55,7 +55,8 @@ impl Into<AnyViewHandle> for &dyn SidebarItemHandle {
 pub struct Sidebar {
     side: Side,
     items: Vec<Item>,
-    active_item_ix: Option<usize>,
+    is_open: bool,
+    active_item_ix: usize,
     actual_width: Rc<RefCell<f32>>,
     custom_width: Rc<RefCell<f32>>,
 }
@@ -83,23 +84,39 @@ pub struct ToggleSidebarItem {
     pub item_index: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-pub struct ToggleSidebarItemFocus {
-    pub side: Side,
-    pub item_index: usize,
-}
-
-impl_actions!(workspace, [ToggleSidebarItem, ToggleSidebarItemFocus]);
+impl_actions!(workspace, [ToggleSidebarItem]);
 
 impl Sidebar {
     pub fn new(side: Side) -> Self {
         Self {
             side,
             items: Default::default(),
-            active_item_ix: None,
+            active_item_ix: 0,
+            is_open: false,
             actual_width: Rc::new(RefCell::new(260.)),
             custom_width: Rc::new(RefCell::new(260.)),
         }
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.is_open
+    }
+
+    pub fn active_item_ix(&self) -> usize {
+        self.active_item_ix
+    }
+
+    pub fn set_open(&mut self, open: bool, cx: &mut ViewContext<Self>) {
+        if open != self.is_open {
+            self.is_open = open;
+            cx.notify();
+        }
+    }
+
+    pub fn toggle_open(&mut self, cx: &mut ViewContext<Self>) {
+        if self.is_open {}
+        self.is_open = !self.is_open;
+        cx.notify();
     }
 
     pub fn add_item<T: SidebarItem>(
@@ -133,23 +150,25 @@ impl Sidebar {
     }
 
     pub fn activate_item(&mut self, item_ix: usize, cx: &mut ViewContext<Self>) {
-        self.active_item_ix = Some(item_ix);
+        self.active_item_ix = item_ix;
         cx.notify();
     }
 
     pub fn toggle_item(&mut self, item_ix: usize, cx: &mut ViewContext<Self>) {
-        if self.active_item_ix == Some(item_ix) {
-            self.active_item_ix = None;
+        if self.active_item_ix == item_ix {
+            self.is_open = false;
         } else {
-            self.active_item_ix = Some(item_ix);
+            self.active_item_ix = item_ix;
         }
         cx.notify();
     }
 
     pub fn active_item(&self) -> Option<&Rc<dyn SidebarItemHandle>> {
-        self.active_item_ix
-            .and_then(|ix| self.items.get(ix))
-            .map(|item| &item.view)
+        if self.is_open {
+            self.items.get(self.active_item_ix).map(|item| &item.view)
+        } else {
+            None
+        }
     }
 
     fn render_resize_handle(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
@@ -249,6 +268,7 @@ impl View for SidebarButtons {
         let item_style = theme.item;
         let badge_style = theme.badge;
         let active_ix = sidebar.active_item_ix;
+        let is_open = sidebar.is_open;
         let side = sidebar.side;
         let group_style = match side {
             Side::Left => theme.group_left,
@@ -267,7 +287,7 @@ impl View for SidebarButtons {
                         item_index: ix,
                     };
                     MouseEventHandler::new::<Self, _, _>(ix, cx, move |state, cx| {
-                        let is_active = Some(ix) == active_ix;
+                        let is_active = is_open && ix == active_ix;
                         let style = item_style.style_for(state, is_active);
                         Stack::new()
                             .with_child(Svg::new(icon_path).with_color(style.icon_color).boxed())

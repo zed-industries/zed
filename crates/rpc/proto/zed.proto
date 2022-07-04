@@ -172,7 +172,7 @@ message JoinProjectResponse {
 
     message Accept {
         uint32 replica_id = 1;
-        repeated Worktree worktrees = 2;
+        repeated WorktreeMetadata worktrees = 2;
         repeated Collaborator collaborators = 3;
         repeated LanguageServer language_servers = 4;        
     }
@@ -199,6 +199,7 @@ message UpdateWorktree {
     repeated Entry updated_entries = 4;
     repeated uint64 removed_entries = 5;
     uint64 scan_id = 6;
+    bool is_last_update = 7;
 }
 
 message UpdateWorktreeExtensions {
@@ -774,15 +775,6 @@ message User {
     uint64 id = 1;
     string github_login = 2;
     string avatar_url = 3;
-}
-
-message Worktree {
-    uint64 id = 1;
-    string root_name = 2;
-    repeated Entry entries = 3;
-    repeated DiagnosticSummary diagnostic_summaries = 4;
-    bool visible = 5;
-    uint64 scan_id = 6;
 }
 
 message File {

@@ -40,7 +40,7 @@ pub fn delete_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
 mod test {
     use indoc::indoc;
 
-    use crate::vim_test_context::VimTestContext;
+    use crate::{state::Mode, vim_test_context::VimTestContext};
 
     #[gpui::test]
     async fn test_delete_h(cx: &mut gpui::TestAppContext) {
@@ -389,5 +389,43 @@ mod test {
                 jumps over
                 the lazy"},
         );
+    }
+
+    #[gpui::test]
+    async fn test_cancel_delete_operator(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state(
+            indoc! {"
+                The quick brown
+                fox ju|mps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+
+        // Canceling operator twice reverts to normal mode with no active operator
+        cx.simulate_keystrokes(["d", "escape", "k"]);
+        assert_eq!(cx.active_operator(), None);
+        assert_eq!(cx.mode(), Mode::Normal);
+        cx.assert_editor_state(indoc! {"
+            The qu|ick brown
+            fox jumps over
+            the lazy dog"});
+    }
+
+    #[gpui::test]
+    async fn test_unbound_command_cancels_pending_operator(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state(
+            indoc! {"
+                The quick brown
+                fox ju|mps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+
+        // Canceling operator twice reverts to normal mode with no active operator
+        cx.simulate_keystrokes(["d", "y"]);
+        assert_eq!(cx.active_operator(), None);
+        assert_eq!(cx.mode(), Mode::Normal);
     }
 }
