@@ -248,6 +248,7 @@ unsafe fn get_key_text(
     use cocoa::appkit::*;
     const BACKSPACE_KEY: u16 = 0x7f;
     const ENTER_KEY: u16 = 0x0d;
+    const NUMPAD_ENTER_KEY: u16 = 0x03;
     const ESCAPE_KEY: u16 = 0x1b;
     const TAB_KEY: u16 = 0x09;
     const SHIFT_TAB_KEY: u16 = 0x19;
@@ -260,7 +261,7 @@ unsafe fn get_key_text(
             "space"
         }
         BACKSPACE_KEY => "backspace",
-        ENTER_KEY => "enter",
+        ENTER_KEY | NUMPAD_ENTER_KEY => "enter",
         ESCAPE_KEY => "escape",
         TAB_KEY => "tab",
         SHIFT_TAB_KEY => "tab",
