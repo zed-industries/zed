@@ -51,7 +51,7 @@ use std::{
 };
 use time::OffsetDateTime;
 use tokio::{
-    sync::{RwLock, RwLockReadGuard, RwLockWriteGuard},
+    sync::{Mutex, MutexGuard},
     time::Sleep,
 };
 use tower::ServiceBuilder;
@@ -97,7 +97,7 @@ impl<R: RequestMessage> Response<R> {
 
 pub struct Server {
     peer: Arc<Peer>,
-    pub(crate) store: RwLock<Store>,
+    pub(crate) store: Mutex<Store>,
     app_state: Arc<AppState>,
     handlers: HashMap<TypeId, MessageHandler>,
     notifications: Option<mpsc::UnboundedSender<()>>,
@@ -115,13 +115,8 @@ pub struct RealExecutor;
 const MESSAGE_COUNT_PER_PAGE: usize = 100;
 const MAX_MESSAGE_LEN: usize = 1024;
 
-struct StoreReadGuard<'a> {
-    guard: RwLockReadGuard<'a, Store>,
-    _not_send: PhantomData<Rc<()>>,
-}
-
-struct StoreWriteGuard<'a> {
-    guard: RwLockWriteGuard<'a, Store>,
+pub(crate) struct StoreGuard<'a> {
+    guard: MutexGuard<'a, Store>,
     _not_send: PhantomData<Rc<()>>,
 }
 
@@ -129,7 +124,7 @@ struct StoreWriteGuard<'a> {
 pub struct ServerSnapshot<'a> {
     peer: &'a Peer,
     #[serde(serialize_with = "serialize_deref")]
-    store: RwLockReadGuard<'a, Store>,
+    store: StoreGuard<'a>,
 }
 
 pub fn serialize_deref<S, T, U>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
@@ -384,7 +379,7 @@ impl Server {
             ).await?;
 
             {
-                let mut store = this.store_mut().await;
+                let mut store = this.store().await;
                 store.add_connection(connection_id, user_id, user.admin);
                 this.peer.send(connection_id, store.build_initial_contacts_update(contacts))?;
 
@@ -471,7 +466,7 @@ impl Server {
         let mut projects_to_unregister = Vec::new();
         let removed_user_id;
         {
-            let mut store = self.store_mut().await;
+            let mut store = self.store().await;
             let removed_connection = store.remove_connection(connection_id)?;
 
             for (project_id, project) in removed_connection.hosted_projects {
@@ -605,7 +600,7 @@ impl Server {
             .await
             .user_id_for_connection(request.sender_id)?;
         let project_id = self.app_state.db.register_project(user_id).await?;
-        self.store_mut()
+        self.store()
             .await
             .register_project(request.sender_id, project_id)?;
 
@@ -623,7 +618,7 @@ impl Server {
     ) -> Result<()> {
         let project_id = ProjectId::from_proto(request.payload.project_id);
         let (user_id, project) = {
-            let mut state = self.store_mut().await;
+            let mut state = self.store().await;
             let project = state.unregister_project(project_id, request.sender_id)?;
             (state.user_id_for_connection(request.sender_id)?, project)
         };
@@ -725,7 +720,7 @@ impl Server {
             return Err(anyhow!("no such project"))?;
         }
 
-        self.store_mut().await.request_join_project(
+        self.store().await.request_join_project(
             guest_user_id,
             project_id,
             response.into_receipt(),
@@ -747,7 +742,7 @@ impl Server {
         let host_user_id;
 
         {
-            let mut state = self.store_mut().await;
+            let mut state = self.store().await;
             let project_id = ProjectId::from_proto(request.payload.project_id);
             let project = state.project(project_id)?;
             if project.host_connection_id != request.sender_id {
@@ -791,20 +786,10 @@ impl Server {
             let worktrees = project
                 .worktrees
                 .iter()
-                .filter_map(|(id, shared_worktree)| {
-                    let worktree = project.worktrees.get(&id)?;
-                    Some(proto::Worktree {
-                        id: *id,
-                        root_name: worktree.root_name.clone(),
-                        entries: shared_worktree.entries.values().cloned().collect(),
-                        diagnostic_summaries: shared_worktree
-                            .diagnostic_summaries
-                            .values()
-                            .cloned()
-                            .collect(),
-                        visible: worktree.visible,
-                        scan_id: shared_worktree.scan_id,
-                    })
+                .map(|(id, worktree)| proto::WorktreeMetadata {
+                    id: *id,
+                    root_name: worktree.root_name.clone(),
+                    visible: worktree.visible,
                 })
                 .collect::<Vec<_>>();
 
@@ -840,20 +825,58 @@ impl Server {
                 }
             }
 
-            for (receipt, replica_id) in receipts_with_replica_ids {
+            // First, we send the metadata associated with each worktree.
+            for (receipt, replica_id) in &receipts_with_replica_ids {
                 self.peer.respond(
-                    receipt,
+                    receipt.clone(),
                     proto::JoinProjectResponse {
                         variant: Some(proto::join_project_response::Variant::Accept(
                             proto::join_project_response::Accept {
                                 worktrees: worktrees.clone(),
-                                replica_id: replica_id as u32,
+                                replica_id: *replica_id as u32,
                                 collaborators: collaborators.clone(),
                                 language_servers: project.language_servers.clone(),
                             },
                         )),
                     },
                 )?;
+            }
+
+            for (worktree_id, worktree) in &project.worktrees {
+                #[cfg(any(test, feature = "test-support"))]
+                const MAX_CHUNK_SIZE: usize = 2;
+                #[cfg(not(any(test, feature = "test-support")))]
+                const MAX_CHUNK_SIZE: usize = 256;
+
+                // Stream this worktree's entries.
+                let message = proto::UpdateWorktree {
+                    project_id: project_id.to_proto(),
+                    worktree_id: *worktree_id,
+                    root_name: worktree.root_name.clone(),
+                    updated_entries: worktree.entries.values().cloned().collect(),
+                    removed_entries: Default::default(),
+                    scan_id: worktree.scan_id,
+                    is_last_update: worktree.is_complete,
+                };
+                for update in proto::split_worktree_update(message, MAX_CHUNK_SIZE) {
+                    for (receipt, _) in &receipts_with_replica_ids {
+                        self.peer.send(receipt.sender_id, update.clone())?;
+                    }
+                }
+
+                // Stream this worktree's diagnostics.
+                for summary in worktree.diagnostic_summaries.values() {
+                    for (receipt, _) in &receipts_with_replica_ids {
+                        self.peer.send(
+                            receipt.sender_id,
+                            proto::UpdateDiagnosticSummary {
+                                project_id: project_id.to_proto(),
+                                worktree_id: *worktree_id,
+                                summary: Some(summary.clone()),
+                            },
+                        )?;
+                    }
+                }
             }
         }
 
@@ -869,7 +892,7 @@ impl Server {
         let project_id = ProjectId::from_proto(request.payload.project_id);
         let project;
         {
-            let mut store = self.store_mut().await;
+            let mut store = self.store().await;
             project = store.leave_project(sender_id, project_id)?;
             tracing::info!(
                 %project_id,
@@ -920,7 +943,7 @@ impl Server {
         let project_id = ProjectId::from_proto(request.payload.project_id);
         let user_id;
         {
-            let mut state = self.store_mut().await;
+            let mut state = self.store().await;
             user_id = state.user_id_for_connection(request.sender_id)?;
             let guest_connection_ids = state
                 .read_project(project_id, request.sender_id)?
@@ -939,7 +962,7 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::RegisterProjectActivity>,
     ) -> Result<()> {
-        self.store_mut().await.register_project_activity(
+        self.store().await.register_project_activity(
             ProjectId::from_proto(request.payload.project_id),
             request.sender_id,
         )?;
@@ -954,7 +977,7 @@ impl Server {
         let project_id = ProjectId::from_proto(request.payload.project_id);
         let worktree_id = request.payload.worktree_id;
         let (connection_ids, metadata_changed, extension_counts) = {
-            let mut store = self.store_mut().await;
+            let mut store = self.store().await;
             let (connection_ids, metadata_changed, extension_counts) = store.update_worktree(
                 request.sender_id,
                 project_id,
@@ -963,6 +986,7 @@ impl Server {
                 &request.payload.removed_entries,
                 &request.payload.updated_entries,
                 request.payload.scan_id,
+                request.payload.is_last_update,
             )?;
             (connection_ids, metadata_changed, extension_counts.clone())
         };
@@ -995,7 +1019,7 @@ impl Server {
             .summary
             .clone()
             .ok_or_else(|| anyhow!("invalid summary"))?;
-        let receiver_ids = self.store_mut().await.update_diagnostic_summary(
+        let receiver_ids = self.store().await.update_diagnostic_summary(
             ProjectId::from_proto(request.payload.project_id),
             request.payload.worktree_id,
             request.sender_id,
@@ -1013,7 +1037,7 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::StartLanguageServer>,
     ) -> Result<()> {
-        let receiver_ids = self.store_mut().await.start_language_server(
+        let receiver_ids = self.store().await.start_language_server(
             ProjectId::from_proto(request.payload.project_id),
             request.sender_id,
             request
@@ -1052,20 +1076,23 @@ impl Server {
     where
         T: EntityMessage + RequestMessage,
     {
+        let project_id = ProjectId::from_proto(request.payload.remote_entity_id());
         let host_connection_id = self
             .store()
             .await
-            .read_project(
-                ProjectId::from_proto(request.payload.remote_entity_id()),
-                request.sender_id,
-            )?
+            .read_project(project_id, request.sender_id)?
             .host_connection_id;
+        let payload = self
+            .peer
+            .forward_request(request.sender_id, host_connection_id, request.payload)
+            .await?;
 
-        response.send(
-            self.peer
-                .forward_request(request.sender_id, host_connection_id, request.payload)
-                .await?,
-        )?;
+        // Ensure project still exists by the time we get the response from the host.
+        self.store()
+            .await
+            .read_project(project_id, request.sender_id)?;
+
+        response.send(payload)?;
         Ok(())
     }
 
@@ -1106,7 +1133,7 @@ impl Server {
     ) -> Result<()> {
         let project_id = ProjectId::from_proto(request.payload.project_id);
         let receiver_ids = {
-            let mut store = self.store_mut().await;
+            let mut store = self.store().await;
             store.register_project_activity(project_id, request.sender_id)?;
             store.project_connection_ids(project_id, request.sender_id)?
         };
@@ -1173,7 +1200,7 @@ impl Server {
         let leader_id = ConnectionId(request.payload.leader_id);
         let follower_id = request.sender_id;
         {
-            let mut store = self.store_mut().await;
+            let mut store = self.store().await;
             if !store
                 .project_connection_ids(project_id, follower_id)?
                 .contains(&leader_id)
@@ -1198,7 +1225,7 @@ impl Server {
     async fn unfollow(self: Arc<Self>, request: TypedEnvelope<proto::Unfollow>) -> Result<()> {
         let project_id = ProjectId::from_proto(request.payload.project_id);
         let leader_id = ConnectionId(request.payload.leader_id);
-        let mut store = self.store_mut().await;
+        let mut store = self.store().await;
         if !store
             .project_connection_ids(project_id, request.sender_id)?
             .contains(&leader_id)
@@ -1216,7 +1243,7 @@ impl Server {
         request: TypedEnvelope<proto::UpdateFollowers>,
     ) -> Result<()> {
         let project_id = ProjectId::from_proto(request.payload.project_id);
-        let mut store = self.store_mut().await;
+        let mut store = self.store().await;
         store.register_project_activity(project_id, request.sender_id)?;
         let connection_ids = store.project_connection_ids(project_id, request.sender_id)?;
         let leader_id = request
@@ -1474,7 +1501,7 @@ impl Server {
             Err(anyhow!("access denied"))?;
         }
 
-        self.store_mut()
+        self.store()
             .await
             .join_channel(request.sender_id, channel_id);
         let messages = self
@@ -1516,7 +1543,7 @@ impl Server {
             Err(anyhow!("access denied"))?;
         }
 
-        self.store_mut()
+        self.store()
             .await
             .leave_channel(request.sender_id, channel_id);
 
@@ -1624,25 +1651,13 @@ impl Server {
         Ok(())
     }
 
-    async fn store<'a>(self: &'a Arc<Self>) -> StoreReadGuard<'a> {
+    pub(crate) async fn store<'a>(&'a self) -> StoreGuard<'a> {
         #[cfg(test)]
         tokio::task::yield_now().await;
-        let guard = self.store.read().await;
+        let guard = self.store.lock().await;
         #[cfg(test)]
         tokio::task::yield_now().await;
-        StoreReadGuard {
-            guard,
-            _not_send: PhantomData,
-        }
-    }
-
-    async fn store_mut<'a>(self: &'a Arc<Self>) -> StoreWriteGuard<'a> {
-        #[cfg(test)]
-        tokio::task::yield_now().await;
-        let guard = self.store.write().await;
-        #[cfg(test)]
-        tokio::task::yield_now().await;
-        StoreWriteGuard {
+        StoreGuard {
             guard,
             _not_send: PhantomData,
         }
@@ -1650,13 +1665,13 @@ impl Server {
 
     pub async fn snapshot<'a>(self: &'a Arc<Self>) -> ServerSnapshot<'a> {
         ServerSnapshot {
-            store: self.store.read().await,
+            store: self.store().await,
             peer: &self.peer,
         }
     }
 }
 
-impl<'a> Deref for StoreReadGuard<'a> {
+impl<'a> Deref for StoreGuard<'a> {
     type Target = Store;
 
     fn deref(&self) -> &Self::Target {
@@ -1664,21 +1679,13 @@ impl<'a> Deref for StoreReadGuard<'a> {
     }
 }
 
-impl<'a> Deref for StoreWriteGuard<'a> {
-    type Target = Store;
-
-    fn deref(&self) -> &Self::Target {
-        &*self.guard
-    }
-}
-
-impl<'a> DerefMut for StoreWriteGuard<'a> {
+impl<'a> DerefMut for StoreGuard<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut *self.guard
     }
 }
 
-impl<'a> Drop for StoreWriteGuard<'a> {
+impl<'a> Drop for StoreGuard<'a> {
     fn drop(&mut self) {
         #[cfg(test)]
         self.check_invariants();
