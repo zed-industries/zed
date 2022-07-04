@@ -554,7 +554,7 @@ impl Buffer {
             }) {
                 let new_text = new_text.await?;
                 let diff = this
-                    .read_with(&cx, |this, cx| this.diff(new_text.into(), cx))
+                    .read_with(&cx, |this, cx| this.diff(new_text, cx))
                     .await;
                 this.update(&mut cx, |this, cx| {
                     if let Some(transaction) = this.apply_diff(diff, cx).cloned() {
@@ -968,18 +968,19 @@ impl Buffer {
         }
     }
 
-    pub(crate) fn diff(&self, new_text: Arc<str>, cx: &AppContext) -> Task<Diff> {
-        // TODO: it would be nice to not allocate here.
-        let old_text = self.text();
+    pub(crate) fn diff(&self, new_text: String, cx: &AppContext) -> Task<Diff> {
+        let old_text = self.as_rope().clone();
         let base_version = self.version();
         cx.background().spawn(async move {
-            let changes = TextDiff::from_lines(old_text.as_str(), new_text.as_ref())
+            let old_text = old_text.to_string();
+            let new_text = new_text.replace("\r\n", "\n").replace('\r', "\n");
+            let changes = TextDiff::from_lines(old_text.as_str(), new_text.as_str())
                 .iter_all_changes()
                 .map(|c| (c.tag(), c.value().len()))
                 .collect::<Vec<_>>();
             Diff {
                 base_version,
-                new_text,
+                new_text: new_text.into(),
                 changes,
                 start_offset: 0,
             }
