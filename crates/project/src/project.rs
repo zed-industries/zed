@@ -12,7 +12,7 @@ use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
-use futures::{future::Shared, AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt};
+use futures::{future::Shared, AsyncWriteExt, Future, FutureExt, SinkExt, StreamExt, TryFutureExt};
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{
     AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
@@ -708,7 +708,7 @@ impl Project {
         })
     }
 
-    fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
+    async fn on_settings_changed(&mut self, cx: &mut ModelContext<'_, Self>) {
         let settings = cx.global::<Settings>();
 
         let mut language_servers_to_start = Vec::new();
@@ -734,7 +734,6 @@ impl Project {
             if let Some(lsp_adapter) = language.lsp_adapter() {
                 if !settings.enable_language_server(Some(&language.name())) {
                     let lsp_name = lsp_adapter.name().await;
-                    // .await;
                     for (worktree_id, started_lsp_name) in self.started_language_servers.keys() {
                         if lsp_name == *started_lsp_name {
                             language_servers_to_stop.push((*worktree_id, started_lsp_name.clone()));
@@ -1893,11 +1892,11 @@ impl Project {
         });
     }
 
-    fn on_buffer_event(
+    async fn on_buffer_event(
         &mut self,
         buffer: ModelHandle<Buffer>,
         event: &BufferEvent,
-        cx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<'_, Self>,
     ) -> Option<()> {
         match event {
             BufferEvent::Operation(operation) => {
@@ -2043,12 +2042,12 @@ impl Project {
         None
     }
 
-    fn start_language_server(
+    async fn start_language_server(
         &mut self,
         worktree_id: WorktreeId,
         worktree_path: Arc<Path>,
         language: Arc<Language>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<'_, Self>,
     ) {
         if !cx
             .global::<Settings>()
@@ -2395,12 +2394,12 @@ impl Project {
         None
     }
 
-    fn restart_language_server(
+    async fn restart_language_server(
         &mut self,
         worktree_id: WorktreeId,
         fallback_path: Arc<Path>,
         language: Arc<Language>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<'_, Self>,
     ) {
         let adapter = if let Some(adapter) = language.lsp_adapter() {
             adapter
@@ -2440,12 +2439,12 @@ impl Project {
         .detach();
     }
 
-    fn on_lsp_diagnostics_published(
+    async fn on_lsp_diagnostics_published(
         &mut self,
         server_id: usize,
         mut params: lsp::PublishDiagnosticsParams,
         adapter: &Arc<dyn LspAdapter>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<'_, Self>,
     ) {
         adapter.process_diagnostics(&mut params);
         self.update_diagnostics(
@@ -3339,13 +3338,17 @@ impl Project {
                 let response = request.await?;
                 let mut symbols = Vec::new();
                 if let Some(this) = this.upgrade(&cx) {
-                    this.read_with(&cx, |this, _| {
-                        symbols.extend(
-                            response.symbols.into_iter().filter_map(|symbol| {
-                                this.deserialize_symbol(symbol).log_err().await
-                            }),
-                        );
-                    })
+                    let new_symbols = this.read_with(&cx, |this, _| {
+                        response
+                            .symbols
+                            .into_iter()
+                            .map(|symbol| this.deserialize_symbol(symbol))
+                    });
+                    for new_symbol in new_symbols {
+                        if let Some(new_symbol) = new_symbol.await.ok() {
+                            symbols.push(new_symbol);
+                        }
+                    }
                 }
                 Ok(symbols)
             })

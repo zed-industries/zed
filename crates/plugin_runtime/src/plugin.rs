@@ -302,7 +302,7 @@ impl Plugin {
 
 impl Plugin {
     async fn init(module: Vec<u8>, plugin: PluginBuilder) -> Result<Self, Error> {
-        dbg!("started initialization");
+        dbg!("Initializing new plugin");
         // initialize the WebAssembly System Interface context
         let engine = plugin.engine;
         let mut linker = plugin.linker;
@@ -310,8 +310,6 @@ impl Plugin {
 
         // create a store, note that we can't initialize the allocator,
         // because we can't grab the functions until initialized.
-        dbg!("Creating store");
-        let start = std::time::Instant::now();
         let mut store: Store<WasiCtxAlloc> = Store::new(
             &engine,
             WasiCtxAlloc {
@@ -319,20 +317,11 @@ impl Plugin {
                 alloc: None,
             },
         );
-        dbg!(start.elapsed());
-
         let module = Module::new(&engine, module)?;
+
         // load the provided module into the asynchronous runtime
         linker.module_async(&mut store, "", &module).await?;
-        dbg!("Instantiating module");
-        let start = std::time::Instant::now();
         let instance = linker.instantiate_async(&mut store, &module).await?;
-        let end = dbg!(start.elapsed());
-
-        dbg!("Instantiating second module");
-        let start = std::time::Instant::now();
-        let instance2 = linker.instantiate_async(&mut store, &module).await?;
-        let end = dbg!(start.elapsed());
 
         // now that the module is initialized,
         // we can initialize the store's allocator
@@ -342,8 +331,6 @@ impl Plugin {
             alloc_buffer,
             free_buffer,
         });
-
-        dbg!("bound funcitons");
 
         Ok(Plugin {
             engine,
