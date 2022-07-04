@@ -733,8 +733,9 @@ impl Project {
         for language in self.languages.to_vec() {
             if let Some(lsp_adapter) = language.lsp_adapter() {
                 if !settings.enable_language_server(Some(&language.name())) {
-                    let lsp_name = lsp_adapter.name();
-                    for (worktree_id, started_lsp_name) in self.language_server_ids.keys() {
+                    let lsp_name = lsp_adapter.name().await;
+                    // .await;
+                    for (worktree_id, started_lsp_name) in self.started_language_servers.keys() {
                         if lsp_name == *started_lsp_name {
                             language_servers_to_stop.push((*worktree_id, started_lsp_name.clone()));
                         }
@@ -1648,11 +1649,10 @@ impl Project {
                         this.create_local_worktree(&abs_path, false, cx)
                     })
                     .await?;
+                let name = lsp_adapter.name().await;
                 this.update(&mut cx, |this, cx| {
-                    this.language_server_ids.insert(
-                        (worktree.read(cx).id(), language_server_name),
-                        language_server_id,
-                    );
+                    this.language_servers
+                        .insert((worktree.read(cx).id(), name), (lsp_adapter, lsp_server));
                 });
                 (worktree, PathBuf::new())
             };
@@ -1799,10 +1799,10 @@ impl Project {
         Ok(())
     }
 
-    fn register_buffer_with_language_server(
+    async fn register_buffer_with_language_server(
         &mut self,
         buffer_handle: &ModelHandle<Buffer>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<'_, Self>,
     ) {
         let buffer = buffer_handle.read(cx);
         let buffer_id = buffer.remote_id();
@@ -1816,7 +1816,7 @@ impl Project {
                 if let Some(language) = buffer.language() {
                     let worktree_id = file.worktree_id(cx);
                     if let Some(adapter) = language.lsp_adapter() {
-                        language_id = adapter.id_for_language(language.name().as_ref());
+                        language_id = adapter.id_for_language(language.name().as_ref()).await;
                         language_server = self
                             .language_server_ids
                             .get(&(worktree_id, adapter.name()))
@@ -1985,6 +1985,7 @@ impl Project {
                     self.language_server_for_buffer(buffer.read(cx), cx)?;
                 if lsp_adapter
                     .disk_based_diagnostics_progress_token()
+                    .await
                     .is_none()
                 {
                     let server_id = language_server.server_id();
@@ -2074,6 +2075,7 @@ impl Project {
                     self.client.http_client(),
                     cx,
                 );
+
                 self.language_servers.insert(
                     server_id,
                     LanguageServerState::Starting(cx.spawn_weak(|this, mut cx| async move {
@@ -2405,7 +2407,6 @@ impl Project {
         } else {
             return;
         };
-
         let server_name = adapter.name();
         let stop = self.stop_language_server(worktree_id, server_name.clone(), cx);
         cx.spawn_weak(|this, mut cx| async move {
@@ -2450,7 +2451,7 @@ impl Project {
         self.update_diagnostics(
             server_id,
             params,
-            adapter.disk_based_diagnostic_sources(),
+            adapter.disk_based_diagnostic_sources().await,
             cx,
         )
         .log_err();
@@ -2460,7 +2461,7 @@ impl Project {
         &mut self,
         progress: lsp::ProgressParams,
         server_id: usize,
-        disk_based_diagnostics_progress_token: Option<&str>,
+        disk_based_diagnostics_progress_token: Option<String>,
         cx: &mut ModelContext<Self>,
     ) {
         let token = match progress.token {
@@ -2486,7 +2487,7 @@ impl Project {
 
         match progress {
             lsp::WorkDoneProgress::Begin(report) => {
-                if Some(token.as_str()) == disk_based_diagnostics_progress_token {
+                if Some(token) == disk_based_diagnostics_progress_token {
                     language_server_status.has_pending_diagnostic_updates = true;
                     self.disk_based_diagnostics_started(server_id, cx);
                     self.broadcast_language_server_update(
@@ -2517,7 +2518,7 @@ impl Project {
                 }
             }
             lsp::WorkDoneProgress::Report(report) => {
-                if Some(token.as_str()) != disk_based_diagnostics_progress_token {
+                if Some(token) != disk_based_diagnostics_progress_token {
                     self.on_lsp_work_progress(
                         server_id,
                         token.clone(),
@@ -2543,7 +2544,7 @@ impl Project {
             lsp::WorkDoneProgress::End(_) => {
                 language_server_status.progress_tokens.remove(&token);
 
-                if Some(token.as_str()) == disk_based_diagnostics_progress_token {
+                if Some(token) == disk_based_diagnostics_progress_token {
                     language_server_status.has_pending_diagnostic_updates = false;
                     self.disk_based_diagnostics_finished(server_id, cx);
                     self.broadcast_language_server_update(
@@ -2692,7 +2693,7 @@ impl Project {
         &mut self,
         language_server_id: usize,
         params: lsp::PublishDiagnosticsParams,
-        disk_based_sources: &[&str],
+        disk_based_sources: Vec<String>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let abs_path = params
@@ -2734,9 +2735,8 @@ impl Project {
                 );
             } else {
                 let group_id = post_inc(&mut self.next_diagnostic_group_id);
-                let is_disk_based = source.map_or(false, |source| {
-                    disk_based_sources.contains(&source.as_str())
-                });
+                let is_disk_based =
+                    source.map_or(false, |source| disk_based_sources.contains(&source));
 
                 sources_by_group_id.insert(group_id, source);
                 primary_diagnostic_group_ids
@@ -3307,7 +3307,9 @@ impl Project {
                                 .languages
                                 .select_language(&path)
                                 .and_then(|language| {
-                                    language.label_for_symbol(&lsp_symbol.name, lsp_symbol.kind)
+                                    language
+                                        .label_for_symbol(&lsp_symbol.name, lsp_symbol.kind)
+                                        .await
                                 })
                                 .unwrap_or_else(|| CodeLabel::plain(lsp_symbol.name.clone(), None));
                             let signature = this.symbol_signature(worktree_id, &path);
@@ -3315,7 +3317,7 @@ impl Project {
                             Some(Symbol {
                                 source_worktree_id,
                                 worktree_id,
-                                language_server_name: adapter.name(),
+                                language_server_name: adapter.name().await,
                                 name: lsp_symbol.name,
                                 kind: lsp_symbol.kind,
                                 label,
@@ -3339,10 +3341,9 @@ impl Project {
                 if let Some(this) = this.upgrade(&cx) {
                     this.read_with(&cx, |this, _| {
                         symbols.extend(
-                            response
-                                .symbols
-                                .into_iter()
-                                .filter_map(|symbol| this.deserialize_symbol(symbol).log_err()),
+                            response.symbols.into_iter().filter_map(|symbol| {
+                                this.deserialize_symbol(symbol).log_err().await
+                            }),
                         );
                     })
                 }
@@ -3548,7 +3549,7 @@ impl Project {
                                 new_text,
                                 label: language
                                     .as_ref()
-                                    .and_then(|l| l.label_for_completion(&lsp_completion))
+                                    .and_then(|l| l.label_for_completion(&lsp_completion).await)
                                     .unwrap_or_else(|| {
                                         CodeLabel::plain(
                                             lsp_completion.label.clone(),
@@ -3582,7 +3583,7 @@ impl Project {
                     .completions
                     .into_iter()
                     .map(|completion| {
-                        language::proto::deserialize_completion(completion, language.as_ref())
+                        language::proto::deserialize_completion(completion, language.as_ref()).await
                     })
                     .collect()
             })
@@ -5198,7 +5199,8 @@ impl Project {
                     .completion
                     .ok_or_else(|| anyhow!("invalid completion"))?,
                 language,
-            )?;
+            )
+            .await?;
             Ok::<_, anyhow::Error>(
                 this.apply_additional_edits_for_completion(buffer, completion, false, cx),
             )
@@ -5386,7 +5388,7 @@ impl Project {
             .symbol
             .ok_or_else(|| anyhow!("invalid symbol"))?;
         let symbol = this.read_with(&cx, |this, _| {
-            let symbol = this.deserialize_symbol(symbol)?;
+            let symbol = this.deserialize_symbol(symbol).await?;
             let signature = this.symbol_signature(symbol.worktree_id, &symbol.path);
             if signature == symbol.signature {
                 Ok(symbol)
@@ -5591,7 +5593,7 @@ impl Project {
         })
     }
 
-    fn deserialize_symbol(&self, serialized_symbol: proto::Symbol) -> Result<Symbol> {
+    async fn deserialize_symbol(&self, serialized_symbol: proto::Symbol) -> Result<Symbol> {
         let source_worktree_id = WorktreeId::from_proto(serialized_symbol.source_worktree_id);
         let worktree_id = WorktreeId::from_proto(serialized_symbol.worktree_id);
         let start = serialized_symbol
@@ -5607,9 +5609,18 @@ impl Project {
             source_worktree_id,
             worktree_id,
             language_server_name: LanguageServerName(serialized_symbol.language_server_name.into()),
-            label: language
-                .and_then(|language| language.label_for_symbol(&serialized_symbol.name, kind))
-                .unwrap_or_else(|| CodeLabel::plain(serialized_symbol.name.clone(), None)),
+            label: {
+                match language {
+                    Some(language) => {
+                        language
+                            .label_for_symbol(&serialized_symbol.name, kind)
+                            .await
+                    }
+                    None => None,
+                }
+                .unwrap_or_else(|| CodeLabel::plain(serialized_symbol.name.clone(), None))
+            },
+
             name: serialized_symbol.name,
             path,
             range: PointUtf16::new(start.row, start.column)..PointUtf16::new(end.row, end.column),
@@ -5864,6 +5875,8 @@ impl Project {
         cx: &AppContext,
     ) -> Option<(&Arc<dyn LspAdapter>, &Arc<LanguageServer>)> {
         if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language()) {
+            // TODO(isaac): this is not a good idea
+            let name = cx.background().block(language.lsp_adapter()?.name());
             let worktree_id = file.worktree_id(cx);
             let key = (worktree_id, language.lsp_adapter()?.name());
 

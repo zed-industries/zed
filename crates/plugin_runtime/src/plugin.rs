@@ -1,5 +1,5 @@
 use std::future::Future;
-use std::pin::Pin;
+
 use std::{fs::File, marker::PhantomData, path::Path};
 
 use anyhow::{anyhow, Error};

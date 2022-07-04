@@ -397,7 +397,7 @@ pub fn serialize_completion(completion: &Completion) -> proto::Completion {
     }
 }
 
-pub fn deserialize_completion(
+pub async fn deserialize_completion(
     completion: proto::Completion,
     language: Option<&Arc<Language>>,
 ) -> Result<Completion> {
@@ -413,12 +413,17 @@ pub fn deserialize_completion(
     Ok(Completion {
         old_range: old_start..old_end,
         new_text: completion.new_text,
-        label: language
-            .and_then(|l| l.label_for_completion(&lsp_completion))
-            .unwrap_or(CodeLabel::plain(
+        label: {
+            let label = match language {
+                Some(l) => l.label_for_completion(&lsp_completion).await,
+                None => None,
+            };
+
+            label.unwrap_or(CodeLabel::plain(
                 lsp_completion.label.clone(),
                 lsp_completion.filter_text.as_deref(),
-            )),
+            ))
+        },
         lsp_completion,
     })
 }

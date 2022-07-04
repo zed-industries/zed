@@ -78,10 +78,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
     ) -> Result<PathBuf>;
-    async fn cached_server_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> BoxFuture<'static, Option<PathBuf>>;
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf>;
 
     async fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
@@ -110,11 +107,11 @@ pub trait LspAdapter: 'static + Send + Sync {
         None
     }
 
-    async fn disk_based_diagnostic_sources(&self) -> &'static [&'static str] {
+    async fn disk_based_diagnostic_sources(&self) -> Vec<String> {
         Default::default()
     }
 
-    async fn disk_based_diagnostics_progress_token(&self) -> Option<&'static str> {
+    async fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
         None
     }
 
@@ -179,8 +176,8 @@ pub struct FakeLspAdapter {
     pub name: &'static str,
     pub capabilities: lsp::ServerCapabilities,
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
-    pub disk_based_diagnostics_progress_token: Option<&'static str>,
-    pub disk_based_diagnostics_sources: &'static [&'static str],
+    pub disk_based_diagnostics_progress_token: Option<String>,
+    pub disk_based_diagnostics_sources: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -359,7 +356,7 @@ impl LanguageRegistry {
             let server_binary_path = this
                 .lsp_binary_paths
                 .lock()
-                .entry(adapter.name())
+                .entry(adapter.name().await)
                 .or_insert_with(|| {
                     get_server_binary_path(
                         adapter.clone(),
@@ -376,7 +373,7 @@ impl LanguageRegistry {
                 .map_err(|e| anyhow!(e));
 
             let server_binary_path = server_binary_path.await?;
-            let server_args = adapter.server_args();
+            let server_args = adapter.server_args().await;
             let server = lsp::LanguageServer::new(
                 server_id,
                 &server_binary_path,
@@ -402,7 +399,7 @@ async fn get_server_binary_path(
     download_dir: Arc<Path>,
     statuses: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
 ) -> Result<PathBuf> {
-    let container_dir: Arc<Path> = download_dir.join(adapter.name().0.as_ref()).into();
+    let container_dir = download_dir.join(adapter.name().await.0.as_ref());
     if !container_dir.exists() {
         smol::fs::create_dir_all(&container_dir)
             .await
@@ -544,32 +541,42 @@ impl Language {
         self.config.line_comment.as_deref()
     }
 
-    pub fn disk_based_diagnostic_sources(&self) -> &'static [&'static str] {
-        self.adapter.as_ref().map_or(&[] as &[_], |adapter| {
-            adapter.disk_based_diagnostic_sources()
-        })
-    }
-
-    pub fn disk_based_diagnostics_progress_token(&self) -> Option<&'static str> {
-        self.adapter
-            .as_ref()
-            .and_then(|adapter| adapter.disk_based_diagnostics_progress_token())
-    }
-
-    pub fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams) {
-        if let Some(processor) = self.adapter.as_ref() {
-            processor.process_diagnostics(diagnostics);
+    pub async fn disk_based_diagnostic_sources(&self) -> Vec<String> {
+        match self.adapter.as_ref() {
+            Some(adapter) => adapter.disk_based_diagnostic_sources().await,
+            None => Vec::new(),
         }
     }
 
-    pub fn label_for_completion(&self, completion: &lsp::CompletionItem) -> Option<CodeLabel> {
+    pub async fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
+        if let Some(adapter) = self.adapter.as_ref() {
+            adapter.disk_based_diagnostics_progress_token().await
+        } else {
+            None
+        }
+    }
+
+    pub async fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams) {
+        if let Some(processor) = self.adapter.as_ref() {
+            processor.process_diagnostics(diagnostics).await;
+        }
+    }
+
+    pub async fn label_for_completion(
+        &self,
+        completion: &lsp::CompletionItem,
+    ) -> Option<CodeLabel> {
         self.adapter
             .as_ref()?
             .label_for_completion(completion, self)
+            .await
     }
 
-    pub fn label_for_symbol(&self, name: &str, kind: lsp::SymbolKind) -> Option<CodeLabel> {
-        self.adapter.as_ref()?.label_for_symbol(name, kind, self)
+    pub async fn label_for_symbol(&self, name: &str, kind: lsp::SymbolKind) -> Option<CodeLabel> {
+        self.adapter
+            .as_ref()?
+            .label_for_symbol(name, kind, self)
+            .await
     }
 
     pub fn highlight_text<'a>(
@@ -678,45 +685,46 @@ impl Default for FakeLspAdapter {
             capabilities: lsp::LanguageServer::full_capabilities(),
             initializer: None,
             disk_based_diagnostics_progress_token: None,
-            disk_based_diagnostics_sources: &[],
+            disk_based_diagnostics_sources: Vec::new(),
         }
     }
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[async_trait]
 impl LspAdapter for FakeLspAdapter {
-    fn name(&self) -> LanguageServerName {
+    async fn name(&self) -> LanguageServerName {
         LanguageServerName(self.name.into())
     }
 
-    fn fetch_latest_server_version(
+    async fn fetch_latest_server_version(
         &self,
         _: Arc<dyn HttpClient>,
-    ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>> {
+    ) -> Result<Box<dyn 'static + Send + Any>> {
         unreachable!();
     }
 
-    fn fetch_server_binary(
+    async fn fetch_server_binary(
         &self,
         _: Box<dyn 'static + Send + Any>,
         _: Arc<dyn HttpClient>,
-        _: Arc<Path>,
-    ) -> BoxFuture<'static, Result<PathBuf>> {
+        _: PathBuf,
+    ) -> Result<PathBuf> {
         unreachable!();
     }
 
-    fn cached_server_binary(&self, _: Arc<Path>) -> BoxFuture<'static, Option<PathBuf>> {
+    async fn cached_server_binary(&self, _: PathBuf) -> Option<PathBuf> {
         unreachable!();
     }
 
-    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
+    async fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
-    fn disk_based_diagnostic_sources(&self) -> &'static [&'static str] {
-        self.disk_based_diagnostics_sources
+    async fn disk_based_diagnostic_sources(&self) -> Vec<String> {
+        self.disk_based_diagnostics_sources.clone()
     }
 
-    fn disk_based_diagnostics_progress_token(&self) -> Option<&'static str> {
-        self.disk_based_diagnostics_progress_token
+    async fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
+        self.disk_based_diagnostics_progress_token.clone()
     }
 }
 

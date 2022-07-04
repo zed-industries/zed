@@ -2,9 +2,7 @@ use core::panic;
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{
-    parse_macro_input, Block, FnArg, ForeignItemFn, Ident, ItemFn, Pat, PatIdent, Type, Visibility,
-};
+use syn::{parse_macro_input, Block, FnArg, ForeignItemFn, Ident, ItemFn, Pat, Type, Visibility};
 
 /// Attribute macro to be used guest-side within a plugin.
 /// ```ignore
