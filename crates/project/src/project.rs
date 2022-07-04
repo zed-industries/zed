@@ -113,6 +113,7 @@ pub struct Project {
     collaborators: HashMap<PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
     _subscriptions: Vec<gpui::Subscription>,
+    lsp_settings_changed: Option<Task<()>>,
     opened_buffer: (Rc<RefCell<watch::Sender<()>>>, watch::Receiver<()>),
     shared_buffers: HashMap<PeerId, HashSet<u64>>,
     loading_buffers: HashMap<
@@ -488,6 +489,7 @@ impl Project {
                 next_language_server_id: 0,
                 nonce: StdRng::from_entropy().gen(),
                 initialized_persistent_state: false,
+                lsp_settings_changed: None,
             }
         })
     }
@@ -602,6 +604,7 @@ impl Project {
                 buffer_snapshots: Default::default(),
                 nonce: StdRng::from_entropy().gen(),
                 initialized_persistent_state: false,
+                lsp_settings_changed: None,
             };
             for worktree in worktrees {
                 this.add_worktree(&worktree, cx);
@@ -710,51 +713,55 @@ impl Project {
 
     fn on_settings_changed(&mut self, cx: &mut ModelContext<'_, Self>) {
         let settings = cx.global::<Settings>();
-
-        let mut language_servers_to_start = Vec::new();
-        for buffer in self.opened_buffers.values() {
-            if let Some(buffer) = buffer.upgrade(cx) {
-                let buffer = buffer.read(cx);
-                if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language())
-                {
-                    if settings.enable_language_server(Some(&language.name())) {
-                        let worktree = file.worktree.read(cx);
-                        language_servers_to_start.push((
-                            worktree.id(),
-                            worktree.as_local().unwrap().abs_path().clone(),
-                            language.clone(),
-                        ));
-                    }
-                }
-            }
-        }
-
-        let mut language_servers_to_stop = Vec::new();
-        for language in self.languages.to_vec() {
-            if let Some(lsp_adapter) = language.lsp_adapter() {
-                if !settings.enable_language_server(Some(&language.name())) {
-                    let lsp_name = lsp_adapter.name().await;
-                    for (worktree_id, started_lsp_name) in self.started_language_servers.keys() {
-                        if lsp_name == *started_lsp_name {
-                            language_servers_to_stop.push((*worktree_id, started_lsp_name.clone()));
+        self.lsp_settings_changed = Some(cx.spawn(|_, _| async {
+            let mut language_servers_to_start = Vec::new();
+            for buffer in self.opened_buffers.values() {
+                if let Some(buffer) = buffer.upgrade(cx) {
+                    let buffer = buffer.read(cx);
+                    if let Some((file, language)) =
+                        File::from_dyn(buffer.file()).zip(buffer.language())
+                    {
+                        if settings.enable_language_server(Some(&language.name())) {
+                            let worktree = file.worktree.read(cx);
+                            language_servers_to_start.push((
+                                worktree.id(),
+                                worktree.as_local().unwrap().abs_path().clone(),
+                                language.clone(),
+                            ));
                         }
                     }
                 }
             }
-        }
 
-        // Stop all newly-disabled language servers.
-        for (worktree_id, adapter_name) in language_servers_to_stop {
-            self.stop_language_server(worktree_id, adapter_name, cx)
-                .detach();
-        }
+            let mut language_servers_to_stop = Vec::new();
+            for language in self.languages.to_vec() {
+                if let Some(lsp_adapter) = language.lsp_adapter() {
+                    if !settings.enable_language_server(Some(&language.name())) {
+                        let lsp_name = lsp_adapter.name().await;
+                        for (worktree_id, started_lsp_name) in self.started_language_servers.keys()
+                        {
+                            if lsp_name == *started_lsp_name {
+                                language_servers_to_stop
+                                    .push((*worktree_id, started_lsp_name.clone()));
+                            }
+                        }
+                    }
+                }
+            }
 
-        // Start all the newly-enabled language servers.
-        for (worktree_id, worktree_path, language) in language_servers_to_start {
-            self.start_language_server(worktree_id, worktree_path, language, cx);
-        }
+            // Stop all newly-disabled language servers.
+            for (worktree_id, adapter_name) in language_servers_to_stop {
+                self.stop_language_server(worktree_id, adapter_name, cx)
+                    .detach();
+            }
 
-        cx.notify();
+            // Start all the newly-enabled language servers.
+            for (worktree_id, worktree_path, language) in language_servers_to_start {
+                self.start_language_server(worktree_id, worktree_path, language, cx);
+            }
+
+            cx.notify();
+        }))
     }
 
     pub fn buffer_for_id(&self, remote_id: u64, cx: &AppContext) -> Option<ModelHandle<Buffer>> {
@@ -3482,19 +3489,18 @@ impl Project {
                     let snapshot = this.snapshot();
                     let clipped_position = this.clip_point_utf16(position, Bias::Left);
                     let mut range_for_token = None;
-                    Ok(completions
-                        .into_iter()
-                        .filter_map(|lsp_completion| {
-                            // For now, we can only handle additional edits if they are returned
-                            // when resolving the completion, not if they are present initially.
-                            if lsp_completion
-                                .additional_text_edits
-                                .as_ref()
-                                .map_or(false, |edits| !edits.is_empty())
-                            {
-                                return None;
-                            }
+                    let result = Vec::new();
 
+                    for lsp_completion in completions.into_iter() {
+                        // For now, we can only handle additional edits if they are returned
+                        // when resolving the completion, not if they are present initially.
+                        if lsp_completion
+                            .additional_text_edits
+                            .as_ref()
+                            .map_or(false, |edits| !edits.is_empty())
+                        {
+                            continue;
+                        }
                             let (old_range, mut new_text) = match lsp_completion.text_edit.as_ref()
                             {
                                 // If the language server provides a range to overwrite, then
@@ -3540,9 +3546,17 @@ impl Project {
                                         text.clone(),
                                     )
                                 }
-                                Some(lsp::CompletionTextEdit::InsertAndReplace(_)) => {
-                                    log::info!("unsupported insert/replace completion");
-                                    return None;
+                                (
+                                    snapshot.anchor_before(start)..snapshot.anchor_after(end),
+                                    edit.new_text.clone(),
+                                )
+                            }
+                            // If the language server does not provide a range, then infer
+                            // the range based on the syntax tree.
+                            None => {
+                                if position != clipped_position {
+                                    log::info!("completion out of expected range");
+                                    continue;
                                 }
                             };
 
@@ -3560,12 +3574,54 @@ impl Project {
                                             lsp_completion.label.clone(),
                                             lsp_completion.filter_text.as_deref(),
                                         )
+                                let Range { start, end } = range_for_token
+                                    .get_or_insert_with(|| {
+                                        let offset = position.to_offset(&snapshot);
+                                        let (range, kind) = snapshot.surrounding_word(offset);
+                                        if kind == Some(CharKind::Word) {
+                                            range
+                                        } else {
+                                            offset..offset
+                                        }
                                     })
-                                },
-                                lsp_completion,
-                            })
-                        })
-                        .collect())
+                                    .clone();
+                                let text = lsp_completion
+                                    .insert_text
+                                    .as_ref()
+                                    .unwrap_or(&lsp_completion.label)
+                                    .clone();
+                                (
+                                    snapshot.anchor_before(start)..snapshot.anchor_after(end),
+                                    text.clone(),
+                                )
+                            }
+                            Some(lsp::CompletionTextEdit::InsertAndReplace(_)) => {
+                                log::info!("unsupported insert/replace completion");
+                                continue;
+                            }
+                        };
+
+                        let completion = Completion {
+                            old_range,
+                            new_text,
+                            label: {
+                                match language.as_ref() {
+                                    Some(l) => l.label_for_completion(&lsp_completion).await,
+                                    None => None,
+                                }
+                                .unwrap_or_else(|| {
+                                    CodeLabel::plain(
+                                        lsp_completion.label.clone(),
+                                        lsp_completion.filter_text.as_deref(),
+                                    )
+                                })
+                            },
+                            lsp_completion,
+                        };
+
+                        result.push(completion);
+                    }
+                    Ok(result)
                 })
             })
         } else if let Some(project_id) = self.remote_id() {
@@ -3587,10 +3643,8 @@ impl Project {
 
                 let completions = Vec::new();
                 for completion in response.completions.into_iter() {
-                    completions.push(
-                        language::proto::deserialize_completion(completion, language.as_ref())
-                            .await,
-                    );
+                    completions
+                        .push(language::proto::deserialize_completion(completion, language).await);
                 }
                 completions.into_iter().collect()
             })
@@ -5205,7 +5259,7 @@ impl Project {
                     .payload
                     .completion
                     .ok_or_else(|| anyhow!("invalid completion"))?,
-                language,
+                language.cloned(),
             );
             Ok::<_, anyhow::Error>((buffer, completion))
         })?;
@@ -5605,43 +5659,52 @@ impl Project {
         })
     }
 
-    async fn deserialize_symbol(&self, serialized_symbol: proto::Symbol) -> Result<Symbol> {
-        let source_worktree_id = WorktreeId::from_proto(serialized_symbol.source_worktree_id);
-        let worktree_id = WorktreeId::from_proto(serialized_symbol.worktree_id);
-        let start = serialized_symbol
-            .start
-            .ok_or_else(|| anyhow!("invalid start"))?;
-        let end = serialized_symbol
-            .end
-            .ok_or_else(|| anyhow!("invalid end"))?;
-        let kind = unsafe { mem::transmute(serialized_symbol.kind) };
-        let path = PathBuf::from(serialized_symbol.path);
-        let language = self.languages.select_language(&path);
-        Ok(Symbol {
-            source_worktree_id,
-            worktree_id,
-            language_server_name: LanguageServerName(serialized_symbol.language_server_name.into()),
-            label: {
-                match language {
-                    Some(language) => {
-                        language
-                            .label_for_symbol(&serialized_symbol.name, kind)
-                            .await
+    fn deserialize_symbol(
+        &self,
+        serialized_symbol: proto::Symbol,
+    ) -> impl Future<Output = Result<Symbol>> {
+        let languages = self.languages.clone();
+        async move {
+            let source_worktree_id = WorktreeId::from_proto(serialized_symbol.source_worktree_id);
+            let worktree_id = WorktreeId::from_proto(serialized_symbol.worktree_id);
+            let start = serialized_symbol
+                .start
+                .ok_or_else(|| anyhow!("invalid start"))?;
+            let end = serialized_symbol
+                .end
+                .ok_or_else(|| anyhow!("invalid end"))?;
+            let kind = unsafe { mem::transmute(serialized_symbol.kind) };
+            let path = PathBuf::from(serialized_symbol.path);
+            let language = languages.select_language(&path);
+            Ok(Symbol {
+                source_worktree_id,
+                worktree_id,
+                language_server_name: LanguageServerName(
+                    serialized_symbol.language_server_name.into(),
+                ),
+                label: {
+                    match language {
+                        Some(language) => {
+                            language
+                                .label_for_symbol(&serialized_symbol.name, kind)
+                                .await
+                        }
+                        None => None,
                     }
-                    None => None,
-                }
-                .unwrap_or_else(|| CodeLabel::plain(serialized_symbol.name.clone(), None))
-            },
+                    .unwrap_or_else(|| CodeLabel::plain(serialized_symbol.name.clone(), None))
+                },
 
-            name: serialized_symbol.name,
-            path,
-            range: PointUtf16::new(start.row, start.column)..PointUtf16::new(end.row, end.column),
-            kind,
-            signature: serialized_symbol
-                .signature
-                .try_into()
-                .map_err(|_| anyhow!("invalid signature"))?,
-        })
+                name: serialized_symbol.name,
+                path,
+                range: PointUtf16::new(start.row, start.column)
+                    ..PointUtf16::new(end.row, end.column),
+                kind,
+                signature: serialized_symbol
+                    .signature
+                    .try_into()
+                    .map_err(|_| anyhow!("invalid signature"))?,
+            })
+        }
     }
 
     async fn handle_buffer_saved(

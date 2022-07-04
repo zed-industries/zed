@@ -399,7 +399,7 @@ pub fn serialize_completion(completion: &Completion) -> proto::Completion {
 
 pub async fn deserialize_completion(
     completion: proto::Completion,
-    language: Option<&Arc<Language>>,
+    language: Option<Arc<Language>>,
 ) -> Result<Completion> {
     let old_start = completion
         .old_start
