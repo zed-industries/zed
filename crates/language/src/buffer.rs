@@ -53,6 +53,7 @@ pub struct Buffer {
     saved_version: clock::Global,
     saved_version_fingerprint: String,
     saved_mtime: SystemTime,
+    line_ending: LineEnding,
     transaction_depth: usize,
     was_dirty_before_starting_transaction: Option<bool>,
     language: Option<Arc<Language>>,
@@ -95,6 +96,12 @@ pub struct IndentSize {
 pub enum IndentKind {
     Space,
     Tab,
+}
+
+#[derive(Copy, Debug, Clone, PartialEq, Eq)]
+pub enum LineEnding {
+    Unix,
+    Windows,
 }
 
 #[derive(Clone, Debug)]
@@ -194,6 +201,7 @@ pub trait File: Send + Sync {
         buffer_id: u64,
         text: Rope,
         version: clock::Global,
+        line_ending: LineEnding,
         cx: &mut MutableAppContext,
     ) -> Task<Result<(clock::Global, String, SystemTime)>>;
 
@@ -275,6 +283,7 @@ pub(crate) struct Diff {
     base_version: clock::Global,
     new_text: Arc<str>,
     changes: Vec<(ChangeTag, usize)>,
+    line_ending: LineEnding,
     start_offset: usize,
 }
 
@@ -309,13 +318,12 @@ impl Buffer {
         base_text: T,
         cx: &mut ModelContext<Self>,
     ) -> Self {
+        let history = History::new(base_text.into());
+        let line_ending = LineEnding::detect(&history.base_text);
         Self::build(
-            TextBuffer::new(
-                replica_id,
-                cx.model_id() as u64,
-                History::new(base_text.into()),
-            ),
+            TextBuffer::new(replica_id, cx.model_id() as u64, history),
             None,
+            line_ending,
         )
     }
 
@@ -325,13 +333,12 @@ impl Buffer {
         file: Arc<dyn File>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
+        let history = History::new(base_text.into());
+        let line_ending = LineEnding::detect(&history.base_text);
         Self::build(
-            TextBuffer::new(
-                replica_id,
-                cx.model_id() as u64,
-                History::new(base_text.into()),
-            ),
+            TextBuffer::new(replica_id, cx.model_id() as u64, history),
             Some(file),
+            line_ending,
         )
     }
 
@@ -346,7 +353,9 @@ impl Buffer {
             message.id,
             History::new(Arc::from(message.base_text)),
         );
-        let mut this = Self::build(buffer, file);
+        let line_ending = proto::LineEnding::from_i32(message.line_ending)
+            .ok_or_else(|| anyhow!("missing line_ending"))?;
+        let mut this = Self::build(buffer, file, LineEnding::from_proto(line_ending));
         let ops = message
             .operations
             .into_iter()
@@ -411,6 +420,7 @@ impl Buffer {
             diagnostics: proto::serialize_diagnostics(self.diagnostics.iter()),
             diagnostics_timestamp: self.diagnostics_timestamp.value,
             completion_triggers: self.completion_triggers.clone(),
+            line_ending: self.line_ending.to_proto() as i32,
         }
     }
 
@@ -419,7 +429,7 @@ impl Buffer {
         self
     }
 
-    fn build(buffer: TextBuffer, file: Option<Arc<dyn File>>) -> Self {
+    fn build(buffer: TextBuffer, file: Option<Arc<dyn File>>, line_ending: LineEnding) -> Self {
         let saved_mtime;
         if let Some(file) = file.as_ref() {
             saved_mtime = file.mtime();
@@ -435,6 +445,7 @@ impl Buffer {
             was_dirty_before_starting_transaction: None,
             text: buffer,
             file,
+            line_ending,
             syntax_tree: Mutex::new(None),
             parsing_in_background: false,
             parse_count: 0,
@@ -491,7 +502,13 @@ impl Buffer {
         };
         let text = self.as_rope().clone();
         let version = self.version();
-        let save = file.save(self.remote_id(), text, version, cx.as_mut());
+        let save = file.save(
+            self.remote_id(),
+            text,
+            version,
+            self.line_ending,
+            cx.as_mut(),
+        );
         cx.spawn(|this, mut cx| async move {
             let (version, fingerprint, mtime) = save.await?;
             this.update(&mut cx, |this, cx| {
@@ -538,7 +555,7 @@ impl Buffer {
             }) {
                 let new_text = new_text.await?;
                 let diff = this
-                    .read_with(&cx, |this, cx| this.diff(new_text.into(), cx))
+                    .read_with(&cx, |this, cx| this.diff(new_text, cx))
                     .await;
                 this.update(&mut cx, |this, cx| {
                     if let Some(transaction) = this.apply_diff(diff, cx).cloned() {
@@ -952,19 +969,22 @@ impl Buffer {
         }
     }
 
-    pub(crate) fn diff(&self, new_text: Arc<str>, cx: &AppContext) -> Task<Diff> {
-        // TODO: it would be nice to not allocate here.
-        let old_text = self.text();
+    pub(crate) fn diff(&self, new_text: String, cx: &AppContext) -> Task<Diff> {
+        let old_text = self.as_rope().clone();
         let base_version = self.version();
         cx.background().spawn(async move {
-            let changes = TextDiff::from_lines(old_text.as_str(), new_text.as_ref())
+            let old_text = old_text.to_string();
+            let line_ending = LineEnding::detect(&new_text);
+            let new_text = new_text.replace("\r\n", "\n").replace('\r', "\n");
+            let changes = TextDiff::from_lines(old_text.as_str(), new_text.as_str())
                 .iter_all_changes()
                 .map(|c| (c.tag(), c.value().len()))
                 .collect::<Vec<_>>();
             Diff {
                 base_version,
-                new_text,
+                new_text: new_text.into(),
                 changes,
+                line_ending,
                 start_offset: 0,
             }
         })
@@ -978,6 +998,7 @@ impl Buffer {
         if self.version == diff.base_version {
             self.finalize_last_transaction();
             self.start_transaction();
+            self.line_ending = diff.line_ending;
             let mut offset = diff.start_offset;
             for (tag, len) in diff.changes {
                 let range = offset..(offset + len);
@@ -1491,6 +1512,10 @@ impl Buffer {
 
     pub fn completion_triggers(&self) -> &[String] {
         &self.completion_triggers
+    }
+
+    pub fn line_ending(&self) -> LineEnding {
+        self.line_ending
     }
 }
 
@@ -2509,6 +2534,52 @@ impl std::ops::SubAssign for IndentSize {
         if self.kind == other.kind && self.len >= other.len {
             self.len -= other.len;
         }
+    }
+}
+
+impl LineEnding {
+    fn from_proto(style: proto::LineEnding) -> Self {
+        match style {
+            proto::LineEnding::Unix => Self::Unix,
+            proto::LineEnding::Windows => Self::Windows,
+        }
+    }
+
+    fn detect(text: &str) -> Self {
+        let text = &text[..cmp::min(text.len(), 1000)];
+        if let Some(ix) = text.find('\n') {
+            if ix == 0 || text.as_bytes()[ix - 1] != b'\r' {
+                Self::Unix
+            } else {
+                Self::Windows
+            }
+        } else {
+            Default::default()
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LineEnding::Unix => "\n",
+            LineEnding::Windows => "\r\n",
+        }
+    }
+
+    fn to_proto(self) -> proto::LineEnding {
+        match self {
+            LineEnding::Unix => proto::LineEnding::Unix,
+            LineEnding::Windows => proto::LineEnding::Windows,
+        }
+    }
+}
+
+impl Default for LineEnding {
+    fn default() -> Self {
+        #[cfg(unix)]
+        return Self::Unix;
+
+        #[cfg(not(unix))]
+        return Self::Windows;
     }
 }
 

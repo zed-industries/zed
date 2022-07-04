@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use fsevent::EventStream;
 use futures::{Stream, StreamExt};
+use language::LineEnding;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::{
     io,
@@ -21,7 +22,7 @@ pub trait Fs: Send + Sync {
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>>;
     async fn load(&self, path: &Path) -> Result<String>;
-    async fn save(&self, path: &Path, text: &Rope) -> Result<()>;
+    async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
     async fn is_file(&self, path: &Path) -> bool;
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>>;
@@ -169,11 +170,11 @@ impl Fs for RealFs {
         Ok(text)
     }
 
-    async fn save(&self, path: &Path, text: &Rope) -> Result<()> {
+    async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
         let buffer_size = text.summary().bytes.min(10 * 1024);
         let file = smol::fs::File::create(path).await?;
         let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
-        for chunk in text.chunks() {
+        for chunk in chunks(text, line_ending) {
             writer.write_all(chunk.as_bytes()).await?;
         }
         writer.flush().await?;
@@ -646,16 +647,17 @@ impl Fs for FakeFs {
         Ok(text.clone())
     }
 
-    async fn save(&self, path: &Path, text: &Rope) -> Result<()> {
+    async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
         self.simulate_random_delay().await;
         let mut state = self.state.lock().await;
         let path = normalize_path(path);
         state.validate_path(&path)?;
+        let content = chunks(text, line_ending).collect();
         if let Some(entry) = state.entries.get_mut(&path) {
             if entry.metadata.is_dir {
                 Err(anyhow!("cannot overwrite a directory with a file"))
             } else {
-                entry.content = Some(text.chunks().collect());
+                entry.content = Some(content);
                 entry.metadata.mtime = SystemTime::now();
                 state.emit_event(&[path]).await;
                 Ok(())
@@ -670,7 +672,7 @@ impl Fs for FakeFs {
                     is_dir: false,
                     is_symlink: false,
                 },
-                content: Some(text.chunks().collect()),
+                content: Some(content),
             };
             state.entries.insert(path.to_path_buf(), entry);
             state.emit_event(&[path]).await;
@@ -750,6 +752,21 @@ impl Fs for FakeFs {
     fn as_fake(&self) -> &FakeFs {
         self
     }
+}
+
+fn chunks(rope: &Rope, line_ending: LineEnding) -> impl Iterator<Item = &str> {
+    rope.chunks().flat_map(move |chunk| {
+        let mut newline = false;
+        chunk.split('\n').flat_map(move |line| {
+            let ending = if newline {
+                Some(line_ending.as_str())
+            } else {
+                None
+            };
+            newline = true;
+            ending.into_iter().chain([line])
+        })
+    })
 }
 
 pub fn normalize_path(path: &Path) -> PathBuf {

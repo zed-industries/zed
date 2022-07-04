@@ -58,10 +58,18 @@ impl Rope {
     pub fn push(&mut self, text: &str) {
         let mut new_chunks = SmallVec::<[_; 16]>::new();
         let mut new_chunk = ArrayString::new();
-        for ch in text.chars() {
+        let mut chars = text.chars().peekable();
+        while let Some(mut ch) = chars.next() {
             if new_chunk.len() + ch.len_utf8() > 2 * CHUNK_BASE {
                 new_chunks.push(Chunk(new_chunk));
                 new_chunk = ArrayString::new();
+            }
+
+            if ch == '\r' {
+                ch = '\n';
+                if chars.peek().copied() == Some('\n') {
+                    chars.next();
+                }
             }
             new_chunk.push(ch);
         }
