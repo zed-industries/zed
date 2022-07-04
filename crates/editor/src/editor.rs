@@ -2132,6 +2132,41 @@ impl Editor {
         }
     }
 
+    fn select_autoclose_pair(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let old_selections = self.selections.all::<usize>(cx);
+        let autoclose_pair = if let Some(autoclose_pair) = self.autoclose_stack.last() {
+            autoclose_pair
+        } else {
+            return false;
+        };
+
+        debug_assert_eq!(old_selections.len(), autoclose_pair.ranges.len());
+
+        let mut new_selections = Vec::new();
+        for (selection, autoclose_range) in old_selections
+            .iter()
+            .zip(autoclose_pair.ranges.iter().map(|r| r.to_offset(&buffer)))
+        {
+            if selection.is_empty() && autoclose_range.is_empty() && selection.start == autoclose_range.start {
+                new_selections.push(Selection {
+                    id: selection.id,
+                    start: selection.start - autoclose_pair.pair.start.len(),
+                    end: selection.end + autoclose_pair.pair.end.len(),
+                    reversed: true,
+                    goal: selection.goal,
+                });
+            } else {
+                return false;
+            }
+        }
+
+        self.change_selections(Some(Autoscroll::Fit), cx, |selections| {
+            selections.select(new_selections)
+        });
+        true
+    }
+
     fn completion_query(buffer: &MultiBufferSnapshot, position: impl ToOffset) -> Option<String> {
         let offset = position.to_offset(buffer);
         let (word_range, kind) = buffer.surrounding_word(offset);
@@ -2776,46 +2811,52 @@ impl Editor {
     }
 
     pub fn backspace(&mut self, _: &Backspace, cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections.all::<Point>(cx);
-        if !self.selections.line_mode {
-            for selection in &mut selections {
-                if selection.is_empty() {
-                    let old_head = selection.head();
-                    let mut new_head =
-                        movement::left(&display_map, old_head.to_display_point(&display_map))
+        self.transact(cx, |this, cx| {
+            if !this.select_autoclose_pair(cx) {
+                let mut selections = this.selections.all::<Point>(cx);
+                if !this.selections.line_mode {
+                    let display_map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
+                    for selection in &mut selections {
+                        if selection.is_empty() {
+                            let old_head = selection.head();
+                            let mut new_head = movement::left(
+                                &display_map,
+                                old_head.to_display_point(&display_map),
+                            )
                             .to_point(&display_map);
-                    if let Some((buffer, line_buffer_range)) = display_map
-                        .buffer_snapshot
-                        .buffer_line_for_row(old_head.row)
-                    {
-                        let indent_size = buffer.indent_size_for_line(line_buffer_range.start.row);
-                        let language_name = buffer.language().map(|language| language.name());
-                        let indent_len = match indent_size.kind {
-                            IndentKind::Space => {
-                                cx.global::<Settings>().tab_size(language_name.as_deref())
+                            if let Some((buffer, line_buffer_range)) = display_map
+                                .buffer_snapshot
+                                .buffer_line_for_row(old_head.row)
+                            {
+                                let indent_size =
+                                    buffer.indent_size_for_line(line_buffer_range.start.row);
+                                let language_name =
+                                    buffer.language().map(|language| language.name());
+                                let indent_len = match indent_size.kind {
+                                    IndentKind::Space => {
+                                        cx.global::<Settings>().tab_size(language_name.as_deref())
+                                    }
+                                    IndentKind::Tab => NonZeroU32::new(1).unwrap(),
+                                };
+                                if old_head.column <= indent_size.len && old_head.column > 0 {
+                                    let indent_len = indent_len.get();
+                                    new_head = cmp::min(
+                                        new_head,
+                                        Point::new(
+                                            old_head.row,
+                                            ((old_head.column - 1) / indent_len) * indent_len,
+                                        ),
+                                    );
+                                }
                             }
-                            IndentKind::Tab => NonZeroU32::new(1).unwrap(),
-                        };
-                        if old_head.column <= indent_size.len && old_head.column > 0 {
-                            let indent_len = indent_len.get();
-                            new_head = cmp::min(
-                                new_head,
-                                Point::new(
-                                    old_head.row,
-                                    ((old_head.column - 1) / indent_len) * indent_len,
-                                ),
-                            );
+
+                            selection.set_head(new_head, SelectionGoal::None);
                         }
                     }
-
-                    selection.set_head(new_head, SelectionGoal::None);
                 }
-            }
-        }
 
-        self.transact(cx, |this, cx| {
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections));
+                this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections));
+            }
             this.insert("", cx);
         });
     }
@@ -3749,15 +3790,17 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                let line_mode = s.line_mode;
-                s.move_with(|map, selection| {
-                    if selection.is_empty() && !line_mode {
-                        let cursor = movement::previous_word_start(map, selection.head());
-                        selection.set_head(cursor, SelectionGoal::None);
-                    }
+            if !this.select_autoclose_pair(cx) {
+                this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                    let line_mode = s.line_mode;
+                    s.move_with(|map, selection| {
+                        if selection.is_empty() && !line_mode {
+                            let cursor = movement::previous_word_start(map, selection.head());
+                            selection.set_head(cursor, SelectionGoal::None);
+                        }
+                    });
                 });
-            });
+            }
             this.insert("", cx);
         });
     }
@@ -3768,15 +3811,17 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                let line_mode = s.line_mode;
-                s.move_with(|map, selection| {
-                    if selection.is_empty() && !line_mode {
-                        let cursor = movement::previous_subword_start(map, selection.head());
-                        selection.set_head(cursor, SelectionGoal::None);
-                    }
+            if !this.select_autoclose_pair(cx) {
+                this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                    let line_mode = s.line_mode;
+                    s.move_with(|map, selection| {
+                        if selection.is_empty() && !line_mode {
+                            let cursor = movement::previous_subword_start(map, selection.head());
+                            selection.set_head(cursor, SelectionGoal::None);
+                        }
+                    });
                 });
-            });
+            }
             this.insert("", cx);
         });
     }
@@ -8964,7 +9009,7 @@ mod tests {
             a
             b
             c
-            "#
+        "#
         .unindent();
 
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
@@ -9019,6 +9064,108 @@ mod tests {
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
                     DisplayPoint::new(2, 0)..DisplayPoint::new(2, 1)
+                ]
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                brackets: vec![BracketPair {
+                    start: "{".to_string(),
+                    end: "}".to_string(),
+                    close: true,
+                    newline: true,
+                }],
+                autoclose_before: "}".to_string(),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        ));
+
+        let text = r#"
+            a
+            b
+            c
+        "#
+        .unindent();
+
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let (_, editor) = cx.add_window(|cx| build_editor(buffer, cx));
+        editor
+            .condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
+            .await;
+
+        editor.update(cx, |editor, cx| {
+            editor.change_selections(None, cx, |s| {
+                s.select_ranges([
+                    Point::new(0, 1)..Point::new(0, 1),
+                    Point::new(1, 1)..Point::new(1, 1),
+                    Point::new(2, 1)..Point::new(2, 1),
+                ])
+            });
+
+            editor.handle_input(&Input("{".to_string()), cx);
+            editor.handle_input(&Input("{".to_string()), cx);
+            editor.handle_input(&Input("_".to_string()), cx);
+            assert_eq!(
+                editor.text(cx),
+                "
+                a{{_}}
+                b{{_}}
+                c{{_}}
+                "
+                .unindent()
+            );
+            assert_eq!(
+                editor.selections.ranges::<Point>(cx),
+                [
+                    Point::new(0, 4)..Point::new(0, 4),
+                    Point::new(1, 4)..Point::new(1, 4),
+                    Point::new(2, 4)..Point::new(2, 4)
+                ]
+            );
+
+            editor.backspace(&Default::default(), cx);
+            editor.backspace(&Default::default(), cx);
+            assert_eq!(
+                editor.text(cx),
+                "
+                a{}
+                b{}
+                c{}
+                "
+                .unindent()
+            );
+            assert_eq!(
+                editor.selections.ranges::<Point>(cx),
+                [
+                    Point::new(0, 2)..Point::new(0, 2),
+                    Point::new(1, 2)..Point::new(1, 2),
+                    Point::new(2, 2)..Point::new(2, 2)
+                ]
+            );
+
+            editor.delete_to_previous_word_start(&Default::default(), cx);
+            assert_eq!(
+                editor.text(cx),
+                "
+                a
+                b
+                c
+                "
+                .unindent()
+            );
+            assert_eq!(
+                editor.selections.ranges::<Point>(cx),
+                [
+                    Point::new(0, 1)..Point::new(0, 1),
+                    Point::new(1, 1)..Point::new(1, 1),
+                    Point::new(2, 1)..Point::new(2, 1)
                 ]
             );
         });
