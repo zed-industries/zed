@@ -53,6 +53,7 @@ pub struct Buffer {
     saved_version: clock::Global,
     saved_version_fingerprint: String,
     saved_mtime: SystemTime,
+    newline_style: NewlineStyle,
     transaction_depth: usize,
     was_dirty_before_starting_transaction: Option<bool>,
     language: Option<Arc<Language>>,
@@ -95,6 +96,12 @@ pub struct IndentSize {
 pub enum IndentKind {
     Space,
     Tab,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum NewlineStyle {
+    Unix,
+    Windows,
 }
 
 #[derive(Clone, Debug)]
@@ -194,6 +201,7 @@ pub trait File: Send + Sync {
         buffer_id: u64,
         text: Rope,
         version: clock::Global,
+        newline_style: NewlineStyle,
         cx: &mut MutableAppContext,
     ) -> Task<Result<(clock::Global, String, SystemTime)>>;
 
@@ -309,13 +317,12 @@ impl Buffer {
         base_text: T,
         cx: &mut ModelContext<Self>,
     ) -> Self {
+        let history = History::new(base_text.into());
+        let newline_style = NewlineStyle::detect(&history.base_text);
         Self::build(
-            TextBuffer::new(
-                replica_id,
-                cx.model_id() as u64,
-                History::new(base_text.into()),
-            ),
+            TextBuffer::new(replica_id, cx.model_id() as u64, history),
             None,
+            newline_style,
         )
     }
 
@@ -325,13 +332,12 @@ impl Buffer {
         file: Arc<dyn File>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
+        let history = History::new(base_text.into());
+        let newline_style = NewlineStyle::detect(&history.base_text);
         Self::build(
-            TextBuffer::new(
-                replica_id,
-                cx.model_id() as u64,
-                History::new(base_text.into()),
-            ),
+            TextBuffer::new(replica_id, cx.model_id() as u64, history),
             Some(file),
+            newline_style,
         )
     }
 
@@ -346,7 +352,9 @@ impl Buffer {
             message.id,
             History::new(Arc::from(message.base_text)),
         );
-        let mut this = Self::build(buffer, file);
+        let newline_style = proto::NewlineStyle::from_i32(message.newline_style)
+            .ok_or_else(|| anyhow!("missing newline_style"))?;
+        let mut this = Self::build(buffer, file, NewlineStyle::from_proto(newline_style));
         let ops = message
             .operations
             .into_iter()
@@ -411,6 +419,7 @@ impl Buffer {
             diagnostics: proto::serialize_diagnostics(self.diagnostics.iter()),
             diagnostics_timestamp: self.diagnostics_timestamp.value,
             completion_triggers: self.completion_triggers.clone(),
+            newline_style: self.newline_style.to_proto() as i32,
         }
     }
 
@@ -419,7 +428,7 @@ impl Buffer {
         self
     }
 
-    fn build(buffer: TextBuffer, file: Option<Arc<dyn File>>) -> Self {
+    fn build(buffer: TextBuffer, file: Option<Arc<dyn File>>, newline_style: NewlineStyle) -> Self {
         let saved_mtime;
         if let Some(file) = file.as_ref() {
             saved_mtime = file.mtime();
@@ -435,6 +444,7 @@ impl Buffer {
             was_dirty_before_starting_transaction: None,
             text: buffer,
             file,
+            newline_style,
             syntax_tree: Mutex::new(None),
             parsing_in_background: false,
             parse_count: 0,
@@ -491,7 +501,13 @@ impl Buffer {
         };
         let text = self.as_rope().clone();
         let version = self.version();
-        let save = file.save(self.remote_id(), text, version, cx.as_mut());
+        let save = file.save(
+            self.remote_id(),
+            text,
+            version,
+            self.newline_style,
+            cx.as_mut(),
+        );
         cx.spawn(|this, mut cx| async move {
             let (version, fingerprint, mtime) = save.await?;
             this.update(&mut cx, |this, cx| {
@@ -1491,6 +1507,10 @@ impl Buffer {
 
     pub fn completion_triggers(&self) -> &[String] {
         &self.completion_triggers
+    }
+
+    pub fn newline_style(&self) -> NewlineStyle {
+        self.newline_style
     }
 }
 
@@ -2509,6 +2529,52 @@ impl std::ops::SubAssign for IndentSize {
         if self.kind == other.kind && self.len >= other.len {
             self.len -= other.len;
         }
+    }
+}
+
+impl NewlineStyle {
+    fn from_proto(style: proto::NewlineStyle) -> Self {
+        match style {
+            proto::NewlineStyle::Unix => Self::Unix,
+            proto::NewlineStyle::Windows => Self::Windows,
+        }
+    }
+
+    fn detect(text: &str) -> Self {
+        let text = &text[..cmp::min(text.len(), 1000)];
+        if let Some(ix) = text.find('\n') {
+            if ix == 0 || text.as_bytes()[ix - 1] != b'\r' {
+                Self::Unix
+            } else {
+                Self::Windows
+            }
+        } else {
+            Default::default()
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NewlineStyle::Unix => "\n",
+            NewlineStyle::Windows => "\r\n",
+        }
+    }
+
+    fn to_proto(self) -> proto::NewlineStyle {
+        match self {
+            NewlineStyle::Unix => proto::NewlineStyle::Unix,
+            NewlineStyle::Windows => proto::NewlineStyle::Windows,
+        }
+    }
+}
+
+impl Default for NewlineStyle {
+    fn default() -> Self {
+        #[cfg(unix)]
+        return Self::Unix;
+
+        #[cfg(not(unix))]
+        return Self::Windows;
     }
 }
 

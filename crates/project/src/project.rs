@@ -6054,7 +6054,7 @@ mod tests {
     use gpui::{executor::Deterministic, test::subscribe};
     use language::{
         tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
-        OffsetRangeExt, Point, ToPoint,
+        NewlineStyle, OffsetRangeExt, Point, ToPoint,
     };
     use lsp::Url;
     use serde_json::json;
@@ -8547,9 +8547,13 @@ mod tests {
             assert!(!buffer.has_conflict());
         });
         let new_contents = "AAAA\naaa\nBB\nbbbbb\n";
-        fs.save("/dir/the-file".as_ref(), &new_contents.into())
-            .await
-            .unwrap();
+        fs.save(
+            "/dir/the-file".as_ref(),
+            &new_contents.into(),
+            NewlineStyle::Unix,
+        )
+        .await
+        .unwrap();
 
         // Because the buffer was not modified, it is reloaded from disk. Its
         // contents are edited according to the diff between the old and new
@@ -8584,6 +8588,7 @@ mod tests {
         fs.save(
             "/dir/the-file".as_ref(),
             &"\n\n\nAAAA\naaa\nBB\nbbbbb\n".into(),
+            NewlineStyle::Unix,
         )
         .await
         .unwrap();

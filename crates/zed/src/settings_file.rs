@@ -117,6 +117,7 @@ mod tests {
             }
             "#
             .into(),
+            Default::default(),
         )
         .await
         .unwrap();
@@ -174,6 +175,7 @@ mod tests {
             }
             "#
             .into(),
+            Default::default(),
         )
         .await
         .unwrap();

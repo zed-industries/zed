@@ -810,6 +810,12 @@ message BufferState {
     repeated Diagnostic diagnostics = 6;
     uint32 diagnostics_timestamp = 7;
     repeated string completion_triggers = 8;
+    NewlineStyle newline_style = 9;
+}
+
+enum NewlineStyle {
+    Unix = 0;
+    Windows = 1;
 }
 
 message SelectionSet {

@@ -22,7 +22,7 @@ use gpui::{
 };
 use language::{
     range_to_lsp, tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
-    LanguageConfig, LanguageRegistry, OffsetRangeExt, Point, Rope,
+    LanguageConfig, LanguageRegistry, NewlineStyle, OffsetRangeExt, Point, Rope,
 };
 use lsp::{self, FakeLanguageServer};
 use parking_lot::Mutex;
@@ -1263,7 +1263,11 @@ async fn test_buffer_reloading(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
 
     client_a
         .fs
-        .save("/dir/a.txt".as_ref(), &"new contents".into())
+        .save(
+            "/dir/a.txt".as_ref(),
+            &"new contents".into(),
+            NewlineStyle::Unix,
+        )
         .await
         .unwrap();
     buffer_b
@@ -1857,7 +1861,11 @@ async fn test_reloading_buffer_manually(cx_a: &mut TestAppContext, cx_b: &mut Te
 
     client_a
         .fs
-        .save("/a/a.rs".as_ref(), &Rope::from("let seven = 7;"))
+        .save(
+            "/a/a.rs".as_ref(),
+            &Rope::from("let seven = 7;"),
+            NewlineStyle::Unix,
+        )
         .await
         .unwrap();
     buffer_a
