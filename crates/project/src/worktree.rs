@@ -334,7 +334,7 @@ impl Worktree {
 
     fn poll_snapshot(&mut self, cx: &mut ModelContext<Self>) {
         match self {
-            Self::Local(worktree) => worktree.poll_snapshot(cx),
+            Self::Local(worktree) => worktree.poll_snapshot(false, cx),
             Self::Remote(worktree) => worktree.poll_snapshot(cx),
         };
     }
@@ -494,36 +494,37 @@ impl LocalWorktree {
         Ok(updated)
     }
 
-    fn poll_snapshot(&mut self, cx: &mut ModelContext<Worktree>) {
+    fn poll_snapshot(&mut self, force: bool, cx: &mut ModelContext<Worktree>) {
         self.poll_task.take();
-        self.snapshot = self.background_snapshot.lock().clone();
         match self.scan_state() {
             ScanState::Idle => {
+                self.snapshot = self.background_snapshot.lock().clone();
                 if let Some(share) = self.share.as_mut() {
                     *share.snapshots_tx.borrow_mut() = self.snapshot.clone();
                 }
                 cx.emit(Event::UpdatedEntries);
             }
             ScanState::Initializing => {
+                let is_fake_fs = self.fs.is_fake();
                 self.snapshot = self.background_snapshot.lock().clone();
-                if self.poll_task.is_none() {
-                    let is_fake_fs = self.fs.is_fake();
-                    self.poll_task = Some(cx.spawn_weak(|this, mut cx| async move {
-                        if is_fake_fs {
-                            #[cfg(any(test, feature = "test-support"))]
-                            cx.background().simulate_random_delay().await;
-                        } else {
-                            smol::Timer::after(Duration::from_millis(100)).await;
-                        }
-                        if let Some(this) = this.upgrade(&cx) {
-                            this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
-                        }
-                    }));
-                }
+                self.poll_task = Some(cx.spawn_weak(|this, mut cx| async move {
+                    if is_fake_fs {
+                        #[cfg(any(test, feature = "test-support"))]
+                        cx.background().simulate_random_delay().await;
+                    } else {
+                        smol::Timer::after(Duration::from_millis(100)).await;
+                    }
+                    if let Some(this) = this.upgrade(&cx) {
+                        this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
+                    }
+                }));
                 cx.emit(Event::UpdatedEntries);
             }
-            ScanState::Updating => {}
-            ScanState::Err(_) => {}
+            _ => {
+                if force {
+                    self.snapshot = self.background_snapshot.lock().clone();
+                }
+            }
         }
         cx.notify();
     }
@@ -672,7 +673,7 @@ impl LocalWorktree {
                     let mut snapshot = this.background_snapshot.lock();
                     snapshot.delete_entry(entry_id);
                 }
-                this.poll_snapshot(cx);
+                this.poll_snapshot(true, cx);
             });
             Ok(())
         }))
@@ -823,7 +824,7 @@ impl LocalWorktree {
                     inserted_entry = snapshot.insert_entry(entry, fs.as_ref());
                     snapshot.scan_id += 1;
                 }
-                this.poll_snapshot(cx);
+                this.poll_snapshot(true, cx);
                 Ok(inserted_entry)
             })
         })
