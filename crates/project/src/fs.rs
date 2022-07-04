@@ -174,15 +174,8 @@ impl Fs for RealFs {
         let buffer_size = text.summary().bytes.min(10 * 1024);
         let file = smol::fs::File::create(path).await?;
         let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
-        let mut newline = false;
-        for chunk in text.chunks() {
-            for line in chunk.split('\n') {
-                if newline {
-                    writer.write_all(line_ending.as_str().as_bytes()).await?;
-                }
-                writer.write_all(line.as_bytes()).await?;
-                newline = true;
-            }
+        for chunk in chunks(text, line_ending) {
+            writer.write_all(chunk.as_bytes()).await?;
         }
         writer.flush().await?;
         Ok(())
@@ -659,15 +652,12 @@ impl Fs for FakeFs {
         let mut state = self.state.lock().await;
         let path = normalize_path(path);
         state.validate_path(&path)?;
+        let content = chunks(text, line_ending).collect();
         if let Some(entry) = state.entries.get_mut(&path) {
             if entry.metadata.is_dir {
                 Err(anyhow!("cannot overwrite a directory with a file"))
             } else {
-                entry.content = Some(
-                    text.chunks()
-                        .map(|chunk| chunk.replace('\n', line_ending.as_str()))
-                        .collect(),
-                );
+                entry.content = Some(content);
                 entry.metadata.mtime = SystemTime::now();
                 state.emit_event(&[path]).await;
                 Ok(())
@@ -682,7 +672,7 @@ impl Fs for FakeFs {
                     is_dir: false,
                     is_symlink: false,
                 },
-                content: Some(text.chunks().collect()),
+                content: Some(content),
             };
             state.entries.insert(path.to_path_buf(), entry);
             state.emit_event(&[path]).await;
@@ -762,6 +752,21 @@ impl Fs for FakeFs {
     fn as_fake(&self) -> &FakeFs {
         self
     }
+}
+
+fn chunks(rope: &Rope, line_ending: LineEnding) -> impl Iterator<Item = &str> {
+    rope.chunks().flat_map(move |chunk| {
+        let mut newline = false;
+        chunk.split('\n').flat_map(move |line| {
+            let ending = if newline {
+                Some(line_ending.as_str())
+            } else {
+                None
+            };
+            newline = true;
+            ending.into_iter().chain([line])
+        })
+    })
 }
 
 pub fn normalize_path(path: &Path) -> PathBuf {
