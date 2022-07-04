@@ -10,7 +10,7 @@ Wasm plugins can be run through `wasmtime`, with supported for sandboxed system 
 ## ABI
 The interface between the host Rust runtime ('Runtime') and plugins implemented in Wasm ('Plugin') is pretty simple.
 
-`Buffer` is a pair of two 4-byte (`u32`) fields:
+`Buffer` is a pair of two 4-byte (`u32`) fields, encoded as a single `u64`.
 
 ```
 struct Buffer {
@@ -21,7 +21,7 @@ struct Buffer {
 
 All functions that Plugin exports must have the following properties:
 
-- Have the signature `fn(ptr: u32, len: u32) -> u32`, where the return type is a pointer to a `Buffer`, and the arguments are the component parts of a `Buffer`.
+- Have the signature `fn(ptr: u64) -> u64`, where both the argument and return types are a `Buffer`:
 
     - The input `Buffer` will contain the input arguments serialized to `bincode`.
     - The output `Buffer` will contain the output arguments serialized to `bincode`.

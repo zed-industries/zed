@@ -15,19 +15,16 @@ use future_wrap::*;
 pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
     let plugin = PluginBuilder::new_with_default_ctx()?
         .host_function_async("command", |command: String| async move {
-            // TODO: actual thing
             dbg!(&command);
+
+            // TODO: actual thing
             let mut args = command.split(' ');
             let command = args.next().unwrap();
-            dbg!("Running command");
+
+            dbg!("Running external command");
+
+            let start = std::time::Instant::now();
             let future = smol::process::Command::new(command).args(args).output();
-            dbg!("Awaiting command");
-
-            #[no_mangle]
-            fn heck_point() {
-                dbg!("command awaited");
-            }
-
             let future = future.wrap(|fut, cx| {
                 dbg!("Poll command!");
 
@@ -35,12 +32,9 @@ pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
                 res
             });
             let future = future.await;
-            heck_point();
-            dbg!("blocked on future");
-            future.log_err().map(|output| {
-                dbg!("done running command");
-                output.stdout
-            })
+            dbg!(start.elapsed());
+
+            future.log_err().map(|output| output.stdout)
         })?
         .init(include_bytes!("../../../../plugins/bin/json_language.wasm"))
         .await?;
@@ -129,16 +123,17 @@ impl LspAdapter for PluginLspAdapter {
         // let versions: Result<Option<String>> = call_block!(self, "fetch_latest_server_version", ());
         let runtime = self.runtime.clone();
         let function = self.fetch_latest_server_version;
-        async move {
-            let mut runtime = runtime.lock().await;
-            let versions: Result<Option<String>> =
-                runtime.call::<_, Option<String>>(&function, ()).await;
-            versions
-                .map_err(|e| anyhow!("{}", e))?
-                .ok_or_else(|| anyhow!("Could not fetch latest server version"))
-                .map(|v| Box::new(v) as Box<_>)
-        }
-        .boxed()
+        self.executor
+            .spawn(async move {
+                let mut runtime = runtime.lock().await;
+                let versions: Result<Option<String>> =
+                    runtime.call::<_, Option<String>>(&function, ()).await;
+                versions
+                    .map_err(|e| anyhow!("{}", e))?
+                    .ok_or_else(|| anyhow!("Could not fetch latest server version"))
+                    .map(|v| Box::new(v) as Box<_>)
+            })
+            .boxed()
     }
 
     fn fetch_server_binary(
@@ -150,29 +145,31 @@ impl LspAdapter for PluginLspAdapter {
         let version = *version.downcast::<String>().unwrap();
         let runtime = self.runtime.clone();
         let function = self.fetch_server_binary;
-        async move {
-            let mut runtime = runtime.lock().await;
-            let handle = runtime.attach_path(&container_dir)?;
-            let result: Result<PathBuf, String> =
-                runtime.call(&function, (container_dir, version)).await?;
-            runtime.remove_resource(handle)?;
-            result.map_err(|e| anyhow!("{}", e))
-        }
-        .boxed()
+        self.executor
+            .spawn(async move {
+                let mut runtime = runtime.lock().await;
+                let handle = runtime.attach_path(&container_dir)?;
+                let result: Result<PathBuf, String> =
+                    runtime.call(&function, (container_dir, version)).await?;
+                runtime.remove_resource(handle)?;
+                result.map_err(|e| anyhow!("{}", e))
+            })
+            .boxed()
     }
 
     fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>> {
         let runtime = self.runtime.clone();
         let function = self.cached_server_binary;
 
-        async move {
-            let mut runtime = runtime.lock().await;
-            let handle = runtime.attach_path(&container_dir).ok()?;
-            let result: Option<PathBuf> = runtime.call(&function, container_dir).await.ok()?;
-            runtime.remove_resource(handle).ok()?;
-            result
-        }
-        .boxed()
+        self.executor
+            .spawn(async move {
+                let mut runtime = runtime.lock().await;
+                let handle = runtime.attach_path(&container_dir).ok()?;
+                let result: Option<PathBuf> = runtime.call(&function, container_dir).await.ok()?;
+                runtime.remove_resource(handle).ok()?;
+                result
+            })
+            .boxed()
     }
 
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}

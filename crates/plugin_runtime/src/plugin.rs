@@ -69,8 +69,12 @@ impl PluginBuilder {
         dbg!("new plugin");
         let mut config = Config::default();
         config.async_support(true);
+        dbg!("Creating engine");
+        let start = std::time::Instant::now();
         let engine = Engine::new(&config)?;
+        dbg!(start.elapsed());
         let linker = Linker::new(&engine);
+        dbg!(start.elapsed());
 
         Ok(PluginBuilder {
             // host_functions: HashMap::new(),
@@ -306,6 +310,8 @@ impl Plugin {
 
         // create a store, note that we can't initialize the allocator,
         // because we can't grab the functions until initialized.
+        dbg!("Creating store");
+        let start = std::time::Instant::now();
         let mut store: Store<WasiCtxAlloc> = Store::new(
             &engine,
             WasiCtxAlloc {
@@ -313,12 +319,20 @@ impl Plugin {
                 alloc: None,
             },
         );
-        let module = Module::new(&engine, module)?;
-        dbg!("created store");
+        dbg!(start.elapsed());
 
+        let module = Module::new(&engine, module)?;
         // load the provided module into the asynchronous runtime
         linker.module_async(&mut store, "", &module).await?;
+        dbg!("Instantiating module");
+        let start = std::time::Instant::now();
         let instance = linker.instantiate_async(&mut store, &module).await?;
+        let end = dbg!(start.elapsed());
+
+        dbg!("Instantiating second module");
+        let start = std::time::Instant::now();
+        let instance2 = linker.instantiate_async(&mut store, &module).await?;
+        let end = dbg!(start.elapsed());
 
         // now that the module is initialized,
         // we can initialize the store's allocator
