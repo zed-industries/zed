@@ -1361,7 +1361,7 @@ pub mod tests {
     use super::*;
     use anyhow::anyhow;
     use collections::BTreeMap;
-    use gpui::executor::Background;
+    use gpui::executor::{Background, Deterministic};
     use lazy_static::lazy_static;
     use parking_lot::Mutex;
     use rand::prelude::*;
@@ -1376,7 +1376,7 @@ pub mod tests {
     async fn test_get_users_by_ids() {
         for test_db in [
             TestDb::postgres().await,
-            TestDb::fake(Arc::new(gpui::executor::Background::new())),
+            TestDb::fake(build_background_executor()),
         ] {
             let db = test_db.db();
 
@@ -1687,7 +1687,7 @@ pub mod tests {
     async fn test_recent_channel_messages() {
         for test_db in [
             TestDb::postgres().await,
-            TestDb::fake(Arc::new(gpui::executor::Background::new())),
+            TestDb::fake(build_background_executor()),
         ] {
             let db = test_db.db();
             let user = db.create_user("user", None, false).await.unwrap();
@@ -1726,7 +1726,7 @@ pub mod tests {
     async fn test_channel_message_nonces() {
         for test_db in [
             TestDb::postgres().await,
-            TestDb::fake(Arc::new(gpui::executor::Background::new())),
+            TestDb::fake(build_background_executor()),
         ] {
             let db = test_db.db();
             let user = db.create_user("user", None, false).await.unwrap();
@@ -1834,7 +1834,7 @@ pub mod tests {
     async fn test_add_contacts() {
         for test_db in [
             TestDb::postgres().await,
-            TestDb::fake(Arc::new(gpui::executor::Background::new())),
+            TestDb::fake(build_background_executor()),
         ] {
             let db = test_db.db();
 
@@ -2835,5 +2835,9 @@ pub mod tests {
         fn as_fake(&self) -> Option<&FakeDb> {
             Some(self)
         }
+    }
+
+    fn build_background_executor() -> Arc<Background> {
+        Deterministic::new(0).build_background()
     }
 }

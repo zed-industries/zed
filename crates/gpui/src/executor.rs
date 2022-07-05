@@ -675,9 +675,7 @@ impl Background {
                 }
             }
             _ => {
-                log::info!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-
-                // panic!("this method can only be called on a deterministic executor")
+                panic!("this method can only be called on a deterministic executor")
             }
         }
     }
