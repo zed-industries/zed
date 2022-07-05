@@ -4451,7 +4451,7 @@ impl AnyViewHandle {
                 handle_id: self.handle_id,
             });
             unsafe {
-                Arc::decrement_strong_count(&self.ref_counts);
+                Arc::decrement_strong_count(Arc::as_ptr(&self.ref_counts));
             }
             std::mem::forget(self);
             result
@@ -4517,8 +4517,9 @@ impl<T: View> From<ViewHandle<T>> for AnyViewHandle {
             #[cfg(any(test, feature = "test-support"))]
             handle_id: handle.handle_id,
         };
+
         unsafe {
-            Arc::decrement_strong_count(&handle.ref_counts);
+            Arc::decrement_strong_count(Arc::as_ptr(&handle.ref_counts));
         }
         std::mem::forget(handle);
         any_handle
@@ -4580,7 +4581,7 @@ impl AnyModelHandle {
                 handle_id: self.handle_id,
             });
             unsafe {
-                Arc::decrement_strong_count(&self.ref_counts);
+                Arc::decrement_strong_count(Arc::as_ptr(&self.ref_counts));
             }
             std::mem::forget(self);
             result
