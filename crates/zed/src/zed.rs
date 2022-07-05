@@ -6,12 +6,13 @@ pub mod settings_file;
 pub mod test;
 
 use anyhow::{anyhow, Context, Result};
+use assets::Assets;
 use breadcrumbs::Breadcrumbs;
 pub use client;
 pub use contacts_panel;
 use contacts_panel::ContactsPanel;
 pub use editor;
-use editor::Editor;
+use editor::{Editor, MultiBuffer};
 use gpui::{
     actions,
     geometry::vector::vec2f,
@@ -21,7 +22,6 @@ use gpui::{
 };
 use lazy_static::lazy_static;
 pub use lsp;
-use project::Project;
 pub use project::{self, fs};
 use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};
@@ -30,6 +30,7 @@ use serde_json::to_string_pretty;
 use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
 use std::{
     path::{Path, PathBuf},
+    str,
     sync::Arc,
 };
 use util::ResultExt;
@@ -51,6 +52,7 @@ actions!(
         DebugElements,
         OpenSettings,
         OpenKeymap,
+        OpenDefaultKeymap,
         IncreaseBufferFontSize,
         DecreaseBufferFontSize,
         ResetBufferFontSize,
@@ -104,6 +106,32 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         let app_state = app_state.clone();
         move |_: &mut Workspace, _: &OpenKeymap, cx: &mut ViewContext<Workspace>| {
             open_config_file(&KEYMAP_PATH, app_state.clone(), cx);
+        }
+    });
+    cx.add_action({
+        let app_state = app_state.clone();
+        move |workspace: &mut Workspace, _: &OpenDefaultKeymap, cx: &mut ViewContext<Workspace>| {
+            workspace.with_local_workspace(cx, app_state.clone(), |workspace, cx| {
+                let project = workspace.project().clone();
+                let buffer = project.update(cx, |project, cx| {
+                    let text = Assets::get("keymaps/default.json").unwrap().data;
+                    let text = str::from_utf8(text.as_ref()).unwrap();
+                    project
+                        .create_buffer(text, project.languages().get_language("JSON"), cx)
+                        .expect("creating buffers on a local workspace always succeeds")
+                });
+                let buffer = cx.add_model(|cx| {
+                    MultiBuffer::singleton(buffer, cx).with_title("Default Key Bindings".into())
+                });
+                workspace.add_item(
+                    Box::new(
+                        cx.add_view(|cx| {
+                            Editor::for_multibuffer(buffer, Some(project.clone()), cx)
+                        }),
+                    ),
+                    cx,
+                );
+            });
         }
     });
     cx.add_action(
@@ -348,29 +376,9 @@ fn open_config_file(
 
         workspace
             .update(&mut cx, |workspace, cx| {
-                if workspace.project().read(cx).is_local() {
+                workspace.with_local_workspace(cx, app_state, |workspace, cx| {
                     workspace.open_paths(vec![path.to_path_buf()], false, cx)
-                } else {
-                    let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
-                        let mut workspace = Workspace::new(
-                            Project::local(
-                                false,
-                                app_state.client.clone(),
-                                app_state.user_store.clone(),
-                                app_state.project_store.clone(),
-                                app_state.languages.clone(),
-                                app_state.fs.clone(),
-                                cx,
-                            ),
-                            cx,
-                        );
-                        (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
-                        workspace
-                    });
-                    workspace.update(cx, |workspace, cx| {
-                        workspace.open_paths(vec![path.to_path_buf()], false, cx)
-                    })
-                }
+                })
             })
             .await;
         Ok::<_, anyhow::Error>(())
@@ -386,7 +394,7 @@ mod tests {
     use gpui::{
         executor::Deterministic, AssetSource, MutableAppContext, TestAppContext, ViewHandle,
     };
-    use project::ProjectPath;
+    use project::{Project, ProjectPath};
     use serde_json::json;
     use std::{
         collections::HashSet,

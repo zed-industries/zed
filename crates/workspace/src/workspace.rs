@@ -891,6 +891,43 @@ impl Workspace {
         &self.project
     }
 
+    /// Call the given callback with a workspace whose project is local.
+    ///
+    /// If the given workspace has a local project, then it will be passed
+    /// to the callback. Otherwise, a new empty window will be created.
+    pub fn with_local_workspace<T, F>(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+        app_state: Arc<AppState>,
+        mut callback: F,
+    ) -> T
+    where
+        T: 'static,
+        F: FnMut(&mut Workspace, &mut ViewContext<Workspace>) -> T,
+    {
+        if self.project.read(cx).is_local() {
+            callback(self, cx)
+        } else {
+            let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
+                let mut workspace = Workspace::new(
+                    Project::local(
+                        false,
+                        app_state.client.clone(),
+                        app_state.user_store.clone(),
+                        app_state.project_store.clone(),
+                        app_state.languages.clone(),
+                        app_state.fs.clone(),
+                        cx,
+                    ),
+                    cx,
+                );
+                (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
+                workspace
+            });
+            workspace.update(cx, callback)
+        }
+    }
+
     pub fn worktrees<'a>(
         &self,
         cx: &'a AppContext,
