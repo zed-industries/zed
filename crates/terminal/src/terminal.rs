@@ -5,7 +5,8 @@ use alacritty_terminal::{
     grid::Scroll,
     sync::FairMutex,
     term::{color::Rgb as AlacRgb, SizeInfo},
-    tty, Term,
+    tty::{self, setup_env},
+    Term,
 };
 
 use futures::{
@@ -19,7 +20,7 @@ use gpui::{
 use project::{Project, ProjectPath};
 use settings::Settings;
 use smallvec::SmallVec;
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use workspace::{Item, Workspace};
 
 use crate::terminal_element::{get_color_at_index, TerminalEl};
@@ -28,7 +29,7 @@ use crate::terminal_element::{get_color_at_index, TerminalEl};
 const ETX_CHAR: char = 3_u8 as char; //'End of text', the control code for 'ctrl-c'
 const TAB_CHAR: char = 9_u8 as char;
 const CARRIAGE_RETURN_CHAR: char = 13_u8 as char;
-const ESC_CHAR: char = 27_u8 as char;
+const ESC_CHAR: char = 27_u8 as char; // == \x1b
 const DEL_CHAR: char = 127_u8 as char;
 const LEFT_SEQ: &str = "\x1b[D";
 const RIGHT_SEQ: &str = "\x1b[C";
@@ -127,10 +128,18 @@ impl Terminal {
             hold: false,
         };
 
+        //Does this mangle the zed Env? I'm guessing it does... do child processes have a seperate ENV?
+        let mut env: HashMap<String, String> = HashMap::new();
+        //TODO: Properly set the current locale,
+        env.insert("LC_ALL".to_string(), "en_US.UTF-8".to_string());
+
         let config = Config {
             pty_config: pty_config.clone(),
+            env,
             ..Default::default()
         };
+
+        setup_env(&config);
 
         //The details here don't matter, the terminal will be resized on the first layout
         //Set to something small for easier debugging
@@ -286,11 +295,16 @@ impl Terminal {
 
     ///Write the Input payload to the tty. This locks the terminal so we can scroll it.
     fn write_to_pty(&mut self, input: &Input, cx: &mut ViewContext<Self>) {
+        self.write_bytes_to_pty(input.0.clone().into_bytes(), cx);
+    }
+
+    ///Write the Input payload to the tty. This locks the terminal so we can scroll it.
+    fn write_bytes_to_pty(&mut self, input: Vec<u8>, cx: &mut ViewContext<Self>) {
         //iTerm bell behavior, bell stays until terminal is interacted with
         self.has_bell = false;
-        self.term.lock().scroll_display(Scroll::Bottom);
         cx.emit(Event::TitleChanged);
-        self.pty_tx.notify(input.0.clone().into_bytes());
+        self.term.lock().scroll_display(Scroll::Bottom);
+        self.pty_tx.notify(input);
     }
 
     ///Send the `up` key
@@ -320,6 +334,7 @@ impl Terminal {
 
     ///Send the `delete` key. TODO: Difference between this and backspace?
     fn del(&mut self, _: &Del, cx: &mut ViewContext<Self>) {
+        // self.write_to_pty(&Input("\x1b[3~".to_string()), cx)
         self.write_to_pty(&Input(DEL_CHAR.to_string()), cx);
     }
 
