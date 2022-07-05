@@ -390,6 +390,7 @@ message BufferReloaded {
     repeated VectorClockEntry version = 3;
     Timestamp mtime = 4;
     string fingerprint = 5;
+    LineEnding line_ending = 6;
 }
 
 message ReloadBuffers {

@@ -1736,6 +1736,7 @@ impl language::LocalFile for File {
         buffer_id: u64,
         version: &clock::Global,
         fingerprint: String,
+        line_ending: LineEnding,
         mtime: SystemTime,
         cx: &mut MutableAppContext,
     ) {
@@ -1749,6 +1750,7 @@ impl language::LocalFile for File {
                     version: serialize_version(&version),
                     mtime: Some(mtime.into()),
                     fingerprint,
+                    line_ending: line_ending.to_proto() as i32,
                 })
                 .log_err();
         }

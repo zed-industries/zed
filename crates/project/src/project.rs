@@ -23,8 +23,9 @@ use language::{
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CharKind, CodeAction, CodeLabel,
     Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent, File as _,
-    Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapter, OffsetRangeExt,
-    Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
+    Language, LanguageRegistry, LanguageServerName, LineEnding, LocalFile, LspAdapter,
+    OffsetRangeExt, Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
+    Transaction,
 };
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer, LanguageString,
@@ -5539,8 +5540,12 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        let payload = envelope.payload.clone();
+        let payload = envelope.payload;
         let version = deserialize_version(payload.version);
+        let line_ending = LineEnding::from_proto(
+            proto::LineEnding::from_i32(payload.line_ending)
+                .ok_or_else(|| anyhow!("missing line ending"))?,
+        );
         let mtime = payload
             .mtime
             .ok_or_else(|| anyhow!("missing mtime"))?
@@ -5552,7 +5557,7 @@ impl Project {
                 .and_then(|buffer| buffer.upgrade(cx));
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.did_reload(version, payload.fingerprint, mtime, cx);
+                    buffer.did_reload(version, payload.fingerprint, line_ending, mtime, cx);
                 });
             }
             Ok(())

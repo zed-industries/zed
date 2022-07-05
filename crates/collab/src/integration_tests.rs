@@ -1244,7 +1244,7 @@ async fn test_buffer_reloading(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
         .insert_tree(
             "/dir",
             json!({
-                "a.txt": "a-contents",
+                "a.txt": "a\nb\nc",
             }),
         )
         .await;
@@ -1259,23 +1259,25 @@ async fn test_buffer_reloading(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
     buffer_b.read_with(cx_b, |buf, _| {
         assert!(!buf.is_dirty());
         assert!(!buf.has_conflict());
+        assert_eq!(buf.line_ending(), LineEnding::Unix);
     });
 
+    let new_contents = Rope::from("d\ne\nf");
     client_a
         .fs
-        .save(
-            "/dir/a.txt".as_ref(),
-            &"new contents".into(),
-            LineEnding::Unix,
-        )
+        .save("/dir/a.txt".as_ref(), &new_contents, LineEnding::Windows)
         .await
         .unwrap();
     buffer_b
         .condition(&cx_b, |buf, _| {
-            buf.text() == "new contents" && !buf.is_dirty()
+            buf.text() == new_contents.to_string() && !buf.is_dirty()
         })
         .await;
-    buffer_b.read_with(cx_b, |buf, _| assert!(!buf.has_conflict()));
+    buffer_b.read_with(cx_b, |buf, _| {
+        assert!(!buf.is_dirty());
+        assert!(!buf.has_conflict());
+        assert_eq!(buf.line_ending(), LineEnding::Windows);
+    });
 }
 
 #[gpui::test(iterations = 10)]

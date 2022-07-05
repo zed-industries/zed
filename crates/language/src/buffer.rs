@@ -221,6 +221,7 @@ pub trait LocalFile: File {
         buffer_id: u64,
         version: &clock::Global,
         fingerprint: String,
+        line_ending: LineEnding,
         mtime: SystemTime,
         cx: &mut MutableAppContext,
     );
@@ -562,6 +563,7 @@ impl Buffer {
                         this.did_reload(
                             this.version(),
                             this.as_rope().fingerprint(),
+                            this.line_ending,
                             new_mtime,
                             cx,
                         );
@@ -580,17 +582,20 @@ impl Buffer {
         &mut self,
         version: clock::Global,
         fingerprint: String,
+        line_ending: LineEnding,
         mtime: SystemTime,
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
         self.saved_version_fingerprint = fingerprint;
+        self.line_ending = line_ending;
         self.saved_mtime = mtime;
         if let Some(file) = self.file.as_ref().and_then(|f| f.as_local()) {
             file.buffer_reloaded(
                 self.remote_id(),
                 &self.saved_version,
                 self.saved_version_fingerprint.clone(),
+                self.line_ending,
                 self.saved_mtime,
                 cx,
             );
@@ -2538,7 +2543,7 @@ impl std::ops::SubAssign for IndentSize {
 }
 
 impl LineEnding {
-    fn from_proto(style: proto::LineEnding) -> Self {
+    pub fn from_proto(style: proto::LineEnding) -> Self {
         match style {
             proto::LineEnding::Unix => Self::Unix,
             proto::LineEnding::Windows => Self::Windows,
@@ -2565,7 +2570,7 @@ impl LineEnding {
         }
     }
 
-    fn to_proto(self) -> proto::LineEnding {
+    pub fn to_proto(self) -> proto::LineEnding {
         match self {
             LineEnding::Unix => proto::LineEnding::Unix,
             LineEnding::Windows => proto::LineEnding::Windows,
