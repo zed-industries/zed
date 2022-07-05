@@ -5372,7 +5372,7 @@ impl Editor {
             .map(|h| &h.1);
         let write_highlights = self
             .background_highlights
-            .get(&TypeId::of::<DocumentHighlightRead>())
+            .get(&TypeId::of::<DocumentHighlightWrite>())
             .map(|h| &h.1);
         let left_position = position.bias_left(buffer);
         let right_position = position.bias_right(buffer);
@@ -10279,5 +10279,15 @@ impl<T: Ord + Clone> RangeExt<T> for Range<T> {
 
     fn to_inclusive(&self) -> RangeInclusive<T> {
         self.start.clone()..=self.end.clone()
+    }
+}
+
+trait RangeToAnchorExt {
+    fn to_anchors(self, snapshot: &MultiBufferSnapshot) -> Range<Anchor>;
+}
+
+impl<T: ToOffset> RangeToAnchorExt for Range<T> {
+    fn to_anchors(self, snapshot: &MultiBufferSnapshot) -> Range<Anchor> {
+        snapshot.anchor_after(self.start)..snapshot.anchor_before(self.end)
     }
 }

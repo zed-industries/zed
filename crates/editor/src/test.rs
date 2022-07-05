@@ -1,4 +1,5 @@
 use std::{
+    any::TypeId,
     ops::{Deref, DerefMut, Range},
     sync::Arc,
 };
@@ -13,7 +14,7 @@ use project::Project;
 use settings::Settings;
 use util::{
     assert_set_eq, set_eq,
-    test::{marked_text, marked_text_ranges, marked_text_ranges_by, SetEqError},
+    test::{marked_text, marked_text_ranges, marked_text_ranges_by, SetEqError, TextRangeMarker},
 };
 use workspace::{pane, AppState, Workspace, WorkspaceHandle};
 
@@ -159,29 +160,30 @@ impl<'a> EditorTestContext<'a> {
     // `[` to `}` represents a non empty selection with the head at `}`
     // `{` to `]` represents a non empty selection with the head at `{`
     pub fn set_state(&mut self, text: &str) {
+        self.set_state_by(
+            vec![
+                '|'.into(),
+                ('[', '}').into(),
+                TextRangeMarker::ReverseRange('{', ']'),
+            ],
+            text,
+        );
+    }
+
+    pub fn set_state_by(&mut self, range_markers: Vec<TextRangeMarker>, text: &str) {
         self.editor.update(self.cx, |editor, cx| {
-            let (unmarked_text, mut selection_ranges) = marked_text_ranges_by(
-                &text,
-                vec!['|'.into(), ('[', '}').into(), ('{', ']').into()],
-            );
+            let (unmarked_text, selection_ranges) = marked_text_ranges_by(&text, range_markers);
             editor.set_text(unmarked_text, cx);
 
-            let mut selections: Vec<Range<usize>> =
-                selection_ranges.remove(&'|'.into()).unwrap_or_default();
-            selections.extend(
-                selection_ranges
-                    .remove(&('{', ']').into())
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|range| range.end..range.start),
-            );
-            selections.extend(
-                selection_ranges
-                    .remove(&('[', '}').into())
-                    .unwrap_or_default(),
-            );
-
-            editor.change_selections(Some(Autoscroll::Fit), cx, |s| s.select_ranges(selections));
+            let selection_ranges: Vec<Range<usize>> = selection_ranges
+                .values()
+                .into_iter()
+                .flatten()
+                .cloned()
+                .collect();
+            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.select_ranges(selection_ranges)
+            })
         })
     }
 
@@ -214,6 +216,26 @@ impl<'a> EditorTestContext<'a> {
             expected_forward_selections,
             Some(text.to_string()),
         )
+    }
+
+    pub fn assert_editor_background_highlights<Tag: 'static>(&mut self, marked_text: &str) {
+        let (unmarked, mut ranges) = marked_text_ranges_by(marked_text, vec![('[', ']').into()]);
+        assert_eq!(unmarked, self.buffer_text());
+
+        let asserted_ranges = ranges.remove(&('[', ']').into()).unwrap();
+        let actual_ranges: Vec<Range<usize>> = self.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            editor
+                .background_highlights
+                .get(&TypeId::of::<Tag>())
+                .map(|h| h.1.clone())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|range| range.to_offset(&snapshot.buffer_snapshot))
+                .collect()
+        });
+
+        assert_set_eq!(asserted_ranges, actual_ranges);
     }
 
     pub fn assert_editor_text_highlights<Tag: ?Sized + 'static>(&mut self, marked_text: &str) {
