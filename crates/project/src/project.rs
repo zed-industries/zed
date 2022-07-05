@@ -3298,11 +3298,31 @@ impl Project {
                 } else {
                     return Ok(Default::default());
                 };
-                this.read_with(&cx, |this, cx| {
-                    let mut symbols = Vec::new();
+
+                struct PartialSymbol<F1, F2>
+                where
+                    F1: Future<Output = LanguageServerName>,
+                    F2: Future<Output = Option<CodeLabel>>,
+                {
+                    source_worktree_id: WorktreeId,
+                    worktree_id: WorktreeId,
+                    language_server_name: F1,
+                    path: PathBuf,
+                    label: Option<F2>,
+                    name: String,
+                    kind: lsp::SymbolKind,
+                    range: Range<PointUtf16>,
+                    signature: [u8; 32],
+                }
+
+                let partial_symbols = this.read_with(&cx, |this, cx| {
+                    let mut partial_symbols = Vec::new();
                     for (adapter, source_worktree_id, worktree_abs_path, response) in responses {
-                        symbols.extend(response.into_iter().flatten().filter_map(|lsp_symbol| {
-                            let abs_path = lsp_symbol.location.uri.to_file_path().ok()?;
+                        for lsp_symbol in response.into_iter().flatten() {
+                            let abs_path = match lsp_symbol.location.uri.to_file_path().ok() {
+                                Some(abs_path) => abs_path,
+                                None => continue,
+                            };
                             let mut worktree_id = source_worktree_id;
                             let path;
                             if let Some((worktree, rel_path)) =
@@ -3315,31 +3335,54 @@ impl Project {
                             }
 
                             let label = match this.languages.select_language(&path) {
-                                Some(language) => {
-                                    language
-                                        .label_for_symbol(&lsp_symbol.name, lsp_symbol.kind)
-                                        .await
-                                }
+                                Some(language) => Some(
+                                    language.label_for_symbol(&lsp_symbol.name, lsp_symbol.kind),
+                                ),
                                 None => None,
-                            }
-                            .unwrap_or_else(|| CodeLabel::plain(lsp_symbol.name.clone(), None));
-                            let signature = this.symbol_signature(worktree_id, &path);
+                            };
 
-                            Some(Symbol {
+                            let signature = this.symbol_signature(worktree_id, &path);
+                            let language_server_name = adapter.name();
+
+                            partial_symbols.push(PartialSymbol {
                                 source_worktree_id,
                                 worktree_id,
-                                language_server_name: adapter.name().await,
+                                language_server_name,
                                 name: lsp_symbol.name,
                                 kind: lsp_symbol.kind,
                                 label,
                                 path,
                                 range: range_from_lsp(lsp_symbol.location.range),
                                 signature,
-                            })
-                        }));
+                            });
+                        }
                     }
-                    Ok(symbols)
-                })
+
+                    partial_symbols
+                });
+
+                let mut symbols = Vec::new();
+                for ps in partial_symbols.into_iter() {
+                    let label = match ps.label {
+                        Some(label) => label.await,
+                        None => None,
+                    }
+                    .unwrap_or_else(|| CodeLabel::plain(ps.name.clone(), None));
+
+                    symbols.push(Symbol {
+                        source_worktree_id: ps.source_worktree_id,
+                        worktree_id: ps.worktree_id,
+                        language_server_name: ps.language_server_name.await,
+                        name: ps.name,
+                        kind: ps.kind,
+                        label,
+                        path: ps.path,
+                        range: ps.range,
+                        signature: ps.signature,
+                    });
+                }
+
+                Ok(symbols)
             })
         } else if let Some(project_id) = self.remote_id() {
             let request = self.client.request(proto::GetProjectSymbols {
