@@ -5634,7 +5634,10 @@ impl Editor {
 
     fn autosave(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
         if let Some(project) = self.project.clone() {
-            if self.buffer.read(cx).is_dirty(cx) && !self.buffer.read(cx).has_conflict(cx) {
+            if self.buffer.read(cx).is_dirty(cx)
+                && !self.buffer.read(cx).has_conflict(cx)
+                && workspace::Item::can_save(self, cx)
+            {
                 return workspace::Item::save(self, project, cx);
             }
         }
@@ -6276,22 +6279,23 @@ mod tests {
     use super::*;
     use futures::StreamExt;
     use gpui::{
+        executor::Deterministic,
         geometry::rect::RectF,
         platform::{WindowBounds, WindowOptions},
     };
     use indoc::indoc;
     use language::{FakeLspAdapter, LanguageConfig};
     use lsp::FakeLanguageServer;
-    use project::FakeFs;
+    use project::{FakeFs, Fs};
     use settings::LanguageSettings;
-    use std::{cell::RefCell, rc::Rc, time::Instant};
+    use std::{cell::RefCell, path::Path, rc::Rc, time::Instant};
     use text::Point;
     use unindent::Unindent;
     use util::{
         assert_set_eq,
         test::{marked_text_by, marked_text_ranges, marked_text_ranges_by, sample_text},
     };
-    use workspace::{FollowableItem, ItemHandle};
+    use workspace::{FollowableItem, Item, ItemHandle};
 
     #[gpui::test]
     fn test_edit_events(cx: &mut MutableAppContext) {
@@ -9553,6 +9557,72 @@ mod tests {
             .await;
         cx.foreground().start_waiting();
         save.await.unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_autosave(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppContext) {
+        deterministic.forbid_parking();
+
+        let fs = FakeFs::new(cx.background().clone());
+        fs.insert_file("/file.rs", Default::default()).await;
+
+        let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
+            .await
+            .unwrap();
+
+        let (_, editor) = cx.add_window(|cx| Editor::for_buffer(buffer, Some(project), cx));
+
+        // Autosave on window change.
+        editor.update(cx, |editor, cx| {
+            cx.update_global(|settings: &mut Settings, _| {
+                settings.autosave = Autosave::OnWindowChange;
+            });
+            editor.insert("X", cx);
+            assert!(editor.is_dirty(cx))
+        });
+
+        // Deactivating the window saves the file.
+        cx.simulate_window_activation(None);
+        deterministic.run_until_parked();
+        assert_eq!(fs.load(Path::new("/file.rs")).await.unwrap(), "X");
+        editor.read_with(cx, |editor, cx| assert!(!editor.is_dirty(cx)));
+
+        // Autosave on focus change.
+        editor.update(cx, |editor, cx| {
+            cx.focus_self();
+            cx.update_global(|settings: &mut Settings, _| {
+                settings.autosave = Autosave::OnFocusChange;
+            });
+            editor.insert("X", cx);
+            assert!(editor.is_dirty(cx))
+        });
+
+        // Blurring the editor saves the file.
+        editor.update(cx, |_, cx| cx.blur());
+        deterministic.run_until_parked();
+        assert_eq!(fs.load(Path::new("/file.rs")).await.unwrap(), "XX");
+        editor.read_with(cx, |editor, cx| assert!(!editor.is_dirty(cx)));
+
+        // Autosave after delay.
+        editor.update(cx, |editor, cx| {
+            cx.update_global(|settings: &mut Settings, _| {
+                settings.autosave = Autosave::AfterDelay { milliseconds: 500 };
+            });
+            editor.insert("X", cx);
+            assert!(editor.is_dirty(cx))
+        });
+
+        // Delay hasn't fully expired, so the file is still dirty and unsaved.
+        deterministic.advance_clock(Duration::from_millis(250));
+        assert_eq!(fs.load(Path::new("/file.rs")).await.unwrap(), "XX");
+        editor.read_with(cx, |editor, cx| assert!(editor.is_dirty(cx)));
+
+        // After delay expires, the file is saved.
+        deterministic.advance_clock(Duration::from_millis(250));
+        assert_eq!(fs.load(Path::new("/file.rs")).await.unwrap(), "XXX");
+        editor.read_with(cx, |editor, cx| assert!(!editor.is_dirty(cx)));
     }
 
     #[gpui::test]
