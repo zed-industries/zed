@@ -401,9 +401,12 @@ impl TestAppContext {
         T: View,
         F: FnOnce(&mut ViewContext<T>) -> T,
     {
-        self.cx
+        let (window_id, view) = self
+            .cx
             .borrow_mut()
-            .add_window(Default::default(), build_root_view)
+            .add_window(Default::default(), build_root_view);
+        self.simulate_window_activation(Some(window_id));
+        (window_id, view)
     }
 
     pub fn window_ids(&self) -> Vec<usize> {
@@ -548,6 +551,35 @@ impl TestAppContext {
             should_close
         } else {
             false
+        }
+    }
+
+    pub fn simulate_window_activation(&self, to_activate: Option<usize>) {
+        let mut handlers = BTreeMap::new();
+        {
+            let mut cx = self.cx.borrow_mut();
+            for (window_id, (_, window)) in &mut cx.presenters_and_platform_windows {
+                let window = window
+                    .as_any_mut()
+                    .downcast_mut::<platform::test::Window>()
+                    .unwrap();
+                handlers.insert(
+                    *window_id,
+                    mem::take(&mut window.active_status_change_handlers),
+                );
+            }
+        };
+        let mut handlers = handlers.into_iter().collect::<Vec<_>>();
+        handlers.sort_unstable_by_key(|(window_id, _)| Some(*window_id) == to_activate);
+
+        for (window_id, mut window_handlers) in handlers {
+            for window_handler in &mut window_handlers {
+                window_handler(Some(window_id) == to_activate);
+            }
+
+            self.window_mut(window_id)
+                .active_status_change_handlers
+                .extend(window_handlers);
         }
     }
 
@@ -6991,5 +7023,82 @@ mod tests {
             Some("render count: 3")
         );
         assert_eq!(presenter.borrow().rendered_views.len(), 1);
+    }
+
+    #[crate::test(self)]
+    async fn test_window_activation(cx: &mut TestAppContext) {
+        struct View(&'static str);
+
+        impl super::Entity for View {
+            type Event = ();
+        }
+
+        impl super::View for View {
+            fn ui_name() -> &'static str {
+                "test view"
+            }
+
+            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+                Empty::new().boxed()
+            }
+        }
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let (window_1, _) = cx.add_window(|cx: &mut ViewContext<View>| {
+            cx.observe_window_activation({
+                let events = events.clone();
+                move |this, active, _| events.borrow_mut().push((this.0, active))
+            })
+            .detach();
+            View("window 1")
+        });
+        assert_eq!(mem::take(&mut *events.borrow_mut()), [("window 1", true)]);
+
+        let (window_2, _) = cx.add_window(|cx: &mut ViewContext<View>| {
+            cx.observe_window_activation({
+                let events = events.clone();
+                move |this, active, _| events.borrow_mut().push((this.0, active))
+            })
+            .detach();
+            View("window 2")
+        });
+        assert_eq!(
+            mem::take(&mut *events.borrow_mut()),
+            [("window 1", false), ("window 2", true)]
+        );
+
+        let (window_3, _) = cx.add_window(|cx: &mut ViewContext<View>| {
+            cx.observe_window_activation({
+                let events = events.clone();
+                move |this, active, _| events.borrow_mut().push((this.0, active))
+            })
+            .detach();
+            View("window 3")
+        });
+        assert_eq!(
+            mem::take(&mut *events.borrow_mut()),
+            [("window 2", false), ("window 3", true)]
+        );
+
+        cx.simulate_window_activation(Some(window_2));
+        assert_eq!(
+            mem::take(&mut *events.borrow_mut()),
+            [("window 3", false), ("window 2", true)]
+        );
+
+        cx.simulate_window_activation(Some(window_1));
+        assert_eq!(
+            mem::take(&mut *events.borrow_mut()),
+            [("window 2", false), ("window 1", true)]
+        );
+
+        cx.simulate_window_activation(Some(window_3));
+        assert_eq!(
+            mem::take(&mut *events.borrow_mut()),
+            [("window 1", false), ("window 3", true)]
+        );
+
+        cx.simulate_window_activation(Some(window_3));
+        assert_eq!(mem::take(&mut *events.borrow_mut()), []);
     }
 }
