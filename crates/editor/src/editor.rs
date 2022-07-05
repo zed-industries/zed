@@ -17,6 +17,7 @@ use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
+use futures::{channel::oneshot, FutureExt};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions,
@@ -28,8 +29,8 @@ use gpui::{
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
     text_layout, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
-    ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use hover_popover::{hide_hover, HoverState};
 pub use language::{char_kind, CharKind};
@@ -48,7 +49,7 @@ use ordered_float::OrderedFloat;
 use project::{LocationLink, Project, ProjectPath, ProjectTransaction};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Autosave, Settings};
 use smallvec::SmallVec;
 use smol::Timer;
 use snippet::Snippet;
@@ -436,6 +437,9 @@ pub struct Editor {
     leader_replica_id: Option<u16>,
     hover_state: HoverState,
     link_go_to_definition_state: LinkGoToDefinitionState,
+    pending_autosave: Option<Task<Option<()>>>,
+    cancel_pending_autosave: Option<oneshot::Sender<()>>,
+    _subscriptions: Vec<Subscription>,
 }
 
 pub struct EditorSnapshot {
@@ -973,17 +977,13 @@ impl Editor {
                 cx,
             )
         });
-        cx.observe(&buffer, Self::on_buffer_changed).detach();
-        cx.subscribe(&buffer, Self::on_buffer_event).detach();
-        cx.observe(&display_map, Self::on_display_map_changed)
-            .detach();
 
         let selections = SelectionsCollection::new(display_map.clone(), buffer.clone());
 
         let mut this = Self {
             handle: cx.weak_handle(),
-            buffer,
-            display_map,
+            buffer: buffer.clone(),
+            display_map: display_map.clone(),
             selections,
             columnar_selection_tail: None,
             add_selections_state: None,
@@ -1026,6 +1026,14 @@ impl Editor {
             leader_replica_id: None,
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
+            pending_autosave: Default::default(),
+            cancel_pending_autosave: Default::default(),
+            _subscriptions: vec![
+                cx.observe(&buffer, Self::on_buffer_changed),
+                cx.subscribe(&buffer, Self::on_buffer_event),
+                cx.observe(&display_map, Self::on_display_map_changed),
+                cx.observe_window_activation(Self::on_window_activation_changed),
+            ],
         };
         this.end_selection(cx);
 
@@ -2148,7 +2156,10 @@ impl Editor {
             .iter()
             .zip(autoclose_pair.ranges.iter().map(|r| r.to_offset(&buffer)))
         {
-            if selection.is_empty() && autoclose_range.is_empty() && selection.start == autoclose_range.start {
+            if selection.is_empty()
+                && autoclose_range.is_empty()
+                && selection.start == autoclose_range.start
+            {
                 new_selections.push(Selection {
                     id: selection.id,
                     start: selection.start - autoclose_pair.pair.start.len(),
@@ -5570,6 +5581,33 @@ impl Editor {
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
                 cx.emit(Event::BufferEdited);
+                if let Autosave::AfterDelay { milliseconds } = cx.global::<Settings>().autosave {
+                    let pending_autosave =
+                        self.pending_autosave.take().unwrap_or(Task::ready(None));
+                    if let Some(cancel_pending_autosave) = self.cancel_pending_autosave.take() {
+                        let _ = cancel_pending_autosave.send(());
+                    }
+
+                    let (cancel_tx, mut cancel_rx) = oneshot::channel();
+                    self.cancel_pending_autosave = Some(cancel_tx);
+                    self.pending_autosave = Some(cx.spawn_weak(|this, mut cx| async move {
+                        let mut timer = futures::future::join(
+                            cx.background().timer(Duration::from_millis(milliseconds)),
+                            pending_autosave,
+                        )
+                        .fuse();
+                        futures::select! {
+                            _ = timer => {}
+                            _ = cancel_rx => return None,
+                        }
+
+                        this.upgrade(&cx)?
+                            .update(&mut cx, |this, cx| this.autosave(cx))
+                            .await
+                            .log_err();
+                        None
+                    }));
+                }
             }
             language::Event::Reparsed => cx.emit(Event::Reparsed),
             language::Event::DirtyChanged => cx.emit(Event::DirtyChanged),
@@ -5586,6 +5624,22 @@ impl Editor {
 
     fn on_display_map_changed(&mut self, _: ModelHandle<DisplayMap>, cx: &mut ViewContext<Self>) {
         cx.notify();
+    }
+
+    fn on_window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {
+        if !active && cx.global::<Settings>().autosave == Autosave::OnWindowChange {
+            self.autosave(cx).detach_and_log_err(cx);
+        }
+    }
+
+    fn autosave(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
+        if let Some(project) = self.project.clone() {
+            if self.buffer.read(cx).is_dirty(cx) && !self.buffer.read(cx).has_conflict(cx) {
+                return workspace::Item::save(self, project, cx);
+            }
+        }
+
+        Task::ready(Ok(()))
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {
@@ -5805,6 +5859,10 @@ impl View for Editor {
         hide_hover(self, cx);
         cx.emit(Event::Blurred);
         cx.notify();
+
+        if cx.global::<Settings>().autosave == Autosave::OnFocusChange {
+            self.autosave(cx).detach_and_log_err(cx);
+        }
     }
 
     fn keymap_context(&self, _: &AppContext) -> gpui::keymap::Context {

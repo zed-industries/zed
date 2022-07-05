@@ -25,6 +25,7 @@ pub struct Settings {
     pub default_buffer_font_size: f32,
     pub hover_popover_enabled: bool,
     pub vim_mode: bool,
+    pub autosave: Autosave,
     pub language_settings: LanguageSettings,
     pub language_defaults: HashMap<Arc<str>, LanguageSettings>,
     pub language_overrides: HashMap<Arc<str>, LanguageSettings>,
@@ -39,7 +40,6 @@ pub struct LanguageSettings {
     pub preferred_line_length: Option<u32>,
     pub format_on_save: Option<bool>,
     pub enable_language_server: Option<bool>,
-    pub autosave: Option<Autosave>,
 }
 
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -54,7 +54,7 @@ pub enum SoftWrap {
 #[serde(rename_all = "snake_case")]
 pub enum Autosave {
     Off,
-    AfterDelay { milliseconds: usize },
+    AfterDelay { milliseconds: u64 },
     OnFocusChange,
     OnWindowChange,
 }
@@ -73,6 +73,8 @@ pub struct SettingsFileContent {
     pub vim_mode: Option<bool>,
     #[serde(default)]
     pub format_on_save: Option<bool>,
+    #[serde(default)]
+    pub autosave: Option<Autosave>,
     #[serde(default)]
     pub enable_language_server: Option<bool>,
     #[serde(flatten)]
@@ -95,6 +97,7 @@ impl Settings {
             default_buffer_font_size: 15.,
             hover_popover_enabled: true,
             vim_mode: false,
+            autosave: Autosave::Off,
             language_settings: Default::default(),
             language_defaults: Default::default(),
             language_overrides: Default::default(),
@@ -138,11 +141,6 @@ impl Settings {
             .unwrap_or(true)
     }
 
-    pub fn autosave(&self, language: Option<&str>) -> Autosave {
-        self.language_setting(language, |settings| settings.autosave)
-            .unwrap_or(Autosave::Off)
-    }
-
     pub fn enable_language_server(&self, language: Option<&str>) -> bool {
         self.language_setting(language, |settings| settings.enable_language_server)
             .unwrap_or(true)
@@ -172,6 +170,7 @@ impl Settings {
             default_buffer_font_size: 14.,
             hover_popover_enabled: true,
             vim_mode: false,
+            autosave: Autosave::Off,
             language_settings: Default::default(),
             language_defaults: Default::default(),
             language_overrides: Default::default(),
@@ -213,6 +212,7 @@ impl Settings {
         merge(&mut self.default_buffer_font_size, data.buffer_font_size);
         merge(&mut self.hover_popover_enabled, data.hover_popover_enabled);
         merge(&mut self.vim_mode, data.vim_mode);
+        merge(&mut self.autosave, data.autosave);
         merge_option(
             &mut self.language_settings.format_on_save,
             data.format_on_save,
@@ -227,7 +227,6 @@ impl Settings {
             &mut self.language_settings.preferred_line_length,
             data.editor.preferred_line_length,
         );
-        merge_option(&mut self.language_settings.autosave, data.editor.autosave);
 
         for (language_name, settings) in data.language_overrides.clone().into_iter() {
             let target = self
@@ -246,7 +245,6 @@ impl Settings {
                 &mut target.preferred_line_length,
                 settings.preferred_line_length,
             );
-            merge_option(&mut target.autosave, settings.autosave);
         }
     }
 }
