@@ -783,6 +783,7 @@ type FocusObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 type GlobalObservationCallback = Box<dyn FnMut(&mut MutableAppContext)>;
 type ReleaseObservationCallback = Box<dyn FnOnce(&dyn Any, &mut MutableAppContext)>;
 type ActionObservationCallback = Box<dyn FnMut(TypeId, &mut MutableAppContext)>;
+type WindowActivationCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
 type DeserializeActionCallback = fn(json: &str) -> anyhow::Result<Box<dyn Action>>;
 type WindowShouldCloseSubscriptionCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 
@@ -809,6 +810,8 @@ pub struct MutableAppContext {
     global_observations:
         Arc<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalObservationCallback>>>>>,
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
+    window_activation_observations:
+        Arc<Mutex<HashMap<usize, BTreeMap<usize, Option<WindowActivationCallback>>>>>,
     action_dispatch_observations: Arc<Mutex<BTreeMap<usize, ActionObservationCallback>>>,
     presenters_and_platform_windows:
         HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
@@ -862,6 +865,7 @@ impl MutableAppContext {
             focus_observations: Default::default(),
             release_observations: Default::default(),
             global_observations: Default::default(),
+            window_activation_observations: Default::default(),
             action_dispatch_observations: Default::default(),
             presenters_and_platform_windows: HashMap::new(),
             foreground,
@@ -1358,6 +1362,24 @@ impl MutableAppContext {
         }
     }
 
+    fn observe_window_activation<F>(&mut self, window_id: usize, callback: F) -> Subscription
+    where
+        F: 'static + FnMut(bool, &mut MutableAppContext) -> bool,
+    {
+        let subscription_id = post_inc(&mut self.next_subscription_id);
+        self.pending_effects
+            .push_back(Effect::WindowActivationObservation {
+                window_id,
+                subscription_id,
+                callback: Box::new(callback),
+            });
+        Subscription::WindowActivationObservation {
+            id: subscription_id,
+            window_id,
+            observations: Some(Arc::downgrade(&self.window_activation_observations)),
+        }
+    }
+
     pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut MutableAppContext)) {
         self.pending_effects.push_back(Effect::Deferred {
             callback: Box::new(callback),
@@ -1715,19 +1737,16 @@ impl MutableAppContext {
         self.update(|this| {
             let window_id = post_inc(&mut this.next_window_id);
             let root_view = this.add_view(window_id, build_root_view);
-
             this.cx.windows.insert(
                 window_id,
                 Window {
                     root_view: root_view.clone().into(),
                     focused_view_id: Some(root_view.id()),
-                    is_active: true,
+                    is_active: false,
                     invalidation: None,
                 },
             );
-            root_view.update(this, |view, cx| {
-                view.on_focus(cx);
-            });
+            root_view.update(this, |view, cx| view.on_focus(cx));
             this.open_platform_window(window_id, window_options);
 
             (window_id, root_view)
@@ -1995,10 +2014,19 @@ impl MutableAppContext {
                                     .get_or_insert(WindowInvalidation::default());
                             }
                         }
+                        Effect::WindowActivationObservation {
+                            window_id,
+                            subscription_id,
+                            callback,
+                        } => self.handle_window_activation_observation_effect(
+                            window_id,
+                            subscription_id,
+                            callback,
+                        ),
                         Effect::ActivateWindow {
                             window_id,
                             is_active,
-                        } => self.handle_activation_effect(window_id, is_active),
+                        } => self.handle_window_activation_effect(window_id, is_active),
                         Effect::RefreshWindows => {
                             refreshing = true;
                         }
@@ -2361,7 +2389,31 @@ impl MutableAppContext {
         }
     }
 
-    fn handle_activation_effect(&mut self, window_id: usize, active: bool) {
+    fn handle_window_activation_observation_effect(
+        &mut self,
+        window_id: usize,
+        subscription_id: usize,
+        callback: WindowActivationCallback,
+    ) {
+        match self
+            .window_activation_observations
+            .lock()
+            .entry(window_id)
+            .or_default()
+            .entry(subscription_id)
+        {
+            btree_map::Entry::Vacant(entry) => {
+                entry.insert(Some(callback));
+            }
+            // Observation was dropped before effect was processed
+            btree_map::Entry::Occupied(entry) => {
+                debug_assert!(entry.get().is_none());
+                entry.remove();
+            }
+        }
+    }
+
+    fn handle_window_activation_effect(&mut self, window_id: usize, active: bool) {
         if self
             .cx
             .windows
@@ -2383,6 +2435,34 @@ impl MutableAppContext {
                     view.on_blur(this, window_id, view_id);
                 }
                 this.cx.views.insert((window_id, view_id), view);
+            }
+
+            let callbacks = this
+                .window_activation_observations
+                .lock()
+                .remove(&window_id);
+            if let Some(callbacks) = callbacks {
+                for (id, callback) in callbacks {
+                    if let Some(mut callback) = callback {
+                        let alive = callback(active, this);
+                        if alive {
+                            match this
+                                .window_activation_observations
+                                .lock()
+                                .entry(window_id)
+                                .or_default()
+                                .entry(id)
+                            {
+                                btree_map::Entry::Vacant(entry) => {
+                                    entry.insert(Some(callback));
+                                }
+                                btree_map::Entry::Occupied(entry) => {
+                                    entry.remove();
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             Some(())
@@ -2842,6 +2922,11 @@ pub enum Effect {
         window_id: usize,
         is_active: bool,
     },
+    WindowActivationObservation {
+        window_id: usize,
+        subscription_id: usize,
+        callback: WindowActivationCallback,
+    },
     RefreshWindows,
     ActionDispatchNotification {
         action_id: TypeId,
@@ -2933,6 +3018,15 @@ impl Debug for Effect {
             Effect::ResizeWindow { window_id } => f
                 .debug_struct("Effect::RefreshWindow")
                 .field("window_id", window_id)
+                .finish(),
+            Effect::WindowActivationObservation {
+                window_id,
+                subscription_id,
+                ..
+            } => f
+                .debug_struct("Effect::WindowActivationObservation")
+                .field("window_id", window_id)
+                .field("subscription_id", subscription_id)
                 .finish(),
             Effect::ActivateWindow {
                 window_id,
@@ -3516,6 +3610,24 @@ impl<'a, T: View> ViewContext<'a, T> {
                 });
             }
         })
+    }
+
+    pub fn observe_window_activation<F>(&mut self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut T, bool, &mut ViewContext<T>),
+    {
+        let observer = self.weak_handle();
+        self.app
+            .observe_window_activation(self.window_id(), move |active, cx| {
+                if let Some(observer) = observer.upgrade(cx) {
+                    observer.update(cx, |observer, cx| {
+                        callback(observer, active, cx);
+                    });
+                    true
+                } else {
+                    false
+                }
+            })
     }
 
     pub fn emit(&mut self, payload: T::Event) {
@@ -4833,6 +4945,12 @@ pub enum Subscription {
         id: usize,
         observations: Option<Weak<Mutex<BTreeMap<usize, ActionObservationCallback>>>>,
     },
+    WindowActivationObservation {
+        id: usize,
+        window_id: usize,
+        observations:
+            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<WindowActivationCallback>>>>>>,
+    },
 }
 
 impl Subscription {
@@ -4857,6 +4975,9 @@ impl Subscription {
                 observations.take();
             }
             Subscription::ActionObservation { observations, .. } => {
+                observations.take();
+            }
+            Subscription::WindowActivationObservation { observations, .. } => {
                 observations.take();
             }
         }
@@ -4970,6 +5091,27 @@ impl Drop for Subscription {
             Subscription::ActionObservation { id, observations } => {
                 if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
                     observations.lock().remove(&id);
+                }
+            }
+            Subscription::WindowActivationObservation {
+                id,
+                window_id,
+                observations,
+            } => {
+                if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
+                    match observations
+                        .lock()
+                        .entry(*window_id)
+                        .or_default()
+                        .entry(*id)
+                    {
+                        btree_map::Entry::Vacant(entry) => {
+                            entry.insert(None);
+                        }
+                        btree_map::Entry::Occupied(entry) => {
+                            entry.remove();
+                        }
+                    }
                 }
             }
         }
