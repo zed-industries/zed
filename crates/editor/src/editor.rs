@@ -5591,11 +5591,11 @@ impl Editor {
                     let (cancel_tx, mut cancel_rx) = oneshot::channel();
                     self.cancel_pending_autosave = Some(cancel_tx);
                     self.pending_autosave = Some(cx.spawn_weak(|this, mut cx| async move {
-                        let mut timer = futures::future::join(
-                            cx.background().timer(Duration::from_millis(milliseconds)),
-                            pending_autosave,
-                        )
-                        .fuse();
+                        let mut timer = cx
+                            .background()
+                            .timer(Duration::from_millis(milliseconds))
+                            .fuse();
+                        pending_autosave.await;
                         futures::select! {
                             _ = timer => {}
                             _ = cancel_rx => return None,
@@ -6634,8 +6634,8 @@ mod tests {
             editor.read(cx).selections.ranges(cx)
         );
         assert_set_eq!(
-            cloned_editor.update(cx, |e, cx| dbg!(e.selections.display_ranges(cx))),
-            editor.update(cx, |e, cx| dbg!(e.selections.display_ranges(cx)))
+            cloned_editor.update(cx, |e, cx| e.selections.display_ranges(cx)),
+            editor.update(cx, |e, cx| e.selections.display_ranges(cx))
         );
     }
 
