@@ -3485,11 +3485,18 @@ impl Project {
                     Default::default()
                 };
 
-                source_buffer_handle.read_with(&cx, |this, _| {
+                struct PartialCompletion<F: Future<Output = Option<CodeLabel>>> {
+                    pub old_range: Range<Anchor>,
+                    pub new_text: String,
+                    pub label: Option<F>,
+                    pub lsp_completion: lsp::CompletionItem,
+                }
+
+                let partial_completions = source_buffer_handle.read_with(&cx, |this, _| {
                     let snapshot = this.snapshot();
                     let clipped_position = this.clip_point_utf16(position, Bias::Left);
                     let mut range_for_token = None;
-                    let result = Vec::new();
+                    let mut partial_completions = Vec::new();
 
                     for lsp_completion in completions.into_iter() {
                         // For now, we can only handle additional edits if they are returned
@@ -3601,28 +3608,48 @@ impl Project {
                             }
                         };
 
-                        let completion = Completion {
+                        let label = match language.as_ref() {
+                            Some(l) => Some(l.label_for_completion(&lsp_completion)),
+                            None => None,
+                        };
+
+                        let partial_completion = PartialCompletion {
                             old_range,
                             new_text,
-                            label: {
-                                match language.as_ref() {
-                                    Some(l) => l.label_for_completion(&lsp_completion).await,
-                                    None => None,
-                                }
-                                .unwrap_or_else(|| {
-                                    CodeLabel::plain(
-                                        lsp_completion.label.clone(),
-                                        lsp_completion.filter_text.as_deref(),
-                                    )
-                                })
-                            },
+                            label,
                             lsp_completion,
                         };
 
-                        result.push(completion);
+                        partial_completions.push(partial_completion);
                     }
-                    Ok(result)
-                })
+                    partial_completions
+                });
+
+                let mut result = Vec::new();
+
+                for pc in partial_completions.into_iter() {
+                    let label = match pc.label {
+                        Some(label) => label.await,
+                        None => None,
+                    }
+                    .unwrap_or_else(|| {
+                        CodeLabel::plain(
+                            pc.lsp_completion.label.clone(),
+                            pc.lsp_completion.filter_text.as_deref(),
+                        )
+                    });
+
+                    let completion = Completion {
+                        old_range: pc.old_range,
+                        new_text: pc.new_text,
+                        label,
+                        lsp_completion: pc.lsp_completion,
+                    };
+
+                    result.push(completion);
+                }
+
+                Ok(result)
             })
         } else if let Some(project_id) = self.remote_id() {
             let rpc = self.client.clone();
