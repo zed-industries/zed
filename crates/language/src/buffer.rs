@@ -314,30 +314,30 @@ impl CharKind {
 }
 
 impl Buffer {
-    pub fn new<T: Into<Arc<str>>>(
+    pub fn new<T: Into<String>>(
         replica_id: ReplicaId,
         base_text: T,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let history = History::new(base_text.into());
-        let line_ending = LineEnding::detect(&history.base_text);
+        let base_text = base_text.into();
+        let line_ending = LineEnding::detect(&base_text);
         Self::build(
-            TextBuffer::new(replica_id, cx.model_id() as u64, history),
+            TextBuffer::new(replica_id, cx.model_id() as u64, base_text),
             None,
             line_ending,
         )
     }
 
-    pub fn from_file<T: Into<Arc<str>>>(
+    pub fn from_file<T: Into<String>>(
         replica_id: ReplicaId,
         base_text: T,
         file: Arc<dyn File>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let history = History::new(base_text.into());
-        let line_ending = LineEnding::detect(&history.base_text);
+        let base_text = base_text.into();
+        let line_ending = LineEnding::detect(&base_text);
         Self::build(
-            TextBuffer::new(replica_id, cx.model_id() as u64, history),
+            TextBuffer::new(replica_id, cx.model_id() as u64, base_text),
             Some(file),
             line_ending,
         )
@@ -349,11 +349,7 @@ impl Buffer {
         file: Option<Arc<dyn File>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<Self> {
-        let buffer = TextBuffer::new(
-            replica_id,
-            message.id,
-            History::new(Arc::from(message.base_text)),
-        );
+        let buffer = TextBuffer::new(replica_id, message.id, message.base_text);
         let line_ending = proto::LineEnding::from_i32(message.line_ending)
             .ok_or_else(|| anyhow!("missing line_ending"))?;
         let mut this = Self::build(buffer, file, LineEnding::from_proto(line_ending));

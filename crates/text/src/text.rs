@@ -148,9 +148,9 @@ impl HistoryEntry {
 }
 
 #[derive(Clone)]
-pub struct History {
+struct History {
     // TODO: Turn this into a String or Rope, maybe.
-    pub base_text: Arc<str>,
+    base_text: Arc<str>,
     operations: HashMap<clock::Local, Operation>,
     undo_stack: Vec<HistoryEntry>,
     redo_stack: Vec<HistoryEntry>,
@@ -539,7 +539,8 @@ pub struct UndoOperation {
 }
 
 impl Buffer {
-    pub fn new(replica_id: u16, remote_id: u64, history: History) -> Buffer {
+    pub fn new(replica_id: u16, remote_id: u64, base_text: String) -> Buffer {
+        let history = History::new(base_text.into());
         let mut fragments = SumTree::new();
         let mut insertions = SumTree::new();
 
