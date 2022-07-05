@@ -19,17 +19,20 @@ cargo build --release --package cli --target x86_64-apple-darwin
 echo "Creating application bundle"
 (cd crates/zed && cargo bundle --release --target x86_64-apple-darwin)
 
+TEMP_RELEASE_DIR_PATH=target/x86_64-apple-darwin/release/bundle/osx
+APP_PATH=$TEMP_RELEASE_DIR_PATH/Zed.app
+
 echo "Creating fat binaries"
 lipo \
     -create \
     target/{x86_64-apple-darwin,aarch64-apple-darwin}/release/Zed \
     -output \
-    target/x86_64-apple-darwin/release/bundle/osx/Zed.app/Contents/MacOS/zed
+    $APP_PATH/Contents/MacOS/zed
 lipo \
     -create \
     target/{x86_64-apple-darwin,aarch64-apple-darwin}/release/cli \
     -output \
-    target/x86_64-apple-darwin/release/bundle/osx/Zed.app/Contents/MacOS/cli
+    $APP_PATH/Contents/MacOS/cli
 
 if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
     echo "Signing bundle with Apple-issued certificate"
@@ -40,28 +43,35 @@ if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTAR
     security import /tmp/zed-certificate.p12 -k zed.keychain -P $MACOS_CERTIFICATE_PASSWORD -T /usr/bin/codesign
     rm /tmp/zed-certificate.p12
     security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $MACOS_CERTIFICATE_PASSWORD zed.keychain
-    /usr/bin/codesign --force --deep --timestamp --options runtime --sign "Zed Industries, Inc." target/x86_64-apple-darwin/release/bundle/osx/Zed.app -v
+    /usr/bin/codesign --force --deep --timestamp --options runtime --sign "Zed Industries, Inc." $APP_PATH -v
     security default-keychain -s login.keychain
 else
     echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_USERNAME, APPLE_NOTARIZATION_PASSWORD"
     echo "Performing an ad-hoc signature, but this bundle should not be distributed"
-    codesign --force --deep --sign - target/x86_64-apple-darwin/release/bundle/osx/Zed.app -v
+    codesign --force --deep --sign - $APP_PATH -v
 fi
 
+RELEASE_DIR_PATH=target/release
+DMG_PATH=$RELEASE_DIR_PATH/Zed.dmg
+
 echo "Creating DMG"
-mkdir -p target/release
-hdiutil create -volname Zed -srcfolder target/x86_64-apple-darwin/release/bundle/osx -ov -format UDZO target/release/Zed.dmg
+mkdir -p $RELEASE_DIR_PATH
+ln -s /Applications $TEMP_RELEASE_DIR_PATH
+hdiutil create -volname Zed -srcfolder $TEMP_RELEASE_DIR_PATH -ov -format UDZO $DMG_PATH
+# If someone runs this bundle script locally, a symlink will be placed in `TEMP_RELEASE_DIR_PATH`.  
+# This symlink causes CPU issues with Zed if the Zed codebase is opened in Zed, so we simply remove it for now.
+rm $TEMP_RELEASE_DIR_PATH/Applications
 
 if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
     echo "Notarizing DMG with Apple"
     npm install -g notarize-cli
-    npx notarize-cli --file target/release/Zed.dmg --bundle-id dev.zed.Zed --username $APPLE_NOTARIZATION_USERNAME --password $APPLE_NOTARIZATION_PASSWORD
+    npx notarize-cli --file $DMG_PATH --bundle-id dev.zed.Zed --username $APPLE_NOTARIZATION_USERNAME --password $APPLE_NOTARIZATION_PASSWORD
 fi
 
-# If -o option is specified, open the target/release directory in Finder to reveal the DMG
+# If -o option is specified, open the $RELEASE_DIR_PATH directory in Finder to reveal the DMG
 while getopts o flag
 do
     case "${flag}" in
-        o) open target/release;;
+        o) open $RELEASE_DIR_PATH;;
     esac
 done
