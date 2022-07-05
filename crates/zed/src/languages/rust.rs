@@ -3,20 +3,13 @@ use anyhow::{anyhow, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use client::http::HttpClient;
-use futures::{future::BoxFuture, io::BufReader, FutureExt, StreamExt};
+use futures::{io::BufReader, StreamExt};
 pub use language::*;
 use lazy_static::lazy_static;
 use regex::Regex;
 use smol::fs::{self, File};
-use std::{
-    any::Any,
-    borrow::Cow,
-    env::consts,
-    path::{Path, PathBuf},
-    str,
-    sync::Arc,
-};
-use util::{ResultExt, TryFutureExt};
+use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
+use util::ResultExt;
 
 pub struct RustLspAdapter;
 
@@ -290,7 +283,7 @@ mod tests {
                 },
             ],
         };
-        RustLspAdapter.process_diagnostics(&mut params);
+        smol::block_on(RustLspAdapter.process_diagnostics(&mut params));
 
         assert_eq!(params.diagnostics[0].message, "use of moved value `a`");
 

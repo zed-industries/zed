@@ -2,16 +2,12 @@ use super::installation::{npm_install_packages, npm_package_latest_version};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::http::HttpClient;
-use futures::{future::BoxFuture, FutureExt, StreamExt};
+use futures::StreamExt;
 use language::{LanguageServerName, LspAdapter};
 use serde_json::json;
 use smol::fs;
-use std::{
-    any::Any,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
-use util::{ResultExt, TryFutureExt};
+use std::{any::Any, path::PathBuf, sync::Arc};
+use util::ResultExt;
 
 pub struct JsonLspAdapter;
 

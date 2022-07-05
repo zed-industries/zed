@@ -31,8 +31,8 @@ use language::{
     Transaction,
 };
 use lsp::{
-    CompletionList, DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer,
-    LanguageString, MarkedString,
+    DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer, LanguageString,
+    MarkedString,
 };
 use lsp_command::*;
 use parking_lot::Mutex;
@@ -1732,7 +1732,7 @@ impl Project {
                 .await?;
             this.update(&mut cx, |this, cx| {
                 this.assign_language_to_buffer(&buffer, cx);
-                this.register_buffer_with_language_server(&buffer, cx);
+                this.register_buffer_with_language_server(&buffer, cx).await;
             });
             Ok(())
         })
@@ -1786,12 +1786,12 @@ impl Project {
             ))?,
         }
         cx.subscribe(buffer, |this, buffer, event, cx| {
-            this.on_buffer_event(buffer, event, cx);
+            this.on_buffer_event(buffer, event, cx).await;
         })
         .detach();
 
         self.assign_language_to_buffer(buffer, cx);
-        self.register_buffer_with_language_server(buffer, cx);
+        self.register_buffer_with_language_server(buffer, cx).await;
         cx.observe_release(buffer, |this, buffer, cx| {
             if let Some(file) = File::from_dyn(buffer.file()) {
                 if file.is_local() {
@@ -2052,7 +2052,8 @@ impl Project {
         let worktree = file.worktree.read(cx).as_local()?;
         let worktree_id = worktree.id();
         let worktree_abs_path = worktree.abs_path().clone();
-        self.start_language_server(worktree_id, worktree_abs_path, language, cx);
+        self.start_language_server(worktree_id, worktree_abs_path, language, cx)
+            .await;
 
         None
     }
@@ -2404,7 +2405,8 @@ impl Project {
             .collect();
         for (worktree_id, worktree_abs_path, full_path) in language_server_lookup_info {
             let language = self.languages.select_language(&full_path)?;
-            self.restart_language_server(worktree_id, worktree_abs_path, language, cx);
+            self.restart_language_server(worktree_id, worktree_abs_path, language, cx)
+                .await;
         }
 
         None
@@ -2462,7 +2464,7 @@ impl Project {
         adapter: &Arc<dyn LspAdapter>,
         cx: &mut ModelContext<'_, Self>,
     ) {
-        adapter.process_diagnostics(&mut params);
+        adapter.process_diagnostics(&mut params).await;
         self.update_diagnostics(
             server_id,
             params,
@@ -4640,7 +4642,7 @@ impl Project {
         for (buffer, old_path) in renamed_buffers {
             self.unregister_buffer_from_language_server(&buffer, old_path, cx);
             self.assign_language_to_buffer(&buffer, cx);
-            self.register_buffer_with_language_server(&buffer, cx);
+            self.register_buffer_with_language_server(&buffer, cx).await;
         }
     }
 

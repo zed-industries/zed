@@ -2,15 +2,11 @@ use super::installation::{latest_github_release, GitHubLspBinaryVersion};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::http::HttpClient;
-use futures::{future::BoxFuture, FutureExt, StreamExt};
+use futures::StreamExt;
 pub use language::*;
 use smol::fs::{self, File};
-use std::{
-    any::Any,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
-use util::{ResultExt, TryFutureExt};
+use std::{any::Any, path::PathBuf, sync::Arc};
+use util::ResultExt;
 
 pub struct CLspAdapter;
 

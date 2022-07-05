@@ -1,7 +1,4 @@
-use gpui::{
-    executor::{self, Background},
-    Task,
-};
+use gpui::executor::Background;
 pub use language::*;
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, str, sync::Arc};

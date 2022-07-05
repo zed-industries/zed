@@ -2,19 +2,13 @@ use super::installation::latest_github_release;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use client::http::HttpClient;
-use futures::{future::BoxFuture, FutureExt, StreamExt};
+use futures::StreamExt;
 pub use language::*;
 use lazy_static::lazy_static;
 use regex::Regex;
 use smol::{fs, process};
-use std::{
-    any::Any,
-    ops::Range,
-    path::{Path, PathBuf},
-    str,
-    sync::Arc,
-};
-use util::{ResultExt, TryFutureExt};
+use std::{any::Any, ops::Range, path::PathBuf, str, sync::Arc};
+use util::ResultExt;
 
 #[derive(Copy, Clone)]
 pub struct GoLspAdapter;

@@ -3,11 +3,9 @@ use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::lock::Mutex;
 use futures::Future;
-use futures::{future::BoxFuture, FutureExt};
 use gpui::executor::Background;
 use language::{LanguageServerName, LspAdapter};
 use plugin_runtime::{Plugin, PluginBuilder, WasiFn};
-use std::task::Poll;
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
 
