@@ -30,6 +30,7 @@ pub enum Motion {
     EndOfLine,
     StartOfDocument,
     EndOfDocument,
+    Matching,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -65,7 +66,8 @@ actions!(
         EndOfLine,
         CurrentLine,
         StartOfDocument,
-        EndOfDocument
+        EndOfDocument,
+        Matching,
     ]
 );
 impl_actions!(vim, [NextWordStart, NextWordEnd, PreviousWordStart]);
@@ -85,6 +87,7 @@ pub fn init(cx: &mut MutableAppContext) {
         motion(Motion::StartOfDocument, cx)
     });
     cx.add_action(|_: &mut Workspace, _: &EndOfDocument, cx: _| motion(Motion::EndOfDocument, cx));
+    cx.add_action(|_: &mut Workspace, _: &Matching, cx: _| motion(Motion::Matching, cx));
 
     cx.add_action(
         |_: &mut Workspace, &NextWordStart { ignore_punctuation }: &NextWordStart, cx: _| {
@@ -136,7 +139,7 @@ impl Motion {
         }
 
         match self {
-            EndOfLine | NextWordEnd { .. } => true,
+            EndOfLine | NextWordEnd { .. } | Matching => true,
             Left | Right | StartOfLine | NextWordStart { .. } | PreviousWordStart { .. } => false,
             _ => panic!("Exclusivity not defined for {self:?}"),
         }
@@ -172,6 +175,7 @@ impl Motion {
             CurrentLine => (end_of_line(map, point), SelectionGoal::None),
             StartOfDocument => (start_of_document(map, point), SelectionGoal::None),
             EndOfDocument => (end_of_document(map, point), SelectionGoal::None),
+            Matching => (matching(map, point), SelectionGoal::None),
         }
     }
 
@@ -340,4 +344,19 @@ fn end_of_document(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let mut new_point = map.max_point();
     *new_point.column_mut() = point.column();
     map.clip_point(new_point, Bias::Left)
+}
+
+fn matching(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    let offset = point.to_offset(map, Bias::Left);
+    if let Some((open_range, close_range)) =
+        map.buffer_snapshot.enclosing_bracket_ranges(offset..offset)
+    {
+        if open_range.contains(&offset) {
+            close_range.start.to_display_point(map)
+        } else {
+            open_range.start.to_display_point(map)
+        }
+    } else {
+        point
+    }
 }

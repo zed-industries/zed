@@ -28,6 +28,7 @@ pub fn marked_text(marked_text: &str) -> (String, Vec<usize>) {
 pub enum TextRangeMarker {
     Empty(char),
     Range(char, char),
+    ReverseRange(char, char),
 }
 
 impl TextRangeMarker {
@@ -35,6 +36,7 @@ impl TextRangeMarker {
         match self {
             Self::Empty(m) => vec![*m],
             Self::Range(l, r) => vec![*l, *r],
+            Self::ReverseRange(l, r) => vec![*l, *r],
         }
     }
 }
@@ -81,6 +83,21 @@ pub fn marked_text_ranges_by(
                     .map(|(start, end)| {
                         assert!(end >= start, "marked ranges must be disjoint");
                         start..end
+                    })
+                    .collect::<Vec<Range<usize>>>();
+                (marker, ranges)
+            }
+            TextRangeMarker::ReverseRange(start_marker, end_marker) => {
+                let starts = marker_offsets.remove(&start_marker).unwrap_or_default();
+                let ends = marker_offsets.remove(&end_marker).unwrap_or_default();
+                assert_eq!(starts.len(), ends.len(), "marked ranges are unbalanced");
+
+                let ranges = starts
+                    .into_iter()
+                    .zip(ends)
+                    .map(|(start, end)| {
+                        assert!(end >= start, "marked ranges must be disjoint");
+                        end..start
                     })
                     .collect::<Vec<Range<usize>>>();
                 (marker, ranges)

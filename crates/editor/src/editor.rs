@@ -1,5 +1,6 @@
 pub mod display_map;
 mod element;
+mod highlight_matching_bracket;
 mod hover_popover;
 pub mod items;
 mod link_go_to_definition;
@@ -32,6 +33,7 @@ use gpui::{
     ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
+use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
 pub use language::{char_kind, CharKind};
 use language::{
@@ -1430,6 +1432,7 @@ impl Editor {
             }
             self.refresh_code_actions(cx);
             self.refresh_document_highlights(cx);
+            refresh_matching_bracket_highlights(self, cx);
         }
 
         self.pause_cursor_blinking(cx);
@@ -5425,7 +5428,7 @@ impl Editor {
             .map(|h| &h.1);
         let write_highlights = self
             .background_highlights
-            .get(&TypeId::of::<DocumentHighlightRead>())
+            .get(&TypeId::of::<DocumentHighlightWrite>())
             .map(|h| &h.1);
         let left_position = position.bias_left(buffer);
         let right_position = position.bias_right(buffer);
@@ -10551,5 +10554,15 @@ impl<T: Ord + Clone> RangeExt<T> for Range<T> {
 
     fn to_inclusive(&self) -> RangeInclusive<T> {
         self.start.clone()..=self.end.clone()
+    }
+}
+
+trait RangeToAnchorExt {
+    fn to_anchors(self, snapshot: &MultiBufferSnapshot) -> Range<Anchor>;
+}
+
+impl<T: ToOffset> RangeToAnchorExt for Range<T> {
+    fn to_anchors(self, snapshot: &MultiBufferSnapshot) -> Range<Anchor> {
+        snapshot.anchor_after(self.start)..snapshot.anchor_before(self.end)
     }
 }

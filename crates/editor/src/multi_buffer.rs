@@ -2321,7 +2321,7 @@ impl MultiBufferSnapshot {
                     .enclosing_bracket_ranges(start_in_buffer..end_in_buffer)?;
 
                 if start_bracket_range.start >= excerpt_buffer_start
-                    && end_bracket_range.end < excerpt_buffer_end
+                    && end_bracket_range.end <= excerpt_buffer_end
                 {
                     start_bracket_range.start =
                         cursor.start() + (start_bracket_range.start - excerpt_buffer_start);
