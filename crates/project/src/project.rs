@@ -713,25 +713,28 @@ impl Project {
 
     fn on_settings_changed(&mut self, cx: &mut ModelContext<'_, Self>) {
         let settings = cx.global::<Settings>();
-        self.lsp_settings_changed = Some(cx.spawn(|_, _| async {
-            let mut language_servers_to_start = Vec::new();
-            for buffer in self.opened_buffers.values() {
-                if let Some(buffer) = buffer.upgrade(cx) {
-                    let buffer = buffer.read(cx);
-                    if let Some((file, language)) =
-                        File::from_dyn(buffer.file()).zip(buffer.language())
-                    {
-                        if settings.enable_language_server(Some(&language.name())) {
-                            let worktree = file.worktree.read(cx);
-                            language_servers_to_start.push((
-                                worktree.id(),
-                                worktree.as_local().unwrap().abs_path().clone(),
-                                language.clone(),
-                            ));
+        self.lsp_settings_changed = Some(cx.spawn(|project, cx| async {
+            let language_servers_to_start = project.update(&mut cx, |project, cx| {
+                let mut language_servers_to_start = Vec::new();
+                for buffer in self.opened_buffers.values() {
+                    if let Some(buffer) = buffer.upgrade(cx) {
+                        let buffer = buffer.read(cx);
+                        if let Some((file, language)) =
+                            File::from_dyn(buffer.file()).zip(buffer.language())
+                        {
+                            if settings.enable_language_server(Some(&language.name())) {
+                                let worktree = file.worktree.read(cx);
+                                language_servers_to_start.push((
+                                    worktree.id(),
+                                    worktree.as_local().unwrap().abs_path().clone(),
+                                    language.clone(),
+                                ));
+                            }
                         }
                     }
                 }
-            }
+                language_servers_to_start
+            });
 
             let mut language_servers_to_stop = Vec::new();
             for language in self.languages.to_vec() {
@@ -749,18 +752,20 @@ impl Project {
                 }
             }
 
-            // Stop all newly-disabled language servers.
-            for (worktree_id, adapter_name) in language_servers_to_stop {
-                self.stop_language_server(worktree_id, adapter_name, cx)
-                    .detach();
-            }
+            project.update(&mut cx, |project, cx| {
+                // Stop all newly-disabled language servers.
+                for (worktree_id, adapter_name) in language_servers_to_stop {
+                    self.stop_language_server(worktree_id, adapter_name, cx)
+                        .detach();
+                }
 
-            // Start all the newly-enabled language servers.
-            for (worktree_id, worktree_path, language) in language_servers_to_start {
-                self.start_language_server(worktree_id, worktree_path, language, cx);
-            }
+                // Start all the newly-enabled language servers.
+                for (worktree_id, worktree_path, language) in language_servers_to_start {
+                    self.start_language_server(worktree_id, worktree_path, language, cx);
+                }
 
-            cx.notify();
+                cx.notify();
+            });
         }))
     }
 
