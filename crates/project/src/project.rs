@@ -1042,7 +1042,7 @@ impl Project {
     pub fn worktrees<'a>(
         &'a self,
         cx: &'a AppContext,
-    ) -> impl 'a + Iterator<Item = ModelHandle<Worktree>> {
+    ) -> impl 'a + DoubleEndedIterator<Item = ModelHandle<Worktree>> {
         self.worktrees
             .iter()
             .filter_map(move |worktree| worktree.upgrade(cx))
@@ -1051,7 +1051,7 @@ impl Project {
     pub fn visible_worktrees<'a>(
         &'a self,
         cx: &'a AppContext,
-    ) -> impl 'a + Iterator<Item = ModelHandle<Worktree>> {
+    ) -> impl 'a + DoubleEndedIterator<Item = ModelHandle<Worktree>> {
         self.worktrees.iter().filter_map(|worktree| {
             worktree.upgrade(cx).and_then(|worktree| {
                 if worktree.read(cx).is_visible() {

@@ -33,6 +33,7 @@ pub struct ProjectPanel {
     project: ModelHandle<Project>,
     list: UniformListState,
     visible_entries: Vec<(WorktreeId, Vec<Entry>)>,
+    last_worktree_root_id: Option<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     selection: Option<Selection>,
     edit_state: Option<EditState>,
@@ -93,7 +94,7 @@ pub struct Open {
 #[derive(Clone, PartialEq)]
 pub struct DeployContextMenu {
     pub position: Vector2F,
-    pub entry_id: Option<ProjectEntryId>,
+    pub entry_id: ProjectEntryId,
 }
 
 actions!(
@@ -187,6 +188,7 @@ impl ProjectPanel {
                 project: project.clone(),
                 list: Default::default(),
                 visible_entries: Default::default(),
+                last_worktree_root_id: Default::default(),
                 expanded_dir_ids: Default::default(),
                 selection: None,
                 edit_state: None,
@@ -232,53 +234,51 @@ impl ProjectPanel {
     }
 
     fn deploy_context_menu(&mut self, action: &DeployContextMenu, cx: &mut ViewContext<Self>) {
+        let project = self.project.read(cx);
+
+        let entry_id = action.entry_id;
+        let worktree_id = if let Some(id) = project.worktree_id_for_entry(entry_id, cx) {
+            id
+        } else {
+            return;
+        };
+
+        self.selection = Some(Selection {
+            worktree_id,
+            entry_id,
+        });
+
         let mut menu_entries = Vec::new();
-
-        if let Some(entry_id) = action.entry_id {
-            if let Some(worktree_id) = self.project.read(cx).worktree_id_for_entry(entry_id, cx) {
-                self.selection = Some(Selection {
-                    worktree_id,
-                    entry_id,
-                });
-
-                if let Some((worktree, entry)) = self.selected_entry(cx) {
-                    let is_root = Some(entry) == worktree.root_entry();
-                    if !self.project.read(cx).is_remote() {
-                        menu_entries.push(ContextMenuItem::item(
-                            "Add Folder to Project",
-                            workspace::AddFolderToProject,
-                        ));
-                        if is_root {
-                            menu_entries.push(ContextMenuItem::item(
-                                "Remove from Project",
-                                workspace::RemoveWorktreeFromProject(worktree_id),
-                            ));
-                        }
-                    }
-                    menu_entries.push(ContextMenuItem::item("New File", AddFile));
-                    menu_entries.push(ContextMenuItem::item("New Folder", AddDirectory));
-                    menu_entries.push(ContextMenuItem::Separator);
-                    menu_entries.push(ContextMenuItem::item("Copy", Copy));
-                    menu_entries.push(ContextMenuItem::item("Copy Path", CopyPath));
-                    menu_entries.push(ContextMenuItem::item("Cut", Cut));
-                    if let Some(clipboard_entry) = self.clipboard_entry {
-                        if clipboard_entry.worktree_id() == worktree.id() {
-                            menu_entries.push(ContextMenuItem::item("Paste", Paste));
-                        }
-                    }
-                    menu_entries.push(ContextMenuItem::Separator);
-                    menu_entries.push(ContextMenuItem::item("Rename", Rename));
-                    if !is_root {
-                        menu_entries.push(ContextMenuItem::item("Delete", Delete));
-                    }
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            let is_root = Some(entry) == worktree.root_entry();
+            if !project.is_remote() {
+                menu_entries.push(ContextMenuItem::item(
+                    "Add Folder to Project",
+                    workspace::AddFolderToProject,
+                ));
+                if is_root {
+                    menu_entries.push(ContextMenuItem::item(
+                        "Remove from Project",
+                        workspace::RemoveWorktreeFromProject(worktree_id),
+                    ));
                 }
             }
-        } else {
-            self.selection.take();
-            menu_entries.push(ContextMenuItem::item(
-                "Add Folder to Project",
-                workspace::AddFolderToProject,
-            ));
+            menu_entries.push(ContextMenuItem::item("New File", AddFile));
+            menu_entries.push(ContextMenuItem::item("New Folder", AddDirectory));
+            menu_entries.push(ContextMenuItem::Separator);
+            menu_entries.push(ContextMenuItem::item("Copy", Copy));
+            menu_entries.push(ContextMenuItem::item("Copy Path", CopyPath));
+            menu_entries.push(ContextMenuItem::item("Cut", Cut));
+            if let Some(clipboard_entry) = self.clipboard_entry {
+                if clipboard_entry.worktree_id() == worktree.id() {
+                    menu_entries.push(ContextMenuItem::item("Paste", Paste));
+                }
+            }
+            menu_entries.push(ContextMenuItem::Separator);
+            menu_entries.push(ContextMenuItem::item("Rename", Rename));
+            if !is_root {
+                menu_entries.push(ContextMenuItem::item("Delete", Delete));
+            }
         }
 
         self.context_menu.update(cx, |menu, cx| {
@@ -779,14 +779,16 @@ impl ProjectPanel {
         new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
         cx: &mut ViewContext<Self>,
     ) {
-        let worktrees = self
-            .project
-            .read(cx)
-            .worktrees(cx)
-            .filter(|worktree| worktree.read(cx).is_visible());
-        self.visible_entries.clear();
+        let project = self.project.read(cx);
+        self.last_worktree_root_id = project
+            .visible_worktrees(cx)
+            .rev()
+            .next()
+            .and_then(|worktree| worktree.read(cx).root_entry())
+            .map(|entry| entry.id);
 
-        for worktree in worktrees {
+        self.visible_entries.clear();
+        for worktree in project.visible_worktrees(cx) {
             let snapshot = worktree.read(cx).snapshot();
             let worktree_id = snapshot.id();
 
@@ -818,6 +820,7 @@ impl ProjectPanel {
 
             let mut visible_worktree_entries = Vec::new();
             let mut entry_iter = snapshot.entries(true);
+
             while let Some(entry) = entry_iter.entry() {
                 visible_worktree_entries.push(entry.clone());
                 if Some(entry.id) == new_entry_parent_id {
@@ -1062,10 +1065,7 @@ impl ProjectPanel {
             }
         })
         .on_right_mouse_down(move |position, cx| {
-            cx.dispatch_action(DeployContextMenu {
-                entry_id: Some(entry_id),
-                position,
-            })
+            cx.dispatch_action(DeployContextMenu { entry_id, position })
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
@@ -1082,6 +1082,7 @@ impl View for ProjectPanel {
         let theme = &cx.global::<Settings>().theme.project_panel;
         let mut container_style = theme.container;
         let padding = std::mem::take(&mut container_style.padding);
+        let last_worktree_root_id = self.last_worktree_root_id;
         Stack::new()
             .with_child(
                 MouseEventHandler::new::<Tag, _, _>(0, cx, |_, cx| {
@@ -1113,10 +1114,11 @@ impl View for ProjectPanel {
                     .boxed()
                 })
                 .on_right_mouse_down(move |position, cx| {
-                    cx.dispatch_action(DeployContextMenu {
-                        entry_id: None,
-                        position,
-                    })
+                    // When deploying the context menu anywhere below the last project entry,
+                    // act as if the user clicked the root of the last worktree.
+                    if let Some(entry_id) = last_worktree_root_id {
+                        cx.dispatch_action(DeployContextMenu { entry_id, position })
+                    }
                 })
                 .boxed(),
             )
