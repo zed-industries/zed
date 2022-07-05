@@ -81,7 +81,7 @@ pub struct Shadow {
     pub color: Color,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Glyph {
     pub font_id: FontId,
     pub font_size: f32,

@@ -17,6 +17,7 @@ use gpui::{
         vector::{vec2f, Vector2F},
     },
     json::json,
+    scene::Glyph,
     text_layout::{Line, RunStyle},
     Event, FontCache, MouseRegion, PaintContext, Quad, SizeConstraint, WeakViewHandle,
 };
@@ -26,7 +27,7 @@ use settings::Settings;
 use std::{iter, rc::Rc};
 use theme::TerminalStyle;
 
-use crate::{Input, ScrollTerminal, Terminal};
+use crate::{gpui_func_tools::paint_layer, Input, ScrollTerminal, Terminal};
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
@@ -82,6 +83,7 @@ pub struct LayoutState {
     cur_size: SizeInfo,
     background_color: Color,
     background_rects: Vec<(RectF, Color)>, //Vec index == Line index for the LineSpan
+    ccc: Glyph,
 }
 
 impl TerminalEl {
@@ -188,6 +190,14 @@ impl Element for TerminalEl {
             )
         });
 
+        let g = Glyph {
+            font_id: text_style.font_id,
+            font_size: text_style.font_size,
+            id: 50,
+            origin: vec2f(0., 0.),
+            color: Color::red(),
+        };
+
         (
             constraint.max,
             LayoutState {
@@ -198,6 +208,7 @@ impl Element for TerminalEl {
                 cur_size,
                 background_rects,
                 background_color: terminal_theme.background,
+                ccc: g,
             },
         )
     }
@@ -210,64 +221,71 @@ impl Element for TerminalEl {
         cx: &mut gpui::PaintContext,
     ) -> Self::PaintState {
         //Setup element stuff
-        cx.scene.push_layer(Some(visible_bounds));
+        let clip_bounds = Some(visible_bounds);
+        paint_layer(cx, clip_bounds, |cx| {
+            //Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
+            cx.scene.push_mouse_region(MouseRegion {
+                view_id: self.view.id(),
+                mouse_down: Some(Rc::new(|_, cx| cx.focus_parent_view())),
+                bounds: visible_bounds,
+                ..Default::default()
+            });
 
-        //Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
-        cx.scene.push_mouse_region(MouseRegion {
-            view_id: self.view.id(),
-            mouse_down: Some(Rc::new(|_, cx| cx.focus_parent_view())),
-            bounds: visible_bounds,
-            ..Default::default()
-        });
+            let origin = bounds.origin() + vec2f(layout.em_width.0, 0.);
 
-        let origin = bounds.origin() + vec2f(layout.em_width.0, 0.);
+            paint_layer(cx, clip_bounds, |cx| {
+                layout.ccc.origin.set_x(visible_bounds.origin_x() + 20.);
+                layout.ccc.origin.set_y(visible_bounds.origin_y() + 20.);
+                cx.scene.push_glyph(layout.ccc)
+            });
 
-        //Start us off with a nice simple background color
-        cx.scene.push_layer(Some(visible_bounds));
-        cx.scene.push_quad(Quad {
-            bounds: RectF::new(bounds.origin(), bounds.size()),
-            background: Some(layout.background_color),
-            border: Default::default(),
-            corner_radius: 0.,
-        });
+            //Start us off with a nice simple background color
+            paint_layer(cx, clip_bounds, |cx| {
+                cx.scene.push_quad(Quad {
+                    bounds: RectF::new(bounds.origin(), bounds.size()),
+                    background: Some(layout.background_color),
+                    border: Default::default(),
+                    corner_radius: 0.,
+                });
 
-        //Draw cell backgrounds
-        for background_rect in &layout.background_rects {
-            let new_origin = origin + background_rect.0.origin();
-            cx.scene.push_quad(Quad {
-                bounds: RectF::new(new_origin, background_rect.0.size()),
-                background: Some(background_rect.1),
-                border: Default::default(),
-                corner_radius: 0.,
-            })
-        }
-        cx.scene.pop_layer();
+                //Draw cell backgrounds
+                for background_rect in &layout.background_rects {
+                    let new_origin = origin + background_rect.0.origin();
+                    cx.scene.push_quad(Quad {
+                        bounds: RectF::new(new_origin, background_rect.0.size()),
+                        background: Some(background_rect.1),
+                        border: Default::default(),
+                        corner_radius: 0.,
+                    })
+                }
+            });
 
-        //Draw text
-        cx.scene.push_layer(Some(visible_bounds));
-        let mut line_origin = origin.clone();
-        for line in &layout.lines {
-            let boundaries = RectF::new(line_origin, vec2f(bounds.width(), layout.line_height.0));
-            if boundaries.intersects(visible_bounds) {
-                line.paint(line_origin, visible_bounds, layout.line_height.0, cx);
+            paint_layer(cx, clip_bounds, |cx| {
+                let mut line_origin = origin.clone();
+                for line in &layout.lines {
+                    let boundaries =
+                        RectF::new(line_origin, vec2f(bounds.width(), layout.line_height.0));
+                    if boundaries.intersects(visible_bounds) {
+                        line.paint(line_origin, visible_bounds, layout.line_height.0, cx);
+                    }
+                    line_origin.set_y(boundaries.max_y());
+                }
+            });
+
+            //Draw cursor
+            if let Some(cursor) = &layout.cursor {
+                paint_layer(cx, clip_bounds, |cx| {
+                    cursor.paint(origin, cx);
+                })
             }
-            line_origin.set_y(boundaries.max_y());
-        }
-        cx.scene.pop_layer();
 
-        //Draw cursor
-        if let Some(cursor) = &layout.cursor {
-            cx.scene.push_layer(Some(visible_bounds));
-            cursor.paint(origin, cx);
-            cx.scene.pop_layer();
-        }
-
-        #[cfg(debug_assertions)]
-        if DEBUG_GRID {
-            draw_debug_grid(bounds, layout, cx);
-        }
-
-        cx.scene.pop_layer();
+            #[cfg(debug_assertions)]
+            if DEBUG_GRID {
+                paint_layer(cx, clip_bounds, |cx| {
+                    draw_debug_grid(bounds, layout, cx);
+                });
+            }
+        });
     }
 
     fn dispatch_event(

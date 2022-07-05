@@ -15,7 +15,7 @@ pub use clipboard::ClipboardItem;
 pub mod fonts;
 pub mod geometry;
 mod presenter;
-mod scene;
+pub mod scene;
 pub use scene::{Border, CursorRegion, MouseRegion, MouseRegionId, Quad, Scene};
 pub mod text_layout;
 pub use text_layout::TextLayoutCache;

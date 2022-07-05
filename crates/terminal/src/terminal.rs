@@ -37,6 +37,7 @@ const UP_SEQ: &str = "\x1b[A";
 const DOWN_SEQ: &str = "\x1b[B";
 const DEFAULT_TITLE: &str = "Terminal";
 
+pub mod gpui_func_tools;
 pub mod terminal_element;
 
 ///Action for carrying the input to the PTY
@@ -479,8 +480,9 @@ fn to_alac_rgb(color: Color) -> AlacRgb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal_element::{build_chunks, BuiltChunks};
+    use alacritty_terminal::{grid::GridIterator, term::cell::Cell};
     use gpui::TestAppContext;
+    use itertools::Itertools;
 
     ///Basic integration test, can we get the terminal to show up, execute a command,
     //and produce noticable output?
@@ -496,14 +498,18 @@ mod tests {
         terminal
             .condition(cx, |terminal, _cx| {
                 let term = terminal.term.clone();
-                let BuiltChunks { chunks, .. } = build_chunks(
-                    term.lock().renderable_content().display_iter,
-                    &Default::default(),
-                    Default::default(),
-                );
-                let content = chunks.iter().map(|e| e.0.trim()).collect::<String>();
+                let content = grid_as_str(term.lock().renderable_content().display_iter);
                 content.contains("7")
             })
             .await;
+    }
+
+    pub(crate) fn grid_as_str(grid_iterator: GridIterator<Cell>) -> String {
+        let lines = grid_iterator.group_by(|i| i.point.line.0);
+        lines
+            .into_iter()
+            .map(|(_, line)| line.map(|i| i.c).collect::<String>())
+            .collect::<Vec<String>>()
+            .join("\n")
     }
 }
