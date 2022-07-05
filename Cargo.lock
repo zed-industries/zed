@@ -1951,15 +1951,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
 
 [[package]]
-name = "future-wrap"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5bab12b2506593396c1339caf22beeb6f5cbe95dac5e376b71a3d17cbe2c4630"
-dependencies = [
- "pin-project",
-]
-
-[[package]]
 name = "futures"
 version = "0.3.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7018,7 +7009,6 @@ dependencies = [
  "env_logger",
  "file_finder",
  "fsevent",
- "future-wrap",
  "futures",
  "fuzzy",
  "go_to_line",

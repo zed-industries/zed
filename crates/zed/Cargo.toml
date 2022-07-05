@@ -102,8 +102,6 @@ tree-sitter-toml = { git = "https://github.com/tree-sitter/tree-sitter-toml", re
 tree-sitter-typescript = "0.20.1"
 url = "2.2"
 
-# TODO(isaac): remove this
-future-wrap = "0.1.1"
 
 [dev-dependencies]
 text = { path = "../text", features = ["test-support"] }

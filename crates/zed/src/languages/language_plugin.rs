@@ -9,31 +9,18 @@ use plugin_runtime::{Plugin, PluginBuilder, WasiFn};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
 
-use future_wrap::*;
-
 pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
     let plugin = PluginBuilder::new_with_default_ctx()?
         .host_function_async("command", |command: String| async move {
             dbg!(&command);
-
-            // TODO: actual thing
             let mut args = command.split(' ');
             let command = args.next().unwrap();
-
-            dbg!("Running external command");
-
-            let start = std::time::Instant::now();
-            let future = smol::process::Command::new(command).args(args).output();
-            let future = future.wrap(|fut, cx| {
-                dbg!("Poll command!");
-
-                let res = fut.poll(cx);
-                res
-            });
-            let future = future.await;
-            dbg!(start.elapsed());
-
-            future.log_err().map(|output| output.stdout)
+            smol::process::Command::new(command)
+                .args(args)
+                .output()
+                .await
+                .log_err()
+                .map(|output| output.stdout)
         })?
         .init(include_bytes!("../../../../plugins/bin/json_language.wasm"))
         .await?;

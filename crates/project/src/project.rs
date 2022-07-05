@@ -1732,8 +1732,9 @@ impl Project {
                 .await?;
             this.update(&mut cx, |this, cx| {
                 this.assign_language_to_buffer(&buffer, cx);
-                this.register_buffer_with_language_server(&buffer, cx).await;
-            });
+                this.register_buffer_with_language_server(&buffer, cx)
+            })
+            .await;
             Ok(())
         })
     }
@@ -1791,6 +1792,7 @@ impl Project {
         .detach();
 
         self.assign_language_to_buffer(buffer, cx);
+        // TODO(isaac): should this be done in the background
         self.register_buffer_with_language_server(buffer, cx).await;
         cx.observe_release(buffer, |this, buffer, cx| {
             if let Some(file) = File::from_dyn(buffer.file()) {
