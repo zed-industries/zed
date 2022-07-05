@@ -7,6 +7,7 @@ use std::borrow::Cow;
 use crate::{
     motion::Motion,
     state::{Mode, Operator},
+    utils::copy_selections_content,
     Vim,
 };
 use change::init as change_init;
@@ -200,11 +201,12 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
                 if let Some(item) = cx.as_mut().read_from_clipboard() {
+                    copy_selections_content(editor, editor.selections.line_mode, cx);
                     let mut clipboard_text = Cow::Borrowed(item.text());
                     if let Some(mut clipboard_selections) =
                         item.metadata::<Vec<ClipboardSelection>>()
                     {
-                        let (display_map, selections) = editor.selections.all_display(cx);
+                        let (display_map, selections) = editor.selections.all_adjusted_display(cx);
                         let all_selections_were_entire_line =
                             clipboard_selections.iter().all(|s| s.is_entire_line);
                         if clipboard_selections.len() != selections.len() {

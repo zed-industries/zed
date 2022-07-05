@@ -6,7 +6,7 @@ use workspace::Workspace;
 
 use crate::{motion::Motion, state::Mode, utils::copy_selections_content, Vim};
 
-actions!(vim, [VisualDelete, VisualChange, VisualYank]);
+actions!(vim, [VisualDelete, VisualChange, VisualYank, VisualPaste]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(change);
