@@ -39,6 +39,7 @@ pub struct LanguageSettings {
     pub preferred_line_length: Option<u32>,
     pub format_on_save: Option<bool>,
     pub enable_language_server: Option<bool>,
+    pub autosave: Option<Autosave>,
 }
 
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -47,6 +48,15 @@ pub enum SoftWrap {
     None,
     EditorWidth,
     PreferredLineLength,
+}
+
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Autosave {
+    Off,
+    AfterDelay { milliseconds: usize },
+    OnFocusChange,
+    OnWindowChange,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
@@ -126,6 +136,11 @@ impl Settings {
     pub fn format_on_save(&self, language: Option<&str>) -> bool {
         self.language_setting(language, |settings| settings.format_on_save)
             .unwrap_or(true)
+    }
+
+    pub fn autosave(&self, language: Option<&str>) -> Autosave {
+        self.language_setting(language, |settings| settings.autosave)
+            .unwrap_or(Autosave::Off)
     }
 
     pub fn enable_language_server(&self, language: Option<&str>) -> bool {
@@ -212,6 +227,7 @@ impl Settings {
             &mut self.language_settings.preferred_line_length,
             data.editor.preferred_line_length,
         );
+        merge_option(&mut self.language_settings.autosave, data.editor.autosave);
 
         for (language_name, settings) in data.language_overrides.clone().into_iter() {
             let target = self
@@ -230,6 +246,7 @@ impl Settings {
                 &mut target.preferred_line_length,
                 settings.preferred_line_length,
             );
+            merge_option(&mut target.autosave, settings.autosave);
         }
     }
 }
