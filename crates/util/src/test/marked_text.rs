@@ -96,7 +96,7 @@ pub fn marked_text_ranges_by(
                     .into_iter()
                     .zip(ends)
                     .map(|(start, end)| {
-                        assert!(start >= end, "marked ranges must be disjoint");
+                        assert!(end >= start, "marked ranges must be disjoint");
                         end..start
                     })
                     .collect::<Vec<Range<usize>>>();
