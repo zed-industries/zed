@@ -1,6 +1,7 @@
 use super::installation::{latest_github_release, GitHubLspBinaryVersion};
 use anyhow::{anyhow, Result};
 use async_compression::futures::bufread::GzipDecoder;
+use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::{future::BoxFuture, io::BufReader, FutureExt, StreamExt};
 pub use language::*;
@@ -19,6 +20,7 @@ use util::{ResultExt, TryFutureExt};
 
 pub struct RustLspAdapter;
 
+#[async_trait]
 impl LspAdapter for RustLspAdapter {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("rust-analyzer".into())
@@ -28,21 +30,18 @@ impl LspAdapter for RustLspAdapter {
         &self,
         http: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        async move {
-            let release = latest_github_release("rust-analyzer/rust-analyzer", http).await?;
-            let asset_name = format!("rust-analyzer-{}-apple-darwin.gz", consts::ARCH);
-            let asset = release
-                .assets
-                .iter()
-                .find(|asset| asset.name == asset_name)
-                .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
-            let version = GitHubLspBinaryVersion {
-                name: release.name,
-                url: asset.browser_download_url.clone(),
-            };
-            Ok(Box::new(version) as Box<_>)
-        }
-        .boxed()
+        let release = latest_github_release("rust-analyzer/rust-analyzer", http).await?;
+        let asset_name = format!("rust-analyzer-{}-apple-darwin.gz", consts::ARCH);
+        let asset = release
+            .assets
+            .iter()
+            .find(|asset| asset.name == asset_name)
+            .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
+        let version = GitHubLspBinaryVersion {
+            name: release.name,
+            url: asset.browser_download_url.clone(),
+        };
+        Ok(Box::new(version) as Box<_>)
     }
 
     async fn fetch_server_binary(
@@ -51,55 +50,49 @@ impl LspAdapter for RustLspAdapter {
         http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
     ) -> Result<PathBuf> {
-        async move {
-            let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
-            let destination_path = container_dir.join(format!("rust-analyzer-{}", version.name));
+        let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
+        let destination_path = container_dir.join(format!("rust-analyzer-{}", version.name));
 
-            if fs::metadata(&destination_path).await.is_err() {
-                let mut response = http
-                    .get(&version.url, Default::default(), true)
-                    .await
-                    .map_err(|err| anyhow!("error downloading release: {}", err))?;
-                let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-                let mut file = File::create(&destination_path).await?;
-                futures::io::copy(decompressed_bytes, &mut file).await?;
-                fs::set_permissions(
-                    &destination_path,
-                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-                )
-                .await?;
+        if fs::metadata(&destination_path).await.is_err() {
+            let mut response = http
+                .get(&version.url, Default::default(), true)
+                .await
+                .map_err(|err| anyhow!("error downloading release: {}", err))?;
+            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+            let mut file = File::create(&destination_path).await?;
+            futures::io::copy(decompressed_bytes, &mut file).await?;
+            fs::set_permissions(
+                &destination_path,
+                <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+            )
+            .await?;
 
-                if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
-                    while let Some(entry) = entries.next().await {
-                        if let Some(entry) = entry.log_err() {
-                            let entry_path = entry.path();
-                            if entry_path.as_path() != destination_path {
-                                fs::remove_file(&entry_path).await.log_err();
-                            }
+            if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
+                while let Some(entry) = entries.next().await {
+                    if let Some(entry) = entry.log_err() {
+                        let entry_path = entry.path();
+                        if entry_path.as_path() != destination_path {
+                            fs::remove_file(&entry_path).await.log_err();
                         }
                     }
                 }
             }
-
-            Ok(destination_path)
         }
-        .boxed()
+
+        Ok(destination_path)
     }
 
-    async fn cached_server_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> BoxFuture<'static, Option<PathBuf>> {
-        async move {
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
+        (|| async move {
             let mut last = None;
             let mut entries = fs::read_dir(&container_dir).await?;
             while let Some(entry) = entries.next().await {
                 last = Some(entry?.path());
             }
             last.ok_or_else(|| anyhow!("no cached binary"))
-        }
+        })()
+        .await
         .log_err()
-        .boxed()
     }
 
     async fn disk_based_diagnostic_sources(&self) -> Vec<String> {
@@ -337,12 +330,12 @@ mod tests {
         let highlight_field = grammar.highlight_id_for_name("property").unwrap();
 
         assert_eq!(
-            language.label_for_completion(&lsp::CompletionItem {
+            smol::block_on(language.label_for_completion(&lsp::CompletionItem {
                 kind: Some(lsp::CompletionItemKind::FUNCTION),
                 label: "hello(…)".to_string(),
                 detail: Some("fn(&mut Option<T>) -> Vec<T>".to_string()),
                 ..Default::default()
-            }),
+            })),
             Some(CodeLabel {
                 text: "hello(&mut Option<T>) -> Vec<T>".to_string(),
                 filter_range: 0..5,
@@ -358,12 +351,12 @@ mod tests {
         );
 
         assert_eq!(
-            language.label_for_completion(&lsp::CompletionItem {
+            smol::block_on(language.label_for_completion(&lsp::CompletionItem {
                 kind: Some(lsp::CompletionItemKind::FIELD),
                 label: "len".to_string(),
                 detail: Some("usize".to_string()),
                 ..Default::default()
-            }),
+            })),
             Some(CodeLabel {
                 text: "len: usize".to_string(),
                 filter_range: 0..3,
@@ -372,12 +365,12 @@ mod tests {
         );
 
         assert_eq!(
-            language.label_for_completion(&lsp::CompletionItem {
+            smol::block_on(language.label_for_completion(&lsp::CompletionItem {
                 kind: Some(lsp::CompletionItemKind::FUNCTION),
                 label: "hello(…)".to_string(),
                 detail: Some("fn(&mut Option<T>) -> Vec<T>".to_string()),
                 ..Default::default()
-            }),
+            })),
             Some(CodeLabel {
                 text: "hello(&mut Option<T>) -> Vec<T>".to_string(),
                 filter_range: 0..5,
@@ -415,7 +408,7 @@ mod tests {
         let highlight_keyword = grammar.highlight_id_for_name("keyword").unwrap();
 
         assert_eq!(
-            language.label_for_symbol("hello", lsp::SymbolKind::FUNCTION),
+            smol::block_on(language.label_for_symbol("hello", lsp::SymbolKind::FUNCTION)),
             Some(CodeLabel {
                 text: "fn hello".to_string(),
                 filter_range: 3..8,
@@ -424,7 +417,7 @@ mod tests {
         );
 
         assert_eq!(
-            language.label_for_symbol("World", lsp::SymbolKind::TYPE_PARAMETER),
+            smol::block_on(language.label_for_symbol("World", lsp::SymbolKind::TYPE_PARAMETER)),
             Some(CodeLabel {
                 text: "type World".to_string(),
                 filter_range: 5..10,

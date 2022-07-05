@@ -1,5 +1,6 @@
 use super::installation::{latest_github_release, GitHubLspBinaryVersion};
 use anyhow::{anyhow, Context, Result};
+use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 pub use language::*;
@@ -23,21 +24,18 @@ impl super::LspAdapter for CLspAdapter {
         &self,
         http: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        async move {
-            let release = latest_github_release("clangd/clangd", http).await?;
-            let asset_name = format!("clangd-mac-{}.zip", release.name);
-            let asset = release
-                .assets
-                .iter()
-                .find(|asset| asset.name == asset_name)
-                .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
-            let version = GitHubLspBinaryVersion {
-                name: release.name,
-                url: asset.browser_download_url.clone(),
-            };
-            Ok(Box::new(version) as Box<_>)
-        }
-        .boxed()
+        let release = latest_github_release("clangd/clangd", http).await?;
+        let asset_name = format!("clangd-mac-{}.zip", release.name);
+        let asset = release
+            .assets
+            .iter()
+            .find(|asset| asset.name == asset_name)
+            .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
+        let version = GitHubLspBinaryVersion {
+            name: release.name,
+            url: asset.browser_download_url.clone(),
+        };
+        Ok(Box::new(version) as Box<_>)
     }
 
     async fn fetch_server_binary(
@@ -47,54 +45,51 @@ impl super::LspAdapter for CLspAdapter {
         container_dir: PathBuf,
     ) -> Result<PathBuf> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        async move {
-            let zip_path = container_dir.join(format!("clangd_{}.zip", version.name));
-            let version_dir = container_dir.join(format!("clangd_{}", version.name));
-            let binary_path = version_dir.join("bin/clangd");
+        let zip_path = container_dir.join(format!("clangd_{}.zip", version.name));
+        let version_dir = container_dir.join(format!("clangd_{}", version.name));
+        let binary_path = version_dir.join("bin/clangd");
 
-            if fs::metadata(&binary_path).await.is_err() {
-                let mut response = http
-                    .get(&version.url, Default::default(), true)
-                    .await
-                    .context("error downloading release")?;
-                let mut file = File::create(&zip_path).await?;
-                if !response.status().is_success() {
-                    Err(anyhow!(
-                        "download failed with status {}",
-                        response.status().to_string()
-                    ))?;
-                }
-                futures::io::copy(response.body_mut(), &mut file).await?;
+        if fs::metadata(&binary_path).await.is_err() {
+            let mut response = http
+                .get(&version.url, Default::default(), true)
+                .await
+                .context("error downloading release")?;
+            let mut file = File::create(&zip_path).await?;
+            if !response.status().is_success() {
+                Err(anyhow!(
+                    "download failed with status {}",
+                    response.status().to_string()
+                ))?;
+            }
+            futures::io::copy(response.body_mut(), &mut file).await?;
 
-                let unzip_status = smol::process::Command::new("unzip")
-                    .current_dir(&container_dir)
-                    .arg(&zip_path)
-                    .output()
-                    .await?
-                    .status;
-                if !unzip_status.success() {
-                    Err(anyhow!("failed to unzip clangd archive"))?;
-                }
+            let unzip_status = smol::process::Command::new("unzip")
+                .current_dir(&container_dir)
+                .arg(&zip_path)
+                .output()
+                .await?
+                .status;
+            if !unzip_status.success() {
+                Err(anyhow!("failed to unzip clangd archive"))?;
+            }
 
-                if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
-                    while let Some(entry) = entries.next().await {
-                        if let Some(entry) = entry.log_err() {
-                            let entry_path = entry.path();
-                            if entry_path.as_path() != version_dir {
-                                fs::remove_dir_all(&entry_path).await.log_err();
-                            }
+            if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
+                while let Some(entry) = entries.next().await {
+                    if let Some(entry) = entry.log_err() {
+                        let entry_path = entry.path();
+                        if entry_path.as_path() != version_dir {
+                            fs::remove_dir_all(&entry_path).await.log_err();
                         }
                     }
                 }
             }
-
-            Ok(binary_path)
         }
-        .boxed()
+
+        Ok(binary_path)
     }
 
     async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
-        async move {
+        (|| async move {
             let mut last_clangd_dir = None;
             let mut entries = fs::read_dir(&container_dir).await?;
             while let Some(entry) = entries.next().await {
@@ -113,9 +108,9 @@ impl super::LspAdapter for CLspAdapter {
                     clangd_dir
                 ))
             }
-        }
+        })()
+        .await
         .log_err()
-        .boxed()
     }
 
     async fn label_for_completion(

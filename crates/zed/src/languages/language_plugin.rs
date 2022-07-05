@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::lock::Mutex;
 use futures::Future;
@@ -85,35 +86,26 @@ struct Versions {
 // I wish there was high-level instrumentation for this...
 // - it's totally a deadlock, the proof is in the pudding
 
-// macro_rules! call_block {
-//     ($self:ident, $name:expr, $arg:expr) => {
-//         $self.executor.block(async {
-//             dbg!("starting to block on something");
-//             let locked = $self.runtime.lock();
-//             dbg!("locked runtime");
-//             // TODO: No blocking calls!
-//             let mut awaited = locked.await;
-//             dbg!("awaited lock");
-//             let called = awaited.call($name, $arg);
-//             dbg!("called function");
-//             let result = called.await;
-//             dbg!("awaited result");
-//             result
-//         })
-//     };
-// }
-
-// TODO: convert to async trait
-
 #[async_trait]
 impl LspAdapter for PluginLspAdapter {
     async fn name(&self) -> LanguageServerName {
-        let name: String = call_block!(self, &self.name, ()).unwrap();
+        let name: String = self
+            .runtime
+            .lock()
+            .await
+            .call(&self.name, ())
+            .await
+            .unwrap();
         LanguageServerName(name.into())
     }
 
     async fn server_args<'a>(&'a self) -> Vec<String> {
-        call_block!(self, &self.server_args, ()).unwrap()
+        self.runtime
+            .lock()
+            .await
+            .call(&self.server_args, ())
+            .await
+            .unwrap()
     }
 
     async fn fetch_latest_server_version(
@@ -133,15 +125,15 @@ impl LspAdapter for PluginLspAdapter {
                     .ok_or_else(|| anyhow!("Could not fetch latest server version"))
                     .map(|v| Box::new(v) as Box<_>)
             })
-            .boxed()
+            .await
     }
 
-    fn fetch_server_binary(
+    async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
         _: Arc<dyn HttpClient>,
         container_dir: PathBuf,
-    ) -> BoxFuture<'static, Result<PathBuf>> {
+    ) -> Result<PathBuf> {
         let version = *version.downcast::<String>().unwrap();
         let runtime = self.runtime.clone();
         let function = self.fetch_server_binary;
@@ -154,10 +146,10 @@ impl LspAdapter for PluginLspAdapter {
                 runtime.remove_resource(handle)?;
                 result.map_err(|e| anyhow!("{}", e))
             })
-            .boxed()
+            .await
     }
 
-    fn cached_server_binary(&self, container_dir: PathBuf) -> BoxFuture<'static, Option<PathBuf>> {
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
         let runtime = self.runtime.clone();
         let function = self.cached_server_binary;
 
@@ -169,10 +161,10 @@ impl LspAdapter for PluginLspAdapter {
                 runtime.remove_resource(handle).ok()?;
                 result
             })
-            .boxed()
+            .await
     }
 
-    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
+    // async fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
     // fn label_for_completion(
     //     &self,
@@ -193,8 +185,14 @@ impl LspAdapter for PluginLspAdapter {
     //     })
     // }
 
-    fn initialization_options(&self) -> Option<serde_json::Value> {
-        let string: String = call_block!(self, &self.initialization_options, ()).log_err()?;
+    async fn initialization_options(&self) -> Option<serde_json::Value> {
+        let string: String = self
+            .runtime
+            .lock()
+            .await
+            .call(&self.initialization_options, ())
+            .await
+            .log_err()?;
 
         serde_json::from_str(&string).ok()
     }

@@ -712,61 +712,64 @@ impl Project {
     }
 
     fn on_settings_changed(&mut self, cx: &mut ModelContext<'_, Self>) {
-        let settings = cx.global::<Settings>();
-        self.lsp_settings_changed = Some(cx.spawn(|project, cx| async {
-            let language_servers_to_start = project.update(&mut cx, |project, cx| {
-                let mut language_servers_to_start = Vec::new();
-                for buffer in self.opened_buffers.values() {
-                    if let Some(buffer) = buffer.upgrade(cx) {
-                        let buffer = buffer.read(cx);
-                        if let Some((file, language)) =
-                            File::from_dyn(buffer.file()).zip(buffer.language())
-                        {
-                            if settings.enable_language_server(Some(&language.name())) {
-                                let worktree = file.worktree.read(cx);
-                                language_servers_to_start.push((
-                                    worktree.id(),
-                                    worktree.as_local().unwrap().abs_path().clone(),
-                                    language.clone(),
-                                ));
-                            }
-                        }
-                    }
-                }
-                language_servers_to_start
-            });
+        // let settings = cx.global::<Settings>();
+        // self.lsp_settings_changed = Some(cx.spawn(|project, cx| async {
+        //     let language_servers_to_start = project.update(&mut cx, |project, cx| {
+        //         let mut language_servers_to_start = Vec::new();
+        //         for buffer in self.opened_buffers.values() {
+        //             if let Some(buffer) = buffer.upgrade(cx) {
+        //                 let buffer = buffer.read(cx);
+        //                 if let Some((file, language)) =
+        //                     File::from_dyn(buffer.file()).zip(buffer.language())
+        //                 {
+        //                     if settings.enable_language_server(Some(&language.name())) {
+        //                         let worktree = file.worktree.read(cx);
+        //                         language_servers_to_start.push((
+        //                             worktree.id(),
+        //                             worktree.as_local().unwrap().abs_path().clone(),
+        //                             language.clone(),
+        //                         ));
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //         language_servers_to_start
+        //     });
 
-            let mut language_servers_to_stop = Vec::new();
-            for language in self.languages.to_vec() {
-                if let Some(lsp_adapter) = language.lsp_adapter() {
-                    if !settings.enable_language_server(Some(&language.name())) {
-                        let lsp_name = lsp_adapter.name().await;
-                        for (worktree_id, started_lsp_name) in self.started_language_servers.keys()
-                        {
-                            if lsp_name == *started_lsp_name {
-                                language_servers_to_stop
-                                    .push((*worktree_id, started_lsp_name.clone()));
-                            }
-                        }
-                    }
-                }
-            }
+        //     let mut language_servers_to_stop = Vec::new();
+        //     for language in self.languages.to_vec() {
+        //         if let Some(lsp_adapter) = language.lsp_adapter() {
+        //             if !settings.enable_language_server(Some(&language.name())) {
+        //                 let lsp_name = lsp_adapter.name().await;
+        //                 for (worktree_id, started_lsp_name) in self.started_language_servers.keys()
+        //                 {
+        //                     if lsp_name == *started_lsp_name {
+        //                         language_servers_to_stop
+        //                             .push((*worktree_id, started_lsp_name.clone()));
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //     }
 
-            project.update(&mut cx, |project, cx| {
-                // Stop all newly-disabled language servers.
-                for (worktree_id, adapter_name) in language_servers_to_stop {
-                    self.stop_language_server(worktree_id, adapter_name, cx)
-                        .detach();
-                }
+        //     project.update(&mut cx, |project, cx| {
+        //         // Stop all newly-disabled language servers.
+        //         for (worktree_id, adapter_name) in language_servers_to_stop {
+        //             self.stop_language_server(worktree_id, adapter_name, cx)
+        //                 .detach();
+        //         }
 
-                // Start all the newly-enabled language servers.
-                for (worktree_id, worktree_path, language) in language_servers_to_start {
-                    self.start_language_server(worktree_id, worktree_path, language, cx);
-                }
+        //         // Start all the newly-enabled language servers.
+        //         for (worktree_id, worktree_path, language) in language_servers_to_start {
+        //             self.start_language_server(worktree_id, worktree_path, language, cx);
+        //         }
 
-                cx.notify();
-            });
-        }))
+        //         cx.notify();
+        //     });
+        // }))
+
+        // TODO(isaac): uncomment the above
+        todo!()
     }
 
     pub fn buffer_for_id(&self, remote_id: u64, cx: &AppContext) -> Option<ModelHandle<Buffer>> {
@@ -2186,6 +2189,7 @@ impl Project {
                                         language_server.clone(),
                                         cx,
                                     )
+
                                 }
                             })
                             .detach();
@@ -2496,9 +2500,12 @@ impl Project {
             return;
         }
 
+        let same_token =
+            Some(token.as_ref()) == disk_based_diagnostics_progress_token.as_ref().map(|x| &**x);
+
         match progress {
             lsp::WorkDoneProgress::Begin(report) => {
-                if Some(token) == disk_based_diagnostics_progress_token {
+                if same_token {
                     language_server_status.has_pending_diagnostic_updates = true;
                     self.disk_based_diagnostics_started(server_id, cx);
                     self.broadcast_language_server_update(
@@ -2529,7 +2536,7 @@ impl Project {
                 }
             }
             lsp::WorkDoneProgress::Report(report) => {
-                if Some(token) != disk_based_diagnostics_progress_token {
+                if !same_token {
                     self.on_lsp_work_progress(
                         server_id,
                         token.clone(),
@@ -2555,7 +2562,7 @@ impl Project {
             lsp::WorkDoneProgress::End(_) => {
                 language_server_status.progress_tokens.remove(&token);
 
-                if Some(token) == disk_based_diagnostics_progress_token {
+                if same_token {
                     language_server_status.has_pending_diagnostic_updates = false;
                     self.disk_based_diagnostics_finished(server_id, cx);
                     self.broadcast_language_server_update(
@@ -3299,16 +3306,12 @@ impl Project {
                     return Ok(Default::default());
                 };
 
-                struct PartialSymbol<F1, F2>
-                where
-                    F1: Future<Output = LanguageServerName>,
-                    F2: Future<Output = Option<CodeLabel>>,
-                {
+                struct PartialSymbol {
                     source_worktree_id: WorktreeId,
                     worktree_id: WorktreeId,
-                    language_server_name: F1,
+                    adapter: Arc<dyn LspAdapter>,
                     path: PathBuf,
-                    label: Option<F2>,
+                    language: Option<Arc<Language>>,
                     name: String,
                     kind: lsp::SymbolKind,
                     range: Range<PointUtf16>,
@@ -3334,23 +3337,17 @@ impl Project {
                                 path = relativize_path(&worktree_abs_path, &abs_path);
                             }
 
-                            let label = match this.languages.select_language(&path) {
-                                Some(language) => Some(
-                                    language.label_for_symbol(&lsp_symbol.name, lsp_symbol.kind),
-                                ),
-                                None => None,
-                            };
-
+                            let language = this.languages.select_language(&path).clone();
                             let signature = this.symbol_signature(worktree_id, &path);
-                            let language_server_name = adapter.name();
 
                             partial_symbols.push(PartialSymbol {
                                 source_worktree_id,
                                 worktree_id,
-                                language_server_name,
+                                // TODO: just pass out single adapter?
+                                adapter: adapter.clone(),
                                 name: lsp_symbol.name,
                                 kind: lsp_symbol.kind,
-                                label,
+                                language,
                                 path,
                                 range: range_from_lsp(lsp_symbol.location.range),
                                 signature,
@@ -3363,16 +3360,18 @@ impl Project {
 
                 let mut symbols = Vec::new();
                 for ps in partial_symbols.into_iter() {
-                    let label = match ps.label {
-                        Some(label) => label.await,
+                    let label = match ps.language {
+                        Some(language) => language.label_for_symbol(&ps.name, ps.kind).await,
                         None => None,
                     }
                     .unwrap_or_else(|| CodeLabel::plain(ps.name.clone(), None));
 
+                    let language_server_name = ps.adapter.name().await;
+
                     symbols.push(Symbol {
                         source_worktree_id: ps.source_worktree_id,
                         worktree_id: ps.worktree_id,
-                        language_server_name: ps.language_server_name.await,
+                        language_server_name,
                         name: ps.name,
                         kind: ps.kind,
                         label,
@@ -3394,10 +3393,11 @@ impl Project {
                 let mut symbols = Vec::new();
                 if let Some(this) = this.upgrade(&cx) {
                     let new_symbols = this.read_with(&cx, |this, _| {
-                        response
-                            .symbols
-                            .into_iter()
-                            .map(|symbol| this.deserialize_symbol(symbol))
+                        let mut new_symbols = Vec::new();
+                        for symbol in response.symbols.into_iter() {
+                            new_symbols.push(this.deserialize_symbol(symbol));
+                        }
+                        new_symbols
                     });
                     for new_symbol in new_symbols {
                         if let Some(new_symbol) = new_symbol.await.ok() {
@@ -3533,10 +3533,10 @@ impl Project {
                     Default::default()
                 };
 
-                struct PartialCompletion<F: Future<Output = Option<CodeLabel>>> {
+                struct PartialCompletion {
                     pub old_range: Range<Anchor>,
                     pub new_text: String,
-                    pub label: Option<F>,
+                    pub language: Option<Arc<Language>>,
                     pub lsp_completion: lsp::CompletionItem,
                 }
 
@@ -3656,15 +3656,10 @@ impl Project {
                             }
                         };
 
-                        let label = match language.as_ref() {
-                            Some(l) => Some(l.label_for_completion(&lsp_completion)),
-                            None => None,
-                        };
-
                         let partial_completion = PartialCompletion {
                             old_range,
                             new_text,
-                            label,
+                            language: language.clone(),
                             lsp_completion,
                         };
 
@@ -3676,8 +3671,8 @@ impl Project {
                 let mut result = Vec::new();
 
                 for pc in partial_completions.into_iter() {
-                    let label = match pc.label {
-                        Some(label) => label.await,
+                    let label = match pc.language.as_ref() {
+                        Some(l) => l.label_for_completion(&pc.lsp_completion).await,
                         None => None,
                     }
                     .unwrap_or_else(|| {
@@ -3716,10 +3711,11 @@ impl Project {
                     })
                     .await;
 
-                let completions = Vec::new();
+                let mut completions = Vec::new();
                 for completion in response.completions.into_iter() {
-                    completions
-                        .push(language::proto::deserialize_completion(completion, language).await);
+                    completions.push(
+                        language::proto::deserialize_completion(completion, language.clone()).await,
+                    );
                 }
                 completions.into_iter().collect()
             })

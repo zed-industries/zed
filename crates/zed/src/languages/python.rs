@@ -1,5 +1,6 @@
 use super::installation::{npm_install_packages, npm_package_latest_version};
 use anyhow::{anyhow, Context, Result};
+use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use language::{LanguageServerName, LspAdapter};
@@ -31,7 +32,7 @@ impl LspAdapter for PythonLspAdapter {
         &self,
         _: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Any + Send>> {
-        async move { Ok(Box::new(npm_package_latest_version("pyright").await?) as Box<_>) }.boxed()
+        Ok(Box::new(npm_package_latest_version("pyright").await?) as Box<_>)
     }
 
     async fn fetch_server_binary(
@@ -41,35 +42,32 @@ impl LspAdapter for PythonLspAdapter {
         container_dir: PathBuf,
     ) -> Result<PathBuf> {
         let version = version.downcast::<String>().unwrap();
-        async move {
-            let version_dir = container_dir.join(version.as_str());
-            fs::create_dir_all(&version_dir)
-                .await
-                .context("failed to create version directory")?;
-            let binary_path = version_dir.join(Self::BIN_PATH);
+        let version_dir = container_dir.join(version.as_str());
+        fs::create_dir_all(&version_dir)
+            .await
+            .context("failed to create version directory")?;
+        let binary_path = version_dir.join(Self::BIN_PATH);
 
-            if fs::metadata(&binary_path).await.is_err() {
-                npm_install_packages([("pyright", version.as_str())], &version_dir).await?;
+        if fs::metadata(&binary_path).await.is_err() {
+            npm_install_packages([("pyright", version.as_str())], &version_dir).await?;
 
-                if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
-                    while let Some(entry) = entries.next().await {
-                        if let Some(entry) = entry.log_err() {
-                            let entry_path = entry.path();
-                            if entry_path.as_path() != version_dir {
-                                fs::remove_dir_all(&entry_path).await.log_err();
-                            }
+            if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
+                while let Some(entry) = entries.next().await {
+                    if let Some(entry) = entry.log_err() {
+                        let entry_path = entry.path();
+                        if entry_path.as_path() != version_dir {
+                            fs::remove_dir_all(&entry_path).await.log_err();
                         }
                     }
                 }
             }
-
-            Ok(binary_path)
         }
-        .boxed()
+
+        Ok(binary_path)
     }
 
     async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
-        async move {
+        (|| async move {
             let mut last_version_dir = None;
             let mut entries = fs::read_dir(&container_dir).await?;
             while let Some(entry) = entries.next().await {
@@ -88,9 +86,9 @@ impl LspAdapter for PythonLspAdapter {
                     last_version_dir
                 ))
             }
-        }
+        })()
+        .await
         .log_err()
-        .boxed()
     }
 
     async fn label_for_completion(

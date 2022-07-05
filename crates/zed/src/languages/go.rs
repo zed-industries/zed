@@ -1,5 +1,6 @@
 use super::installation::latest_github_release;
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 pub use language::*;
@@ -36,18 +37,15 @@ impl super::LspAdapter for GoLspAdapter {
         &self,
         http: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        async move {
-            let release = latest_github_release("golang/tools", http).await?;
-            let version: Option<String> = release.name.strip_prefix("gopls/v").map(str::to_string);
-            if version.is_none() {
-                log::warn!(
-                    "couldn't infer gopls version from github release name '{}'",
-                    release.name
-                );
-            }
-            Ok(Box::new(version) as Box<_>)
+        let release = latest_github_release("golang/tools", http).await?;
+        let version: Option<String> = release.name.strip_prefix("gopls/v").map(str::to_string);
+        if version.is_none() {
+            log::warn!(
+                "couldn't infer gopls version from github release name '{}'",
+                release.name
+            );
         }
-        .boxed()
+        Ok(Box::new(version) as Box<_>)
     }
 
     async fn fetch_server_binary(
@@ -59,65 +57,62 @@ impl super::LspAdapter for GoLspAdapter {
         let version = version.downcast::<Option<String>>().unwrap();
         let this = *self;
 
-        async move {
-            if let Some(version) = *version {
-                let binary_path = container_dir.join(&format!("gopls_{version}"));
-                if let Ok(metadata) = fs::metadata(&binary_path).await {
-                    if metadata.is_file() {
-                        if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
-                            while let Some(entry) = entries.next().await {
-                                if let Some(entry) = entry.log_err() {
-                                    let entry_path = entry.path();
-                                    if entry_path.as_path() != binary_path
-                                        && entry.file_name() != "gobin"
-                                    {
-                                        fs::remove_file(&entry_path).await.log_err();
-                                    }
+        if let Some(version) = *version {
+            let binary_path = container_dir.join(&format!("gopls_{version}"));
+            if let Ok(metadata) = fs::metadata(&binary_path).await {
+                if metadata.is_file() {
+                    if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
+                        while let Some(entry) = entries.next().await {
+                            if let Some(entry) = entry.log_err() {
+                                let entry_path = entry.path();
+                                if entry_path.as_path() != binary_path
+                                    && entry.file_name() != "gobin"
+                                {
+                                    fs::remove_file(&entry_path).await.log_err();
                                 }
                             }
                         }
-
-                        return Ok(binary_path.to_path_buf());
                     }
+
+                    return Ok(binary_path.to_path_buf());
                 }
-            } else if let Some(path) = this.cached_server_binary(container_dir.clone()).await {
-                return Ok(path.to_path_buf());
             }
-
-            let gobin_dir = container_dir.join("gobin");
-            fs::create_dir_all(&gobin_dir).await?;
-            let install_output = process::Command::new("go")
-                .env("GO111MODULE", "on")
-                .env("GOBIN", &gobin_dir)
-                .args(["install", "golang.org/x/tools/gopls@latest"])
-                .output()
-                .await?;
-            if !install_output.status.success() {
-                Err(anyhow!("failed to install gopls. Is go installed?"))?;
-            }
-
-            let installed_binary_path = gobin_dir.join("gopls");
-            let version_output = process::Command::new(&installed_binary_path)
-                .arg("version")
-                .output()
-                .await
-                .map_err(|e| anyhow!("failed to run installed gopls binary {:?}", e))?;
-            let version_stdout = str::from_utf8(&version_output.stdout)
-                .map_err(|_| anyhow!("gopls version produced invalid utf8"))?;
-            let version = GOPLS_VERSION_REGEX
-                .find(version_stdout)
-                .ok_or_else(|| anyhow!("failed to parse gopls version output"))?
-                .as_str();
-            let binary_path = container_dir.join(&format!("gopls_{version}"));
-            fs::rename(&installed_binary_path, &binary_path).await?;
-
-            Ok(binary_path.to_path_buf())
+        } else if let Some(path) = this.cached_server_binary(container_dir.clone()).await {
+            return Ok(path.to_path_buf());
         }
-        .boxed()
+
+        let gobin_dir = container_dir.join("gobin");
+        fs::create_dir_all(&gobin_dir).await?;
+        let install_output = process::Command::new("go")
+            .env("GO111MODULE", "on")
+            .env("GOBIN", &gobin_dir)
+            .args(["install", "golang.org/x/tools/gopls@latest"])
+            .output()
+            .await?;
+        if !install_output.status.success() {
+            Err(anyhow!("failed to install gopls. Is go installed?"))?;
+        }
+
+        let installed_binary_path = gobin_dir.join("gopls");
+        let version_output = process::Command::new(&installed_binary_path)
+            .arg("version")
+            .output()
+            .await
+            .map_err(|e| anyhow!("failed to run installed gopls binary {:?}", e))?;
+        let version_stdout = str::from_utf8(&version_output.stdout)
+            .map_err(|_| anyhow!("gopls version produced invalid utf8"))?;
+        let version = GOPLS_VERSION_REGEX
+            .find(version_stdout)
+            .ok_or_else(|| anyhow!("failed to parse gopls version output"))?
+            .as_str();
+        let binary_path = container_dir.join(&format!("gopls_{version}"));
+        fs::rename(&installed_binary_path, &binary_path).await?;
+
+        Ok(binary_path.to_path_buf())
     }
 
     async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
-        async move {
+        (|| async move {
             let mut last_binary_path = None;
             let mut entries = fs::read_dir(&container_dir).await?;
             while let Some(entry) = entries.next().await {
@@ -137,9 +132,9 @@ impl super::LspAdapter for GoLspAdapter {
             } else {
                 Err(anyhow!("no cached binary"))
             }
-        }
+        })()
+        .await
         .log_err()
-        .boxed()
     }
 
     async fn label_for_completion(
@@ -345,12 +340,12 @@ mod tests {
         let highlight_field = grammar.highlight_id_for_name("property").unwrap();
 
         assert_eq!(
-            language.label_for_completion(&lsp::CompletionItem {
+            smol::block_on(language.label_for_completion(&lsp::CompletionItem {
                 kind: Some(lsp::CompletionItemKind::FUNCTION),
                 label: "Hello".to_string(),
                 detail: Some("func(a B) c.D".to_string()),
                 ..Default::default()
-            }),
+            })),
             Some(CodeLabel {
                 text: "Hello(a B) c.D".to_string(),
                 filter_range: 0..5,
@@ -364,12 +359,12 @@ mod tests {
 
         // Nested methods
         assert_eq!(
-            language.label_for_completion(&lsp::CompletionItem {
+            smol::block_on(language.label_for_completion(&lsp::CompletionItem {
                 kind: Some(lsp::CompletionItemKind::METHOD),
                 label: "one.two.Three".to_string(),
                 detail: Some("func() [3]interface{}".to_string()),
                 ..Default::default()
-            }),
+            })),
             Some(CodeLabel {
                 text: "one.two.Three() [3]interface{}".to_string(),
                 filter_range: 0..13,
@@ -383,12 +378,12 @@ mod tests {
 
         // Nested fields
         assert_eq!(
-            language.label_for_completion(&lsp::CompletionItem {
+            smol::block_on(language.label_for_completion(&lsp::CompletionItem {
                 kind: Some(lsp::CompletionItemKind::FIELD),
                 label: "two.Three".to_string(),
                 detail: Some("a.Bcd".to_string()),
                 ..Default::default()
-            }),
+            })),
             Some(CodeLabel {
                 text: "two.Three a.Bcd".to_string(),
                 filter_range: 0..9,
