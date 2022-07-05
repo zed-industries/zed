@@ -5596,9 +5596,9 @@ impl Editor {
                             .timer(Duration::from_millis(milliseconds))
                             .fuse();
                         pending_autosave.await;
-                        futures::select! {
-                            _ = timer => {}
+                        futures::select_biased! {
                             _ = cancel_rx => return None,
+                            _ = timer => {}
                         }
 
                         this.upgrade(&cx)?
