@@ -136,13 +136,13 @@ pub struct ItemNavHistory {
     item: Rc<dyn WeakItemHandle>,
 }
 
-#[derive(Default)]
-pub struct NavHistory {
+struct NavHistory {
     mode: NavigationMode,
     backward_stack: VecDeque<NavigationEntry>,
     forward_stack: VecDeque<NavigationEntry>,
     closed_stack: VecDeque<NavigationEntry>,
     paths_by_item: HashMap<usize, ProjectPath>,
+    pane: WeakViewHandle<Pane>,
 }
 
 #[derive(Copy, Clone)]
@@ -168,17 +168,28 @@ pub struct NavigationEntry {
 
 impl Pane {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
+        let handle = cx.weak_handle();
         Self {
             items: Vec::new(),
             active_item_index: 0,
             autoscroll: false,
-            nav_history: Default::default(),
-            toolbar: cx.add_view(|_| Toolbar::new()),
+            nav_history: Rc::new(RefCell::new(NavHistory {
+                mode: NavigationMode::Normal,
+                backward_stack: Default::default(),
+                forward_stack: Default::default(),
+                closed_stack: Default::default(),
+                paths_by_item: Default::default(),
+                pane: handle.clone(),
+            })),
+            toolbar: cx.add_view(|_| Toolbar::new(handle)),
         }
     }
 
-    pub fn nav_history(&self) -> &Rc<RefCell<NavHistory>> {
-        &self.nav_history
+    pub fn nav_history_for_item<T: Item>(&self, item: &ViewHandle<T>) -> ItemNavHistory {
+        ItemNavHistory {
+            history: self.nav_history.clone(),
+            item: Rc::new(item.downgrade()),
+        }
     }
 
     pub fn activate(&self, cx: &mut ViewContext<Self>) {
@@ -223,6 +234,26 @@ impl Pane {
         )
     }
 
+    pub fn disable_history(&mut self) {
+        self.nav_history.borrow_mut().disable();
+    }
+
+    pub fn enable_history(&mut self) {
+        self.nav_history.borrow_mut().enable();
+    }
+
+    pub fn can_navigate_backward(&self) -> bool {
+        !self.nav_history.borrow().backward_stack.is_empty()
+    }
+
+    pub fn can_navigate_forward(&self) -> bool {
+        !self.nav_history.borrow().forward_stack.is_empty()
+    }
+
+    fn history_updated(&mut self, cx: &mut ViewContext<Self>) {
+        self.toolbar.update(cx, |_, cx| cx.notify());
+    }
+
     fn navigate_history(
         workspace: &mut Workspace,
         pane: ViewHandle<Pane>,
@@ -234,7 +265,7 @@ impl Pane {
         let to_load = pane.update(cx, |pane, cx| {
             loop {
                 // Retrieve the weak item handle from the history.
-                let entry = pane.nav_history.borrow_mut().pop(mode)?;
+                let entry = pane.nav_history.borrow_mut().pop(mode, cx)?;
 
                 // If the item is still present in this pane, then activate it.
                 if let Some(index) = entry
@@ -367,7 +398,6 @@ impl Pane {
             return;
         }
 
-        item.set_nav_history(pane.read(cx).nav_history.clone(), cx);
         item.added_to_pane(workspace, pane.clone(), cx);
         pane.update(cx, |pane, cx| {
             // If there is already an active item, then insert the new item
@@ -625,11 +655,16 @@ impl Pane {
                             .borrow_mut()
                             .set_mode(NavigationMode::Normal);
 
-                        let mut nav_history = pane.nav_history().borrow_mut();
                         if let Some(path) = item.project_path(cx) {
-                            nav_history.paths_by_item.insert(item.id(), path);
+                            pane.nav_history
+                                .borrow_mut()
+                                .paths_by_item
+                                .insert(item.id(), path);
                         } else {
-                            nav_history.paths_by_item.remove(&item.id());
+                            pane.nav_history
+                                .borrow_mut()
+                                .paths_by_item
+                                .remove(&item.id());
                         }
                     }
                 });
@@ -953,57 +988,56 @@ impl View for Pane {
 }
 
 impl ItemNavHistory {
-    pub fn new<T: Item>(history: Rc<RefCell<NavHistory>>, item: &ViewHandle<T>) -> Self {
-        Self {
-            history,
-            item: Rc::new(item.downgrade()),
-        }
+    pub fn push<D: 'static + Any>(&self, data: Option<D>, cx: &mut MutableAppContext) {
+        self.history.borrow_mut().push(data, self.item.clone(), cx);
     }
 
-    pub fn history(&self) -> Rc<RefCell<NavHistory>> {
-        self.history.clone()
+    pub fn pop_backward(&self, cx: &mut MutableAppContext) -> Option<NavigationEntry> {
+        self.history.borrow_mut().pop(NavigationMode::GoingBack, cx)
     }
 
-    pub fn push<D: 'static + Any>(&self, data: Option<D>) {
-        self.history.borrow_mut().push(data, self.item.clone());
+    pub fn pop_forward(&self, cx: &mut MutableAppContext) -> Option<NavigationEntry> {
+        self.history
+            .borrow_mut()
+            .pop(NavigationMode::GoingForward, cx)
     }
 }
 
 impl NavHistory {
-    pub fn disable(&mut self) {
-        self.mode = NavigationMode::Disabled;
-    }
-
-    pub fn enable(&mut self) {
-        self.mode = NavigationMode::Normal;
-    }
-
-    pub fn pop_backward(&mut self) -> Option<NavigationEntry> {
-        self.backward_stack.pop_back()
-    }
-
-    pub fn pop_forward(&mut self) -> Option<NavigationEntry> {
-        self.forward_stack.pop_back()
-    }
-
-    pub fn pop_closed(&mut self) -> Option<NavigationEntry> {
-        self.closed_stack.pop_back()
-    }
-
-    fn pop(&mut self, mode: NavigationMode) -> Option<NavigationEntry> {
-        match mode {
-            NavigationMode::Normal | NavigationMode::Disabled | NavigationMode::ClosingItem => None,
-            NavigationMode::GoingBack => self.pop_backward(),
-            NavigationMode::GoingForward => self.pop_forward(),
-            NavigationMode::ReopeningClosedItem => self.pop_closed(),
-        }
-    }
-
     fn set_mode(&mut self, mode: NavigationMode) {
         self.mode = mode;
     }
 
-    pub fn push<D: 'static + Any>(&mut self, data: Option<D>, item: Rc<dyn WeakItemHandle>) {
+    fn disable(&mut self) {
+        self.mode = NavigationMode::Disabled;
+    }
+
+    fn enable(&mut self) {
+        self.mode = NavigationMode::Normal;
+    }
+
+    fn pop(&mut self, mode: NavigationMode, cx: &mut MutableAppContext) -> Option<NavigationEntry> {
+        let entry = match mode {
+            NavigationMode::Normal | NavigationMode::Disabled | NavigationMode::ClosingItem => {
+                return None
+            }
+            NavigationMode::GoingBack => &mut self.backward_stack,
+            NavigationMode::GoingForward => &mut self.forward_stack,
+            NavigationMode::ReopeningClosedItem => &mut self.closed_stack,
+        }
+        .pop_back();
+        if entry.is_some() {
+            self.did_update(cx);
+        }
+        entry
+    }
+
+    fn push<D: 'static + Any>(
+        &mut self,
+        data: Option<D>,
+        item: Rc<dyn WeakItemHandle>,
+        cx: &mut MutableAppContext,
+    ) {
         match self.mode {
             NavigationMode::Disabled => {}
             NavigationMode::Normal | NavigationMode::ReopeningClosedItem => {
@@ -1043,6 +1077,13 @@ impl NavHistory {
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
                 });
             }
+        }
+        self.did_update(cx);
+    }
+
+    fn did_update(&self, cx: &mut MutableAppContext) {
+        if let Some(pane) = self.pane.upgrade(cx) {
+            cx.defer(move |cx| pane.update(cx, |pane, cx| pane.history_updated(cx)));
         }
     }
 }

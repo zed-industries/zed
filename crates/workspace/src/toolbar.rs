@@ -1,7 +1,7 @@
-use crate::ItemHandle;
+use crate::{ItemHandle, Pane};
 use gpui::{
-    elements::*, AnyViewHandle, AppContext, ElementBox, Entity, MutableAppContext, RenderContext,
-    View, ViewContext, ViewHandle,
+    elements::*, platform::CursorStyle, Action, AnyViewHandle, AppContext, ElementBox, Entity,
+    MutableAppContext, RenderContext, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
 
@@ -42,6 +42,7 @@ pub enum ToolbarItemLocation {
 
 pub struct Toolbar {
     active_pane_item: Option<Box<dyn ItemHandle>>,
+    pane: WeakViewHandle<Pane>,
     items: Vec<(Box<dyn ToolbarItemViewHandle>, ToolbarItemLocation)>,
 }
 
@@ -60,6 +61,7 @@ impl View for Toolbar {
         let mut primary_left_items = Vec::new();
         let mut primary_right_items = Vec::new();
         let mut secondary_item = None;
+        let spacing = theme.item_spacing;
 
         for (item, position) in &self.items {
             match *position {
@@ -68,7 +70,7 @@ impl View for Toolbar {
                     let left_item = ChildView::new(item.as_ref())
                         .aligned()
                         .contained()
-                        .with_margin_right(theme.item_spacing);
+                        .with_margin_right(spacing);
                     if let Some((flex, expanded)) = flex {
                         primary_left_items.push(left_item.flex(flex, expanded).boxed());
                     } else {
@@ -79,7 +81,7 @@ impl View for Toolbar {
                     let right_item = ChildView::new(item.as_ref())
                         .aligned()
                         .contained()
-                        .with_margin_left(theme.item_spacing)
+                        .with_margin_left(spacing)
                         .flex_float();
                     if let Some((flex, expanded)) = flex {
                         primary_right_items.push(right_item.flex(flex, expanded).boxed());
@@ -98,26 +100,98 @@ impl View for Toolbar {
             }
         }
 
+        let pane = self.pane.clone();
+        let mut enable_go_backward = false;
+        let mut enable_go_forward = false;
+        if let Some(pane) = pane.upgrade(cx) {
+            let pane = pane.read(cx);
+            enable_go_backward = pane.can_navigate_backward();
+            enable_go_forward = pane.can_navigate_forward();
+        }
+
+        let container_style = theme.container;
+        let height = theme.height;
+        let button_style = theme.nav_button;
+
         Flex::column()
             .with_child(
                 Flex::row()
+                    .with_child(nav_button(
+                        "icons/arrow-left.svg",
+                        button_style,
+                        enable_go_backward,
+                        spacing,
+                        super::GoBack {
+                            pane: Some(pane.clone()),
+                        },
+                        cx,
+                    ))
+                    .with_child(nav_button(
+                        "icons/arrow-right.svg",
+                        button_style,
+                        enable_go_forward,
+                        spacing,
+                        super::GoForward {
+                            pane: Some(pane.clone()),
+                        },
+                        cx,
+                    ))
                     .with_children(primary_left_items)
                     .with_children(primary_right_items)
                     .constrained()
-                    .with_height(theme.height)
+                    .with_height(height)
                     .boxed(),
             )
             .with_children(secondary_item)
             .contained()
-            .with_style(theme.container)
+            .with_style(container_style)
             .boxed()
     }
 }
 
+fn nav_button<A: Action + Clone>(
+    svg_path: &'static str,
+    style: theme::Interactive<theme::IconButton>,
+    enabled: bool,
+    spacing: f32,
+    action: A,
+    cx: &mut RenderContext<Toolbar>,
+) -> ElementBox {
+    MouseEventHandler::new::<A, _, _>(0, cx, |state, _| {
+        let style = if enabled {
+            style.style_for(state, false)
+        } else {
+            style.disabled_style()
+        };
+        Svg::new(svg_path)
+            .with_color(style.color)
+            .constrained()
+            .with_width(style.icon_width)
+            .aligned()
+            .contained()
+            .with_style(style.container)
+            .constrained()
+            .with_width(style.button_width)
+            .with_height(style.button_width)
+            .aligned()
+            .boxed()
+    })
+    .with_cursor_style(if enabled {
+        CursorStyle::PointingHand
+    } else {
+        CursorStyle::default()
+    })
+    .on_mouse_down(move |_, cx| cx.dispatch_action(action.clone()))
+    .contained()
+    .with_margin_right(spacing)
+    .boxed()
+}
+
 impl Toolbar {
-    pub fn new() -> Self {
+    pub fn new(pane: WeakViewHandle<Pane>) -> Self {
         Self {
             active_pane_item: None,
+            pane,
             items: Default::default(),
         }
     }
