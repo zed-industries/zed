@@ -140,7 +140,7 @@ export default function workspace(theme: Theme) {
       border: border(theme, "secondary", { bottom: true }),
       itemSpacing: 8,
       navButton: {
-        color: iconColor(theme, "primary"),
+        color: iconColor(theme, "secondary"),
         iconWidth: 8,
         buttonWidth: 18,
         cornerRadius: 6,
@@ -149,7 +149,7 @@ export default function workspace(theme: Theme) {
           background: backgroundColor(theme, 300),
         },
         disabled: {
-          color: iconColor(theme, "muted")
+          color: withOpacity(iconColor(theme, "muted"), 0.6),
         },
       },
       padding: { left: 16, right: 8, top: 4, bottom: 4 },
