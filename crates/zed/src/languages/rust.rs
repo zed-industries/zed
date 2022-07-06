@@ -305,7 +305,7 @@ mod tests {
         let language = language(
             "rust",
             tree_sitter_rust::language(),
-            Some(Arc::new(RustLspAdapter)),
+            Some(smol::block_on(LspAdapter::new(RustLspAdapter))),
         );
         let grammar = language.grammar().unwrap();
         let theme = SyntaxTheme::new(vec![
@@ -384,7 +384,7 @@ mod tests {
         let language = language(
             "rust",
             tree_sitter_rust::language(),
-            Some(Arc::new(RustLspAdapter)),
+            Some(smol::block_on(LspAdapter::new(RustLspAdapter))),
         );
         let grammar = language.grammar().unwrap();
         let theme = SyntaxTheme::new(vec![

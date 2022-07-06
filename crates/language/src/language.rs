@@ -78,7 +78,7 @@ pub struct LspAdapter {
 }
 
 impl LspAdapter {
-    pub async fn new(adapter: impl LspAdapterTrait) -> Arc<Self> {
+    pub async fn new<T: LspAdapterTrait>(adapter: T) -> Arc<Self> {
         let adapter = Box::new(adapter);
         let name = adapter.name().await;
         let server_args = adapter.server_args().await;

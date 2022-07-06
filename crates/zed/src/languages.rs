@@ -22,26 +22,26 @@ pub async fn init(languages: Arc<LanguageRegistry>, executor: Arc<Background>) {
         (
             "c",
             tree_sitter_c::language(),
-            Some(Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>),
+            Some(LspAdapter::new(c::CLspAdapter).await),
         ),
         (
             "cpp",
             tree_sitter_cpp::language(),
-            Some(Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>),
+            Some(LspAdapter::new(c::CLspAdapter).await),
         ),
         (
             "go",
             tree_sitter_go::language(),
-            Some(Arc::new(go::GoLspAdapter) as Arc<dyn LspAdapter>),
+            Some(LspAdapter::new(go::GoLspAdapter).await),
         ),
         (
             "json",
             tree_sitter_json::language(),
-            // Some(Arc::new(json::JsonLspAdapter)),
-            language_plugin::new_json(executor)
-                .await
-                .log_err()
-                .map(|lang| Arc::new(lang) as Arc<_>),
+            // Some(LspAdapter::new(json::JsonLspAdapter)),
+            match language_plugin::new_json(executor).await.log_err() {
+                Some(lang) => Some(LspAdapter::new(lang).await),
+                None => None,
+            },
         ),
         (
             "markdown",
@@ -51,12 +51,12 @@ pub async fn init(languages: Arc<LanguageRegistry>, executor: Arc<Background>) {
         (
             "python",
             tree_sitter_python::language(),
-            Some(Arc::new(python::PythonLspAdapter)),
+            Some(LspAdapter::new(python::PythonLspAdapter).await),
         ),
         (
             "rust",
             tree_sitter_rust::language(),
-            Some(Arc::new(rust::RustLspAdapter)),
+            Some(LspAdapter::new(rust::RustLspAdapter).await),
         ),
         (
             "toml",
@@ -66,17 +66,17 @@ pub async fn init(languages: Arc<LanguageRegistry>, executor: Arc<Background>) {
         (
             "tsx",
             tree_sitter_typescript::language_tsx(),
-            Some(Arc::new(typescript::TypeScriptLspAdapter)),
+            Some(LspAdapter::new(typescript::TypeScriptLspAdapter).await),
         ),
         (
             "typescript",
             tree_sitter_typescript::language_typescript(),
-            Some(Arc::new(typescript::TypeScriptLspAdapter)),
+            Some(LspAdapter::new(typescript::TypeScriptLspAdapter).await),
         ),
         (
             "javascript",
             tree_sitter_typescript::language_tsx(),
-            Some(Arc::new(typescript::TypeScriptLspAdapter)),
+            Some(LspAdapter::new(typescript::TypeScriptLspAdapter).await),
         ),
     ] {
         languages.add(Arc::new(language(name, grammar, lsp_adapter)));
@@ -86,7 +86,7 @@ pub async fn init(languages: Arc<LanguageRegistry>, executor: Arc<Background>) {
 pub(crate) fn language(
     name: &str,
     grammar: tree_sitter::Language,
-    lsp_adapter: Option<Arc<dyn LspAdapter>>,
+    lsp_adapter: Option<Arc<LspAdapter>>,
 ) -> Language {
     let config = toml::from_slice(
         &LanguageDir::get(&format!("{}/config.toml", name))
