@@ -14,7 +14,7 @@ use gpui::{
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
-use settings::Settings;
+use settings::{Autosave, Settings};
 use std::{any::Any, cell::RefCell, mem, path::Path, rc::Rc};
 use util::ResultExt;
 
@@ -677,7 +677,13 @@ impl Pane {
                 _ => return Ok(false),
             }
         } else if is_dirty && (can_save || is_singleton) {
-            let should_save = if should_prompt_for_save {
+            let autosave_enabled = cx.read(|cx| {
+                matches!(
+                    cx.global::<Settings>().autosave,
+                    Autosave::OnFocusChange | Autosave::OnWindowChange
+                )
+            });
+            let should_save = if should_prompt_for_save && !autosave_enabled {
                 let mut answer = pane.update(cx, |pane, cx| {
                     pane.activate_item(item_ix, true, true, cx);
                     cx.prompt(
