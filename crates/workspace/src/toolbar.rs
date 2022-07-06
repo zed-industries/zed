@@ -101,6 +101,14 @@ impl View for Toolbar {
         }
 
         let pane = self.pane.clone();
+        let mut enable_go_backward = false;
+        let mut enable_go_forward = false;
+        if let Some(pane) = pane.upgrade(cx) {
+            let pane = pane.read(cx);
+            enable_go_backward = pane.can_navigate_backward();
+            enable_go_forward = pane.can_navigate_forward();
+        }
+
         let container_style = theme.container;
         let height = theme.height;
         let button_style = theme.nav_button;
@@ -111,6 +119,7 @@ impl View for Toolbar {
                     .with_child(nav_button(
                         "icons/arrow-left.svg",
                         button_style,
+                        enable_go_backward,
                         spacing,
                         super::GoBack {
                             pane: Some(pane.clone()),
@@ -120,6 +129,7 @@ impl View for Toolbar {
                     .with_child(nav_button(
                         "icons/arrow-right.svg",
                         button_style,
+                        enable_go_forward,
                         spacing,
                         super::GoForward {
                             pane: Some(pane.clone()),
@@ -142,12 +152,17 @@ impl View for Toolbar {
 fn nav_button<A: Action + Clone>(
     svg_path: &'static str,
     style: theme::Interactive<theme::IconButton>,
+    enabled: bool,
     spacing: f32,
     action: A,
     cx: &mut RenderContext<Toolbar>,
 ) -> ElementBox {
     MouseEventHandler::new::<A, _, _>(0, cx, |state, _| {
-        let style = style.style_for(state, false);
+        let style = if enabled {
+            style.style_for(state, false)
+        } else {
+            style.disabled_style()
+        };
         Svg::new(svg_path)
             .with_color(style.color)
             .constrained()
@@ -160,7 +175,11 @@ fn nav_button<A: Action + Clone>(
             .with_height(style.button_width)
             .boxed()
     })
-    .with_cursor_style(CursorStyle::PointingHand)
+    .with_cursor_style(if enabled {
+        CursorStyle::PointingHand
+    } else {
+        CursorStyle::default()
+    })
     .on_mouse_down(move |_, cx| cx.dispatch_action(action.clone()))
     .contained()
     .with_margin_right(spacing)

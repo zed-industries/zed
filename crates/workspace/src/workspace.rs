@@ -414,7 +414,6 @@ pub trait ItemHandle: 'static + fmt::Debug {
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
     fn is_singleton(&self, cx: &AppContext) -> bool;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
-    fn set_nav_history(&self, nav_history: Rc<RefCell<NavHistory>>, cx: &mut MutableAppContext);
     fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemHandle>>;
     fn added_to_pane(
         &self,
@@ -484,12 +483,6 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         Box::new(self.clone())
     }
 
-    fn set_nav_history(&self, nav_history: Rc<RefCell<NavHistory>>, cx: &mut MutableAppContext) {
-        self.update(cx, |item, cx| {
-            item.set_nav_history(ItemNavHistory::new(nav_history, &cx.handle()), cx);
-        })
-    }
-
     fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemHandle>> {
         self.update(cx, |item, cx| {
             cx.add_option_view(|cx| item.clone_on_split(cx))
@@ -503,6 +496,9 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         pane: ViewHandle<Pane>,
         cx: &mut ViewContext<Workspace>,
     ) {
+        let history = pane.read(cx).nav_history_for_item(self);
+        self.update(cx, |this, cx| this.set_nav_history(history, cx));
+
         if let Some(followed_item) = self.to_followable_item_handle(cx) {
             if let Some(message) = followed_item.to_state_proto(cx) {
                 workspace.update_followers(

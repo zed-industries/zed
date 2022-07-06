@@ -510,27 +510,22 @@ pub struct Interactive<T> {
     pub default: T,
     pub hover: Option<T>,
     pub active: Option<T>,
-    pub active_hover: Option<T>,
+    pub disabled: Option<T>,
 }
 
 impl<T> Interactive<T> {
     pub fn style_for(&self, state: MouseState, active: bool) -> &T {
         if active {
-            if state.hovered {
-                self.active_hover
-                    .as_ref()
-                    .or(self.active.as_ref())
-                    .unwrap_or(&self.default)
-            } else {
-                self.active.as_ref().unwrap_or(&self.default)
-            }
+            self.active.as_ref().unwrap_or(&self.default)
+        } else if state.hovered {
+            self.hover.as_ref().unwrap_or(&self.default)
         } else {
-            if state.hovered {
-                self.hover.as_ref().unwrap_or(&self.default)
-            } else {
-                &self.default
-            }
+            &self.default
         }
+    }
+
+    pub fn disabled_style(&self) -> &T {
+        self.disabled.as_ref().unwrap_or(&self.default)
     }
 }
 
@@ -545,7 +540,7 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
             default: Value,
             hover: Option<Value>,
             active: Option<Value>,
-            active_hover: Option<Value>,
+            disabled: Option<Value>,
         }
 
         let json = Helper::deserialize(deserializer)?;
@@ -571,14 +566,14 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
 
         let hover = deserialize_state(json.hover)?;
         let active = deserialize_state(json.active)?;
-        let active_hover = deserialize_state(json.active_hover)?;
+        let disabled = deserialize_state(json.disabled)?;
         let default = serde_json::from_value(json.default).map_err(serde::de::Error::custom)?;
 
         Ok(Interactive {
             default,
             hover,
             active,
-            active_hover,
+            disabled,
         })
     }
 }
