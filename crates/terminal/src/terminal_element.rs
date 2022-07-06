@@ -1,6 +1,6 @@
 use alacritty_terminal::{
     ansi::Color as AnsiColor,
-    grid::{GridIterator, Indexed},
+    grid::{Dimensions, GridIterator, Indexed},
     index::Point,
     term::{
         cell::{Cell, Flags},
@@ -11,22 +11,23 @@ use editor::{Cursor, CursorShape};
 use gpui::{
     color::Color,
     elements::*,
-    fonts::{HighlightStyle, TextStyle, Underline},
+    fonts::{TextStyle, Underline},
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
     json::json,
     text_layout::{Line, RunStyle},
-    Event, FontCache, MouseRegion, PaintContext, Quad, SizeConstraint, WeakViewHandle,
+    Event, FontCache, MouseRegion, PaintContext, Quad, SizeConstraint, TextLayoutCache,
+    WeakViewHandle,
 };
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use settings::Settings;
-use std::{iter, rc::Rc};
+use std::rc::Rc;
 use theme::TerminalStyle;
 
-use crate::{Input, ScrollTerminal, Terminal};
+use crate::{gpui_func_tools::paint_layer, Input, ScrollTerminal, Terminal};
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
@@ -43,45 +44,36 @@ pub struct TerminalEl {
     view: WeakViewHandle<Terminal>,
 }
 
-///Represents a span of cells in a single line in the terminal's grid.
-///This is used for drawing background rectangles
-#[derive(Debug, Default, Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
-pub struct RectSpan {
-    start: i32,
-    end: i32,
-    line: usize,
-    color: Color,
-}
-
-///A background color span
-impl RectSpan {
-    ///Creates a new LineSpan. `start` must be <= `end`.
-    ///If `start` == `end`, then this span is considered to be over a
-    /// single cell
-    fn new(start: i32, end: i32, line: usize, color: Color) -> RectSpan {
-        debug_assert!(start <= end);
-        RectSpan {
-            start,
-            end,
-            line,
-            color,
-        }
-    }
-}
-
 ///Helper types so I don't mix these two up
 struct CellWidth(f32);
 struct LineHeight(f32);
 
+#[derive(Clone, Debug, Default)]
+struct LayoutCell {
+    point: Point<i32, i32>,
+    text: Line,
+    background_color: Color,
+}
+
+impl LayoutCell {
+    fn new(point: Point<i32, i32>, text: Line, background_color: Color) -> LayoutCell {
+        LayoutCell {
+            point,
+            text,
+            background_color,
+        }
+    }
+}
+
 ///The information generated during layout that is nescessary for painting
 pub struct LayoutState {
-    lines: Vec<Line>,
+    cells: Vec<(Point<i32, i32>, Line)>,
+    background_rects: Vec<(RectF, Color)>, //Vec index == Line index for the LineSpan
     line_height: LineHeight,
     em_width: CellWidth,
     cursor: Option<Cursor>,
-    cur_size: SizeInfo,
     background_color: Color,
-    background_rects: Vec<(RectF, Color)>, //Vec index == Line index for the LineSpan
+    cur_size: SizeInfo,
 }
 
 impl TerminalEl {
@@ -126,30 +118,32 @@ impl Element for TerminalEl {
 
         let content = term.renderable_content();
 
-        //And we're off! Begin layouting
-        let BuiltChunks {
-            chunks,
-            line_count,
-            cursor_index,
-        } = build_chunks(content.display_iter, &terminal_theme, cursor_point);
-
-        let shaped_lines = layout_highlighted_chunks(
-            chunks
-                .iter()
-                .map(|(text, style, _)| (text.as_str(), *style)),
+        let layout_cells = layout_cells(
+            content.display_iter,
             &text_style,
+            terminal_theme,
             cx.text_layout_cache,
-            cx.font_cache(),
-            usize::MAX,
-            line_count,
         );
 
-        let backgrounds = chunks
+        let cells = layout_cells
             .iter()
-            .filter(|(_, _, line_span)| line_span != &RectSpan::default())
-            .map(|(_, _, line_span)| *line_span)
-            .collect();
-        let background_rects = make_background_rects(backgrounds, &shaped_lines, &line_height);
+            .map(|c| (c.point, c.text.clone()))
+            .collect::<Vec<(Point<i32, i32>, Line)>>();
+        let background_rects = layout_cells
+            .iter()
+            .map(|cell| {
+                (
+                    RectF::new(
+                        vec2f(
+                            cell.point.column as f32 * cell_width.0,
+                            cell.point.line as f32 * line_height.0,
+                        ),
+                        vec2f(cell_width.0, line_height.0),
+                    ),
+                    cell.background_color,
+                )
+            })
+            .collect::<Vec<(RectF, Color)>>();
 
         let block_text = cx.text_layout_cache.layout_str(
             &cursor_text,
@@ -164,12 +158,14 @@ impl Element for TerminalEl {
             )],
         );
 
-        let cursor = get_cursor_position(
+        let cursor = get_cursor_shape(
             content.cursor.point.line.0 as usize,
-            cursor_index,
-            &shaped_lines,
+            content.cursor.point.column.0 as usize,
             content.display_offset,
             &line_height,
+            &cell_width,
+            cur_size.total_lines(),
+            &block_text,
         )
         .map(move |(cursor_position, block_width)| {
             let block_width = if block_width != 0.0 {
@@ -191,7 +187,7 @@ impl Element for TerminalEl {
         (
             constraint.max,
             LayoutState {
-                lines: shaped_lines,
+                cells,
                 line_height,
                 em_width: cell_width,
                 cursor,
@@ -210,64 +206,64 @@ impl Element for TerminalEl {
         cx: &mut gpui::PaintContext,
     ) -> Self::PaintState {
         //Setup element stuff
-        cx.scene.push_layer(Some(visible_bounds));
+        let clip_bounds = Some(visible_bounds);
+        paint_layer(cx, clip_bounds, |cx| {
+            //Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
+            cx.scene.push_mouse_region(MouseRegion {
+                view_id: self.view.id(),
+                mouse_down: Some(Rc::new(|_, cx| cx.focus_parent_view())),
+                bounds: visible_bounds,
+                ..Default::default()
+            });
 
-        //Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
-        cx.scene.push_mouse_region(MouseRegion {
-            view_id: self.view.id(),
-            mouse_down: Some(Rc::new(|_, cx| cx.focus_parent_view())),
-            bounds: visible_bounds,
-            ..Default::default()
-        });
+            let origin = bounds.origin() + vec2f(layout.em_width.0, 0.);
 
-        let origin = bounds.origin() + vec2f(layout.em_width.0, 0.);
+            paint_layer(cx, clip_bounds, |cx| {
+                //Start with a background color
+                cx.scene.push_quad(Quad {
+                    bounds: RectF::new(bounds.origin(), bounds.size()),
+                    background: Some(layout.background_color),
+                    border: Default::default(),
+                    corner_radius: 0.,
+                });
 
-        //Start us off with a nice simple background color
-        cx.scene.push_layer(Some(visible_bounds));
-        cx.scene.push_quad(Quad {
-            bounds: RectF::new(bounds.origin(), bounds.size()),
-            background: Some(layout.background_color),
-            border: Default::default(),
-            corner_radius: 0.,
-        });
+                //Draw cell backgrounds
+                for background_rect in &layout.background_rects {
+                    let new_origin = origin + background_rect.0.origin();
+                    cx.scene.push_quad(Quad {
+                        bounds: RectF::new(new_origin, background_rect.0.size()),
+                        background: Some(background_rect.1),
+                        border: Default::default(),
+                        corner_radius: 0.,
+                    })
+                }
+            });
 
-        //Draw cell backgrounds
-        for background_rect in &layout.background_rects {
-            let new_origin = origin + background_rect.0.origin();
-            cx.scene.push_quad(Quad {
-                bounds: RectF::new(new_origin, background_rect.0.size()),
-                background: Some(background_rect.1),
-                border: Default::default(),
-                corner_radius: 0.,
-            })
-        }
-        cx.scene.pop_layer();
+            //Draw text
+            paint_layer(cx, clip_bounds, |cx| {
+                for (point, cell) in &layout.cells {
+                    let cell_origin = vec2f(
+                        origin.x() + point.column as f32 * layout.em_width.0,
+                        origin.y() + point.line as f32 * layout.line_height.0,
+                    );
+                    cell.paint(cell_origin, visible_bounds, layout.line_height.0, cx);
+                }
+            });
 
-        //Draw text
-        cx.scene.push_layer(Some(visible_bounds));
-        let mut line_origin = origin.clone();
-        for line in &layout.lines {
-            let boundaries = RectF::new(line_origin, vec2f(bounds.width(), layout.line_height.0));
-            if boundaries.intersects(visible_bounds) {
-                line.paint(line_origin, visible_bounds, layout.line_height.0, cx);
+            //Draw cursor
+            if let Some(cursor) = &layout.cursor {
+                paint_layer(cx, clip_bounds, |cx| {
+                    cursor.paint(origin, cx);
+                })
             }
-            line_origin.set_y(boundaries.max_y());
-        }
-        cx.scene.pop_layer();
 
-        //Draw cursor
-        if let Some(cursor) = &layout.cursor {
-            cx.scene.push_layer(Some(visible_bounds));
-            cursor.paint(origin, cx);
-            cx.scene.pop_layer();
-        }
-
-        #[cfg(debug_assertions)]
-        if DEBUG_GRID {
-            draw_debug_grid(bounds, layout, cx);
-        }
-
-        cx.scene.pop_layer();
+            #[cfg(debug_assertions)]
+            if DEBUG_GRID {
+                paint_layer(cx, clip_bounds, |cx| {
+                    draw_debug_grid(bounds, layout, cx);
+                });
+            }
+        });
     }
 
     fn dispatch_event(
@@ -347,140 +343,91 @@ fn make_new_size(
     )
 }
 
-pub struct BuiltChunks {
-    pub chunks: Vec<(String, Option<HighlightStyle>, RectSpan)>,
-    pub line_count: usize,
-    pub cursor_index: usize,
-}
-
-///In a single pass, this function generates the background and foreground color info for every item in the grid.
-pub(crate) fn build_chunks(
-    grid_iterator: GridIterator<Cell>,
-    theme: &TerminalStyle,
-    cursor_point: Point,
-) -> BuiltChunks {
-    let mut line_count: usize = 0;
-    let mut cursor_index: usize = 0;
-    //Every `group_by()` -> `into_iter()` pair needs to be seperated by a local variable so
-    //rust knows where to put everything.
-    //Start by grouping by lines
-    let lines = grid_iterator.group_by(|i| i.point.line.0);
-    let result = lines
+fn layout_cells(
+    grid: GridIterator<Cell>,
+    text_style: &TextStyle,
+    terminal_theme: &TerminalStyle,
+    text_layout_cache: &TextLayoutCache,
+) -> Vec<LayoutCell> {
+    let mut line_count: i32 = 0;
+    let lines = grid.group_by(|i| i.point.line);
+    lines
         .into_iter()
-        .map(|(_line_grid_index, line)| {
+        .map(|(_, line)| {
             line_count += 1;
-            let mut col_index = 0;
-            //Setup a variable
+            line.map(|indexed_cell| {
+                let cell_text = &indexed_cell.c.to_string();
 
-            //Then group by style
-            let chunks = line.group_by(|i| cell_style(&i, theme));
-            chunks
-                .into_iter()
-                .map(|(style, fragment)| {
-                    //And assemble the styled fragment into it's background and foreground information
-                    let mut str_fragment = String::new();
-                    for indexed_cell in fragment {
-                        if cursor_point.line.0 == indexed_cell.point.line.0
-                            && indexed_cell.point.column < cursor_point.column.0
-                        {
-                            cursor_index += indexed_cell.c.to_string().len();
-                        }
-                        str_fragment.push(indexed_cell.c);
-                    }
+                let cell_style = cell_style(&indexed_cell, terminal_theme, text_style);
 
-                    let start = col_index;
-                    let end = start + str_fragment.len() as i32;
-
-                    //munge it here
-                    col_index = end;
-                    (
-                        str_fragment,
-                        Some(style.0),
-                        RectSpan::new(start, end, line_count - 1, style.1), //Line count -> Line index
-                    )
-                })
-                //Add a \n to the end, as we're using text layouting rather than grid layouts
-                .chain(iter::once(("\n".to_string(), None, Default::default())))
-                .collect::<Vec<(String, Option<HighlightStyle>, RectSpan)>>()
+                let layout_cell = text_layout_cache.layout_str(
+                    cell_text,
+                    text_style.font_size,
+                    &[(cell_text.len(), cell_style)],
+                );
+                LayoutCell::new(
+                    Point::new(line_count - 1, indexed_cell.point.column.0 as i32),
+                    layout_cell,
+                    convert_color(&indexed_cell.bg, terminal_theme),
+                )
+            })
+            .collect::<Vec<LayoutCell>>()
         })
         .flatten()
-        //We have a Vec<Vec<>> (Vec of lines of styled chunks), flatten to just Vec<> (the styled chunks)
-        .collect::<Vec<(String, Option<HighlightStyle>, RectSpan)>>();
-
-    BuiltChunks {
-        chunks: result,
-        line_count,
-        cursor_index,
-    }
-}
-
-///Convert a RectSpan in terms of character offsets, into RectFs of exact offsets
-fn make_background_rects(
-    backgrounds: Vec<RectSpan>,
-    shaped_lines: &Vec<Line>,
-    line_height: &LineHeight,
-) -> Vec<(RectF, Color)> {
-    backgrounds
-        .into_iter()
-        .map(|line_span| {
-            //This should always be safe, as the shaped lines and backgrounds where derived
-            //At the same time earlier
-            let line = shaped_lines
-                .get(line_span.line)
-                .expect("Background line_num did not correspond to a line number");
-            let x = line.x_for_index(line_span.start as usize);
-            let width = line.x_for_index(line_span.end as usize) - x;
-            (
-                RectF::new(
-                    vec2f(x, line_span.line as f32 * line_height.0),
-                    vec2f(width, line_height.0),
-                ),
-                line_span.color,
-            )
-        })
-        .collect::<Vec<(RectF, Color)>>()
+        .collect::<Vec<LayoutCell>>()
 }
 
 // Compute the cursor position and expected block width, may return a zero width if x_for_index returns
 // the same position for sequential indexes. Use em_width instead
-fn get_cursor_position(
+//TODO: This function is messy, too many arguments and too many ifs. Simplify.
+fn get_cursor_shape(
     line: usize,
     line_index: usize,
-    shaped_lines: &Vec<Line>,
     display_offset: usize,
     line_height: &LineHeight,
+    cell_width: &CellWidth,
+    total_lines: usize,
+    text_fragment: &Line,
 ) -> Option<(Vector2F, f32)> {
     let cursor_line = line + display_offset;
-    shaped_lines.get(cursor_line).map(|layout_line| {
-        let cursor_x = layout_line.x_for_index(line_index);
-        let next_char_x = layout_line.x_for_index(line_index + 1);
-        (
-            vec2f(cursor_x, cursor_line as f32 * line_height.0),
-            next_char_x - cursor_x,
-        )
-    })
+    if cursor_line <= total_lines {
+        let cursor_width = if text_fragment.width() == 0. {
+            cell_width.0
+        } else {
+            text_fragment.width()
+        };
+
+        Some((
+            vec2f(
+                line_index as f32 * cell_width.0,
+                cursor_line as f32 * line_height.0,
+            ),
+            cursor_width,
+        ))
+    } else {
+        None
+    }
 }
 
 ///Convert the Alacritty cell styles to GPUI text styles and background color
-fn cell_style(indexed: &Indexed<&Cell>, style: &TerminalStyle) -> (HighlightStyle, Color) {
+fn cell_style(indexed: &Indexed<&Cell>, style: &TerminalStyle, text_style: &TextStyle) -> RunStyle {
     let flags = indexed.cell.flags;
-    let fg = Some(convert_color(&indexed.cell.fg, style));
-    let bg = convert_color(&indexed.cell.bg, style);
+    let fg = convert_color(&indexed.cell.fg, style);
 
-    let underline = flags.contains(Flags::UNDERLINE).then(|| Underline {
+    let underline = flags
+        .contains(Flags::UNDERLINE)
+        .then(|| Underline {
+            color: Some(fg),
+            squiggly: false,
+            thickness: OrderedFloat(1.),
+        })
+        .unwrap_or_default();
+
+    RunStyle {
         color: fg,
-        squiggly: false,
-        thickness: OrderedFloat(1.),
-    });
-
-    (
-        HighlightStyle {
-            color: fg,
-            underline,
-            ..Default::default()
-        },
-        bg,
-    )
+        font_id: text_style.font_id,
+        underline,
+    }
 }
 
 ///Converts a 2, 8, or 24 bit color ANSI color to the GPUI equivalent

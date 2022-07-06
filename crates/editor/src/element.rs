@@ -1616,7 +1616,7 @@ impl PaintState {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum CursorShape {
     Bar,
     Block,
@@ -1629,6 +1629,7 @@ impl Default for CursorShape {
     }
 }
 
+#[derive(Debug)]
 pub struct Cursor {
     origin: Vector2F,
     block_width: f32,
