@@ -1787,6 +1787,7 @@ impl Project {
             ))?,
         }
         cx.subscribe(buffer, |this, buffer, event, cx| {
+            // TODO(isaac): should this be done in the background?
             this.on_buffer_event(buffer, event, cx).await;
         })
         .detach();
@@ -3310,6 +3311,7 @@ impl Project {
                     return Ok(Default::default());
                 };
 
+                // TODO(isaac): also use join_all
                 struct PartialSymbol {
                     source_worktree_id: WorktreeId,
                     worktree_id: WorktreeId,
@@ -3537,6 +3539,7 @@ impl Project {
                     Default::default()
                 };
 
+                // TODO(isaac): use futures::future::join_all
                 struct PartialCompletion {
                     pub old_range: Range<Anchor>,
                     pub new_text: String,

@@ -65,6 +65,23 @@ pub struct LanguageServerName(pub Arc<str>);
 
 use async_trait::async_trait;
 
+// pub struct LspAdapter {
+//     name: LanguageServerName,
+//     adapter: Arc<dyn LspAdapter>,
+// }
+
+// impl LspAdapter {
+//     async fn new(adapter: Arc<dyn LspAdapter>) -> Self {
+//         let name = adapter.name().await;
+
+//         LspAdapter { name, adapter }
+//     }
+
+//     fn name(&self) -> LanguageServerName {
+//         self.name
+//     }
+// }
+
 #[async_trait]
 pub trait LspAdapter: 'static + Send + Sync {
     async fn name(&self) -> LanguageServerName;
