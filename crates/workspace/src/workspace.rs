@@ -2688,7 +2688,7 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{ModelHandle, TestAppContext, ViewContext};
+    use gpui::{executor::Deterministic, ModelHandle, TestAppContext, ViewContext};
     use project::{FakeFs, Project, ProjectEntryId};
     use serde_json::json;
 
@@ -3026,6 +3026,86 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_autosave(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppContext) {
+        deterministic.forbid_parking();
+
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, [], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+
+        let item = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.project_entry_ids = vec![ProjectEntryId::from_proto(1)];
+            item.is_dirty = true;
+            item
+        });
+        let item_id = item.id();
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item(Box::new(item.clone()), cx);
+        });
+
+        // Autosave on window change.
+        item.update(cx, |_, cx| {
+            cx.update_global(|settings: &mut Settings, _| {
+                settings.autosave = Autosave::OnWindowChange;
+            });
+        });
+
+        // Deactivating the window saves the file.
+        cx.simulate_window_activation(None);
+        deterministic.run_until_parked();
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 1));
+
+        // Autosave on focus change.
+        item.update(cx, |_, cx| {
+            cx.focus_self();
+            cx.update_global(|settings: &mut Settings, _| {
+                settings.autosave = Autosave::OnFocusChange;
+            });
+        });
+
+        // Blurring the item saves the file.
+        item.update(cx, |_, cx| cx.blur());
+        deterministic.run_until_parked();
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 2));
+
+        // Autosave after delay.
+        item.update(cx, |_, cx| {
+            cx.update_global(|settings: &mut Settings, _| {
+                settings.autosave = Autosave::AfterDelay { milliseconds: 500 };
+            });
+            cx.emit(TestItemEvent::Edit);
+        });
+
+        // Delay hasn't fully expired, so the file is still dirty and unsaved.
+        deterministic.advance_clock(Duration::from_millis(250));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 2));
+
+        // After delay expires, the file is saved.
+        deterministic.advance_clock(Duration::from_millis(250));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 3));
+
+        // Autosave on focus change, ensuring closing the tab counts as such.
+        item.update(cx, |_, cx| {
+            cx.update_global(|settings: &mut Settings, _| {
+                settings.autosave = Autosave::OnFocusChange;
+            });
+        });
+
+        workspace
+            .update(cx, |workspace, cx| {
+                let pane = workspace.active_pane().clone();
+                Pane::close_items(workspace, pane, cx, move |id| id == item_id)
+            })
+            .await
+            .unwrap();
+        assert!(!cx.has_pending_prompt(window_id));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 4));
+    }
+
     #[derive(Clone)]
     struct TestItem {
         save_count: usize,
@@ -3036,6 +3116,10 @@ mod tests {
         project_entry_ids: Vec<ProjectEntryId>,
         project_path: Option<ProjectPath>,
         is_singleton: bool,
+    }
+
+    enum TestItemEvent {
+        Edit,
     }
 
     impl TestItem {
@@ -3054,7 +3138,7 @@ mod tests {
     }
 
     impl Entity for TestItem {
-        type Event = ();
+        type Event = TestItemEvent;
     }
 
     impl View for TestItem {
@@ -3135,6 +3219,10 @@ mod tests {
 
         fn should_update_tab_on_event(_: &Self::Event) -> bool {
             true
+        }
+
+        fn is_edit_event(event: &Self::Event) -> bool {
+            matches!(event, TestItemEvent::Edit)
         }
     }
 }

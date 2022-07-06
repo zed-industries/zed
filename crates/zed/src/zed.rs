@@ -396,11 +396,9 @@ mod tests {
     };
     use project::{Project, ProjectPath};
     use serde_json::json;
-    use settings::Autosave;
     use std::{
         collections::HashSet,
         path::{Path, PathBuf},
-        time::Duration,
     };
     use theme::{Theme, ThemeRegistry, DEFAULT_THEME_NAME};
     use workspace::{
@@ -977,79 +975,6 @@ mod tests {
                 editor.read(cx).buffer().read(cx).as_singleton().unwrap()
             );
         })
-    }
-
-    #[gpui::test]
-    async fn test_autosave(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppContext) {
-        let app_state = init(cx);
-        let fs = app_state.fs.clone();
-        fs.as_fake()
-            .insert_tree("/root", json!({ "a.txt": "" }))
-            .await;
-
-        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
-        cx.update(|cx| {
-            workspace.update(cx, |view, cx| {
-                view.open_paths(vec![PathBuf::from("/root/a.txt")], true, cx)
-            })
-        })
-        .await;
-        let editor = cx.read(|cx| {
-            let pane = workspace.read(cx).active_pane().read(cx);
-            let item = pane.active_item().unwrap();
-            item.downcast::<Editor>().unwrap()
-        });
-
-        // Autosave on window change.
-        editor.update(cx, |editor, cx| {
-            cx.update_global(|settings: &mut Settings, _| {
-                settings.autosave = Autosave::OnWindowChange;
-            });
-            editor.insert("X", cx);
-            assert!(editor.is_dirty(cx))
-        });
-
-        // Deactivating the window saves the file.
-        cx.simulate_window_activation(None);
-        deterministic.run_until_parked();
-        assert_eq!(fs.load(Path::new("/root/a.txt")).await.unwrap(), "X");
-        editor.read_with(cx, |editor, cx| assert!(!editor.is_dirty(cx)));
-
-        // Autosave on focus change.
-        editor.update(cx, |editor, cx| {
-            cx.focus_self();
-            cx.update_global(|settings: &mut Settings, _| {
-                settings.autosave = Autosave::OnFocusChange;
-            });
-            editor.insert("X", cx);
-            assert!(editor.is_dirty(cx))
-        });
-
-        // Blurring the editor saves the file.
-        editor.update(cx, |_, cx| cx.blur());
-        deterministic.run_until_parked();
-        assert_eq!(fs.load(Path::new("/root/a.txt")).await.unwrap(), "XX");
-        editor.read_with(cx, |editor, cx| assert!(!editor.is_dirty(cx)));
-
-        // Autosave after delay.
-        editor.update(cx, |editor, cx| {
-            cx.update_global(|settings: &mut Settings, _| {
-                settings.autosave = Autosave::AfterDelay { milliseconds: 500 };
-            });
-            editor.insert("X", cx);
-            assert!(editor.is_dirty(cx))
-        });
-
-        // Delay hasn't fully expired, so the file is still dirty and unsaved.
-        deterministic.advance_clock(Duration::from_millis(250));
-        assert_eq!(fs.load(Path::new("/root/a.txt")).await.unwrap(), "XX");
-        editor.read_with(cx, |editor, cx| assert!(editor.is_dirty(cx)));
-
-        // After delay expires, the file is saved.
-        deterministic.advance_clock(Duration::from_millis(250));
-        assert_eq!(fs.load(Path::new("/root/a.txt")).await.unwrap(), "XXX");
-        editor.read_with(cx, |editor, cx| assert!(!editor.is_dirty(cx)));
     }
 
     #[gpui::test]
