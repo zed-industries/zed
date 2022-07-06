@@ -18,7 +18,6 @@ use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
-use futures::{channel::oneshot, FutureExt};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions,
@@ -51,7 +50,7 @@ use ordered_float::OrderedFloat;
 use project::{LocationLink, Project, ProjectPath, ProjectTransaction};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
-use settings::{Autosave, Settings};
+use settings::Settings;
 use smallvec::SmallVec;
 use smol::Timer;
 use snippet::Snippet;
@@ -439,8 +438,6 @@ pub struct Editor {
     leader_replica_id: Option<u16>,
     hover_state: HoverState,
     link_go_to_definition_state: LinkGoToDefinitionState,
-    pending_autosave: Option<Task<Option<()>>>,
-    cancel_pending_autosave: Option<oneshot::Sender<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1028,13 +1025,10 @@ impl Editor {
             leader_replica_id: None,
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
-            pending_autosave: Default::default(),
-            cancel_pending_autosave: Default::default(),
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
                 cx.observe(&display_map, Self::on_display_map_changed),
-                cx.observe_window_activation(Self::on_window_activation_changed),
             ],
         };
         this.end_selection(cx);
@@ -5584,33 +5578,6 @@ impl Editor {
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
                 cx.emit(Event::BufferEdited);
-                if let Autosave::AfterDelay { milliseconds } = cx.global::<Settings>().autosave {
-                    let pending_autosave =
-                        self.pending_autosave.take().unwrap_or(Task::ready(None));
-                    if let Some(cancel_pending_autosave) = self.cancel_pending_autosave.take() {
-                        let _ = cancel_pending_autosave.send(());
-                    }
-
-                    let (cancel_tx, mut cancel_rx) = oneshot::channel();
-                    self.cancel_pending_autosave = Some(cancel_tx);
-                    self.pending_autosave = Some(cx.spawn_weak(|this, mut cx| async move {
-                        let mut timer = cx
-                            .background()
-                            .timer(Duration::from_millis(milliseconds))
-                            .fuse();
-                        pending_autosave.await;
-                        futures::select_biased! {
-                            _ = cancel_rx => return None,
-                            _ = timer => {}
-                        }
-
-                        this.upgrade(&cx)?
-                            .update(&mut cx, |this, cx| this.autosave(cx))
-                            .await
-                            .log_err();
-                        None
-                    }));
-                }
             }
             language::Event::Reparsed => cx.emit(Event::Reparsed),
             language::Event::DirtyChanged => cx.emit(Event::DirtyChanged),
@@ -5627,25 +5594,6 @@ impl Editor {
 
     fn on_display_map_changed(&mut self, _: ModelHandle<DisplayMap>, cx: &mut ViewContext<Self>) {
         cx.notify();
-    }
-
-    fn on_window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if !active && cx.global::<Settings>().autosave == Autosave::OnWindowChange {
-            self.autosave(cx).detach_and_log_err(cx);
-        }
-    }
-
-    fn autosave(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
-        if let Some(project) = self.project.clone() {
-            if self.buffer.read(cx).is_dirty(cx)
-                && !self.buffer.read(cx).has_conflict(cx)
-                && workspace::Item::can_save(self, cx)
-            {
-                return workspace::Item::save(self, project, cx);
-            }
-        }
-
-        Task::ready(Ok(()))
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {
@@ -5865,10 +5813,6 @@ impl View for Editor {
         hide_hover(self, cx);
         cx.emit(Event::Blurred);
         cx.notify();
-
-        if cx.global::<Settings>().autosave == Autosave::OnFocusChange {
-            self.autosave(cx).detach_and_log_err(cx);
-        }
     }
 
     fn keymap_context(&self, _: &AppContext) -> gpui::keymap::Context {
@@ -6282,23 +6226,22 @@ mod tests {
     use super::*;
     use futures::StreamExt;
     use gpui::{
-        executor::Deterministic,
         geometry::rect::RectF,
         platform::{WindowBounds, WindowOptions},
     };
     use indoc::indoc;
     use language::{FakeLspAdapter, LanguageConfig};
     use lsp::FakeLanguageServer;
-    use project::{FakeFs, Fs};
+    use project::FakeFs;
     use settings::LanguageSettings;
-    use std::{cell::RefCell, path::Path, rc::Rc, time::Instant};
+    use std::{cell::RefCell, rc::Rc, time::Instant};
     use text::Point;
     use unindent::Unindent;
     use util::{
         assert_set_eq,
         test::{marked_text_by, marked_text_ranges, marked_text_ranges_by, sample_text},
     };
-    use workspace::{FollowableItem, Item, ItemHandle};
+    use workspace::{FollowableItem, ItemHandle};
 
     #[gpui::test]
     fn test_edit_events(cx: &mut MutableAppContext) {
@@ -9560,72 +9503,6 @@ mod tests {
             .await;
         cx.foreground().start_waiting();
         save.await.unwrap();
-    }
-
-    #[gpui::test]
-    async fn test_autosave(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppContext) {
-        deterministic.forbid_parking();
-
-        let fs = FakeFs::new(cx.background().clone());
-        fs.insert_file("/file.rs", Default::default()).await;
-
-        let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
-        let buffer = project
-            .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
-            .await
-            .unwrap();
-
-        let (_, editor) = cx.add_window(|cx| Editor::for_buffer(buffer, Some(project), cx));
-
-        // Autosave on window change.
-        editor.update(cx, |editor, cx| {
-            cx.update_global(|settings: &mut Settings, _| {
-                settings.autosave = Autosave::OnWindowChange;
-            });
-            editor.insert("X", cx);
-            assert!(editor.is_dirty(cx))
-        });
-
-        // Deactivating the window saves the file.
-        cx.simulate_window_activation(None);
-        deterministic.run_until_parked();
-        assert_eq!(fs.load(Path::new("/file.rs")).await.unwrap(), "X");
-        editor.read_with(cx, |editor, cx| assert!(!editor.is_dirty(cx)));
-
-        // Autosave on focus change.
-        editor.update(cx, |editor, cx| {
-            cx.focus_self();
-            cx.update_global(|settings: &mut Settings, _| {
-                settings.autosave = Autosave::OnFocusChange;
-            });
-            editor.insert("X", cx);
-            assert!(editor.is_dirty(cx))
-        });
-
-        // Blurring the editor saves the file.
-        editor.update(cx, |_, cx| cx.blur());
-        deterministic.run_until_parked();
-        assert_eq!(fs.load(Path::new("/file.rs")).await.unwrap(), "XX");
-        editor.read_with(cx, |editor, cx| assert!(!editor.is_dirty(cx)));
-
-        // Autosave after delay.
-        editor.update(cx, |editor, cx| {
-            cx.update_global(|settings: &mut Settings, _| {
-                settings.autosave = Autosave::AfterDelay { milliseconds: 500 };
-            });
-            editor.insert("X", cx);
-            assert!(editor.is_dirty(cx))
-        });
-
-        // Delay hasn't fully expired, so the file is still dirty and unsaved.
-        deterministic.advance_clock(Duration::from_millis(250));
-        assert_eq!(fs.load(Path::new("/file.rs")).await.unwrap(), "XX");
-        editor.read_with(cx, |editor, cx| assert!(editor.is_dirty(cx)));
-
-        // After delay expires, the file is saved.
-        deterministic.advance_clock(Duration::from_millis(250));
-        assert_eq!(fs.load(Path::new("/file.rs")).await.unwrap(), "XXX");
-        editor.read_with(cx, |editor, cx| assert!(!editor.is_dirty(cx)));
     }
 
     #[gpui::test]

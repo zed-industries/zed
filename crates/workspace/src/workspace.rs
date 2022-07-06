@@ -11,6 +11,7 @@ use client::{
 };
 use clock::ReplicaId;
 use collections::{hash_map, HashMap, HashSet};
+use futures::{channel::oneshot, FutureExt};
 use gpui::{
     actions,
     color::Color,
@@ -30,7 +31,7 @@ pub use pane_group::*;
 use postage::prelude::Stream;
 use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, ProjectStore, Worktree, WorktreeId};
 use serde::Deserialize;
-use settings::Settings;
+use settings::{Autosave, Settings};
 use sidebar::{Side, Sidebar, SidebarButtons, ToggleSidebarItem};
 use smallvec::SmallVec;
 use status_bar::StatusBar;
@@ -41,12 +42,14 @@ use std::{
     cell::RefCell,
     fmt,
     future::Future,
+    mem,
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
     },
+    time::Duration,
 };
 use theme::{Theme, ThemeRegistry};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
@@ -296,6 +299,9 @@ pub trait Item: View {
     fn should_update_tab_on_event(_: &Self::Event) -> bool {
         false
     }
+    fn is_edit_event(_: &Self::Event) -> bool {
+        false
+    }
     fn act_as_type(
         &self,
         type_id: TypeId,
@@ -510,6 +516,8 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
             }
         }
 
+        let mut pending_autosave = None;
+        let mut cancel_pending_autosave = oneshot::channel::<()>().0;
         let pending_update = Rc::new(RefCell::new(None));
         let pending_update_scheduled = Rc::new(AtomicBool::new(false));
         let pane = pane.downgrade();
@@ -569,6 +577,40 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                     cx.emit(pane::Event::ChangeItemTitle);
                     cx.notify();
                 });
+            }
+
+            if T::is_edit_event(event) {
+                if let Autosave::AfterDelay { milliseconds } = cx.global::<Settings>().autosave {
+                    let prev_autosave = pending_autosave.take().unwrap_or(Task::ready(Some(())));
+                    let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
+                    let prev_cancel_tx = mem::replace(&mut cancel_pending_autosave, cancel_tx);
+                    let project = workspace.project.downgrade();
+                    let _ = prev_cancel_tx.send(());
+                    pending_autosave = Some(cx.spawn_weak(|_, mut cx| async move {
+                        let mut timer = cx
+                            .background()
+                            .timer(Duration::from_millis(milliseconds))
+                            .fuse();
+                        prev_autosave.await;
+                        futures::select_biased! {
+                            _ = cancel_rx => return None,
+                            _ = timer => {}
+                        }
+
+                        let project = project.upgrade(&cx)?;
+                        cx.update(|cx| Pane::autosave_item(&item, project, cx))
+                            .await
+                            .log_err();
+                        None
+                    }));
+                }
+            }
+        })
+        .detach();
+
+        cx.observe_focus(self, move |workspace, item, focused, cx| {
+            if !focused && cx.global::<Settings>().autosave == Autosave::OnFocusChange {
+                Pane::autosave_item(&item, workspace.project.clone(), cx).detach_and_log_err(cx);
             }
         })
         .detach();
@@ -774,6 +816,8 @@ impl Workspace {
             cx.notify()
         })
         .detach();
+        cx.observe_window_activation(Self::on_window_activation_changed)
+            .detach();
 
         cx.subscribe(&project, move |this, project, event, cx| {
             match event {
@@ -2314,6 +2358,19 @@ impl Workspace {
         }
         None
     }
+
+    fn on_window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {
+        if !active && cx.global::<Settings>().autosave == Autosave::OnWindowChange {
+            for pane in &self.panes {
+                pane.update(cx, |pane, cx| {
+                    for item in pane.items() {
+                        Pane::autosave_item(item.as_ref(), self.project.clone(), cx)
+                            .detach_and_log_err(cx);
+                    }
+                });
+            }
+        }
+    }
 }
 
 impl Entity for Workspace {
@@ -2631,7 +2688,7 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{ModelHandle, TestAppContext, ViewContext};
+    use gpui::{executor::Deterministic, ModelHandle, TestAppContext, ViewContext};
     use project::{FakeFs, Project, ProjectEntryId};
     use serde_json::json;
 
@@ -2969,6 +3026,110 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_autosave(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppContext) {
+        deterministic.forbid_parking();
+
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, [], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+
+        let item = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.project_entry_ids = vec![ProjectEntryId::from_proto(1)];
+            item
+        });
+        let item_id = item.id();
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item(Box::new(item.clone()), cx);
+        });
+
+        // Autosave on window change.
+        item.update(cx, |item, cx| {
+            cx.update_global(|settings: &mut Settings, _| {
+                settings.autosave = Autosave::OnWindowChange;
+            });
+            item.is_dirty = true;
+        });
+
+        // Deactivating the window saves the file.
+        cx.simulate_window_activation(None);
+        deterministic.run_until_parked();
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 1));
+
+        // Autosave on focus change.
+        item.update(cx, |item, cx| {
+            cx.focus_self();
+            cx.update_global(|settings: &mut Settings, _| {
+                settings.autosave = Autosave::OnFocusChange;
+            });
+            item.is_dirty = true;
+        });
+
+        // Blurring the item saves the file.
+        item.update(cx, |_, cx| cx.blur());
+        deterministic.run_until_parked();
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 2));
+
+        // Autosave after delay.
+        item.update(cx, |item, cx| {
+            cx.update_global(|settings: &mut Settings, _| {
+                settings.autosave = Autosave::AfterDelay { milliseconds: 500 };
+            });
+            item.is_dirty = true;
+            cx.emit(TestItemEvent::Edit);
+        });
+
+        // Delay hasn't fully expired, so the file is still dirty and unsaved.
+        deterministic.advance_clock(Duration::from_millis(250));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 2));
+
+        // After delay expires, the file is saved.
+        deterministic.advance_clock(Duration::from_millis(250));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 3));
+
+        // Autosave on focus change, ensuring closing the tab counts as such.
+        item.update(cx, |item, cx| {
+            cx.update_global(|settings: &mut Settings, _| {
+                settings.autosave = Autosave::OnFocusChange;
+            });
+            item.is_dirty = true;
+        });
+
+        workspace
+            .update(cx, |workspace, cx| {
+                let pane = workspace.active_pane().clone();
+                Pane::close_items(workspace, pane, cx, move |id| id == item_id)
+            })
+            .await
+            .unwrap();
+        assert!(!cx.has_pending_prompt(window_id));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 4));
+
+        // Add the item again, ensuring autosave is prevented if the underlying file has been deleted.
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item(Box::new(item.clone()), cx);
+        });
+        item.update(cx, |item, cx| {
+            item.project_entry_ids = Default::default();
+            item.is_dirty = true;
+            cx.blur();
+        });
+        deterministic.run_until_parked();
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 4));
+
+        // Ensure autosave is prevented for deleted files also when closing the buffer.
+        let _close_items = workspace.update(cx, |workspace, cx| {
+            let pane = workspace.active_pane().clone();
+            Pane::close_items(workspace, pane, cx, move |id| id == item_id)
+        });
+        deterministic.run_until_parked();
+        assert!(cx.has_pending_prompt(window_id));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 4));
+    }
+
     #[derive(Clone)]
     struct TestItem {
         save_count: usize,
@@ -2979,6 +3140,10 @@ mod tests {
         project_entry_ids: Vec<ProjectEntryId>,
         project_path: Option<ProjectPath>,
         is_singleton: bool,
+    }
+
+    enum TestItemEvent {
+        Edit,
     }
 
     impl TestItem {
@@ -2997,7 +3162,7 @@ mod tests {
     }
 
     impl Entity for TestItem {
-        type Event = ();
+        type Event = TestItemEvent;
     }
 
     impl View for TestItem {
@@ -3054,6 +3219,7 @@ mod tests {
             _: &mut ViewContext<Self>,
         ) -> Task<anyhow::Result<()>> {
             self.save_count += 1;
+            self.is_dirty = false;
             Task::ready(Ok(()))
         }
 
@@ -3064,6 +3230,7 @@ mod tests {
             _: &mut ViewContext<Self>,
         ) -> Task<anyhow::Result<()>> {
             self.save_as_count += 1;
+            self.is_dirty = false;
             Task::ready(Ok(()))
         }
 
@@ -3073,11 +3240,16 @@ mod tests {
             _: &mut ViewContext<Self>,
         ) -> Task<anyhow::Result<()>> {
             self.reload_count += 1;
+            self.is_dirty = false;
             Task::ready(Ok(()))
         }
 
         fn should_update_tab_on_event(_: &Self::Event) -> bool {
             true
+        }
+
+        fn is_edit_event(event: &Self::Event) -> bool {
+            matches!(event, TestItemEvent::Edit)
         }
     }
 }

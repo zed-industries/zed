@@ -811,7 +811,7 @@ type GlobalActionCallback = dyn FnMut(&dyn Action, &mut MutableAppContext);
 type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext) -> bool>;
 type GlobalSubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
 type ObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
-type FocusObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
+type FocusObservationCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
 type GlobalObservationCallback = Box<dyn FnMut(&mut MutableAppContext)>;
 type ReleaseObservationCallback = Box<dyn FnOnce(&dyn Any, &mut MutableAppContext)>;
 type ActionObservationCallback = Box<dyn FnMut(TypeId, &mut MutableAppContext)>;
@@ -1305,7 +1305,7 @@ impl MutableAppContext {
 
     fn observe_focus<F, V>(&mut self, handle: &ViewHandle<V>, mut callback: F) -> Subscription
     where
-        F: 'static + FnMut(ViewHandle<V>, &mut MutableAppContext) -> bool,
+        F: 'static + FnMut(ViewHandle<V>, bool, &mut MutableAppContext) -> bool,
         V: View,
     {
         let subscription_id = post_inc(&mut self.next_subscription_id);
@@ -1314,9 +1314,9 @@ impl MutableAppContext {
         self.pending_effects.push_back(Effect::FocusObservation {
             view_id,
             subscription_id,
-            callback: Box::new(move |cx| {
+            callback: Box::new(move |focused, cx| {
                 if let Some(observed) = observed.upgrade(cx) {
-                    callback(observed, cx)
+                    callback(observed, focused, cx)
                 } else {
                     false
                 }
@@ -2525,6 +2525,31 @@ impl MutableAppContext {
                 if let Some(mut blurred_view) = this.cx.views.remove(&(window_id, blurred_id)) {
                     blurred_view.on_blur(this, window_id, blurred_id);
                     this.cx.views.insert((window_id, blurred_id), blurred_view);
+
+                    let callbacks = this.focus_observations.lock().remove(&blurred_id);
+                    if let Some(callbacks) = callbacks {
+                        for (id, callback) in callbacks {
+                            if let Some(mut callback) = callback {
+                                let alive = callback(false, this);
+                                if alive {
+                                    match this
+                                        .focus_observations
+                                        .lock()
+                                        .entry(blurred_id)
+                                        .or_default()
+                                        .entry(id)
+                                    {
+                                        btree_map::Entry::Vacant(entry) => {
+                                            entry.insert(Some(callback));
+                                        }
+                                        btree_map::Entry::Occupied(entry) => {
+                                            entry.remove();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -2537,7 +2562,7 @@ impl MutableAppContext {
                     if let Some(callbacks) = callbacks {
                         for (id, callback) in callbacks {
                             if let Some(mut callback) = callback {
-                                let alive = callback(this);
+                                let alive = callback(true, this);
                                 if alive {
                                     match this
                                         .focus_observations
@@ -3598,20 +3623,21 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn observe_focus<F, V>(&mut self, handle: &ViewHandle<V>, mut callback: F) -> Subscription
     where
-        F: 'static + FnMut(&mut T, ViewHandle<V>, &mut ViewContext<T>),
+        F: 'static + FnMut(&mut T, ViewHandle<V>, bool, &mut ViewContext<T>),
         V: View,
     {
         let observer = self.weak_handle();
-        self.app.observe_focus(handle, move |observed, cx| {
-            if let Some(observer) = observer.upgrade(cx) {
-                observer.update(cx, |observer, cx| {
-                    callback(observer, observed, cx);
-                });
-                true
-            } else {
-                false
-            }
-        })
+        self.app
+            .observe_focus(handle, move |observed, focused, cx| {
+                if let Some(observer) = observer.upgrade(cx) {
+                    observer.update(cx, |observer, cx| {
+                        callback(observer, observed, focused, cx);
+                    });
+                    true
+                } else {
+                    false
+                }
+            })
     }
 
     pub fn observe_release<E, F, H>(&mut self, handle: &H, mut callback: F) -> Subscription
@@ -6448,11 +6474,13 @@ mod tests {
         view_1.update(cx, |_, cx| {
             cx.observe_focus(&view_2, {
                 let observed_events = observed_events.clone();
-                move |this, view, cx| {
+                move |this, view, focused, cx| {
+                    let label = if focused { "focus" } else { "blur" };
                     observed_events.lock().push(format!(
-                        "{} observed {}'s focus",
+                        "{} observed {}'s {}",
                         this.name,
-                        view.read(cx).name
+                        view.read(cx).name,
+                        label
                     ))
                 }
             })
@@ -6461,16 +6489,20 @@ mod tests {
         view_2.update(cx, |_, cx| {
             cx.observe_focus(&view_1, {
                 let observed_events = observed_events.clone();
-                move |this, view, cx| {
+                move |this, view, focused, cx| {
+                    let label = if focused { "focus" } else { "blur" };
                     observed_events.lock().push(format!(
-                        "{} observed {}'s focus",
+                        "{} observed {}'s {}",
                         this.name,
-                        view.read(cx).name
+                        view.read(cx).name,
+                        label
                     ))
                 }
             })
             .detach();
         });
+        assert_eq!(mem::take(&mut *view_events.lock()), ["view 1 focused"]);
+        assert_eq!(mem::take(&mut *observed_events.lock()), Vec::<&str>::new());
 
         view_1.update(cx, |_, cx| {
             // Ensure only the latest focus is honored.
@@ -6478,31 +6510,47 @@ mod tests {
             cx.focus(&view_1);
             cx.focus(&view_2);
         });
-        view_1.update(cx, |_, cx| cx.focus(&view_1));
-        view_1.update(cx, |_, cx| cx.focus(&view_2));
-        view_1.update(cx, |_, _| drop(view_2));
-
         assert_eq!(
-            *view_events.lock(),
-            [
-                "view 1 focused".to_string(),
-                "view 1 blurred".to_string(),
-                "view 2 focused".to_string(),
-                "view 2 blurred".to_string(),
-                "view 1 focused".to_string(),
-                "view 1 blurred".to_string(),
-                "view 2 focused".to_string(),
-                "view 1 focused".to_string(),
-            ],
+            mem::take(&mut *view_events.lock()),
+            ["view 1 blurred", "view 2 focused"],
         );
         assert_eq!(
-            *observed_events.lock(),
+            mem::take(&mut *observed_events.lock()),
             [
-                "view 1 observed view 2's focus".to_string(),
-                "view 2 observed view 1's focus".to_string(),
-                "view 1 observed view 2's focus".to_string(),
+                "view 2 observed view 1's blur",
+                "view 1 observed view 2's focus"
             ]
         );
+
+        view_1.update(cx, |_, cx| cx.focus(&view_1));
+        assert_eq!(
+            mem::take(&mut *view_events.lock()),
+            ["view 2 blurred", "view 1 focused"],
+        );
+        assert_eq!(
+            mem::take(&mut *observed_events.lock()),
+            [
+                "view 1 observed view 2's blur",
+                "view 2 observed view 1's focus"
+            ]
+        );
+
+        view_1.update(cx, |_, cx| cx.focus(&view_2));
+        assert_eq!(
+            mem::take(&mut *view_events.lock()),
+            ["view 1 blurred", "view 2 focused"],
+        );
+        assert_eq!(
+            mem::take(&mut *observed_events.lock()),
+            [
+                "view 2 observed view 1's blur",
+                "view 1 observed view 2's focus"
+            ]
+        );
+
+        view_1.update(cx, |_, _| drop(view_2));
+        assert_eq!(mem::take(&mut *view_events.lock()), ["view 1 focused"]);
+        assert_eq!(mem::take(&mut *observed_events.lock()), Vec::<&str>::new());
     }
 
     #[crate::test(self)]
