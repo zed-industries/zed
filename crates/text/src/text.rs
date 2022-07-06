@@ -2353,9 +2353,13 @@ impl LineEnding {
     }
 
     pub fn detect(text: &str) -> Self {
-        if let Some(ix) = text[..cmp::min(text.len(), 1000)].find(&['\n']) {
-            let text = text.as_bytes();
-            if ix > 0 && text[ix - 1] == b'\r' {
+        let mut max_ix = cmp::min(text.len(), 1000);
+        while !text.is_char_boundary(max_ix) {
+            max_ix -= 1;
+        }
+
+        if let Some(ix) = text[..max_ix].find(&['\n']) {
+            if ix > 0 && text.as_bytes()[ix - 1] == b'\r' {
                 Self::Windows
             } else {
                 Self::Unix

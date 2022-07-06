@@ -154,6 +154,17 @@ fn test_random_edits(mut rng: StdRng) {
 
 #[test]
 fn test_line_endings() {
+    assert_eq!(LineEnding::detect(&"🍐✅\n".repeat(1000)), LineEnding::Unix);
+    assert_eq!(LineEnding::detect(&"abcd\n".repeat(1000)), LineEnding::Unix);
+    assert_eq!(
+        LineEnding::detect(&"🍐✅\r\n".repeat(1000)),
+        LineEnding::Windows
+    );
+    assert_eq!(
+        LineEnding::detect(&"abcd\r\n".repeat(1000)),
+        LineEnding::Windows
+    );
+
     let mut buffer = Buffer::new(0, 0, "one\r\ntwo".into());
     assert_eq!(buffer.text(), "one\ntwo");
     assert_eq!(buffer.line_ending(), LineEnding::Windows);
