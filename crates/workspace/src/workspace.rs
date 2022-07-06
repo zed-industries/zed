@@ -2360,7 +2360,12 @@ impl Workspace {
     }
 
     fn on_window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if !active && cx.global::<Settings>().autosave == Autosave::OnWindowChange {
+        if !active
+            && matches!(
+                cx.global::<Settings>().autosave,
+                Autosave::OnWindowChange | Autosave::OnFocusChange
+            )
+        {
             for pane in &self.panes {
                 pane.update(cx, |pane, cx| {
                     for item in pane.items() {
@@ -3073,6 +3078,17 @@ mod tests {
         deterministic.run_until_parked();
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 2));
 
+        // Deactivating the window still saves the file.
+        cx.simulate_window_activation(Some(window_id));
+        item.update(cx, |item, cx| {
+            cx.focus_self();
+            item.is_dirty = true;
+        });
+        cx.simulate_window_activation(None);
+
+        deterministic.run_until_parked();
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 3));
+
         // Autosave after delay.
         item.update(cx, |item, cx| {
             cx.update_global(|settings: &mut Settings, _| {
@@ -3084,11 +3100,11 @@ mod tests {
 
         // Delay hasn't fully expired, so the file is still dirty and unsaved.
         deterministic.advance_clock(Duration::from_millis(250));
-        item.read_with(cx, |item, _| assert_eq!(item.save_count, 2));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 3));
 
         // After delay expires, the file is saved.
         deterministic.advance_clock(Duration::from_millis(250));
-        item.read_with(cx, |item, _| assert_eq!(item.save_count, 3));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 4));
 
         // Autosave on focus change, ensuring closing the tab counts as such.
         item.update(cx, |item, cx| {
@@ -3106,7 +3122,7 @@ mod tests {
             .await
             .unwrap();
         assert!(!cx.has_pending_prompt(window_id));
-        item.read_with(cx, |item, _| assert_eq!(item.save_count, 4));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
 
         // Add the item again, ensuring autosave is prevented if the underlying file has been deleted.
         workspace.update(cx, |workspace, cx| {
@@ -3118,7 +3134,7 @@ mod tests {
             cx.blur();
         });
         deterministic.run_until_parked();
-        item.read_with(cx, |item, _| assert_eq!(item.save_count, 4));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
 
         // Ensure autosave is prevented for deleted files also when closing the buffer.
         let _close_items = workspace.update(cx, |workspace, cx| {
@@ -3127,7 +3143,7 @@ mod tests {
         });
         deterministic.run_until_parked();
         assert!(cx.has_pending_prompt(window_id));
-        item.read_with(cx, |item, _| assert_eq!(item.save_count, 4));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
     }
 
     #[derive(Clone)]
