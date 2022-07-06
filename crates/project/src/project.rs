@@ -740,7 +740,7 @@ impl Project {
             for language in self.languages.to_vec() {
                 if let Some(lsp_adapter) = language.lsp_adapter() {
                     if !settings.enable_language_server(Some(&language.name())) {
-                        let lsp_name = lsp_adapter.name().await;
+                        let lsp_name = lsp_adapter.name;
                         for (worktree_id, started_lsp_name) in self.started_language_servers.keys()
                         {
                             if lsp_name == *started_lsp_name {
@@ -1663,7 +1663,7 @@ impl Project {
                         this.create_local_worktree(&abs_path, false, cx)
                     })
                     .await?;
-                let name = lsp_adapter.name().await;
+                let name = lsp_adapter.name;
                 this.update(&mut cx, |this, cx| {
                     this.language_servers
                         .insert((worktree.read(cx).id(), name), (lsp_adapter, lsp_server));
@@ -1816,7 +1816,7 @@ impl Project {
         Ok(())
     }
 
-    async fn register_buffer_with_language_server(
+    fn register_buffer_with_language_server(
         &mut self,
         buffer_handle: &ModelHandle<Buffer>,
         cx: &mut ModelContext<'_, Self>,
@@ -1833,10 +1833,10 @@ impl Project {
                 if let Some(language) = buffer.language() {
                     let worktree_id = file.worktree_id(cx);
                     if let Some(adapter) = language.lsp_adapter() {
-                        language_id = adapter.id_for_language(language.name().as_ref()).await;
+                        language_id = adapter.id_for_language.clone();
                         language_server = self
                             .language_server_ids
-                            .get(&(worktree_id, adapter.name()))
+                            .get(&(worktree_id, adapter.name.clone()))
                             .and_then(|id| self.language_servers.get(&id))
                             .and_then(|server_state| {
                                 if let LanguageServerState::Running { server, .. } = server_state {
@@ -2000,11 +2000,7 @@ impl Project {
                 // that don't support a disk-based progress token.
                 let (lsp_adapter, language_server) =
                     self.language_server_for_buffer(buffer.read(cx), cx)?;
-                if lsp_adapter
-                    .disk_based_diagnostics_progress_token()
-                    .await
-                    .is_none()
-                {
+                if lsp_adapter.disk_based_diagnostics_progress_token.is_none() {
                     let server_id = language_server.server_id();
                     self.disk_based_diagnostics_finished(server_id, cx);
                     self.broadcast_language_server_update(
@@ -2024,10 +2020,9 @@ impl Project {
     fn language_servers_for_worktree(
         &self,
         worktree_id: WorktreeId,
-    ) -> impl Iterator<Item = (&Arc<dyn LspAdapter>, &Arc<LanguageServer>)> {
-        self.language_server_ids
-            .iter()
-            .filter_map(move |((language_server_worktree_id, _), id)| {
+    ) -> impl Iterator<Item = &(Arc<LspAdapter>, Arc<LanguageServer>)> {
+        self.language_servers.iter().filter_map(
+            move |((language_server_worktree_id, _), server)| {
                 if *language_server_worktree_id == worktree_id {
                     if let Some(LanguageServerState::Running { adapter, server }) =
                         self.language_servers.get(&id)
@@ -2080,8 +2075,8 @@ impl Project {
         } else {
             return;
         };
-        let key = (worktree_id, adapter.name());
 
+        let key = (worktree_id, adapter.name);
         self.language_server_ids
             .entry(key.clone())
             .or_insert_with(|| {
@@ -2115,7 +2110,7 @@ impl Project {
                                         this.update(&mut cx, |this, cx| {
                                             this.on_lsp_diagnostics_published(
                                                 server_id, params, &adapter, cx,
-                                            );
+                                            )
                                         });
                                     }
                                 }
@@ -2427,8 +2422,8 @@ impl Project {
         } else {
             return;
         };
-        let server_name = adapter.name();
-        let stop = self.stop_language_server(worktree_id, server_name.clone(), cx);
+
+        let stop = self.stop_language_server(worktree_id, adapter.name, cx);
         cx.spawn_weak(|this, mut cx| async move {
             let (original_root_path, orphaned_worktrees) = stop.await;
             if let Some(this) = this.upgrade(&cx) {
@@ -2464,14 +2459,14 @@ impl Project {
         &mut self,
         server_id: usize,
         mut params: lsp::PublishDiagnosticsParams,
-        adapter: &Arc<dyn LspAdapter>,
+        adapter: &Arc<LspAdapter>,
         cx: &mut ModelContext<'_, Self>,
     ) {
         adapter.process_diagnostics(&mut params).await;
         self.update_diagnostics(
             server_id,
             params,
-            adapter.disk_based_diagnostic_sources().await,
+            &adapter.disk_based_diagnostic_sources,
             cx,
         )
         .log_err();
@@ -2645,7 +2640,7 @@ impl Project {
         this: WeakModelHandle<Self>,
         params: lsp::ApplyWorkspaceEditParams,
         server_id: usize,
-        adapter: Arc<dyn LspAdapter>,
+        adapter: Arc<LspAdapter>,
         language_server: Arc<LanguageServer>,
         mut cx: AsyncAppContext,
     ) -> Result<lsp::ApplyWorkspaceEditResponse> {
@@ -2716,7 +2711,7 @@ impl Project {
         &mut self,
         language_server_id: usize,
         params: lsp::PublishDiagnosticsParams,
-        disk_based_sources: Vec<String>,
+        disk_based_sources: &[String],
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let abs_path = params
@@ -3314,7 +3309,7 @@ impl Project {
                 struct PartialSymbol {
                     source_worktree_id: WorktreeId,
                     worktree_id: WorktreeId,
-                    adapter: Arc<dyn LspAdapter>,
+                    adapter: Arc<LspAdapter>,
                     path: PathBuf,
                     language: Option<Arc<Language>>,
                     name: String,
@@ -3372,7 +3367,7 @@ impl Project {
                         }
                         .unwrap_or_else(|| CodeLabel::plain(ps.name.clone(), None));
 
-                        let language_server_name = ps.adapter.name().await;
+                        let language_server_name = ps.adapter.name;
 
                         Symbol {
                             source_worktree_id: ps.source_worktree_id,
@@ -4019,7 +4014,7 @@ impl Project {
         this: ModelHandle<Self>,
         edit: lsp::WorkspaceEdit,
         push_to_history: bool,
-        lsp_adapter: Arc<dyn LspAdapter>,
+        lsp_adapter: Arc<LspAdapter>,
         language_server: Arc<LanguageServer>,
         cx: &mut AsyncAppContext,
     ) -> Result<ProjectTransaction> {
@@ -6029,10 +6024,9 @@ impl Project {
         &self,
         buffer: &Buffer,
         cx: &AppContext,
-    ) -> Option<(&Arc<dyn LspAdapter>, &Arc<LanguageServer>)> {
+    ) -> Option<&(Arc<LspAdapter>, Arc<LanguageServer>)> {
         if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language()) {
-            // TODO(isaac): this is not a good idea
-            let name = cx.background().block(language.lsp_adapter()?.name());
+            let name = language.lsp_adapter()?.name;
             let worktree_id = file.worktree_id(cx);
             let key = (worktree_id, language.lsp_adapter()?.name());
 

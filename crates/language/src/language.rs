@@ -7,6 +7,7 @@ pub mod proto;
 mod tests;
 
 use anyhow::{anyhow, Context, Result};
+use async_trait::async_trait;
 use client::http::HttpClient;
 use collections::HashMap;
 use futures::{
@@ -43,7 +44,7 @@ pub use outline::{Outline, OutlineItem};
 pub use tree_sitter::{Parser, Tree};
 
 thread_local! {
-    static PARSER: RefCell<Parser>  = RefCell::new(Parser::new());
+    static PARSER: RefCell<Parser> = RefCell::new(Parser::new());
 }
 
 lazy_static! {
@@ -63,38 +64,103 @@ pub trait ToLspPosition {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LanguageServerName(pub Arc<str>);
 
-use async_trait::async_trait;
+/// Represents a Language Server, with certain cached sync properties.
+/// Uses [`LspAdapterTrait`] under the hood, but calls all 'static' methods
+/// once at startup, and caches the results.
+pub struct LspAdapter {
+    pub name: LanguageServerName,
+    pub server_args: Vec<String>,
+    pub initialization_options: Option<Value>,
+    pub disk_based_diagnostic_sources: Vec<String>,
+    pub disk_based_diagnostics_progress_token: Option<String>,
+    pub id_for_language: Option<String>,
+    pub adapter: Box<dyn LspAdapterTrait>,
+}
 
-// pub struct LspAdapter {
-//     name: LanguageServerName,
-//     adapter: Arc<dyn LspAdapter>,
-// }
+impl LspAdapter {
+    pub async fn new(adapter: impl LspAdapterTrait) -> Arc<Self> {
+        let adapter = Box::new(adapter);
+        let name = adapter.name().await;
+        let server_args = adapter.server_args().await;
+        let initialization_options = adapter.initialization_options().await;
+        let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources().await;
+        let disk_based_diagnostics_progress_token =
+            adapter.disk_based_diagnostics_progress_token().await;
+        let id_for_language = adapter.id_for_language(name.0.as_ref()).await;
 
-// impl LspAdapter {
-//     async fn new(adapter: Arc<dyn LspAdapter>) -> Self {
-//         let name = adapter.name().await;
+        Arc::new(LspAdapter {
+            name,
+            server_args,
+            initialization_options,
+            disk_based_diagnostic_sources,
+            disk_based_diagnostics_progress_token,
+            id_for_language,
+            adapter,
+        })
+    }
 
-//         LspAdapter { name, adapter }
-//     }
+    pub async fn fetch_latest_server_version(
+        &self,
+        http: Arc<dyn HttpClient>,
+    ) -> Result<Box<dyn 'static + Send + Any>> {
+        self.adapter.fetch_latest_server_version(http).await
+    }
 
-//     fn name(&self) -> LanguageServerName {
-//         self.name
-//     }
-// }
+    pub async fn fetch_server_binary(
+        &self,
+        version: Box<dyn 'static + Send + Any>,
+        http: Arc<dyn HttpClient>,
+        container_dir: PathBuf,
+    ) -> Result<PathBuf> {
+        self.adapter
+            .fetch_server_binary(version, http, container_dir)
+            .await
+    }
+
+    pub async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
+        self.adapter.cached_server_binary(container_dir).await
+    }
+
+    pub async fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
+        self.adapter.process_diagnostics(params).await
+    }
+
+    pub async fn label_for_completion(
+        &self,
+        completion_item: &lsp::CompletionItem,
+        language: &Language,
+    ) -> Option<CodeLabel> {
+        self.adapter
+            .label_for_completion(completion_item, language)
+            .await
+    }
+
+    pub async fn label_for_symbol(
+        &self,
+        name: &str,
+        kind: lsp::SymbolKind,
+        language: &Language,
+    ) -> Option<CodeLabel> {
+        self.adapter.label_for_symbol(name, kind, language).await
+    }
+}
 
 #[async_trait]
-pub trait LspAdapter: 'static + Send + Sync {
+pub trait LspAdapterTrait: 'static + Send + Sync {
     async fn name(&self) -> LanguageServerName;
+
     async fn fetch_latest_server_version(
         &self,
         http: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Send + Any>>;
+
     async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
         http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
     ) -> Result<PathBuf>;
+
     async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf>;
 
     async fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
@@ -189,7 +255,9 @@ fn deserialize_regex<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Regex>, D
 }
 
 #[cfg(any(test, feature = "test-support"))]
-pub struct FakeLspAdapter {
+pub type FakeLspAdapter = Arc<FakeLspAdapterInner>;
+
+pub struct FakeLspAdapterInner {
     pub name: &'static str,
     pub capabilities: lsp::ServerCapabilities,
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
@@ -208,12 +276,12 @@ pub struct BracketPair {
 pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
-    pub(crate) adapter: Option<Arc<dyn LspAdapter>>,
+    pub(crate) adapter: Option<Arc<LspAdapter>>,
 
     #[cfg(any(test, feature = "test-support"))]
     fake_adapter: Option<(
         mpsc::UnboundedSender<lsp::FakeLanguageServer>,
-        Arc<FakeLspAdapter>,
+        FakeLspAdapter,
     )>,
 }
 
@@ -373,7 +441,7 @@ impl LanguageRegistry {
             let server_binary_path = this
                 .lsp_binary_paths
                 .lock()
-                .entry(adapter.name().await)
+                .entry(adapter.name.clone())
                 .or_insert_with(|| {
                     get_server_binary_path(
                         adapter.clone(),
@@ -390,7 +458,7 @@ impl LanguageRegistry {
                 .map_err(|e| anyhow!(e));
 
             let server_binary_path = server_binary_path.await?;
-            let server_args = adapter.server_args().await;
+            let server_args = &adapter.server_args;
             let server = lsp::LanguageServer::new(
                 server_id,
                 &server_binary_path,
@@ -410,13 +478,13 @@ impl LanguageRegistry {
 }
 
 async fn get_server_binary_path(
-    adapter: Arc<dyn LspAdapter>,
+    adapter: Arc<LspAdapter>,
     language: Arc<Language>,
     http_client: Arc<dyn HttpClient>,
     download_dir: Arc<Path>,
     statuses: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
 ) -> Result<PathBuf> {
-    let container_dir = download_dir.join(adapter.name().await.0.as_ref());
+    let container_dir = download_dir.join(adapter.name.0.as_ref());
     if !container_dir.exists() {
         smol::fs::create_dir_all(&container_dir)
             .await
@@ -452,7 +520,7 @@ async fn get_server_binary_path(
 }
 
 async fn fetch_latest_server_binary_path(
-    adapter: Arc<dyn LspAdapter>,
+    adapter: Arc<LspAdapter>,
     language: Arc<Language>,
     http_client: Arc<dyn HttpClient>,
     container_dir: &Path,
@@ -501,7 +569,7 @@ impl Language {
         }
     }
 
-    pub fn lsp_adapter(&self) -> Option<Arc<dyn LspAdapter>> {
+    pub fn lsp_adapter(&self) -> Option<Arc<LspAdapter>> {
         self.adapter.clone()
     }
 
@@ -533,7 +601,7 @@ impl Language {
         Arc::get_mut(self.grammar.as_mut().unwrap()).unwrap()
     }
 
-    pub fn with_lsp_adapter(mut self, lsp_adapter: Arc<dyn LspAdapter>) -> Self {
+    pub fn with_lsp_adapter(mut self, lsp_adapter: Arc<LspAdapter>) -> Self {
         self.adapter = Some(lsp_adapter);
         self
     }
@@ -544,8 +612,8 @@ impl Language {
         fake_lsp_adapter: FakeLspAdapter,
     ) -> mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
         let (servers_tx, servers_rx) = mpsc::unbounded();
-        let adapter = Arc::new(fake_lsp_adapter);
-        self.fake_adapter = Some((servers_tx, adapter.clone()));
+        self.fake_adapter = Some((servers_tx, fake_lsp_adapter.clone()));
+        let adapter = smol::block_on(LspAdapter::new(fake_lsp_adapter));
         self.adapter = Some(adapter);
         servers_rx
     }
@@ -558,16 +626,16 @@ impl Language {
         self.config.line_comment.as_deref()
     }
 
-    pub async fn disk_based_diagnostic_sources(&self) -> Vec<String> {
+    pub async fn disk_based_diagnostic_sources(&self) -> &[String] {
         match self.adapter.as_ref() {
-            Some(adapter) => adapter.disk_based_diagnostic_sources().await,
-            None => Vec::new(),
+            Some(adapter) => &adapter.disk_based_diagnostic_sources,
+            None => &[],
         }
     }
 
-    pub async fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
+    pub async fn disk_based_diagnostics_progress_token(&self) -> Option<&str> {
         if let Some(adapter) = self.adapter.as_ref() {
-            adapter.disk_based_diagnostics_progress_token().await
+            adapter.disk_based_diagnostics_progress_token.as_deref()
         } else {
             None
         }
@@ -695,7 +763,7 @@ impl CodeLabel {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-impl Default for FakeLspAdapter {
+impl Default for FakeLspAdapterInner {
     fn default() -> Self {
         Self {
             name: "the-fake-language-server",
@@ -709,7 +777,7 @@ impl Default for FakeLspAdapter {
 
 #[cfg(any(test, feature = "test-support"))]
 #[async_trait]
-impl LspAdapter for FakeLspAdapter {
+impl LspAdapterTrait for FakeLspAdapter {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName(self.name.into())
     }
