@@ -445,6 +445,10 @@ impl Item for Editor {
             Event::Saved | Event::DirtyChanged | Event::TitleChanged
         )
     }
+
+    fn is_edit_event(event: &Self::Event) -> bool {
+        matches!(event, Event::BufferEdited)
+    }
 }
 
 impl ProjectItem for Editor {

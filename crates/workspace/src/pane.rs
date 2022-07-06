@@ -718,6 +718,18 @@ impl Pane {
         Ok(true)
     }
 
+    pub fn autosave_item(
+        item: &dyn ItemHandle,
+        project: ModelHandle<Project>,
+        cx: &mut MutableAppContext,
+    ) -> Task<Result<()>> {
+        if item.is_dirty(cx) && !item.has_conflict(cx) && item.can_save(cx) {
+            item.save(project, cx)
+        } else {
+            Task::ready(Ok(()))
+        }
+    }
+
     pub fn focus_active_item(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(active_item) = self.active_item() {
             cx.focus(active_item);

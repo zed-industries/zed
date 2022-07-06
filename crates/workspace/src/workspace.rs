@@ -11,6 +11,7 @@ use client::{
 };
 use clock::ReplicaId;
 use collections::{hash_map, HashMap, HashSet};
+use futures::{channel::oneshot, FutureExt};
 use gpui::{
     actions,
     color::Color,
@@ -30,7 +31,7 @@ pub use pane_group::*;
 use postage::prelude::Stream;
 use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, ProjectStore, Worktree, WorktreeId};
 use serde::Deserialize;
-use settings::Settings;
+use settings::{Autosave, Settings};
 use sidebar::{Side, Sidebar, SidebarButtons, ToggleSidebarItem};
 use smallvec::SmallVec;
 use status_bar::StatusBar;
@@ -41,12 +42,14 @@ use std::{
     cell::RefCell,
     fmt,
     future::Future,
+    mem,
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
     },
+    time::Duration,
 };
 use theme::{Theme, ThemeRegistry};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
@@ -296,6 +299,9 @@ pub trait Item: View {
     fn should_update_tab_on_event(_: &Self::Event) -> bool {
         false
     }
+    fn is_edit_event(_: &Self::Event) -> bool {
+        false
+    }
     fn act_as_type(
         &self,
         type_id: TypeId,
@@ -510,6 +516,8 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
             }
         }
 
+        let mut pending_autosave = None;
+        let mut cancel_pending_autosave = oneshot::channel::<()>().0;
         let pending_update = Rc::new(RefCell::new(None));
         let pending_update_scheduled = Rc::new(AtomicBool::new(false));
         let pane = pane.downgrade();
@@ -569,6 +577,40 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                     cx.emit(pane::Event::ChangeItemTitle);
                     cx.notify();
                 });
+            }
+
+            if T::is_edit_event(event) {
+                if let Autosave::AfterDelay { milliseconds } = cx.global::<Settings>().autosave {
+                    let prev_autosave = pending_autosave.take().unwrap_or(Task::ready(Some(())));
+                    let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
+                    let prev_cancel_tx = mem::replace(&mut cancel_pending_autosave, cancel_tx);
+                    let project = workspace.project.downgrade();
+                    let _ = prev_cancel_tx.send(());
+                    pending_autosave = Some(cx.spawn_weak(|_, mut cx| async move {
+                        let mut timer = cx
+                            .background()
+                            .timer(Duration::from_millis(milliseconds))
+                            .fuse();
+                        prev_autosave.await;
+                        futures::select_biased! {
+                            _ = cancel_rx => return None,
+                            _ = timer => {}
+                        }
+
+                        let project = project.upgrade(&cx)?;
+                        cx.update(|cx| Pane::autosave_item(&item, project, cx))
+                            .await
+                            .log_err();
+                        None
+                    }));
+                }
+            }
+        })
+        .detach();
+
+        cx.observe_focus(self, move |workspace, item, focused, cx| {
+            if !focused && cx.global::<Settings>().autosave == Autosave::OnFocusChange {
+                Pane::autosave_item(&item, workspace.project.clone(), cx).detach_and_log_err(cx);
             }
         })
         .detach();
@@ -774,6 +816,8 @@ impl Workspace {
             cx.notify()
         })
         .detach();
+        cx.observe_window_activation(Self::on_window_activation_changed)
+            .detach();
 
         cx.subscribe(&project, move |this, project, event, cx| {
             match event {
@@ -2313,6 +2357,19 @@ impl Workspace {
             cx.notify();
         }
         None
+    }
+
+    fn on_window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {
+        if !active && cx.global::<Settings>().autosave == Autosave::OnWindowChange {
+            for pane in &self.panes {
+                pane.update(cx, |pane, cx| {
+                    for item in pane.items() {
+                        Pane::autosave_item(item.as_ref(), self.project.clone(), cx)
+                            .detach_and_log_err(cx);
+                    }
+                });
+            }
+        }
     }
 }
 

@@ -329,6 +329,14 @@ impl Item for ProjectSearchView {
     fn should_update_tab_on_event(event: &ViewEvent) -> bool {
         matches!(event, ViewEvent::UpdateTab)
     }
+
+    fn is_edit_event(event: &Self::Event) -> bool {
+        if let ViewEvent::EditorEvent(editor_event) = event {
+            Editor::is_edit_event(editor_event)
+        } else {
+            false
+        }
+    }
 }
 
 impl ProjectSearchView {
