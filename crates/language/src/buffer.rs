@@ -1233,7 +1233,8 @@ impl Buffer {
 
             let inserted_ranges = edits
                 .into_iter()
-                .filter_map(|(range, new_text)| {
+                .zip(&edit_operation.as_edit().unwrap().new_text)
+                .filter_map(|((range, _), new_text)| {
                     let first_newline_ix = new_text.find('\n')?;
                     let new_text_len = new_text.len();
                     let start = (delta + range.start as isize) as usize + first_newline_ix + 1;
