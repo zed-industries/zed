@@ -673,6 +673,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1db59621ec70f09c5e9b597b220c7a2b43611f4710dc03ceb8748637775692c"
 
 [[package]]
+name = "cargo-get"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "359bbb7e7ca4fb789be0405afecfd750ab58ea519875a93c145f4d5f2eee1663"
+dependencies = [
+ "cargo_toml",
+ "clap 2.34.0",
+ "semver",
+]
+
+[[package]]
+name = "cargo_toml"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "363c7cfaa15f101415c4ac9e68706ca4a2277773932828b33f96e59d28c68e62"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "toml",
+]
+
+[[package]]
 name = "castaway"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6169,6 +6191,7 @@ dependencies = [
  "auto_update",
  "backtrace",
  "breadcrumbs",
+ "cargo-get",
  "chat_panel",
  "chrono",
  "cli",

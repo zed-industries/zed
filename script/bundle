@@ -52,7 +52,8 @@ else
 fi
 
 RELEASE_DIR_PATH=target/release
-DMG_PATH=$RELEASE_DIR_PATH/Zed.dmg
+VERSION=$(cd crates/zed && cargo-get version)
+DMG_PATH=$RELEASE_DIR_PATH/Zed_v$VERSION.dmg
 
 echo "Creating DMG"
 mkdir -p $RELEASE_DIR_PATH

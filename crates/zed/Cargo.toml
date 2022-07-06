@@ -112,6 +112,7 @@ client = { path = "../client", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
+cargo-get = "0.3.3"
 env_logger = "0.9"
 serde_json = { version = "1.0", features = ["preserve_order"] }
 unindent = "0.1.7"
