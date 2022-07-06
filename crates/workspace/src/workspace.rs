@@ -3039,7 +3039,6 @@ mod tests {
         let item = cx.add_view(window_id, |_| {
             let mut item = TestItem::new();
             item.project_entry_ids = vec![ProjectEntryId::from_proto(1)];
-            item.is_dirty = true;
             item
         });
         let item_id = item.id();
@@ -3048,10 +3047,11 @@ mod tests {
         });
 
         // Autosave on window change.
-        item.update(cx, |_, cx| {
+        item.update(cx, |item, cx| {
             cx.update_global(|settings: &mut Settings, _| {
                 settings.autosave = Autosave::OnWindowChange;
             });
+            item.is_dirty = true;
         });
 
         // Deactivating the window saves the file.
@@ -3060,11 +3060,12 @@ mod tests {
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 1));
 
         // Autosave on focus change.
-        item.update(cx, |_, cx| {
+        item.update(cx, |item, cx| {
             cx.focus_self();
             cx.update_global(|settings: &mut Settings, _| {
                 settings.autosave = Autosave::OnFocusChange;
             });
+            item.is_dirty = true;
         });
 
         // Blurring the item saves the file.
@@ -3073,10 +3074,11 @@ mod tests {
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 2));
 
         // Autosave after delay.
-        item.update(cx, |_, cx| {
+        item.update(cx, |item, cx| {
             cx.update_global(|settings: &mut Settings, _| {
                 settings.autosave = Autosave::AfterDelay { milliseconds: 500 };
             });
+            item.is_dirty = true;
             cx.emit(TestItemEvent::Edit);
         });
 
@@ -3089,10 +3091,11 @@ mod tests {
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 3));
 
         // Autosave on focus change, ensuring closing the tab counts as such.
-        item.update(cx, |_, cx| {
+        item.update(cx, |item, cx| {
             cx.update_global(|settings: &mut Settings, _| {
                 settings.autosave = Autosave::OnFocusChange;
             });
+            item.is_dirty = true;
         });
 
         workspace
@@ -3103,6 +3106,27 @@ mod tests {
             .await
             .unwrap();
         assert!(!cx.has_pending_prompt(window_id));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 4));
+
+        // Add the item again, ensuring autosave is prevented if the underlying file has been deleted.
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item(Box::new(item.clone()), cx);
+        });
+        item.update(cx, |item, cx| {
+            item.project_entry_ids = Default::default();
+            item.is_dirty = true;
+            cx.blur();
+        });
+        deterministic.run_until_parked();
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 4));
+
+        // Ensure autosave is prevented for deleted files also when closing the buffer.
+        let _close_items = workspace.update(cx, |workspace, cx| {
+            let pane = workspace.active_pane().clone();
+            Pane::close_items(workspace, pane, cx, move |id| id == item_id)
+        });
+        deterministic.run_until_parked();
+        assert!(cx.has_pending_prompt(window_id));
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 4));
     }
 
@@ -3195,6 +3219,7 @@ mod tests {
             _: &mut ViewContext<Self>,
         ) -> Task<anyhow::Result<()>> {
             self.save_count += 1;
+            self.is_dirty = false;
             Task::ready(Ok(()))
         }
 
@@ -3205,6 +3230,7 @@ mod tests {
             _: &mut ViewContext<Self>,
         ) -> Task<anyhow::Result<()>> {
             self.save_as_count += 1;
+            self.is_dirty = false;
             Task::ready(Ok(()))
         }
 
@@ -3214,6 +3240,7 @@ mod tests {
             _: &mut ViewContext<Self>,
         ) -> Task<anyhow::Result<()>> {
             self.reload_count += 1;
+            self.is_dirty = false;
             Task::ready(Ok(()))
         }
 

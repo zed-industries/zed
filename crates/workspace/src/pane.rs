@@ -677,13 +677,13 @@ impl Pane {
                 _ => return Ok(false),
             }
         } else if is_dirty && (can_save || is_singleton) {
-            let autosave_enabled = cx.read(|cx| {
+            let will_autosave = cx.read(|cx| {
                 matches!(
                     cx.global::<Settings>().autosave,
                     Autosave::OnFocusChange | Autosave::OnWindowChange
-                )
+                ) && Self::can_autosave_item(item.as_ref(), cx)
             });
-            let should_save = if should_prompt_for_save && !autosave_enabled {
+            let should_save = if should_prompt_for_save && !will_autosave {
                 let mut answer = pane.update(cx, |pane, cx| {
                     pane.activate_item(item_ix, true, true, cx);
                     cx.prompt(
@@ -724,12 +724,17 @@ impl Pane {
         Ok(true)
     }
 
+    fn can_autosave_item(item: &dyn ItemHandle, cx: &AppContext) -> bool {
+        let is_deleted = item.project_entry_ids(cx).is_empty();
+        item.is_dirty(cx) && !item.has_conflict(cx) && item.can_save(cx) && !is_deleted
+    }
+
     pub fn autosave_item(
         item: &dyn ItemHandle,
         project: ModelHandle<Project>,
         cx: &mut MutableAppContext,
     ) -> Task<Result<()>> {
-        if item.is_dirty(cx) && !item.has_conflict(cx) && item.can_save(cx) {
+        if Self::can_autosave_item(item, cx) {
             item.save(project, cx)
         } else {
             Task::ready(Ok(()))
