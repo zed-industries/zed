@@ -43,7 +43,7 @@ fn test_random_edits(mut rng: StdRng) {
         .take(reference_string_len)
         .collect::<String>();
     let mut buffer = Buffer::new(0, 0, reference_string.clone().into());
-    reference_string = reference_string.replace("\r", "");
+    LineEnding::strip_carriage_returns(&mut reference_string);
 
     buffer.history.group_interval = Duration::from_millis(rng.gen_range(0..=200));
     let mut buffer_versions = Vec::new();
@@ -58,7 +58,6 @@ fn test_random_edits(mut rng: StdRng) {
         for (old_range, new_text) in edits.iter().rev() {
             reference_string.replace_range(old_range.clone(), &new_text);
         }
-        reference_string = reference_string.replace("\r", "");
 
         assert_eq!(buffer.text(), reference_string);
         log::info!(
@@ -154,14 +153,25 @@ fn test_random_edits(mut rng: StdRng) {
 
 #[test]
 fn test_line_endings() {
-    let mut buffer = Buffer::new(0, 0, "one\r\ntwo".into());
-    assert_eq!(buffer.text(), "one\ntwo");
+    assert_eq!(LineEnding::detect(&"🍐✅\n".repeat(1000)), LineEnding::Unix);
+    assert_eq!(LineEnding::detect(&"abcd\n".repeat(1000)), LineEnding::Unix);
+    assert_eq!(
+        LineEnding::detect(&"🍐✅\r\n".repeat(1000)),
+        LineEnding::Windows
+    );
+    assert_eq!(
+        LineEnding::detect(&"abcd\r\n".repeat(1000)),
+        LineEnding::Windows
+    );
+
+    let mut buffer = Buffer::new(0, 0, "one\r\ntwo\rthree".into());
+    assert_eq!(buffer.text(), "one\ntwo\nthree");
     assert_eq!(buffer.line_ending(), LineEnding::Windows);
     buffer.check_invariants();
 
-    buffer.edit([(buffer.len()..buffer.len(), "\r\nthree")]);
+    buffer.edit([(buffer.len()..buffer.len(), "\r\nfour")]);
     buffer.edit([(0..0, "zero\r\n")]);
-    assert_eq!(buffer.text(), "zero\none\ntwo\nthree");
+    assert_eq!(buffer.text(), "zero\none\ntwo\nthree\nfour");
     assert_eq!(buffer.line_ending(), LineEnding::Windows);
     buffer.check_invariants();
 }

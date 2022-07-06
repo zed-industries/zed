@@ -18,6 +18,7 @@ pub use anchor::*;
 use anyhow::Result;
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
+use lazy_static::lazy_static;
 use locator::Locator;
 use operation_queue::OperationQueue;
 pub use patch::Patch;
@@ -26,10 +27,12 @@ pub use point_utf16::*;
 use postage::{barrier, oneshot, prelude::*};
 #[cfg(any(test, feature = "test-support"))]
 pub use random_char_iter::*;
+use regex::Regex;
 use rope::TextDimension;
 pub use rope::{Chunks, Rope, TextSummary};
 pub use selection::*;
 use std::{
+    borrow::Cow,
     cmp::{self, Ordering},
     future::Future,
     iter::Iterator,
@@ -41,6 +44,10 @@ use std::{
 pub use subscription::*;
 pub use sum_tree::Bias;
 use sum_tree::{FilterCursor, SumTree};
+
+lazy_static! {
+    static ref CARRIAGE_RETURNS_REGEX: Regex = Regex::new("\r\n|\r").unwrap();
+}
 
 pub type TransactionId = clock::Local;
 
@@ -1472,6 +1479,15 @@ impl Buffer {
 
         log::info!("mutating buffer {} with {:?}", self.replica_id, edits);
         let op = self.edit(edits.iter().cloned());
+        if let Operation::Edit(edit) = &op {
+            assert_eq!(edits.len(), edit.new_text.len());
+            for (edit, new_text) in edits.iter_mut().zip(&edit.new_text) {
+                edit.1 = new_text.clone();
+            }
+        } else {
+            unreachable!()
+        }
+
         (edits, op)
     }
 
@@ -2353,9 +2369,13 @@ impl LineEnding {
     }
 
     pub fn detect(text: &str) -> Self {
-        if let Some(ix) = text[..cmp::min(text.len(), 1000)].find(&['\n']) {
-            let text = text.as_bytes();
-            if ix > 0 && text[ix - 1] == b'\r' {
+        let mut max_ix = cmp::min(text.len(), 1000);
+        while !text.is_char_boundary(max_ix) {
+            max_ix -= 1;
+        }
+
+        if let Some(ix) = text[..max_ix].find(&['\n']) {
+            if ix > 0 && text.as_bytes()[ix - 1] == b'\r' {
                 Self::Windows
             } else {
                 Self::Unix
@@ -2366,12 +2386,14 @@ impl LineEnding {
     }
 
     pub fn strip_carriage_returns(text: &mut String) {
-        text.retain(|c| c != '\r')
+        if let Cow::Owned(replaced) = CARRIAGE_RETURNS_REGEX.replace_all(text, "\n") {
+            *text = replaced;
+        }
     }
 
     fn strip_carriage_returns_from_arc(text: Arc<str>) -> Arc<str> {
-        if text.contains('\r') {
-            text.replace('\r', "").into()
+        if let Cow::Owned(replaced) = CARRIAGE_RETURNS_REGEX.replace_all(&text, "\n") {
+            replaced.into()
         } else {
             text
         }
