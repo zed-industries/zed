@@ -63,6 +63,7 @@ pub struct BufferSnapshot {
     remote_id: u64,
     visible_text: Rope,
     deleted_text: Rope,
+    line_ending: LineEnding,
     undo_map: UndoMap,
     fragments: SumTree<Fragment>,
     insertions: SumTree<InsertionFragment>,
@@ -84,6 +85,12 @@ pub struct Transaction {
     pub start: clock::Global,
     pub end: clock::Global,
     pub ranges: Vec<Range<FullOffset>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LineEnding {
+    Unix,
+    Windows,
 }
 
 impl HistoryEntry {
@@ -148,9 +155,9 @@ impl HistoryEntry {
 }
 
 #[derive(Clone)]
-pub struct History {
+struct History {
     // TODO: Turn this into a String or Rope, maybe.
-    pub base_text: Arc<str>,
+    base_text: Arc<str>,
     operations: HashMap<clock::Local, Operation>,
     undo_stack: Vec<HistoryEntry>,
     redo_stack: Vec<HistoryEntry>,
@@ -539,13 +546,18 @@ pub struct UndoOperation {
 }
 
 impl Buffer {
-    pub fn new(replica_id: u16, remote_id: u64, history: History) -> Buffer {
+    pub fn new(replica_id: u16, remote_id: u64, mut base_text: String) -> Buffer {
+        let line_ending = LineEnding::detect(&base_text);
+        LineEnding::strip_carriage_returns(&mut base_text);
+
+        let history = History::new(base_text.into());
         let mut fragments = SumTree::new();
         let mut insertions = SumTree::new();
 
         let mut local_clock = clock::Local::new(replica_id);
         let mut lamport_clock = clock::Lamport::new(replica_id);
         let mut version = clock::Global::new();
+
         let visible_text = Rope::from(history.base_text.as_ref());
         if visible_text.len() > 0 {
             let insertion_timestamp = InsertionTimestamp {
@@ -576,6 +588,7 @@ impl Buffer {
                 remote_id,
                 visible_text,
                 deleted_text: Rope::new(),
+                line_ending,
                 fragments,
                 insertions,
                 version,
@@ -658,7 +671,7 @@ impl Buffer {
         let mut new_insertions = Vec::new();
         let mut insertion_offset = 0;
 
-        let mut ranges = edits
+        let mut edits = edits
             .map(|(range, new_text)| (range.to_offset(&*self), new_text))
             .peekable();
 
@@ -666,12 +679,12 @@ impl Buffer {
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
         let mut old_fragments = self.fragments.cursor::<FragmentTextSummary>();
         let mut new_fragments =
-            old_fragments.slice(&ranges.peek().unwrap().0.start, Bias::Right, &None);
+            old_fragments.slice(&edits.peek().unwrap().0.start, Bias::Right, &None);
         new_ropes.push_tree(new_fragments.summary().text);
 
         let mut fragment_start = old_fragments.start().visible;
-        for (range, new_text) in ranges {
-            let new_text = new_text.into();
+        for (range, new_text) in edits {
+            let new_text = LineEnding::strip_carriage_returns_from_arc(new_text.into());
             let fragment_end = old_fragments.end(&None).visible;
 
             // If the current fragment ends before this range, then jump ahead to the first fragment
@@ -714,6 +727,7 @@ impl Buffer {
             // Insert the new text before any existing fragments within the range.
             if !new_text.is_empty() {
                 let new_start = new_fragments.summary().text.visible;
+
                 edits_patch.push(Edit {
                     old: fragment_start..fragment_start,
                     new: new_start..new_start + new_text.len(),
@@ -803,6 +817,10 @@ impl Buffer {
         self.snapshot.deleted_text = deleted_text;
         self.subscriptions.publish_mut(&edits_patch);
         edit_op
+    }
+
+    pub fn set_line_ending(&mut self, line_ending: LineEnding) {
+        self.snapshot.line_ending = line_ending;
     }
 
     pub fn apply_ops<I: IntoIterator<Item = Operation>>(&mut self, ops: I) -> Result<()> {
@@ -1412,6 +1430,8 @@ impl Buffer {
             fragment_summary.text.deleted,
             self.snapshot.deleted_text.len()
         );
+
+        assert!(!self.text().contains("\r\n"));
     }
 
     pub fn set_group_interval(&mut self, group_interval: Duration) {
@@ -1547,6 +1567,10 @@ impl BufferSnapshot {
 
     pub fn text(&self) -> String {
         self.visible_text.to_string()
+    }
+
+    pub fn line_ending(&self) -> LineEnding {
+        self.line_ending
     }
 
     pub fn deleted_text(&self) -> String {
@@ -2306,6 +2330,50 @@ impl operation_queue::Operation for Operation {
             Operation::Undo {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
+        }
+    }
+}
+
+impl Default for LineEnding {
+    fn default() -> Self {
+        #[cfg(unix)]
+        return Self::Unix;
+
+        #[cfg(not(unix))]
+        return Self::CRLF;
+    }
+}
+
+impl LineEnding {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LineEnding::Unix => "\n",
+            LineEnding::Windows => "\r\n",
+        }
+    }
+
+    pub fn detect(text: &str) -> Self {
+        if let Some(ix) = text[..cmp::min(text.len(), 1000)].find(&['\n']) {
+            let text = text.as_bytes();
+            if ix > 0 && text[ix - 1] == b'\r' {
+                Self::Windows
+            } else {
+                Self::Unix
+            }
+        } else {
+            Self::default()
+        }
+    }
+
+    pub fn strip_carriage_returns(text: &mut String) {
+        text.retain(|c| c != '\r')
+    }
+
+    fn strip_carriage_returns_from_arc(text: Arc<str>) -> Arc<str> {
+        if text.contains('\r') {
+            text.replace('\r', "").into()
+        } else {
+            text
         }
     }
 }

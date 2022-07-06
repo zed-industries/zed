@@ -18,7 +18,7 @@ fn init_logger() {
 
 #[test]
 fn test_edit() {
-    let mut buffer = Buffer::new(0, 0, History::new("abc".into()));
+    let mut buffer = Buffer::new(0, 0, "abc".into());
     assert_eq!(buffer.text(), "abc");
     buffer.edit([(3..3, "def")]);
     assert_eq!(buffer.text(), "abcdef");
@@ -42,7 +42,9 @@ fn test_random_edits(mut rng: StdRng) {
     let mut reference_string = RandomCharIter::new(&mut rng)
         .take(reference_string_len)
         .collect::<String>();
-    let mut buffer = Buffer::new(0, 0, History::new(reference_string.clone().into()));
+    let mut buffer = Buffer::new(0, 0, reference_string.clone().into());
+    reference_string = reference_string.replace("\r", "");
+
     buffer.history.group_interval = Duration::from_millis(rng.gen_range(0..=200));
     let mut buffer_versions = Vec::new();
     log::info!(
@@ -56,6 +58,8 @@ fn test_random_edits(mut rng: StdRng) {
         for (old_range, new_text) in edits.iter().rev() {
             reference_string.replace_range(old_range.clone(), &new_text);
         }
+        reference_string = reference_string.replace("\r", "");
+
         assert_eq!(buffer.text(), reference_string);
         log::info!(
             "buffer text {:?}, version: {:?}",
@@ -149,8 +153,22 @@ fn test_random_edits(mut rng: StdRng) {
 }
 
 #[test]
+fn test_line_endings() {
+    let mut buffer = Buffer::new(0, 0, "one\r\ntwo".into());
+    assert_eq!(buffer.text(), "one\ntwo");
+    assert_eq!(buffer.line_ending(), LineEnding::Windows);
+    buffer.check_invariants();
+
+    buffer.edit([(buffer.len()..buffer.len(), "\r\nthree")]);
+    buffer.edit([(0..0, "zero\r\n")]);
+    assert_eq!(buffer.text(), "zero\none\ntwo\nthree");
+    assert_eq!(buffer.line_ending(), LineEnding::Windows);
+    buffer.check_invariants();
+}
+
+#[test]
 fn test_line_len() {
-    let mut buffer = Buffer::new(0, 0, History::new("".into()));
+    let mut buffer = Buffer::new(0, 0, "".into());
     buffer.edit([(0..0, "abcd\nefg\nhij")]);
     buffer.edit([(12..12, "kl\nmno")]);
     buffer.edit([(18..18, "\npqrs\n")]);
@@ -167,7 +185,7 @@ fn test_line_len() {
 #[test]
 fn test_common_prefix_at_positionn() {
     let text = "a = str; b = δα";
-    let buffer = Buffer::new(0, 0, History::new(text.into()));
+    let buffer = Buffer::new(0, 0, text.into());
 
     let offset1 = offset_after(text, "str");
     let offset2 = offset_after(text, "δα");
@@ -215,7 +233,7 @@ fn test_common_prefix_at_positionn() {
 
 #[test]
 fn test_text_summary_for_range() {
-    let buffer = Buffer::new(0, 0, History::new("ab\nefg\nhklm\nnopqrs\ntuvwxyz".into()));
+    let buffer = Buffer::new(0, 0, "ab\nefg\nhklm\nnopqrs\ntuvwxyz".into());
     assert_eq!(
         buffer.text_summary_for_range::<TextSummary, _>(1..3),
         TextSummary {
@@ -280,7 +298,7 @@ fn test_text_summary_for_range() {
 
 #[test]
 fn test_chars_at() {
-    let mut buffer = Buffer::new(0, 0, History::new("".into()));
+    let mut buffer = Buffer::new(0, 0, "".into());
     buffer.edit([(0..0, "abcd\nefgh\nij")]);
     buffer.edit([(12..12, "kl\nmno")]);
     buffer.edit([(18..18, "\npqrs")]);
@@ -302,7 +320,7 @@ fn test_chars_at() {
     assert_eq!(chars.collect::<String>(), "PQrs");
 
     // Regression test:
-    let mut buffer = Buffer::new(0, 0, History::new("".into()));
+    let mut buffer = Buffer::new(0, 0, "".into());
     buffer.edit([(0..0, "[workspace]\nmembers = [\n    \"xray_core\",\n    \"xray_server\",\n    \"xray_cli\",\n    \"xray_wasm\",\n]\n")]);
     buffer.edit([(60..60, "\n")]);
 
@@ -312,7 +330,7 @@ fn test_chars_at() {
 
 #[test]
 fn test_anchors() {
-    let mut buffer = Buffer::new(0, 0, History::new("".into()));
+    let mut buffer = Buffer::new(0, 0, "".into());
     buffer.edit([(0..0, "abc")]);
     let left_anchor = buffer.anchor_before(2);
     let right_anchor = buffer.anchor_after(2);
@@ -430,7 +448,7 @@ fn test_anchors() {
 
 #[test]
 fn test_anchors_at_start_and_end() {
-    let mut buffer = Buffer::new(0, 0, History::new("".into()));
+    let mut buffer = Buffer::new(0, 0, "".into());
     let before_start_anchor = buffer.anchor_before(0);
     let after_end_anchor = buffer.anchor_after(0);
 
@@ -453,7 +471,7 @@ fn test_anchors_at_start_and_end() {
 
 #[test]
 fn test_undo_redo() {
-    let mut buffer = Buffer::new(0, 0, History::new("1234".into()));
+    let mut buffer = Buffer::new(0, 0, "1234".into());
     // Set group interval to zero so as to not group edits in the undo stack.
     buffer.history.group_interval = Duration::from_secs(0);
 
@@ -490,7 +508,7 @@ fn test_undo_redo() {
 #[test]
 fn test_history() {
     let mut now = Instant::now();
-    let mut buffer = Buffer::new(0, 0, History::new("123456".into()));
+    let mut buffer = Buffer::new(0, 0, "123456".into());
 
     buffer.start_transaction_at(now);
     buffer.edit([(2..4, "cd")]);
@@ -544,7 +562,7 @@ fn test_history() {
 #[test]
 fn test_finalize_last_transaction() {
     let now = Instant::now();
-    let mut buffer = Buffer::new(0, 0, History::new("123456".into()));
+    let mut buffer = Buffer::new(0, 0, "123456".into());
 
     buffer.start_transaction_at(now);
     buffer.edit([(2..4, "cd")]);
@@ -579,7 +597,7 @@ fn test_finalize_last_transaction() {
 #[test]
 fn test_edited_ranges_for_transaction() {
     let now = Instant::now();
-    let mut buffer = Buffer::new(0, 0, History::new("1234567".into()));
+    let mut buffer = Buffer::new(0, 0, "1234567".into());
 
     buffer.start_transaction_at(now);
     buffer.edit([(2..4, "cd")]);
@@ -618,9 +636,9 @@ fn test_edited_ranges_for_transaction() {
 fn test_concurrent_edits() {
     let text = "abcdef";
 
-    let mut buffer1 = Buffer::new(1, 0, History::new(text.into()));
-    let mut buffer2 = Buffer::new(2, 0, History::new(text.into()));
-    let mut buffer3 = Buffer::new(3, 0, History::new(text.into()));
+    let mut buffer1 = Buffer::new(1, 0, text.into());
+    let mut buffer2 = Buffer::new(2, 0, text.into());
+    let mut buffer3 = Buffer::new(3, 0, text.into());
 
     let buf1_op = buffer1.edit([(1..2, "12")]);
     assert_eq!(buffer1.text(), "a12cdef");
@@ -659,7 +677,7 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
     let mut network = Network::new(rng.clone());
 
     for i in 0..peers {
-        let mut buffer = Buffer::new(i as ReplicaId, 0, History::new(base_text.clone().into()));
+        let mut buffer = Buffer::new(i as ReplicaId, 0, base_text.clone().into());
         buffer.history.group_interval = Duration::from_millis(rng.gen_range(0..=200));
         buffers.push(buffer);
         replica_ids.push(i as u16);

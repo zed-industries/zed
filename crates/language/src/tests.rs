@@ -421,7 +421,7 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
     async fn search<'a>(
         outline: &'a Outline<Anchor>,
         query: &str,
-        cx: &gpui::TestAppContext,
+        cx: &'a gpui::TestAppContext,
     ) -> Vec<(&'a str, Vec<usize>)> {
         let matches = cx
             .read(|cx| outline.search(query, cx.background().clone()))

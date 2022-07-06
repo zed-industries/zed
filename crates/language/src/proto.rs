@@ -11,6 +11,20 @@ use text::*;
 
 pub use proto::{Buffer, BufferState, LineEnding, SelectionSet};
 
+pub fn deserialize_line_ending(message: proto::LineEnding) -> text::LineEnding {
+    match message {
+        LineEnding::Unix => text::LineEnding::Unix,
+        LineEnding::Windows => text::LineEnding::Windows,
+    }
+}
+
+pub fn serialize_line_ending(message: text::LineEnding) -> proto::LineEnding {
+    match message {
+        text::LineEnding::Unix => proto::LineEnding::Unix,
+        text::LineEnding::Windows => proto::LineEnding::Windows,
+    }
+}
+
 pub fn serialize_operation(operation: &Operation) -> proto::Operation {
     proto::Operation {
         variant: Some(match operation {

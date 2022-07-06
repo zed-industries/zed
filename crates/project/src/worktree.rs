@@ -23,7 +23,7 @@ use gpui::{
     Task,
 };
 use language::{
-    proto::{deserialize_version, serialize_version},
+    proto::{deserialize_version, serialize_line_ending, serialize_version},
     Buffer, DiagnosticEntry, LineEnding, PointUtf16, Rope,
 };
 use lazy_static::lazy_static;
@@ -1750,7 +1750,7 @@ impl language::LocalFile for File {
                     version: serialize_version(&version),
                     mtime: Some(mtime.into()),
                     fingerprint,
-                    line_ending: line_ending.to_proto() as i32,
+                    line_ending: serialize_line_ending(line_ending) as i32,
                 })
                 .log_err();
         }
