@@ -43,7 +43,7 @@ fn test_random_edits(mut rng: StdRng) {
         .take(reference_string_len)
         .collect::<String>();
     let mut buffer = Buffer::new(0, 0, reference_string.clone().into());
-    LineEnding::strip_carriage_returns(&mut reference_string);
+    LineEnding::normalize(&mut reference_string);
 
     buffer.history.group_interval = Duration::from_millis(rng.gen_range(0..=200));
     let mut buffer_versions = Vec::new();

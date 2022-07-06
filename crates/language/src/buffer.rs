@@ -964,7 +964,7 @@ impl Buffer {
         cx.background().spawn(async move {
             let old_text = old_text.to_string();
             let line_ending = LineEnding::detect(&new_text);
-            LineEnding::strip_carriage_returns(&mut new_text);
+            LineEnding::normalize(&mut new_text);
             let changes = TextDiff::from_lines(old_text.as_str(), new_text.as_str())
                 .iter_all_changes()
                 .map(|c| (c.tag(), c.value().len()))

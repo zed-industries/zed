@@ -26,8 +26,9 @@ use language::{
     },
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CharKind, CodeAction, CodeLabel,
     Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent, File as _,
-    Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapter, OffsetRangeExt,
-    Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
+    Language, LanguageRegistry, LanguageServerName, LineEnding, LocalFile, LspAdapter,
+    OffsetRangeExt, Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
+    Transaction,
 };
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer, LanguageString,
@@ -3381,7 +3382,8 @@ impl Project {
                                 return None;
                             }
 
-                            let (old_range, new_text) = match lsp_completion.text_edit.as_ref() {
+                            let (old_range, mut new_text) = match lsp_completion.text_edit.as_ref()
+                            {
                                 // If the language server provides a range to overwrite, then
                                 // check that the range is valid.
                                 Some(lsp::CompletionTextEdit::Edit(edit)) => {
@@ -3431,6 +3433,7 @@ impl Project {
                                 }
                             };
 
+                            LineEnding::normalize(&mut new_text);
                             Some(Completion {
                                 old_range,
                                 new_text,
