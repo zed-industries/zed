@@ -20,12 +20,14 @@ use gpui::{
 };
 use language::{
     point_to_lsp,
-    proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
+    proto::{
+        deserialize_anchor, deserialize_line_ending, deserialize_version, serialize_anchor,
+        serialize_version,
+    },
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CharKind, CodeAction, CodeLabel,
     Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent, File as _,
-    Language, LanguageRegistry, LanguageServerName, LineEnding, LocalFile, LspAdapter,
-    OffsetRangeExt, Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
-    Transaction,
+    Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapter, OffsetRangeExt,
+    Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
 };
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DocumentHighlightKind, LanguageServer, LanguageString,
@@ -5542,7 +5544,7 @@ impl Project {
     ) -> Result<()> {
         let payload = envelope.payload;
         let version = deserialize_version(payload.version);
-        let line_ending = LineEnding::from_proto(
+        let line_ending = deserialize_line_ending(
             proto::LineEnding::from_i32(payload.line_ending)
                 .ok_or_else(|| anyhow!("missing line ending"))?,
         );
