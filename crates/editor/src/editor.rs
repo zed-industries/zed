@@ -6233,7 +6233,7 @@ mod tests {
         platform::{WindowBounds, WindowOptions},
     };
     use indoc::indoc;
-    use language::{FakeLspAdapter, FakeLspAdapterInner, LanguageConfig};
+    use language::{FakeLspAdapterInner, LanguageConfig};
     use lsp::FakeLanguageServer;
     use project::FakeFs;
     use settings::LanguageSettings;

@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::StreamExt;
-use language::{LanguageServerName, LspAdapter, LspAdapterTrait};
+use language::{LanguageServerName, LspAdapterTrait};
 use smol::fs;
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;

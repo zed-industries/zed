@@ -2,9 +2,8 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::lock::Mutex;
-use futures::Future;
 use gpui::executor::Background;
-use language::{LanguageServerName, LspAdapter, LspAdapterTrait};
+use language::{LanguageServerName, LspAdapterTrait};
 use plugin_runtime::{Plugin, PluginBuilder, WasiFn};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
@@ -55,10 +54,10 @@ impl PluginLspAdapter {
     }
 }
 
-struct Versions {
-    language_version: String,
-    server_version: String,
-}
+// struct Versions {
+//     language_version: String,
+//     server_version: String,
+// }
 
 // TODO: is this the root cause?
 // sketch:

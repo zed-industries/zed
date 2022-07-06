@@ -9,9 +9,7 @@ use indoc::indoc;
 
 use collections::BTreeMap;
 use gpui::{json, keymap::Keystroke, AppContext, ModelHandle, ViewContext, ViewHandle};
-use language::{
-    point_to_lsp, FakeLspAdapter, FakeLspAdapterInner, Language, LanguageConfig, Selection,
-};
+use language::{point_to_lsp, FakeLspAdapterInner, Language, LanguageConfig, Selection};
 use project::Project;
 use settings::Settings;
 use util::{

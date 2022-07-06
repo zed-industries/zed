@@ -1771,13 +1771,11 @@ impl Project {
             ))?,
         }
         cx.subscribe(buffer, |this, buffer, event, cx| {
-            // TODO(isaac): should this be done in the background?
             this.on_buffer_event(buffer, event, cx);
         })
         .detach();
 
         self.assign_language_to_buffer(buffer, cx);
-        // TODO(isaac): should this be done in the background
         self.register_buffer_with_language_server(buffer, cx);
         cx.observe_release(buffer, |this, buffer, cx| {
             if let Some(file) = File::from_dyn(buffer.file()) {
@@ -2091,9 +2089,10 @@ impl Project {
                                 move |params, mut cx| {
                                     if let Some(this) = this.upgrade(&cx) {
                                         this.update(&mut cx, |this, cx| {
-                                            this.on_lsp_diagnostics_published(
+                                            // TODO(isaac): remove block on
+                                            smol::block_on(this.on_lsp_diagnostics_published(
                                                 server_id, params, &adapter, cx,
-                                            )
+                                            ))
                                         });
                                     }
                                 }
