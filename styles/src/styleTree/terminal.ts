@@ -1,7 +1,8 @@
 import Theme from "../themes/common/theme";
+import { border, modalShadow } from "./components";
 
 export default function terminal(theme: Theme) {
-  return {
+  let colors = {
     black: theme.ramps.neutral(0).hex(),
     red: theme.ramps.red(0.5).hex(),
     green: theme.ramps.green(0.5).hex(),
@@ -20,6 +21,7 @@ export default function terminal(theme: Theme) {
     brightWhite: theme.ramps.neutral(7).hex(),
     foreground: theme.ramps.neutral(7).hex(),
     background: theme.ramps.neutral(0).hex(),
+    modalBackground: theme.ramps.neutral(1).hex(),
     cursor: theme.ramps.neutral(7).hex(),
     dimBlack: theme.ramps.neutral(7).hex(),
     dimRed: theme.ramps.red(0.75).hex(),
@@ -31,5 +33,17 @@ export default function terminal(theme: Theme) {
     dimWhite: theme.ramps.neutral(5).hex(),
     brightForeground: theme.ramps.neutral(7).hex(),
     dimForeground: theme.ramps.neutral(0).hex(),
+  };
+
+  return {
+    colors,
+    modalContainer: {
+      background: colors.modalBackground,
+      cornerRadius: 8,
+      padding: 8,
+      margin: 25,
+      border: border(theme, "primary"),
+      shadow: modalShadow(theme),
+    }
   };
 }

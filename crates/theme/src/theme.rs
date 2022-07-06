@@ -637,6 +637,12 @@ pub struct HoverPopover {
 
 #[derive(Clone, Deserialize, Default)]
 pub struct TerminalStyle {
+    pub colors: TerminalColors,
+    pub modal_container: ContainerStyle,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct TerminalColors {
     pub black: Color,
     pub red: Color,
     pub green: Color,
@@ -655,6 +661,7 @@ pub struct TerminalStyle {
     pub bright_white: Color,
     pub foreground: Color,
     pub background: Color,
+    pub modal_background: Color,
     pub cursor: Color,
     pub dim_black: Color,
     pub dim_red: Color,

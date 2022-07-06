@@ -25,7 +25,7 @@ use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use settings::Settings;
 use std::rc::Rc;
-use theme::TerminalStyle;
+use theme::{TerminalColors, TerminalStyle};
 
 use crate::{gpui_func_tools::paint_layer, Input, ScrollTerminal, Terminal};
 
@@ -110,7 +110,8 @@ impl Element for TerminalEl {
 
         //Now that we're done with the mutable portion, grab the immutable settings and view again
         let terminal_theme = &(cx.global::<Settings>()).theme.terminal;
-        let term = view_handle.read(cx).term.lock();
+        let view = view_handle.read(cx);
+        let term = view.term.lock();
 
         let grid = term.grid();
         let cursor_point = grid.cursor.point;
@@ -123,6 +124,7 @@ impl Element for TerminalEl {
             &text_style,
             terminal_theme,
             cx.text_layout_cache,
+            view.modal,
         );
 
         let cells = layout_cells
@@ -152,7 +154,7 @@ impl Element for TerminalEl {
                 cursor_text.len(),
                 RunStyle {
                     font_id: text_style.font_id,
-                    color: terminal_theme.background,
+                    color: terminal_theme.colors.background,
                     underline: Default::default(),
                 },
             )],
@@ -178,11 +180,17 @@ impl Element for TerminalEl {
                 cursor_position,
                 block_width,
                 line_height.0,
-                terminal_theme.cursor,
+                terminal_theme.colors.cursor,
                 CursorShape::Block,
                 Some(block_text.clone()),
             )
         });
+
+        let background_color = if view.modal {
+            terminal_theme.colors.modal_background
+        } else {
+            terminal_theme.colors.background
+        };
 
         (
             constraint.max,
@@ -193,7 +201,7 @@ impl Element for TerminalEl {
                 cursor,
                 cur_size,
                 background_rects,
-                background_color: terminal_theme.background,
+                background_color,
             },
         )
     }
@@ -348,6 +356,7 @@ fn layout_cells(
     text_style: &TextStyle,
     terminal_theme: &TerminalStyle,
     text_layout_cache: &TextLayoutCache,
+    modal: bool,
 ) -> Vec<LayoutCell> {
     let mut line_count: i32 = 0;
     let lines = grid.group_by(|i| i.point.line);
@@ -358,7 +367,7 @@ fn layout_cells(
             line.map(|indexed_cell| {
                 let cell_text = &indexed_cell.c.to_string();
 
-                let cell_style = cell_style(&indexed_cell, terminal_theme, text_style);
+                let cell_style = cell_style(&indexed_cell, terminal_theme, text_style, modal);
 
                 let layout_cell = text_layout_cache.layout_str(
                     cell_text,
@@ -368,7 +377,7 @@ fn layout_cells(
                 LayoutCell::new(
                     Point::new(line_count - 1, indexed_cell.point.column.0 as i32),
                     layout_cell,
-                    convert_color(&indexed_cell.bg, terminal_theme),
+                    convert_color(&indexed_cell.bg, &terminal_theme.colors, modal),
                 )
             })
             .collect::<Vec<LayoutCell>>()
@@ -410,9 +419,14 @@ fn get_cursor_shape(
 }
 
 ///Convert the Alacritty cell styles to GPUI text styles and background color
-fn cell_style(indexed: &Indexed<&Cell>, style: &TerminalStyle, text_style: &TextStyle) -> RunStyle {
+fn cell_style(
+    indexed: &Indexed<&Cell>,
+    style: &TerminalStyle,
+    text_style: &TextStyle,
+    modal: bool,
+) -> RunStyle {
     let flags = indexed.cell.flags;
-    let fg = convert_color(&indexed.cell.fg, style);
+    let fg = convert_color(&indexed.cell.fg, &style.colors, modal);
 
     let underline = flags
         .contains(Flags::UNDERLINE)
@@ -431,67 +445,73 @@ fn cell_style(indexed: &Indexed<&Cell>, style: &TerminalStyle, text_style: &Text
 }
 
 ///Converts a 2, 8, or 24 bit color ANSI color to the GPUI equivalent
-fn convert_color(alac_color: &AnsiColor, style: &TerminalStyle) -> Color {
+fn convert_color(alac_color: &AnsiColor, colors: &TerminalColors, modal: bool) -> Color {
+    let background = if modal {
+        colors.modal_background
+    } else {
+        colors.background
+    };
+
     match alac_color {
         //Named and theme defined colors
         alacritty_terminal::ansi::Color::Named(n) => match n {
-            alacritty_terminal::ansi::NamedColor::Black => style.black,
-            alacritty_terminal::ansi::NamedColor::Red => style.red,
-            alacritty_terminal::ansi::NamedColor::Green => style.green,
-            alacritty_terminal::ansi::NamedColor::Yellow => style.yellow,
-            alacritty_terminal::ansi::NamedColor::Blue => style.blue,
-            alacritty_terminal::ansi::NamedColor::Magenta => style.magenta,
-            alacritty_terminal::ansi::NamedColor::Cyan => style.cyan,
-            alacritty_terminal::ansi::NamedColor::White => style.white,
-            alacritty_terminal::ansi::NamedColor::BrightBlack => style.bright_black,
-            alacritty_terminal::ansi::NamedColor::BrightRed => style.bright_red,
-            alacritty_terminal::ansi::NamedColor::BrightGreen => style.bright_green,
-            alacritty_terminal::ansi::NamedColor::BrightYellow => style.bright_yellow,
-            alacritty_terminal::ansi::NamedColor::BrightBlue => style.bright_blue,
-            alacritty_terminal::ansi::NamedColor::BrightMagenta => style.bright_magenta,
-            alacritty_terminal::ansi::NamedColor::BrightCyan => style.bright_cyan,
-            alacritty_terminal::ansi::NamedColor::BrightWhite => style.bright_white,
-            alacritty_terminal::ansi::NamedColor::Foreground => style.foreground,
-            alacritty_terminal::ansi::NamedColor::Background => style.background,
-            alacritty_terminal::ansi::NamedColor::Cursor => style.cursor,
-            alacritty_terminal::ansi::NamedColor::DimBlack => style.dim_black,
-            alacritty_terminal::ansi::NamedColor::DimRed => style.dim_red,
-            alacritty_terminal::ansi::NamedColor::DimGreen => style.dim_green,
-            alacritty_terminal::ansi::NamedColor::DimYellow => style.dim_yellow,
-            alacritty_terminal::ansi::NamedColor::DimBlue => style.dim_blue,
-            alacritty_terminal::ansi::NamedColor::DimMagenta => style.dim_magenta,
-            alacritty_terminal::ansi::NamedColor::DimCyan => style.dim_cyan,
-            alacritty_terminal::ansi::NamedColor::DimWhite => style.dim_white,
-            alacritty_terminal::ansi::NamedColor::BrightForeground => style.bright_foreground,
-            alacritty_terminal::ansi::NamedColor::DimForeground => style.dim_foreground,
+            alacritty_terminal::ansi::NamedColor::Black => colors.black,
+            alacritty_terminal::ansi::NamedColor::Red => colors.red,
+            alacritty_terminal::ansi::NamedColor::Green => colors.green,
+            alacritty_terminal::ansi::NamedColor::Yellow => colors.yellow,
+            alacritty_terminal::ansi::NamedColor::Blue => colors.blue,
+            alacritty_terminal::ansi::NamedColor::Magenta => colors.magenta,
+            alacritty_terminal::ansi::NamedColor::Cyan => colors.cyan,
+            alacritty_terminal::ansi::NamedColor::White => colors.white,
+            alacritty_terminal::ansi::NamedColor::BrightBlack => colors.bright_black,
+            alacritty_terminal::ansi::NamedColor::BrightRed => colors.bright_red,
+            alacritty_terminal::ansi::NamedColor::BrightGreen => colors.bright_green,
+            alacritty_terminal::ansi::NamedColor::BrightYellow => colors.bright_yellow,
+            alacritty_terminal::ansi::NamedColor::BrightBlue => colors.bright_blue,
+            alacritty_terminal::ansi::NamedColor::BrightMagenta => colors.bright_magenta,
+            alacritty_terminal::ansi::NamedColor::BrightCyan => colors.bright_cyan,
+            alacritty_terminal::ansi::NamedColor::BrightWhite => colors.bright_white,
+            alacritty_terminal::ansi::NamedColor::Foreground => colors.foreground,
+            alacritty_terminal::ansi::NamedColor::Background => background,
+            alacritty_terminal::ansi::NamedColor::Cursor => colors.cursor,
+            alacritty_terminal::ansi::NamedColor::DimBlack => colors.dim_black,
+            alacritty_terminal::ansi::NamedColor::DimRed => colors.dim_red,
+            alacritty_terminal::ansi::NamedColor::DimGreen => colors.dim_green,
+            alacritty_terminal::ansi::NamedColor::DimYellow => colors.dim_yellow,
+            alacritty_terminal::ansi::NamedColor::DimBlue => colors.dim_blue,
+            alacritty_terminal::ansi::NamedColor::DimMagenta => colors.dim_magenta,
+            alacritty_terminal::ansi::NamedColor::DimCyan => colors.dim_cyan,
+            alacritty_terminal::ansi::NamedColor::DimWhite => colors.dim_white,
+            alacritty_terminal::ansi::NamedColor::BrightForeground => colors.bright_foreground,
+            alacritty_terminal::ansi::NamedColor::DimForeground => colors.dim_foreground,
         },
         //'True' colors
         alacritty_terminal::ansi::Color::Spec(rgb) => Color::new(rgb.r, rgb.g, rgb.b, u8::MAX),
         //8 bit, indexed colors
-        alacritty_terminal::ansi::Color::Indexed(i) => get_color_at_index(i, style),
+        alacritty_terminal::ansi::Color::Indexed(i) => get_color_at_index(i, colors),
     }
 }
 
 ///Converts an 8 bit ANSI color to it's GPUI equivalent.
-pub fn get_color_at_index(index: &u8, style: &TerminalStyle) -> Color {
+pub fn get_color_at_index(index: &u8, colors: &TerminalColors) -> Color {
     match index {
         //0-15 are the same as the named colors above
-        0 => style.black,
-        1 => style.red,
-        2 => style.green,
-        3 => style.yellow,
-        4 => style.blue,
-        5 => style.magenta,
-        6 => style.cyan,
-        7 => style.white,
-        8 => style.bright_black,
-        9 => style.bright_red,
-        10 => style.bright_green,
-        11 => style.bright_yellow,
-        12 => style.bright_blue,
-        13 => style.bright_magenta,
-        14 => style.bright_cyan,
-        15 => style.bright_white,
+        0 => colors.black,
+        1 => colors.red,
+        2 => colors.green,
+        3 => colors.yellow,
+        4 => colors.blue,
+        5 => colors.magenta,
+        6 => colors.cyan,
+        7 => colors.white,
+        8 => colors.bright_black,
+        9 => colors.bright_red,
+        10 => colors.bright_green,
+        11 => colors.bright_yellow,
+        12 => colors.bright_blue,
+        13 => colors.bright_magenta,
+        14 => colors.bright_cyan,
+        15 => colors.bright_white,
         //16-231 are mapped to their RGB colors on a 0-5 range per channel
         16..=231 => {
             let (r, g, b) = rgb_for_index(index); //Split the index into it's ANSI-RGB components

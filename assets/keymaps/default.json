@@ -303,7 +303,8 @@
             "cmd-shift-P": "command_palette::Toggle",
             "cmd-shift-M": "diagnostics::Deploy",
             "cmd-shift-E": "project_panel::Toggle",
-            "cmd-alt-s": "workspace::SaveAll"
+            "cmd-alt-s": "workspace::SaveAll",
+            "shift-space t": "terminal::DeployModal"
         }
     },
     // Bindings from Sublime Text
@@ -418,6 +419,12 @@
             "down": "terminal::Down",
             "tab": "terminal::Tab",
             "cmd-v": "terminal::Paste"
+        }
+    },
+    {
+        "context": "ModalTerminal",
+        "bindings": {
+            "escape": "terminal::DeployModal"
         }
     }
 ]
