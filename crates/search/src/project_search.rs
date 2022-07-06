@@ -365,8 +365,10 @@ impl ProjectSearchView {
             cx.emit(ViewEvent::EditorEvent(event.clone()))
         })
         .detach();
-        cx.observe_focus(&query_editor, |this, _, _| {
-            this.results_editor_was_focused = false;
+        cx.observe_focus(&query_editor, |this, _, focused, _| {
+            if focused {
+                this.results_editor_was_focused = false;
+            }
         })
         .detach();
 
@@ -377,8 +379,10 @@ impl ProjectSearchView {
         });
         cx.observe(&results_editor, |_, _, cx| cx.emit(ViewEvent::UpdateTab))
             .detach();
-        cx.observe_focus(&results_editor, |this, _, _| {
-            this.results_editor_was_focused = true;
+        cx.observe_focus(&results_editor, |this, _, focused, _| {
+            if focused {
+                this.results_editor_was_focused = true;
+            }
         })
         .detach();
         cx.subscribe(&results_editor, |this, _, event, cx| {
