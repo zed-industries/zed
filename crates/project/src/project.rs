@@ -3311,7 +3311,6 @@ impl Project {
                     return Ok(Default::default());
                 };
 
-                // TODO(isaac): also use join_all
                 struct PartialSymbol {
                     source_worktree_id: WorktreeId,
                     worktree_id: WorktreeId,
@@ -3366,28 +3365,30 @@ impl Project {
 
                 let mut symbols = Vec::new();
                 for ps in partial_symbols.into_iter() {
-                    let label = match ps.language {
-                        Some(language) => language.label_for_symbol(&ps.name, ps.kind).await,
-                        None => None,
-                    }
-                    .unwrap_or_else(|| CodeLabel::plain(ps.name.clone(), None));
+                    symbols.push(async move {
+                        let label = match ps.language {
+                            Some(language) => language.label_for_symbol(&ps.name, ps.kind).await,
+                            None => None,
+                        }
+                        .unwrap_or_else(|| CodeLabel::plain(ps.name.clone(), None));
 
-                    let language_server_name = ps.adapter.name().await;
+                        let language_server_name = ps.adapter.name().await;
 
-                    symbols.push(Symbol {
-                        source_worktree_id: ps.source_worktree_id,
-                        worktree_id: ps.worktree_id,
-                        language_server_name,
-                        name: ps.name,
-                        kind: ps.kind,
-                        label,
-                        path: ps.path,
-                        range: ps.range,
-                        signature: ps.signature,
+                        Symbol {
+                            source_worktree_id: ps.source_worktree_id,
+                            worktree_id: ps.worktree_id,
+                            language_server_name,
+                            name: ps.name,
+                            kind: ps.kind,
+                            label,
+                            path: ps.path,
+                            range: ps.range,
+                            signature: ps.signature,
+                        }
                     });
                 }
 
-                Ok(symbols)
+                Ok(futures::future::join_all(symbols).await)
             })
         } else if let Some(project_id) = self.remote_id() {
             let request = self.client.request(proto::GetProjectSymbols {
@@ -3678,28 +3679,30 @@ impl Project {
                 let mut result = Vec::new();
 
                 for pc in partial_completions.into_iter() {
-                    let label = match pc.language.as_ref() {
-                        Some(l) => l.label_for_completion(&pc.lsp_completion).await,
-                        None => None,
-                    }
-                    .unwrap_or_else(|| {
-                        CodeLabel::plain(
-                            pc.lsp_completion.label.clone(),
-                            pc.lsp_completion.filter_text.as_deref(),
-                        )
+                    result.push(async move {
+                        let label = match pc.language.as_ref() {
+                            Some(l) => l.label_for_completion(&pc.lsp_completion).await,
+                            None => None,
+                        }
+                        .unwrap_or_else(|| {
+                            CodeLabel::plain(
+                                pc.lsp_completion.label.clone(),
+                                pc.lsp_completion.filter_text.as_deref(),
+                            )
+                        });
+
+                        let completion = Completion {
+                            old_range: pc.old_range,
+                            new_text: pc.new_text,
+                            label,
+                            lsp_completion: pc.lsp_completion,
+                        };
+
+                        completion
                     });
-
-                    let completion = Completion {
-                        old_range: pc.old_range,
-                        new_text: pc.new_text,
-                        label,
-                        lsp_completion: pc.lsp_completion,
-                    };
-
-                    result.push(completion);
                 }
 
-                Ok(result)
+                Ok(futures::future::join_all(result).await)
             })
         } else if let Some(project_id) = self.remote_id() {
             let rpc = self.client.clone();
