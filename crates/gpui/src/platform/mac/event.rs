@@ -7,7 +7,7 @@ use crate::{
 };
 use cocoa::{
     appkit::{NSEvent, NSEventModifierFlags, NSEventType},
-    base::{id, nil, YES},
+    base::{id, YES},
     foundation::NSString as _,
 };
 use std::{borrow::Cow, ffi::CStr, os::raw::c_char};
@@ -111,11 +111,23 @@ impl Event {
                     input,
                 }))
             }
-            NSEventType::NSLeftMouseDown => {
+            NSEventType::NSLeftMouseDown
+            | NSEventType::NSRightMouseDown
+            | NSEventType::NSOtherMouseDown => {
+                let button = match native_event.buttonNumber() {
+                    0 => MouseButton::Left,
+                    1 => MouseButton::Right,
+                    2 => MouseButton::Middle,
+                    3 => MouseButton::Navigate(NavigationDirection::Back),
+                    4 => MouseButton::Navigate(NavigationDirection::Forward),
+                    // Other mouse buttons aren't tracked currently
+                    _ => return None,
+                };
                 let modifiers = native_event.modifierFlags();
+
                 window_height.map(|window_height| {
                     Self::MouseDown(MouseEvent {
-                        button: MouseButton::Left,
+                        button,
                         position: vec2f(
                             native_event.locationInWindow().x as f32,
                             window_height - native_event.locationInWindow().y as f32,
@@ -128,89 +140,23 @@ impl Event {
                     })
                 })
             }
-            NSEventType::NSLeftMouseUp => window_height.map(|window_height| {
-                let modifiers = native_event.modifierFlags();
-                Self::MouseUp(MouseEvent {
-                    button: MouseButton::Left,
-                    position: vec2f(
-                        native_event.locationInWindow().x as f32,
-                        window_height - native_event.locationInWindow().y as f32,
-                    ),
-                    ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
-                    alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
-                    shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
-                    cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
-                    click_count: native_event.clickCount() as usize,
-                })
-            }),
-            NSEventType::NSRightMouseDown => {
-                let modifiers = native_event.modifierFlags();
-                window_height.map(|window_height| {
-                    Self::MouseDown(MouseEvent {
-                        button: MouseButton::Right,
-                        position: vec2f(
-                            native_event.locationInWindow().x as f32,
-                            window_height - native_event.locationInWindow().y as f32,
-                        ),
-                        ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
-                        alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
-                        shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
-                        cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
-                        click_count: native_event.clickCount() as usize,
-                    })
-                })
-            }
-            NSEventType::NSRightMouseUp => window_height.map(|window_height| {
-                let modifiers = native_event.modifierFlags();
-                Self::MouseUp(MouseEvent {
-                    button: MouseButton::Right,
-                    position: vec2f(
-                        native_event.locationInWindow().x as f32,
-                        window_height - native_event.locationInWindow().y as f32,
-                    ),
-                    ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
-                    alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
-                    shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
-                    cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
-                    click_count: native_event.clickCount() as usize,
-                })
-            }),
-            NSEventType::NSOtherMouseDown => {
-                let direction = match native_event.buttonNumber() {
-                    3 => NavigationDirection::Back,
-                    4 => NavigationDirection::Forward,
+            NSEventType::NSLeftMouseUp
+            | NSEventType::NSRightMouseUp
+            | NSEventType::NSOtherMouseUp => {
+                let button = match native_event.buttonNumber() {
+                    0 => MouseButton::Left,
+                    1 => MouseButton::Right,
+                    2 => MouseButton::Middle,
+                    3 => MouseButton::Navigate(NavigationDirection::Back),
+                    4 => MouseButton::Navigate(NavigationDirection::Forward),
                     // Other mouse buttons aren't tracked currently
                     _ => return None,
                 };
 
-                let modifiers = native_event.modifierFlags();
                 window_height.map(|window_height| {
-                    Self::MouseDown(MouseEvent {
-                        button: MouseButton::Navigate(direction),
-                        position: vec2f(
-                            native_event.locationInWindow().x as f32,
-                            window_height - native_event.locationInWindow().y as f32,
-                        ),
-                        ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
-                        alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
-                        shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
-                        cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
-                        click_count: native_event.clickCount() as usize,
-                    })
-                })
-            }
-            NSEventType::NSOtherMouseUp => {
-                let direction = match native_event.buttonNumber() {
-                    3 => NavigationDirection::Back,
-                    4 => NavigationDirection::Forward,
-                    // Other mouse buttons aren't tracked currently
-                    _ => return None,
-                };
-
-                let modifiers = native_event.modifierFlags();
-                window_height.map(|window_height| {
+                    let modifiers = native_event.modifierFlags();
                     Self::MouseUp(MouseEvent {
-                        button: MouseButton::Navigate(direction),
+                        button,
                         position: vec2f(
                             native_event.locationInWindow().x as f32,
                             window_height - native_event.locationInWindow().y as f32,
@@ -236,31 +182,42 @@ impl Event {
                     precise: native_event.hasPreciseScrollingDeltas() == YES,
                 })
             }),
-            NSEventType::NSMouseMoved => window_height.map(|window_height| {
-                let modifiers = native_event.modifierFlags();
-                let pressed_button_flags = NSEvent::pressedMouseButtons(nil);
-
-                // Pick the "strongest" button to report in mouse dragged events
-                let pressed_button = if pressed_button_flags & (1 << 0) != 0 {
-                    Some(MouseButton::Left)
-                } else if pressed_button_flags & (1 << 1) != 0 {
-                    Some(MouseButton::Right)
-                } else if pressed_button_flags & (1 << 2) != 0 {
-                    Some(MouseButton::Middle)
-                } else if pressed_button_flags & (1 << 3) != 0 {
-                    Some(MouseButton::Navigate(NavigationDirection::Back))
-                } else if pressed_button_flags & (1 << 4) != 0 {
-                    Some(MouseButton::Navigate(NavigationDirection::Forward))
-                } else {
-                    None
+            NSEventType::NSLeftMouseDragged
+            | NSEventType::NSRightMouseDragged
+            | NSEventType::NSOtherMouseDragged => {
+                let pressed_button = match native_event.buttonNumber() {
+                    0 => MouseButton::Left,
+                    1 => MouseButton::Right,
+                    2 => MouseButton::Middle,
+                    3 => MouseButton::Navigate(NavigationDirection::Back),
+                    4 => MouseButton::Navigate(NavigationDirection::Forward),
+                    // Other mouse buttons aren't tracked currently
+                    _ => return None,
                 };
 
+                window_height.map(|window_height| {
+                    let modifiers = native_event.modifierFlags();
+                    Self::MouseMoved(MouseMovedEvent {
+                        pressed_button: Some(pressed_button),
+                        position: vec2f(
+                            native_event.locationInWindow().x as f32,
+                            window_height - native_event.locationInWindow().y as f32,
+                        ),
+                        ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
+                        alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
+                        shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
+                        cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
+                    })
+                })
+            }
+            NSEventType::NSMouseMoved => window_height.map(|window_height| {
+                let modifiers = native_event.modifierFlags();
                 Self::MouseMoved(MouseMovedEvent {
                     position: vec2f(
                         native_event.locationInWindow().x as f32,
                         window_height - native_event.locationInWindow().y as f32,
                     ),
-                    pressed_button,
+                    pressed_button: None,
                     ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
                     alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
                     shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
