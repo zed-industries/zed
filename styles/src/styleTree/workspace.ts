@@ -142,13 +142,15 @@ export default function workspace(theme: Theme) {
       navButton: {
         color: iconColor(theme, "primary"),
         iconWidth: 8,
-        buttonWidth: 12,
+        buttonWidth: 18,
+        cornerRadius: 6,
         hover: {
           color: iconColor(theme, "active"),
+          background: backgroundColor(theme, 300),
         },
         disabled: {
           color: iconColor(theme, "muted")
-        }
+        },
       },
       padding: { left: 16, right: 8, top: 4, bottom: 4 },
     },

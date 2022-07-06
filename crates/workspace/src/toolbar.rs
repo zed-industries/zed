@@ -173,6 +173,7 @@ fn nav_button<A: Action + Clone>(
             .constrained()
             .with_width(style.button_width)
             .with_height(style.button_width)
+            .aligned()
             .boxed()
     })
     .with_cursor_style(if enabled {
