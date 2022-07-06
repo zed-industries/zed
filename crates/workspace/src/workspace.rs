@@ -3142,25 +3142,104 @@ mod tests {
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
     }
 
-    #[derive(Clone)]
+    #[gpui::test]
+    async fn test_pane_navigation(
+        deterministic: Arc<Deterministic>,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        deterministic.forbid_parking();
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, [], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+
+        let item = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.project_entry_ids = vec![ProjectEntryId::from_proto(1)];
+            item
+        });
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let toolbar = pane.read_with(cx, |pane, _| pane.toolbar().clone());
+        let toolbar_notify_count = Rc::new(RefCell::new(0));
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item(Box::new(item.clone()), cx);
+            let toolbar_notification_count = toolbar_notify_count.clone();
+            cx.observe(&toolbar, move |_, _, _| {
+                *toolbar_notification_count.borrow_mut() += 1
+            })
+            .detach();
+        });
+
+        pane.read_with(cx, |pane, _| {
+            assert!(!pane.can_navigate_backward());
+            assert!(!pane.can_navigate_forward());
+        });
+
+        item.update(cx, |item, cx| {
+            item.set_state("one".to_string(), cx);
+        });
+
+        // Toolbar must be notified to re-render the navigation buttons
+        assert_eq!(*toolbar_notify_count.borrow(), 1);
+
+        pane.read_with(cx, |pane, _| {
+            assert!(pane.can_navigate_backward());
+            assert!(!pane.can_navigate_forward());
+        });
+
+        workspace
+            .update(cx, |workspace, cx| {
+                Pane::go_back(workspace, Some(pane.clone()), cx)
+            })
+            .await;
+
+        assert_eq!(*toolbar_notify_count.borrow(), 3);
+        pane.read_with(cx, |pane, _| {
+            assert!(!pane.can_navigate_backward());
+            assert!(pane.can_navigate_forward());
+        });
+    }
+
     struct TestItem {
+        state: String,
         save_count: usize,
         save_as_count: usize,
         reload_count: usize,
         is_dirty: bool,
+        is_singleton: bool,
         has_conflict: bool,
         project_entry_ids: Vec<ProjectEntryId>,
         project_path: Option<ProjectPath>,
-        is_singleton: bool,
+        nav_history: Option<ItemNavHistory>,
     }
 
     enum TestItemEvent {
         Edit,
     }
 
+    impl Clone for TestItem {
+        fn clone(&self) -> Self {
+            Self {
+                state: self.state.clone(),
+                save_count: self.save_count,
+                save_as_count: self.save_as_count,
+                reload_count: self.reload_count,
+                is_dirty: self.is_dirty,
+                is_singleton: self.is_singleton,
+                has_conflict: self.has_conflict,
+                project_entry_ids: self.project_entry_ids.clone(),
+                project_path: self.project_path.clone(),
+                nav_history: None,
+            }
+        }
+    }
+
     impl TestItem {
         fn new() -> Self {
             Self {
+                state: String::new(),
                 save_count: 0,
                 save_as_count: 0,
                 reload_count: 0,
@@ -3169,6 +3248,18 @@ mod tests {
                 project_entry_ids: Vec::new(),
                 project_path: None,
                 is_singleton: true,
+                nav_history: None,
+            }
+        }
+
+        fn set_state(&mut self, state: String, cx: &mut ViewContext<Self>) {
+            self.push_to_nav_history(cx);
+            self.state = state;
+        }
+
+        fn push_to_nav_history(&mut self, cx: &mut ViewContext<Self>) {
+            if let Some(history) = &mut self.nav_history {
+                history.push(Some(Box::new(self.state.clone())), cx);
             }
         }
     }
@@ -3204,7 +3295,23 @@ mod tests {
             self.is_singleton
         }
 
-        fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>) {}
+        fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {
+            self.nav_history = Some(history);
+        }
+
+        fn navigate(&mut self, state: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
+            let state = *state.downcast::<String>().unwrap_or_default();
+            if state != self.state {
+                self.state = state;
+                true
+            } else {
+                false
+            }
+        }
+
+        fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
+            self.push_to_nav_history(cx);
+        }
 
         fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
         where
