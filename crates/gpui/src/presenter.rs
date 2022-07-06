@@ -9,9 +9,10 @@ use crate::{
     scene::CursorRegion,
     text_layout::TextLayoutCache,
     Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox, Entity,
-    FontSystem, ModelHandle, MouseRegion, MouseRegionId, ReadModel, ReadView, RenderContext,
-    RenderParams, Scene, UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle, WeakModelHandle,
-    WeakViewHandle,
+    FontSystem, LeftMouseDownEvent, LeftMouseDraggedEvent, LeftMouseUpEvent, ModelHandle,
+    MouseMovedEvent, MouseRegion, MouseRegionId, ReadModel, ReadView, RenderContext, RenderParams,
+    RightMouseDownEvent, RightMouseUpEvent, Scene, UpgradeModelHandle, UpgradeViewHandle, View,
+    ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
@@ -235,7 +236,7 @@ impl Presenter {
             let mut dragged_region = None;
 
             match event {
-                Event::LeftMouseDown { position, .. } => {
+                Event::LeftMouseDown(LeftMouseDownEvent { position, .. }) => {
                     let mut hit = false;
                     for (region, _) in self.mouse_regions.iter().rev() {
                         if region.bounds.contains_point(position) {
@@ -251,11 +252,11 @@ impl Presenter {
                         }
                     }
                 }
-                Event::LeftMouseUp {
+                Event::LeftMouseUp(LeftMouseUpEvent {
                     position,
                     click_count,
                     ..
-                } => {
+                }) => {
                     self.prev_drag_position.take();
                     if let Some(region) = self.clicked_region.take() {
                         invalidated_views.push(region.view_id);
@@ -264,7 +265,7 @@ impl Presenter {
                         }
                     }
                 }
-                Event::RightMouseDown { position, .. } => {
+                Event::RightMouseDown(RightMouseDownEvent { position, .. }) => {
                     let mut hit = false;
                     for (region, _) in self.mouse_regions.iter().rev() {
                         if region.bounds.contains_point(position) {
@@ -279,11 +280,11 @@ impl Presenter {
                         }
                     }
                 }
-                Event::RightMouseUp {
+                Event::RightMouseUp(RightMouseUpEvent {
                     position,
                     click_count,
                     ..
-                } => {
+                }) => {
                     if let Some(region) = self.right_clicked_region.take() {
                         invalidated_views.push(region.view_id);
                         if region.bounds.contains_point(position) {
@@ -294,13 +295,13 @@ impl Presenter {
                 Event::MouseMoved { .. } => {
                     self.last_mouse_moved_event = Some(event.clone());
                 }
-                Event::LeftMouseDragged {
+                Event::LeftMouseDragged(LeftMouseDraggedEvent {
                     position,
                     shift,
                     ctrl,
                     alt,
                     cmd,
-                } => {
+                }) => {
                     if let Some((clicked_region, prev_drag_position)) = self
                         .clicked_region
                         .as_ref()
@@ -311,14 +312,14 @@ impl Presenter {
                         *prev_drag_position = position;
                     }
 
-                    self.last_mouse_moved_event = Some(Event::MouseMoved {
+                    self.last_mouse_moved_event = Some(Event::MouseMoved(MouseMovedEvent {
                         position,
                         left_mouse_down: true,
                         shift,
                         ctrl,
                         alt,
                         cmd,
-                    });
+                    }));
                 }
                 _ => {}
             }
@@ -410,11 +411,11 @@ impl Presenter {
         let mut unhovered_regions = Vec::new();
         let mut hovered_regions = Vec::new();
 
-        if let Event::MouseMoved {
+        if let Event::MouseMoved(MouseMovedEvent {
             position,
             left_mouse_down,
             ..
-        } = event
+        }) = event
         {
             if !left_mouse_down {
                 let mut style_to_assign = CursorStyle::Arrow;

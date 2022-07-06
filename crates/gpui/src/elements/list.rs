@@ -5,7 +5,7 @@ use crate::{
     },
     json::json,
     DebugContext, Element, ElementBox, ElementRc, Event, EventContext, LayoutContext, PaintContext,
-    RenderContext, SizeConstraint, View, ViewContext,
+    RenderContext, ScrollWheelEvent, SizeConstraint, View, ViewContext,
 };
 use std::{cell::RefCell, collections::VecDeque, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
@@ -311,11 +311,11 @@ impl Element for List {
         state.items = new_items;
 
         match event {
-            Event::ScrollWheel {
+            Event::ScrollWheel(ScrollWheelEvent {
                 position,
                 delta,
                 precise,
-            } => {
+            }) => {
                 if bounds.contains_point(*position) {
                     if state.scroll(scroll_top, bounds.height(), *delta, *precise, cx) {
                         handled = true;

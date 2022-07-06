@@ -2,6 +2,9 @@ use crate::{
     geometry::vector::vec2f,
     keymap::Keystroke,
     platform::{Event, NavigationDirection},
+    KeyDownEvent, KeyUpEvent, LeftMouseDownEvent, LeftMouseDraggedEvent, LeftMouseUpEvent,
+    ModifiersChangedEvent, MouseMovedEvent, NavigateMouseDownEvent, NavigateMouseUpEvent,
+    RightMouseDownEvent, RightMouseUpEvent, ScrollWheelEvent,
 };
 use cocoa::{
     appkit::{NSEvent, NSEventModifierFlags, NSEventType},
@@ -59,12 +62,12 @@ impl Event {
                 let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
                 let cmd = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
 
-                Some(Self::ModifiersChanged {
+                Some(Self::ModifiersChanged(ModifiersChangedEvent {
                     ctrl,
                     alt,
                     shift,
                     cmd,
-                })
+                }))
             }
             NSEventType::NSKeyDown => {
                 let modifiers = native_event.modifierFlags();
@@ -76,7 +79,7 @@ impl Event {
 
                 let (unmodified_chars, input) = get_key_text(native_event, cmd, ctrl, function)?;
 
-                Some(Self::KeyDown {
+                Some(Self::KeyDown(KeyDownEvent {
                     keystroke: Keystroke {
                         ctrl,
                         alt,
@@ -86,7 +89,7 @@ impl Event {
                     },
                     input,
                     is_held: native_event.isARepeat() == YES,
-                })
+                }))
             }
             NSEventType::NSKeyUp => {
                 let modifiers = native_event.modifierFlags();
@@ -98,7 +101,7 @@ impl Event {
 
                 let (unmodified_chars, input) = get_key_text(native_event, cmd, ctrl, function)?;
 
-                Some(Self::KeyUp {
+                Some(Self::KeyUp(KeyUpEvent {
                     keystroke: Keystroke {
                         ctrl,
                         alt,
@@ -107,49 +110,57 @@ impl Event {
                         key: unmodified_chars.into(),
                     },
                     input,
-                })
+                }))
             }
             NSEventType::NSLeftMouseDown => {
                 let modifiers = native_event.modifierFlags();
-                window_height.map(|window_height| Self::LeftMouseDown {
+                window_height.map(|window_height| {
+                    Self::LeftMouseDown(LeftMouseDownEvent {
+                        position: vec2f(
+                            native_event.locationInWindow().x as f32,
+                            window_height - native_event.locationInWindow().y as f32,
+                        ),
+                        ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
+                        alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
+                        shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
+                        cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
+                        click_count: native_event.clickCount() as usize,
+                    })
+                })
+            }
+            NSEventType::NSLeftMouseUp => window_height.map(|window_height| {
+                Self::LeftMouseUp(LeftMouseUpEvent {
                     position: vec2f(
                         native_event.locationInWindow().x as f32,
                         window_height - native_event.locationInWindow().y as f32,
                     ),
-                    ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
-                    alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
-                    shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
-                    cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
                     click_count: native_event.clickCount() as usize,
                 })
-            }
-            NSEventType::NSLeftMouseUp => window_height.map(|window_height| Self::LeftMouseUp {
-                position: vec2f(
-                    native_event.locationInWindow().x as f32,
-                    window_height - native_event.locationInWindow().y as f32,
-                ),
-                click_count: native_event.clickCount() as usize,
             }),
             NSEventType::NSRightMouseDown => {
                 let modifiers = native_event.modifierFlags();
-                window_height.map(|window_height| Self::RightMouseDown {
+                window_height.map(|window_height| {
+                    Self::RightMouseDown(RightMouseDownEvent {
+                        position: vec2f(
+                            native_event.locationInWindow().x as f32,
+                            window_height - native_event.locationInWindow().y as f32,
+                        ),
+                        ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
+                        alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
+                        shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
+                        cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
+                        click_count: native_event.clickCount() as usize,
+                    })
+                })
+            }
+            NSEventType::NSRightMouseUp => window_height.map(|window_height| {
+                Self::RightMouseUp(RightMouseUpEvent {
                     position: vec2f(
                         native_event.locationInWindow().x as f32,
                         window_height - native_event.locationInWindow().y as f32,
                     ),
-                    ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
-                    alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
-                    shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
-                    cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
                     click_count: native_event.clickCount() as usize,
                 })
-            }
-            NSEventType::NSRightMouseUp => window_height.map(|window_height| Self::RightMouseUp {
-                position: vec2f(
-                    native_event.locationInWindow().x as f32,
-                    window_height - native_event.locationInWindow().y as f32,
-                ),
-                click_count: native_event.clickCount() as usize,
             }),
             NSEventType::NSOtherMouseDown => {
                 let direction = match native_event.buttonNumber() {
@@ -160,17 +171,19 @@ impl Event {
                 };
 
                 let modifiers = native_event.modifierFlags();
-                window_height.map(|window_height| Self::NavigateMouseDown {
-                    position: vec2f(
-                        native_event.locationInWindow().x as f32,
-                        window_height - native_event.locationInWindow().y as f32,
-                    ),
-                    direction,
-                    ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
-                    alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
-                    shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
-                    cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
-                    click_count: native_event.clickCount() as usize,
+                window_height.map(|window_height| {
+                    Self::NavigateMouseDown(NavigateMouseDownEvent {
+                        position: vec2f(
+                            native_event.locationInWindow().x as f32,
+                            window_height - native_event.locationInWindow().y as f32,
+                        ),
+                        direction,
+                        ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
+                        alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
+                        shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
+                        cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
+                        click_count: native_event.clickCount() as usize,
+                    })
                 })
             }
             NSEventType::NSOtherMouseUp => {
@@ -181,17 +194,19 @@ impl Event {
                     _ => return None,
                 };
 
-                window_height.map(|window_height| Self::NavigateMouseUp {
-                    position: vec2f(
-                        native_event.locationInWindow().x as f32,
-                        window_height - native_event.locationInWindow().y as f32,
-                    ),
-                    direction,
+                window_height.map(|window_height| {
+                    Self::NavigateMouseUp(NavigateMouseUpEvent {
+                        position: vec2f(
+                            native_event.locationInWindow().x as f32,
+                            window_height - native_event.locationInWindow().y as f32,
+                        ),
+                        direction,
+                    })
                 })
             }
             NSEventType::NSLeftMouseDragged => window_height.map(|window_height| {
                 let modifiers = native_event.modifierFlags();
-                Self::LeftMouseDragged {
+                Self::LeftMouseDragged(LeftMouseDraggedEvent {
                     position: vec2f(
                         native_event.locationInWindow().x as f32,
                         window_height - native_event.locationInWindow().y as f32,
@@ -200,22 +215,24 @@ impl Event {
                     alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
                     shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
                     cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
-                }
+                })
             }),
-            NSEventType::NSScrollWheel => window_height.map(|window_height| Self::ScrollWheel {
-                position: vec2f(
-                    native_event.locationInWindow().x as f32,
-                    window_height - native_event.locationInWindow().y as f32,
-                ),
-                delta: vec2f(
-                    native_event.scrollingDeltaX() as f32,
-                    native_event.scrollingDeltaY() as f32,
-                ),
-                precise: native_event.hasPreciseScrollingDeltas() == YES,
+            NSEventType::NSScrollWheel => window_height.map(|window_height| {
+                Self::ScrollWheel(ScrollWheelEvent {
+                    position: vec2f(
+                        native_event.locationInWindow().x as f32,
+                        window_height - native_event.locationInWindow().y as f32,
+                    ),
+                    delta: vec2f(
+                        native_event.scrollingDeltaX() as f32,
+                        native_event.scrollingDeltaY() as f32,
+                    ),
+                    precise: native_event.hasPreciseScrollingDeltas() == YES,
+                })
             }),
             NSEventType::NSMouseMoved => window_height.map(|window_height| {
                 let modifiers = native_event.modifierFlags();
-                Self::MouseMoved {
+                Self::MouseMoved(MouseMovedEvent {
                     position: vec2f(
                         native_event.locationInWindow().x as f32,
                         window_height - native_event.locationInWindow().y as f32,
@@ -225,7 +242,7 @@ impl Event {
                     alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
                     shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
                     cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
-                }
+                })
             }),
             _ => None,
         }

@@ -23,9 +23,10 @@ use gpui::{
     json::{self, ToJson},
     platform::CursorStyle,
     text_layout::{self, Line, RunStyle, TextLayoutCache},
-    AppContext, Axis, Border, CursorRegion, Element, ElementBox, Event, EventContext,
-    LayoutContext, MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext,
-    WeakViewHandle,
+    AppContext, Axis, Border, CursorRegion, Element, ElementBox, Event, EventContext, KeyDownEvent,
+    LayoutContext, LeftMouseDownEvent, LeftMouseDraggedEvent, LeftMouseUpEvent,
+    ModifiersChangedEvent, MouseMovedEvent, MutableAppContext, PaintContext, Quad, Scene,
+    ScrollWheelEvent, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
 use language::{Bias, DiagnosticSeverity, Selection};
@@ -1463,14 +1464,14 @@ impl Element for EditorElement {
         }
 
         match event {
-            Event::LeftMouseDown {
+            Event::LeftMouseDown(LeftMouseDownEvent {
                 position,
                 cmd,
                 alt,
                 shift,
                 click_count,
                 ..
-            } => self.mouse_down(
+            }) => self.mouse_down(
                 *position,
                 *cmd,
                 *alt,
@@ -1480,18 +1481,20 @@ impl Element for EditorElement {
                 paint,
                 cx,
             ),
-            Event::LeftMouseUp { position, .. } => self.mouse_up(*position, cx),
-            Event::LeftMouseDragged { position, .. } => {
+            Event::LeftMouseUp(LeftMouseUpEvent { position, .. }) => self.mouse_up(*position, cx),
+            Event::LeftMouseDragged(LeftMouseDraggedEvent { position, .. }) => {
                 self.mouse_dragged(*position, layout, paint, cx)
             }
-            Event::ScrollWheel {
+            Event::ScrollWheel(ScrollWheelEvent {
                 position,
                 delta,
                 precise,
-            } => self.scroll(*position, *delta, *precise, layout, paint, cx),
-            Event::KeyDown { input, .. } => self.key_down(input.as_deref(), cx),
-            Event::ModifiersChanged { cmd, .. } => self.modifiers_changed(*cmd, cx),
-            Event::MouseMoved { position, cmd, .. } => {
+            }) => self.scroll(*position, *delta, *precise, layout, paint, cx),
+            Event::KeyDown(KeyDownEvent { input, .. }) => self.key_down(input.as_deref(), cx),
+            Event::ModifiersChanged(ModifiersChangedEvent { cmd, .. }) => {
+                self.modifiers_changed(*cmd, cx)
+            }
+            Event::MouseMoved(MouseMovedEvent { position, cmd, .. }) => {
                 self.mouse_moved(*position, *cmd, layout, paint, cx)
             }
 

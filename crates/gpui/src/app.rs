@@ -4,7 +4,7 @@ use crate::{
     elements::ElementBox,
     executor::{self, Task},
     keymap::{self, Binding, Keystroke},
-    platform::{self, Platform, PromptLevel, WindowOptions},
+    platform::{self, KeyDownEvent, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::post_inc,
     AssetCache, AssetSource, ClipboardItem, FontCache, MouseRegionId, PathPromptOptions,
@@ -377,11 +377,11 @@ impl TestAppContext {
 
             if !cx.dispatch_keystroke(window_id, dispatch_path, &keystroke) {
                 presenter.borrow_mut().dispatch_event(
-                    Event::KeyDown {
+                    Event::KeyDown(KeyDownEvent {
                         keystroke,
                         input,
                         is_held,
-                    },
+                    }),
                     cx,
                 );
             }
@@ -1820,7 +1820,7 @@ impl MutableAppContext {
             window.on_event(Box::new(move |event| {
                 app.update(|cx| {
                     if let Some(presenter) = presenter.upgrade() {
-                        if let Event::KeyDown { keystroke, .. } = &event {
+                        if let Event::KeyDown(KeyDownEvent { keystroke, .. }) = &event {
                             if cx.dispatch_keystroke(
                                 window_id,
                                 presenter.borrow().dispatch_path(cx.as_ref()),
@@ -5381,7 +5381,7 @@ impl RefCounts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{actions, elements::*, impl_actions};
+    use crate::{actions, elements::*, impl_actions, LeftMouseDownEvent};
     use serde::Deserialize;
     use smol::future::poll_once;
     use std::{
@@ -5734,14 +5734,14 @@ mod tests {
         let presenter = cx.presenters_and_platform_windows[&window_id].0.clone();
         // Ensure window's root element is in a valid lifecycle state.
         presenter.borrow_mut().dispatch_event(
-            Event::LeftMouseDown {
+            Event::LeftMouseDown(LeftMouseDownEvent {
                 position: Default::default(),
                 ctrl: false,
                 alt: false,
                 shift: false,
                 cmd: false,
                 click_count: 1,
-            },
+            }),
             cx,
         );
         assert_eq!(mouse_down_count.load(SeqCst), 1);

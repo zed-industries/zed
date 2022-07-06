@@ -1,6 +1,7 @@
 use crate::{
     geometry::vector::Vector2F, CursorRegion, DebugContext, Element, ElementBox, Event,
-    EventContext, LayoutContext, MouseRegion, NavigationDirection, PaintContext, SizeConstraint,
+    EventContext, LayoutContext, LeftMouseDownEvent, MouseRegion, NavigateMouseDownEvent,
+    NavigationDirection, PaintContext, RightMouseDownEvent, SizeConstraint,
 };
 use pathfinder_geometry::rect::RectF;
 use serde_json::json;
@@ -116,7 +117,7 @@ impl Element for EventHandler {
             true
         } else {
             match event {
-                Event::LeftMouseDown { position, .. } => {
+                Event::LeftMouseDown(LeftMouseDownEvent { position, .. }) => {
                     if let Some(callback) = self.mouse_down.as_mut() {
                         if visible_bounds.contains_point(*position) {
                             return callback(cx);
@@ -124,7 +125,7 @@ impl Element for EventHandler {
                     }
                     false
                 }
-                Event::RightMouseDown { position, .. } => {
+                Event::RightMouseDown(RightMouseDownEvent { position, .. }) => {
                     if let Some(callback) = self.right_mouse_down.as_mut() {
                         if visible_bounds.contains_point(*position) {
                             return callback(cx);
@@ -132,11 +133,11 @@ impl Element for EventHandler {
                     }
                     false
                 }
-                Event::NavigateMouseDown {
+                Event::NavigateMouseDown(NavigateMouseDownEvent {
                     position,
                     direction,
                     ..
-                } => {
+                }) => {
                     if let Some(callback) = self.navigate_mouse_down.as_mut() {
                         if visible_bounds.contains_point(*position) {
                             return callback(*direction, cx);

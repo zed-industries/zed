@@ -7,79 +7,115 @@ pub enum NavigationDirection {
 }
 
 #[derive(Clone, Debug)]
+pub struct KeyDownEvent {
+    pub keystroke: Keystroke,
+    pub input: Option<String>,
+    pub is_held: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct KeyUpEvent {
+    pub keystroke: Keystroke,
+    pub input: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ModifiersChangedEvent {
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub cmd: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct ScrollWheelEvent {
+    pub position: Vector2F,
+    pub delta: Vector2F,
+    pub precise: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct LeftMouseDownEvent {
+    pub position: Vector2F,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub cmd: bool,
+    pub click_count: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct LeftMouseUpEvent {
+    pub position: Vector2F,
+    pub click_count: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct LeftMouseDraggedEvent {
+    pub position: Vector2F,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub cmd: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct RightMouseDownEvent {
+    pub position: Vector2F,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub cmd: bool,
+    pub click_count: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct RightMouseUpEvent {
+    pub position: Vector2F,
+    pub click_count: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct NavigateMouseDownEvent {
+    pub position: Vector2F,
+    pub direction: NavigationDirection,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub cmd: bool,
+    pub click_count: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct NavigateMouseUpEvent {
+    pub position: Vector2F,
+    pub direction: NavigationDirection,
+}
+
+#[derive(Clone, Debug)]
+pub struct MouseMovedEvent {
+    pub position: Vector2F,
+    pub left_mouse_down: bool,
+    pub ctrl: bool,
+    pub cmd: bool,
+    pub alt: bool,
+    pub shift: bool,
+}
+
+#[derive(Clone, Debug)]
 pub enum Event {
-    KeyDown {
-        keystroke: Keystroke,
-        input: Option<String>,
-        is_held: bool,
-    },
-    KeyUp {
-        keystroke: Keystroke,
-        input: Option<String>,
-    },
-    ModifiersChanged {
-        ctrl: bool,
-        alt: bool,
-        shift: bool,
-        cmd: bool,
-    },
-    ScrollWheel {
-        position: Vector2F,
-        delta: Vector2F,
-        precise: bool,
-    },
-    LeftMouseDown {
-        position: Vector2F,
-        ctrl: bool,
-        alt: bool,
-        shift: bool,
-        cmd: bool,
-        click_count: usize,
-    },
-    LeftMouseUp {
-        position: Vector2F,
-        click_count: usize,
-    },
-    LeftMouseDragged {
-        position: Vector2F,
-        ctrl: bool,
-        alt: bool,
-        shift: bool,
-        cmd: bool,
-    },
-    RightMouseDown {
-        position: Vector2F,
-        ctrl: bool,
-        alt: bool,
-        shift: bool,
-        cmd: bool,
-        click_count: usize,
-    },
-    RightMouseUp {
-        position: Vector2F,
-        click_count: usize,
-    },
-    NavigateMouseDown {
-        position: Vector2F,
-        direction: NavigationDirection,
-        ctrl: bool,
-        alt: bool,
-        shift: bool,
-        cmd: bool,
-        click_count: usize,
-    },
-    NavigateMouseUp {
-        position: Vector2F,
-        direction: NavigationDirection,
-    },
-    MouseMoved {
-        position: Vector2F,
-        left_mouse_down: bool,
-        ctrl: bool,
-        cmd: bool,
-        alt: bool,
-        shift: bool,
-    },
+    KeyDown(KeyDownEvent),
+    KeyUp(KeyUpEvent),
+    ModifiersChanged(ModifiersChangedEvent),
+    ScrollWheel(ScrollWheelEvent),
+    LeftMouseDown(LeftMouseDownEvent),
+    LeftMouseUp(LeftMouseUpEvent),
+    LeftMouseDragged(LeftMouseDraggedEvent),
+    RightMouseDown(RightMouseDownEvent),
+    RightMouseUp(RightMouseUpEvent),
+    NavigateMouseDown(NavigateMouseDownEvent),
+    NavigateMouseUp(NavigateMouseUpEvent),
+    MouseMoved(MouseMovedEvent),
 }
 
 impl Event {
@@ -88,15 +124,15 @@ impl Event {
             Event::KeyDown { .. } => None,
             Event::KeyUp { .. } => None,
             Event::ModifiersChanged { .. } => None,
-            Event::ScrollWheel { position, .. }
-            | Event::LeftMouseDown { position, .. }
-            | Event::LeftMouseUp { position, .. }
-            | Event::LeftMouseDragged { position, .. }
-            | Event::RightMouseDown { position, .. }
-            | Event::RightMouseUp { position, .. }
-            | Event::NavigateMouseDown { position, .. }
-            | Event::NavigateMouseUp { position, .. }
-            | Event::MouseMoved { position, .. } => Some(*position),
+            Event::ScrollWheel(ScrollWheelEvent { position, .. })
+            | Event::LeftMouseDown(LeftMouseDownEvent { position, .. })
+            | Event::LeftMouseUp(LeftMouseUpEvent { position, .. })
+            | Event::LeftMouseDragged(LeftMouseDraggedEvent { position, .. })
+            | Event::RightMouseDown(RightMouseDownEvent { position, .. })
+            | Event::RightMouseUp(RightMouseUpEvent { position, .. })
+            | Event::NavigateMouseDown(NavigateMouseDownEvent { position, .. })
+            | Event::NavigateMouseUp(NavigateMouseUpEvent { position, .. })
+            | Event::MouseMoved(MouseMovedEvent { position, .. }) => Some(*position),
         }
     }
 }
