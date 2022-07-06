@@ -168,12 +168,13 @@ pub struct NavigationEntry {
 
 impl Pane {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
+        let handle = cx.weak_handle();
         Self {
             items: Vec::new(),
             active_item_index: 0,
             autoscroll: false,
             nav_history: Default::default(),
-            toolbar: cx.add_view(|_| Toolbar::new()),
+            toolbar: cx.add_view(|_| Toolbar::new(handle)),
         }
     }
 

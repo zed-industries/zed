@@ -108,6 +108,7 @@ pub struct Toolbar {
     pub container: ContainerStyle,
     pub height: f32,
     pub item_spacing: f32,
+    pub nav_button: Interactive<IconButton>,
 }
 
 #[derive(Clone, Deserialize, Default)]
