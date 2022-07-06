@@ -24,9 +24,9 @@ use gpui::{
     platform::CursorStyle,
     text_layout::{self, Line, RunStyle, TextLayoutCache},
     AppContext, Axis, Border, CursorRegion, Element, ElementBox, Event, EventContext, KeyDownEvent,
-    LayoutContext, LeftMouseDownEvent, LeftMouseDraggedEvent, LeftMouseUpEvent,
-    ModifiersChangedEvent, MouseMovedEvent, MutableAppContext, PaintContext, Quad, Scene,
-    ScrollWheelEvent, SizeConstraint, ViewContext, WeakViewHandle,
+    LayoutContext, ModifiersChangedEvent, MouseButton, MouseEvent, MouseMovedEvent,
+    MutableAppContext, PaintContext, Quad, Scene, ScrollWheelEvent, SizeConstraint, ViewContext,
+    WeakViewHandle,
 };
 use json::json;
 use language::{Bias, DiagnosticSeverity, Selection};
@@ -1464,7 +1464,8 @@ impl Element for EditorElement {
         }
 
         match event {
-            Event::LeftMouseDown(LeftMouseDownEvent {
+            Event::MouseDown(MouseEvent {
+                button: MouseButton::Left,
                 position,
                 cmd,
                 alt,
@@ -1481,10 +1482,16 @@ impl Element for EditorElement {
                 paint,
                 cx,
             ),
-            Event::LeftMouseUp(LeftMouseUpEvent { position, .. }) => self.mouse_up(*position, cx),
-            Event::LeftMouseDragged(LeftMouseDraggedEvent { position, .. }) => {
-                self.mouse_dragged(*position, layout, paint, cx)
-            }
+            Event::MouseUp(MouseEvent {
+                button: MouseButton::Left,
+                position,
+                ..
+            }) => self.mouse_up(*position, cx),
+            Event::MouseMoved(MouseMovedEvent {
+                pressed_button: Some(MouseButton::Left),
+                position,
+                ..
+            }) => self.mouse_dragged(*position, layout, paint, cx),
             Event::ScrollWheel(ScrollWheelEvent {
                 position,
                 delta,

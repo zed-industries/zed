@@ -1,7 +1,7 @@
 use crate::{
     geometry::vector::Vector2F, CursorRegion, DebugContext, Element, ElementBox, Event,
-    EventContext, LayoutContext, LeftMouseDownEvent, MouseRegion, NavigateMouseDownEvent,
-    NavigationDirection, PaintContext, RightMouseDownEvent, SizeConstraint,
+    EventContext, LayoutContext, MouseButton, MouseEvent, MouseRegion, NavigationDirection,
+    PaintContext, SizeConstraint,
 };
 use pathfinder_geometry::rect::RectF;
 use serde_json::json;
@@ -117,7 +117,11 @@ impl Element for EventHandler {
             true
         } else {
             match event {
-                Event::LeftMouseDown(LeftMouseDownEvent { position, .. }) => {
+                Event::MouseDown(MouseEvent {
+                    button: MouseButton::Left,
+                    position,
+                    ..
+                }) => {
                     if let Some(callback) = self.mouse_down.as_mut() {
                         if visible_bounds.contains_point(*position) {
                             return callback(cx);
@@ -125,7 +129,11 @@ impl Element for EventHandler {
                     }
                     false
                 }
-                Event::RightMouseDown(RightMouseDownEvent { position, .. }) => {
+                Event::MouseDown(MouseEvent {
+                    button: MouseButton::Right,
+                    position,
+                    ..
+                }) => {
                     if let Some(callback) = self.right_mouse_down.as_mut() {
                         if visible_bounds.contains_point(*position) {
                             return callback(cx);
@@ -133,9 +141,9 @@ impl Element for EventHandler {
                     }
                     false
                 }
-                Event::NavigateMouseDown(NavigateMouseDownEvent {
+                Event::MouseDown(MouseEvent {
+                    button: MouseButton::Navigate(direction),
                     position,
-                    direction,
                     ..
                 }) => {
                     if let Some(callback) = self.navigate_mouse_down.as_mut() {

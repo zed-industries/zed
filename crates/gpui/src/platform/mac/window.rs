@@ -6,7 +6,7 @@ use crate::{
     },
     keymap::Keystroke,
     platform::{self, Event, WindowBounds, WindowContext},
-    KeyDownEvent, LeftMouseDraggedEvent, ModifiersChangedEvent, Scene,
+    KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseEvent, MouseMovedEvent, Scene,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -125,10 +125,6 @@ unsafe fn build_classes() {
         );
         decl.add_method(
             sel!(mouseMoved:),
-            handle_view_event as extern "C" fn(&Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(mouseDragged:),
             handle_view_event as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
@@ -603,18 +599,26 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
 
     if let Some(event) = event {
         match &event {
-            Event::LeftMouseDragged(LeftMouseDraggedEvent { position, .. }) => {
+            Event::MouseMoved(
+                event @ MouseMovedEvent {
+                    pressed_button: Some(_),
+                    ..
+                },
+            ) => {
                 window_state_borrow.synthetic_drag_counter += 1;
                 window_state_borrow
                     .executor
                     .spawn(synthetic_drag(
                         weak_window_state,
                         window_state_borrow.synthetic_drag_counter,
-                        *position,
+                        *event,
                     ))
                     .detach();
             }
-            Event::LeftMouseUp { .. } => {
+            Event::MouseUp(MouseEvent {
+                button: MouseButton::Left,
+                ..
+            }) => {
                 window_state_borrow.synthetic_drag_counter += 1;
             }
             Event::ModifiersChanged(ModifiersChangedEvent {
@@ -835,7 +839,7 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
 async fn synthetic_drag(
     window_state: Weak<RefCell<WindowState>>,
     drag_id: usize,
-    position: Vector2F,
+    event: MouseMovedEvent,
 ) {
     loop {
         Timer::after(Duration::from_millis(16)).await;
@@ -844,14 +848,7 @@ async fn synthetic_drag(
             if window_state_borrow.synthetic_drag_counter == drag_id {
                 if let Some(mut callback) = window_state_borrow.event_callback.take() {
                     drop(window_state_borrow);
-                    callback(Event::LeftMouseDragged(LeftMouseDraggedEvent {
-                        // TODO: Make sure empty modifiers is correct for this
-                        position,
-                        shift: false,
-                        ctrl: false,
-                        alt: false,
-                        cmd: false,
-                    }));
+                    callback(Event::MouseMoved(event));
                     window_state.borrow_mut().event_callback = Some(callback);
                 }
             } else {
