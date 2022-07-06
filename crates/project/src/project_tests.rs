@@ -1850,6 +1850,59 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "TypeScript".into(),
+            path_suffixes: vec!["ts".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::language_typescript()),
+    );
+    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default());
+
+    let fs = FakeFs::new(cx.background());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.ts": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    project.update(cx, |project, _| project.languages.add(Arc::new(language)));
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
+        .await
+        .unwrap();
+
+    let fake_server = fake_language_servers.next().await.unwrap();
+
+    let text = "let a = b.fqn";
+    buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
+    let completions = project.update(cx, |project, cx| {
+        project.completions(&buffer, text.len(), cx)
+    });
+
+    fake_server
+        .handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "fullyQualifiedName?".into(),
+                    insert_text: Some("fully\rQualified\r\nName".into()),
+                    ..Default::default()
+                },
+            ])))
+        })
+        .next()
+        .await;
+    let completions = completions.await.unwrap();
+    assert_eq!(completions.len(), 1);
+    assert_eq!(completions[0].new_text, "fully\nQualified\nName");
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
     let mut language = Language::new(

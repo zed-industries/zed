@@ -555,7 +555,7 @@ pub struct UndoOperation {
 impl Buffer {
     pub fn new(replica_id: u16, remote_id: u64, mut base_text: String) -> Buffer {
         let line_ending = LineEnding::detect(&base_text);
-        LineEnding::strip_carriage_returns(&mut base_text);
+        LineEnding::normalize(&mut base_text);
 
         let history = History::new(base_text.into());
         let mut fragments = SumTree::new();
@@ -691,7 +691,7 @@ impl Buffer {
 
         let mut fragment_start = old_fragments.start().visible;
         for (range, new_text) in edits {
-            let new_text = LineEnding::strip_carriage_returns_from_arc(new_text.into());
+            let new_text = LineEnding::normalize_arc(new_text.into());
             let fragment_end = old_fragments.end(&None).visible;
 
             // If the current fragment ends before this range, then jump ahead to the first fragment
@@ -2385,13 +2385,13 @@ impl LineEnding {
         }
     }
 
-    pub fn strip_carriage_returns(text: &mut String) {
+    pub fn normalize(text: &mut String) {
         if let Cow::Owned(replaced) = CARRIAGE_RETURNS_REGEX.replace_all(text, "\n") {
             *text = replaced;
         }
     }
 
-    fn strip_carriage_returns_from_arc(text: Arc<str>) -> Arc<str> {
+    fn normalize_arc(text: Arc<str>) -> Arc<str> {
         if let Cow::Owned(replaced) = CARRIAGE_RETURNS_REGEX.replace_all(&text, "\n") {
             replaced.into()
         } else {
