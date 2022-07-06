@@ -4910,6 +4910,7 @@ dependencies = [
  "parking_lot 0.11.2",
  "postage",
  "rand 0.8.5",
+ "regex",
  "smallvec",
  "sum_tree",
  "util",
