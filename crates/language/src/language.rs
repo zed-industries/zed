@@ -254,10 +254,11 @@ fn deserialize_regex<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Regex>, D
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
-pub type FakeLspAdapter = Arc<FakeLspAdapterInner>;
+// #[cfg(any(test, feature = "test-support"))]
+// pub type FakeLspAdapter = Arc<FakeLspAdapterInner>;
 
-pub struct FakeLspAdapterInner {
+#[cfg(any(test, feature = "test-support"))]
+pub struct FakeLspAdapter {
     pub name: &'static str,
     pub capabilities: lsp::ServerCapabilities,
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
@@ -281,7 +282,7 @@ pub struct Language {
     #[cfg(any(test, feature = "test-support"))]
     fake_adapter: Option<(
         mpsc::UnboundedSender<lsp::FakeLanguageServer>,
-        FakeLspAdapter,
+        Arc<FakeLspAdapter>,
     )>,
 }
 
@@ -609,7 +610,7 @@ impl Language {
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_fake_lsp_adapter(
         &mut self,
-        fake_lsp_adapter: FakeLspAdapter,
+        fake_lsp_adapter: Arc<FakeLspAdapter>,
     ) -> mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
         let (servers_tx, servers_rx) = mpsc::unbounded();
         self.fake_adapter = Some((servers_tx, fake_lsp_adapter.clone()));
@@ -763,7 +764,7 @@ impl CodeLabel {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-impl Default for FakeLspAdapterInner {
+impl Default for FakeLspAdapter {
     fn default() -> Self {
         Self {
             name: "the-fake-language-server",
@@ -777,7 +778,7 @@ impl Default for FakeLspAdapterInner {
 
 #[cfg(any(test, feature = "test-support"))]
 #[async_trait]
-impl LspAdapterTrait for FakeLspAdapter {
+impl LspAdapterTrait for Arc<FakeLspAdapter> {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName(self.name.into())
     }

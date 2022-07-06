@@ -6233,7 +6233,7 @@ mod tests {
         platform::{WindowBounds, WindowOptions},
     };
     use indoc::indoc;
-    use language::{FakeLspAdapterInner, LanguageConfig};
+    use language::{FakeLspAdapter, LanguageConfig};
     use lsp::FakeLanguageServer;
     use project::FakeFs;
     use settings::LanguageSettings;
@@ -9302,7 +9302,7 @@ mod tests {
             },
             Some(tree_sitter_rust::language()),
         );
-        let mut fake_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapterInner {
+        let mut fake_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 document_formatting_provider: Some(lsp::OneOf::Left(true)),
                 ..Default::default()
@@ -9414,7 +9414,7 @@ mod tests {
             },
             Some(tree_sitter_rust::language()),
         );
-        let mut fake_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapterInner {
+        let mut fake_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
                 ..Default::default()
@@ -9526,7 +9526,7 @@ mod tests {
             },
             Some(tree_sitter_rust::language()),
         );
-        let mut fake_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapterInner {
+        let mut fake_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 completion_provider: Some(lsp::CompletionOptions {
                     trigger_characters: Some(vec![".".to_string(), ":".to_string()]),

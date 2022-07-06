@@ -68,7 +68,7 @@ impl PluginBuilder {
     pub fn new(wasi_ctx: WasiCtx) -> Result<Self, Error> {
         let mut config = Config::default();
         config.async_support(true);
-        config.epoch_interruption(true);
+        // config.epoch_interruption(true);
         let engine = Engine::new(&config)?;
         let linker = Linker::new(&engine);
 

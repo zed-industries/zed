@@ -290,7 +290,7 @@ mod tests {
             },
             None,
         );
-        let mut fake_servers = language.set_fake_lsp_adapter(FakeLspAdapter::default());
+        let mut fake_servers = language.set_fake_lsp_adapter(Arc::<FakeLspAdapter>::default());
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree("/dir", json!({ "test.rs": "" })).await;

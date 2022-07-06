@@ -1675,7 +1675,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         },
         Some(tree_sitter_rust::language()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapterInner {
+    let mut fake_language_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
         capabilities: lsp::ServerCapabilities {
             completion_provider: Some(lsp::CompletionOptions {
                 trigger_characters: Some(vec![".".to_string()]),
@@ -2867,7 +2867,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         },
         Some(tree_sitter_rust::language()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapterInner {
+    let mut fake_language_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
         capabilities: lsp::ServerCapabilities {
             rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
                 prepare_provider: Some(true),
@@ -3051,7 +3051,7 @@ async fn test_language_server_statuses(
         },
         Some(tree_sitter_rust::language()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapterInner {
+    let mut fake_language_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
         name: "the-language-server",
         ..Default::default()
     }));
@@ -4577,7 +4577,7 @@ async fn test_random_collaboration(
         },
         None,
     );
-    let _fake_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapterInner {
+    let _fake_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
         name: "the-fake-language-server",
         capabilities: lsp::LanguageServer::full_capabilities(),
         initializer: Some(Box::new({

@@ -9,7 +9,7 @@ use indoc::indoc;
 
 use collections::BTreeMap;
 use gpui::{json, keymap::Keystroke, AppContext, ModelHandle, ViewContext, ViewHandle};
-use language::{point_to_lsp, FakeLspAdapterInner, Language, LanguageConfig, Selection};
+use language::{point_to_lsp, FakeLspAdapter, Language, LanguageConfig, Selection};
 use project::Project;
 use settings::Settings;
 use util::{
@@ -457,7 +457,7 @@ impl<'a> EditorLspTestContext<'a> {
                 .unwrap_or(&"txt".to_string())
         );
 
-        let mut fake_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapterInner {
+        let mut fake_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
             capabilities,
             ..Default::default()
         }));
