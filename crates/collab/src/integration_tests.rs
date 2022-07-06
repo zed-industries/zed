@@ -1675,7 +1675,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         },
         Some(tree_sitter_rust::language()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
+    let mut fake_language_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapterInner {
         capabilities: lsp::ServerCapabilities {
             completion_provider: Some(lsp::CompletionOptions {
                 trigger_characters: Some(vec![".".to_string()]),
@@ -1684,7 +1684,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
             ..Default::default()
         },
         ..Default::default()
-    });
+    }));
     client_a.language_registry.add(Arc::new(language));
 
     client_a
@@ -2867,7 +2867,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         },
         Some(tree_sitter_rust::language()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
+    let mut fake_language_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapterInner {
         capabilities: lsp::ServerCapabilities {
             rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
                 prepare_provider: Some(true),
@@ -2876,7 +2876,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
             ..Default::default()
         },
         ..Default::default()
-    });
+    }));
     client_a.language_registry.add(Arc::new(language));
 
     client_a
@@ -3051,10 +3051,10 @@ async fn test_language_server_statuses(
         },
         Some(tree_sitter_rust::language()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
+    let mut fake_language_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapterInner {
         name: "the-language-server",
         ..Default::default()
-    });
+    }));
     client_a.language_registry.add(Arc::new(language));
 
     client_a
@@ -4577,7 +4577,7 @@ async fn test_random_collaboration(
         },
         None,
     );
-    let _fake_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
+    let _fake_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapterInner {
         name: "the-fake-language-server",
         capabilities: lsp::LanguageServer::full_capabilities(),
         initializer: Some(Box::new({
@@ -4689,7 +4689,7 @@ async fn test_random_collaboration(
             }
         })),
         ..Default::default()
-    });
+    }));
     host_language_registry.add(Arc::new(language));
 
     let op_start_signal = futures::channel::mpsc::unbounded();

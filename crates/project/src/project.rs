@@ -113,7 +113,6 @@ pub struct Project {
     collaborators: HashMap<PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
     _subscriptions: Vec<gpui::Subscription>,
-    lsp_settings_changed: Option<Task<()>>,
     opened_buffer: (Rc<RefCell<watch::Sender<()>>>, watch::Receiver<()>),
     shared_buffers: HashMap<PeerId, HashSet<u64>>,
     loading_buffers: HashMap<
@@ -489,7 +488,6 @@ impl Project {
                 next_language_server_id: 0,
                 nonce: StdRng::from_entropy().gen(),
                 initialized_persistent_state: false,
-                lsp_settings_changed: None,
             }
         })
     }
@@ -604,7 +602,6 @@ impl Project {
                 buffer_snapshots: Default::default(),
                 nonce: StdRng::from_entropy().gen(),
                 initialized_persistent_state: false,
-                lsp_settings_changed: None,
             };
             for worktree in worktrees {
                 this.add_worktree(&worktree, cx);
@@ -713,63 +710,51 @@ impl Project {
 
     fn on_settings_changed(&mut self, cx: &mut ModelContext<'_, Self>) {
         let settings = cx.global::<Settings>();
-        self.lsp_settings_changed = Some(cx.spawn(|project, cx| async {
-            let language_servers_to_start = project.update(&mut cx, |project, cx| {
-                let mut language_servers_to_start = Vec::new();
-                for buffer in self.opened_buffers.values() {
-                    if let Some(buffer) = buffer.upgrade(cx) {
-                        let buffer = buffer.read(cx);
-                        if let Some((file, language)) =
-                            File::from_dyn(buffer.file()).zip(buffer.language())
-                        {
-                            if settings.enable_language_server(Some(&language.name())) {
-                                let worktree = file.worktree.read(cx);
-                                language_servers_to_start.push((
-                                    worktree.id(),
-                                    worktree.as_local().unwrap().abs_path().clone(),
-                                    language.clone(),
-                                ));
-                            }
-                        }
+
+        let mut language_servers_to_start = Vec::new();
+        for buffer in self.opened_buffers.values() {
+            if let Some(buffer) = buffer.upgrade(cx) {
+                let buffer = buffer.read(cx);
+                if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language())
+                {
+                    if settings.enable_language_server(Some(&language.name())) {
+                        let worktree = file.worktree.read(cx);
+                        language_servers_to_start.push((
+                            worktree.id(),
+                            worktree.as_local().unwrap().abs_path().clone(),
+                            language.clone(),
+                        ));
                     }
                 }
-                language_servers_to_start
-            });
+            }
+        }
 
-            let mut language_servers_to_stop = Vec::new();
-            for language in self.languages.to_vec() {
-                if let Some(lsp_adapter) = language.lsp_adapter() {
-                    if !settings.enable_language_server(Some(&language.name())) {
-                        let lsp_name = lsp_adapter.name;
-                        for (worktree_id, started_lsp_name) in self.started_language_servers.keys()
-                        {
-                            if lsp_name == *started_lsp_name {
-                                language_servers_to_stop
-                                    .push((*worktree_id, started_lsp_name.clone()));
-                            }
+        let mut language_servers_to_stop = Vec::new();
+        for language in self.languages.to_vec() {
+            if let Some(lsp_adapter) = language.lsp_adapter() {
+                if !settings.enable_language_server(Some(&language.name())) {
+                    let lsp_name = &lsp_adapter.name;
+                    for (worktree_id, started_lsp_name) in self.language_servers.keys() {
+                        if lsp_name == started_lsp_name {
+                            language_servers_to_stop.push((*worktree_id, started_lsp_name.clone()));
                         }
                     }
                 }
             }
+        }
 
-            project.update(&mut cx, |project, cx| {
-                // Stop all newly-disabled language servers.
-                for (worktree_id, adapter_name) in language_servers_to_stop {
-                    self.stop_language_server(worktree_id, adapter_name, cx)
-                        .detach();
-                }
+        // Stop all newly-disabled language servers.
+        for (worktree_id, adapter_name) in language_servers_to_stop {
+            self.stop_language_server(worktree_id, adapter_name, cx)
+                .detach();
+        }
 
-                // Start all the newly-enabled language servers.
-                for (worktree_id, worktree_path, language) in language_servers_to_start {
-                    self.start_language_server(worktree_id, worktree_path, language, cx);
-                }
+        // Start all the newly-enabled language servers.
+        for (worktree_id, worktree_path, language) in language_servers_to_start {
+            self.start_language_server(worktree_id, worktree_path, language, cx);
+        }
 
-                cx.notify();
-            });
-        }))
-
-        // // TODO(isaac): uncomment the above
-        // todo!()
+        cx.notify();
     }
 
     pub fn buffer_for_id(&self, remote_id: u64, cx: &AppContext) -> Option<ModelHandle<Buffer>> {
@@ -1663,7 +1648,7 @@ impl Project {
                         this.create_local_worktree(&abs_path, false, cx)
                     })
                     .await?;
-                let name = lsp_adapter.name;
+                let name = lsp_adapter.name.clone();
                 this.update(&mut cx, |this, cx| {
                     this.language_servers
                         .insert((worktree.read(cx).id(), name), (lsp_adapter, lsp_server));
@@ -1733,8 +1718,7 @@ impl Project {
             this.update(&mut cx, |this, cx| {
                 this.assign_language_to_buffer(&buffer, cx);
                 this.register_buffer_with_language_server(&buffer, cx)
-            })
-            .await;
+            });
             Ok(())
         })
     }
@@ -1788,13 +1772,13 @@ impl Project {
         }
         cx.subscribe(buffer, |this, buffer, event, cx| {
             // TODO(isaac): should this be done in the background?
-            this.on_buffer_event(buffer, event, cx).await;
+            this.on_buffer_event(buffer, event, cx);
         })
         .detach();
 
         self.assign_language_to_buffer(buffer, cx);
         // TODO(isaac): should this be done in the background
-        self.register_buffer_with_language_server(buffer, cx).await;
+        self.register_buffer_with_language_server(buffer, cx);
         cx.observe_release(buffer, |this, buffer, cx| {
             if let Some(file) = File::from_dyn(buffer.file()) {
                 if file.is_local() {
@@ -1910,7 +1894,7 @@ impl Project {
         });
     }
 
-    async fn on_buffer_event(
+    fn on_buffer_event(
         &mut self,
         buffer: ModelHandle<Buffer>,
         event: &BufferEvent,
@@ -2050,13 +2034,12 @@ impl Project {
         let worktree = file.worktree.read(cx).as_local()?;
         let worktree_id = worktree.id();
         let worktree_abs_path = worktree.abs_path().clone();
-        self.start_language_server(worktree_id, worktree_abs_path, language, cx)
-            .await;
+        self.start_language_server(worktree_id, worktree_abs_path, language, cx);
 
         None
     }
 
-    async fn start_language_server(
+    fn start_language_server(
         &mut self,
         worktree_id: WorktreeId,
         worktree_path: Arc<Path>,
@@ -2324,8 +2307,6 @@ impl Project {
                         })
                     })),
                 );
-
-                server_id
             });
     }
 
@@ -2403,14 +2384,13 @@ impl Project {
             .collect();
         for (worktree_id, worktree_abs_path, full_path) in language_server_lookup_info {
             let language = self.languages.select_language(&full_path)?;
-            self.restart_language_server(worktree_id, worktree_abs_path, language, cx)
-                .await;
+            self.restart_language_server(worktree_id, worktree_abs_path, language, cx);
         }
 
         None
     }
 
-    async fn restart_language_server(
+    fn restart_language_server(
         &mut self,
         worktree_id: WorktreeId,
         fallback_path: Arc<Path>,
@@ -2423,7 +2403,7 @@ impl Project {
             return;
         };
 
-        let stop = self.stop_language_server(worktree_id, adapter.name, cx);
+        let stop = self.stop_language_server(worktree_id, adapter.name.clone(), cx);
         cx.spawn_weak(|this, mut cx| async move {
             let (original_root_path, orphaned_worktrees) = stop.await;
             if let Some(this) = this.upgrade(&cx) {
@@ -2476,7 +2456,7 @@ impl Project {
         &mut self,
         progress: lsp::ProgressParams,
         server_id: usize,
-        disk_based_diagnostics_progress_token: Option<String>,
+        disk_based_diagnostics_progress_token: Option<&str>,
         cx: &mut ModelContext<Self>,
     ) {
         let token = match progress.token {
@@ -2500,8 +2480,7 @@ impl Project {
             return;
         }
 
-        let same_token =
-            Some(token.as_ref()) == disk_based_diagnostics_progress_token.as_ref().map(|x| &**x);
+        let same_token = Some(token.as_ref()) == disk_based_diagnostics_progress_token;
 
         match progress {
             lsp::WorkDoneProgress::Begin(report) => {
@@ -3309,7 +3288,7 @@ impl Project {
                 struct PartialSymbol {
                     source_worktree_id: WorktreeId,
                     worktree_id: WorktreeId,
-                    adapter: Arc<LspAdapter>,
+                    language_server_name: LanguageServerName,
                     path: PathBuf,
                     language: Option<Arc<Language>>,
                     name: String,
@@ -3343,8 +3322,7 @@ impl Project {
                             partial_symbols.push(PartialSymbol {
                                 source_worktree_id,
                                 worktree_id,
-                                // TODO: just pass out single adapter?
-                                adapter: adapter.clone(),
+                                language_server_name: adapter.name.clone(),
                                 name: lsp_symbol.name,
                                 kind: lsp_symbol.kind,
                                 language,
@@ -3367,12 +3345,10 @@ impl Project {
                         }
                         .unwrap_or_else(|| CodeLabel::plain(ps.name.clone(), None));
 
-                        let language_server_name = ps.adapter.name;
-
                         Symbol {
                             source_worktree_id: ps.source_worktree_id,
                             worktree_id: ps.worktree_id,
-                            language_server_name,
+                            language_server_name: ps.language_server_name,
                             name: ps.name,
                             kind: ps.kind,
                             label,
@@ -3535,7 +3511,6 @@ impl Project {
                     Default::default()
                 };
 
-                // TODO(isaac): use futures::future::join_all
                 struct PartialCompletion {
                     pub old_range: Range<Anchor>,
                     pub new_text: String,
@@ -4645,7 +4620,7 @@ impl Project {
         for (buffer, old_path) in renamed_buffers {
             self.unregister_buffer_from_language_server(&buffer, old_path, cx);
             self.assign_language_to_buffer(&buffer, cx);
-            self.register_buffer_with_language_server(&buffer, cx).await;
+            self.register_buffer_with_language_server(&buffer, cx);
         }
     }
 
@@ -6026,7 +6001,7 @@ impl Project {
         cx: &AppContext,
     ) -> Option<&(Arc<LspAdapter>, Arc<LanguageServer>)> {
         if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language()) {
-            let name = language.lsp_adapter()?.name;
+            let name = language.lsp_adapter()?.name.clone();
             let worktree_id = file.worktree_id(cx);
             let key = (worktree_id, language.lsp_adapter()?.name());
 

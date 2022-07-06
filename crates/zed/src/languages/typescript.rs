@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::StreamExt;
-use language::{LanguageServerName, LspAdapter};
+use language::{LanguageServerName, LspAdapter, LspAdapterTrait};
 use serde_json::json;
 use smol::fs;
 use std::{any::Any, path::PathBuf, sync::Arc};
@@ -21,7 +21,7 @@ struct Versions {
 }
 
 #[async_trait]
-impl LspAdapter for TypeScriptLspAdapter {
+impl LspAdapterTrait for TypeScriptLspAdapter {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("typescript-language-server".into())
     }

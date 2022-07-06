@@ -14,7 +14,7 @@ use util::ResultExt;
 pub struct RustLspAdapter;
 
 #[async_trait]
-impl LspAdapter for RustLspAdapter {
+impl LspAdapterTrait for RustLspAdapter {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("rust-analyzer".into())
     }

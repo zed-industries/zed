@@ -6233,7 +6233,7 @@ mod tests {
         platform::{WindowBounds, WindowOptions},
     };
     use indoc::indoc;
-    use language::{FakeLspAdapter, LanguageConfig};
+    use language::{FakeLspAdapter, LanguageConfig, FakeLspAdapterInner};
     use lsp::FakeLanguageServer;
     use project::FakeFs;
     use settings::LanguageSettings;
@@ -9302,13 +9302,13 @@ mod tests {
             },
             Some(tree_sitter_rust::language()),
         );
-        let mut fake_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
+        let mut fake_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapterInner {
             capabilities: lsp::ServerCapabilities {
                 document_formatting_provider: Some(lsp::OneOf::Left(true)),
                 ..Default::default()
             },
             ..Default::default()
-        });
+        }));
 
         let fs = FakeFs::new(cx.background().clone());
         fs.insert_file("/file.rs", Default::default()).await;
@@ -9414,13 +9414,13 @@ mod tests {
             },
             Some(tree_sitter_rust::language()),
         );
-        let mut fake_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
+        let mut fake_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapterInner {
             capabilities: lsp::ServerCapabilities {
                 document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
                 ..Default::default()
             },
             ..Default::default()
-        });
+        }));
 
         let fs = FakeFs::new(cx.background().clone());
         fs.insert_file("/file.rs", Default::default()).await;
@@ -9526,7 +9526,7 @@ mod tests {
             },
             Some(tree_sitter_rust::language()),
         );
-        let mut fake_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
+        let mut fake_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapterInner {
             capabilities: lsp::ServerCapabilities {
                 completion_provider: Some(lsp::CompletionOptions {
                     trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
@@ -9535,7 +9535,7 @@ mod tests {
                 ..Default::default()
             },
             ..Default::default()
-        });
+        }));
 
         let text = "
             one

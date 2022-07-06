@@ -4,7 +4,7 @@ use client::http::HttpClient;
 use futures::lock::Mutex;
 use futures::Future;
 use gpui::executor::Background;
-use language::{LanguageServerName, LspAdapter};
+use language::{LanguageServerName, LspAdapter, LspAdapterTrait};
 use plugin_runtime::{Plugin, PluginBuilder, WasiFn};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
@@ -72,7 +72,7 @@ struct Versions {
 // - it's totally a deadlock, the proof is in the pudding
 
 #[async_trait]
-impl LspAdapter for PluginLspAdapter {
+impl LspAdapterTrait for PluginLspAdapter {
     async fn name(&self) -> LanguageServerName {
         let name: String = self
             .runtime

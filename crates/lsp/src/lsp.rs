@@ -258,6 +258,9 @@ impl LanguageServer {
         }
     }
 
+    /// Initializes a language server.
+    /// Note that `options` is used directly to construct [`InitializeParams`],
+    /// which is why it is owned.
     pub async fn initialize(mut self, options: Option<Value>) -> Result<Arc<Self>> {
         let root_uri = Url::from_file_path(&self.root_path).unwrap();
         #[allow(deprecated)]

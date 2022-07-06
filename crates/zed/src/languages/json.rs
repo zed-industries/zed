@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::StreamExt;
-use language::{LanguageServerName, LspAdapter};
+use language::{LanguageServerName, LspAdapter, LspAdapterTrait};
 use serde_json::json;
 use smol::fs;
 use std::{any::Any, path::PathBuf, sync::Arc};
@@ -17,7 +17,7 @@ impl JsonLspAdapter {
 }
 
 #[async_trait]
-impl LspAdapter for JsonLspAdapter {
+impl LspAdapterTrait for JsonLspAdapter {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("vscode-json-languageserver".into())
     }

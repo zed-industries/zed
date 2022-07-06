@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::StreamExt;
-use language::{LanguageServerName, LspAdapter};
+use language::{LanguageServerName, LspAdapter, LspAdapterTrait};
 use smol::fs;
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
@@ -15,7 +15,7 @@ impl PythonLspAdapter {
 }
 
 #[async_trait]
-impl LspAdapter for PythonLspAdapter {
+impl LspAdapterTrait for PythonLspAdapter {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("pyright".into())
     }
