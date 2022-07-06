@@ -1,7 +1,6 @@
 use alacritty_terminal::{
-    ansi::Color as AnsiColor,
     grid::{Dimensions, GridIterator, Indexed},
-    index::Point,
+    index::{Column as GridCol, Line as GridLine, Point, Side},
     term::{
         cell::{Cell, Flags},
         SizeInfo,
@@ -24,10 +23,12 @@ use gpui::{
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use settings::Settings;
-use std::rc::Rc;
+use std::{cmp::min, rc::Rc};
 use theme::TerminalStyle;
 
-use crate::{gpui_func_tools::paint_layer, Input, ScrollTerminal, Terminal};
+use crate::{
+    color_translation::convert_color, gpui_func_tools::paint_layer, Input, ScrollTerminal, Terminal,
+};
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
@@ -74,6 +75,7 @@ pub struct LayoutState {
     cursor: Option<Cursor>,
     background_color: Color,
     cur_size: SizeInfo,
+    display_offset: usize,
 }
 
 impl TerminalEl {
@@ -194,6 +196,7 @@ impl Element for TerminalEl {
                 cur_size,
                 background_rects,
                 background_color: terminal_theme.background,
+                display_offset: content.display_offset,
             },
         )
     }
@@ -209,10 +212,50 @@ impl Element for TerminalEl {
         let clip_bounds = Some(visible_bounds);
         paint_layer(cx, clip_bounds, |cx| {
             //Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
+
+            /*
+            To set a selection,
+            set the selection variable on the terminal
+
+            CLICK:
+            Get the grid point associated with this mouse click
+            And the side????? - TODO - algorithm for calculating this in Processor::cell_side
+            On single left click -> Clear selection, start empty selection
+            On double left click -> start semantic selection
+            On double triple click -> start line selection
+
+            MOUSE MOVED:
+            Find the new cell the mouse is over
+            Update the selection by calling terminal.selection.update()
+            */
+            let cur_size = layout.cur_size.clone();
+            let display_offset = layout.display_offset.clone();
             cx.scene.push_mouse_region(MouseRegion {
                 view_id: self.view.id(),
-                mouse_down: Some(Rc::new(|_, cx| cx.focus_parent_view())),
+                mouse_down: Some(Rc::new(move |pos, cx| {
+                    let point = grid_cell(pos, cur_size, display_offset);
+                    let side = cell_side(cur_size, pos.x() as usize);
+
+                    //One problem is we need a terminal
+                    //Second problem is that we need # of clicks
+                    //Third problem is that dragging reports deltas, and we need locations.
+                    //Fourth (minor) is need to render the selection
+
+                    // if single_click {
+                    //   terminal.selection = Some(Selection::new(SelectionType::Simple, point, side))
+                    // } else if double_click {
+                    //   terminal.selection = Some(Selection::new(SelectionType::Semantic, point, side))
+                    // } else if triple_click {
+                    //   terminal.selection = Some(Selection::new(SelectionType::Lines, point, side))
+                    // }
+
+                    cx.focus_parent_view()
+                })),
                 bounds: visible_bounds,
+                drag: Some(Rc::new(|delta, cx| {
+                    //Calculate new point from delta
+                    //terminal.selection.update(point, side)
+                })),
                 ..Default::default()
             });
 
@@ -310,6 +353,19 @@ impl Element for TerminalEl {
         })
     }
 }
+
+/*
+Mouse moved -> WindowEvent::CursorMoved
+mouse press -> WindowEvent::MouseInput
+update_selection_scrolling
+
+
+copy_selection
+start_selection
+toggle_selection
+update_selection
+clear_selection
+ */
 
 ///Configures a text style from the current settings.
 fn make_text_style(font_cache: &FontCache, settings: &Settings) -> TextStyle {
@@ -430,98 +486,34 @@ fn cell_style(indexed: &Indexed<&Cell>, style: &TerminalStyle, text_style: &Text
     }
 }
 
-///Converts a 2, 8, or 24 bit color ANSI color to the GPUI equivalent
-fn convert_color(alac_color: &AnsiColor, style: &TerminalStyle) -> Color {
-    match alac_color {
-        //Named and theme defined colors
-        alacritty_terminal::ansi::Color::Named(n) => match n {
-            alacritty_terminal::ansi::NamedColor::Black => style.black,
-            alacritty_terminal::ansi::NamedColor::Red => style.red,
-            alacritty_terminal::ansi::NamedColor::Green => style.green,
-            alacritty_terminal::ansi::NamedColor::Yellow => style.yellow,
-            alacritty_terminal::ansi::NamedColor::Blue => style.blue,
-            alacritty_terminal::ansi::NamedColor::Magenta => style.magenta,
-            alacritty_terminal::ansi::NamedColor::Cyan => style.cyan,
-            alacritty_terminal::ansi::NamedColor::White => style.white,
-            alacritty_terminal::ansi::NamedColor::BrightBlack => style.bright_black,
-            alacritty_terminal::ansi::NamedColor::BrightRed => style.bright_red,
-            alacritty_terminal::ansi::NamedColor::BrightGreen => style.bright_green,
-            alacritty_terminal::ansi::NamedColor::BrightYellow => style.bright_yellow,
-            alacritty_terminal::ansi::NamedColor::BrightBlue => style.bright_blue,
-            alacritty_terminal::ansi::NamedColor::BrightMagenta => style.bright_magenta,
-            alacritty_terminal::ansi::NamedColor::BrightCyan => style.bright_cyan,
-            alacritty_terminal::ansi::NamedColor::BrightWhite => style.bright_white,
-            alacritty_terminal::ansi::NamedColor::Foreground => style.foreground,
-            alacritty_terminal::ansi::NamedColor::Background => style.background,
-            alacritty_terminal::ansi::NamedColor::Cursor => style.cursor,
-            alacritty_terminal::ansi::NamedColor::DimBlack => style.dim_black,
-            alacritty_terminal::ansi::NamedColor::DimRed => style.dim_red,
-            alacritty_terminal::ansi::NamedColor::DimGreen => style.dim_green,
-            alacritty_terminal::ansi::NamedColor::DimYellow => style.dim_yellow,
-            alacritty_terminal::ansi::NamedColor::DimBlue => style.dim_blue,
-            alacritty_terminal::ansi::NamedColor::DimMagenta => style.dim_magenta,
-            alacritty_terminal::ansi::NamedColor::DimCyan => style.dim_cyan,
-            alacritty_terminal::ansi::NamedColor::DimWhite => style.dim_white,
-            alacritty_terminal::ansi::NamedColor::BrightForeground => style.bright_foreground,
-            alacritty_terminal::ansi::NamedColor::DimForeground => style.dim_foreground,
-        },
-        //'True' colors
-        alacritty_terminal::ansi::Color::Spec(rgb) => Color::new(rgb.r, rgb.g, rgb.b, u8::MAX),
-        //8 bit, indexed colors
-        alacritty_terminal::ansi::Color::Indexed(i) => get_color_at_index(i, style),
+///Copied (with modifications) from alacritty/src/input.rs > Processor::cell_side()
+fn cell_side(cur_size: SizeInfo, x: usize) -> Side {
+    let cell_x = x.saturating_sub(cur_size.cell_width() as usize) % cur_size.cell_width() as usize;
+    let half_cell_width = (cur_size.cell_width() / 2.0) as usize;
+
+    let additional_padding =
+        (cur_size.width() - cur_size.cell_width() * 2.) % cur_size.cell_width();
+    let end_of_grid = cur_size.width() - cur_size.cell_width() - additional_padding;
+
+    if cell_x > half_cell_width
+            // Edge case when mouse leaves the window.
+            || x as f32 >= end_of_grid
+    {
+        Side::Right
+    } else {
+        Side::Left
     }
 }
 
-///Converts an 8 bit ANSI color to it's GPUI equivalent.
-pub fn get_color_at_index(index: &u8, style: &TerminalStyle) -> Color {
-    match index {
-        //0-15 are the same as the named colors above
-        0 => style.black,
-        1 => style.red,
-        2 => style.green,
-        3 => style.yellow,
-        4 => style.blue,
-        5 => style.magenta,
-        6 => style.cyan,
-        7 => style.white,
-        8 => style.bright_black,
-        9 => style.bright_red,
-        10 => style.bright_green,
-        11 => style.bright_yellow,
-        12 => style.bright_blue,
-        13 => style.bright_magenta,
-        14 => style.bright_cyan,
-        15 => style.bright_white,
-        //16-231 are mapped to their RGB colors on a 0-5 range per channel
-        16..=231 => {
-            let (r, g, b) = rgb_for_index(index); //Split the index into it's ANSI-RGB components
-            let step = (u8::MAX as f32 / 5.).floor() as u8; //Split the RGB range into 5 chunks, with floor so no overflow
-            Color::new(r * step, g * step, b * step, u8::MAX) //Map the ANSI-RGB components to an RGB color
-        }
-        //232-255 are a 24 step grayscale from black to white
-        232..=255 => {
-            let i = index - 232; //Align index to 0..24
-            let step = (u8::MAX as f32 / 24.).floor() as u8; //Split the RGB grayscale values into 24 chunks
-            Color::new(i * step, i * step, i * step, u8::MAX) //Map the ANSI-grayscale components to the RGB-grayscale
-        }
-    }
-}
+///Copied (with modifications) from alacritty/src/event.rs > Mouse::point()
+fn grid_cell(pos: Vector2F, cur_size: SizeInfo, display_offset: usize) -> Point {
+    let col = pos.x() - cur_size.cell_width() / cur_size.cell_width(); //TODO: underflow...
+    let col = min(GridCol(col as usize), cur_size.last_column());
 
-///Generates the rgb channels in [0, 5] for a given index into the 6x6x6 ANSI color cube
-///See: [8 bit ansi color](https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit).
-///
-///Wikipedia gives a formula for calculating the index for a given color:
-///
-///index = 16 + 36 × r + 6 × g + b (0 ≤ r, g, b ≤ 5)
-///
-///This function does the reverse, calculating the r, g, and b components from a given index.
-fn rgb_for_index(i: &u8) -> (u8, u8, u8) {
-    debug_assert!(i >= &16 && i <= &231);
-    let i = i - 16;
-    let r = (i - (i % 36)) / 36;
-    let g = ((i % 36) - (i % 6)) / 6;
-    let b = (i % 36) % 6;
-    (r, g, b)
+    let line = pos.y() - cur_size.padding_y() / cur_size.cell_height();
+    let line = min(line as usize, cur_size.bottommost_line().0 as usize);
+
+    Point::new(GridLine((line - display_offset) as i32), col)
 }
 
 ///Draws the grid as Alacritty sees it. Useful for checking if there is an inconsistency between
@@ -552,17 +544,5 @@ fn draw_debug_grid(bounds: RectF, layout: &mut LayoutState, cx: &mut PaintContex
             border: Default::default(),
             corner_radius: 0.,
         });
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_rgb_for_index() {
-        //Test every possible value in the color cube
-        for i in 16..=231 {
-            let (r, g, b) = crate::terminal_element::rgb_for_index(&(i as u8));
-            assert_eq!(i, 16 + 36 * r + 6 * g + b);
-        }
     }
 }
