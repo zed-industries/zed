@@ -8,7 +8,7 @@ use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::ToJson,
     platform::CursorStyle,
-    EventContext, ImageData,
+    EventContext, ImageData, MouseEvent, MouseMovedEvent, ScrollWheelEvent,
 };
 
 pub struct Scene {
@@ -44,11 +44,22 @@ pub struct CursorRegion {
     pub style: CursorStyle,
 }
 
+pub enum MouseRegionEvent {
+    Moved(MouseMovedEvent),
+    Hover(MouseEvent),
+    Down(MouseEvent),
+    Up(MouseEvent),
+    Click(MouseEvent),
+    DownOut(MouseEvent),
+    ScrollWheel(ScrollWheelEvent),
+}
+
 #[derive(Clone, Default)]
 pub struct MouseRegion {
     pub view_id: usize,
     pub discriminant: Option<(TypeId, usize)>,
     pub bounds: RectF,
+
     pub hover: Option<Rc<dyn Fn(Vector2F, bool, &mut EventContext)>>,
     pub mouse_down: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
     pub click: Option<Rc<dyn Fn(Vector2F, usize, &mut EventContext)>>,

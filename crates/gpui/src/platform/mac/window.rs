@@ -6,7 +6,7 @@ use crate::{
     },
     keymap::Keystroke,
     platform::{self, Event, WindowBounds, WindowContext},
-    Scene,
+    KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseEvent, MouseMovedEvent, Scene,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -562,11 +562,11 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
     let event = unsafe { Event::from_native(native_event, Some(window_state_borrow.size().y())) };
     if let Some(event) = event {
         match &event {
-            Event::KeyDown {
+            Event::KeyDown(KeyDownEvent {
                 keystroke,
                 input,
                 is_held,
-            } => {
+            }) => {
                 let keydown = (keystroke.clone(), input.clone());
                 // Ignore events from held-down keys after some of the initially-pressed keys
                 // were released.
@@ -603,33 +603,41 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
 
     if let Some(event) = event {
         match &event {
-            Event::LeftMouseDragged { position, .. } => {
+            Event::MouseMoved(
+                event @ MouseMovedEvent {
+                    pressed_button: Some(_),
+                    ..
+                },
+            ) => {
                 window_state_borrow.synthetic_drag_counter += 1;
                 window_state_borrow
                     .executor
                     .spawn(synthetic_drag(
                         weak_window_state,
                         window_state_borrow.synthetic_drag_counter,
-                        *position,
+                        *event,
                     ))
                     .detach();
             }
-            Event::LeftMouseUp { .. } => {
+            Event::MouseUp(MouseEvent {
+                button: MouseButton::Left,
+                ..
+            }) => {
                 window_state_borrow.synthetic_drag_counter += 1;
             }
-            Event::ModifiersChanged {
+            Event::ModifiersChanged(ModifiersChangedEvent {
                 ctrl,
                 alt,
                 shift,
                 cmd,
-            } => {
+            }) => {
                 // Only raise modifiers changed event when they have actually changed
-                if let Some(Event::ModifiersChanged {
+                if let Some(Event::ModifiersChanged(ModifiersChangedEvent {
                     ctrl: prev_ctrl,
                     alt: prev_alt,
                     shift: prev_shift,
                     cmd: prev_cmd,
-                }) = &window_state_borrow.previous_modifiers_changed_event
+                })) = &window_state_borrow.previous_modifiers_changed_event
                 {
                     if prev_ctrl == ctrl
                         && prev_alt == alt
@@ -667,11 +675,11 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
         shift: false,
         key: chars.clone(),
     };
-    let event = Event::KeyDown {
+    let event = Event::KeyDown(KeyDownEvent {
         keystroke: keystroke.clone(),
         input: Some(chars.clone()),
         is_held: false,
-    };
+    });
 
     window_state_borrow.last_fresh_keydown = Some((keystroke, Some(chars)));
     if let Some(mut callback) = window_state_borrow.event_callback.take() {
@@ -835,7 +843,7 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
 async fn synthetic_drag(
     window_state: Weak<RefCell<WindowState>>,
     drag_id: usize,
-    position: Vector2F,
+    event: MouseMovedEvent,
 ) {
     loop {
         Timer::after(Duration::from_millis(16)).await;
@@ -844,14 +852,7 @@ async fn synthetic_drag(
             if window_state_borrow.synthetic_drag_counter == drag_id {
                 if let Some(mut callback) = window_state_borrow.event_callback.take() {
                     drop(window_state_borrow);
-                    callback(Event::LeftMouseDragged {
-                        // TODO: Make sure empty modifiers is correct for this
-                        position,
-                        shift: false,
-                        ctrl: false,
-                        alt: false,
-                        cmd: false,
-                    });
+                    callback(Event::MouseMoved(event));
                     window_state.borrow_mut().event_callback = Some(callback);
                 }
             } else {

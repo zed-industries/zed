@@ -9,9 +9,9 @@ use crate::{
     scene::CursorRegion,
     text_layout::TextLayoutCache,
     Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox, Entity,
-    FontSystem, ModelHandle, MouseRegion, MouseRegionId, ReadModel, ReadView, RenderContext,
-    RenderParams, Scene, UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle, WeakModelHandle,
-    WeakViewHandle,
+    FontSystem, ModelHandle, MouseButton, MouseEvent, MouseMovedEvent, MouseRegion, MouseRegionId,
+    ReadModel, ReadView, RenderContext, RenderParams, Scene, UpgradeModelHandle, UpgradeViewHandle,
+    View, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
@@ -235,7 +235,11 @@ impl Presenter {
             let mut dragged_region = None;
 
             match event {
-                Event::LeftMouseDown { position, .. } => {
+                Event::MouseDown(MouseEvent {
+                    position,
+                    button: MouseButton::Left,
+                    ..
+                }) => {
                     let mut hit = false;
                     for (region, _) in self.mouse_regions.iter().rev() {
                         if region.bounds.contains_point(position) {
@@ -251,11 +255,12 @@ impl Presenter {
                         }
                     }
                 }
-                Event::LeftMouseUp {
+                Event::MouseUp(MouseEvent {
                     position,
                     click_count,
+                    button: MouseButton::Left,
                     ..
-                } => {
+                }) => {
                     self.prev_drag_position.take();
                     if let Some(region) = self.clicked_region.take() {
                         invalidated_views.push(region.view_id);
@@ -264,7 +269,11 @@ impl Presenter {
                         }
                     }
                 }
-                Event::RightMouseDown { position, .. } => {
+                Event::MouseDown(MouseEvent {
+                    position,
+                    button: MouseButton::Right,
+                    ..
+                }) => {
                     let mut hit = false;
                     for (region, _) in self.mouse_regions.iter().rev() {
                         if region.bounds.contains_point(position) {
@@ -279,11 +288,12 @@ impl Presenter {
                         }
                     }
                 }
-                Event::RightMouseUp {
+                Event::MouseUp(MouseEvent {
                     position,
                     click_count,
+                    button: MouseButton::Right,
                     ..
-                } => {
+                }) => {
                     if let Some(region) = self.right_clicked_region.take() {
                         invalidated_views.push(region.view_id);
                         if region.bounds.contains_point(position) {
@@ -291,34 +301,37 @@ impl Presenter {
                         }
                     }
                 }
-                Event::MouseMoved { .. } => {
-                    self.last_mouse_moved_event = Some(event.clone());
-                }
-                Event::LeftMouseDragged {
+                Event::MouseMoved(MouseMovedEvent {
+                    pressed_button,
                     position,
                     shift,
                     ctrl,
                     alt,
                     cmd,
-                } => {
-                    if let Some((clicked_region, prev_drag_position)) = self
-                        .clicked_region
-                        .as_ref()
-                        .zip(self.prev_drag_position.as_mut())
-                    {
-                        dragged_region =
-                            Some((clicked_region.clone(), position - *prev_drag_position));
-                        *prev_drag_position = position;
+                    ..
+                }) => {
+                    if let Some(MouseButton::Left) = pressed_button {
+                        if let Some((clicked_region, prev_drag_position)) = self
+                            .clicked_region
+                            .as_ref()
+                            .zip(self.prev_drag_position.as_mut())
+                        {
+                            dragged_region =
+                                Some((clicked_region.clone(), position - *prev_drag_position));
+                            *prev_drag_position = position;
+                        }
+
+                        self.last_mouse_moved_event = Some(Event::MouseMoved(MouseMovedEvent {
+                            position,
+                            pressed_button: Some(MouseButton::Left),
+                            shift,
+                            ctrl,
+                            alt,
+                            cmd,
+                        }));
                     }
 
-                    self.last_mouse_moved_event = Some(Event::MouseMoved {
-                        position,
-                        left_mouse_down: true,
-                        shift,
-                        ctrl,
-                        alt,
-                        cmd,
-                    });
+                    self.last_mouse_moved_event = Some(event.clone());
                 }
                 _ => {}
             }
@@ -410,13 +423,13 @@ impl Presenter {
         let mut unhovered_regions = Vec::new();
         let mut hovered_regions = Vec::new();
 
-        if let Event::MouseMoved {
+        if let Event::MouseMoved(MouseMovedEvent {
             position,
-            left_mouse_down,
+            pressed_button,
             ..
-        } = event
+        }) = event
         {
-            if !left_mouse_down {
+            if let None = pressed_button {
                 let mut style_to_assign = CursorStyle::Arrow;
                 for region in self.cursor_regions.iter().rev() {
                     if region.bounds.contains_point(*position) {
