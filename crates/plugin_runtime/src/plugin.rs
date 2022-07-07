@@ -231,9 +231,9 @@ impl PluginBuilder {
 
     /// Initializes a [`Plugin`] from a given compiled Wasm module.
     /// Both binary (`.wasm`) and text (`.wat`) module formats are supported.
-    pub async fn init<T: AsRef<[u8]>>(self, module: T) -> Result<Plugin, Error> {
+    pub async fn init<T: AsRef<[u8]>>(self, precompiled: bool, module: T) -> Result<Plugin, Error> {
         dbg!("initializing plugin");
-        Plugin::init(module.as_ref().to_vec(), self).await
+        Plugin::init(precompiled, module.as_ref().to_vec(), self).await
     }
 }
 
@@ -297,7 +297,11 @@ impl Plugin {
 }
 
 impl Plugin {
-    async fn init(module: Vec<u8>, plugin: PluginBuilder) -> Result<Self, Error> {
+    async fn init(
+        precompiled: bool,
+        module: Vec<u8>,
+        plugin: PluginBuilder,
+    ) -> Result<Self, Error> {
         dbg!("Initializing new plugin");
         // initialize the WebAssembly System Interface context
         let engine = plugin.engine;
@@ -314,7 +318,11 @@ impl Plugin {
             },
         );
         // store.epoch_deadline_async_yield_and_update(todo!());
-        let module = Module::new(&engine, module)?;
+        let module = if precompiled {
+            unsafe { Module::deserialize(&engine, module)? }
+        } else {
+            Module::new(&engine, module)?
+        };
 
         // load the provided module into the asynchronous runtime
         linker.module_async(&mut store, "", &module).await?;

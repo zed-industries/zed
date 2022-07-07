@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::{io::Write, path::Path};
+use wasmtime::{Config, Engine};
 
 fn main() {
     let base = Path::new("../../plugins");
@@ -28,6 +29,8 @@ fn main() {
         .expect("Could not find compiled plugins in target");
     println!("cargo:warning={:?}", binaries);
 
+    let engine = create_engine();
+
     for file in binaries {
         let is_wasm = || {
             let path = file.ok()?.path();
@@ -39,11 +42,30 @@ fn main() {
         };
 
         if let Some(path) = is_wasm() {
-            std::fs::copy(&path, base.join("bin").join(path.file_name().unwrap()))
-                .expect("Could not copy compiled plugin to bin");
+            let out_path = base.join("bin").join(path.file_name().unwrap());
+            std::fs::copy(&path, &out_path).expect("Could not copy compiled plugin to bin");
+            precompile(&out_path, &engine);
         }
     }
+}
 
-    // TODO: create .wat versions
-    // TODO: optimize with wasm-opt
+fn create_engine() -> Engine {
+    let mut config = Config::default();
+    config.async_support(true);
+    // config.epoch_interruption(true);
+    Engine::new(&config).expect("Could not create engine")
+}
+
+fn precompile(path: &Path, engine: &Engine) {
+    let bytes = std::fs::read(path).expect("Could not read wasm module");
+    let compiled = engine
+        .precompile_module(&bytes)
+        .expect("Could not precompile module");
+    let out_path = path.parent().unwrap().join(&format!(
+        "{}.pre",
+        path.file_name().unwrap().to_string_lossy()
+    ));
+    let mut out_file = std::fs::File::create(out_path)
+        .expect("Could not create output file for precompiled module");
+    out_file.write_all(&compiled).unwrap();
 }

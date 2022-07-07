@@ -51,7 +51,10 @@ mod tests {
                         })
                 })
                 .unwrap()
-                .init(include_bytes!("../../../plugins/bin/test_plugin.wasm"))
+                .init(
+                    false,
+                    include_bytes!("../../../plugins/bin/test_plugin.wasm"),
+                )
                 .await
                 .unwrap();
 
