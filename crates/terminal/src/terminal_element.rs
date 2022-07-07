@@ -1,12 +1,15 @@
 use alacritty_terminal::{
     grid::{Dimensions, GridIterator, Indexed},
     index::{Column as GridCol, Line as GridLine, Point, Side},
+    selection::{Selection, SelectionRange, SelectionType},
+    sync::FairMutex,
     term::{
         cell::{Cell, Flags},
         SizeInfo,
     },
+    Term,
 };
-use editor::{Cursor, CursorShape};
+use editor::{Cursor, CursorShape, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     color::Color,
     elements::*,
@@ -23,11 +26,13 @@ use gpui::{
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use settings::Settings;
-use std::{cmp::min, rc::Rc};
+use std::{cmp::min, ops::Range, rc::Rc, sync::Arc};
+use std::{fmt::Debug, ops::Sub};
 use theme::TerminalStyle;
 
 use crate::{
-    color_translation::convert_color, gpui_func_tools::paint_layer, Input, ScrollTerminal, Terminal,
+    color_translation::convert_color, gpui_func_tools::paint_layer, Input, ScrollTerminal,
+    Terminal, ZedListener,
 };
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
@@ -45,14 +50,27 @@ pub struct TerminalEl {
     view: WeakViewHandle<Terminal>,
 }
 
-///Helper types so I don't mix these two up
+///New type pattern so I don't mix these two up
 struct CellWidth(f32);
 struct LineHeight(f32);
+
+struct LayoutLine {
+    cells: Vec<LayoutCell>,
+    highlighted_range: Option<Range<usize>>,
+}
+
+///New type pattern to ensure that we use adjusted mouse positions throughout the code base, rather than
+struct PaneRelativePos(Vector2F);
+
+///Functionally the constructor for the PaneRelativePos type, mutates the mouse_position
+fn relative_pos(mouse_position: Vector2F, origin: Vector2F) -> PaneRelativePos {
+    PaneRelativePos(mouse_position.sub(origin)) //Avoid the extra allocation by mutating
+}
 
 #[derive(Clone, Debug, Default)]
 struct LayoutCell {
     point: Point<i32, i32>,
-    text: Line,
+    text: Line, //NOTE TO SELF THIS IS BAD PERFORMANCE RN!
     background_color: Color,
 }
 
@@ -68,14 +86,15 @@ impl LayoutCell {
 
 ///The information generated during layout that is nescessary for painting
 pub struct LayoutState {
-    cells: Vec<(Point<i32, i32>, Line)>,
-    background_rects: Vec<(RectF, Color)>, //Vec index == Line index for the LineSpan
+    layout_lines: Vec<LayoutLine>,
     line_height: LineHeight,
     em_width: CellWidth,
     cursor: Option<Cursor>,
     background_color: Color,
     cur_size: SizeInfo,
     display_offset: usize,
+    terminal: Arc<FairMutex<Term<ZedListener>>>,
+    selection_color: Color,
 }
 
 impl TerminalEl {
@@ -111,41 +130,30 @@ impl Element for TerminalEl {
         view_handle.update(cx.app, |view, _cx| view.set_size(cur_size));
 
         //Now that we're done with the mutable portion, grab the immutable settings and view again
-        let terminal_theme = &(cx.global::<Settings>()).theme.terminal;
-        let term = view_handle.read(cx).term.lock();
+        let (selection_color, terminal_theme) = {
+            let theme = &(cx.global::<Settings>()).theme;
+            (theme.editor.selection.selection, &theme.terminal)
+        };
+        let terminal_mutex = view_handle.read(cx).term.clone();
 
+        let term = terminal_mutex.lock();
         let grid = term.grid();
         let cursor_point = grid.cursor.point;
         let cursor_text = grid[cursor_point.line][cursor_point.column].c.to_string();
 
         let content = term.renderable_content();
 
-        let layout_cells = layout_cells(
+        //We have a 'SelectionRange' struct to work with,
+        //Allows us to query start, end, and contains
+        //content.selection.unwrap()
+
+        let layout_lines = layout_lines(
             content.display_iter,
             &text_style,
             terminal_theme,
             cx.text_layout_cache,
+            content.selection,
         );
-
-        let cells = layout_cells
-            .iter()
-            .map(|c| (c.point, c.text.clone()))
-            .collect::<Vec<(Point<i32, i32>, Line)>>();
-        let background_rects = layout_cells
-            .iter()
-            .map(|cell| {
-                (
-                    RectF::new(
-                        vec2f(
-                            cell.point.column as f32 * cell_width.0,
-                            cell.point.line as f32 * line_height.0,
-                        ),
-                        vec2f(cell_width.0, line_height.0),
-                    ),
-                    cell.background_color,
-                )
-            })
-            .collect::<Vec<(RectF, Color)>>();
 
         let block_text = cx.text_layout_cache.layout_str(
             &cursor_text,
@@ -185,18 +193,21 @@ impl Element for TerminalEl {
                 Some(block_text.clone()),
             )
         });
+        let display_offset = content.display_offset;
+        drop(term);
 
         (
             constraint.max,
             LayoutState {
-                cells,
+                layout_lines,
                 line_height,
                 em_width: cell_width,
                 cursor,
                 cur_size,
-                background_rects,
                 background_color: terminal_theme.background,
-                display_offset: content.display_offset,
+                display_offset,
+                terminal: terminal_mutex,
+                selection_color,
             },
         )
     }
@@ -210,6 +221,7 @@ impl Element for TerminalEl {
     ) -> Self::PaintState {
         //Setup element stuff
         let clip_bounds = Some(visible_bounds);
+
         paint_layer(cx, clip_bounds, |cx| {
             //Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
 
@@ -230,36 +242,44 @@ impl Element for TerminalEl {
             */
             let cur_size = layout.cur_size.clone();
             let display_offset = layout.display_offset.clone();
+            let terminal_mutex = layout.terminal.clone();
+            let origin = bounds.origin() + vec2f(layout.em_width.0, 0.);
+
+            //TODO: Better way of doing this?
+            let mutex1 = terminal_mutex.clone();
+            let _mutex2 = terminal_mutex.clone();
+
             cx.scene.push_mouse_region(MouseRegion {
                 view_id: self.view.id(),
-                mouse_down: Some(Rc::new(move |pos, cx| {
-                    let point = grid_cell(pos, cur_size, display_offset);
-                    let side = cell_side(cur_size, pos.x() as usize);
+                click: Some(Rc::new(move |pos, click_count, cx| {
+                    let (point, side) = mouse_to_cell_data(pos, origin, cur_size, display_offset);
 
-                    //One problem is we need a terminal
-                    //Second problem is that we need # of clicks
-                    //Third problem is that dragging reports deltas, and we need locations.
-                    //Fourth (minor) is need to render the selection
+                    let selection_type = match click_count {
+                        1 => Some(SelectionType::Simple),
+                        2 => Some(SelectionType::Semantic),
+                        3 => Some(SelectionType::Lines),
+                        _ => None,
+                    };
 
-                    // if single_click {
-                    //   terminal.selection = Some(Selection::new(SelectionType::Simple, point, side))
-                    // } else if double_click {
-                    //   terminal.selection = Some(Selection::new(SelectionType::Semantic, point, side))
-                    // } else if triple_click {
-                    //   terminal.selection = Some(Selection::new(SelectionType::Lines, point, side))
-                    // }
+                    let selection = selection_type
+                        .map(|selection_type| Selection::new(selection_type, point, side));
 
+                    let mut term = mutex1.lock();
+                    term.selection = selection;
                     cx.focus_parent_view()
                 })),
                 bounds: visible_bounds,
-                drag: Some(Rc::new(|delta, cx| {
-                    //Calculate new point from delta
-                    //terminal.selection.update(point, side)
+                drag: Some(Rc::new(move |_delta, _cx| {
+                    // let (point, side) = mouse_to_cell_data(pos, origin, cur_size, display_offset);
+
+                    // let mut term = mutex2.lock();
+                    // if let Some(mut selection) = term.selection.take() {
+                    //     selection.update(point, side);
+                    //     term.selection = Some(selection);
+                    // }
                 })),
                 ..Default::default()
             });
-
-            let origin = bounds.origin() + vec2f(layout.em_width.0, 0.);
 
             paint_layer(cx, clip_bounds, |cx| {
                 //Start with a background color
@@ -271,25 +291,84 @@ impl Element for TerminalEl {
                 });
 
                 //Draw cell backgrounds
-                for background_rect in &layout.background_rects {
-                    let new_origin = origin + background_rect.0.origin();
-                    cx.scene.push_quad(Quad {
-                        bounds: RectF::new(new_origin, background_rect.0.size()),
-                        background: Some(background_rect.1),
-                        border: Default::default(),
-                        corner_radius: 0.,
+                for layout_line in &layout.layout_lines {
+                    for layout_cell in &layout_line.cells {
+                        let position = vec2f(
+                            origin.x() + layout_cell.point.column as f32 * layout.em_width.0,
+                            origin.y() + layout_cell.point.line as f32 * layout.line_height.0,
+                        );
+                        let size = vec2f(layout.em_width.0, layout.line_height.0);
+
+                        cx.scene.push_quad(Quad {
+                            bounds: RectF::new(position, size),
+                            background: Some(layout_cell.background_color),
+                            border: Default::default(),
+                            corner_radius: 0.,
+                        })
+                    }
+                }
+            });
+
+            //Draw Selection
+            paint_layer(cx, clip_bounds, |cx| {
+                let mut highlight_y = None;
+                let highlight_lines = layout
+                    .layout_lines
+                    .iter()
+                    .filter_map(|line| {
+                        if let Some(range) = &line.highlighted_range {
+                            if let None = highlight_y {
+                                highlight_y = Some(
+                                    origin.y()
+                                        + line.cells[0].point.line as f32 * layout.line_height.0,
+                                );
+                            }
+                            let start_x = origin.x()
+                                + line.cells[range.start].point.column as f32 * layout.em_width.0;
+                            let end_x = origin.x()
+                                //TODO: Why -1? I know switch from count to index... but where...
+                                + line.cells[range.end - 1].point.column as f32 * layout.em_width.0
+                                + layout.em_width.0;
+
+                            return Some(HighlightedRangeLine { start_x, end_x });
+                        } else {
+                            return None;
+                        }
                     })
+                    .collect::<Vec<HighlightedRangeLine>>();
+
+                if let Some(y) = highlight_y {
+                    let hr = HighlightedRange {
+                        start_y: y, //Need to change this
+                        line_height: layout.line_height.0,
+                        lines: highlight_lines,
+                        color: layout.selection_color,
+                        //Copied from editor. TODO: move to theme or something
+                        corner_radius: 0.15 * layout.line_height.0,
+                    };
+                    hr.paint(bounds, cx.scene);
                 }
             });
 
             //Draw text
             paint_layer(cx, clip_bounds, |cx| {
-                for (point, cell) in &layout.cells {
-                    let cell_origin = vec2f(
-                        origin.x() + point.column as f32 * layout.em_width.0,
-                        origin.y() + point.line as f32 * layout.line_height.0,
-                    );
-                    cell.paint(cell_origin, visible_bounds, layout.line_height.0, cx);
+                for layout_line in &layout.layout_lines {
+                    for layout_cell in &layout_line.cells {
+                        let point = layout_cell.point;
+
+                        //Don't actually know the start_x for a line, until here:
+                        let cell_origin = vec2f(
+                            origin.x() + point.column as f32 * layout.em_width.0,
+                            origin.y() + point.line as f32 * layout.line_height.0,
+                        );
+
+                        layout_cell.text.paint(
+                            cell_origin,
+                            visible_bounds,
+                            layout.line_height.0,
+                            cx,
+                        );
+                    }
                 }
             });
 
@@ -354,18 +433,17 @@ impl Element for TerminalEl {
     }
 }
 
-/*
-Mouse moved -> WindowEvent::CursorMoved
-mouse press -> WindowEvent::MouseInput
-update_selection_scrolling
-
-
-copy_selection
-start_selection
-toggle_selection
-update_selection
-clear_selection
- */
+fn mouse_to_cell_data(
+    pos: Vector2F,
+    origin: Vector2F,
+    cur_size: SizeInfo,
+    display_offset: usize,
+) -> (Point, alacritty_terminal::index::Direction) {
+    let relative_pos = relative_pos(pos, origin);
+    let point = grid_cell(&relative_pos, cur_size, display_offset);
+    let side = cell_side(&relative_pos, cur_size);
+    (point, side)
+}
 
 ///Configures a text style from the current settings.
 fn make_text_style(font_cache: &FontCache, settings: &Settings) -> TextStyle {
@@ -399,38 +477,59 @@ fn make_new_size(
     )
 }
 
-fn layout_cells(
+//Let's say that calculating the display is correct, that means that either calculating the highlight ranges is incorrect
+//OR calculating the click ranges is incorrect
+
+fn layout_lines(
     grid: GridIterator<Cell>,
     text_style: &TextStyle,
     terminal_theme: &TerminalStyle,
     text_layout_cache: &TextLayoutCache,
-) -> Vec<LayoutCell> {
-    let mut line_count: i32 = 0;
+    selection_range: Option<SelectionRange>,
+) -> Vec<LayoutLine> {
     let lines = grid.group_by(|i| i.point.line);
     lines
         .into_iter()
-        .map(|(_, line)| {
-            line_count += 1;
-            line.map(|indexed_cell| {
-                let cell_text = &indexed_cell.c.to_string();
+        .enumerate()
+        .map(|(line_index, (_, line))| {
+            let mut highlighted_range = None;
+            let cells = line
+                .enumerate()
+                .map(|(x_index, indexed_cell)| {
+                    if selection_range
+                        .map(|range| range.contains(indexed_cell.point))
+                        .unwrap_or(false)
+                    {
+                        let mut range = highlighted_range.take().unwrap_or(x_index..x_index + 1);
+                        range.end = range.end.max(x_index + 1);
+                        highlighted_range = Some(range);
+                    }
 
-                let cell_style = cell_style(&indexed_cell, terminal_theme, text_style);
+                    let cell_text = &indexed_cell.c.to_string();
 
-                let layout_cell = text_layout_cache.layout_str(
-                    cell_text,
-                    text_style.font_size,
-                    &[(cell_text.len(), cell_style)],
-                );
-                LayoutCell::new(
-                    Point::new(line_count - 1, indexed_cell.point.column.0 as i32),
-                    layout_cell,
-                    convert_color(&indexed_cell.bg, terminal_theme),
-                )
-            })
-            .collect::<Vec<LayoutCell>>()
+                    let cell_style = cell_style(&indexed_cell, terminal_theme, text_style);
+
+                    //This is where we might be able to get better performance
+                    let layout_cell = text_layout_cache.layout_str(
+                        cell_text,
+                        text_style.font_size,
+                        &[(cell_text.len(), cell_style)],
+                    );
+
+                    LayoutCell::new(
+                        Point::new(line_index as i32, indexed_cell.point.column.0 as i32),
+                        layout_cell,
+                        convert_color(&indexed_cell.bg, terminal_theme),
+                    )
+                })
+                .collect::<Vec<LayoutCell>>();
+
+            LayoutLine {
+                cells,
+                highlighted_range,
+            }
         })
-        .flatten()
-        .collect::<Vec<LayoutCell>>()
+        .collect::<Vec<LayoutLine>>()
 }
 
 // Compute the cursor position and expected block width, may return a zero width if x_for_index returns
@@ -487,7 +586,8 @@ fn cell_style(indexed: &Indexed<&Cell>, style: &TerminalStyle, text_style: &Text
 }
 
 ///Copied (with modifications) from alacritty/src/input.rs > Processor::cell_side()
-fn cell_side(cur_size: SizeInfo, x: usize) -> Side {
+fn cell_side(pos: &PaneRelativePos, cur_size: SizeInfo) -> Side {
+    let x = pos.0.x() as usize;
     let cell_x = x.saturating_sub(cur_size.cell_width() as usize) % cur_size.cell_width() as usize;
     let half_cell_width = (cur_size.cell_width() / 2.0) as usize;
 
@@ -506,11 +606,14 @@ fn cell_side(cur_size: SizeInfo, x: usize) -> Side {
 }
 
 ///Copied (with modifications) from alacritty/src/event.rs > Mouse::point()
-fn grid_cell(pos: Vector2F, cur_size: SizeInfo, display_offset: usize) -> Point {
-    let col = pos.x() - cur_size.cell_width() / cur_size.cell_width(); //TODO: underflow...
+///Position is a pane-relative position. That means the top left corner of the mouse
+///Region should be (0,0)
+fn grid_cell(pos: &PaneRelativePos, cur_size: SizeInfo, display_offset: usize) -> Point {
+    let pos = pos.0;
+    let col = pos.x() / cur_size.cell_width(); //TODO: underflow...
     let col = min(GridCol(col as usize), cur_size.last_column());
 
-    let line = pos.y() - cur_size.padding_y() / cur_size.cell_height();
+    let line = pos.y() / cur_size.cell_height();
     let line = min(line as usize, cur_size.bottommost_line().0 as usize);
 
     Point::new(GridLine((line - display_offset) as i32), col)
