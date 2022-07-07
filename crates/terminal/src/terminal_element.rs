@@ -143,10 +143,6 @@ impl Element for TerminalEl {
 
         let content = term.renderable_content();
 
-        //We have a 'SelectionRange' struct to work with,
-        //Allows us to query start, end, and contains
-        //content.selection.unwrap()
-
         let layout_lines = layout_lines(
             content.display_iter,
             &text_style,
