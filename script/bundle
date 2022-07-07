@@ -19,8 +19,8 @@ cargo build --release --package cli --target x86_64-apple-darwin
 echo "Creating application bundle"
 (cd crates/zed && cargo bundle --release --target x86_64-apple-darwin)
 
-TEMP_RELEASE_DIR_PATH=target/x86_64-apple-darwin/release/bundle/osx
-APP_PATH=$TEMP_RELEASE_DIR_PATH/Zed.app
+TEMP_RELEASE_DIR_PATH="target/x86_64-apple-darwin/release/bundle/osx"
+APP_PATH="${TEMP_RELEASE_DIR_PATH}/Zed.app"
 
 echo "Creating fat binaries"
 lipo \
@@ -51,9 +51,9 @@ else
     codesign --force --deep --sign - $APP_PATH -v
 fi
 
-RELEASE_DIR_PATH=target/release
+RELEASE_DIR_PATH="target/release"
 VERSION=$(cd crates/zed && cargo-get version)
-DMG_PATH=$RELEASE_DIR_PATH/Zed_v$VERSION.dmg
+DMG_PATH="${RELEASE_DIR_PATH}/Zed_v${VERSION}.dmg"
 
 echo "Creating DMG"
 mkdir -p $RELEASE_DIR_PATH
