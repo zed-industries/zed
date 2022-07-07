@@ -1,5 +1,5 @@
 use alacritty_terminal::{
-    config::{Config, Program, PtyConfig},
+    config::{Config, PtyConfig},
     event::{Event as AlacTermEvent, EventListener, Notify},
     event_loop::{EventLoop, Msg, Notifier},
     grid::Scroll,
@@ -126,7 +126,7 @@ impl Terminal {
         .detach();
 
         let pty_config = PtyConfig {
-            shell: Some(Program::Just("zsh".to_string())),
+            shell: None, //Use the users default shell
             working_directory,
             hold: false,
         };
