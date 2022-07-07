@@ -151,6 +151,7 @@ pub struct AsyncAppContext(Rc<RefCell<MutableAppContext>>);
 pub struct TestAppContext {
     cx: Rc<RefCell<MutableAppContext>>,
     foreground_platform: Rc<platform::test::ForegroundPlatform>,
+    condition_duration: Option<Duration>,
 }
 
 impl App {
@@ -337,6 +338,7 @@ impl TestAppContext {
         let cx = TestAppContext {
             cx: Rc::new(RefCell::new(cx)),
             foreground_platform,
+            condition_duration: None,
         };
         cx.cx.borrow_mut().weak_self = Some(Rc::downgrade(&cx.cx));
         cx
@@ -610,6 +612,19 @@ impl TestAppContext {
                 .downcast_mut::<platform::test::Window>()
                 .unwrap();
             test_window
+        })
+    }
+
+    pub fn set_condition_duration(&mut self, duration: Duration) {
+        self.condition_duration = Some(duration);
+    }
+    pub fn condition_duration(&self) -> Duration {
+        self.condition_duration.unwrap_or_else(|| {
+            if std::env::var("CI").is_ok() {
+                Duration::from_secs(2)
+            } else {
+                Duration::from_millis(500)
+            }
         })
     }
 }
@@ -4424,6 +4439,7 @@ impl<T: View> ViewHandle<T> {
         use postage::prelude::{Sink as _, Stream as _};
 
         let (tx, mut rx) = postage::mpsc::channel(1024);
+        let timeout_duration = cx.condition_duration();
 
         let mut cx = cx.cx.borrow_mut();
         let subscriptions = self.update(&mut *cx, |_, cx| {
@@ -4445,14 +4461,9 @@ impl<T: View> ViewHandle<T> {
 
         let cx = cx.weak_self.as_ref().unwrap().upgrade().unwrap();
         let handle = self.downgrade();
-        let duration = if std::env::var("CI").is_ok() {
-            Duration::from_secs(2)
-        } else {
-            Duration::from_millis(500)
-        };
 
         async move {
-            crate::util::timeout(duration, async move {
+            crate::util::timeout(timeout_duration, async move {
                 loop {
                     {
                         let cx = cx.borrow();
