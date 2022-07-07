@@ -488,7 +488,7 @@ fn get_working_directory(wt: &LocalWorktree) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
 
-    use std::{path::Path, sync::atomic::AtomicUsize};
+    use std::{path::Path, sync::atomic::AtomicUsize, time::Duration};
 
     use super::*;
     use alacritty_terminal::{grid::GridIterator, term::cell::Cell};
@@ -501,6 +501,8 @@ mod tests {
     #[gpui::test]
     async fn test_terminal(cx: &mut TestAppContext) {
         let terminal = cx.add_view(Default::default(), |cx| Terminal::new(cx, None));
+        cx.set_condition_duration(Duration::from_secs(2));
+
         terminal.update(cx, |terminal, cx| {
             terminal.write_to_pty(&Input(("expr 3 + 4".to_string()).to_string()), cx);
             terminal.carriage_return(&Return, cx);
@@ -510,7 +512,6 @@ mod tests {
             .condition(cx, |terminal, _cx| {
                 let term = terminal.term.clone();
                 let content = grid_as_str(term.lock().renderable_content().display_iter);
-                dbg!(&content);
                 content.contains("7")
             })
             .await;
