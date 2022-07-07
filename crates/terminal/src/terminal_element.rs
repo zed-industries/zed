@@ -126,7 +126,6 @@ impl Element for TerminalEl {
         //Tell the view our new size. Requires a mutable borrow of cx and the view
         let cur_size = make_new_size(constraint, &cell_width, &line_height);
         //Note that set_size locks and mutates the terminal.
-        //TODO: Would be nice to lock once for the whole of layout
         view_handle.update(cx.app, |view, _cx| view.set_size(cur_size));
 
         //Now that we're done with the mutable portion, grab the immutable settings and view again
@@ -219,72 +218,20 @@ impl Element for TerminalEl {
         let clip_bounds = Some(visible_bounds);
 
         paint_layer(cx, clip_bounds, |cx| {
-            //Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
-
-            /*
-            To set a selection,
-            set the selection variable on the terminal
-
-            CLICK:
-            Get the grid point associated with this mouse click
-            And the side????? - TODO - algorithm for calculating this in Processor::cell_side
-            On single left click -> Clear selection, start empty selection
-            On double left click -> start semantic selection
-            On double triple click -> start line selection
-
-            MOUSE MOVED:
-            Find the new cell the mouse is over
-            Update the selection by calling terminal.selection.update()
-            */
             let cur_size = layout.cur_size.clone();
             let display_offset = layout.display_offset.clone();
-            let terminal_mutex = layout.terminal.clone();
             let origin = bounds.origin() + vec2f(layout.em_width.0, 0.);
 
-            //TODO: Better way of doing this?
-            let mutex1 = terminal_mutex.clone();
-            let mutex2 = terminal_mutex.clone();
-            let mutex3 = terminal_mutex.clone();
-
-            cx.scene.push_mouse_region(MouseRegion {
-                view_id: self.view.id(),
-                mouse_down: Some(Rc::new(move |pos, _| {
-                    let (point, side) = mouse_to_cell_data(pos, origin, cur_size, display_offset);
-                    mutex3.lock().selection =
-                        Some(Selection::new(SelectionType::Simple, point, side))
-                })),
-                click: Some(Rc::new(move |pos, click_count, cx| {
-                    let (point, side) = mouse_to_cell_data(pos, origin, cur_size, display_offset);
-
-                    let selection_type = match click_count {
-                        0 => return, //This is a release
-                        1 => Some(SelectionType::Simple),
-                        2 => Some(SelectionType::Semantic),
-                        3 => Some(SelectionType::Lines),
-                        _ => None,
-                    };
-
-                    let selection = selection_type
-                        .map(|selection_type| Selection::new(selection_type, point, side));
-
-                    let mut term = mutex1.lock();
-                    term.selection = selection;
-                    cx.focus_parent_view();
-                    cx.notify();
-                })),
-                bounds: visible_bounds,
-                drag: Some(Rc::new(move |_delta, pos, cx| {
-                    let (point, side) = mouse_to_cell_data(pos, origin, cur_size, display_offset);
-
-                    let mut term = mutex2.lock();
-                    if let Some(mut selection) = term.selection.take() {
-                        selection.update(point, side);
-                        term.selection = Some(selection);
-                    }
-                    cx.notify();
-                })),
-                ..Default::default()
-            });
+            //Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
+            attach_mouse_handlers(
+                origin,
+                cur_size,
+                display_offset,
+                self.view.id(),
+                &layout.terminal,
+                visible_bounds,
+                cx,
+            );
 
             paint_layer(cx, clip_bounds, |cx| {
                 //Start with a background color
@@ -331,8 +278,7 @@ impl Element for TerminalEl {
                             let start_x = origin.x()
                                 + line.cells[range.start].point.column as f32 * layout.em_width.0;
                             let end_x = origin.x()
-                                //TODO: Why -1? I know switch from count to index... but where...
-                                + line.cells[range.end - 1].point.column as f32 * layout.em_width.0
+                                + line.cells[range.end].point.column as f32 * layout.em_width.0
                                 + layout.em_width.0;
 
                             return Some(HighlightedRangeLine { start_x, end_x });
@@ -482,9 +428,6 @@ fn make_new_size(
     )
 }
 
-//Let's say that calculating the display is correct, that means that either calculating the highlight ranges is incorrect
-//OR calculating the click ranges is incorrect
-
 fn layout_lines(
     grid: GridIterator<Cell>,
     text_style: &TextStyle,
@@ -505,8 +448,8 @@ fn layout_lines(
                         .map(|range| range.contains(indexed_cell.point))
                         .unwrap_or(false)
                     {
-                        let mut range = highlighted_range.take().unwrap_or(x_index..x_index + 1);
-                        range.end = range.end.max(x_index + 1);
+                        let mut range = highlighted_range.take().unwrap_or(x_index..x_index);
+                        range.end = range.end.max(x_index);
                         highlighted_range = Some(range);
                     }
 
@@ -588,6 +531,61 @@ fn cell_style(indexed: &Indexed<&Cell>, style: &TerminalStyle, text_style: &Text
         font_id: text_style.font_id,
         underline,
     }
+}
+
+fn attach_mouse_handlers(
+    origin: Vector2F,
+    cur_size: SizeInfo,
+    display_offset: usize,
+    view_id: usize,
+    terminal_mutex: &Arc<FairMutex<Term<ZedListener>>>,
+    visible_bounds: RectF,
+    cx: &mut PaintContext,
+) {
+    let click_mutex = terminal_mutex.clone();
+    let drag_mutex = terminal_mutex.clone();
+    let mouse_down_mutex = terminal_mutex.clone();
+
+    cx.scene.push_mouse_region(MouseRegion {
+        view_id,
+        mouse_down: Some(Rc::new(move |pos, _| {
+            let (point, side) = mouse_to_cell_data(pos, origin, cur_size, display_offset);
+            mouse_down_mutex.lock().selection =
+                Some(Selection::new(SelectionType::Simple, point, side))
+        })),
+        click: Some(Rc::new(move |pos, click_count, cx| {
+            let (point, side) = mouse_to_cell_data(pos, origin, cur_size, display_offset);
+
+            let selection_type = match click_count {
+                0 => return, //This is a release
+                1 => Some(SelectionType::Simple),
+                2 => Some(SelectionType::Semantic),
+                3 => Some(SelectionType::Lines),
+                _ => None,
+            };
+
+            let selection =
+                selection_type.map(|selection_type| Selection::new(selection_type, point, side));
+
+            let mut term = click_mutex.lock();
+            term.selection = selection;
+            cx.focus_parent_view();
+            cx.notify();
+        })),
+        bounds: visible_bounds,
+        drag: Some(Rc::new(move |_delta, pos, cx| {
+            let (point, side) = mouse_to_cell_data(pos, origin, cur_size, display_offset);
+
+            let mut term = drag_mutex.lock();
+            if let Some(mut selection) = term.selection.take() {
+                selection.update(point, side);
+                term.selection = Some(selection);
+            }
+
+            cx.notify();
+        })),
+        ..Default::default()
+    });
 }
 
 ///Copied (with modifications) from alacritty/src/input.rs > Processor::cell_side()
