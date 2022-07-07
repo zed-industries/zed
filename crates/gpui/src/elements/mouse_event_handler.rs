@@ -24,7 +24,7 @@ pub struct MouseEventHandler {
     right_click: Option<Rc<dyn Fn(Vector2F, usize, &mut EventContext)>>,
     mouse_down_out: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
     right_mouse_down_out: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
-    drag: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
+    drag: Option<Rc<dyn Fn(Vector2F, Vector2F, &mut EventContext)>>,
     hover: Option<Rc<dyn Fn(Vector2F, bool, &mut EventContext)>>,
     padding: Padding,
 }
@@ -106,7 +106,10 @@ impl MouseEventHandler {
         self
     }
 
-    pub fn on_drag(mut self, handler: impl Fn(Vector2F, &mut EventContext) + 'static) -> Self {
+    pub fn on_drag(
+        mut self,
+        handler: impl Fn(Vector2F, Vector2F, &mut EventContext) + 'static,
+    ) -> Self {
         self.drag = Some(Rc::new(handler));
         self
     }

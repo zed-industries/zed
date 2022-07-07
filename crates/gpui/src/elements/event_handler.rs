@@ -90,7 +90,7 @@ impl Element for EventHandler {
                 click: Some(Rc::new(|_, _, _| {})),
                 right_mouse_down: Some(Rc::new(|_, _| {})),
                 right_click: Some(Rc::new(|_, _, _| {})),
-                drag: Some(Rc::new(|_, _| {})),
+                drag: Some(Rc::new(|_, _, _| {})),
                 mouse_down_out: Some(Rc::new(|_, _| {})),
                 right_mouse_down_out: Some(Rc::new(|_, _| {})),
             });
