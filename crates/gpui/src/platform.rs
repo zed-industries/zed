@@ -20,7 +20,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
-pub use event::{Event, NavigationDirection};
+pub use event::*;
 use postage::oneshot;
 use serde::Deserialize;
 use std::{
