@@ -554,7 +554,7 @@ mod tests {
         });
 
         let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
-        app_state.fs.as_fake().insert_dir("/root").await;
+        app_state.fs.create_dir(Path::new("/root")).await.unwrap();
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name")));
         save_task.await.unwrap();
         editor.read_with(cx, |editor, cx| {
@@ -680,14 +680,25 @@ mod tests {
     async fn test_open_paths(cx: &mut TestAppContext) {
         let app_state = init(cx);
 
-        let fs = app_state.fs.as_fake();
-        fs.insert_dir("/dir1").await;
-        fs.insert_dir("/dir2").await;
-        fs.insert_dir("/dir3").await;
-        fs.insert_file("/dir1/a.txt", "".into()).await;
-        fs.insert_file("/dir2/b.txt", "".into()).await;
-        fs.insert_file("/dir3/c.txt", "".into()).await;
-        fs.insert_file("/d.txt", "".into()).await;
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/",
+                json!({
+                    "dir1": {
+                        "a.txt": ""
+                    },
+                    "dir2": {
+                        "b.txt": ""
+                    },
+                    "dir3": {
+                        "c.txt": ""
+                    },
+                    "d.txt": ""
+                }),
+            )
+            .await;
 
         let project = Project::test(app_state.fs.clone(), ["/dir1".as_ref()], cx).await;
         let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
@@ -891,7 +902,7 @@ mod tests {
     #[gpui::test]
     async fn test_open_and_save_new_file(cx: &mut TestAppContext) {
         let app_state = init(cx);
-        app_state.fs.as_fake().insert_dir("/root").await;
+        app_state.fs.create_dir(Path::new("/root")).await.unwrap();
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages().add(rust_lang()));
@@ -980,7 +991,7 @@ mod tests {
     #[gpui::test]
     async fn test_setting_language_when_saving_as_single_file_worktree(cx: &mut TestAppContext) {
         let app_state = init(cx);
-        app_state.fs.as_fake().insert_dir("/root").await;
+        app_state.fs.create_dir(Path::new("/root")).await.unwrap();
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         project.update(cx, |project, _| project.languages().add(rust_lang()));
