@@ -91,6 +91,7 @@ pub struct Terminal {
     has_new_content: bool,
     has_bell: bool, //Currently using iTerm bell, show bell emoji in tab until input is received
     cur_size: SizeInfo,
+    associated_directory: Option<PathBuf>,
 }
 
 ///Upward flowing events, for changing the title and such
@@ -126,7 +127,7 @@ impl Terminal {
 
         let pty_config = PtyConfig {
             shell: None,
-            working_directory,
+            working_directory: working_directory.clone(),
             hold: false,
         };
 
@@ -173,6 +174,7 @@ impl Terminal {
             has_new_content: false,
             has_bell: false,
             cur_size: size_info,
+            associated_directory: working_directory,
         }
     }
 
@@ -408,6 +410,13 @@ impl Item for Terminal {
                 .boxed(),
         )
         .boxed()
+    }
+
+    fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self> {
+        //From what I can tell, there's no  way to tell the current working
+        //Directory of the terminal from outside the terminal. There might be
+        //solutions to this, but they are non-trivial and require more IPC
+        Some(Terminal::new(cx, self.associated_directory.clone()))
     }
 
     fn project_path(&self, _cx: &gpui::AppContext) -> Option<ProjectPath> {
