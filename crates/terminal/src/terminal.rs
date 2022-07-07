@@ -8,7 +8,6 @@ use alacritty_terminal::{
     tty::{self, setup_env},
     Term,
 };
-
 use color_translation::{get_color_at_index, to_alac_rgb};
 use dirs::home_dir;
 use futures::{
