@@ -52,7 +52,7 @@ pub struct ScrollTerminal(pub i32);
 
 actions!(
     terminal,
-    [Sigint, Escape, Del, Return, Left, Right, Up, Down, Tab, Clear, Paste, Deploy, Quit]
+    [Sigint, Escape, Del, Return, Left, Right, Up, Down, Tab, Clear, Copy, Paste, Deploy, Quit]
 );
 impl_internal_actions!(terminal, [Input, ScrollTerminal]);
 
@@ -70,6 +70,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Terminal::up);
     cx.add_action(Terminal::down);
     cx.add_action(Terminal::tab);
+    cx.add_action(Terminal::copy);
     cx.add_action(Terminal::paste);
     cx.add_action(Terminal::scroll_terminal);
 }
@@ -270,6 +271,16 @@ impl Terminal {
     ///Tell Zed to close us
     fn quit(&mut self, _: &Quit, cx: &mut ViewContext<Self>) {
         cx.emit(Event::CloseTerminal);
+    }
+
+    ///Attempt to paste the clipboard into the terminal
+    fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
+        let term = self.term.lock();
+        let copy_text = term.selection_to_string();
+        match copy_text {
+            Some(s) => cx.write_to_clipboard(ClipboardItem::new(s)),
+            None => (),
+        }
     }
 
     ///Attempt to paste the clipboard into the terminal
