@@ -129,7 +129,7 @@ impl Terminal {
         .detach();
 
         let pty_config = PtyConfig {
-            shell: None,
+            shell: None, //Use the users default shell
             working_directory: working_directory.clone(),
             hold: false,
         };
