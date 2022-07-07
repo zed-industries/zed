@@ -9,11 +9,8 @@ use alacritty_terminal::{
     Term,
 };
 
-<<<<<<< HEAD
-use dirs::home_dir;
-=======
 use color_translation::{get_color_at_index, to_alac_rgb};
->>>>>>> 3fe0d66d (Began working on selections, refactored colors)
+use dirs::home_dir;
 use futures::{
     channel::mpsc::{unbounded, UnboundedSender},
     StreamExt,
@@ -475,13 +472,12 @@ fn get_working_directory(wt: &LocalWorktree) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
 
-    use std::{path::Path, sync::atomic::AtomicUsize, time::Duration};
-
     use super::*;
     use alacritty_terminal::{grid::GridIterator, term::cell::Cell};
     use gpui::TestAppContext;
     use itertools::Itertools;
     use project::{FakeFs, Fs, RealFs, RemoveOptions, Worktree};
+    use std::{path::Path, sync::atomic::AtomicUsize, time::Duration};
 
     ///Basic integration test, can we get the terminal to show up, execute a command,
     //and produce noticable output?
@@ -489,7 +485,6 @@ mod tests {
     async fn test_terminal(cx: &mut TestAppContext) {
         let terminal = cx.add_view(Default::default(), |cx| Terminal::new(cx, None));
         cx.set_condition_duration(Duration::from_secs(2));
-
         terminal.update(cx, |terminal, cx| {
             terminal.write_to_pty(&Input(("expr 3 + 4".to_string()).to_string()), cx);
             terminal.carriage_return(&Return, cx);
@@ -499,6 +494,7 @@ mod tests {
             .condition(cx, |terminal, _cx| {
                 let term = terminal.term.clone();
                 let content = grid_as_str(term.lock().renderable_content().display_iter);
+                dbg!(&content);
                 content.contains("7")
             })
             .await;

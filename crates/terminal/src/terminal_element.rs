@@ -247,7 +247,7 @@ impl Element for TerminalEl {
 
             //TODO: Better way of doing this?
             let mutex1 = terminal_mutex.clone();
-            let _mutex2 = terminal_mutex.clone();
+            let mutex2 = terminal_mutex.clone();
 
             cx.scene.push_mouse_region(MouseRegion {
                 view_id: self.view.id(),
@@ -269,14 +269,18 @@ impl Element for TerminalEl {
                     cx.focus_parent_view()
                 })),
                 bounds: visible_bounds,
-                drag: Some(Rc::new(move |_delta, _cx| {
-                    // let (point, side) = mouse_to_cell_data(pos, origin, cur_size, display_offset);
+                drag: Some(Rc::new(move |_delta, pos, cx| {
+                    let (point, side) = mouse_to_cell_data(pos, origin, cur_size, display_offset);
 
-                    // let mut term = mutex2.lock();
-                    // if let Some(mut selection) = term.selection.take() {
-                    //     selection.update(point, side);
-                    //     term.selection = Some(selection);
-                    // }
+                    let mut term = mutex2.lock();
+                    if let Some(mut selection) = term.selection.take() {
+                        selection.update(point, side);
+                        term.selection = Some(selection);
+                    } else {
+                        term.selection = Some(Selection::new(SelectionType::Simple, point, side));
+                    }
+
+                    cx.notify()
                 })),
                 ..Default::default()
             });
