@@ -4878,6 +4878,8 @@ name = "terminal"
 version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
+ "client",
+ "dirs 4.0.0",
  "editor",
  "futures",
  "gpui",
