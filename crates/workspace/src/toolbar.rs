@@ -112,6 +112,7 @@ impl View for Toolbar {
         let container_style = theme.container;
         let height = theme.height;
         let button_style = theme.nav_button;
+        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
 
         Flex::column()
             .with_child(
@@ -119,21 +120,27 @@ impl View for Toolbar {
                     .with_child(nav_button(
                         "icons/arrow-left.svg",
                         button_style,
+                        tooltip_style.clone(),
                         enable_go_backward,
                         spacing,
                         super::GoBack {
                             pane: Some(pane.clone()),
                         },
+                        super::GoBack { pane: None },
+                        "Go Back",
                         cx,
                     ))
                     .with_child(nav_button(
                         "icons/arrow-right.svg",
                         button_style,
+                        tooltip_style.clone(),
                         enable_go_forward,
                         spacing,
                         super::GoForward {
                             pane: Some(pane.clone()),
                         },
+                        super::GoForward { pane: None },
+                        "Go Forward",
                         cx,
                     ))
                     .with_children(primary_left_items)
@@ -152,9 +159,12 @@ impl View for Toolbar {
 fn nav_button<A: Action + Clone>(
     svg_path: &'static str,
     style: theme::Interactive<theme::IconButton>,
+    tooltip_style: TooltipStyle,
     enabled: bool,
     spacing: f32,
     action: A,
+    tooltip_action: A,
+    action_name: &str,
     cx: &mut RenderContext<Toolbar>,
 ) -> ElementBox {
     MouseEventHandler::new::<A, _, _>(0, cx, |state, _| {
@@ -181,7 +191,14 @@ fn nav_button<A: Action + Clone>(
     } else {
         CursorStyle::default()
     })
-    .on_mouse_down(move |_, cx| cx.dispatch_action(action.clone()))
+    .on_click(move |_, _, cx| cx.dispatch_action(action.clone()))
+    .with_tooltip::<A, _>(
+        0,
+        action_name.to_string(),
+        Some(Box::new(tooltip_action)),
+        tooltip_style,
+        cx,
+    )
     .contained()
     .with_margin_right(spacing)
     .boxed()
