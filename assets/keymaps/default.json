@@ -417,7 +417,8 @@
             "up": "terminal::Up",
             "down": "terminal::Down",
             "tab": "terminal::Tab",
-            "cmd-v": "terminal::Paste"
+            "cmd-v": "terminal::Paste",
+            "cmd-c": "terminal::Copy"
         }
     }
 ]
