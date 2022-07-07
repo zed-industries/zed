@@ -306,11 +306,8 @@ impl Presenter {
                         .as_ref()
                         .zip(self.prev_drag_position.as_mut())
                     {
-                        dragged_region = Some((
-                            clicked_region.clone(),
-                            position - *prev_drag_position,
-                            position,
-                        ));
+                        dragged_region =
+                            Some((clicked_region.clone(), *prev_drag_position, position));
                         *prev_drag_position = position;
                     }
 
@@ -369,11 +366,11 @@ impl Presenter {
                 }
             }
 
-            if let Some((dragged_region, delta, position)) = dragged_region {
+            if let Some((dragged_region, prev_position, position)) = dragged_region {
                 handled = true;
                 if let Some(drag_callback) = dragged_region.drag {
                     event_cx.with_current_view(dragged_region.view_id, |event_cx| {
-                        drag_callback(delta, position, event_cx);
+                        drag_callback(prev_position, position, event_cx);
                     })
                 }
             }
