@@ -255,6 +255,7 @@ impl Element for TerminalEl {
                     let (point, side) = mouse_to_cell_data(pos, origin, cur_size, display_offset);
 
                     let selection_type = match click_count {
+                        0 => return, //This is a release
                         1 => Some(SelectionType::Simple),
                         2 => Some(SelectionType::Semantic),
                         3 => Some(SelectionType::Lines),
@@ -279,8 +280,7 @@ impl Element for TerminalEl {
                     } else {
                         term.selection = Some(Selection::new(SelectionType::Simple, point, side));
                     }
-
-                    cx.notify()
+                    cx.notify();
                 })),
                 ..Default::default()
             });
