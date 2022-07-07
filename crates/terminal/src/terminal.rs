@@ -37,6 +37,8 @@ const RIGHT_SEQ: &str = "\x1b[C";
 const UP_SEQ: &str = "\x1b[A";
 const DOWN_SEQ: &str = "\x1b[B";
 const DEFAULT_TITLE: &str = "Terminal";
+const DEBUG_TERMINAL_WIDTH: f32 = 300.;
+const DEBUG_TERMINAL_HEIGHT: f32 = 200.;
 
 pub mod color_translation;
 pub mod gpui_func_tools;
@@ -146,8 +148,15 @@ impl Terminal {
         setup_env(&config);
 
         //The details here don't matter, the terminal will be resized on the first layout
-        //Set to something small for easier debugging
-        let size_info = SizeInfo::new(200., 100.0, 5., 5., 0., 0., false);
+        let size_info = SizeInfo::new(
+            DEBUG_TERMINAL_WIDTH,
+            DEBUG_TERMINAL_HEIGHT,
+            5.,
+            5.,
+            0.,
+            0.,
+            false,
+        );
 
         //Set up the terminal...
         let term = Term::new(&config, size_info, ZedListener(events_tx.clone()));
@@ -485,7 +494,12 @@ mod tests {
     use std::{path::Path, sync::atomic::AtomicUsize, time::Duration};
 
     use super::*;
-    use alacritty_terminal::{grid::GridIterator, term::cell::Cell};
+    use alacritty_terminal::{
+        grid::GridIterator,
+        index::{Column, Line, Point, Side},
+        selection::{Selection, SelectionType},
+        term::cell::Cell,
+    };
     use gpui::TestAppContext;
     use itertools::Itertools;
     use project::{FakeFs, Fs, RealFs, RemoveOptions, Worktree};
@@ -509,15 +523,6 @@ mod tests {
                 content.contains("7")
             })
             .await;
-    }
-
-    pub(crate) fn grid_as_str(grid_iterator: GridIterator<Cell>) -> String {
-        let lines = grid_iterator.group_by(|i| i.point.line.0);
-        lines
-            .into_iter()
-            .map(|(_, line)| line.map(|i| i.c).collect::<String>())
-            .collect::<Vec<String>>()
-            .join("\n")
     }
 
     #[gpui::test]
@@ -599,5 +604,48 @@ mod tests {
         .await
         .ok()
         .expect("Could not remove test directory");
+    }
+
+    ///Basic integration test, can we get the terminal to show up, execute a command,
+    //and produce noticable output?
+    #[gpui::test]
+    async fn test_copy(cx: &mut TestAppContext) {
+        let terminal = cx.add_view(Default::default(), |cx| Terminal::new(cx, None));
+        cx.set_condition_duration(Duration::from_secs(2));
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_to_pty(&Input(("expr 3 + 4".to_string()).to_string()), cx);
+            terminal.carriage_return(&Return, cx);
+        });
+
+        terminal
+            .condition(cx, |terminal, _cx| {
+                let term = terminal.term.clone();
+                let content = grid_as_str(term.lock().renderable_content().display_iter);
+                content.contains("7")
+            })
+            .await;
+
+        terminal.update(cx, |terminal, cx| {
+            let mut term = terminal.term.lock();
+            term.selection = Some(Selection::new(
+                SelectionType::Semantic,
+                Point::new(Line(3), Column(0)),
+                Side::Right,
+            ));
+            drop(term);
+            terminal.copy(&Copy, cx)
+        });
+
+        cx.assert_clipboard_content(Some(&"7"));
+    }
+
+    pub(crate) fn grid_as_str(grid_iterator: GridIterator<Cell>) -> String {
+        let lines = grid_iterator.group_by(|i| i.point.line.0);
+        lines
+            .into_iter()
+            .map(|(_, line)| line.map(|i| i.c).collect::<String>())
+            .collect::<Vec<String>>()
+            .join("\n")
     }
 }
