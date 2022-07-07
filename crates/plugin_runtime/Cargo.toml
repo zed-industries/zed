@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-wasmtime = "0.37.0"
-wasmtime-wasi = "0.37.0"
-wasi-common = "0.37.0"
+wasmtime = "0.38"
+wasmtime-wasi = "0.38"
+wasi-common = "0.38"
 anyhow = { version = "1.0", features = ["std"] }
 serde = "1.0"
 serde_json = "1.0"
@@ -15,4 +15,4 @@ pollster = "0.2.5"
 smol = "1.2.5"
 
 [build-dependencies]
-wasmtime = "0.38.1"
+wasmtime = "0.38"

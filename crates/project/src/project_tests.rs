@@ -86,7 +86,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         },
         None,
     );
-    let mut fake_rust_servers = rust_language.set_fake_lsp_adapter(FakeLspAdapter {
+    let mut fake_rust_servers = rust_language.set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
         name: "the-rust-language-server",
         capabilities: lsp::ServerCapabilities {
             completion_provider: Some(lsp::CompletionOptions {
@@ -96,8 +96,8 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             ..Default::default()
         },
         ..Default::default()
-    });
-    let mut fake_json_servers = json_language.set_fake_lsp_adapter(FakeLspAdapter {
+    }));
+    let mut fake_json_servers = json_language.set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
         name: "the-json-language-server",
         capabilities: lsp::ServerCapabilities {
             completion_provider: Some(lsp::CompletionOptions {
@@ -107,7 +107,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             ..Default::default()
         },
         ..Default::default()
-    });
+    }));
 
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
@@ -611,11 +611,11 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         },
         Some(tree_sitter_rust::language()),
     );
-    let mut fake_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
-        disk_based_diagnostics_progress_token: Some(progress_token),
-        disk_based_diagnostics_sources: &["disk"],
+    let mut fake_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+        disk_based_diagnostics_progress_token: Some(progress_token.into()),
+        disk_based_diagnostics_sources: vec!["disk".into()],
         ..Default::default()
-    });
+    }));
 
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
@@ -734,11 +734,11 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
         },
         None,
     );
-    let mut fake_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
-        disk_based_diagnostics_sources: &["disk"],
-        disk_based_diagnostics_progress_token: Some(progress_token),
+    let mut fake_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+        disk_based_diagnostics_sources: vec!["disk".into()],
+        disk_based_diagnostics_progress_token: Some(progress_token.into()),
         ..Default::default()
-    });
+    }));
 
     let fs = FakeFs::new(cx.background());
     fs.insert_tree("/dir", json!({ "a.rs": "" })).await;
@@ -813,10 +813,10 @@ async fn test_toggling_enable_language_server(
         },
         None,
     );
-    let mut fake_rust_servers = rust.set_fake_lsp_adapter(FakeLspAdapter {
+    let mut fake_rust_servers = rust.set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
         name: "rust-lsp",
         ..Default::default()
-    });
+    }));
     let mut js = Language::new(
         LanguageConfig {
             name: Arc::from("JavaScript"),
@@ -825,10 +825,10 @@ async fn test_toggling_enable_language_server(
         },
         None,
     );
-    let mut fake_js_servers = js.set_fake_lsp_adapter(FakeLspAdapter {
+    let mut fake_js_servers = js.set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
         name: "js-lsp",
         ..Default::default()
-    });
+    }));
 
     let fs = FakeFs::new(cx.background());
     fs.insert_tree("/dir", json!({ "a.rs": "", "b.js": "" }))
@@ -934,10 +934,10 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
         },
         Some(tree_sitter_rust::language()),
     );
-    let mut fake_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
-        disk_based_diagnostics_sources: &["disk"],
+    let mut fake_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+        disk_based_diagnostics_sources: vec!["disk".into()],
         ..Default::default()
-    });
+    }));
 
     let text = "
         fn a() { A }
@@ -2841,7 +2841,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
         },
         Some(tree_sitter_rust::language()),
     );
-    let mut fake_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
+    let mut fake_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
         capabilities: lsp::ServerCapabilities {
             rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
                 prepare_provider: Some(true),
@@ -2850,7 +2850,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
             ..Default::default()
         },
         ..Default::default()
-    });
+    }));
 
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(

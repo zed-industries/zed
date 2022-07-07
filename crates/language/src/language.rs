@@ -541,7 +541,7 @@ async fn fetch_latest_server_binary_path(
         .broadcast((language.clone(), LanguageServerBinaryStatus::Downloading))
         .await?;
     let path = adapter
-        .fetch_server_binary(version_info, http_client, container_dir.clone())
+        .fetch_server_binary(version_info, http_client, container_dir.to_path_buf())
         .await?;
     lsp_binary_statuses_tx
         .broadcast((language.clone(), LanguageServerBinaryStatus::Downloaded))

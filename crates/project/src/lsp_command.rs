@@ -389,7 +389,7 @@ impl LspCommand for GetDefinition {
                         this.open_local_buffer_via_lsp(
                             target_uri,
                             language_server.server_id(),
-                            lsp_adapter.name(),
+                            lsp_adapter.name.clone(),
                             cx,
                         )
                     })
@@ -610,7 +610,7 @@ impl LspCommand for GetReferences {
                         this.open_local_buffer_via_lsp(
                             lsp_location.uri,
                             language_server.server_id(),
-                            lsp_adapter.name(),
+                            lsp_adapter.name.clone(),
                             cx,
                         )
                     })
