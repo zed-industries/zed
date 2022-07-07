@@ -329,6 +329,14 @@ impl Item for ProjectSearchView {
     fn should_update_tab_on_event(event: &ViewEvent) -> bool {
         matches!(event, ViewEvent::UpdateTab)
     }
+
+    fn is_edit_event(event: &Self::Event) -> bool {
+        if let ViewEvent::EditorEvent(editor_event) = event {
+            Editor::is_edit_event(editor_event)
+        } else {
+            false
+        }
+    }
 }
 
 impl ProjectSearchView {
@@ -365,8 +373,10 @@ impl ProjectSearchView {
             cx.emit(ViewEvent::EditorEvent(event.clone()))
         })
         .detach();
-        cx.observe_focus(&query_editor, |this, _, _| {
-            this.results_editor_was_focused = false;
+        cx.observe_focus(&query_editor, |this, _, focused, _| {
+            if focused {
+                this.results_editor_was_focused = false;
+            }
         })
         .detach();
 
@@ -377,8 +387,10 @@ impl ProjectSearchView {
         });
         cx.observe(&results_editor, |_, _, cx| cx.emit(ViewEvent::UpdateTab))
             .detach();
-        cx.observe_focus(&results_editor, |this, _, _| {
-            this.results_editor_was_focused = true;
+        cx.observe_focus(&results_editor, |this, _, focused, _| {
+            if focused {
+                this.results_editor_was_focused = true;
+            }
         })
         .detach();
         cx.subscribe(&results_editor, |this, _, event, cx| {

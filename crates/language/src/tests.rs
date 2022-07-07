@@ -23,6 +23,29 @@ fn init_logger() {
 }
 
 #[gpui::test]
+fn test_line_endings(cx: &mut gpui::MutableAppContext) {
+    cx.add_model(|cx| {
+        let mut buffer =
+            Buffer::new(0, "one\r\ntwo\rthree", cx).with_language(Arc::new(rust_lang()), cx);
+        assert_eq!(buffer.text(), "one\ntwo\nthree");
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+
+        buffer.check_invariants();
+        buffer.edit_with_autoindent(
+            [(buffer.len()..buffer.len(), "\r\nfour")],
+            IndentSize::spaces(2),
+            cx,
+        );
+        buffer.edit([(0..0, "zero\r\n")], cx);
+        assert_eq!(buffer.text(), "zero\none\ntwo\nthree\nfour");
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+        buffer.check_invariants();
+
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_select_language() {
     let registry = LanguageRegistry::test();
     registry.add(Arc::new(Language::new(
@@ -421,7 +444,7 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
     async fn search<'a>(
         outline: &'a Outline<Anchor>,
         query: &str,
-        cx: &gpui::TestAppContext,
+        cx: &'a gpui::TestAppContext,
     ) -> Vec<(&'a str, Vec<usize>)> {
         let matches = cx
             .read(|cx| outline.search(query, cx.background().clone()))

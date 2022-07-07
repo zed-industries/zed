@@ -4878,6 +4878,8 @@ name = "terminal"
 version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
+ "client",
+ "dirs 4.0.0",
  "editor",
  "futures",
  "gpui",
@@ -4910,6 +4912,7 @@ dependencies = [
  "parking_lot 0.11.2",
  "postage",
  "rand 0.8.5",
+ "regex",
  "smallvec",
  "sum_tree",
  "util",
@@ -6158,7 +6161,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.43.0"
+version = "0.45.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
