@@ -352,13 +352,8 @@ impl Item for Editor {
         project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        let settings = cx.global::<Settings>();
         let buffer = self.buffer().clone();
-        let mut buffers = buffer.read(cx).all_buffers();
-        buffers.retain(|buffer| {
-            let language_name = buffer.read(cx).language().map(|l| l.name());
-            settings.format_on_save(language_name.as_deref())
-        });
+        let buffers = buffer.read(cx).all_buffers();
         let mut timeout = cx.background().timer(FORMAT_TIMEOUT).fuse();
         let format = project.update(cx, |project, cx| project.format(buffers, true, cx));
         cx.spawn(|this, mut cx| async move {
@@ -444,6 +439,10 @@ impl Item for Editor {
             event,
             Event::Saved | Event::DirtyChanged | Event::TitleChanged
         )
+    }
+
+    fn is_edit_event(event: &Self::Event) -> bool {
+        matches!(event, Event::BufferEdited)
     }
 }
 

@@ -22,7 +22,7 @@ impl<T: Rng> Iterator for RandomCharIter<T> {
 
         match self.0.gen_range(0..100) {
             // whitespace
-            0..=19 => [' ', '\n', '\t'].choose(&mut self.0).copied(),
+            0..=19 => [' ', '\n', '\r', '\t'].choose(&mut self.0).copied(),
             // two-byte greek letters
             20..=32 => char::from_u32(self.0.gen_range(('α' as u32)..('ω' as u32 + 1))),
             // // three-byte characters

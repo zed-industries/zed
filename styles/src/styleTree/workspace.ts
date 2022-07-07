@@ -139,6 +139,19 @@ export default function workspace(theme: Theme) {
       background: backgroundColor(theme, 500),
       border: border(theme, "secondary", { bottom: true }),
       itemSpacing: 8,
+      navButton: {
+        color: iconColor(theme, "secondary"),
+        iconWidth: 8,
+        buttonWidth: 18,
+        cornerRadius: 6,
+        hover: {
+          color: iconColor(theme, "active"),
+          background: backgroundColor(theme, 300),
+        },
+        disabled: {
+          color: withOpacity(iconColor(theme, "muted"), 0.6),
+        },
+      },
       padding: { left: 16, right: 8, top: 4, bottom: 4 },
     },
     breadcrumbs: {

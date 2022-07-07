@@ -549,7 +549,7 @@ impl Client {
                 client.respond_with_error(
                     receipt,
                     proto::Error {
-                        message: error.to_string(),
+                        message: format!("{:?}", error),
                     },
                 )?;
                 Err(error)

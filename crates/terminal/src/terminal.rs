@@ -8,8 +8,8 @@ use alacritty_terminal::{
     tty::{self, setup_env},
     Term,
 };
-
 use color_translation::{get_color_at_index, to_alac_rgb};
+use dirs::home_dir;
 use futures::{
     channel::mpsc::{unbounded, UnboundedSender},
     StreamExt,
@@ -18,7 +18,7 @@ use gpui::{
     actions, elements::*, impl_internal_actions, platform::CursorStyle, ClipboardItem, Entity,
     MutableAppContext, View, ViewContext,
 };
-use project::{Project, ProjectPath};
+use project::{LocalWorktree, Project, ProjectPath};
 use settings::Settings;
 use smallvec::SmallVec;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
@@ -252,11 +252,12 @@ impl Terminal {
     ///Create a new Terminal in the current working directory or the user's home directory
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         let project = workspace.project().read(cx);
+
         let abs_path = project
             .active_entry()
             .and_then(|entry_id| project.worktree_for_entry(entry_id, cx))
             .and_then(|worktree_handle| worktree_handle.read(cx).as_local())
-            .map(|wt| wt.abs_path().to_path_buf());
+            .and_then(get_working_directory);
 
         workspace.add_item(Box::new(cx.add_view(|cx| Terminal::new(cx, abs_path))), cx);
     }
@@ -452,18 +453,29 @@ impl Item for Terminal {
     }
 }
 
+fn get_working_directory(wt: &LocalWorktree) -> Option<PathBuf> {
+    Some(wt.abs_path().to_path_buf())
+        .filter(|path| path.is_dir())
+        .or_else(|| home_dir())
+}
+
 #[cfg(test)]
 mod tests {
+
+    use std::{path::Path, sync::atomic::AtomicUsize, time::Duration};
+
     use super::*;
     use alacritty_terminal::{grid::GridIterator, term::cell::Cell};
     use gpui::TestAppContext;
     use itertools::Itertools;
+    use project::{FakeFs, Fs, RealFs, RemoveOptions, Worktree};
 
     ///Basic integration test, can we get the terminal to show up, execute a command,
     //and produce noticable output?
     #[gpui::test]
     async fn test_terminal(cx: &mut TestAppContext) {
         let terminal = cx.add_view(Default::default(), |cx| Terminal::new(cx, None));
+        cx.set_condition_duration(Duration::from_secs(2));
 
         terminal.update(cx, |terminal, cx| {
             terminal.write_to_pty(&Input(("expr 3 + 4".to_string()).to_string()), cx);
@@ -486,5 +498,86 @@ mod tests {
             .map(|(_, line)| line.map(|i| i.c).collect::<String>())
             .collect::<Vec<String>>()
             .join("\n")
+    }
+
+    #[gpui::test]
+    async fn single_file_worktree(cx: &mut TestAppContext) {
+        let mut async_cx = cx.to_async();
+        let http_client = client::test::FakeHttpClient::with_404_response();
+        let client = client::Client::new(http_client.clone());
+        let fake_fs = FakeFs::new(cx.background().clone());
+
+        let path = Path::new("/file/");
+        fake_fs.insert_file(path, "a".to_string()).await;
+
+        let worktree_handle = Worktree::local(
+            client,
+            path,
+            true,
+            fake_fs,
+            Arc::new(AtomicUsize::new(0)),
+            &mut async_cx,
+        )
+        .await
+        .ok()
+        .unwrap();
+
+        async_cx.update(|cx| {
+            let wt = worktree_handle.read(cx).as_local().unwrap();
+            let wd = get_working_directory(wt);
+            assert!(wd.is_some());
+            let path = wd.unwrap();
+            //This should be the system's working directory, so querying the real file system is probably ok.
+            assert!(path.is_dir());
+            assert_eq!(path, home_dir().unwrap());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_worktree_directory(cx: &mut TestAppContext) {
+        let mut async_cx = cx.to_async();
+        let http_client = client::test::FakeHttpClient::with_404_response();
+        let client = client::Client::new(http_client.clone());
+
+        let fs = RealFs;
+        let mut test_wd = home_dir().unwrap();
+        test_wd.push("dir");
+
+        fs.create_dir(test_wd.as_path())
+            .await
+            .expect("File could not be created");
+
+        let worktree_handle = Worktree::local(
+            client,
+            test_wd.clone(),
+            true,
+            Arc::new(RealFs),
+            Arc::new(AtomicUsize::new(0)),
+            &mut async_cx,
+        )
+        .await
+        .ok()
+        .unwrap();
+
+        async_cx.update(|cx| {
+            let wt = worktree_handle.read(cx).as_local().unwrap();
+            let wd = get_working_directory(wt);
+            assert!(wd.is_some());
+            let path = wd.unwrap();
+            assert!(path.is_dir());
+            assert_eq!(path, test_wd);
+        });
+
+        //Clean up after ourselves.
+        fs.remove_dir(
+            test_wd.as_path(),
+            RemoveOptions {
+                recursive: false,
+                ignore_if_not_exists: true,
+            },
+        )
+        .await
+        .ok()
+        .expect("Could not remove test directory");
     }
 }

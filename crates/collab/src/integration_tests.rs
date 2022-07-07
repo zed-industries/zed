@@ -35,7 +35,7 @@ use project::{
 use rand::prelude::*;
 use rpc::PeerId;
 use serde_json::json;
-use settings::Settings;
+use settings::{FormatOnSave, Settings};
 use sqlx::types::time::OffsetDateTime;
 use std::{
     cell::RefCell,
@@ -1912,7 +1912,6 @@ async fn test_reloading_buffer_manually(cx_a: &mut TestAppContext, cx_b: &mut Te
 
 #[gpui::test(iterations = 10)]
 async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-    cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -1932,11 +1931,15 @@ async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
     let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default());
     client_a.language_registry.add(Arc::new(language));
 
+    // Here we insert a fake tree with a directory that exists on disk. This is needed
+    // because later we'll invoke a command, which requires passing a working directory
+    // that points to a valid location on disk.
+    let directory = env::current_dir().unwrap();
     client_a
         .fs
-        .insert_tree("/a", json!({ "a.rs": "let one = two" }))
+        .insert_tree(&directory, json!({ "a.rs": "let one = \"two\"" }))
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(&directory, cx_a).await;
     let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
     let buffer_b = cx_b
@@ -1967,7 +1970,28 @@ async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
         .unwrap();
     assert_eq!(
         buffer_b.read_with(cx_b, |buffer, _| buffer.text()),
-        "let honey = two"
+        "let honey = \"two\""
+    );
+
+    // Ensure buffer can be formatted using an external command. Notice how the
+    // host's configuration is honored as opposed to using the guest's settings.
+    cx_a.update(|cx| {
+        cx.update_global(|settings: &mut Settings, _| {
+            settings.language_settings.format_on_save = Some(FormatOnSave::External {
+                command: "awk".to_string(),
+                arguments: vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()],
+            });
+        });
+    });
+    project_b
+        .update(cx_b, |project, cx| {
+            project.format(HashSet::from_iter([buffer_b.clone()]), true, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        buffer_b.read_with(cx_b, |buffer, _| buffer.text()),
+        format!("let honey = \"{}/a.rs\"\n", directory.to_str().unwrap())
     );
 }
 
