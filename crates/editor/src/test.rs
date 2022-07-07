@@ -404,14 +404,6 @@ impl<'a> EditorTestContext<'a> {
 
         editor_text_with_selections
     }
-
-    pub fn assert_clipboard_content(&mut self, expected_content: Option<&str>) {
-        self.cx.update(|cx| {
-            let actual_content = cx.read_from_clipboard().map(|item| item.text().to_owned());
-            let expected_content = expected_content.map(|content| content.to_owned());
-            assert_eq!(actual_content, expected_content);
-        })
-    }
 }
 
 impl<'a> Deref for EditorTestContext<'a> {
