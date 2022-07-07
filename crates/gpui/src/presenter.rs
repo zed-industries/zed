@@ -651,6 +651,7 @@ impl<'a> PaintContext<'a> {
         }
     }
 
+    #[inline]
     pub fn paint_layer<F>(&mut self, clip_bounds: Option<RectF>, f: F)
     where
         F: FnOnce(&mut Self) -> (),
