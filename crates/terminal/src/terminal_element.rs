@@ -244,9 +244,15 @@ impl Element for TerminalEl {
             //TODO: Better way of doing this?
             let mutex1 = terminal_mutex.clone();
             let mutex2 = terminal_mutex.clone();
+            let mutex3 = terminal_mutex.clone();
 
             cx.scene.push_mouse_region(MouseRegion {
                 view_id: self.view.id(),
+                mouse_down: Some(Rc::new(move |pos, _| {
+                    let (point, side) = mouse_to_cell_data(pos, origin, cur_size, display_offset);
+                    mutex3.lock().selection =
+                        Some(Selection::new(SelectionType::Simple, point, side))
+                })),
                 click: Some(Rc::new(move |pos, click_count, cx| {
                     let (point, side) = mouse_to_cell_data(pos, origin, cur_size, display_offset);
 
@@ -263,7 +269,8 @@ impl Element for TerminalEl {
 
                     let mut term = mutex1.lock();
                     term.selection = selection;
-                    cx.focus_parent_view()
+                    cx.focus_parent_view();
+                    cx.notify();
                 })),
                 bounds: visible_bounds,
                 drag: Some(Rc::new(move |_delta, pos, cx| {
@@ -273,8 +280,6 @@ impl Element for TerminalEl {
                     if let Some(mut selection) = term.selection.take() {
                         selection.update(point, side);
                         term.selection = Some(selection);
-                    } else {
-                        term.selection = Some(Selection::new(SelectionType::Simple, point, side));
                     }
                     cx.notify();
                 })),
