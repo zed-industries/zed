@@ -4,19 +4,23 @@ use alacritty_terminal::{
     event_loop::{EventLoop, Msg, Notifier},
     grid::Scroll,
     sync::FairMutex,
-    term::{color::Rgb as AlacRgb, SizeInfo},
+    term::SizeInfo,
     tty::{self, setup_env},
     Term,
 };
 
+<<<<<<< HEAD
 use dirs::home_dir;
+=======
+use color_translation::{get_color_at_index, to_alac_rgb};
+>>>>>>> 3fe0d66d (Began working on selections, refactored colors)
 use futures::{
     channel::mpsc::{unbounded, UnboundedSender},
     StreamExt,
 };
 use gpui::{
-    actions, color::Color, elements::*, impl_internal_actions, platform::CursorStyle,
-    ClipboardItem, Entity, MutableAppContext, View, ViewContext,
+    actions, elements::*, impl_internal_actions, platform::CursorStyle, ClipboardItem, Entity,
+    MutableAppContext, View, ViewContext,
 };
 use project::{LocalWorktree, Project, ProjectPath};
 use settings::Settings;
@@ -24,7 +28,7 @@ use smallvec::SmallVec;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use workspace::{Item, Workspace};
 
-use crate::terminal_element::{get_color_at_index, TerminalEl};
+use crate::terminal_element::TerminalEl;
 
 //ASCII Control characters on a keyboard
 const ETX_CHAR: char = 3_u8 as char; //'End of text', the control code for 'ctrl-c'
@@ -38,6 +42,7 @@ const UP_SEQ: &str = "\x1b[A";
 const DOWN_SEQ: &str = "\x1b[B";
 const DEFAULT_TITLE: &str = "Terminal";
 
+pub mod color_translation;
 pub mod gpui_func_tools;
 pub mod terminal_element;
 
@@ -63,7 +68,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Terminal::escape);
     cx.add_action(Terminal::quit);
     cx.add_action(Terminal::del);
-    cx.add_action(Terminal::carriage_return); //TODO figure out how to do this properly. Should we be checking the terminal mode?
+    cx.add_action(Terminal::carriage_return);
     cx.add_action(Terminal::left);
     cx.add_action(Terminal::right);
     cx.add_action(Terminal::up);
@@ -131,7 +136,6 @@ impl Terminal {
             hold: false,
         };
 
-        //Does this mangle the zed Env? I'm guessing it does... do child processes have a seperate ENV?
         let mut env: HashMap<String, String> = HashMap::new();
         //TODO: Properly set the current locale,
         env.insert("LC_ALL".to_string(), "en_US.UTF-8".to_string());
@@ -222,24 +226,7 @@ impl Terminal {
             AlacTermEvent::ColorRequest(index, format) => {
                 let color = self.term.lock().colors()[index].unwrap_or_else(|| {
                     let term_style = &cx.global::<Settings>().theme.terminal;
-                    match index {
-                        0..=255 => to_alac_rgb(get_color_at_index(&(index as u8), term_style)),
-                        //These additional values are required to match the Alacritty Colors object's behavior
-                        256 => to_alac_rgb(term_style.foreground),
-                        257 => to_alac_rgb(term_style.background),
-                        258 => to_alac_rgb(term_style.cursor),
-                        259 => to_alac_rgb(term_style.dim_black),
-                        260 => to_alac_rgb(term_style.dim_red),
-                        261 => to_alac_rgb(term_style.dim_green),
-                        262 => to_alac_rgb(term_style.dim_yellow),
-                        263 => to_alac_rgb(term_style.dim_blue),
-                        264 => to_alac_rgb(term_style.dim_magenta),
-                        265 => to_alac_rgb(term_style.dim_cyan),
-                        266 => to_alac_rgb(term_style.dim_white),
-                        267 => to_alac_rgb(term_style.bright_foreground),
-                        268 => to_alac_rgb(term_style.black), //Dim Background, non-standard
-                        _ => AlacRgb { r: 0, g: 0, b: 0 },
-                    }
+                    to_alac_rgb(get_color_at_index(&index, term_style))
                 });
                 self.write_to_pty(&Input(format(color)), cx)
             }
@@ -476,15 +463,6 @@ impl Item for Terminal {
 
     fn should_activate_item_on_event(event: &Self::Event) -> bool {
         matches!(event, &Event::Activate)
-    }
-}
-
-//Convenience method for less lines
-fn to_alac_rgb(color: Color) -> AlacRgb {
-    AlacRgb {
-        r: color.r,
-        g: color.g,
-        b: color.g,
     }
 }
 
