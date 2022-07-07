@@ -12,7 +12,7 @@ use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
-use futures::{future::Shared, Future, FutureExt, StreamExt, TryFutureExt};
+use futures::{future::Shared, AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt};
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{
     AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
@@ -51,10 +51,12 @@ use std::{
     ffi::OsString,
     hash::Hash,
     mem,
+    num::NonZeroU32,
     ops::Range,
     os::unix::{ffi::OsStrExt, prelude::OsStringExt},
     path::{Component, Path, PathBuf},
     rc::Rc,
+    str,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
         Arc,
@@ -3025,83 +3027,190 @@ impl Project {
             }
 
             for (buffer, buffer_abs_path, language_server) in local_buffers {
-                let text_document = lsp::TextDocumentIdentifier::new(
-                    lsp::Url::from_file_path(&buffer_abs_path).unwrap(),
-                );
-                let capabilities = &language_server.capabilities();
-                let tab_size = cx.update(|cx| {
-                    let language_name = buffer.read(cx).language().map(|language| language.name());
-                    cx.global::<Settings>().tab_size(language_name.as_deref())
+                let (format_on_save, tab_size) = buffer.read_with(&cx, |buffer, cx| {
+                    let settings = cx.global::<Settings>();
+                    let language_name = buffer.language().map(|language| language.name());
+                    (
+                        settings.format_on_save(language_name.as_deref()),
+                        settings.tab_size(language_name.as_deref()),
+                    )
                 });
-                let lsp_edits = if capabilities
-                    .document_formatting_provider
-                    .as_ref()
-                    .map_or(false, |provider| *provider != lsp::OneOf::Left(false))
-                {
-                    language_server
-                        .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
-                            text_document,
-                            options: lsp::FormattingOptions {
-                                tab_size: tab_size.into(),
-                                insert_spaces: true,
-                                insert_final_newline: Some(true),
-                                ..Default::default()
-                            },
-                            work_done_progress_params: Default::default(),
-                        })
-                        .await?
-                } else if capabilities
-                    .document_range_formatting_provider
-                    .as_ref()
-                    .map_or(false, |provider| *provider != lsp::OneOf::Left(false))
-                {
-                    let buffer_start = lsp::Position::new(0, 0);
-                    let buffer_end =
-                        buffer.read_with(&cx, |buffer, _| point_to_lsp(buffer.max_point_utf16()));
-                    language_server
-                        .request::<lsp::request::RangeFormatting>(
-                            lsp::DocumentRangeFormattingParams {
-                                text_document,
-                                range: lsp::Range::new(buffer_start, buffer_end),
-                                options: lsp::FormattingOptions {
-                                    tab_size: tab_size.into(),
-                                    insert_spaces: true,
-                                    insert_final_newline: Some(true),
-                                    ..Default::default()
-                                },
-                                work_done_progress_params: Default::default(),
-                            },
+
+                let transaction = match format_on_save {
+                    settings::FormatOnSave::Off => continue,
+                    settings::FormatOnSave::LanguageServer => Self::format_via_lsp(
+                        &this,
+                        &buffer,
+                        &buffer_abs_path,
+                        &language_server,
+                        tab_size,
+                        &mut cx,
+                    )
+                    .await
+                    .context("failed to format via language server")?,
+                    settings::FormatOnSave::External { command, arguments } => {
+                        Self::format_via_external_command(
+                            &buffer,
+                            &buffer_abs_path,
+                            &command,
+                            &arguments,
+                            &mut cx,
                         )
-                        .await?
-                } else {
-                    continue;
+                        .await
+                        .context(format!(
+                            "failed to format via external command {:?}",
+                            command
+                        ))?
+                    }
                 };
 
-                if let Some(lsp_edits) = lsp_edits {
-                    let edits = this
-                        .update(&mut cx, |this, cx| {
-                            this.edits_from_lsp(&buffer, lsp_edits, None, cx)
-                        })
-                        .await?;
-                    buffer.update(&mut cx, |buffer, cx| {
-                        buffer.finalize_last_transaction();
-                        buffer.start_transaction();
-                        for (range, text) in edits {
-                            buffer.edit([(range, text)], cx);
-                        }
-                        if buffer.end_transaction(cx).is_some() {
-                            let transaction = buffer.finalize_last_transaction().unwrap().clone();
-                            if !push_to_history {
-                                buffer.forget_transaction(transaction.id);
-                            }
-                            project_transaction.0.insert(cx.handle(), transaction);
-                        }
-                    });
+                if let Some(transaction) = transaction {
+                    if !push_to_history {
+                        buffer.update(&mut cx, |buffer, _| {
+                            buffer.forget_transaction(transaction.id)
+                        });
+                    }
+                    project_transaction.0.insert(buffer, transaction);
                 }
             }
 
             Ok(project_transaction)
         })
+    }
+
+    async fn format_via_lsp(
+        this: &ModelHandle<Self>,
+        buffer: &ModelHandle<Buffer>,
+        abs_path: &Path,
+        language_server: &Arc<LanguageServer>,
+        tab_size: NonZeroU32,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Option<Transaction>> {
+        let text_document =
+            lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(abs_path).unwrap());
+        let capabilities = &language_server.capabilities();
+        let lsp_edits = if capabilities
+            .document_formatting_provider
+            .as_ref()
+            .map_or(false, |provider| *provider != lsp::OneOf::Left(false))
+        {
+            language_server
+                .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
+                    text_document,
+                    options: lsp::FormattingOptions {
+                        tab_size: tab_size.into(),
+                        insert_spaces: true,
+                        insert_final_newline: Some(true),
+                        ..Default::default()
+                    },
+                    work_done_progress_params: Default::default(),
+                })
+                .await?
+        } else if capabilities
+            .document_range_formatting_provider
+            .as_ref()
+            .map_or(false, |provider| *provider != lsp::OneOf::Left(false))
+        {
+            let buffer_start = lsp::Position::new(0, 0);
+            let buffer_end =
+                buffer.read_with(cx, |buffer, _| point_to_lsp(buffer.max_point_utf16()));
+            language_server
+                .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
+                    text_document,
+                    range: lsp::Range::new(buffer_start, buffer_end),
+                    options: lsp::FormattingOptions {
+                        tab_size: tab_size.into(),
+                        insert_spaces: true,
+                        insert_final_newline: Some(true),
+                        ..Default::default()
+                    },
+                    work_done_progress_params: Default::default(),
+                })
+                .await?
+        } else {
+            None
+        };
+
+        if let Some(lsp_edits) = lsp_edits {
+            let edits = this
+                .update(cx, |this, cx| {
+                    this.edits_from_lsp(&buffer, lsp_edits, None, cx)
+                })
+                .await?;
+            buffer.update(cx, |buffer, cx| {
+                buffer.finalize_last_transaction();
+                buffer.start_transaction();
+                for (range, text) in edits {
+                    buffer.edit([(range, text)], cx);
+                }
+                if buffer.end_transaction(cx).is_some() {
+                    let transaction = buffer.finalize_last_transaction().unwrap().clone();
+                    Ok(Some(transaction))
+                } else {
+                    Ok(None)
+                }
+            })
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn format_via_external_command(
+        buffer: &ModelHandle<Buffer>,
+        buffer_abs_path: &Path,
+        command: &str,
+        arguments: &[String],
+        cx: &mut AsyncAppContext,
+    ) -> Result<Option<Transaction>> {
+        let working_dir_path = buffer.read_with(cx, |buffer, cx| {
+            let file = File::from_dyn(buffer.file())?;
+            let worktree = file.worktree.read(cx).as_local()?;
+            let mut worktree_path = worktree.abs_path().to_path_buf();
+            if worktree.root_entry()?.is_file() {
+                worktree_path.pop();
+            }
+            Some(worktree_path)
+        });
+
+        if let Some(working_dir_path) = working_dir_path {
+            let mut child =
+                smol::process::Command::new(command)
+                    .args(arguments.iter().map(|arg| {
+                        arg.replace("{buffer_path}", &buffer_abs_path.to_string_lossy())
+                    }))
+                    .current_dir(&working_dir_path)
+                    .stdin(smol::process::Stdio::piped())
+                    .stdout(smol::process::Stdio::piped())
+                    .stderr(smol::process::Stdio::piped())
+                    .spawn()?;
+            let stdin = child
+                .stdin
+                .as_mut()
+                .ok_or_else(|| anyhow!("failed to acquire stdin"))?;
+            let text = buffer.read_with(cx, |buffer, _| buffer.as_rope().clone());
+            for chunk in text.chunks() {
+                stdin.write_all(chunk.as_bytes()).await?;
+            }
+            stdin.flush().await?;
+
+            let output = child.output().await?;
+            if !output.status.success() {
+                return Err(anyhow!(
+                    "command failed with exit code {:?}:\nstdout: {}\nstderr: {}",
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr),
+                ));
+            }
+
+            let stdout = String::from_utf8(output.stdout)?;
+            let diff = buffer
+                .read_with(cx, |buffer, cx| buffer.diff(stdout, cx))
+                .await;
+            Ok(buffer.update(cx, |buffer, cx| buffer.apply_diff(diff, cx).cloned()))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn definition<T: ToPointUtf16>(

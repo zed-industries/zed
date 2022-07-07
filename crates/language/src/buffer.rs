@@ -273,7 +273,7 @@ pub struct Chunk<'a> {
     pub is_unnecessary: bool,
 }
 
-pub(crate) struct Diff {
+pub struct Diff {
     base_version: clock::Global,
     new_text: Arc<str>,
     changes: Vec<(ChangeTag, usize)>,
@@ -958,7 +958,7 @@ impl Buffer {
         }
     }
 
-    pub(crate) fn diff(&self, mut new_text: String, cx: &AppContext) -> Task<Diff> {
+    pub fn diff(&self, mut new_text: String, cx: &AppContext) -> Task<Diff> {
         let old_text = self.as_rope().clone();
         let base_version = self.version();
         cx.background().spawn(async move {
@@ -979,11 +979,7 @@ impl Buffer {
         })
     }
 
-    pub(crate) fn apply_diff(
-        &mut self,
-        diff: Diff,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<&Transaction> {
+    pub fn apply_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> Option<&Transaction> {
         if self.version == diff.base_version {
             self.finalize_last_transaction();
             self.start_transaction();
