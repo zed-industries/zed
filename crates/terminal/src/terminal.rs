@@ -40,6 +40,8 @@ const DOWN_SEQ: &str = "\x1b[B";
 const DEFAULT_TITLE: &str = "Terminal";
 const DEBUG_TERMINAL_WIDTH: f32 = 300.;
 const DEBUG_TERMINAL_HEIGHT: f32 = 200.;
+const DEBUG_CELL_WIDTH: f32 = 5.;
+const DEBUG_LINE_HEIGHT: f32 = 5.;
 
 pub mod color_translation;
 pub mod gpui_func_tools;
@@ -152,8 +154,8 @@ impl Terminal {
         let size_info = SizeInfo::new(
             DEBUG_TERMINAL_WIDTH,
             DEBUG_TERMINAL_HEIGHT,
-            5.,
-            5.,
+            DEBUG_CELL_WIDTH,
+            DEBUG_LINE_HEIGHT,
             0.,
             0.,
             false,
