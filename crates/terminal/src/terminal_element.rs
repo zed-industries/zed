@@ -645,3 +645,40 @@ fn draw_debug_grid(bounds: RectF, layout: &mut LayoutState, cx: &mut PaintContex
         });
     }
 }
+
+mod test {
+
+    #[test]
+    fn test_mouse_to_selection() {
+        let term_width = 100.;
+        let term_height = 200.;
+        let cell_width = 10.;
+        let line_height = 20.;
+        let mouse_pos_x = 100.; //Window relative
+        let mouse_pos_y = 100.; //Window relative
+        let origin_x = 10.;
+        let origin_y = 20.;
+
+        let cur_size = alacritty_terminal::term::SizeInfo::new(
+            term_width,
+            term_height,
+            cell_width,
+            line_height,
+            0.,
+            0.,
+            false,
+        );
+
+        let mouse_pos = gpui::geometry::vector::vec2f(mouse_pos_x, mouse_pos_y);
+        let origin = gpui::geometry::vector::vec2f(origin_x, origin_y); //Position of terminal window, 1 'cell' in
+        let (point, _) =
+            crate::terminal_element::mouse_to_cell_data(mouse_pos, origin, cur_size, 0);
+        assert_eq!(
+            point,
+            alacritty_terminal::index::Point::new(
+                alacritty_terminal::index::Line(((mouse_pos_y - origin_y) / line_height) as i32),
+                alacritty_terminal::index::Column(((mouse_pos_x - origin_x) / cell_width) as usize),
+            )
+        );
+    }
+}
