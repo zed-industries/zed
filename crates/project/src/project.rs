@@ -2028,7 +2028,7 @@ impl Project {
     ) -> Task<()> {
         let mut subscription = languages.subscribe();
         cx.spawn_weak(|project, mut cx| async move {
-            while let Some(_) = subscription.next().await {
+            while let Some(()) = subscription.next().await {
                 if let Some(project) = project.upgrade(&cx) {
                     project.update(&mut cx, |project, cx| {
                         let mut buffers_without_language = Vec::new();
@@ -2041,8 +2041,10 @@ impl Project {
                         }
 
                         for buffer in buffers_without_language {
+                            dbg!("notified that new language was added");
                             project.assign_language_to_buffer(&buffer, cx);
                             project.register_buffer_with_language_server(&buffer, cx);
+                            dbg!(buffer.read(cx).language().map(|x| x.name()));
                         }
                     });
                 }
@@ -2055,6 +2057,7 @@ impl Project {
         buffer: &ModelHandle<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
+        dbg!("assigning language to buffer");
         // If the buffer has a language, set it and start the language server if we haven't already.
         let full_path = buffer.read(cx).file()?.full_path(cx);
         let language = self.languages.select_language(&full_path)?;
@@ -2078,6 +2081,7 @@ impl Project {
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
+        dbg!(format!("starting lsp for {:?}", language.name()));
         if !cx
             .global::<Settings>()
             .enable_language_server(Some(&language.name()))
@@ -2343,6 +2347,8 @@ impl Project {
 
                 server_id
             });
+
+        dbg!("Done starting lsp");
     }
 
     // Returns a list of all of the worktrees which no longer have a language server and the root path
@@ -3273,8 +3279,8 @@ impl Project {
         position: T,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<DocumentHighlight>>> {
+        // dbg!("getting highlights");
         let position = position.to_point_utf16(buffer.read(cx));
-
         self.request_lsp(buffer.clone(), GetDocumentHighlights { position }, cx)
     }
 

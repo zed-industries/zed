@@ -226,6 +226,7 @@ fn main() {
             let languages = languages.clone();
             |cx| async move {
                 init_languages.await;
+                dbg!("all languages initialized, starting setting highlighting");
                 cx.read(|cx| languages.set_theme(&cx.global::<Settings>().theme.editor.syntax));
             }
         })

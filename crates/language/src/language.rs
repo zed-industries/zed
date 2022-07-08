@@ -14,7 +14,7 @@ use futures::{
     future::{BoxFuture, Shared},
     FutureExt, TryFutureExt,
 };
-use gpui::{MutableAppContext, Task};
+use gpui::{AsyncAppContext, MutableAppContext, Task};
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock};
@@ -339,8 +339,9 @@ impl LanguageRegistry {
         Self::new(Task::ready(()))
     }
 
-    pub fn add(&self, language: Arc<Language>) {
+    pub fn add(&self, language: Arc<Language>, theme: &SyntaxTheme) {
         self.languages.write().push(language.clone());
+        language.set_theme(theme);
         *self.subscription.write().0.borrow_mut() = ();
     }
 
@@ -387,11 +388,14 @@ impl LanguageRegistry {
             .read()
             .iter()
             .find(|language| {
-                language
-                    .config
-                    .path_suffixes
-                    .iter()
-                    .any(|suffix| dbg!(path_suffixes.contains(&Some(dbg!(suffix.as_str())))))
+                language.config.path_suffixes.iter().any(|suffix| {
+                    if path_suffixes.contains(&Some(suffix.as_str())) {
+                        dbg!(format!("found {}", suffix));
+                        true
+                    } else {
+                        false
+                    }
+                })
             })
             .cloned()
     }
@@ -713,6 +717,7 @@ impl Language {
             if let Some(highlights_query) = &grammar.highlights_query {
                 *grammar.highlight_map.lock() =
                     HighlightMap::new(highlights_query.capture_names(), theme);
+                dbg!("highlighting");
             }
         }
     }

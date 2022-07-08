@@ -27,13 +27,8 @@ pub fn fetch_latest_server_version() -> Option<String> {
         versions: Vec<String>,
     }
 
-    // TODO: command returns error code
     let output =
         command("npm info vscode-json-languageserver --json").expect("could not run command");
-    // if !output.is_ok() {
-    //     return None;
-    // }
-
     let output = String::from_utf8(output).unwrap();
 
     let mut info: NpmInfo = serde_json::from_str(&output).ok()?;
