@@ -26,9 +26,10 @@ use gpui::{
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use settings::Settings;
+use theme::TerminalStyle;
+
 use std::{cmp::min, ops::Range, rc::Rc, sync::Arc};
 use std::{fmt::Debug, ops::Sub};
-use theme::TerminalStyle;
 
 use crate::{
     color_translation::convert_color, gpui_func_tools::paint_layer, Input, ScrollTerminal,
@@ -128,12 +129,13 @@ impl Element for TerminalEl {
         view_handle.update(cx.app, |view, _cx| view.set_size(cur_size));
 
         //Now that we're done with the mutable portion, grab the immutable settings and view again
+        let view = view_handle.read(cx);
+
         let (selection_color, terminal_theme) = {
             let theme = &(cx.global::<Settings>()).theme;
             (theme.editor.selection.selection, &theme.terminal)
         };
         let terminal_mutex = view_handle.read(cx).term.clone();
-
         let term = terminal_mutex.lock();
         let grid = term.grid();
         let cursor_point = grid.cursor.point;
@@ -146,6 +148,7 @@ impl Element for TerminalEl {
             &text_style,
             terminal_theme,
             cx.text_layout_cache,
+            view.modal,
             content.selection,
         );
 
@@ -156,7 +159,7 @@ impl Element for TerminalEl {
                 cursor_text.len(),
                 RunStyle {
                     font_id: text_style.font_id,
-                    color: terminal_theme.background,
+                    color: terminal_theme.colors.background,
                     underline: Default::default(),
                 },
             )],
@@ -182,12 +185,18 @@ impl Element for TerminalEl {
                 cursor_position,
                 block_width,
                 line_height.0,
-                terminal_theme.cursor,
+                terminal_theme.colors.cursor,
                 CursorShape::Block,
                 Some(block_text.clone()),
             )
         });
         drop(term);
+
+        let background_color = if view.modal {
+            terminal_theme.colors.modal_background
+        } else {
+            terminal_theme.colors.background
+        };
 
         (
             constraint.max,
@@ -197,7 +206,7 @@ impl Element for TerminalEl {
                 em_width: cell_width,
                 cursor,
                 cur_size,
-                background_color: terminal_theme.background,
+                background_color,
                 terminal: terminal_mutex,
                 selection_color,
             },
@@ -379,7 +388,7 @@ impl Element for TerminalEl {
     }
 }
 
-fn mouse_to_cell_data(
+pub fn mouse_to_cell_data(
     pos: Vector2F,
     origin: Vector2F,
     cur_size: SizeInfo,
@@ -428,6 +437,7 @@ fn layout_lines(
     text_style: &TextStyle,
     terminal_theme: &TerminalStyle,
     text_layout_cache: &TextLayoutCache,
+    modal: bool,
     selection_range: Option<SelectionRange>,
 ) -> Vec<LayoutLine> {
     let lines = grid.group_by(|i| i.point.line);
@@ -450,7 +460,7 @@ fn layout_lines(
 
                     let cell_text = &indexed_cell.c.to_string();
 
-                    let cell_style = cell_style(&indexed_cell, terminal_theme, text_style);
+                    let cell_style = cell_style(&indexed_cell, terminal_theme, text_style, modal);
 
                     //This is where we might be able to get better performance
                     let layout_cell = text_layout_cache.layout_str(
@@ -462,7 +472,7 @@ fn layout_lines(
                     LayoutCell::new(
                         Point::new(line_index as i32, indexed_cell.point.column.0 as i32),
                         layout_cell,
-                        convert_color(&indexed_cell.bg, terminal_theme),
+                        convert_color(&indexed_cell.bg, &terminal_theme.colors, modal),
                     )
                 })
                 .collect::<Vec<LayoutCell>>();
@@ -508,9 +518,14 @@ fn get_cursor_shape(
 }
 
 ///Convert the Alacritty cell styles to GPUI text styles and background color
-fn cell_style(indexed: &Indexed<&Cell>, style: &TerminalStyle, text_style: &TextStyle) -> RunStyle {
+fn cell_style(
+    indexed: &Indexed<&Cell>,
+    style: &TerminalStyle,
+    text_style: &TextStyle,
+    modal: bool,
+) -> RunStyle {
     let flags = indexed.cell.flags;
-    let fg = convert_color(&indexed.cell.fg, style);
+    let fg = convert_color(&indexed.cell.fg, &style.colors, modal);
 
     let underline = flags
         .contains(Flags::UNDERLINE)

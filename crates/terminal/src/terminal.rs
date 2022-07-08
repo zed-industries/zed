@@ -1,3 +1,8 @@
+pub mod color_translation;
+pub mod gpui_func_tools;
+mod modal;
+pub mod terminal_element;
+
 use alacritty_terminal::{
     config::{Config, PtyConfig},
     event::{Event as AlacTermEvent, EventListener, Notify},
@@ -18,6 +23,7 @@ use gpui::{
     actions, elements::*, impl_internal_actions, platform::CursorStyle, ClipboardItem, Entity,
     MutableAppContext, View, ViewContext,
 };
+use modal::deploy_modal;
 use project::{LocalWorktree, Project, ProjectPath};
 use settings::Settings;
 use smallvec::SmallVec;
@@ -42,10 +48,6 @@ const DEBUG_TERMINAL_HEIGHT: f32 = 200.;
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
 
-pub mod color_translation;
-pub mod gpui_func_tools;
-pub mod terminal_element;
-
 ///Action for carrying the input to the PTY
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct Input(pub String);
@@ -56,7 +58,23 @@ pub struct ScrollTerminal(pub i32);
 
 actions!(
     terminal,
-    [Sigint, Escape, Del, Return, Left, Right, Up, Down, Tab, Clear, Copy, Paste, Deploy, Quit]
+    [
+        Sigint,
+        Escape,
+        Del,
+        Return,
+        Left,
+        Right,
+        Up,
+        Down,
+        Tab,
+        Clear,
+        Copy,
+        Paste,
+        Deploy,
+        Quit,
+        DeployModal,
+    ]
 );
 impl_internal_actions!(terminal, [Input, ScrollTerminal]);
 
@@ -77,6 +95,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Terminal::copy);
     cx.add_action(Terminal::paste);
     cx.add_action(Terminal::scroll_terminal);
+    cx.add_action(deploy_modal);
 }
 
 ///A translation struct for Alacritty to communicate with us from their event loop
@@ -97,6 +116,7 @@ pub struct Terminal {
     has_new_content: bool,
     has_bell: bool, //Currently using iTerm bell, show bell emoji in tab until input is received
     cur_size: SizeInfo,
+    modal: bool,
     associated_directory: Option<PathBuf>,
 }
 
@@ -113,7 +133,7 @@ impl Entity for Terminal {
 
 impl Terminal {
     ///Create a new Terminal view. This spawns a task, a thread, and opens the TTY devices
-    fn new(cx: &mut ViewContext<Self>, working_directory: Option<PathBuf>) -> Self {
+    fn new(cx: &mut ViewContext<Self>, working_directory: Option<PathBuf>, modal: bool) -> Self {
         //Spawn a task so the Alacritty EventLoop can communicate with us in a view context
         let (events_tx, mut events_rx) = unbounded();
         cx.spawn_weak(|this, mut cx| async move {
@@ -186,6 +206,7 @@ impl Terminal {
             has_new_content: false,
             has_bell: false,
             cur_size: size_info,
+            modal,
             associated_directory: working_directory,
         }
     }
@@ -234,7 +255,7 @@ impl Terminal {
             AlacTermEvent::ColorRequest(index, format) => {
                 let color = self.term.lock().colors()[index].unwrap_or_else(|| {
                     let term_style = &cx.global::<Settings>().theme.terminal;
-                    to_alac_rgb(get_color_at_index(&index, term_style))
+                    to_alac_rgb(get_color_at_index(&index, &term_style.colors))
                 });
                 self.write_to_pty(&Input(format(color)), cx)
             }
@@ -273,7 +294,10 @@ impl Terminal {
             .and_then(|worktree_handle| worktree_handle.read(cx).as_local())
             .and_then(get_working_directory);
 
-        workspace.add_item(Box::new(cx.add_view(|cx| Terminal::new(cx, abs_path))), cx);
+        workspace.add_item(
+            Box::new(cx.add_view(|cx| Terminal::new(cx, abs_path, false))),
+            cx,
+        );
     }
 
     ///Send the shutdown message to Alacritty
@@ -376,12 +400,25 @@ impl View for Terminal {
     }
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
-        TerminalEl::new(cx.handle()).contained().boxed()
+        let element = TerminalEl::new(cx.handle()).contained();
+        if self.modal {
+            let settings = cx.global::<Settings>();
+            let container_style = settings.theme.terminal.modal_container;
+            element.with_style(container_style).boxed()
+        } else {
+            element.boxed()
+        }
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
         cx.emit(Event::Activate);
         self.has_new_content = false;
+    }
+
+    fn keymap_context(&self, _: &gpui::AppContext) -> gpui::keymap::Context {
+        let mut context = Self::default_keymap_context();
+        context.set.insert("ModalTerminal".into());
+        context
     }
 }
 
@@ -421,7 +458,7 @@ impl Item for Terminal {
         //From what I can tell, there's no  way to tell the current working
         //Directory of the terminal from outside the terminal. There might be
         //solutions to this, but they are non-trivial and require more IPC
-        Some(Terminal::new(cx, self.associated_directory.clone()))
+        Some(Terminal::new(cx, self.associated_directory.clone(), false))
     }
 
     fn project_path(&self, _cx: &gpui::AppContext) -> Option<ProjectPath> {
@@ -509,7 +546,7 @@ mod tests {
     //and produce noticable output?
     #[gpui::test]
     async fn test_terminal(cx: &mut TestAppContext) {
-        let terminal = cx.add_view(Default::default(), |cx| Terminal::new(cx, None));
+        let terminal = cx.add_view(Default::default(), |cx| Terminal::new(cx, None, false));
         cx.set_condition_duration(Duration::from_secs(2));
         terminal.update(cx, |terminal, cx| {
             terminal.write_to_pty(&Input(("expr 3 + 4".to_string()).to_string()), cx);
@@ -610,7 +647,7 @@ mod tests {
     ///If this test is failing for you, check that DEBUG_TERMINAL_WIDTH is wide enough to fit your entire command prompt!
     #[gpui::test]
     async fn test_copy(cx: &mut TestAppContext) {
-        let terminal = cx.add_view(Default::default(), |cx| Terminal::new(cx, None));
+        let terminal = cx.add_view(Default::default(), |cx| Terminal::new(cx, None, false));
         cx.set_condition_duration(Duration::from_secs(2));
 
         terminal.update(cx, |terminal, cx| {
