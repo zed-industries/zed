@@ -1,7 +1,7 @@
 use gpui::{ViewContext, ViewHandle};
 use workspace::Workspace;
 
-use crate::{DeployModal, Event, Terminal};
+use crate::{get_working_directory, DeployModal, Event, Terminal};
 
 pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewContext<Workspace>) {
     if let Some(stored_terminal) = cx.default_global::<Option<ViewHandle<Terminal>>>().clone() {
@@ -12,7 +12,7 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
             .active_entry()
             .and_then(|entry_id| project.worktree_for_entry(entry_id, cx))
             .and_then(|worktree_handle| worktree_handle.read(cx).as_local())
-            .map(|wt| wt.abs_path().to_path_buf());
+            .and_then(get_working_directory);
 
         let displaced_modal = workspace.toggle_modal(cx, |_, cx| {
             let this = cx.add_view(|cx| Terminal::new(cx, abs_path, true));

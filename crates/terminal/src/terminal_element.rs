@@ -26,7 +26,7 @@ use gpui::{
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use settings::Settings;
-use theme::{TerminalColors, TerminalStyle};
+use theme::TerminalStyle;
 
 use std::{cmp::min, ops::Range, rc::Rc, sync::Arc};
 use std::{fmt::Debug, ops::Sub};
@@ -130,7 +130,7 @@ impl Element for TerminalEl {
 
         //Now that we're done with the mutable portion, grab the immutable settings and view again
         let view = view_handle.read(cx);
-        let term = view.term.lock();
+
         let (selection_color, terminal_theme) = {
             let theme = &(cx.global::<Settings>()).theme;
             (theme.editor.selection.selection, &theme.terminal)
@@ -388,7 +388,7 @@ impl Element for TerminalEl {
     }
 }
 
-fn mouse_to_cell_data(
+pub fn mouse_to_cell_data(
     pos: Vector2F,
     origin: Vector2F,
     cur_size: SizeInfo,
@@ -540,54 +540,6 @@ fn cell_style(
         color: fg,
         font_id: text_style.font_id,
         underline,
-    }
-}
-
-///Converts a 2, 8, or 24 bit color ANSI color to the GPUI equivalent
-fn convert_color(alac_color: &AnsiColor, colors: &TerminalColors, modal: bool) -> Color {
-    let background = if modal {
-        colors.modal_background
-    } else {
-        colors.background
-    };
-
-    match alac_color {
-        //Named and theme defined colors
-        alacritty_terminal::ansi::Color::Named(n) => match n {
-            alacritty_terminal::ansi::NamedColor::Black => colors.black,
-            alacritty_terminal::ansi::NamedColor::Red => colors.red,
-            alacritty_terminal::ansi::NamedColor::Green => colors.green,
-            alacritty_terminal::ansi::NamedColor::Yellow => colors.yellow,
-            alacritty_terminal::ansi::NamedColor::Blue => colors.blue,
-            alacritty_terminal::ansi::NamedColor::Magenta => colors.magenta,
-            alacritty_terminal::ansi::NamedColor::Cyan => colors.cyan,
-            alacritty_terminal::ansi::NamedColor::White => colors.white,
-            alacritty_terminal::ansi::NamedColor::BrightBlack => colors.bright_black,
-            alacritty_terminal::ansi::NamedColor::BrightRed => colors.bright_red,
-            alacritty_terminal::ansi::NamedColor::BrightGreen => colors.bright_green,
-            alacritty_terminal::ansi::NamedColor::BrightYellow => colors.bright_yellow,
-            alacritty_terminal::ansi::NamedColor::BrightBlue => colors.bright_blue,
-            alacritty_terminal::ansi::NamedColor::BrightMagenta => colors.bright_magenta,
-            alacritty_terminal::ansi::NamedColor::BrightCyan => colors.bright_cyan,
-            alacritty_terminal::ansi::NamedColor::BrightWhite => colors.bright_white,
-            alacritty_terminal::ansi::NamedColor::Foreground => colors.foreground,
-            alacritty_terminal::ansi::NamedColor::Background => background,
-            alacritty_terminal::ansi::NamedColor::Cursor => colors.cursor,
-            alacritty_terminal::ansi::NamedColor::DimBlack => colors.dim_black,
-            alacritty_terminal::ansi::NamedColor::DimRed => colors.dim_red,
-            alacritty_terminal::ansi::NamedColor::DimGreen => colors.dim_green,
-            alacritty_terminal::ansi::NamedColor::DimYellow => colors.dim_yellow,
-            alacritty_terminal::ansi::NamedColor::DimBlue => colors.dim_blue,
-            alacritty_terminal::ansi::NamedColor::DimMagenta => colors.dim_magenta,
-            alacritty_terminal::ansi::NamedColor::DimCyan => colors.dim_cyan,
-            alacritty_terminal::ansi::NamedColor::DimWhite => colors.dim_white,
-            alacritty_terminal::ansi::NamedColor::BrightForeground => colors.bright_foreground,
-            alacritty_terminal::ansi::NamedColor::DimForeground => colors.dim_foreground,
-        },
-        //'True' colors
-        alacritty_terminal::ansi::Color::Spec(rgb) => Color::new(rgb.r, rgb.g, rgb.b, u8::MAX),
-        //8 bit, indexed colors
-        alacritty_terminal::ansi::Color::Indexed(i) => get_color_at_index(i, colors),
     }
 }
 

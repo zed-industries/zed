@@ -1,3 +1,4 @@
+pub mod color_translation;
 pub mod gpui_func_tools;
 mod modal;
 pub mod terminal_element;
@@ -46,10 +47,6 @@ const DEBUG_TERMINAL_WIDTH: f32 = 1000.; //This needs to be wide enough that the
 const DEBUG_TERMINAL_HEIGHT: f32 = 200.;
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
-
-pub mod color_translation;
-pub mod gpui_func_tools;
-pub mod terminal_element;
 
 ///Action for carrying the input to the PTY
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
@@ -258,7 +255,7 @@ impl Terminal {
             AlacTermEvent::ColorRequest(index, format) => {
                 let color = self.term.lock().colors()[index].unwrap_or_else(|| {
                     let term_style = &cx.global::<Settings>().theme.terminal;
-                    to_alac_rgb(get_color_at_index(&index, term_style))
+                    to_alac_rgb(get_color_at_index(&index, &term_style.colors))
                 });
                 self.write_to_pty(&Input(format(color)), cx)
             }
@@ -461,7 +458,7 @@ impl Item for Terminal {
         //From what I can tell, there's no  way to tell the current working
         //Directory of the terminal from outside the terminal. There might be
         //solutions to this, but they are non-trivial and require more IPC
-        Some(Terminal::new(cx, self.associated_directory.clone()))
+        Some(Terminal::new(cx, self.associated_directory.clone(), false))
     }
 
     fn project_path(&self, _cx: &gpui::AppContext) -> Option<ProjectPath> {
@@ -650,7 +647,7 @@ mod tests {
     ///If this test is failing for you, check that DEBUG_TERMINAL_WIDTH is wide enough to fit your entire command prompt!
     #[gpui::test]
     async fn test_copy(cx: &mut TestAppContext) {
-        let terminal = cx.add_view(Default::default(), |cx| Terminal::new(cx, None));
+        let terminal = cx.add_view(Default::default(), |cx| Terminal::new(cx, None, false));
         cx.set_condition_duration(Duration::from_secs(2));
 
         terminal.update(cx, |terminal, cx| {
