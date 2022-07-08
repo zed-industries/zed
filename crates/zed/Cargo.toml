@@ -88,7 +88,7 @@ tempdir = { version = "0.3.7" }
 thiserror = "1.0.29"
 tiny_http = "0.8"
 toml = "0.5"
-tree-sitter = "0.20.8"
+tree-sitter = "0.20"
 tree-sitter-c = "0.20.1"
 tree-sitter-cpp = "0.20.0"
 tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "aeb2f33b366fd78d5789ff104956ce23508b85db" }

@@ -2393,12 +2393,12 @@ impl<'a> Iterator for BufferChunks<'a> {
 
 impl QueryCursorHandle {
     pub(crate) fn new() -> Self {
-        QueryCursorHandle(Some(
-            QUERY_CURSORS
-                .lock()
-                .pop()
-                .unwrap_or_else(|| QueryCursor::new()),
-        ))
+        let mut cursor = QUERY_CURSORS
+            .lock()
+            .pop()
+            .unwrap_or_else(|| QueryCursor::new());
+        cursor.set_match_limit(64);
+        QueryCursorHandle(Some(cursor))
     }
 }
 
