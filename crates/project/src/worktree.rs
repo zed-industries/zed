@@ -2046,24 +2046,41 @@ impl BackgroundScanner {
 
     async fn scan_dirs(&mut self) -> Result<()> {
         let root_char_bag;
+        let root_abs_path;
         let next_entry_id;
         let is_dir;
         {
             let snapshot = self.snapshot.lock();
             root_char_bag = snapshot.root_char_bag;
+            root_abs_path = snapshot.abs_path.clone();
             next_entry_id = snapshot.next_entry_id.clone();
             is_dir = snapshot.root_entry().map_or(false, |e| e.is_dir())
         };
 
+        // Populate ignores above the root.
+        for ancestor in root_abs_path.ancestors().skip(1) {
+            if let Ok(ignore) = build_gitignore(&ancestor.join(&*GITIGNORE), self.fs.as_ref()).await
+            {
+                self.snapshot
+                    .lock()
+                    .ignores_by_abs_path
+                    .insert(ancestor.into(), (ignore.into(), 0));
+            }
+        }
+
         if is_dir {
             let path: Arc<Path> = Arc::from(Path::new(""));
-            let abs_path = self.abs_path();
+            let ignore_stack = self
+                .snapshot
+                .lock()
+                .ignore_stack_for_abs_path(&root_abs_path, true);
+
             let (tx, rx) = channel::unbounded();
             self.executor
                 .block(tx.send(ScanJob {
-                    abs_path: abs_path.to_path_buf(),
+                    abs_path: root_abs_path.to_path_buf(),
                     path,
-                    ignore_stack: IgnoreStack::none(),
+                    ignore_stack,
                     scan_queue: tx.clone(),
                 }))
                 .unwrap();
@@ -2313,14 +2330,15 @@ impl BackgroundScanner {
         let mut ignores_to_update = Vec::new();
         let mut ignores_to_delete = Vec::new();
         for (parent_abs_path, (_, scan_id)) in &snapshot.ignores_by_abs_path {
-            let parent_path = parent_abs_path.strip_prefix(&snapshot.abs_path).unwrap();
-            if *scan_id == snapshot.scan_id && snapshot.entry_for_path(parent_path).is_some() {
-                ignores_to_update.push(parent_abs_path.clone());
-            }
+            if let Ok(parent_path) = parent_abs_path.strip_prefix(&snapshot.abs_path) {
+                if *scan_id == snapshot.scan_id && snapshot.entry_for_path(parent_path).is_some() {
+                    ignores_to_update.push(parent_abs_path.clone());
+                }
 
-            let ignore_path = parent_path.join(&*GITIGNORE);
-            if snapshot.entry_for_path(ignore_path).is_none() {
-                ignores_to_delete.push(parent_abs_path.clone());
+                let ignore_path = parent_path.join(&*GITIGNORE);
+                if snapshot.entry_for_path(ignore_path).is_none() {
+                    ignores_to_delete.push(parent_abs_path.clone());
+                }
             }
         }
 
@@ -2409,20 +2427,6 @@ impl BackgroundScanner {
         let mut snapshot = self.snapshot.lock();
         snapshot.entries_by_path.edit(entries_by_path_edits, &());
         snapshot.entries_by_id.edit(entries_by_id_edits, &());
-    }
-
-    async fn build_root_ignore_stack(&self) {
-        // let parent_abs_path = if let Some(path) = self.abs_path().parent() {
-        //     path
-        // } else {
-        //     return IgnoreStack::none()
-        // }
-
-        // let mut cur_path = PathBuf::new();
-        // for component in self.abs_path().components() {
-        // // self.snapshot.lock().ignores.insert(parent_path, (ignore, self.scan_id));
-        //     cur_path.push(compo)
-        // }
     }
 }
 
@@ -2797,23 +2801,28 @@ mod tests {
 
     #[gpui::test]
     async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
-        let dir = temp_tree(json!({
-            ".git": {},
-            ".gitignore": "ignored-dir\n",
-            "tracked-dir": {
-                "tracked-file1": "tracked contents",
-            },
-            "ignored-dir": {
-                "ignored-file1": "ignored contents",
+        let parent_dir = temp_tree(json!({
+            ".gitignore": "ancestor-ignored-file1\nancestor-ignored-file2\n",
+            "tree": {
+                ".git": {},
+                ".gitignore": "ignored-dir\n",
+                "tracked-dir": {
+                    "tracked-file1": "",
+                    "ancestor-ignored-file1": "",
+                },
+                "ignored-dir": {
+                    "ignored-file1": ""
+                }
             }
         }));
+        let dir = parent_dir.path().join("tree");
 
         let http_client = FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone());
 
         let tree = Worktree::local(
             client,
-            dir.path(),
+            dir.as_path(),
             true,
             Arc::new(RealFs),
             Default::default(),
@@ -2826,23 +2835,47 @@ mod tests {
         tree.flush_fs_events(&cx).await;
         cx.read(|cx| {
             let tree = tree.read(cx);
-            let tracked = tree.entry_for_path("tracked-dir/tracked-file1").unwrap();
-            let ignored = tree.entry_for_path("ignored-dir/ignored-file1").unwrap();
-            assert_eq!(tracked.is_ignored, false);
-            assert_eq!(ignored.is_ignored, true);
+            assert!(
+                !tree
+                    .entry_for_path("tracked-dir/tracked-file1")
+                    .unwrap()
+                    .is_ignored
+            );
+            assert!(
+                tree.entry_for_path("tracked-dir/ancestor-ignored-file1")
+                    .unwrap()
+                    .is_ignored
+            );
+            assert!(
+                tree.entry_for_path("ignored-dir/ignored-file1")
+                    .unwrap()
+                    .is_ignored
+            );
         });
 
-        std::fs::write(dir.path().join("tracked-dir/tracked-file2"), "").unwrap();
-        std::fs::write(dir.path().join("ignored-dir/ignored-file2"), "").unwrap();
+        std::fs::write(dir.join("tracked-dir/tracked-file2"), "").unwrap();
+        std::fs::write(dir.join("tracked-dir/ancestor-ignored-file2"), "").unwrap();
+        std::fs::write(dir.join("ignored-dir/ignored-file2"), "").unwrap();
         tree.flush_fs_events(&cx).await;
         cx.read(|cx| {
             let tree = tree.read(cx);
-            let dot_git = tree.entry_for_path(".git").unwrap();
-            let tracked = tree.entry_for_path("tracked-dir/tracked-file2").unwrap();
-            let ignored = tree.entry_for_path("ignored-dir/ignored-file2").unwrap();
-            assert_eq!(tracked.is_ignored, false);
-            assert_eq!(ignored.is_ignored, true);
-            assert_eq!(dot_git.is_ignored, true);
+            assert!(
+                !tree
+                    .entry_for_path("tracked-dir/tracked-file2")
+                    .unwrap()
+                    .is_ignored
+            );
+            assert!(
+                tree.entry_for_path("tracked-dir/ancestor-ignored-file2")
+                    .unwrap()
+                    .is_ignored
+            );
+            assert!(
+                tree.entry_for_path("ignored-dir/ignored-file2")
+                    .unwrap()
+                    .is_ignored
+            );
+            assert!(tree.entry_for_path(".git").unwrap().is_ignored);
         });
     }
 
