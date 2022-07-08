@@ -4,7 +4,7 @@ use gpui::{
     RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
-use project::{Project, ProjectPath, WorktreeId};
+use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
 use settings::Settings;
 use std::{
     path::Path,
@@ -134,17 +134,40 @@ impl FileFinder {
     }
 
     fn spawn_search(&mut self, query: String, cx: &mut ViewContext<Self>) -> Task<()> {
+        let worktrees = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .collect::<Vec<_>>();
+        let include_root_name = worktrees.len() > 1;
+        let candidate_sets = worktrees
+            .into_iter()
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                PathMatchCandidateSet {
+                    snapshot: worktree.snapshot(),
+                    include_ignored: worktree
+                        .root_entry()
+                        .map_or(false, |entry| entry.is_ignored),
+                    include_root_name,
+                }
+            })
+            .collect::<Vec<_>>();
+
         let search_id = util::post_inc(&mut self.search_count);
         self.cancel_flag.store(true, atomic::Ordering::Relaxed);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
-        let project = self.project.clone();
         cx.spawn(|this, mut cx| async move {
-            let matches = project
-                .read_with(&cx, |project, cx| {
-                    project.match_paths(&query, false, false, 100, cancel_flag.as_ref(), cx)
-                })
-                .await;
+            let matches = fuzzy::match_paths(
+                candidate_sets.as_slice(),
+                &query,
+                false,
+                100,
+                &cancel_flag,
+                cx.background(),
+            )
+            .await;
             let did_cancel = cancel_flag.load(atomic::Ordering::Relaxed);
             this.update(&mut cx, |this, cx| {
                 this.set_matches(search_id, did_cancel, query, matches, cx)
@@ -390,6 +413,51 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_ignored_files(cx: &mut gpui::TestAppContext) {
+        let app_state = cx.update(AppState::test);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/ancestor",
+                json!({
+                    ".gitignore": "ignored-root",
+                    "ignored-root": {
+                        "happiness": "",
+                        "height": "",
+                        "hi": "",
+                        "hiccup": "",
+                    },
+                    "tracked-root": {
+                        ".gitignore": "height",
+                        "happiness": "",
+                        "height": "",
+                        "hi": "",
+                        "hiccup": "",
+                    },
+                }),
+            )
+            .await;
+
+        let project = Project::test(
+            app_state.fs.clone(),
+            [
+                "/ancestor/tracked-root".as_ref(),
+                "/ancestor/ignored-root".as_ref(),
+            ],
+            cx,
+        )
+        .await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (_, finder) =
+            cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), cx));
+        finder
+            .update(cx, |f, cx| f.spawn_search("hi".into(), cx))
+            .await;
+        finder.read_with(cx, |f, _| assert_eq!(f.matches.len(), 7));
+    }
+
+    #[gpui::test]
     async fn test_single_file_worktrees(cx: &mut gpui::TestAppContext) {
         let app_state = cx.update(AppState::test);
         app_state
@@ -473,6 +541,36 @@ mod tests {
             assert_eq!(f.selected_index(), 1);
             f.set_selected_index(0, cx);
             assert_eq!(f.selected_index(), 0);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_search_worktree_without_files(cx: &mut gpui::TestAppContext) {
+        let app_state = cx.update(AppState::test);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/root",
+                json!({
+                    "dir1": {},
+                    "dir2": {
+                        "dir3": {}
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (_, finder) =
+            cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), cx));
+        finder
+            .update(cx, |f, cx| f.spawn_search("dir".into(), cx))
+            .await;
+        cx.read(|cx| {
+            let finder = finder.read(cx);
+            assert_eq!(finder.matches.len(), 0);
         });
     }
 }

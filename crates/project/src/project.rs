@@ -13,7 +13,6 @@ use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use futures::{future::Shared, AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt};
-use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{
     AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
     MutableAppContext, Task, UpgradeModelHandle, WeakModelHandle,
@@ -58,7 +57,7 @@ use std::{
     rc::Rc,
     str,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
     time::Instant,
@@ -5678,43 +5677,6 @@ impl Project {
         })
     }
 
-    pub fn match_paths<'a>(
-        &self,
-        query: &'a str,
-        include_ignored: bool,
-        smart_case: bool,
-        max_results: usize,
-        cancel_flag: &'a AtomicBool,
-        cx: &AppContext,
-    ) -> impl 'a + Future<Output = Vec<PathMatch>> {
-        let worktrees = self
-            .worktrees(cx)
-            .filter(|worktree| worktree.read(cx).is_visible())
-            .collect::<Vec<_>>();
-        let include_root_name = worktrees.len() > 1;
-        let candidate_sets = worktrees
-            .into_iter()
-            .map(|worktree| CandidateSet {
-                snapshot: worktree.read(cx).snapshot(),
-                include_ignored,
-                include_root_name,
-            })
-            .collect::<Vec<_>>();
-
-        let background = cx.background().clone();
-        async move {
-            fuzzy::match_paths(
-                candidate_sets.as_slice(),
-                query,
-                smart_case,
-                max_results,
-                cancel_flag,
-                background,
-            )
-            .await
-        }
-    }
-
     fn edits_from_lsp(
         &mut self,
         buffer: &ModelHandle<Buffer>,
@@ -5942,14 +5904,14 @@ impl OpenBuffer {
     }
 }
 
-struct CandidateSet {
-    snapshot: Snapshot,
-    include_ignored: bool,
-    include_root_name: bool,
+pub struct PathMatchCandidateSet {
+    pub snapshot: Snapshot,
+    pub include_ignored: bool,
+    pub include_root_name: bool,
 }
 
-impl<'a> PathMatchCandidateSet<'a> for CandidateSet {
-    type Candidates = CandidateSetIter<'a>;
+impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
+    type Candidates = PathMatchCandidateSetIter<'a>;
 
     fn id(&self) -> usize {
         self.snapshot.id().to_usize()
@@ -5974,23 +5936,23 @@ impl<'a> PathMatchCandidateSet<'a> for CandidateSet {
     }
 
     fn candidates(&'a self, start: usize) -> Self::Candidates {
-        CandidateSetIter {
+        PathMatchCandidateSetIter {
             traversal: self.snapshot.files(self.include_ignored, start),
         }
     }
 }
 
-struct CandidateSetIter<'a> {
+pub struct PathMatchCandidateSetIter<'a> {
     traversal: Traversal<'a>,
 }
 
-impl<'a> Iterator for CandidateSetIter<'a> {
-    type Item = PathMatchCandidate<'a>;
+impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
+    type Item = fuzzy::PathMatchCandidate<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.traversal.next().map(|entry| {
             if let EntryKind::File(char_bag) = entry.kind {
-                PathMatchCandidate {
+                fuzzy::PathMatchCandidate {
                     path: &entry.path,
                     char_bag,
                 }
