@@ -11,16 +11,13 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
         );
 
     if let Some(stored_connection) = possible_connection {
-        println!("Found stored connection");
         // Create a view from the stored connection
         workspace.toggle_modal(cx, |_, cx| {
             cx.add_view(|cx| Terminal::from_connection(stored_connection, true, cx))
         });
     } else {
-        println!("No global connection :(");
         // No connection was stored, create a new terminal
         if let Some(closed_terminal_handle) = workspace.toggle_modal(cx, |workspace, cx| {
-            println!("Creating new terminal connection");
             let project = workspace.project().read(cx);
             let abs_path = project
                 .active_entry()
@@ -33,7 +30,6 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
             cx.subscribe(&connection_handle, on_event).detach();
             this
         }) {
-            println!("Pulled connection from modal and stored in global");
             let connection = closed_terminal_handle.read(cx).connection.clone();
             cx.set_global(Some(connection));
         }

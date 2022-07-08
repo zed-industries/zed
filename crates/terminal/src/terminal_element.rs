@@ -218,7 +218,6 @@ impl Element for TerminalEl {
         layout: &mut Self::LayoutState,
         cx: &mut gpui::PaintContext,
     ) -> Self::PaintState {
-        println!("Painted a terminal element");
         //Setup element stuff
         let clip_bounds = Some(visible_bounds);
 

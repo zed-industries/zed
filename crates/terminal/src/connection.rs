@@ -115,7 +115,7 @@ impl TerminalConnection {
         event: alacritty_terminal::event::Event,
         cx: &mut ModelContext<Self>,
     ) {
-        match dbg!(event) {
+        match event {
             // TODO: Handle is_self_focused in subscription on terminal view
             AlacTermEvent::Wakeup => {
                 cx.emit(Event::Wakeup);

@@ -139,7 +139,7 @@ impl Terminal {
         cx: &mut ViewContext<Self>,
     ) -> Terminal {
         cx.observe(&connection, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&connection, |this, _, event, cx| match dbg!(event) {
+        cx.subscribe(&connection, |this, _, event, cx| match event {
             Event::Wakeup => {
                 if cx.is_self_focused() {
                     cx.notify()
@@ -472,7 +472,6 @@ mod tests {
             .condition(cx, |terminal, cx| {
                 let term = terminal.connection.read(cx).term.clone();
                 let content = grid_as_str(term.lock().renderable_content().display_iter);
-                dbg!(&content);
                 content.contains("7")
             })
             .await;
