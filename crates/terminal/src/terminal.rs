@@ -43,7 +43,6 @@ const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
 
 pub mod color_translation;
-pub mod gpui_func_tools;
 pub mod terminal_element;
 
 ///Action for carrying the input to the PTY
