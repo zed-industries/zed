@@ -37,8 +37,8 @@ const RIGHT_SEQ: &str = "\x1b[C";
 const UP_SEQ: &str = "\x1b[A";
 const DOWN_SEQ: &str = "\x1b[B";
 const DEFAULT_TITLE: &str = "Terminal";
-const DEBUG_TERMINAL_WIDTH: f32 = 1000.; //This needs to be wide enough that the prompt can fill the whole space.
-const DEBUG_TERMINAL_HEIGHT: f32 = 200.;
+const DEBUG_TERMINAL_WIDTH: f32 = 100.;
+const DEBUG_TERMINAL_HEIGHT: f32 = 100.;
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
 
@@ -609,6 +609,7 @@ mod tests {
     ///If this test is failing for you, check that DEBUG_TERMINAL_WIDTH is wide enough to fit your entire command prompt!
     #[gpui::test]
     async fn test_copy(cx: &mut TestAppContext) {
+        let mut result_line: i32 = 0;
         let terminal = cx.add_view(Default::default(), |cx| Terminal::new(cx, None));
         cx.set_condition_duration(Duration::from_secs(2));
 
@@ -621,7 +622,13 @@ mod tests {
             .condition(cx, |terminal, _cx| {
                 let term = terminal.term.clone();
                 let content = grid_as_str(term.lock().renderable_content().display_iter);
-                content.contains("7")
+                if content.contains("7") {
+                    let idx = content.chars().position(|c| c == '7').unwrap();
+                    result_line = content.chars().take(idx).filter(|c| *c == '\n').count() as i32;
+                    true
+                } else {
+                    false
+                }
             })
             .await;
 
@@ -629,7 +636,7 @@ mod tests {
             let mut term = terminal.term.lock();
             term.selection = Some(Selection::new(
                 SelectionType::Semantic,
-                Point::new(Line(2), Column(0)),
+                Point::new(Line(result_line), Column(0)),
                 Side::Right,
             ));
             drop(term);
