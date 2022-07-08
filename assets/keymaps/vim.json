@@ -140,7 +140,8 @@
             "c": "vim::VisualChange",
             "d": "vim::VisualDelete",
             "x": "vim::VisualDelete",
-            "y": "vim::VisualYank"
+            "y": "vim::VisualYank",
+            "p": "vim::VisualPaste"
         }
     },
     {

@@ -149,6 +149,28 @@ impl SelectionsCollection {
         selections
     }
 
+    pub fn all_adjusted_display(
+        &self,
+        cx: &mut MutableAppContext,
+    ) -> (DisplaySnapshot, Vec<Selection<DisplayPoint>>) {
+        if self.line_mode {
+            let selections = self.all::<Point>(cx);
+            let map = self.display_map(cx);
+            let result = selections
+                .into_iter()
+                .map(|mut selection| {
+                    let new_range = map.expand_to_line(selection.range());
+                    selection.start = new_range.start;
+                    selection.end = new_range.end;
+                    selection.map(|point| point.to_display_point(&map))
+                })
+                .collect();
+            (map, result)
+        } else {
+            self.all_display(cx)
+        }
+    }
+
     pub fn disjoint_in_range<'a, D>(
         &self,
         range: Range<Anchor>,
@@ -175,7 +197,7 @@ impl SelectionsCollection {
     }
 
     pub fn all_display(
-        &mut self,
+        &self,
         cx: &mut MutableAppContext,
     ) -> (DisplaySnapshot, Vec<Selection<DisplayPoint>>) {
         let display_map = self.display_map(cx);

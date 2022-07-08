@@ -125,6 +125,11 @@ impl<'a> VimTestContext<'a> {
         self.cx.set_state(text);
     }
 
+    pub fn assert_state(&mut self, text: &str, mode: Mode) {
+        self.assert_editor_state(text);
+        assert_eq!(self.mode(), mode);
+    }
+
     pub fn assert_binding<const COUNT: usize>(
         &mut self,
         keystrokes: [&str; COUNT],

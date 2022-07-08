@@ -194,11 +194,11 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
     });
 }
 
-// Supports non empty selections so it can be bound and called from visual mode
 fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
+                editor.set_clip_at_line_ends(false, cx);
                 if let Some(item) = cx.as_mut().read_from_clipboard() {
                     let mut clipboard_text = Cow::Borrowed(item.text());
                     if let Some(mut clipboard_selections) =
@@ -244,7 +244,7 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
                                 // If the clipboard text was copied linewise, and the current selection
                                 // is empty, then paste the text after this line and move the selection
                                 // to the start of the pasted text
-                                let range = if selection.is_empty() && linewise {
+                                let insert_at = if linewise {
                                     let (point, _) = display_map
                                         .next_line_boundary(selection.start.to_point(&display_map));
 
@@ -255,37 +255,26 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
                                     // Drop selection at the start of the next line
                                     let selection_point = Point::new(point.row + 1, 0);
                                     new_selections.push(selection.map(|_| selection_point.clone()));
-                                    point..point
+                                    point
                                 } else {
-                                    let mut selection = selection.clone();
-                                    if !selection.reversed {
-                                        let mut adjusted = selection.end;
-                                        // Head is at the end of the selection. Adjust the end position to
-                                        // to include the character under the cursor.
-                                        *adjusted.column_mut() = adjusted.column() + 1;
-                                        adjusted = display_map.clip_point(adjusted, Bias::Right);
-                                        // If the selection is empty, move both the start and end forward one
-                                        // character
-                                        if selection.is_empty() {
-                                            selection.start = adjusted;
-                                            selection.end = adjusted;
-                                        } else {
-                                            selection.end = adjusted;
-                                        }
-                                    }
+                                    let mut point = selection.end;
+                                    // Paste the text after the current selection
+                                    *point.column_mut() = point.column() + 1;
+                                    let point = display_map
+                                        .clip_point(point, Bias::Right)
+                                        .to_point(&display_map);
 
-                                    let range = selection.map(|p| p.to_point(&display_map)).range();
-                                    new_selections.push(selection.map(|_| range.start.clone()));
-                                    range
+                                    new_selections.push(selection.map(|_| point));
+                                    point
                                 };
 
                                 if linewise && to_insert.ends_with('\n') {
                                     edits.push((
-                                        range,
+                                        insert_at..insert_at,
                                         &to_insert[0..to_insert.len().saturating_sub(1)],
                                     ))
                                 } else {
-                                    edits.push((range, to_insert));
+                                    edits.push((insert_at..insert_at, to_insert));
                                 }
                             }
                             drop(snapshot);
@@ -299,6 +288,7 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
                         editor.insert(&clipboard_text, cx);
                     }
                 }
+                editor.set_clip_at_line_ends(true, cx);
             });
         });
     });
@@ -1155,10 +1145,13 @@ mod test {
             the la|zy dog"});
 
         cx.simulate_keystroke("p");
-        cx.assert_editor_state(indoc! {"
-            The quick brown
-            the lazy dog
-            |fox jumps over"});
+        cx.assert_state(
+            indoc! {"
+                The quick brown
+                the lazy dog
+                |fox jumps over"},
+            Mode::Normal,
+        );
 
         cx.set_state(
             indoc! {"
@@ -1171,14 +1164,17 @@ mod test {
         cx.set_state(
             indoc! {"
                 The quick brown
-                fox jump|s over
+                fox jumps ove|r
                 the lazy dog"},
             Mode::Normal,
         );
         cx.simulate_keystroke("p");
-        cx.assert_editor_state(indoc! {"
-            The quick brown
-            fox jumps|jumps over
-            the lazy dog"});
+        cx.assert_state(
+            indoc! {"
+                The quick brown
+                fox jumps over|jumps
+                the lazy dog"},
+            Mode::Normal,
+        );
     }
 }
