@@ -92,7 +92,6 @@ pub struct LayoutState {
     cursor: Option<Cursor>,
     background_color: Color,
     cur_size: SizeInfo,
-    display_offset: usize,
     terminal: Arc<FairMutex<Term<ZedListener>>>,
     selection_color: Color,
 }
@@ -188,7 +187,6 @@ impl Element for TerminalEl {
                 Some(block_text.clone()),
             )
         });
-        let display_offset = content.display_offset;
         drop(term);
 
         (
@@ -200,7 +198,6 @@ impl Element for TerminalEl {
                 cursor,
                 cur_size,
                 background_color: terminal_theme.background,
-                display_offset,
                 terminal: terminal_mutex,
                 selection_color,
             },
@@ -219,14 +216,12 @@ impl Element for TerminalEl {
 
         paint_layer(cx, clip_bounds, |cx| {
             let cur_size = layout.cur_size.clone();
-            let display_offset = layout.display_offset.clone();
             let origin = bounds.origin() + vec2f(layout.em_width.0, 0.);
 
             //Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
             attach_mouse_handlers(
                 origin,
                 cur_size,
-                display_offset,
                 self.view.id(),
                 &layout.terminal,
                 visible_bounds,
@@ -536,7 +531,6 @@ fn cell_style(indexed: &Indexed<&Cell>, style: &TerminalStyle, text_style: &Text
 fn attach_mouse_handlers(
     origin: Vector2F,
     cur_size: SizeInfo,
-    display_offset: usize,
     view_id: usize,
     terminal_mutex: &Arc<FairMutex<Term<ZedListener>>>,
     visible_bounds: RectF,
@@ -549,12 +543,24 @@ fn attach_mouse_handlers(
     cx.scene.push_mouse_region(MouseRegion {
         view_id,
         mouse_down: Some(Rc::new(move |pos, _| {
-            let (point, side) = mouse_to_cell_data(pos, origin, cur_size, display_offset);
-            mouse_down_mutex.lock().selection =
-                Some(Selection::new(SelectionType::Simple, point, side))
+            let mut term = mouse_down_mutex.lock();
+            let (point, side) = mouse_to_cell_data(
+                pos,
+                origin,
+                cur_size,
+                term.renderable_content().display_offset,
+            );
+            term.selection = Some(Selection::new(SelectionType::Simple, point, side))
         })),
         click: Some(Rc::new(move |pos, click_count, cx| {
-            let (point, side) = mouse_to_cell_data(pos, origin, cur_size, display_offset);
+            let mut term = click_mutex.lock();
+
+            let (point, side) = mouse_to_cell_data(
+                pos,
+                origin,
+                cur_size,
+                term.renderable_content().display_offset,
+            );
 
             let selection_type = match click_count {
                 0 => return, //This is a release
@@ -567,16 +573,21 @@ fn attach_mouse_handlers(
             let selection =
                 selection_type.map(|selection_type| Selection::new(selection_type, point, side));
 
-            let mut term = click_mutex.lock();
             term.selection = selection;
             cx.focus_parent_view();
             cx.notify();
         })),
         bounds: visible_bounds,
         drag: Some(Rc::new(move |_delta, pos, cx| {
-            let (point, side) = mouse_to_cell_data(pos, origin, cur_size, display_offset);
-
             let mut term = drag_mutex.lock();
+
+            let (point, side) = mouse_to_cell_data(
+                pos,
+                origin,
+                cur_size,
+                term.renderable_content().display_offset,
+            );
+
             if let Some(mut selection) = term.selection.take() {
                 selection.update(point, side);
                 term.selection = Some(selection);
@@ -617,9 +628,13 @@ fn grid_cell(pos: &PaneRelativePos, cur_size: SizeInfo, display_offset: usize) -
     let col = min(GridCol(col as usize), cur_size.last_column());
 
     let line = pos.y() / cur_size.cell_height();
-    let line = min(line as usize, cur_size.bottommost_line().0 as usize);
+    let line = min(line as i32, cur_size.bottommost_line().0);
 
-    Point::new(GridLine((line - display_offset) as i32), col)
+    //when clicking, need to ADD to get to the top left cell
+    //e.g. total_lines - viewport_height, THEN subtract display offset
+    //0 -> total_lines - viewport_height - display_offset + mouse_line
+
+    Point::new(GridLine(line - display_offset as i32), col)
 }
 
 ///Draws the grid as Alacritty sees it. Useful for checking if there is an inconsistency between
@@ -657,6 +672,40 @@ mod test {
 
     #[test]
     fn test_mouse_to_selection() {
+        let term_width = 100.;
+        let term_height = 200.;
+        let cell_width = 10.;
+        let line_height = 20.;
+        let mouse_pos_x = 100.; //Window relative
+        let mouse_pos_y = 100.; //Window relative
+        let origin_x = 10.;
+        let origin_y = 20.;
+
+        let cur_size = alacritty_terminal::term::SizeInfo::new(
+            term_width,
+            term_height,
+            cell_width,
+            line_height,
+            0.,
+            0.,
+            false,
+        );
+
+        let mouse_pos = gpui::geometry::vector::vec2f(mouse_pos_x, mouse_pos_y);
+        let origin = gpui::geometry::vector::vec2f(origin_x, origin_y); //Position of terminal window, 1 'cell' in
+        let (point, _) =
+            crate::terminal_element::mouse_to_cell_data(mouse_pos, origin, cur_size, 0);
+        assert_eq!(
+            point,
+            alacritty_terminal::index::Point::new(
+                alacritty_terminal::index::Line(((mouse_pos_y - origin_y) / line_height) as i32),
+                alacritty_terminal::index::Column(((mouse_pos_x - origin_x) / cell_width) as usize),
+            )
+        );
+    }
+
+    #[test]
+    fn test_mouse_to_selection_off_edge() {
         let term_width = 100.;
         let term_height = 200.;
         let cell_width = 10.;
