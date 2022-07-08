@@ -1,16 +1,18 @@
-use gpui::{ModelHandle, ViewContext, ViewHandle};
+use gpui::{ModelHandle, ViewContext};
 use workspace::Workspace;
 
 use crate::{get_working_directory, DeployModal, Event, Terminal, TerminalConnection};
 
+struct StoredConnection(ModelHandle<TerminalConnection>);
+
 pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewContext<Workspace>) {
     // Pull the terminal connection out of the global if it has been stored
-    let possible_connection = cx
-        .update_default_global::<Option<ModelHandle<TerminalConnection>>, _, _>(
-            |possible_connection, _| possible_connection.take(),
-        );
+    let possible_connection =
+        cx.update_default_global::<Option<StoredConnection>, _, _>(|possible_connection, _| {
+            possible_connection.take()
+        });
 
-    if let Some(stored_connection) = possible_connection {
+    if let Some(StoredConnection(stored_connection)) = possible_connection {
         // Create a view from the stored connection
         workspace.toggle_modal(cx, |_, cx| {
             cx.add_view(|cx| Terminal::from_connection(stored_connection, true, cx))
@@ -31,7 +33,7 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
             this
         }) {
             let connection = closed_terminal_handle.read(cx).connection.clone();
-            cx.set_global(Some(connection));
+            cx.set_global(Some(StoredConnection(connection)));
         }
     }
 }
@@ -44,7 +46,7 @@ pub fn on_event(
 ) {
     // Dismiss the modal if the terminal quit
     if let Event::CloseTerminal = event {
-        cx.set_global::<Option<ViewHandle<Terminal>>>(None);
+        cx.set_global::<Option<StoredConnection>>(None);
         if workspace
             .modal()
             .cloned()
