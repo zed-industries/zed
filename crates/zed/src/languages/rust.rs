@@ -315,7 +315,7 @@ mod tests {
             ("property".into(), Color::white().into()),
         ]);
 
-        language.set_theme(&theme);
+        language.set_theme(theme.into());
 
         let highlight_function = grammar.highlight_id_for_name("function").unwrap();
         let highlight_type = grammar.highlight_id_for_name("type").unwrap();
@@ -394,7 +394,7 @@ mod tests {
             ("property".into(), Color::white().into()),
         ]);
 
-        language.set_theme(&theme);
+        language.set_theme(theme.into());
 
         let highlight_function = grammar.highlight_id_for_name("function").unwrap();
         let highlight_type = grammar.highlight_id_for_name("type").unwrap();

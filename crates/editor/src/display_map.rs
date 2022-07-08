@@ -959,10 +959,10 @@ pub mod tests {
             }"#
         .unindent();
 
-        let theme = SyntaxTheme::new(vec![
+        let theme = Arc::new(SyntaxTheme::new(vec![
             ("mod.body".to_string(), Color::red().into()),
             ("fn.name".to_string(), Color::blue().into()),
-        ]);
+        ]));
         let language = Arc::new(
             Language::new(
                 LanguageConfig {
@@ -980,7 +980,7 @@ pub mod tests {
             )
             .unwrap(),
         );
-        language.set_theme(&theme);
+        language.set_theme(theme.clone());
         cx.update(|cx| {
             let mut settings = Settings::test(cx);
             settings.language_settings.tab_size = Some(2.try_into().unwrap());
@@ -1049,10 +1049,10 @@ pub mod tests {
             }"#
         .unindent();
 
-        let theme = SyntaxTheme::new(vec![
+        let theme = Arc::new(SyntaxTheme::new(vec![
             ("mod.body".to_string(), Color::red().into()),
             ("fn.name".to_string(), Color::blue().into()),
-        ]);
+        ]));
         let language = Arc::new(
             Language::new(
                 LanguageConfig {
@@ -1070,7 +1070,7 @@ pub mod tests {
             )
             .unwrap(),
         );
-        language.set_theme(&theme);
+        language.set_theme(theme.clone());
 
         cx.update(|cx| cx.set_global(Settings::test(cx)));
 
@@ -1120,10 +1120,10 @@ pub mod tests {
         cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
 
         cx.update(|cx| cx.set_global(Settings::test(cx)));
-        let theme = SyntaxTheme::new(vec![
+        let theme = Arc::new(SyntaxTheme::new(vec![
             ("operator".to_string(), Color::red().into()),
             ("string".to_string(), Color::green().into()),
-        ]);
+        ]));
         let language = Arc::new(
             Language::new(
                 LanguageConfig {
@@ -1141,7 +1141,7 @@ pub mod tests {
             )
             .unwrap(),
         );
-        language.set_theme(&theme);
+        language.set_theme(theme.clone());
 
         let (text, highlighted_ranges) = marked_text_ranges(r#"const[] [a]: B = "c [d]""#);
 
