@@ -379,11 +379,11 @@ impl Presenter {
                 }
             }
 
-            if let Some((dragged_region, delta, position)) = dragged_region {
+            if let Some((dragged_region, prev_position, position)) = dragged_region {
                 handled = true;
                 if let Some(drag_callback) = dragged_region.drag {
                     event_cx.with_current_view(dragged_region.view_id, |event_cx| {
-                        drag_callback(delta, position, event_cx);
+                        drag_callback(prev_position, position, event_cx);
                     })
                 }
             }
