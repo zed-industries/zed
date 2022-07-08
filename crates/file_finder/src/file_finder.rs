@@ -413,6 +413,51 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_ignored_files(cx: &mut gpui::TestAppContext) {
+        let app_state = cx.update(AppState::test);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/ancestor",
+                json!({
+                    ".gitignore": "ignored-root",
+                    "ignored-root": {
+                        "happiness": "",
+                        "height": "",
+                        "hi": "",
+                        "hiccup": "",
+                    },
+                    "tracked-root": {
+                        ".gitignore": "height",
+                        "happiness": "",
+                        "height": "",
+                        "hi": "",
+                        "hiccup": "",
+                    },
+                }),
+            )
+            .await;
+
+        let project = Project::test(
+            app_state.fs.clone(),
+            [
+                "/ancestor/tracked-root".as_ref(),
+                "/ancestor/ignored-root".as_ref(),
+            ],
+            cx,
+        )
+        .await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (_, finder) =
+            cx.add_window(|cx| FileFinder::new(workspace.read(cx).project().clone(), cx));
+        finder
+            .update(cx, |f, cx| f.spawn_search("hi".into(), cx))
+            .await;
+        finder.read_with(cx, |f, _| assert_eq!(f.matches.len(), 7));
+    }
+
+    #[gpui::test]
     async fn test_single_file_worktrees(cx: &mut gpui::TestAppContext) {
         let app_state = cx.update(AppState::test);
         app_state
