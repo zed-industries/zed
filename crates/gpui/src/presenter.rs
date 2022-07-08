@@ -317,7 +317,7 @@ impl Presenter {
                             .zip(self.prev_drag_position.as_mut())
                         {
                             dragged_region =
-                                Some((clicked_region.clone(), position - *prev_drag_position));
+                                Some((clicked_region.clone(), *prev_drag_position, position));
                             *prev_drag_position = position;
                         }
 
@@ -379,11 +379,11 @@ impl Presenter {
                 }
             }
 
-            if let Some((dragged_region, delta)) = dragged_region {
+            if let Some((dragged_region, prev_position, position)) = dragged_region {
                 handled = true;
                 if let Some(drag_callback) = dragged_region.drag {
                     event_cx.with_current_view(dragged_region.view_id, |event_cx| {
-                        drag_callback(delta, event_cx);
+                        drag_callback(prev_position, position, event_cx);
                     })
                 }
             }
@@ -659,6 +659,16 @@ impl<'a> PaintContext<'a> {
             self.rendered_views.insert(view_id, tree);
             self.view_stack.pop();
         }
+    }
+
+    #[inline]
+    pub fn paint_layer<F>(&mut self, clip_bounds: Option<RectF>, f: F)
+    where
+        F: FnOnce(&mut Self) -> (),
+    {
+        self.scene.push_layer(clip_bounds);
+        f(self);
+        self.scene.pop_layer();
     }
 
     pub fn current_view_id(&self) -> usize {
