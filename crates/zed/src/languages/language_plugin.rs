@@ -26,6 +26,7 @@ pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
             include_bytes!("../../../../plugins/bin/json_language.wasm.pre"),
         )
         .await?;
+    // smol::Timer::after(std::time::Duration::from_secs(5)).await;
     PluginLspAdapter::new(plugin, executor).await
 }
 

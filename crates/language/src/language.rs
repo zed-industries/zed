@@ -18,6 +18,7 @@ use gpui::{MutableAppContext, Task};
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock};
+use postage::watch;
 use regex::Regex;
 use serde::{de, Deserialize, Deserializer};
 use serde_json::Value;
@@ -316,6 +317,7 @@ pub struct LanguageRegistry {
             Shared<BoxFuture<'static, Result<PathBuf, Arc<anyhow::Error>>>>,
         >,
     >,
+    subscription: RwLock<(watch::Sender<()>, watch::Receiver<()>)>,
 }
 
 impl LanguageRegistry {
@@ -328,6 +330,7 @@ impl LanguageRegistry {
             lsp_binary_statuses_rx,
             login_shell_env_loaded: login_shell_env_loaded.shared(),
             lsp_binary_paths: Default::default(),
+            subscription: RwLock::new(watch::channel()),
         }
     }
 
@@ -338,6 +341,11 @@ impl LanguageRegistry {
 
     pub fn add(&self, language: Arc<Language>) {
         self.languages.write().push(language.clone());
+        *self.subscription.write().0.borrow_mut() = ();
+    }
+
+    pub fn subscribe(&self) -> watch::Receiver<()> {
+        self.subscription.read().1.clone()
     }
 
     pub fn set_theme(&self, theme: &SyntaxTheme) {

@@ -125,6 +125,7 @@ pub struct Project {
     buffer_snapshots: HashMap<u64, Vec<(i32, TextBufferSnapshot)>>,
     nonce: u128,
     initialized_persistent_state: bool,
+    _maintain_buffer_languages: Task<()>,
 }
 
 #[derive(Error, Debug)]
@@ -472,6 +473,7 @@ impl Project {
                 opened_buffer: (Rc::new(RefCell::new(opened_buffer_tx)), opened_buffer_rx),
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![cx.observe_global::<Settings, _>(Self::on_settings_changed)],
+                _maintain_buffer_languages: Self::maintain_buffer_languages(&languages, cx),
                 active_entry: None,
                 languages,
                 client,
@@ -549,6 +551,7 @@ impl Project {
                 loading_local_worktrees: Default::default(),
                 active_entry: None,
                 collaborators: Default::default(),
+                _maintain_buffer_languages: Self::maintain_buffer_languages(&languages, cx),
                 languages,
                 user_store: user_store.clone(),
                 project_store,
@@ -2019,6 +2022,34 @@ impl Project {
             })
     }
 
+    fn maintain_buffer_languages(
+        languages: &LanguageRegistry,
+        cx: &mut ModelContext<Project>,
+    ) -> Task<()> {
+        let mut subscription = languages.subscribe();
+        cx.spawn_weak(|project, mut cx| async move {
+            while let Some(_) = subscription.next().await {
+                if let Some(project) = project.upgrade(&cx) {
+                    project.update(&mut cx, |project, cx| {
+                        let mut buffers_without_language = Vec::new();
+                        for buffer in project.opened_buffers.values() {
+                            if let Some(buffer) = buffer.upgrade(cx) {
+                                if buffer.read(cx).language().is_none() {
+                                    buffers_without_language.push(buffer);
+                                }
+                            }
+                        }
+
+                        for buffer in buffers_without_language {
+                            project.assign_language_to_buffer(&buffer, cx);
+                            project.register_buffer_with_language_server(&buffer, cx);
+                        }
+                    });
+                }
+            }
+        })
+    }
+
     fn assign_language_to_buffer(
         &mut self,
         buffer: &ModelHandle<Buffer>,
@@ -2089,9 +2120,10 @@ impl Project {
                                 move |params, mut cx| {
                                     if let Some(this) = this.upgrade(&cx) {
                                         this.update(&mut cx, |this, cx| {
-                                            this.on_lsp_diagnostics_published(
+                                            // TODO(isaac): remove block on
+                                            smol::block_on(this.on_lsp_diagnostics_published(
                                                 server_id, params, &adapter, cx,
-                                            );
+                                            ));
                                         });
                                     }
                                 }
