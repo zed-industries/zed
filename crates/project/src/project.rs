@@ -3710,16 +3710,20 @@ impl Project {
                 }
 
                 if let Some(edit) = action.lsp_action.edit {
-                    Self::deserialize_workspace_edit(
-                        this,
-                        edit,
-                        push_to_history,
-                        lsp_adapter.clone(),
-                        lang_server.clone(),
-                        &mut cx,
-                    )
-                    .await
-                } else if let Some(command) = action.lsp_action.command {
+                    if edit.changes.is_some() || edit.document_changes.is_some() {
+                        return Self::deserialize_workspace_edit(
+                            this,
+                            edit,
+                            push_to_history,
+                            lsp_adapter.clone(),
+                            lang_server.clone(),
+                            &mut cx,
+                        )
+                        .await;
+                    }
+                }
+
+                if let Some(command) = action.lsp_action.command {
                     this.update(&mut cx, |this, _| {
                         this.last_workspace_edits_by_language_server
                             .remove(&lang_server.server_id());
@@ -3731,14 +3735,14 @@ impl Project {
                             ..Default::default()
                         })
                         .await?;
-                    Ok(this.update(&mut cx, |this, _| {
+                    return Ok(this.update(&mut cx, |this, _| {
                         this.last_workspace_edits_by_language_server
                             .remove(&lang_server.server_id())
                             .unwrap_or_default()
-                    }))
-                } else {
-                    Ok(ProjectTransaction::default())
+                    }));
                 }
+
+                Ok(ProjectTransaction::default())
             })
         } else if let Some(project_id) = self.remote_id() {
             let client = self.client.clone();
