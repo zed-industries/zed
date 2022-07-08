@@ -1695,22 +1695,22 @@ impl Cursor {
 }
 
 #[derive(Debug)]
-struct HighlightedRange {
-    start_y: f32,
-    line_height: f32,
-    lines: Vec<HighlightedRangeLine>,
-    color: Color,
-    corner_radius: f32,
+pub struct HighlightedRange {
+    pub start_y: f32,
+    pub line_height: f32,
+    pub lines: Vec<HighlightedRangeLine>,
+    pub color: Color,
+    pub corner_radius: f32,
 }
 
 #[derive(Debug)]
-struct HighlightedRangeLine {
-    start_x: f32,
-    end_x: f32,
+pub struct HighlightedRangeLine {
+    pub start_x: f32,
+    pub end_x: f32,
 }
 
 impl HighlightedRange {
-    fn paint(&self, bounds: RectF, scene: &mut Scene) {
+    pub fn paint(&self, bounds: RectF, scene: &mut Scene) {
         if self.lines.len() >= 2 && self.lines[0].start_x > self.lines[1].end_x {
             self.paint_lines(self.start_y, &self.lines[0..1], bounds, scene);
             self.paint_lines(

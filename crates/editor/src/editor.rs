@@ -8232,7 +8232,7 @@ mod tests {
             fox ju|mps over
             the lazy dog"});
         cx.update_editor(|e, cx| e.copy(&Copy, cx));
-        cx.assert_clipboard_content(Some("fox jumps over\n"));
+        cx.cx.assert_clipboard_content(Some("fox jumps over\n"));
 
         // Paste with three selections, noticing how the copied full-line selection is inserted
         // before the empty selections but replaces the selection that is non-empty.
