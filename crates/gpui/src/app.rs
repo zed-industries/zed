@@ -4,7 +4,7 @@ use crate::{
     elements::ElementBox,
     executor::{self, Task},
     keymap::{self, Binding, Keystroke},
-    platform::{self, Platform, PromptLevel, WindowOptions},
+    platform::{self, KeyDownEvent, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::post_inc,
     AssetCache, AssetSource, ClipboardItem, FontCache, MouseRegionId, PathPromptOptions,
@@ -151,6 +151,7 @@ pub struct AsyncAppContext(Rc<RefCell<MutableAppContext>>);
 pub struct TestAppContext {
     cx: Rc<RefCell<MutableAppContext>>,
     foreground_platform: Rc<platform::test::ForegroundPlatform>,
+    condition_duration: Option<Duration>,
 }
 
 impl App {
@@ -337,6 +338,7 @@ impl TestAppContext {
         let cx = TestAppContext {
             cx: Rc::new(RefCell::new(cx)),
             foreground_platform,
+            condition_duration: None,
         };
         cx.cx.borrow_mut().weak_self = Some(Rc::downgrade(&cx.cx));
         cx
@@ -377,11 +379,11 @@ impl TestAppContext {
 
             if !cx.dispatch_keystroke(window_id, dispatch_path, &keystroke) {
                 presenter.borrow_mut().dispatch_event(
-                    Event::KeyDown {
+                    Event::KeyDown(KeyDownEvent {
                         keystroke,
                         input,
                         is_held,
-                    },
+                    }),
                     cx,
                 );
             }
@@ -610,6 +612,27 @@ impl TestAppContext {
                 .downcast_mut::<platform::test::Window>()
                 .unwrap();
             test_window
+        })
+    }
+
+    pub fn set_condition_duration(&mut self, duration: Duration) {
+        self.condition_duration = Some(duration);
+    }
+    pub fn condition_duration(&self) -> Duration {
+        self.condition_duration.unwrap_or_else(|| {
+            if std::env::var("CI").is_ok() {
+                Duration::from_secs(2)
+            } else {
+                Duration::from_millis(500)
+            }
+        })
+    }
+
+    pub fn assert_clipboard_content(&mut self, expected_content: Option<&str>) {
+        self.update(|cx| {
+            let actual_content = cx.read_from_clipboard().map(|item| item.text().to_owned());
+            let expected_content = expected_content.map(|content| content.to_owned());
+            assert_eq!(actual_content, expected_content);
         })
     }
 }
@@ -1820,7 +1843,7 @@ impl MutableAppContext {
             window.on_event(Box::new(move |event| {
                 app.update(|cx| {
                     if let Some(presenter) = presenter.upgrade() {
-                        if let Event::KeyDown { keystroke, .. } = &event {
+                        if let Event::KeyDown(KeyDownEvent { keystroke, .. }) = &event {
                             if cx.dispatch_keystroke(
                                 window_id,
                                 presenter.borrow().dispatch_path(cx.as_ref()),
@@ -4424,6 +4447,7 @@ impl<T: View> ViewHandle<T> {
         use postage::prelude::{Sink as _, Stream as _};
 
         let (tx, mut rx) = postage::mpsc::channel(1024);
+        let timeout_duration = cx.condition_duration();
 
         let mut cx = cx.cx.borrow_mut();
         let subscriptions = self.update(&mut *cx, |_, cx| {
@@ -4445,14 +4469,9 @@ impl<T: View> ViewHandle<T> {
 
         let cx = cx.weak_self.as_ref().unwrap().upgrade().unwrap();
         let handle = self.downgrade();
-        let duration = if std::env::var("CI").is_ok() {
-            Duration::from_secs(2)
-        } else {
-            Duration::from_millis(500)
-        };
 
         async move {
-            crate::util::timeout(duration, async move {
+            crate::util::timeout(timeout_duration, async move {
                 loop {
                     {
                         let cx = cx.borrow();
@@ -5381,7 +5400,7 @@ impl RefCounts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{actions, elements::*, impl_actions};
+    use crate::{actions, elements::*, impl_actions, MouseButton, MouseEvent};
     use serde::Deserialize;
     use smol::future::poll_once;
     use std::{
@@ -5734,14 +5753,15 @@ mod tests {
         let presenter = cx.presenters_and_platform_windows[&window_id].0.clone();
         // Ensure window's root element is in a valid lifecycle state.
         presenter.borrow_mut().dispatch_event(
-            Event::LeftMouseDown {
+            Event::MouseDown(MouseEvent {
                 position: Default::default(),
+                button: MouseButton::Left,
                 ctrl: false,
                 alt: false,
                 shift: false,
                 cmd: false,
                 click_count: 1,
-            },
+            }),
             cx,
         );
         assert_eq!(mouse_down_count.load(SeqCst), 1);

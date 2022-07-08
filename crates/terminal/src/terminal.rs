@@ -3,32 +3,33 @@ mod modal;
 pub mod terminal_element;
 
 use alacritty_terminal::{
-    config::{Config, Program, PtyConfig},
+    config::{Config, PtyConfig},
     event::{Event as AlacTermEvent, EventListener, Notify},
     event_loop::{EventLoop, Msg, Notifier},
     grid::Scroll,
     sync::FairMutex,
-    term::{color::Rgb as AlacRgb, SizeInfo},
+    term::SizeInfo,
     tty::{self, setup_env},
     Term,
 };
-
+use color_translation::{get_color_at_index, to_alac_rgb};
+use dirs::home_dir;
 use futures::{
     channel::mpsc::{unbounded, UnboundedSender},
     StreamExt,
 };
 use gpui::{
-    actions, color::Color, elements::*, impl_internal_actions, platform::CursorStyle,
-    ClipboardItem, Entity, MutableAppContext, View, ViewContext,
+    actions, elements::*, impl_internal_actions, platform::CursorStyle, ClipboardItem, Entity,
+    MutableAppContext, View, ViewContext,
 };
 use modal::deploy_modal;
-use project::{Project, ProjectPath};
+use project::{LocalWorktree, Project, ProjectPath};
 use settings::Settings;
 use smallvec::SmallVec;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use workspace::{Item, Workspace};
 
-use crate::terminal_element::{get_color_at_index, TerminalEl};
+use crate::terminal_element::TerminalEl;
 
 //ASCII Control characters on a keyboard
 const ETX_CHAR: char = 3_u8 as char; //'End of text', the control code for 'ctrl-c'
@@ -41,6 +42,14 @@ const RIGHT_SEQ: &str = "\x1b[C";
 const UP_SEQ: &str = "\x1b[A";
 const DOWN_SEQ: &str = "\x1b[B";
 const DEFAULT_TITLE: &str = "Terminal";
+const DEBUG_TERMINAL_WIDTH: f32 = 1000.; //This needs to be wide enough that the prompt can fill the whole space.
+const DEBUG_TERMINAL_HEIGHT: f32 = 200.;
+const DEBUG_CELL_WIDTH: f32 = 5.;
+const DEBUG_LINE_HEIGHT: f32 = 5.;
+
+pub mod color_translation;
+pub mod gpui_func_tools;
+pub mod terminal_element;
 
 ///Action for carrying the input to the PTY
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
@@ -63,6 +72,7 @@ actions!(
         Down,
         Tab,
         Clear,
+        Copy,
         Paste,
         Deploy,
         Quit,
@@ -79,12 +89,13 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Terminal::escape);
     cx.add_action(Terminal::quit);
     cx.add_action(Terminal::del);
-    cx.add_action(Terminal::carriage_return); //TODO figure out how to do this properly. Should we be checking the terminal mode?
+    cx.add_action(Terminal::carriage_return);
     cx.add_action(Terminal::left);
     cx.add_action(Terminal::right);
     cx.add_action(Terminal::up);
     cx.add_action(Terminal::down);
     cx.add_action(Terminal::tab);
+    cx.add_action(Terminal::copy);
     cx.add_action(Terminal::paste);
     cx.add_action(Terminal::scroll_terminal);
     cx.add_action(deploy_modal);
@@ -109,6 +120,7 @@ pub struct Terminal {
     has_bell: bool, //Currently using iTerm bell, show bell emoji in tab until input is received
     cur_size: SizeInfo,
     modal: bool,
+    associated_directory: Option<PathBuf>,
 }
 
 ///Upward flowing events, for changing the title and such
@@ -143,12 +155,11 @@ impl Terminal {
         .detach();
 
         let pty_config = PtyConfig {
-            shell: Some(Program::Just("zsh".to_string())),
-            working_directory,
+            shell: None, //Use the users default shell
+            working_directory: working_directory.clone(),
             hold: false,
         };
 
-        //Does this mangle the zed Env? I'm guessing it does... do child processes have a seperate ENV?
         let mut env: HashMap<String, String> = HashMap::new();
         //TODO: Properly set the current locale,
         env.insert("LC_ALL".to_string(), "en_US.UTF-8".to_string());
@@ -162,8 +173,15 @@ impl Terminal {
         setup_env(&config);
 
         //The details here don't matter, the terminal will be resized on the first layout
-        //Set to something small for easier debugging
-        let size_info = SizeInfo::new(200., 100.0, 5., 5., 0., 0., false);
+        let size_info = SizeInfo::new(
+            DEBUG_TERMINAL_WIDTH,
+            DEBUG_TERMINAL_HEIGHT,
+            DEBUG_CELL_WIDTH,
+            DEBUG_LINE_HEIGHT,
+            0.,
+            0.,
+            false,
+        );
 
         //Set up the terminal...
         let term = Term::new(&config, size_info, ZedListener(events_tx.clone()));
@@ -192,6 +210,7 @@ impl Terminal {
             has_bell: false,
             cur_size: size_info,
             modal,
+            associated_directory: working_directory,
         }
     }
 
@@ -238,25 +257,8 @@ impl Terminal {
             ),
             AlacTermEvent::ColorRequest(index, format) => {
                 let color = self.term.lock().colors()[index].unwrap_or_else(|| {
-                    let term_style = &cx.global::<Settings>().theme.terminal.colors;
-                    match index {
-                        0..=255 => to_alac_rgb(get_color_at_index(&(index as u8), term_style)),
-                        //These additional values are required to match the Alacritty Colors object's behavior
-                        256 => to_alac_rgb(term_style.foreground),
-                        257 => to_alac_rgb(term_style.background),
-                        258 => to_alac_rgb(term_style.cursor),
-                        259 => to_alac_rgb(term_style.dim_black),
-                        260 => to_alac_rgb(term_style.dim_red),
-                        261 => to_alac_rgb(term_style.dim_green),
-                        262 => to_alac_rgb(term_style.dim_yellow),
-                        263 => to_alac_rgb(term_style.dim_blue),
-                        264 => to_alac_rgb(term_style.dim_magenta),
-                        265 => to_alac_rgb(term_style.dim_cyan),
-                        266 => to_alac_rgb(term_style.dim_white),
-                        267 => to_alac_rgb(term_style.bright_foreground),
-                        268 => to_alac_rgb(term_style.black), //Dim Background, non-standard
-                        _ => AlacRgb { r: 0, g: 0, b: 0 },
-                    }
+                    let term_style = &cx.global::<Settings>().theme.terminal;
+                    to_alac_rgb(get_color_at_index(&index, term_style))
                 });
                 self.write_to_pty(&Input(format(color)), cx)
             }
@@ -288,11 +290,12 @@ impl Terminal {
     ///Create a new Terminal in the current working directory or the user's home directory
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         let project = workspace.project().read(cx);
+
         let abs_path = project
             .active_entry()
             .and_then(|entry_id| project.worktree_for_entry(entry_id, cx))
             .and_then(|worktree_handle| worktree_handle.read(cx).as_local())
-            .map(|wt| wt.abs_path().to_path_buf());
+            .and_then(get_working_directory);
 
         workspace.add_item(
             Box::new(cx.add_view(|cx| Terminal::new(cx, abs_path, false))),
@@ -308,6 +311,16 @@ impl Terminal {
     ///Tell Zed to close us
     fn quit(&mut self, _: &Quit, cx: &mut ViewContext<Self>) {
         cx.emit(Event::CloseTerminal);
+    }
+
+    ///Attempt to paste the clipboard into the terminal
+    fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
+        let term = self.term.lock();
+        let copy_text = term.selection_to_string();
+        match copy_text {
+            Some(s) => cx.write_to_clipboard(ClipboardItem::new(s)),
+            None => (),
+        }
     }
 
     ///Attempt to paste the clipboard into the terminal
@@ -444,6 +457,13 @@ impl Item for Terminal {
         .boxed()
     }
 
+    fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self> {
+        //From what I can tell, there's no  way to tell the current working
+        //Directory of the terminal from outside the terminal. There might be
+        //solutions to this, but they are non-trivial and require more IPC
+        Some(Terminal::new(cx, self.associated_directory.clone()))
+    }
+
     fn project_path(&self, _cx: &gpui::AppContext) -> Option<ProjectPath> {
         None
     }
@@ -504,27 +524,134 @@ impl Item for Terminal {
     }
 }
 
-//Convenience method for less lines
-fn to_alac_rgb(color: Color) -> AlacRgb {
-    AlacRgb {
-        r: color.r,
-        g: color.g,
-        b: color.g,
-    }
+fn get_working_directory(wt: &LocalWorktree) -> Option<PathBuf> {
+    Some(wt.abs_path().to_path_buf())
+        .filter(|path| path.is_dir())
+        .or_else(|| home_dir())
 }
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
-    use alacritty_terminal::{grid::GridIterator, term::cell::Cell};
+    use alacritty_terminal::{
+        grid::GridIterator,
+        index::{Column, Line, Point, Side},
+        selection::{Selection, SelectionType},
+        term::cell::Cell,
+    };
     use gpui::TestAppContext;
     use itertools::Itertools;
+    use project::{FakeFs, Fs, RealFs, RemoveOptions, Worktree};
+    use std::{path::Path, sync::atomic::AtomicUsize, time::Duration};
 
     ///Basic integration test, can we get the terminal to show up, execute a command,
     //and produce noticable output?
     #[gpui::test]
     async fn test_terminal(cx: &mut TestAppContext) {
         let terminal = cx.add_view(Default::default(), |cx| Terminal::new(cx, None, false));
+        cx.set_condition_duration(Duration::from_secs(2));
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_to_pty(&Input(("expr 3 + 4".to_string()).to_string()), cx);
+            terminal.carriage_return(&Return, cx);
+        });
+
+        terminal
+            .condition(cx, |terminal, _cx| {
+                let term = terminal.term.clone();
+                let content = grid_as_str(term.lock().renderable_content().display_iter);
+                dbg!(&content);
+                content.contains("7")
+            })
+            .await;
+    }
+
+    #[gpui::test]
+    async fn single_file_worktree(cx: &mut TestAppContext) {
+        let mut async_cx = cx.to_async();
+        let http_client = client::test::FakeHttpClient::with_404_response();
+        let client = client::Client::new(http_client.clone());
+        let fake_fs = FakeFs::new(cx.background().clone());
+
+        let path = Path::new("/file/");
+        fake_fs.insert_file(path, "a".to_string()).await;
+
+        let worktree_handle = Worktree::local(
+            client,
+            path,
+            true,
+            fake_fs,
+            Arc::new(AtomicUsize::new(0)),
+            &mut async_cx,
+        )
+        .await
+        .ok()
+        .unwrap();
+
+        async_cx.update(|cx| {
+            let wt = worktree_handle.read(cx).as_local().unwrap();
+            let wd = get_working_directory(wt);
+            assert!(wd.is_some());
+            let path = wd.unwrap();
+            //This should be the system's working directory, so querying the real file system is probably ok.
+            assert!(path.is_dir());
+            assert_eq!(path, home_dir().unwrap());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_worktree_directory(cx: &mut TestAppContext) {
+        let mut async_cx = cx.to_async();
+        let http_client = client::test::FakeHttpClient::with_404_response();
+        let client = client::Client::new(http_client.clone());
+
+        let fs = RealFs;
+        let mut test_wd = home_dir().unwrap();
+        test_wd.push("dir");
+
+        fs.create_dir(test_wd.as_path())
+            .await
+            .expect("File could not be created");
+
+        let worktree_handle = Worktree::local(
+            client,
+            test_wd.clone(),
+            true,
+            Arc::new(RealFs),
+            Arc::new(AtomicUsize::new(0)),
+            &mut async_cx,
+        )
+        .await
+        .ok()
+        .unwrap();
+
+        async_cx.update(|cx| {
+            let wt = worktree_handle.read(cx).as_local().unwrap();
+            let wd = get_working_directory(wt);
+            assert!(wd.is_some());
+            let path = wd.unwrap();
+            assert!(path.is_dir());
+            assert_eq!(path, test_wd);
+        });
+
+        //Clean up after ourselves.
+        fs.remove_dir(
+            test_wd.as_path(),
+            RemoveOptions {
+                recursive: false,
+                ignore_if_not_exists: true,
+            },
+        )
+        .await
+        .ok()
+        .expect("Could not remove test directory");
+    }
+
+    ///If this test is failing for you, check that DEBUG_TERMINAL_WIDTH is wide enough to fit your entire command prompt!
+    #[gpui::test]
+    async fn test_copy(cx: &mut TestAppContext) {
+        let terminal = cx.add_view(Default::default(), |cx| Terminal::new(cx, None));
+        cx.set_condition_duration(Duration::from_secs(2));
 
         terminal.update(cx, |terminal, cx| {
             terminal.write_to_pty(&Input(("expr 3 + 4".to_string()).to_string()), cx);
@@ -538,6 +665,19 @@ mod tests {
                 content.contains("7")
             })
             .await;
+
+        terminal.update(cx, |terminal, cx| {
+            let mut term = terminal.term.lock();
+            term.selection = Some(Selection::new(
+                SelectionType::Semantic,
+                Point::new(Line(2), Column(0)),
+                Side::Right,
+            ));
+            drop(term);
+            terminal.copy(&Copy, cx)
+        });
+
+        cx.assert_clipboard_content(Some(&"7"));
     }
 
     pub(crate) fn grid_as_str(grid_iterator: GridIterator<Cell>) -> String {

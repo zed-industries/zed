@@ -188,12 +188,13 @@ impl Sidebar {
         })
         .with_cursor_style(CursorStyle::ResizeLeftRight)
         .on_mouse_down(|_, _| {}) // This prevents the mouse down event from being propagated elsewhere
-        .on_drag(move |delta, cx| {
+        .on_drag(move |old_position, new_position, cx| {
+            let delta = new_position.x() - old_position.x();
             let prev_width = *actual_width.borrow();
             *custom_width.borrow_mut() = 0f32
                 .max(match side {
-                    Side::Left => prev_width + delta.x(),
-                    Side::Right => prev_width - delta.x(),
+                    Side::Left => prev_width + delta,
+                    Side::Right => prev_width - delta,
                 })
                 .round();
 

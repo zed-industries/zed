@@ -334,28 +334,6 @@ impl FakeFs {
         })
     }
 
-    pub async fn insert_dir(&self, path: impl AsRef<Path>) {
-        let mut state = self.state.lock().await;
-        let path = path.as_ref();
-        state.validate_path(path).unwrap();
-
-        let inode = state.next_inode;
-        state.next_inode += 1;
-        state.entries.insert(
-            path.to_path_buf(),
-            FakeFsEntry {
-                metadata: Metadata {
-                    inode,
-                    mtime: SystemTime::now(),
-                    is_dir: true,
-                    is_symlink: false,
-                },
-                content: None,
-            },
-        );
-        state.emit_event(&[path]).await;
-    }
-
     pub async fn insert_file(&self, path: impl AsRef<Path>, content: String) {
         let mut state = self.state.lock().await;
         let path = path.as_ref();
@@ -392,7 +370,7 @@ impl FakeFs {
 
             match tree {
                 Object(map) => {
-                    self.insert_dir(path).await;
+                    self.create_dir(path).await.unwrap();
                     for (name, contents) in map {
                         let mut path = PathBuf::from(path);
                         path.push(name);
@@ -400,7 +378,7 @@ impl FakeFs {
                     }
                 }
                 Null => {
-                    self.insert_dir(&path).await;
+                    self.create_dir(&path).await.unwrap();
                 }
                 String(contents) => {
                     self.insert_file(&path, contents).await;

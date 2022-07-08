@@ -4065,13 +4065,16 @@ impl Editor {
                 }
             }
 
-            nav_history.push(Some(NavigationData {
-                cursor_anchor: position,
-                cursor_position: point,
-                scroll_position: self.scroll_position,
-                scroll_top_anchor: self.scroll_top_anchor.clone(),
-                scroll_top_row,
-            }));
+            nav_history.push(
+                Some(NavigationData {
+                    cursor_anchor: position,
+                    cursor_position: point,
+                    scroll_position: self.scroll_position,
+                    scroll_top_anchor: self.scroll_top_anchor.clone(),
+                    scroll_top_row,
+                }),
+                cx,
+            );
         }
     }
 
@@ -4669,7 +4672,7 @@ impl Editor {
         definitions: Vec<LocationLink>,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let nav_history = workspace.active_pane().read(cx).nav_history().clone();
+        let pane = workspace.active_pane().clone();
         for definition in definitions {
             let range = definition
                 .target
@@ -4681,13 +4684,13 @@ impl Editor {
                 // When selecting a definition in a different buffer, disable the nav history
                 // to avoid creating a history entry at the previous cursor location.
                 if editor_handle != target_editor_handle {
-                    nav_history.borrow_mut().disable();
+                    pane.update(cx, |pane, _| pane.disable_history());
                 }
                 target_editor.change_selections(Some(Autoscroll::Center), cx, |s| {
                     s.select_ranges([range]);
                 });
 
-                nav_history.borrow_mut().enable();
+                pane.update(cx, |pane, _| pane.enable_history());
             });
         }
     }
@@ -5641,8 +5644,8 @@ impl Editor {
         editor_handle.update(cx, |editor, cx| {
             editor.push_to_nav_history(editor.selections.newest_anchor().head(), None, cx);
         });
-        let nav_history = workspace.active_pane().read(cx).nav_history().clone();
-        nav_history.borrow_mut().disable();
+        let pane = workspace.active_pane().clone();
+        pane.update(cx, |pane, _| pane.disable_history());
 
         // We defer the pane interaction because we ourselves are a workspace item
         // and activating a new item causes the pane to call a method on us reentrantly,
@@ -5657,7 +5660,7 @@ impl Editor {
                 });
             }
 
-            nav_history.borrow_mut().enable();
+            pane.update(cx, |pane, _| pane.enable_history());
         });
     }
 
@@ -6241,7 +6244,7 @@ mod tests {
         assert_set_eq,
         test::{marked_text_by, marked_text_ranges, marked_text_ranges_by, sample_text},
     };
-    use workspace::{FollowableItem, ItemHandle};
+    use workspace::{FollowableItem, ItemHandle, NavigationEntry, Pane};
 
     #[gpui::test]
     fn test_edit_events(cx: &mut MutableAppContext) {
@@ -6589,12 +6592,20 @@ mod tests {
     fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
         cx.set_global(Settings::test(cx));
         use workspace::Item;
-        let nav_history = Rc::new(RefCell::new(workspace::NavHistory::default()));
+        let pane = cx.add_view(Default::default(), |cx| Pane::new(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
 
         cx.add_window(Default::default(), |cx| {
             let mut editor = build_editor(buffer.clone(), cx);
-            editor.nav_history = Some(ItemNavHistory::new(nav_history.clone(), &cx.handle()));
+            let handle = cx.handle();
+            editor.set_nav_history(Some(pane.read(cx).nav_history_for_item(&handle)));
+
+            fn pop_history(
+                editor: &mut Editor,
+                cx: &mut MutableAppContext,
+            ) -> Option<NavigationEntry> {
+                editor.nav_history.as_mut().unwrap().pop_backward(cx)
+            }
 
             // Move the cursor a small distance.
             // Nothing is added to the navigation history.
@@ -6604,21 +6615,21 @@ mod tests {
             editor.change_selections(None, cx, |s| {
                 s.select_display_ranges([DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)])
             });
-            assert!(nav_history.borrow_mut().pop_backward().is_none());
+            assert!(pop_history(&mut editor, cx).is_none());
 
             // Move the cursor a large distance.
             // The history can jump back to the previous position.
             editor.change_selections(None, cx, |s| {
                 s.select_display_ranges([DisplayPoint::new(13, 0)..DisplayPoint::new(13, 3)])
             });
-            let nav_entry = nav_history.borrow_mut().pop_backward().unwrap();
+            let nav_entry = pop_history(&mut editor, cx).unwrap();
             editor.navigate(nav_entry.data.unwrap(), cx);
             assert_eq!(nav_entry.item.id(), cx.view_id());
             assert_eq!(
                 editor.selections.display_ranges(cx),
                 &[DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)]
             );
-            assert!(nav_history.borrow_mut().pop_backward().is_none());
+            assert!(pop_history(&mut editor, cx).is_none());
 
             // Move the cursor a small distance via the mouse.
             // Nothing is added to the navigation history.
@@ -6628,7 +6639,7 @@ mod tests {
                 editor.selections.display_ranges(cx),
                 &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
             );
-            assert!(nav_history.borrow_mut().pop_backward().is_none());
+            assert!(pop_history(&mut editor, cx).is_none());
 
             // Move the cursor a large distance via the mouse.
             // The history can jump back to the previous position.
@@ -6638,14 +6649,14 @@ mod tests {
                 editor.selections.display_ranges(cx),
                 &[DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)]
             );
-            let nav_entry = nav_history.borrow_mut().pop_backward().unwrap();
+            let nav_entry = pop_history(&mut editor, cx).unwrap();
             editor.navigate(nav_entry.data.unwrap(), cx);
             assert_eq!(nav_entry.item.id(), cx.view_id());
             assert_eq!(
                 editor.selections.display_ranges(cx),
                 &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
             );
-            assert!(nav_history.borrow_mut().pop_backward().is_none());
+            assert!(pop_history(&mut editor, cx).is_none());
 
             // Set scroll position to check later
             editor.set_scroll_position(Vector2F::new(5.5, 5.5), cx);
@@ -6658,7 +6669,7 @@ mod tests {
             assert_ne!(editor.scroll_position, original_scroll_position);
             assert_ne!(editor.scroll_top_anchor, original_scroll_top_anchor);
 
-            let nav_entry = nav_history.borrow_mut().pop_backward().unwrap();
+            let nav_entry = pop_history(&mut editor, cx).unwrap();
             editor.navigate(nav_entry.data.unwrap(), cx);
             assert_eq!(editor.scroll_position, original_scroll_position);
             assert_eq!(editor.scroll_top_anchor, original_scroll_top_anchor);
@@ -8221,7 +8232,7 @@ mod tests {
             fox ju|mps over
             the lazy dog"});
         cx.update_editor(|e, cx| e.copy(&Copy, cx));
-        cx.assert_clipboard_content(Some("fox jumps over\n"));
+        cx.cx.assert_clipboard_content(Some("fox jumps over\n"));
 
         // Paste with three selections, noticing how the copied full-line selection is inserted
         // before the empty selections but replaces the selection that is non-empty.

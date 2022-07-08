@@ -23,8 +23,9 @@ use gpui::{
     json::{self, ToJson},
     platform::CursorStyle,
     text_layout::{self, Line, RunStyle, TextLayoutCache},
-    AppContext, Axis, Border, CursorRegion, Element, ElementBox, Event, EventContext,
-    LayoutContext, MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext,
+    AppContext, Axis, Border, CursorRegion, Element, ElementBox, Event, EventContext, KeyDownEvent,
+    LayoutContext, ModifiersChangedEvent, MouseButton, MouseEvent, MouseMovedEvent,
+    MutableAppContext, PaintContext, Quad, Scene, ScrollWheelEvent, SizeConstraint, ViewContext,
     WeakViewHandle,
 };
 use json::json;
@@ -1463,14 +1464,15 @@ impl Element for EditorElement {
         }
 
         match event {
-            Event::LeftMouseDown {
+            Event::MouseDown(MouseEvent {
+                button: MouseButton::Left,
                 position,
                 cmd,
                 alt,
                 shift,
                 click_count,
                 ..
-            } => self.mouse_down(
+            }) => self.mouse_down(
                 *position,
                 *cmd,
                 *alt,
@@ -1480,18 +1482,26 @@ impl Element for EditorElement {
                 paint,
                 cx,
             ),
-            Event::LeftMouseUp { position, .. } => self.mouse_up(*position, cx),
-            Event::LeftMouseDragged { position, .. } => {
-                self.mouse_dragged(*position, layout, paint, cx)
-            }
-            Event::ScrollWheel {
+            Event::MouseUp(MouseEvent {
+                button: MouseButton::Left,
+                position,
+                ..
+            }) => self.mouse_up(*position, cx),
+            Event::MouseMoved(MouseMovedEvent {
+                pressed_button: Some(MouseButton::Left),
+                position,
+                ..
+            }) => self.mouse_dragged(*position, layout, paint, cx),
+            Event::ScrollWheel(ScrollWheelEvent {
                 position,
                 delta,
                 precise,
-            } => self.scroll(*position, *delta, *precise, layout, paint, cx),
-            Event::KeyDown { input, .. } => self.key_down(input.as_deref(), cx),
-            Event::ModifiersChanged { cmd, .. } => self.modifiers_changed(*cmd, cx),
-            Event::MouseMoved { position, cmd, .. } => {
+            }) => self.scroll(*position, *delta, *precise, layout, paint, cx),
+            Event::KeyDown(KeyDownEvent { input, .. }) => self.key_down(input.as_deref(), cx),
+            Event::ModifiersChanged(ModifiersChangedEvent { cmd, .. }) => {
+                self.modifiers_changed(*cmd, cx)
+            }
+            Event::MouseMoved(MouseMovedEvent { position, cmd, .. }) => {
                 self.mouse_moved(*position, *cmd, layout, paint, cx)
             }
 
@@ -1685,22 +1695,22 @@ impl Cursor {
 }
 
 #[derive(Debug)]
-struct HighlightedRange {
-    start_y: f32,
-    line_height: f32,
-    lines: Vec<HighlightedRangeLine>,
-    color: Color,
-    corner_radius: f32,
+pub struct HighlightedRange {
+    pub start_y: f32,
+    pub line_height: f32,
+    pub lines: Vec<HighlightedRangeLine>,
+    pub color: Color,
+    pub corner_radius: f32,
 }
 
 #[derive(Debug)]
-struct HighlightedRangeLine {
-    start_x: f32,
-    end_x: f32,
+pub struct HighlightedRangeLine {
+    pub start_x: f32,
+    pub end_x: f32,
 }
 
 impl HighlightedRange {
-    fn paint(&self, bounds: RectF, scene: &mut Scene) {
+    pub fn paint(&self, bounds: RectF, scene: &mut Scene) {
         if self.lines.len() >= 2 && self.lines[0].start_x > self.lines[1].end_x {
             self.paint_lines(self.start_y, &self.lines[0..1], bounds, scene);
             self.paint_lines(

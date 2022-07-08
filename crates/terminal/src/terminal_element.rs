@@ -1,13 +1,15 @@
 use alacritty_terminal::{
-    ansi::Color as AnsiColor,
     grid::{Dimensions, GridIterator, Indexed},
-    index::Point,
+    index::{Column as GridCol, Line as GridLine, Point, Side},
+    selection::{Selection, SelectionRange, SelectionType},
+    sync::FairMutex,
     term::{
         cell::{Cell, Flags},
         SizeInfo,
     },
+    Term,
 };
-use editor::{Cursor, CursorShape};
+use editor::{Cursor, CursorShape, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     color::Color,
     elements::*,
@@ -18,16 +20,21 @@ use gpui::{
     },
     json::json,
     text_layout::{Line, RunStyle},
-    Event, FontCache, MouseRegion, PaintContext, Quad, SizeConstraint, TextLayoutCache,
-    WeakViewHandle,
+    Event, FontCache, KeyDownEvent, MouseRegion, PaintContext, Quad, ScrollWheelEvent,
+    SizeConstraint, TextLayoutCache, WeakViewHandle,
 };
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use settings::Settings;
-use std::rc::Rc;
 use theme::{TerminalColors, TerminalStyle};
 
-use crate::{gpui_func_tools::paint_layer, Input, ScrollTerminal, Terminal};
+use std::{cmp::min, ops::Range, rc::Rc, sync::Arc};
+use std::{fmt::Debug, ops::Sub};
+
+use crate::{
+    color_translation::convert_color, gpui_func_tools::paint_layer, Input, ScrollTerminal,
+    Terminal, ZedListener,
+};
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
@@ -44,14 +51,27 @@ pub struct TerminalEl {
     view: WeakViewHandle<Terminal>,
 }
 
-///Helper types so I don't mix these two up
+///New type pattern so I don't mix these two up
 struct CellWidth(f32);
 struct LineHeight(f32);
+
+struct LayoutLine {
+    cells: Vec<LayoutCell>,
+    highlighted_range: Option<Range<usize>>,
+}
+
+///New type pattern to ensure that we use adjusted mouse positions throughout the code base, rather than
+struct PaneRelativePos(Vector2F);
+
+///Functionally the constructor for the PaneRelativePos type, mutates the mouse_position
+fn relative_pos(mouse_position: Vector2F, origin: Vector2F) -> PaneRelativePos {
+    PaneRelativePos(mouse_position.sub(origin)) //Avoid the extra allocation by mutating
+}
 
 #[derive(Clone, Debug, Default)]
 struct LayoutCell {
     point: Point<i32, i32>,
-    text: Line,
+    text: Line, //NOTE TO SELF THIS IS BAD PERFORMANCE RN!
     background_color: Color,
 }
 
@@ -67,13 +87,14 @@ impl LayoutCell {
 
 ///The information generated during layout that is nescessary for painting
 pub struct LayoutState {
-    cells: Vec<(Point<i32, i32>, Line)>,
-    background_rects: Vec<(RectF, Color)>, //Vec index == Line index for the LineSpan
+    layout_lines: Vec<LayoutLine>,
     line_height: LineHeight,
     em_width: CellWidth,
     cursor: Option<Cursor>,
     background_color: Color,
     cur_size: SizeInfo,
+    terminal: Arc<FairMutex<Term<ZedListener>>>,
+    selection_color: Color,
 }
 
 impl TerminalEl {
@@ -105,47 +126,31 @@ impl Element for TerminalEl {
         //Tell the view our new size. Requires a mutable borrow of cx and the view
         let cur_size = make_new_size(constraint, &cell_width, &line_height);
         //Note that set_size locks and mutates the terminal.
-        //TODO: Would be nice to lock once for the whole of layout
         view_handle.update(cx.app, |view, _cx| view.set_size(cur_size));
 
         //Now that we're done with the mutable portion, grab the immutable settings and view again
-        let terminal_theme = &(cx.global::<Settings>()).theme.terminal;
         let view = view_handle.read(cx);
         let term = view.term.lock();
-
+        let (selection_color, terminal_theme) = {
+            let theme = &(cx.global::<Settings>()).theme;
+            (theme.editor.selection.selection, &theme.terminal)
+        };
+        let terminal_mutex = view_handle.read(cx).term.clone();
+        let term = terminal_mutex.lock();
         let grid = term.grid();
         let cursor_point = grid.cursor.point;
         let cursor_text = grid[cursor_point.line][cursor_point.column].c.to_string();
 
         let content = term.renderable_content();
 
-        let layout_cells = layout_cells(
+        let layout_lines = layout_lines(
             content.display_iter,
             &text_style,
             terminal_theme,
             cx.text_layout_cache,
             view.modal,
+            content.selection,
         );
-
-        let cells = layout_cells
-            .iter()
-            .map(|c| (c.point, c.text.clone()))
-            .collect::<Vec<(Point<i32, i32>, Line)>>();
-        let background_rects = layout_cells
-            .iter()
-            .map(|cell| {
-                (
-                    RectF::new(
-                        vec2f(
-                            cell.point.column as f32 * cell_width.0,
-                            cell.point.line as f32 * line_height.0,
-                        ),
-                        vec2f(cell_width.0, line_height.0),
-                    ),
-                    cell.background_color,
-                )
-            })
-            .collect::<Vec<(RectF, Color)>>();
 
         let block_text = cx.text_layout_cache.layout_str(
             &cursor_text,
@@ -185,6 +190,7 @@ impl Element for TerminalEl {
                 Some(block_text.clone()),
             )
         });
+        drop(term);
 
         let background_color = if view.modal {
             terminal_theme.colors.modal_background
@@ -195,13 +201,14 @@ impl Element for TerminalEl {
         (
             constraint.max,
             LayoutState {
-                cells,
+                layout_lines,
                 line_height,
                 em_width: cell_width,
                 cursor,
                 cur_size,
-                background_rects,
                 background_color,
+                terminal: terminal_mutex,
+                selection_color,
             },
         )
     }
@@ -215,16 +222,20 @@ impl Element for TerminalEl {
     ) -> Self::PaintState {
         //Setup element stuff
         let clip_bounds = Some(visible_bounds);
-        paint_layer(cx, clip_bounds, |cx| {
-            //Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
-            cx.scene.push_mouse_region(MouseRegion {
-                view_id: self.view.id(),
-                mouse_down: Some(Rc::new(|_, cx| cx.focus_parent_view())),
-                bounds: visible_bounds,
-                ..Default::default()
-            });
 
+        paint_layer(cx, clip_bounds, |cx| {
+            let cur_size = layout.cur_size.clone();
             let origin = bounds.origin() + vec2f(layout.em_width.0, 0.);
+
+            //Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
+            attach_mouse_handlers(
+                origin,
+                cur_size,
+                self.view.id(),
+                &layout.terminal,
+                visible_bounds,
+                cx,
+            );
 
             paint_layer(cx, clip_bounds, |cx| {
                 //Start with a background color
@@ -236,25 +247,83 @@ impl Element for TerminalEl {
                 });
 
                 //Draw cell backgrounds
-                for background_rect in &layout.background_rects {
-                    let new_origin = origin + background_rect.0.origin();
-                    cx.scene.push_quad(Quad {
-                        bounds: RectF::new(new_origin, background_rect.0.size()),
-                        background: Some(background_rect.1),
-                        border: Default::default(),
-                        corner_radius: 0.,
+                for layout_line in &layout.layout_lines {
+                    for layout_cell in &layout_line.cells {
+                        let position = vec2f(
+                            origin.x() + layout_cell.point.column as f32 * layout.em_width.0,
+                            origin.y() + layout_cell.point.line as f32 * layout.line_height.0,
+                        );
+                        let size = vec2f(layout.em_width.0, layout.line_height.0);
+
+                        cx.scene.push_quad(Quad {
+                            bounds: RectF::new(position, size),
+                            background: Some(layout_cell.background_color),
+                            border: Default::default(),
+                            corner_radius: 0.,
+                        })
+                    }
+                }
+            });
+
+            //Draw Selection
+            paint_layer(cx, clip_bounds, |cx| {
+                let mut highlight_y = None;
+                let highlight_lines = layout
+                    .layout_lines
+                    .iter()
+                    .filter_map(|line| {
+                        if let Some(range) = &line.highlighted_range {
+                            if let None = highlight_y {
+                                highlight_y = Some(
+                                    origin.y()
+                                        + line.cells[0].point.line as f32 * layout.line_height.0,
+                                );
+                            }
+                            let start_x = origin.x()
+                                + line.cells[range.start].point.column as f32 * layout.em_width.0;
+                            let end_x = origin.x()
+                                + line.cells[range.end].point.column as f32 * layout.em_width.0
+                                + layout.em_width.0;
+
+                            return Some(HighlightedRangeLine { start_x, end_x });
+                        } else {
+                            return None;
+                        }
                     })
+                    .collect::<Vec<HighlightedRangeLine>>();
+
+                if let Some(y) = highlight_y {
+                    let hr = HighlightedRange {
+                        start_y: y, //Need to change this
+                        line_height: layout.line_height.0,
+                        lines: highlight_lines,
+                        color: layout.selection_color,
+                        //Copied from editor. TODO: move to theme or something
+                        corner_radius: 0.15 * layout.line_height.0,
+                    };
+                    hr.paint(bounds, cx.scene);
                 }
             });
 
             //Draw text
             paint_layer(cx, clip_bounds, |cx| {
-                for (point, cell) in &layout.cells {
-                    let cell_origin = vec2f(
-                        origin.x() + point.column as f32 * layout.em_width.0,
-                        origin.y() + point.line as f32 * layout.line_height.0,
-                    );
-                    cell.paint(cell_origin, visible_bounds, layout.line_height.0, cx);
+                for layout_line in &layout.layout_lines {
+                    for layout_cell in &layout_line.cells {
+                        let point = layout_cell.point;
+
+                        //Don't actually know the start_x for a line, until here:
+                        let cell_origin = vec2f(
+                            origin.x() + point.column as f32 * layout.em_width.0,
+                            origin.y() + point.line as f32 * layout.line_height.0,
+                        );
+
+                        layout_cell.text.paint(
+                            cell_origin,
+                            visible_bounds,
+                            layout.line_height.0,
+                            cx,
+                        );
+                    }
                 }
             });
 
@@ -284,9 +353,9 @@ impl Element for TerminalEl {
         cx: &mut gpui::EventContext,
     ) -> bool {
         match event {
-            Event::ScrollWheel {
+            Event::ScrollWheel(ScrollWheelEvent {
                 delta, position, ..
-            } => visible_bounds
+            }) => visible_bounds
                 .contains_point(*position)
                 .then(|| {
                     let vertical_scroll =
@@ -294,9 +363,9 @@ impl Element for TerminalEl {
                     cx.dispatch_action(ScrollTerminal(vertical_scroll.round() as i32));
                 })
                 .is_some(),
-            Event::KeyDown {
+            Event::KeyDown(KeyDownEvent {
                 input: Some(input), ..
-            } => cx
+            }) => cx
                 .is_parent_view_focused()
                 .then(|| {
                     cx.dispatch_action(Input(input.to_string()));
@@ -317,6 +386,18 @@ impl Element for TerminalEl {
             "type": "TerminalElement",
         })
     }
+}
+
+fn mouse_to_cell_data(
+    pos: Vector2F,
+    origin: Vector2F,
+    cur_size: SizeInfo,
+    display_offset: usize,
+) -> (Point, alacritty_terminal::index::Direction) {
+    let relative_pos = relative_pos(pos, origin);
+    let point = grid_cell(&relative_pos, cur_size, display_offset);
+    let side = cell_side(&relative_pos, cur_size);
+    (point, side)
 }
 
 ///Configures a text style from the current settings.
@@ -351,39 +432,57 @@ fn make_new_size(
     )
 }
 
-fn layout_cells(
+fn layout_lines(
     grid: GridIterator<Cell>,
     text_style: &TextStyle,
     terminal_theme: &TerminalStyle,
     text_layout_cache: &TextLayoutCache,
     modal: bool,
-) -> Vec<LayoutCell> {
-    let mut line_count: i32 = 0;
+    selection_range: Option<SelectionRange>,
+) -> Vec<LayoutLine> {
     let lines = grid.group_by(|i| i.point.line);
     lines
         .into_iter()
-        .map(|(_, line)| {
-            line_count += 1;
-            line.map(|indexed_cell| {
-                let cell_text = &indexed_cell.c.to_string();
+        .enumerate()
+        .map(|(line_index, (_, line))| {
+            let mut highlighted_range = None;
+            let cells = line
+                .enumerate()
+                .map(|(x_index, indexed_cell)| {
+                    if selection_range
+                        .map(|range| range.contains(indexed_cell.point))
+                        .unwrap_or(false)
+                    {
+                        let mut range = highlighted_range.take().unwrap_or(x_index..x_index);
+                        range.end = range.end.max(x_index);
+                        highlighted_range = Some(range);
+                    }
 
-                let cell_style = cell_style(&indexed_cell, terminal_theme, text_style, modal);
+                    let cell_text = &indexed_cell.c.to_string();
 
-                let layout_cell = text_layout_cache.layout_str(
-                    cell_text,
-                    text_style.font_size,
-                    &[(cell_text.len(), cell_style)],
-                );
-                LayoutCell::new(
-                    Point::new(line_count - 1, indexed_cell.point.column.0 as i32),
-                    layout_cell,
-                    convert_color(&indexed_cell.bg, &terminal_theme.colors, modal),
-                )
-            })
-            .collect::<Vec<LayoutCell>>()
+                    let cell_style = cell_style(&indexed_cell, terminal_theme, text_style, modal);
+
+                    //This is where we might be able to get better performance
+                    let layout_cell = text_layout_cache.layout_str(
+                        cell_text,
+                        text_style.font_size,
+                        &[(cell_text.len(), cell_style)],
+                    );
+
+                    LayoutCell::new(
+                        Point::new(line_index as i32, indexed_cell.point.column.0 as i32),
+                        layout_cell,
+                        convert_color(&indexed_cell.bg, &terminal_theme.colors, modal),
+                    )
+                })
+                .collect::<Vec<LayoutCell>>();
+
+            LayoutLine {
+                cells,
+                highlighted_range,
+            }
         })
-        .flatten()
-        .collect::<Vec<LayoutCell>>()
+        .collect::<Vec<LayoutLine>>()
 }
 
 // Compute the cursor position and expected block width, may return a zero width if x_for_index returns
@@ -492,56 +591,113 @@ fn convert_color(alac_color: &AnsiColor, colors: &TerminalColors, modal: bool) -
     }
 }
 
-///Converts an 8 bit ANSI color to it's GPUI equivalent.
-pub fn get_color_at_index(index: &u8, colors: &TerminalColors) -> Color {
-    match index {
-        //0-15 are the same as the named colors above
-        0 => colors.black,
-        1 => colors.red,
-        2 => colors.green,
-        3 => colors.yellow,
-        4 => colors.blue,
-        5 => colors.magenta,
-        6 => colors.cyan,
-        7 => colors.white,
-        8 => colors.bright_black,
-        9 => colors.bright_red,
-        10 => colors.bright_green,
-        11 => colors.bright_yellow,
-        12 => colors.bright_blue,
-        13 => colors.bright_magenta,
-        14 => colors.bright_cyan,
-        15 => colors.bright_white,
-        //16-231 are mapped to their RGB colors on a 0-5 range per channel
-        16..=231 => {
-            let (r, g, b) = rgb_for_index(index); //Split the index into it's ANSI-RGB components
-            let step = (u8::MAX as f32 / 5.).floor() as u8; //Split the RGB range into 5 chunks, with floor so no overflow
-            Color::new(r * step, g * step, b * step, u8::MAX) //Map the ANSI-RGB components to an RGB color
-        }
-        //232-255 are a 24 step grayscale from black to white
-        232..=255 => {
-            let i = index - 232; //Align index to 0..24
-            let step = (u8::MAX as f32 / 24.).floor() as u8; //Split the RGB grayscale values into 24 chunks
-            Color::new(i * step, i * step, i * step, u8::MAX) //Map the ANSI-grayscale components to the RGB-grayscale
-        }
+fn attach_mouse_handlers(
+    origin: Vector2F,
+    cur_size: SizeInfo,
+    view_id: usize,
+    terminal_mutex: &Arc<FairMutex<Term<ZedListener>>>,
+    visible_bounds: RectF,
+    cx: &mut PaintContext,
+) {
+    let click_mutex = terminal_mutex.clone();
+    let drag_mutex = terminal_mutex.clone();
+    let mouse_down_mutex = terminal_mutex.clone();
+
+    cx.scene.push_mouse_region(MouseRegion {
+        view_id,
+        mouse_down: Some(Rc::new(move |pos, _| {
+            let mut term = mouse_down_mutex.lock();
+            let (point, side) = mouse_to_cell_data(
+                pos,
+                origin,
+                cur_size,
+                term.renderable_content().display_offset,
+            );
+            term.selection = Some(Selection::new(SelectionType::Simple, point, side))
+        })),
+        click: Some(Rc::new(move |pos, click_count, cx| {
+            let mut term = click_mutex.lock();
+
+            let (point, side) = mouse_to_cell_data(
+                pos,
+                origin,
+                cur_size,
+                term.renderable_content().display_offset,
+            );
+
+            let selection_type = match click_count {
+                0 => return, //This is a release
+                1 => Some(SelectionType::Simple),
+                2 => Some(SelectionType::Semantic),
+                3 => Some(SelectionType::Lines),
+                _ => None,
+            };
+
+            let selection =
+                selection_type.map(|selection_type| Selection::new(selection_type, point, side));
+
+            term.selection = selection;
+            cx.focus_parent_view();
+            cx.notify();
+        })),
+        bounds: visible_bounds,
+        drag: Some(Rc::new(move |_delta, pos, cx| {
+            let mut term = drag_mutex.lock();
+
+            let (point, side) = mouse_to_cell_data(
+                pos,
+                origin,
+                cur_size,
+                term.renderable_content().display_offset,
+            );
+
+            if let Some(mut selection) = term.selection.take() {
+                selection.update(point, side);
+                term.selection = Some(selection);
+            }
+
+            cx.notify();
+        })),
+        ..Default::default()
+    });
+}
+
+///Copied (with modifications) from alacritty/src/input.rs > Processor::cell_side()
+fn cell_side(pos: &PaneRelativePos, cur_size: SizeInfo) -> Side {
+    let x = pos.0.x() as usize;
+    let cell_x = x.saturating_sub(cur_size.cell_width() as usize) % cur_size.cell_width() as usize;
+    let half_cell_width = (cur_size.cell_width() / 2.0) as usize;
+
+    let additional_padding =
+        (cur_size.width() - cur_size.cell_width() * 2.) % cur_size.cell_width();
+    let end_of_grid = cur_size.width() - cur_size.cell_width() - additional_padding;
+
+    if cell_x > half_cell_width
+            // Edge case when mouse leaves the window.
+            || x as f32 >= end_of_grid
+    {
+        Side::Right
+    } else {
+        Side::Left
     }
 }
 
-///Generates the rgb channels in [0, 5] for a given index into the 6x6x6 ANSI color cube
-///See: [8 bit ansi color](https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit).
-///
-///Wikipedia gives a formula for calculating the index for a given color:
-///
-///index = 16 + 36 × r + 6 × g + b (0 ≤ r, g, b ≤ 5)
-///
-///This function does the reverse, calculating the r, g, and b components from a given index.
-fn rgb_for_index(i: &u8) -> (u8, u8, u8) {
-    debug_assert!(i >= &16 && i <= &231);
-    let i = i - 16;
-    let r = (i - (i % 36)) / 36;
-    let g = ((i % 36) - (i % 6)) / 6;
-    let b = (i % 36) % 6;
-    (r, g, b)
+///Copied (with modifications) from alacritty/src/event.rs > Mouse::point()
+///Position is a pane-relative position. That means the top left corner of the mouse
+///Region should be (0,0)
+fn grid_cell(pos: &PaneRelativePos, cur_size: SizeInfo, display_offset: usize) -> Point {
+    let pos = pos.0;
+    let col = pos.x() / cur_size.cell_width(); //TODO: underflow...
+    let col = min(GridCol(col as usize), cur_size.last_column());
+
+    let line = pos.y() / cur_size.cell_height();
+    let line = min(line as i32, cur_size.bottommost_line().0);
+
+    //when clicking, need to ADD to get to the top left cell
+    //e.g. total_lines - viewport_height, THEN subtract display offset
+    //0 -> total_lines - viewport_height - display_offset + mouse_line
+
+    Point::new(GridLine(line - display_offset as i32), col)
 }
 
 ///Draws the grid as Alacritty sees it. Useful for checking if there is an inconsistency between
@@ -575,14 +731,73 @@ fn draw_debug_grid(bounds: RectF, layout: &mut LayoutState, cx: &mut PaintContex
     }
 }
 
-#[cfg(test)]
-mod tests {
+mod test {
+
     #[test]
-    fn test_rgb_for_index() {
-        //Test every possible value in the color cube
-        for i in 16..=231 {
-            let (r, g, b) = crate::terminal_element::rgb_for_index(&(i as u8));
-            assert_eq!(i, 16 + 36 * r + 6 * g + b);
-        }
+    fn test_mouse_to_selection() {
+        let term_width = 100.;
+        let term_height = 200.;
+        let cell_width = 10.;
+        let line_height = 20.;
+        let mouse_pos_x = 100.; //Window relative
+        let mouse_pos_y = 100.; //Window relative
+        let origin_x = 10.;
+        let origin_y = 20.;
+
+        let cur_size = alacritty_terminal::term::SizeInfo::new(
+            term_width,
+            term_height,
+            cell_width,
+            line_height,
+            0.,
+            0.,
+            false,
+        );
+
+        let mouse_pos = gpui::geometry::vector::vec2f(mouse_pos_x, mouse_pos_y);
+        let origin = gpui::geometry::vector::vec2f(origin_x, origin_y); //Position of terminal window, 1 'cell' in
+        let (point, _) =
+            crate::terminal_element::mouse_to_cell_data(mouse_pos, origin, cur_size, 0);
+        assert_eq!(
+            point,
+            alacritty_terminal::index::Point::new(
+                alacritty_terminal::index::Line(((mouse_pos_y - origin_y) / line_height) as i32),
+                alacritty_terminal::index::Column(((mouse_pos_x - origin_x) / cell_width) as usize),
+            )
+        );
+    }
+
+    #[test]
+    fn test_mouse_to_selection_off_edge() {
+        let term_width = 100.;
+        let term_height = 200.;
+        let cell_width = 10.;
+        let line_height = 20.;
+        let mouse_pos_x = 100.; //Window relative
+        let mouse_pos_y = 100.; //Window relative
+        let origin_x = 10.;
+        let origin_y = 20.;
+
+        let cur_size = alacritty_terminal::term::SizeInfo::new(
+            term_width,
+            term_height,
+            cell_width,
+            line_height,
+            0.,
+            0.,
+            false,
+        );
+
+        let mouse_pos = gpui::geometry::vector::vec2f(mouse_pos_x, mouse_pos_y);
+        let origin = gpui::geometry::vector::vec2f(origin_x, origin_y); //Position of terminal window, 1 'cell' in
+        let (point, _) =
+            crate::terminal_element::mouse_to_cell_data(mouse_pos, origin, cur_size, 0);
+        assert_eq!(
+            point,
+            alacritty_terminal::index::Point::new(
+                alacritty_terminal::index::Line(((mouse_pos_y - origin_y) / line_height) as i32),
+                alacritty_terminal::index::Column(((mouse_pos_x - origin_x) / cell_width) as usize),
+            )
+        );
     }
 }
