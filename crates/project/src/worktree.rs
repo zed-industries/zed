@@ -1331,7 +1331,7 @@ impl LocalSnapshot {
     fn insert_entry(&mut self, mut entry: Entry, fs: &dyn Fs) -> Entry {
         if !entry.is_dir() && entry.path.file_name() == Some(&GITIGNORE) {
             let abs_path = self.abs_path.join(&entry.path);
-            match build_gitignore(&abs_path, fs) {
+            match smol::block_on(build_gitignore(&abs_path, fs)) {
                 Ok(ignore) => {
                     let ignore_dir_path = entry.path.parent().unwrap();
                     self.ignores
@@ -1506,8 +1506,8 @@ impl LocalSnapshot {
     }
 }
 
-fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
-    let contents = smol::block_on(fs.load(&abs_path))?;
+async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
+    let contents = fs.load(&abs_path).await?;
     let parent = abs_path.parent().unwrap_or(Path::new("/"));
     let mut builder = GitignoreBuilder::new(parent);
     for line in contents.lines() {
@@ -2117,7 +2117,7 @@ impl BackgroundScanner {
 
             // If we find a .gitignore, add it to the stack of ignores used to determine which paths are ignored
             if child_name == *GITIGNORE {
-                match build_gitignore(&child_abs_path, self.fs.as_ref()) {
+                match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
                     Ok(ignore) => {
                         let ignore = Arc::new(ignore);
                         ignore_stack = ignore_stack.append(job.path.clone(), ignore.clone());
