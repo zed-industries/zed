@@ -20,8 +20,8 @@ use gpui::{
     },
     json::json,
     text_layout::{Line, RunStyle},
-    Event, FontCache, MouseRegion, PaintContext, Quad, SizeConstraint, TextLayoutCache,
-    WeakViewHandle,
+    Event, FontCache, KeyDownEvent, MouseRegion, PaintContext, Quad, ScrollWheelEvent,
+    SizeConstraint, TextLayoutCache, WeakViewHandle,
 };
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
@@ -344,9 +344,9 @@ impl Element for TerminalEl {
         cx: &mut gpui::EventContext,
     ) -> bool {
         match event {
-            Event::ScrollWheel {
+            Event::ScrollWheel(ScrollWheelEvent {
                 delta, position, ..
-            } => visible_bounds
+            }) => visible_bounds
                 .contains_point(*position)
                 .then(|| {
                     let vertical_scroll =
@@ -354,9 +354,9 @@ impl Element for TerminalEl {
                     cx.dispatch_action(ScrollTerminal(vertical_scroll.round() as i32));
                 })
                 .is_some(),
-            Event::KeyDown {
+            Event::KeyDown(KeyDownEvent {
                 input: Some(input), ..
-            } => cx
+            }) => cx
                 .is_parent_view_focused()
                 .then(|| {
                     cx.dispatch_action(Input(input.to_string()));

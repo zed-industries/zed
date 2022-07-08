@@ -5,7 +5,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{self, json},
-    ElementBox, RenderContext, View,
+    ElementBox, RenderContext, ScrollWheelEvent, View,
 };
 use json::ToJson;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -310,11 +310,11 @@ impl Element for UniformList {
         }
 
         match event {
-            Event::ScrollWheel {
+            Event::ScrollWheel(ScrollWheelEvent {
                 position,
                 delta,
                 precise,
-            } => {
+            }) => {
                 if bounds.contains_point(*position) {
                     if self.scroll(*position, *delta, *precise, layout.scroll_max, cx) {
                         handled = true;

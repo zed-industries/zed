@@ -3,7 +3,8 @@ use std::{any::Any, f32::INFINITY};
 use crate::{
     json::{self, ToJson, Value},
     Axis, DebugContext, Element, ElementBox, ElementStateHandle, Event, EventContext,
-    LayoutContext, PaintContext, RenderContext, SizeConstraint, Vector2FExt, View,
+    LayoutContext, MouseMovedEvent, PaintContext, RenderContext, ScrollWheelEvent, SizeConstraint,
+    Vector2FExt, View,
 };
 use pathfinder_geometry::{
     rect::RectF,
@@ -287,11 +288,11 @@ impl Element for Flex {
             handled = child.dispatch_event(event, cx) || handled;
         }
         if !handled {
-            if let &Event::ScrollWheel {
+            if let &Event::ScrollWheel(ScrollWheelEvent {
                 position,
                 delta,
                 precise,
-            } = event
+            }) = event
             {
                 if *remaining_space < 0. && bounds.contains_point(position) {
                     if let Some(scroll_state) = self.scroll_state.as_ref() {
@@ -321,7 +322,7 @@ impl Element for Flex {
         }
 
         if !handled {
-            if let &Event::MouseMoved { position, .. } = event {
+            if let &Event::MouseMoved(MouseMovedEvent { position, .. }) = event {
                 // If this is a scrollable flex, and the mouse is over it, eat the scroll event to prevent
                 // propogating it to the element below.
                 if self.scroll_state.is_some() && bounds.contains_point(position) {
