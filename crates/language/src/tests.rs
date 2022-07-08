@@ -443,7 +443,7 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
 
     async fn search<'a>(
         outline: &'a Outline<Anchor>,
-        query: &str,
+        query: &'a str,
         cx: &'a gpui::TestAppContext,
     ) -> Vec<(&'a str, Vec<usize>)> {
         let matches = cx
