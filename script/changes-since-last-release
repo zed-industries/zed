@@ -1,0 +1,72 @@
+#!/usr/bin/env node --redirect-warnings=/dev/null
+
+const { execFileSync } = require("child_process");
+const { GITHUB_ACCESS_TOKEN } = process.env;
+const PR_REGEX = /pull request #(\d+)/;
+const FIXES_REGEX = /(fixes|closes) (.+[/#]\d+.*)$/im;
+
+main();
+
+async function main() {
+  // Get the last two tags
+  const [newTag, oldTag] = execFileSync(
+    "git",
+    ["tag", "--sort", "-committerdate"],
+    { encoding: "utf8" }
+  )
+    .split("\n")
+    .filter((t) => t.startsWith("v"));
+
+  // Print the previous release
+  console.log(`Changes from ${oldTag} to ${newTag}\n`);
+
+  const hasProtocolChanges =
+    execFileSync("git", ["diff", oldTag, newTag, "--", "crates/rpc"]).status != 0;
+
+  if (hasProtocolChanges) {
+    console.log("No RPC protocol changes\n");
+  } else {
+    console.warn("RPC protocol changes\n");
+  }
+
+  // Get the PRs merged between those two tags.
+  const pullRequestNumbers = execFileSync(
+    "git",
+    [
+      "log",
+      `${oldTag}..${newTag}`,
+      "--oneline",
+      "--grep",
+      "Merge pull request",
+    ],
+    { encoding: "utf8" }
+  )
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => line.match(PR_REGEX)[1]);
+
+  // Fetch the pull requests from the GitHub API.
+  console.log("Merged Pull requests:")
+  for (const pullRequestNumber of pullRequestNumbers) {
+    const webURL = `https://github.com/zed-industries/zed/pull/${pullRequestNumber}`;
+    const apiURL = `https://api.github.com/repos/zed-industries/zed/pulls/${pullRequestNumber}`;
+
+    const response = await fetch(apiURL, {
+      headers: {
+        Authorization: `token ${GITHUB_ACCESS_TOKEN}`,
+      },
+    });
+
+    // Print the pull request title and URL.
+    const pullRequest = await response.json();
+    console.log("*", pullRequest.title);
+    console.log("  URL:    ", webURL);
+
+    // If the pull request contains a 'closes' line, print the closed issue.
+    const fixesMatch = pullRequest.body.match(FIXES_REGEX);
+    if (fixesMatch) {
+      const fixedIssueURL = fixesMatch[2];
+      console.log("  Issue: ", fixedIssueURL);
+    }
+  }
+}
