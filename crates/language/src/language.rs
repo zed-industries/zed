@@ -319,6 +319,7 @@ pub struct LanguageRegistry {
         >,
     >,
     subscription: RwLock<(watch::Sender<()>, watch::Receiver<()>)>,
+    theme: RwLock<Option<Arc<SyntaxTheme>>>,
 }
 
 impl LanguageRegistry {
@@ -332,6 +333,7 @@ impl LanguageRegistry {
             login_shell_env_loaded: login_shell_env_loaded.shared(),
             lsp_binary_paths: Default::default(),
             subscription: RwLock::new(watch::channel()),
+            theme: Default::default(),
         }
     }
 
@@ -341,6 +343,9 @@ impl LanguageRegistry {
     }
 
     pub fn add(&self, language: Arc<Language>) {
+        if let Some(theme) = self.theme.read().clone() {
+            language.set_theme(theme);
+        }
         self.languages.write().push(language.clone());
         *self.subscription.write().0.borrow_mut() = ();
     }
@@ -350,6 +355,7 @@ impl LanguageRegistry {
     }
 
     pub fn set_theme(&self, theme: Arc<SyntaxTheme>) {
+        *self.theme.write() = Some(theme.clone());
         for language in self.languages.read().iter() {
             language.set_theme(theme.clone());
         }
