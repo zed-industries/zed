@@ -102,7 +102,7 @@ pub struct Snapshot {
 #[derive(Clone)]
 pub struct LocalSnapshot {
     abs_path: Arc<Path>,
-    ignores_by_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
+    ignores_by_parent_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
     removed_entry_ids: HashMap<u64, ProjectEntryId>,
     next_entry_id: Arc<AtomicUsize>,
     snapshot: Snapshot,
@@ -370,7 +370,7 @@ impl LocalWorktree {
         let tree = cx.add_model(move |cx: &mut ModelContext<Worktree>| {
             let mut snapshot = LocalSnapshot {
                 abs_path,
-                ignores_by_abs_path: Default::default(),
+                ignores_by_parent_abs_path: Default::default(),
                 removed_entry_ids: Default::default(),
                 next_entry_id,
                 snapshot: Snapshot {
@@ -1333,7 +1333,7 @@ impl LocalSnapshot {
             let abs_path = self.abs_path.join(&entry.path);
             match smol::block_on(build_gitignore(&abs_path, fs)) {
                 Ok(ignore) => {
-                    self.ignores_by_abs_path.insert(
+                    self.ignores_by_parent_abs_path.insert(
                         abs_path.parent().unwrap().into(),
                         (Arc::new(ignore), self.scan_id),
                     );
@@ -1388,7 +1388,7 @@ impl LocalSnapshot {
         };
 
         if let Some(ignore) = ignore {
-            self.ignores_by_abs_path.insert(
+            self.ignores_by_parent_abs_path.insert(
                 self.abs_path.join(&parent_path).into(),
                 (ignore, self.scan_id),
             );
@@ -1477,7 +1477,9 @@ impl LocalSnapshot {
 
         if path.file_name() == Some(&GITIGNORE) {
             let abs_parent_path = self.abs_path.join(path.parent().unwrap());
-            if let Some((_, scan_id)) = self.ignores_by_abs_path.get_mut(abs_parent_path.as_path())
+            if let Some((_, scan_id)) = self
+                .ignores_by_parent_abs_path
+                .get_mut(abs_parent_path.as_path())
             {
                 *scan_id = self.snapshot.scan_id;
             }
@@ -1487,7 +1489,7 @@ impl LocalSnapshot {
     fn ignore_stack_for_abs_path(&self, abs_path: &Path, is_dir: bool) -> Arc<IgnoreStack> {
         let mut new_ignores = Vec::new();
         for ancestor in abs_path.ancestors().skip(1) {
-            if let Some((ignore, _)) = self.ignores_by_abs_path.get(ancestor) {
+            if let Some((ignore, _)) = self.ignores_by_parent_abs_path.get(ancestor) {
                 new_ignores.push((ancestor, Some(ignore.clone())));
             } else {
                 new_ignores.push((ancestor, None));
@@ -2063,18 +2065,25 @@ impl BackgroundScanner {
             {
                 self.snapshot
                     .lock()
-                    .ignores_by_abs_path
+                    .ignores_by_parent_abs_path
                     .insert(ancestor.into(), (ignore.into(), 0));
             }
         }
 
+        let ignore_stack = {
+            let mut snapshot = self.snapshot.lock();
+            let ignore_stack = snapshot.ignore_stack_for_abs_path(&root_abs_path, true);
+            if ignore_stack.is_all() {
+                if let Some(mut root_entry) = snapshot.root_entry().cloned() {
+                    root_entry.is_ignored = true;
+                    snapshot.insert_entry(root_entry, self.fs.as_ref());
+                }
+            }
+            ignore_stack
+        };
+
         if is_dir {
             let path: Arc<Path> = Arc::from(Path::new(""));
-            let ignore_stack = self
-                .snapshot
-                .lock()
-                .ignore_stack_for_abs_path(&root_abs_path, true);
-
             let (tx, rx) = channel::unbounded();
             self.executor
                 .block(tx.send(ScanJob {
@@ -2329,7 +2338,7 @@ impl BackgroundScanner {
 
         let mut ignores_to_update = Vec::new();
         let mut ignores_to_delete = Vec::new();
-        for (parent_abs_path, (_, scan_id)) in &snapshot.ignores_by_abs_path {
+        for (parent_abs_path, (_, scan_id)) in &snapshot.ignores_by_parent_abs_path {
             if let Ok(parent_path) = parent_abs_path.strip_prefix(&snapshot.abs_path) {
                 if *scan_id == snapshot.scan_id && snapshot.entry_for_path(parent_path).is_some() {
                     ignores_to_update.push(parent_abs_path.clone());
@@ -2343,10 +2352,10 @@ impl BackgroundScanner {
         }
 
         for parent_abs_path in ignores_to_delete {
-            snapshot.ignores_by_abs_path.remove(&parent_abs_path);
+            snapshot.ignores_by_parent_abs_path.remove(&parent_abs_path);
             self.snapshot
                 .lock()
-                .ignores_by_abs_path
+                .ignores_by_parent_abs_path
                 .remove(&parent_abs_path);
         }
 
@@ -2388,7 +2397,7 @@ impl BackgroundScanner {
 
     async fn update_ignore_status(&self, job: UpdateIgnoreStatusJob, snapshot: &LocalSnapshot) {
         let mut ignore_stack = job.ignore_stack;
-        if let Some((ignore, _)) = snapshot.ignores_by_abs_path.get(&job.abs_path) {
+        if let Some((ignore, _)) = snapshot.ignores_by_parent_abs_path.get(&job.abs_path) {
             ignore_stack = ignore_stack.append(job.abs_path.clone(), ignore.clone());
         }
 
@@ -2955,7 +2964,7 @@ mod tests {
         let mut initial_snapshot = LocalSnapshot {
             abs_path: root_dir.path().into(),
             removed_entry_ids: Default::default(),
-            ignores_by_abs_path: Default::default(),
+            ignores_by_parent_abs_path: Default::default(),
             next_entry_id: next_entry_id.clone(),
             snapshot: Snapshot {
                 id: WorktreeId::from_usize(0),
@@ -3240,7 +3249,7 @@ mod tests {
                 .collect::<Vec<_>>();
             assert_eq!(dfs_paths_via_traversal, dfs_paths_via_iter);
 
-            for (ignore_parent_abs_path, _) in &self.ignores_by_abs_path {
+            for (ignore_parent_abs_path, _) in &self.ignores_by_parent_abs_path {
                 let ignore_parent_path =
                     ignore_parent_abs_path.strip_prefix(&self.abs_path).unwrap();
                 assert!(self.entry_for_path(&ignore_parent_path).is_some());
