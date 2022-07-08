@@ -4886,6 +4886,7 @@ dependencies = [
  "itertools",
  "mio-extras",
  "ordered-float",
+ "parking_lot 0.11.2",
  "project",
  "settings",
  "smallvec",

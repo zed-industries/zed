@@ -9,7 +9,7 @@ use alacritty_terminal::{
     },
     Term,
 };
-use editor::{Cursor, CursorShape, HighlightedRange, HighlightedRangeLine};
+use editor::{Cursor, CursorShape, HighlightedRange, HighlightedRangeLine, Input};
 use gpui::{
     color::Color,
     elements::*,
@@ -31,10 +31,7 @@ use theme::TerminalStyle;
 use std::{cmp::min, ops::Range, rc::Rc, sync::Arc};
 use std::{fmt::Debug, ops::Sub};
 
-use crate::{
-    color_translation::convert_color, gpui_func_tools::paint_layer, Input, ScrollTerminal,
-    Terminal, ZedListener,
-};
+use crate::{color_translation::convert_color, ScrollTerminal, Terminal, ZedListener};
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
@@ -126,7 +123,7 @@ impl Element for TerminalEl {
         //Tell the view our new size. Requires a mutable borrow of cx and the view
         let cur_size = make_new_size(constraint, &cell_width, &line_height);
         //Note that set_size locks and mutates the terminal.
-        view_handle.update(cx.app, |view, _cx| view.set_size(cur_size));
+        view_handle.update(cx.app, |view, cx| view.set_size(cur_size, cx));
 
         //Now that we're done with the mutable portion, grab the immutable settings and view again
         let view = view_handle.read(cx);
@@ -135,7 +132,8 @@ impl Element for TerminalEl {
             let theme = &(cx.global::<Settings>()).theme;
             (theme.editor.selection.selection, &theme.terminal)
         };
-        let terminal_mutex = view_handle.read(cx).term.clone();
+
+        let terminal_mutex = view_handle.read(cx).connection.read(cx).term.clone();
         let term = terminal_mutex.lock();
         let grid = term.grid();
         let cursor_point = grid.cursor.point;
@@ -220,10 +218,11 @@ impl Element for TerminalEl {
         layout: &mut Self::LayoutState,
         cx: &mut gpui::PaintContext,
     ) -> Self::PaintState {
+        println!("Painted a terminal element");
         //Setup element stuff
         let clip_bounds = Some(visible_bounds);
 
-        paint_layer(cx, clip_bounds, |cx| {
+        cx.paint_layer(clip_bounds, |cx| {
             let cur_size = layout.cur_size.clone();
             let origin = bounds.origin() + vec2f(layout.em_width.0, 0.);
 
@@ -237,7 +236,7 @@ impl Element for TerminalEl {
                 cx,
             );
 
-            paint_layer(cx, clip_bounds, |cx| {
+            cx.paint_layer(clip_bounds, |cx| {
                 //Start with a background color
                 cx.scene.push_quad(Quad {
                     bounds: RectF::new(bounds.origin(), bounds.size()),
@@ -266,7 +265,7 @@ impl Element for TerminalEl {
             });
 
             //Draw Selection
-            paint_layer(cx, clip_bounds, |cx| {
+            cx.paint_layer(clip_bounds, |cx| {
                 let mut highlight_y = None;
                 let highlight_lines = layout
                     .layout_lines
@@ -305,8 +304,7 @@ impl Element for TerminalEl {
                 }
             });
 
-            //Draw text
-            paint_layer(cx, clip_bounds, |cx| {
+            cx.paint_layer(clip_bounds, |cx| {
                 for layout_line in &layout.layout_lines {
                     for layout_cell in &layout_line.cells {
                         let point = layout_cell.point;
@@ -329,16 +327,16 @@ impl Element for TerminalEl {
 
             //Draw cursor
             if let Some(cursor) = &layout.cursor {
-                paint_layer(cx, clip_bounds, |cx| {
+                cx.paint_layer(clip_bounds, |cx| {
                     cursor.paint(origin, cx);
                 })
             }
 
             #[cfg(debug_assertions)]
             if DEBUG_GRID {
-                paint_layer(cx, clip_bounds, |cx| {
+                cx.paint_layer(clip_bounds, |cx| {
                     draw_debug_grid(bounds, layout, cx);
-                });
+                })
             }
         });
     }
