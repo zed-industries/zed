@@ -82,7 +82,6 @@ pub fn cached_server_binary(container_dir: PathBuf) -> Option<PathBuf> {
     let last_version_dir = last_version_dir?;
     let bin_path = last_version_dir.join(BIN_PATH);
     if bin_path.exists() {
-        dbg!(&bin_path);
         Some(bin_path)
     } else {
         println!("no binary found");

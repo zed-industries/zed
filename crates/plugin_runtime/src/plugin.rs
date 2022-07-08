@@ -232,7 +232,6 @@ impl PluginBuilder {
     /// Initializes a [`Plugin`] from a given compiled Wasm module.
     /// Both binary (`.wasm`) and text (`.wat`) module formats are supported.
     pub async fn init<T: AsRef<[u8]>>(self, precompiled: bool, module: T) -> Result<Plugin, Error> {
-        dbg!("initializing plugin");
         Plugin::init(precompiled, module.as_ref().to_vec(), self).await
     }
 }
@@ -302,7 +301,6 @@ impl Plugin {
         module: Vec<u8>,
         plugin: PluginBuilder,
     ) -> Result<Self, Error> {
-        dbg!("Initializing new plugin");
         // initialize the WebAssembly System Interface context
         let engine = plugin.engine;
         let mut linker = plugin.linker;

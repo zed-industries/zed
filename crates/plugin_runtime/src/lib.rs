@@ -92,8 +92,6 @@ mod tests {
                     .unwrap(),
                 "eko\n"
             );
-
-            // dbg!("{}", runtime.call(&plugin.and_back, 1).await.unwrap());
         }
         .block_on()
     }

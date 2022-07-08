@@ -394,14 +394,11 @@ impl LanguageRegistry {
             .read()
             .iter()
             .find(|language| {
-                language.config.path_suffixes.iter().any(|suffix| {
-                    if path_suffixes.contains(&Some(suffix.as_str())) {
-                        dbg!(format!("found {}", suffix));
-                        true
-                    } else {
-                        false
-                    }
-                })
+                language
+                    .config
+                    .path_suffixes
+                    .iter()
+                    .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())))
             })
             .cloned()
     }
