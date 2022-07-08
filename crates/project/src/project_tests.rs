@@ -8,12 +8,12 @@ use language::{
 };
 use lsp::Url;
 use serde_json::json;
-use std::{cell::RefCell, os::unix, path::PathBuf, rc::Rc, task::Poll};
+use std::{cell::RefCell, os::unix, rc::Rc, task::Poll};
 use unindent::Unindent as _;
 use util::{assert_set_eq, test::temp_tree};
 
 #[gpui::test]
-async fn test_populate_and_search(cx: &mut gpui::TestAppContext) {
+async fn test_symlinks(cx: &mut gpui::TestAppContext) {
     let dir = temp_tree(json!({
         "root": {
             "apple": "",
@@ -38,7 +38,6 @@ async fn test_populate_and_search(cx: &mut gpui::TestAppContext) {
     .unwrap();
 
     let project = Project::test(Arc::new(RealFs), [root_link_path.as_ref()], cx).await;
-
     project.read_with(cx, |project, cx| {
         let tree = project.worktrees(cx).next().unwrap().read(cx);
         assert_eq!(tree.file_count(), 5);
@@ -47,23 +46,6 @@ async fn test_populate_and_search(cx: &mut gpui::TestAppContext) {
             tree.inode_for_path("finnochio/grape")
         );
     });
-
-    let cancel_flag = Default::default();
-    let results = project
-        .read_with(cx, |project, cx| {
-            project.match_paths("bna", false, false, 10, &cancel_flag, cx)
-        })
-        .await;
-    assert_eq!(
-        results
-            .into_iter()
-            .map(|result| result.path)
-            .collect::<Vec<Arc<Path>>>(),
-        vec![
-            PathBuf::from("banana/carrot/date").into(),
-            PathBuf::from("banana/carrot/endive").into(),
-        ]
-    );
 }
 
 #[gpui::test]
@@ -1643,28 +1625,6 @@ fn chunks_with_diagnostics<T: ToOffset + ToPoint>(
         }
     }
     chunks
-}
-
-#[gpui::test]
-async fn test_search_worktree_without_files(cx: &mut gpui::TestAppContext) {
-    let dir = temp_tree(json!({
-        "root": {
-            "dir1": {},
-            "dir2": {
-                "dir3": {}
-            }
-        }
-    }));
-
-    let project = Project::test(Arc::new(RealFs), [dir.path()], cx).await;
-    let cancel_flag = Default::default();
-    let results = project
-        .read_with(cx, |project, cx| {
-            project.match_paths("dir", false, false, 10, &cancel_flag, cx)
-        })
-        .await;
-
-    assert!(results.is_empty());
 }
 
 #[gpui::test(iterations = 10)]
