@@ -63,7 +63,7 @@ impl Element for Text {
         cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
         // Convert the string and highlight ranges into an iterator of highlighted chunks.
-        
+
         let mut offset = 0;
         let mut highlight_ranges = self.highlights.iter().peekable();
         let chunks = std::iter::from_fn(|| {
@@ -81,7 +81,8 @@ impl Element for Text {
                         "Highlight out of text range. Text len: {}, Highlight range: {}..{}",
                         self.text.len(),
                         range.start,
-                        range.end);
+                        range.end
+                    );
                     result = None;
                 }
             } else if offset < self.text.len() {
