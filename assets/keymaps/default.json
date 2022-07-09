@@ -302,7 +302,7 @@
             "cmd-p": "file_finder::Toggle",
             "cmd-shift-P": "command_palette::Toggle",
             "cmd-shift-M": "diagnostics::Deploy",
-            "cmd-shift-E": "project_panel::Toggle",
+            "cmd-shift-E": "project_panel::ToggleFocus",
             "cmd-alt-s": "workspace::SaveAll"
         }
     },
@@ -387,7 +387,7 @@
     {
         "context": "Workspace",
         "bindings": {
-            "cmd-shift-C": "contacts_panel::Toggle",
+            "cmd-shift-C": "contacts_panel::ToggleFocus",
             "cmd-shift-B": "workspace::ToggleRightSidebar"
         }
     },
