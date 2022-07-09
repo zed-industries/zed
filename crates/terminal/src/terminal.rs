@@ -1,33 +1,29 @@
 pub mod color_translation;
-pub mod gpui_func_tools;
+pub mod connection;
 mod modal;
 pub mod terminal_element;
 
 use alacritty_terminal::{
-    config::{Config, PtyConfig},
-    event::{Event as AlacTermEvent, EventListener, Notify},
-    event_loop::{EventLoop, Msg, Notifier},
+    event::{Event as AlacTermEvent, EventListener},
+    event_loop::Msg,
     grid::Scroll,
-    sync::FairMutex,
     term::SizeInfo,
-    tty::{self, setup_env},
-    Term,
 };
-use color_translation::{get_color_at_index, to_alac_rgb};
+
+use connection::{Event, TerminalConnection};
 use dirs::home_dir;
-use futures::{
-    channel::mpsc::{unbounded, UnboundedSender},
-    StreamExt,
-};
+use editor::Input;
+use futures::channel::mpsc::UnboundedSender;
 use gpui::{
-    actions, elements::*, impl_internal_actions, platform::CursorStyle, ClipboardItem, Entity,
+    actions, elements::*, impl_internal_actions, ClipboardItem, Entity, ModelHandle,
     MutableAppContext, View, ViewContext,
 };
 use modal::deploy_modal;
+
 use project::{LocalWorktree, Project, ProjectPath};
 use settings::Settings;
 use smallvec::SmallVec;
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 use workspace::{Item, Workspace};
 
 use crate::terminal_element::TerminalEl;
@@ -42,15 +38,10 @@ const LEFT_SEQ: &str = "\x1b[D";
 const RIGHT_SEQ: &str = "\x1b[C";
 const UP_SEQ: &str = "\x1b[A";
 const DOWN_SEQ: &str = "\x1b[B";
-const DEFAULT_TITLE: &str = "Terminal";
 const DEBUG_TERMINAL_WIDTH: f32 = 1000.; //This needs to be wide enough that the prompt can fill the whole space.
 const DEBUG_TERMINAL_HEIGHT: f32 = 200.;
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
-
-///Action for carrying the input to the PTY
-#[derive(Clone, Default, Debug, PartialEq, Eq)]
-pub struct Input(pub String);
 
 ///Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
@@ -76,12 +67,11 @@ actions!(
         DeployModal,
     ]
 );
-impl_internal_actions!(terminal, [Input, ScrollTerminal]);
+impl_internal_actions!(terminal, [ScrollTerminal]);
 
 ///Initialize and register all of our action handlers
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Terminal::deploy);
-    cx.add_action(Terminal::write_to_pty);
     cx.add_action(Terminal::send_sigint);
     cx.add_action(Terminal::escape);
     cx.add_action(Terminal::quit);
@@ -95,6 +85,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Terminal::copy);
     cx.add_action(Terminal::paste);
     cx.add_action(Terminal::scroll_terminal);
+    cx.add_action(Terminal::input);
     cx.add_action(deploy_modal);
 }
 
@@ -110,21 +101,12 @@ impl EventListener for ZedListener {
 
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
 pub struct Terminal {
-    pty_tx: Notifier,
-    term: Arc<FairMutex<Term<ZedListener>>>,
-    title: String,
+    connection: ModelHandle<TerminalConnection>,
     has_new_content: bool,
-    has_bell: bool, //Currently using iTerm bell, show bell emoji in tab until input is received
-    cur_size: SizeInfo,
+    //Currently using iTerm bell, show bell emoji in tab until input is received
+    has_bell: bool,
+    // Only for styling purposes. Doesn't effect behavior
     modal: bool,
-    associated_directory: Option<PathBuf>,
-}
-
-///Upward flowing events, for changing the title and such
-pub enum Event {
-    TitleChanged,
-    CloseTerminal,
-    Activate,
 }
 
 impl Entity for Terminal {
@@ -133,42 +115,7 @@ impl Entity for Terminal {
 
 impl Terminal {
     ///Create a new Terminal view. This spawns a task, a thread, and opens the TTY devices
-    fn new(cx: &mut ViewContext<Self>, working_directory: Option<PathBuf>, modal: bool) -> Self {
-        //Spawn a task so the Alacritty EventLoop can communicate with us in a view context
-        let (events_tx, mut events_rx) = unbounded();
-        cx.spawn_weak(|this, mut cx| async move {
-            while let Some(event) = events_rx.next().await {
-                match this.upgrade(&cx) {
-                    Some(handle) => {
-                        handle.update(&mut cx, |this, cx| {
-                            this.process_terminal_event(event, cx);
-                            cx.notify();
-                        });
-                    }
-                    None => break,
-                }
-            }
-        })
-        .detach();
-
-        let pty_config = PtyConfig {
-            shell: None, //Use the users default shell
-            working_directory: working_directory.clone(),
-            hold: false,
-        };
-
-        let mut env: HashMap<String, String> = HashMap::new();
-        //TODO: Properly set the current locale,
-        env.insert("LC_ALL".to_string(), "en_US.UTF-8".to_string());
-
-        let config = Config {
-            pty_config: pty_config.clone(),
-            env,
-            ..Default::default()
-        };
-
-        setup_env(&config);
-
+    fn new(working_directory: Option<PathBuf>, modal: bool, cx: &mut ViewContext<Self>) -> Self {
         //The details here don't matter, the terminal will be resized on the first layout
         let size_info = SizeInfo::new(
             DEBUG_TERMINAL_WIDTH,
@@ -180,108 +127,69 @@ impl Terminal {
             false,
         );
 
-        //Set up the terminal...
-        let term = Term::new(&config, size_info, ZedListener(events_tx.clone()));
-        let term = Arc::new(FairMutex::new(term));
+        let connection =
+            cx.add_model(|cx| TerminalConnection::new(working_directory, size_info, cx));
 
-        //Setup the pty...
-        let pty = tty::new(&pty_config, &size_info, None).expect("Could not create tty");
-
-        //And connect them together
-        let event_loop = EventLoop::new(
-            term.clone(),
-            ZedListener(events_tx.clone()),
-            pty,
-            pty_config.hold,
-            false,
-        );
-
-        //Kick things off
-        let pty_tx = Notifier(event_loop.channel());
-        let _io_thread = event_loop.spawn();
-        Terminal {
-            title: DEFAULT_TITLE.to_string(),
-            term,
-            pty_tx,
-            has_new_content: false,
-            has_bell: false,
-            cur_size: size_info,
-            modal,
-            associated_directory: working_directory,
-        }
+        Terminal::from_connection(connection, modal, cx)
     }
 
-    ///Takes events from Alacritty and translates them to behavior on this view
-    fn process_terminal_event(
-        &mut self,
-        event: alacritty_terminal::event::Event,
+    fn from_connection(
+        connection: ModelHandle<TerminalConnection>,
+        modal: bool,
         cx: &mut ViewContext<Self>,
-    ) {
-        match event {
-            AlacTermEvent::Wakeup => {
-                if !cx.is_self_focused() {
-                    self.has_new_content = true; //Change tab content
-                    cx.emit(Event::TitleChanged);
-                } else {
+    ) -> Terminal {
+        cx.observe(&connection, |_, _, cx| cx.notify()).detach();
+        cx.subscribe(&connection, |this, _, event, cx| match event {
+            Event::Wakeup => {
+                if cx.is_self_focused() {
                     cx.notify()
+                } else {
+                    this.has_new_content = true;
+                    cx.emit(Event::TitleChanged);
                 }
             }
-            AlacTermEvent::PtyWrite(out) => self.write_to_pty(&Input(out), cx),
-            AlacTermEvent::MouseCursorDirty => {
-                //Calculate new cursor style.
-                //TODO
-                //Check on correctly handling mouse events for terminals
-                cx.platform().set_cursor_style(CursorStyle::Arrow); //???
-            }
-            AlacTermEvent::Title(title) => {
-                self.title = title;
+            Event::Bell => {
+                this.has_bell = true;
                 cx.emit(Event::TitleChanged);
             }
-            AlacTermEvent::ResetTitle => {
-                self.title = DEFAULT_TITLE.to_string();
-                cx.emit(Event::TitleChanged);
-            }
-            AlacTermEvent::ClipboardStore(_, data) => {
-                cx.write_to_clipboard(ClipboardItem::new(data))
-            }
-            AlacTermEvent::ClipboardLoad(_, format) => self.write_to_pty(
-                &Input(format(
-                    &cx.read_from_clipboard()
-                        .map(|ci| ci.text().to_string())
-                        .unwrap_or("".to_string()),
-                )),
-                cx,
-            ),
-            AlacTermEvent::ColorRequest(index, format) => {
-                let color = self.term.lock().colors()[index].unwrap_or_else(|| {
-                    let term_style = &cx.global::<Settings>().theme.terminal;
-                    to_alac_rgb(get_color_at_index(&index, &term_style.colors))
-                });
-                self.write_to_pty(&Input(format(color)), cx)
-            }
-            AlacTermEvent::CursorBlinkingChange => {
-                //TODO: Set a timer to blink the cursor on and off
-            }
-            AlacTermEvent::Bell => {
-                self.has_bell = true;
-                cx.emit(Event::TitleChanged);
-            }
-            AlacTermEvent::Exit => self.quit(&Quit, cx),
+            _ => cx.emit(*event),
+        })
+        .detach();
+
+        Terminal {
+            connection,
+            has_new_content: true,
+            has_bell: false,
+            modal,
         }
     }
 
     ///Resize the terminal and the PTY. This locks the terminal.
-    fn set_size(&mut self, new_size: SizeInfo) {
-        if new_size != self.cur_size {
-            self.pty_tx.0.send(Msg::Resize(new_size)).ok();
-            self.term.lock().resize(new_size);
-            self.cur_size = new_size;
-        }
+    fn set_size(&self, new_size: SizeInfo, cx: &mut MutableAppContext) {
+        self.connection.update(cx, |connection, _| {
+            connection.pty_tx.0.send(Msg::Resize(new_size)).ok();
+            connection.term.lock().resize(new_size);
+        })
     }
 
     ///Scroll the terminal. This locks the terminal
-    fn scroll_terminal(&mut self, scroll: &ScrollTerminal, _: &mut ViewContext<Self>) {
-        self.term.lock().scroll_display(Scroll::Delta(scroll.0));
+    fn scroll_terminal(&mut self, scroll: &ScrollTerminal, cx: &mut ViewContext<Self>) {
+        self.connection
+            .read(cx)
+            .term
+            .lock()
+            .scroll_display(Scroll::Delta(scroll.0));
+    }
+
+    fn input(&mut self, Input(text): &Input, cx: &mut ViewContext<Self>) {
+        self.connection.update(cx, |connection, cx| {
+            connection.write_to_pty(text.clone(), cx);
+        });
+
+        if self.has_bell {
+            self.has_bell = false;
+            cx.emit(Event::TitleChanged);
+        }
     }
 
     ///Create a new Terminal in the current working directory or the user's home directory
@@ -295,14 +203,9 @@ impl Terminal {
             .and_then(get_working_directory);
 
         workspace.add_item(
-            Box::new(cx.add_view(|cx| Terminal::new(cx, abs_path, false))),
+            Box::new(cx.add_view(|cx| Terminal::new(abs_path, false, cx))),
             cx,
         );
-    }
-
-    ///Send the shutdown message to Alacritty
-    fn shutdown_pty(&mut self) {
-        self.pty_tx.0.send(Msg::Shutdown).ok();
     }
 
     ///Tell Zed to close us
@@ -312,7 +215,7 @@ impl Terminal {
 
     ///Attempt to paste the clipboard into the terminal
     fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
-        let term = self.term.lock();
+        let term = self.connection.read(cx).term.lock();
         let copy_text = term.selection_to_string();
         match copy_text {
             Some(s) => cx.write_to_clipboard(ClipboardItem::new(s)),
@@ -323,74 +226,73 @@ impl Terminal {
     ///Attempt to paste the clipboard into the terminal
     fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
         if let Some(item) = cx.read_from_clipboard() {
-            self.write_to_pty(&Input(item.text().to_owned()), cx);
+            self.connection.update(cx, |connection, cx| {
+                connection.write_to_pty(item.text().to_owned(), cx);
+            })
         }
-    }
-
-    ///Write the Input payload to the tty. This locks the terminal so we can scroll it.
-    fn write_to_pty(&mut self, input: &Input, cx: &mut ViewContext<Self>) {
-        self.write_bytes_to_pty(input.0.clone().into_bytes(), cx);
-    }
-
-    ///Write the Input payload to the tty. This locks the terminal so we can scroll it.
-    fn write_bytes_to_pty(&mut self, input: Vec<u8>, cx: &mut ViewContext<Self>) {
-        //iTerm bell behavior, bell stays until terminal is interacted with
-        self.has_bell = false;
-        cx.emit(Event::TitleChanged);
-        self.term.lock().scroll_display(Scroll::Bottom);
-        self.pty_tx.notify(input);
     }
 
     ///Send the `up` key
     fn up(&mut self, _: &Up, cx: &mut ViewContext<Self>) {
-        self.write_to_pty(&Input(UP_SEQ.to_string()), cx);
+        self.connection.update(cx, |connection, cx| {
+            connection.write_to_pty(UP_SEQ.to_string(), cx);
+        });
     }
 
     ///Send the `down` key
     fn down(&mut self, _: &Down, cx: &mut ViewContext<Self>) {
-        self.write_to_pty(&Input(DOWN_SEQ.to_string()), cx);
+        self.connection.update(cx, |connection, cx| {
+            connection.write_to_pty(DOWN_SEQ.to_string(), cx);
+        });
     }
 
     ///Send the `tab` key
     fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
-        self.write_to_pty(&Input(TAB_CHAR.to_string()), cx);
+        self.connection.update(cx, |connection, cx| {
+            connection.write_to_pty(TAB_CHAR.to_string(), cx);
+        });
     }
 
     ///Send `SIGINT` (`ctrl-c`)
     fn send_sigint(&mut self, _: &Sigint, cx: &mut ViewContext<Self>) {
-        self.write_to_pty(&Input(ETX_CHAR.to_string()), cx);
+        self.connection.update(cx, |connection, cx| {
+            connection.write_to_pty(ETX_CHAR.to_string(), cx);
+        });
     }
 
     ///Send the `escape` key
     fn escape(&mut self, _: &Escape, cx: &mut ViewContext<Self>) {
-        self.write_to_pty(&Input(ESC_CHAR.to_string()), cx);
+        self.connection.update(cx, |connection, cx| {
+            connection.write_to_pty(ESC_CHAR.to_string(), cx);
+        });
     }
 
     ///Send the `delete` key. TODO: Difference between this and backspace?
     fn del(&mut self, _: &Del, cx: &mut ViewContext<Self>) {
-        // self.write_to_pty(&Input("\x1b[3~".to_string()), cx)
-        self.write_to_pty(&Input(DEL_CHAR.to_string()), cx);
+        self.connection.update(cx, |connection, cx| {
+            connection.write_to_pty(DEL_CHAR.to_string(), cx);
+        });
     }
 
     ///Send a carriage return. TODO: May need to check the terminal mode.
     fn carriage_return(&mut self, _: &Return, cx: &mut ViewContext<Self>) {
-        self.write_to_pty(&Input(CARRIAGE_RETURN_CHAR.to_string()), cx);
+        self.connection.update(cx, |connection, cx| {
+            connection.write_to_pty(CARRIAGE_RETURN_CHAR.to_string(), cx);
+        });
     }
 
     //Send the `left` key
     fn left(&mut self, _: &Left, cx: &mut ViewContext<Self>) {
-        self.write_to_pty(&Input(LEFT_SEQ.to_string()), cx);
+        self.connection.update(cx, |connection, cx| {
+            connection.write_to_pty(LEFT_SEQ.to_string(), cx);
+        });
     }
 
     //Send the `right` key
     fn right(&mut self, _: &Right, cx: &mut ViewContext<Self>) {
-        self.write_to_pty(&Input(RIGHT_SEQ.to_string()), cx);
-    }
-}
-
-impl Drop for Terminal {
-    fn drop(&mut self) {
-        self.shutdown_pty();
+        self.connection.update(cx, |connection, cx| {
+            connection.write_to_pty(RIGHT_SEQ.to_string(), cx);
+        });
     }
 }
 
@@ -417,7 +319,9 @@ impl View for Terminal {
 
     fn keymap_context(&self, _: &gpui::AppContext) -> gpui::keymap::Context {
         let mut context = Self::default_keymap_context();
-        context.set.insert("ModalTerminal".into());
+        if self.modal {
+            context.set.insert("ModalTerminal".into());
+        }
         context
     }
 }
@@ -441,15 +345,18 @@ impl Item for Terminal {
         };
 
         flex.with_child(
-            Label::new(self.title.clone(), tab_theme.label.clone())
-                .aligned()
-                .contained()
-                .with_margin_left(if self.has_bell {
-                    search_theme.tab_icon_spacing
-                } else {
-                    0.
-                })
-                .boxed(),
+            Label::new(
+                self.connection.read(cx).title.clone(),
+                tab_theme.label.clone(),
+            )
+            .aligned()
+            .contained()
+            .with_margin_left(if self.has_bell {
+                search_theme.tab_icon_spacing
+            } else {
+                0.
+            })
+            .boxed(),
         )
         .boxed()
     }
@@ -458,7 +365,11 @@ impl Item for Terminal {
         //From what I can tell, there's no  way to tell the current working
         //Directory of the terminal from outside the terminal. There might be
         //solutions to this, but they are non-trivial and require more IPC
-        Some(Terminal::new(cx, self.associated_directory.clone(), false))
+        Some(Terminal::new(
+            self.connection.read(cx).associated_directory.clone(),
+            false,
+            cx,
+        ))
     }
 
     fn project_path(&self, _cx: &gpui::AppContext) -> Option<ProjectPath> {
@@ -540,24 +451,29 @@ mod tests {
     use gpui::TestAppContext;
     use itertools::Itertools;
     use project::{FakeFs, Fs, RealFs, RemoveOptions, Worktree};
-    use std::{path::Path, sync::atomic::AtomicUsize, time::Duration};
+    use std::{
+        path::Path,
+        sync::{atomic::AtomicUsize, Arc},
+        time::Duration,
+    };
 
     ///Basic integration test, can we get the terminal to show up, execute a command,
     //and produce noticable output?
     #[gpui::test]
     async fn test_terminal(cx: &mut TestAppContext) {
-        let terminal = cx.add_view(Default::default(), |cx| Terminal::new(cx, None, false));
+        let terminal = cx.add_view(Default::default(), |cx| Terminal::new(None, false, cx));
         cx.set_condition_duration(Duration::from_secs(2));
         terminal.update(cx, |terminal, cx| {
-            terminal.write_to_pty(&Input(("expr 3 + 4".to_string()).to_string()), cx);
+            terminal.connection.update(cx, |connection, cx| {
+                connection.write_to_pty("expr 3 + 4".to_string(), cx);
+            });
             terminal.carriage_return(&Return, cx);
         });
 
         terminal
-            .condition(cx, |terminal, _cx| {
-                let term = terminal.term.clone();
+            .condition(cx, |terminal, cx| {
+                let term = terminal.connection.read(cx).term.clone();
                 let content = grid_as_str(term.lock().renderable_content().display_iter);
-                dbg!(&content);
                 content.contains("7")
             })
             .await;
@@ -647,24 +563,34 @@ mod tests {
     ///If this test is failing for you, check that DEBUG_TERMINAL_WIDTH is wide enough to fit your entire command prompt!
     #[gpui::test]
     async fn test_copy(cx: &mut TestAppContext) {
-        let terminal = cx.add_view(Default::default(), |cx| Terminal::new(cx, None, false));
+        let mut result_line: i32 = 0;
+        let terminal = cx.add_view(Default::default(), |cx| Terminal::new(None, false, cx));
         cx.set_condition_duration(Duration::from_secs(2));
 
         terminal.update(cx, |terminal, cx| {
-            terminal.write_to_pty(&Input(("expr 3 + 4".to_string()).to_string()), cx);
+            terminal.connection.update(cx, |connection, cx| {
+                connection.write_to_pty("expr 3 + 4".to_string(), cx);
+            });
             terminal.carriage_return(&Return, cx);
         });
 
         terminal
-            .condition(cx, |terminal, _cx| {
-                let term = terminal.term.clone();
+            .condition(cx, |terminal, cx| {
+                let term = terminal.connection.read(cx).term.clone();
                 let content = grid_as_str(term.lock().renderable_content().display_iter);
-                content.contains("7")
+
+                if content.contains("7") {
+                    let idx = content.chars().position(|c| c == '7').unwrap();
+                    result_line = content.chars().take(idx).filter(|c| *c == '\n').count() as i32;
+                    true
+                } else {
+                    false
+                }
             })
             .await;
 
         terminal.update(cx, |terminal, cx| {
-            let mut term = terminal.term.lock();
+            let mut term = terminal.connection.read(cx).term.lock();
             term.selection = Some(Selection::new(
                 SelectionType::Semantic,
                 Point::new(Line(2), Column(0)),

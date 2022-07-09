@@ -16,7 +16,7 @@ use std::{collections::HashMap, ffi::c_void, iter::Peekable, mem, sync::Arc, vec
 
 const SHADERS_METALLIB: &'static [u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
-const INSTANCE_BUFFER_SIZE: usize = 1024 * 1024; // This is an arbitrary decision. There's probably a more optimal value.
+const INSTANCE_BUFFER_SIZE: usize = 8192 * 1024; // This is an arbitrary decision. There's probably a more optimal value.
 
 pub struct Renderer {
     sprite_cache: SpriteCache,
