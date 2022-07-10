@@ -460,7 +460,8 @@ impl ProjectItem for Editor {
 
 pub struct CursorPosition {
     position: Option<Point>,
-    selected_count: usize,
+    selected_line_count: u32,
+    selected_character_count: usize,
     _observe_active_editor: Option<Subscription>,
 }
 
@@ -468,7 +469,8 @@ impl CursorPosition {
     pub fn new() -> Self {
         Self {
             position: None,
-            selected_count: 0,
+            selected_line_count: 0,
+            selected_character_count: 0,
             _observe_active_editor: None,
         }
     }
@@ -476,16 +478,23 @@ impl CursorPosition {
     fn update_position(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
         let editor = editor.read(cx);
         let buffer = editor.buffer().read(cx).snapshot(cx);
+        let selections = &editor.selections;
 
-        self.selected_count = 0;
+        self.selected_line_count = selections
+            .all::<Point>(cx)
+            .iter()
+            // We always add 1 because at a minimum, 1 line is always "selected" - whichever line the cursor is currently on
+            .map(|point_selection| (point_selection.end.row - point_selection.start.row) + 1)
+            .sum();
+
+        self.selected_character_count = 0;
         let mut last_selection: Option<Selection<usize>> = None;
-        for selection in editor.selections.all::<usize>(cx) {
-            self.selected_count += selection.end - selection.start;
-            if last_selection
-                .as_ref()
-                .map_or(true, |last_selection| selection.id > last_selection.id)
-            {
-                last_selection = Some(selection);
+        for usize_selection in selections.all::<usize>(cx) {
+            self.selected_character_count += usize_selection.end - usize_selection.start;
+            if last_selection.as_ref().map_or(true, |last_selection| {
+                usize_selection.id > last_selection.id
+            }) {
+                last_selection = Some(usize_selection);
             }
         }
         self.position = last_selection.map(|s| s.head().to_point(&buffer));
@@ -507,8 +516,17 @@ impl View for CursorPosition {
         if let Some(position) = self.position {
             let theme = &cx.global::<Settings>().theme.workspace.status_bar;
             let mut text = format!("{},{}", position.row + 1, position.column + 1);
-            if self.selected_count > 0 {
-                write!(text, " ({} selected)", self.selected_count).unwrap();
+            if self.selected_line_count > 1 && self.selected_character_count > 0 {
+                write!(
+                    text,
+                    " ({} lines, {} chars)",
+                    self.selected_line_count, self.selected_character_count
+                )
+                .unwrap();
+            } else if self.selected_line_count > 1 {
+                write!(text, " ({} lines)", self.selected_line_count).unwrap();
+            } else if self.selected_character_count > 0 {
+                write!(text, " ({} chars)", self.selected_character_count).unwrap();
             }
             Label::new(text, theme.cursor_position.clone()).boxed()
         } else {
