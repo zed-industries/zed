@@ -268,8 +268,6 @@ impl WasiCtxAlloc {
 /// Represents a WebAssembly plugin, with access to the WebAssembly System Inferface.
 /// Build a new plugin using [`PluginBuilder`].
 pub struct Plugin {
-    engine: Engine,
-    module: Module,
     store: Store<WasiCtxAlloc>,
     instance: Instance,
 }
@@ -293,9 +291,7 @@ impl Plugin {
         }
         println!();
     }
-}
 
-impl Plugin {
     async fn init(
         precompiled: bool,
         module: Vec<u8>,
@@ -335,12 +331,7 @@ impl Plugin {
             free_buffer,
         });
 
-        Ok(Plugin {
-            engine,
-            module,
-            store,
-            instance,
-        })
+        Ok(Plugin { store, instance })
     }
 
     /// Attaches a file or directory the the given system path to the runtime.
