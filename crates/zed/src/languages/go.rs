@@ -309,12 +309,12 @@ mod tests {
     use gpui::color::Color;
     use theme::SyntaxTheme;
 
-    #[test]
-    fn test_go_label_for_completion() {
+    #[gpui::test]
+    async fn test_go_label_for_completion() {
         let language = language(
             "go",
             tree_sitter_go::language(),
-            Some(smol::block_on(LspAdapter::new(GoLspAdapter))),
+            Some(LspAdapter::new(GoLspAdapter).await),
         );
 
         let theme = SyntaxTheme::new(vec![
@@ -334,12 +334,14 @@ mod tests {
         let highlight_field = grammar.highlight_id_for_name("property").unwrap();
 
         assert_eq!(
-            smol::block_on(language.label_for_completion(&lsp::CompletionItem {
-                kind: Some(lsp::CompletionItemKind::FUNCTION),
-                label: "Hello".to_string(),
-                detail: Some("func(a B) c.D".to_string()),
-                ..Default::default()
-            })),
+            language
+                .label_for_completion(&lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
+                    label: "Hello".to_string(),
+                    detail: Some("func(a B) c.D".to_string()),
+                    ..Default::default()
+                })
+                .await,
             Some(CodeLabel {
                 text: "Hello(a B) c.D".to_string(),
                 filter_range: 0..5,
@@ -353,12 +355,14 @@ mod tests {
 
         // Nested methods
         assert_eq!(
-            smol::block_on(language.label_for_completion(&lsp::CompletionItem {
-                kind: Some(lsp::CompletionItemKind::METHOD),
-                label: "one.two.Three".to_string(),
-                detail: Some("func() [3]interface{}".to_string()),
-                ..Default::default()
-            })),
+            language
+                .label_for_completion(&lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::METHOD),
+                    label: "one.two.Three".to_string(),
+                    detail: Some("func() [3]interface{}".to_string()),
+                    ..Default::default()
+                })
+                .await,
             Some(CodeLabel {
                 text: "one.two.Three() [3]interface{}".to_string(),
                 filter_range: 0..13,
@@ -372,12 +376,14 @@ mod tests {
 
         // Nested fields
         assert_eq!(
-            smol::block_on(language.label_for_completion(&lsp::CompletionItem {
-                kind: Some(lsp::CompletionItemKind::FIELD),
-                label: "two.Three".to_string(),
-                detail: Some("a.Bcd".to_string()),
-                ..Default::default()
-            })),
+            language
+                .label_for_completion(&lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FIELD),
+                    label: "two.Three".to_string(),
+                    detail: Some("a.Bcd".to_string()),
+                    ..Default::default()
+                })
+                .await,
             Some(CodeLabel {
                 text: "two.Three a.Bcd".to_string(),
                 filter_range: 0..9,
