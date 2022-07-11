@@ -1,7 +1,10 @@
 pub use bincode;
 pub use serde;
 
-// TODO: move the implementation to one place?
+/// This is the buffer that is used Wasm side.
+/// Note that it mirrors the functionality of
+/// the `WasiBuffer` found in `plugin_runtime/src/plugin.rs`,
+/// But has a few different methods.
 pub struct __Buffer {
     pub ptr: u32, // *const u8,
     pub len: u32, // usize,

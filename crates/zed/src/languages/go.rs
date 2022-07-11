@@ -324,7 +324,7 @@ mod tests {
             ("number".into(), Color::yellow().into()),
             ("property".into(), Color::white().into()),
         ]);
-        language.set_theme(theme.into());
+        language.set_theme(&theme);
 
         let grammar = language.grammar().unwrap();
         let highlight_function = grammar.highlight_id_for_name("function").unwrap();

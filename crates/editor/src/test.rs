@@ -457,10 +457,12 @@ impl<'a> EditorLspTestContext<'a> {
                 .unwrap_or(&"txt".to_string())
         );
 
-        let mut fake_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-            capabilities,
-            ..Default::default()
-        }));
+        let mut fake_servers = language
+            .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+                capabilities,
+                ..Default::default()
+            }))
+            .await;
 
         let project = Project::test(params.fs.clone(), [], cx).await;
         project.update(cx, |project, _| project.languages().add(Arc::new(language)));

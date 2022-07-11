@@ -1440,7 +1440,7 @@ async fn test_collaborating_with_diagnostics(
         },
         Some(tree_sitter_rust::language()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default());
+    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
     client_a.language_registry.add(Arc::new(language));
 
     // Share a project as client A
@@ -1675,16 +1675,18 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         },
         Some(tree_sitter_rust::language()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-        capabilities: lsp::ServerCapabilities {
-            completion_provider: Some(lsp::CompletionOptions {
-                trigger_characters: Some(vec![".".to_string()]),
+    let mut fake_language_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string()]),
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
+            },
             ..Default::default()
-        },
-        ..Default::default()
-    }));
+        }))
+        .await;
     client_a.language_registry.add(Arc::new(language));
 
     client_a
@@ -1928,7 +1930,7 @@ async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
         },
         Some(tree_sitter_rust::language()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default());
+    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
     client_a.language_registry.add(Arc::new(language));
 
     // Here we insert a fake tree with a directory that exists on disk. This is needed
@@ -2014,7 +2016,7 @@ async fn test_definition(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         },
         Some(tree_sitter_rust::language()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default());
+    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
     client_a.language_registry.add(Arc::new(language));
 
     client_a
@@ -2123,7 +2125,7 @@ async fn test_references(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         },
         Some(tree_sitter_rust::language()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default());
+    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
     client_a.language_registry.add(Arc::new(language));
 
     client_a
@@ -2303,7 +2305,7 @@ async fn test_document_highlights(cx_a: &mut TestAppContext, cx_b: &mut TestAppC
         },
         Some(tree_sitter_rust::language()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default());
+    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
     client_a.language_registry.add(Arc::new(language));
 
     let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
@@ -2400,7 +2402,7 @@ async fn test_lsp_hover(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         },
         Some(tree_sitter_rust::language()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default());
+    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
     client_a.language_registry.add(Arc::new(language));
 
     let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
@@ -2488,7 +2490,7 @@ async fn test_project_symbols(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
         },
         Some(tree_sitter_rust::language()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default());
+    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
     client_a.language_registry.add(Arc::new(language));
 
     client_a
@@ -2591,7 +2593,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
         },
         Some(tree_sitter_rust::language()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default());
+    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
     client_a.language_registry.add(Arc::new(language));
 
     client_a
@@ -2662,7 +2664,7 @@ async fn test_collaborating_with_code_actions(
         },
         Some(tree_sitter_rust::language()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default());
+    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
     client_a.language_registry.add(Arc::new(language));
 
     client_a
@@ -2867,16 +2869,18 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         },
         Some(tree_sitter_rust::language()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-        capabilities: lsp::ServerCapabilities {
-            rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
-                prepare_provider: Some(true),
-                work_done_progress_options: Default::default(),
-            })),
+    let mut fake_language_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: Default::default(),
+                })),
+                ..Default::default()
+            },
             ..Default::default()
-        },
-        ..Default::default()
-    }));
+        }))
+        .await;
     client_a.language_registry.add(Arc::new(language));
 
     client_a
@@ -3051,10 +3055,12 @@ async fn test_language_server_statuses(
         },
         Some(tree_sitter_rust::language()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-        name: "the-language-server",
-        ..Default::default()
-    }));
+    let mut fake_language_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            name: "the-language-server",
+            ..Default::default()
+        }))
+        .await;
     client_a.language_registry.add(Arc::new(language));
 
     client_a
@@ -4577,119 +4583,124 @@ async fn test_random_collaboration(
         },
         None,
     );
-    let _fake_servers = language.set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-        name: "the-fake-language-server",
-        capabilities: lsp::LanguageServer::full_capabilities(),
-        initializer: Some(Box::new({
-            let rng = rng.clone();
-            let fs = fs.clone();
-            let project = host_project.downgrade();
-            move |fake_server: &mut FakeLanguageServer| {
-                fake_server.handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
-                    Ok(Some(lsp::CompletionResponse::Array(vec![
-                        lsp::CompletionItem {
-                            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                                range: lsp::Range::new(
-                                    lsp::Position::new(0, 0),
-                                    lsp::Position::new(0, 0),
-                                ),
-                                new_text: "the-new-text".to_string(),
-                            })),
-                            ..Default::default()
+    let _fake_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            name: "the-fake-language-server",
+            capabilities: lsp::LanguageServer::full_capabilities(),
+            initializer: Some(Box::new({
+                let rng = rng.clone();
+                let fs = fs.clone();
+                let project = host_project.downgrade();
+                move |fake_server: &mut FakeLanguageServer| {
+                    fake_server.handle_request::<lsp::request::Completion, _, _>(
+                        |_, _| async move {
+                            Ok(Some(lsp::CompletionResponse::Array(vec![
+                                lsp::CompletionItem {
+                                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                        range: lsp::Range::new(
+                                            lsp::Position::new(0, 0),
+                                            lsp::Position::new(0, 0),
+                                        ),
+                                        new_text: "the-new-text".to_string(),
+                                    })),
+                                    ..Default::default()
+                                },
+                            ])))
                         },
-                    ])))
-                });
+                    );
 
-                fake_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
-                    |_, _| async move {
-                        Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
-                            lsp::CodeAction {
-                                title: "the-code-action".to_string(),
-                                ..Default::default()
-                            },
-                        )]))
-                    },
-                );
+                    fake_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+                        |_, _| async move {
+                            Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                                lsp::CodeAction {
+                                    title: "the-code-action".to_string(),
+                                    ..Default::default()
+                                },
+                            )]))
+                        },
+                    );
 
-                fake_server.handle_request::<lsp::request::PrepareRenameRequest, _, _>(
-                    |params, _| async move {
-                        Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
-                            params.position,
-                            params.position,
-                        ))))
-                    },
-                );
+                    fake_server.handle_request::<lsp::request::PrepareRenameRequest, _, _>(
+                        |params, _| async move {
+                            Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+                                params.position,
+                                params.position,
+                            ))))
+                        },
+                    );
 
-                fake_server.handle_request::<lsp::request::GotoDefinition, _, _>({
-                    let fs = fs.clone();
-                    let rng = rng.clone();
-                    move |_, _| {
+                    fake_server.handle_request::<lsp::request::GotoDefinition, _, _>({
                         let fs = fs.clone();
                         let rng = rng.clone();
-                        async move {
-                            let files = fs.files().await;
-                            let mut rng = rng.lock();
-                            let count = rng.gen_range::<usize, _>(1..3);
-                            let files = (0..count)
-                                .map(|_| files.choose(&mut *rng).unwrap())
-                                .collect::<Vec<_>>();
-                            log::info!("LSP: Returning definitions in files {:?}", &files);
-                            Ok(Some(lsp::GotoDefinitionResponse::Array(
-                                files
-                                    .into_iter()
-                                    .map(|file| lsp::Location {
-                                        uri: lsp::Url::from_file_path(file).unwrap(),
-                                        range: Default::default(),
-                                    })
-                                    .collect(),
-                            )))
+                        move |_, _| {
+                            let fs = fs.clone();
+                            let rng = rng.clone();
+                            async move {
+                                let files = fs.files().await;
+                                let mut rng = rng.lock();
+                                let count = rng.gen_range::<usize, _>(1..3);
+                                let files = (0..count)
+                                    .map(|_| files.choose(&mut *rng).unwrap())
+                                    .collect::<Vec<_>>();
+                                log::info!("LSP: Returning definitions in files {:?}", &files);
+                                Ok(Some(lsp::GotoDefinitionResponse::Array(
+                                    files
+                                        .into_iter()
+                                        .map(|file| lsp::Location {
+                                            uri: lsp::Url::from_file_path(file).unwrap(),
+                                            range: Default::default(),
+                                        })
+                                        .collect(),
+                                )))
+                            }
                         }
-                    }
-                });
+                    });
 
-                fake_server.handle_request::<lsp::request::DocumentHighlightRequest, _, _>({
-                    let rng = rng.clone();
-                    let project = project.clone();
-                    move |params, mut cx| {
-                        let highlights = if let Some(project) = project.upgrade(&cx) {
-                            project.update(&mut cx, |project, cx| {
-                                let path = params
-                                    .text_document_position_params
-                                    .text_document
-                                    .uri
-                                    .to_file_path()
-                                    .unwrap();
-                                let (worktree, relative_path) =
-                                    project.find_local_worktree(&path, cx)?;
-                                let project_path =
-                                    ProjectPath::from((worktree.read(cx).id(), relative_path));
-                                let buffer = project.get_open_buffer(&project_path, cx)?.read(cx);
+                    fake_server.handle_request::<lsp::request::DocumentHighlightRequest, _, _>({
+                        let rng = rng.clone();
+                        let project = project.clone();
+                        move |params, mut cx| {
+                            let highlights = if let Some(project) = project.upgrade(&cx) {
+                                project.update(&mut cx, |project, cx| {
+                                    let path = params
+                                        .text_document_position_params
+                                        .text_document
+                                        .uri
+                                        .to_file_path()
+                                        .unwrap();
+                                    let (worktree, relative_path) =
+                                        project.find_local_worktree(&path, cx)?;
+                                    let project_path =
+                                        ProjectPath::from((worktree.read(cx).id(), relative_path));
+                                    let buffer =
+                                        project.get_open_buffer(&project_path, cx)?.read(cx);
 
-                                let mut highlights = Vec::new();
-                                let highlight_count = rng.lock().gen_range(1..=5);
-                                let mut prev_end = 0;
-                                for _ in 0..highlight_count {
-                                    let range =
-                                        buffer.random_byte_range(prev_end, &mut *rng.lock());
+                                    let mut highlights = Vec::new();
+                                    let highlight_count = rng.lock().gen_range(1..=5);
+                                    let mut prev_end = 0;
+                                    for _ in 0..highlight_count {
+                                        let range =
+                                            buffer.random_byte_range(prev_end, &mut *rng.lock());
 
-                                    highlights.push(lsp::DocumentHighlight {
-                                        range: range_to_lsp(range.to_point_utf16(buffer)),
-                                        kind: Some(lsp::DocumentHighlightKind::READ),
-                                    });
-                                    prev_end = range.end;
-                                }
-                                Some(highlights)
-                            })
-                        } else {
-                            None
-                        };
-                        async move { Ok(highlights) }
-                    }
-                });
-            }
-        })),
-        ..Default::default()
-    }));
+                                        highlights.push(lsp::DocumentHighlight {
+                                            range: range_to_lsp(range.to_point_utf16(buffer)),
+                                            kind: Some(lsp::DocumentHighlightKind::READ),
+                                        });
+                                        prev_end = range.end;
+                                    }
+                                    Some(highlights)
+                                })
+                            } else {
+                                None
+                            };
+                            async move { Ok(highlights) }
+                        }
+                    });
+                }
+            })),
+            ..Default::default()
+        }))
+        .await;
     host_language_registry.add(Arc::new(language));
 
     let op_start_signal = futures::channel::mpsc::unbounded();

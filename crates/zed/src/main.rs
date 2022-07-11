@@ -217,7 +217,7 @@ fn main() {
         cx.observe_global::<Settings, _>({
             let languages = languages.clone();
             move |cx| {
-                languages.set_theme(cx.global::<Settings>().theme.editor.syntax.clone());
+                languages.set_theme(cx.global::<Settings>().theme.clone());
             }
         })
         .detach();
@@ -225,9 +225,7 @@ fn main() {
         cx.spawn({
             let languages = languages.clone();
             |cx| async move {
-                cx.read(|cx| {
-                    languages.set_theme(cx.global::<Settings>().theme.editor.syntax.clone())
-                });
+                cx.read(|cx| languages.set_theme(cx.global::<Settings>().theme.clone()));
                 init_languages.await;
             }
         })

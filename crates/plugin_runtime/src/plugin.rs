@@ -16,7 +16,9 @@ use wasmtime_wasi::{Dir, WasiCtx, WasiCtxBuilder};
 /// Represents a resource currently managed by the plugin, like a file descriptor.
 pub struct PluginResource(u32);
 
-#[repr(C)]
+/// This is the buffer that is used Host side.
+/// Note that it mirrors the functionality of
+/// the `__Buffer` found in the `plugin/src/lib.rs` prelude.
 struct WasiBuffer {
     ptr: u32,
     len: u32,

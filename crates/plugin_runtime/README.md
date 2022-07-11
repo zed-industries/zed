@@ -31,6 +31,7 @@ All functions that Plugin exports must have the following properties:
 Additionally, Plugin must export an:
 
 - `__alloc_buffer` function that, given a `u32` length, returns a `u32` pointer to a buffer of that length.
+- `__free_buffer` function that, given a buffer encoded as a `u64`, frees the buffer at the given location, and does not return anything.
 
 Note that all of these requirements are automatically fullfilled for any Rust Wasm plugin that uses the `plugin` crate, and imports the `prelude`. 
 

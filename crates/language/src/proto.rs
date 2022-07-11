@@ -410,20 +410,18 @@ pub async fn deserialize_completion(
         .and_then(deserialize_anchor)
         .ok_or_else(|| anyhow!("invalid old end"))?;
     let lsp_completion = serde_json::from_slice(&completion.lsp_completion)?;
+    let label = match language {
+        Some(l) => l.label_for_completion(&lsp_completion).await,
+        None => None,
+    };
+
     Ok(Completion {
         old_range: old_start..old_end,
         new_text: completion.new_text,
-        label: {
-            let label = match language {
-                Some(l) => l.label_for_completion(&lsp_completion).await,
-                None => None,
-            };
-
-            label.unwrap_or(CodeLabel::plain(
-                lsp_completion.label.clone(),
-                lsp_completion.filter_text.as_deref(),
-            ))
-        },
+        label: label.unwrap_or(CodeLabel::plain(
+            lsp_completion.label.clone(),
+            lsp_completion.filter_text.as_deref(),
+        )),
         lsp_completion,
     })
 }

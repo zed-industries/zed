@@ -67,7 +67,6 @@ pub fn export(args: TokenStream, function: TokenStream) -> TokenStream {
         #inner_fn
 
         #[no_mangle]
-        // TODO: switch len from usize to u32?
         pub extern "C" fn #outer_fn_name(packed_buffer: u64) -> u64 {
             // setup
             let data = unsafe { ::plugin::__Buffer::from_u64(packed_buffer).to_vec() };

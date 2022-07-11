@@ -31,7 +31,7 @@ use std::{
     str,
     sync::Arc,
 };
-use theme::SyntaxTheme;
+use theme::{SyntaxTheme, Theme};
 use tree_sitter::{self, Query};
 use util::ResultExt;
 
@@ -255,9 +255,6 @@ fn deserialize_regex<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Regex>, D
     }
 }
 
-// #[cfg(any(test, feature = "test-support"))]
-// pub type FakeLspAdapter = Arc<FakeLspAdapterInner>;
-
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeLspAdapter {
     pub name: &'static str,
@@ -279,7 +276,6 @@ pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
     pub(crate) adapter: Option<Arc<LspAdapter>>,
-    pub(crate) theme: RwLock<Option<Arc<SyntaxTheme>>>,
 
     #[cfg(any(test, feature = "test-support"))]
     fake_adapter: Option<(
@@ -319,7 +315,7 @@ pub struct LanguageRegistry {
         >,
     >,
     subscription: RwLock<(watch::Sender<()>, watch::Receiver<()>)>,
-    theme: RwLock<Option<Arc<SyntaxTheme>>>,
+    theme: RwLock<Option<Arc<Theme>>>,
 }
 
 impl LanguageRegistry {
@@ -344,7 +340,7 @@ impl LanguageRegistry {
 
     pub fn add(&self, language: Arc<Language>) {
         if let Some(theme) = self.theme.read().clone() {
-            language.set_theme(theme);
+            language.set_theme(&theme.editor.syntax);
         }
         self.languages.write().push(language.clone());
         *self.subscription.write().0.borrow_mut() = ();
@@ -354,10 +350,10 @@ impl LanguageRegistry {
         self.subscription.read().1.clone()
     }
 
-    pub fn set_theme(&self, theme: Arc<SyntaxTheme>) {
+    pub fn set_theme(&self, theme: Arc<Theme>) {
         *self.theme.write() = Some(theme.clone());
         for language in self.languages.read().iter() {
-            language.set_theme(theme.clone());
+            language.set_theme(&theme.editor.syntax);
         }
     }
 
@@ -579,7 +575,6 @@ impl Language {
                 })
             }),
             adapter: None,
-            theme: Default::default(),
 
             #[cfg(any(test, feature = "test-support"))]
             fake_adapter: None,
@@ -624,13 +619,13 @@ impl Language {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn set_fake_lsp_adapter(
+    pub async fn set_fake_lsp_adapter(
         &mut self,
         fake_lsp_adapter: Arc<FakeLspAdapter>,
     ) -> mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
         let (servers_tx, servers_rx) = mpsc::unbounded();
         self.fake_adapter = Some((servers_tx, fake_lsp_adapter.clone()));
-        let adapter = smol::block_on(LspAdapter::new(fake_lsp_adapter));
+        let adapter = LspAdapter::new(fake_lsp_adapter).await;
         self.adapter = Some(adapter);
         servers_rx
     }
@@ -716,21 +711,11 @@ impl Language {
         c.is_whitespace() || self.config.autoclose_before.contains(c)
     }
 
-    /// Sets the theme to the given theme, and then calls [`highlight`].
-    pub fn set_theme(&self, theme: Arc<SyntaxTheme>) {
-        *self.theme.write() = Some(theme.clone());
-        self.highlight()
-    }
-
-    /// Highlights the grammar according to the current theme,
-    /// if one has been set using [`set_theme`].
-    pub fn highlight(&self) {
+    pub fn set_theme(&self, theme: &SyntaxTheme) {
         if let Some(grammar) = self.grammar.as_ref() {
             if let Some(highlights_query) = &grammar.highlights_query {
-                if let Some(theme) = self.theme.read().as_ref() {
-                    *grammar.highlight_map.lock() =
-                        HighlightMap::new(highlights_query.capture_names(), &theme);
-                }
+                *grammar.highlight_map.lock() =
+                    HighlightMap::new(highlights_query.capture_names(), theme);
             }
         }
     }
