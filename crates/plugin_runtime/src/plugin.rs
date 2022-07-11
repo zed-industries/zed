@@ -64,14 +64,22 @@ pub struct PluginBuilder {
     linker: Linker<WasiCtxAlloc>,
 }
 
+/// Creates a default engine for compiling Wasm.
+/// N.B.: this must create the same `Engine` as
+/// the `create_default_engine` function
+/// in `plugin_runtime/build.rs`.
+pub fn create_default_engine() -> Result<Engine, Error> {
+    let mut config = Config::default();
+    config.async_support(true);
+    // config.epoch_interruption(true);
+    Engine::new(&config)
+}
+
 impl PluginBuilder {
     /// Create a new [`PluginBuilder`] with the given WASI context.
     /// Using the default context is a safe bet, see [`new_with_default_context`].
     pub fn new(wasi_ctx: WasiCtx) -> Result<Self, Error> {
-        let mut config = Config::default();
-        config.async_support(true);
-        // config.epoch_interruption(true);
-        let engine = Engine::new(&config)?;
+        let engine = create_default_engine()?;
         let linker = Linker::new(&engine);
 
         Ok(PluginBuilder {
