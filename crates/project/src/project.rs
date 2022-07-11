@@ -1806,7 +1806,7 @@ impl Project {
     fn register_buffer_with_language_server(
         &mut self,
         buffer_handle: &ModelHandle<Buffer>,
-        cx: &mut ModelContext<'_, Self>,
+        cx: &mut ModelContext<Self>,
     ) {
         let buffer = buffer_handle.read(cx);
         let buffer_id = buffer.remote_id();
@@ -1901,7 +1901,7 @@ impl Project {
         &mut self,
         buffer: ModelHandle<Buffer>,
         event: &BufferEvent,
-        cx: &mut ModelContext<'_, Self>,
+        cx: &mut ModelContext<Self>,
     ) -> Option<()> {
         match event {
             BufferEvent::Operation(operation) => {
@@ -2508,12 +2508,12 @@ impl Project {
             return;
         }
 
-        let same_token =
+        let is_disk_based_diagnostics_progress =
             Some(token.as_ref()) == disk_based_diagnostics_progress_token.as_ref().map(|x| &**x);
 
         match progress {
             lsp::WorkDoneProgress::Begin(report) => {
-                if same_token {
+                if is_disk_based_diagnostics_progress {
                     language_server_status.has_pending_diagnostic_updates = true;
                     self.disk_based_diagnostics_started(server_id, cx);
                     self.broadcast_language_server_update(
@@ -2544,7 +2544,7 @@ impl Project {
                 }
             }
             lsp::WorkDoneProgress::Report(report) => {
-                if !same_token {
+                if !is_disk_based_diagnostics_progress {
                     self.on_lsp_work_progress(
                         server_id,
                         token.clone(),
@@ -2570,7 +2570,7 @@ impl Project {
             lsp::WorkDoneProgress::End(_) => {
                 language_server_status.progress_tokens.remove(&token);
 
-                if same_token {
+                if is_disk_based_diagnostics_progress {
                     language_server_status.has_pending_diagnostic_updates = false;
                     self.disk_based_diagnostics_finished(server_id, cx);
                     self.broadcast_language_server_update(

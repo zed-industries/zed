@@ -119,7 +119,8 @@ impl PluginBuilder {
                     let buffer = WasiBuffer::from_u64(packed_buffer);
 
                     // get the args passed from Guest
-                    let args = Plugin::buffer_to_bytes(&mut plugin_memory, &mut caller, &buffer)?;
+                    let args =
+                        Plugin::buffer_to_bytes(&mut plugin_memory, caller.as_context(), &buffer)?;
 
                     let args: A = Plugin::deserialize_to_type(&args)?;
 
@@ -477,19 +478,18 @@ impl Plugin {
         Ok(result)
     }
 
-    // TODO: don't allocate a new `Vec`!
     /// Takes a `(ptr, len)` pair and returns the corresponding deserialized buffer.
     fn buffer_to_bytes<'a>(
         plugin_memory: &'a Memory,
-        store: impl AsContext<Data = WasiCtxAlloc> + 'a,
-        buffer: &WasiBuffer,
-    ) -> Result<Vec<u8>, Error> {
+        store: wasmtime::StoreContext<'a, WasiCtxAlloc>,
+        buffer: &'a WasiBuffer,
+    ) -> Result<&'a [u8], Error> {
         let buffer_start = buffer.ptr as usize;
         let buffer_end = buffer_start + buffer.len as usize;
 
         // read the buffer at this point into a byte array
         // deserialize the byte array into the provided serde type
-        let result = plugin_memory.data(store.as_context())[buffer_start..buffer_end].to_vec();
+        let result = &plugin_memory.data(store)[buffer_start..buffer_end];
         Ok(result)
     }
 
@@ -519,7 +519,6 @@ impl Plugin {
         })
     }
 
-    // TODO: dont' use as for conversions
     /// Asynchronously calls a function defined Guest-side.
     pub async fn call<A: Serialize, R: DeserializeOwned>(
         &mut self,
