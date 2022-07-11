@@ -36,8 +36,6 @@ mod tests {
                 .host_function_async("import_half", |a: u32| async move { a / 2 })
                 .unwrap()
                 .host_function_async("command_async", |command: String| async move {
-                    // TODO: actual thing
-                    dbg!(&command);
                     let mut args = command.split(' ');
                     let command = args.next().unwrap();
                     smol::process::Command::new(command)
@@ -45,10 +43,7 @@ mod tests {
                         .output()
                         .await
                         .ok()
-                        .map(|output| {
-                            dbg!("Did run command!");
-                            output.stdout
-                        })
+                        .map(|output| output.stdout)
                 })
                 .unwrap()
                 .init(

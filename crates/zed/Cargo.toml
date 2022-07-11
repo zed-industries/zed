@@ -39,7 +39,6 @@ journal = { path = "../journal" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
 outline = { path = "../outline" }
-plugin = { path = "../plugin" }
 plugin_runtime = { path = "../plugin_runtime" }
 project = { path = "../project" }
 project_panel = { path = "../project_panel" }
@@ -101,7 +100,6 @@ tree-sitter-python = "0.20.2"
 tree-sitter-toml = { git = "https://github.com/tree-sitter/tree-sitter-toml", rev = "342d9be207c2dba869b9967124c679b5e6fd0ebe" }
 tree-sitter-typescript = "0.20.1"
 url = "2.2"
-
 
 [dev-dependencies]
 text = { path = "../text", features = ["test-support"] }

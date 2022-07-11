@@ -7,6 +7,7 @@ use util::ResultExt;
 mod c;
 mod go;
 mod installation;
+mod json;
 mod language_plugin;
 mod python;
 mod rust;
@@ -37,7 +38,7 @@ pub async fn init(languages: Arc<LanguageRegistry>, executor: Arc<Background>) {
         (
             "json",
             tree_sitter_json::language(),
-            // Some(LspAdapter::new(json::JsonLspAdapter)),
+            // Some(LspAdapter::new(json::JsonLspAdapter).await),
             match language_plugin::new_json(executor).await.log_err() {
                 Some(lang) => Some(LspAdapter::new(lang).await),
                 None => None,

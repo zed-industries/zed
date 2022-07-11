@@ -11,7 +11,6 @@ use util::ResultExt;
 pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
     let plugin = PluginBuilder::new_with_default_ctx()?
         .host_function_async("command", |command: String| async move {
-            dbg!(&command);
             let mut args = command.split(' ');
             let command = args.next().unwrap();
             smol::process::Command::new(command)
@@ -26,7 +25,6 @@ pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
             include_bytes!("../../../../plugins/bin/json_language.wasm.pre"),
         )
         .await?;
-    // smol::Timer::after(std::time::Duration::from_secs(5)).await;
     PluginLspAdapter::new(plugin, executor).await
 }
 
@@ -58,22 +56,6 @@ impl PluginLspAdapter {
     }
 }
 
-// struct Versions {
-//     language_version: String,
-//     server_version: String,
-// }
-
-// TODO: is this the root cause?
-// sketch:
-// - smol command is run, hits await, switches
-// - name is run, blocked on
-// - smol command is still pending
-// - name is stuck for some reason(?)
-// - no progress made...
-// - deadlock!!!?
-// I wish there was high-level instrumentation for this...
-// - it's totally a deadlock, the proof is in the pudding
-
 #[async_trait]
 impl LspAdapterTrait for PluginLspAdapter {
     async fn name(&self) -> LanguageServerName {
@@ -100,7 +82,6 @@ impl LspAdapterTrait for PluginLspAdapter {
         &self,
         _: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        // let versions: Result<Option<String>> = call_block!(self, "fetch_latest_server_version", ());
         let runtime = self.runtime.clone();
         let function = self.fetch_latest_server_version;
         self.executor

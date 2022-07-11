@@ -5,7 +5,7 @@ fn main() {
     let base = Path::new("../../plugins");
 
     // println!("cargo:rerun-if-changed=../../plugins/*");
-    println!("cargo:warning=Rebuilding plugins...");
+    println!("cargo:warning=Precompiling plugins...");
 
     let _ = std::fs::remove_dir_all(base.join("bin"));
     let _ =
@@ -27,7 +27,6 @@ fn main() {
 
     let binaries = std::fs::read_dir(base.join("target/wasm32-wasi/release"))
         .expect("Could not find compiled plugins in target");
-    println!("cargo:warning={:?}", binaries);
 
     let engine = create_engine();
 
