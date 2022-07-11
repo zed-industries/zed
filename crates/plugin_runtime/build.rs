@@ -10,21 +10,27 @@ fn main() {
     let _ =
         std::fs::create_dir_all(base.join("bin")).expect("Could not make plugins bin directory");
 
+    let (profile_flags, profile_target) = match std::env::var("PROFILE").unwrap().as_str() {
+        "debug" => (&[][..], "debug"),
+        "release" => (&["--release"][..], "release"),
+        unknown => panic!("unknown profile `{}`", unknown),
+    };
+
     let build_successful = std::process::Command::new("cargo")
         .args([
             "build",
-            "--release",
             "--target",
             "wasm32-wasi",
             "--manifest-path",
             base.join("Cargo.toml").to_str().unwrap(),
         ])
+        .args(profile_flags)
         .status()
         .expect("Could not build plugins")
         .success();
     assert!(build_successful);
 
-    let binaries = std::fs::read_dir(base.join("target/wasm32-wasi/release"))
+    let binaries = std::fs::read_dir(base.join("target/wasm32-wasi").join(profile_target))
         .expect("Could not find compiled plugins in target");
 
     let engine = create_default_engine();
