@@ -3312,27 +3312,11 @@ impl Project {
                 } else {
                     return Ok(Default::default());
                 };
-
-                struct PartialSymbol {
-                    source_worktree_id: WorktreeId,
-                    worktree_id: WorktreeId,
-                    language_server_name: LanguageServerName,
-                    path: PathBuf,
-                    language: Option<Arc<Language>>,
-                    name: String,
-                    kind: lsp::SymbolKind,
-                    range: Range<PointUtf16>,
-                    signature: [u8; 32],
-                }
-
-                let partial_symbols = this.read_with(&cx, |this, cx| {
-                    let mut partial_symbols = Vec::new();
+                let symbols = this.read_with(&cx, |this, cx| {
+                    let mut symbols = Vec::new();
                     for (adapter, source_worktree_id, worktree_abs_path, response) in responses {
-                        for lsp_symbol in response.into_iter().flatten() {
-                            let abs_path = match lsp_symbol.location.uri.to_file_path().ok() {
-                                Some(abs_path) => abs_path,
-                                None => continue,
-                            };
+                        symbols.extend(response.into_iter().flatten().filter_map(|lsp_symbol| {
+                            let abs_path = lsp_symbol.location.uri.to_file_path().ok()?;
                             let mut worktree_id = source_worktree_id;
                             let path;
                             if let Some((worktree, rel_path)) =
@@ -3344,49 +3328,37 @@ impl Project {
                                 path = relativize_path(&worktree_abs_path, &abs_path);
                             }
 
-                            let language = this.languages.select_language(&path).clone();
                             let signature = this.symbol_signature(worktree_id, &path);
+                            let language = this.languages.select_language(&path);
+                            let language_server_name = adapter.name.clone();
 
-                            partial_symbols.push(PartialSymbol {
-                                source_worktree_id,
-                                worktree_id,
-                                language_server_name: adapter.name.clone(),
-                                name: lsp_symbol.name,
-                                kind: lsp_symbol.kind,
-                                language,
-                                path,
-                                range: range_from_lsp(lsp_symbol.location.range),
-                                signature,
-                            });
-                        }
+                            Some(async move {
+                                let label = if let Some(language) = language {
+                                    language
+                                        .label_for_symbol(&lsp_symbol.name, lsp_symbol.kind)
+                                        .await
+                                } else {
+                                    None
+                                };
+
+                                Symbol {
+                                    source_worktree_id,
+                                    worktree_id,
+                                    language_server_name,
+                                    label: label.unwrap_or_else(|| {
+                                        CodeLabel::plain(lsp_symbol.name.clone(), None)
+                                    }),
+                                    kind: lsp_symbol.kind,
+                                    name: lsp_symbol.name,
+                                    path,
+                                    range: range_from_lsp(lsp_symbol.location.range),
+                                    signature,
+                                }
+                            })
+                        }));
                     }
-
-                    partial_symbols
+                    symbols
                 });
-
-                let mut symbols = Vec::new();
-                for ps in partial_symbols.into_iter() {
-                    symbols.push(async move {
-                        let label = match ps.language {
-                            Some(language) => language.label_for_symbol(&ps.name, ps.kind).await,
-                            None => None,
-                        }
-                        .unwrap_or_else(|| CodeLabel::plain(ps.name.clone(), None));
-
-                        Symbol {
-                            source_worktree_id: ps.source_worktree_id,
-                            worktree_id: ps.worktree_id,
-                            language_server_name: ps.language_server_name,
-                            name: ps.name,
-                            kind: ps.kind,
-                            label,
-                            path: ps.path,
-                            range: ps.range,
-                            signature: ps.signature,
-                        }
-                    });
-                }
-
                 Ok(futures::future::join_all(symbols).await)
             })
         } else if let Some(project_id) = self.remote_id() {
@@ -3399,16 +3371,16 @@ impl Project {
                 let mut symbols = Vec::new();
                 if let Some(this) = this.upgrade(&cx) {
                     let new_symbols = this.read_with(&cx, |this, _| {
-                        let mut new_symbols = Vec::new();
-                        for symbol in response.symbols.into_iter() {
-                            new_symbols.push(this.deserialize_symbol(symbol));
-                        }
-                        new_symbols
+                        response
+                            .symbols
+                            .into_iter()
+                            .map(|symbol| this.deserialize_symbol(symbol))
+                            .collect::<Vec<_>>()
                     });
-                    symbols = futures::future::join_all(new_symbols.into_iter())
+                    symbols = futures::future::join_all(new_symbols)
                         .await
                         .into_iter()
-                        .filter_map(|symbol| symbol.ok())
+                        .filter_map(|symbol| symbol.log_err())
                         .collect::<Vec<_>>();
                 }
                 Ok(symbols)
