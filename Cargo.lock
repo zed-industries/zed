@@ -1611,6 +1611,7 @@ dependencies = [
  "anyhow",
  "clock",
  "collections",
+ "context_menu",
  "ctor",
  "env_logger",
  "futures",
