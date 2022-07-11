@@ -12,7 +12,7 @@ use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
-use futures::{future::Shared, AsyncWriteExt, Future, FutureExt, SinkExt, StreamExt, TryFutureExt};
+use futures::{future::Shared, AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt};
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{
     AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
@@ -2118,23 +2118,24 @@ impl Project {
                             .on_notification::<lsp::notification::PublishDiagnostics, _>({
                                 let this = this.downgrade();
                                 let adapter = adapter.clone();
-                                move |params, mut cx| {
-                                    if let Some(this) = this.upgrade(&cx) {
-                                        // cx.spawn(|cx| {
-                                        //     this.update(&mut cx, |this, cx| {
-                                        //         this.on_lsp_diagnostics_published(
-                                        //             server_id, params, adapter, cx,
-                                        //         )
-                                        //     })
-                                        // })
-                                        // .detach();
-                                        this.update(&mut cx, |this, cx| {
-                                            // TODO(isaac): remove block on
-                                            smol::block_on(this.on_lsp_diagnostics_published(
-                                                server_id, params, &adapter, cx,
-                                            ));
-                                        });
-                                    }
+                                move |mut params, cx| {
+                                    let this = this.clone();
+                                    let adapter = adapter.clone();
+                                    cx.spawn(|mut cx| async move {
+                                        adapter.process_diagnostics(&mut params).await;
+                                        if let Some(this) = this.upgrade(&cx) {
+                                            this.update(&mut cx, |this, cx| {
+                                                this.update_diagnostics(
+                                                    server_id,
+                                                    params,
+                                                    &adapter.disk_based_diagnostic_sources,
+                                                    cx,
+                                                )
+                                                .log_err();
+                                            });
+                                        }
+                                    })
+                                    .detach();
                                 }
                             })
                             .detach();
@@ -2478,23 +2479,6 @@ impl Project {
             }
         })
         .detach();
-    }
-
-    async fn on_lsp_diagnostics_published(
-        &mut self,
-        server_id: usize,
-        mut params: lsp::PublishDiagnosticsParams,
-        adapter: &Arc<LspAdapter>,
-        cx: &mut ModelContext<'_, Self>,
-    ) {
-        adapter.process_diagnostics(&mut params).await;
-        self.update_diagnostics(
-            server_id,
-            params,
-            &adapter.disk_based_diagnostic_sources,
-            cx,
-        )
-        .log_err();
     }
 
     fn on_lsp_progress(
@@ -3580,7 +3564,7 @@ impl Project {
                             continue;
                         }
 
-                        let (old_range, new_text) = match lsp_completion.text_edit.as_ref() {
+                        let (old_range, mut new_text) = match lsp_completion.text_edit.as_ref() {
                             // If the language server provides a range to overwrite, then
                             // check that the range is valid.
                             Some(lsp::CompletionTextEdit::Edit(edit)) => {
@@ -3630,6 +3614,7 @@ impl Project {
                             }
                         };
 
+                        LineEnding::normalize(&mut new_text);
                         let partial_completion = PartialCompletion {
                             old_range,
                             new_text,
