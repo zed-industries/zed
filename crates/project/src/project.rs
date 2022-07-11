@@ -2043,7 +2043,6 @@ impl Project {
                         for buffer in buffers_without_language {
                             project.assign_language_to_buffer(&buffer, cx);
                             project.register_buffer_with_language_server(&buffer, cx);
-                            dbg!(buffer.read(cx).language().map(|x| x.name()));
                         }
                     });
                 }
@@ -3540,20 +3539,11 @@ impl Project {
                     Default::default()
                 };
 
-                struct PartialCompletion {
-                    pub old_range: Range<Anchor>,
-                    pub new_text: String,
-                    pub language: Option<Arc<Language>>,
-                    pub lsp_completion: lsp::CompletionItem,
-                }
-
-                let partial_completions = source_buffer_handle.read_with(&cx, |this, _| {
+                let completions = source_buffer_handle.read_with(&cx, |this, _| {
                     let snapshot = this.snapshot();
                     let clipped_position = this.clip_point_utf16(position, Bias::Left);
                     let mut range_for_token = None;
-                    let mut partial_completions = Vec::new();
-
-                    for lsp_completion in completions.into_iter() {
+                    completions.into_iter().filter_map(move |lsp_completion| {
                         // For now, we can only handle additional edits if they are returned
                         // when resolving the completion, not if they are present initially.
                         if lsp_completion
@@ -3561,7 +3551,7 @@ impl Project {
                             .as_ref()
                             .map_or(false, |edits| !edits.is_empty())
                         {
-                            continue;
+                            return None;
                         }
 
                         let (old_range, mut new_text) = match lsp_completion.text_edit.as_ref() {
@@ -3573,7 +3563,7 @@ impl Project {
                                 let end = snapshot.clip_point_utf16(range.end, Bias::Left);
                                 if start != range.start || end != range.end {
                                     log::info!("completion out of expected range");
-                                    continue;
+                                    return None;
                                 }
                                 (
                                     snapshot.anchor_before(start)..snapshot.anchor_after(end),
@@ -3585,7 +3575,7 @@ impl Project {
                             None => {
                                 if position != clipped_position {
                                     log::info!("completion out of expected range");
-                                    continue;
+                                    return None;
                                 }
                                 let Range { start, end } = range_for_token
                                     .get_or_insert_with(|| {
@@ -3610,50 +3600,34 @@ impl Project {
                             }
                             Some(lsp::CompletionTextEdit::InsertAndReplace(_)) => {
                                 log::info!("unsupported insert/replace completion");
-                                continue;
+                                return None;
                             }
                         };
 
                         LineEnding::normalize(&mut new_text);
-                        let partial_completion = PartialCompletion {
-                            old_range,
-                            new_text,
-                            language: language.clone(),
-                            lsp_completion,
-                        };
-
-                        partial_completions.push(partial_completion);
-                    }
-                    partial_completions
+                        let language = language.clone();
+                        Some(async move {
+                            let label = if let Some(language) = language {
+                                language.label_for_completion(&lsp_completion).await
+                            } else {
+                                None
+                            };
+                            Completion {
+                                old_range,
+                                new_text,
+                                label: label.unwrap_or_else(|| {
+                                    CodeLabel::plain(
+                                        lsp_completion.label.clone(),
+                                        lsp_completion.filter_text.as_deref(),
+                                    )
+                                }),
+                                lsp_completion,
+                            }
+                        })
+                    })
                 });
 
-                let mut result = Vec::new();
-
-                for pc in partial_completions.into_iter() {
-                    result.push(async move {
-                        let label = match pc.language.as_ref() {
-                            Some(l) => l.label_for_completion(&pc.lsp_completion).await,
-                            None => None,
-                        }
-                        .unwrap_or_else(|| {
-                            CodeLabel::plain(
-                                pc.lsp_completion.label.clone(),
-                                pc.lsp_completion.filter_text.as_deref(),
-                            )
-                        });
-
-                        let completion = Completion {
-                            old_range: pc.old_range,
-                            new_text: pc.new_text,
-                            label,
-                            lsp_completion: pc.lsp_completion,
-                        };
-
-                        completion
-                    });
-                }
-
-                Ok(futures::future::join_all(result).await)
+                Ok(futures::future::join_all(completions).await)
             })
         } else if let Some(project_id) = self.remote_id() {
             let rpc = self.client.clone();
@@ -3672,14 +3646,10 @@ impl Project {
                     })
                     .await;
 
-                let mut result = Vec::new();
-                for completion in response.completions.into_iter() {
-                    let completion =
-                        language::proto::deserialize_completion(completion, language.clone())
-                            .await?;
-                    result.push(completion);
-                }
-                Ok(result)
+                let completions = response.completions.into_iter().map(|completion| {
+                    language::proto::deserialize_completion(completion, language.clone())
+                });
+                futures::future::try_join_all(completions).await
             })
         } else {
             Task::ready(Ok(Default::default()))
