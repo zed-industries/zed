@@ -28,7 +28,7 @@ fn main() {
     let binaries = std::fs::read_dir(base.join("target/wasm32-wasi/release"))
         .expect("Could not find compiled plugins in target");
 
-    let engine = create_engine();
+    let engine = create_default_engine();
 
     for file in binaries {
         let is_wasm = || {

@@ -31,6 +31,13 @@ jobs:
           target: x86_64-apple-darwin
           profile: minimal
 
+      - name: Install Rust wasm32-wasi target
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-wasi
+          profile: minimal
+
       - name: Install Node
         uses: actions/setup-node@v2
         with:
@@ -70,6 +77,13 @@ jobs:
         with:
           toolchain: stable
           target: aarch64-apple-darwin
+          profile: minimal
+          
+      - name: Install Rust wasm32-wasi target
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-wasi
           profile: minimal
 
       - name: Install Node

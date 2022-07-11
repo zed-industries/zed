@@ -6,6 +6,7 @@ export ZED_BUNDLE=true
 
 echo "Installing cargo bundle"
 cargo install cargo-bundle --version 0.5.0
+rustup target add wasm32-wasi
 
 # Deal with versions of macOS that don't include libstdc++ headers
 export CXXFLAGS="-stdlib=libc++"
