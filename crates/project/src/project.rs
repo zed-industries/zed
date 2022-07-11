@@ -1722,7 +1722,7 @@ impl Project {
                 .await?;
             this.update(&mut cx, |this, cx| {
                 this.assign_language_to_buffer(&buffer, cx);
-                this.register_buffer_with_language_server(&buffer, cx)
+                this.register_buffer_with_language_server(&buffer, cx);
             });
             Ok(())
         })
@@ -2120,6 +2120,14 @@ impl Project {
                                 let adapter = adapter.clone();
                                 move |params, mut cx| {
                                     if let Some(this) = this.upgrade(&cx) {
+                                        // cx.spawn(|cx| {
+                                        //     this.update(&mut cx, |this, cx| {
+                                        //         this.on_lsp_diagnostics_published(
+                                        //             server_id, params, adapter, cx,
+                                        //         )
+                                        //     })
+                                        // })
+                                        // .detach();
                                         this.update(&mut cx, |this, cx| {
                                             // TODO(isaac): remove block on
                                             smol::block_on(this.on_lsp_diagnostics_published(
@@ -3414,11 +3422,11 @@ impl Project {
                         }
                         new_symbols
                     });
-                    for new_symbol in new_symbols {
-                        if let Some(new_symbol) = new_symbol.await.ok() {
-                            symbols.push(new_symbol);
-                        }
-                    }
+                    symbols = futures::future::join_all(new_symbols.into_iter())
+                        .await
+                        .into_iter()
+                        .filter_map(|symbol| symbol.ok())
+                        .collect::<Vec<_>>();
                 }
                 Ok(symbols)
             })

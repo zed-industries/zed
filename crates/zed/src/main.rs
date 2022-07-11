@@ -225,10 +225,10 @@ fn main() {
         cx.spawn({
             let languages = languages.clone();
             |cx| async move {
-                // init_languages.await;
                 cx.read(|cx| {
                     languages.set_theme(cx.global::<Settings>().theme.editor.syntax.clone())
                 });
+                init_languages.await;
             }
         })
         .detach();
