@@ -1,6 +1,5 @@
 use plugin::prelude::*;
 use serde::Deserialize;
-use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
 

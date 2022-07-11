@@ -5,7 +5,6 @@ fn main() {
     let base = Path::new("../../plugins");
 
     println!("cargo:rerun-if-changed={}", base.display());
-    println!("cargo:warning=Rebuilding precompiled plugins...");
 
     let _ = std::fs::remove_dir_all(base.join("bin"));
     let _ =
