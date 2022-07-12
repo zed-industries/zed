@@ -1,15 +1,12 @@
 use super::installation::{npm_install_packages, npm_package_latest_version};
 use anyhow::{anyhow, Context, Result};
+use async_trait::async_trait;
 use client::http::HttpClient;
-use futures::{future::BoxFuture, FutureExt, StreamExt};
+use futures::StreamExt;
 use language::{LanguageServerName, LspAdapter};
 use smol::fs;
-use std::{
-    any::Any,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
-use util::{ResultExt, TryFutureExt};
+use std::{any::Any, path::PathBuf, sync::Arc};
+use util::ResultExt;
 
 pub struct PythonLspAdapter;
 
@@ -17,61 +14,56 @@ impl PythonLspAdapter {
     const BIN_PATH: &'static str = "node_modules/pyright/langserver.index.js";
 }
 
+#[async_trait]
 impl LspAdapter for PythonLspAdapter {
-    fn name(&self) -> LanguageServerName {
+    async fn name(&self) -> LanguageServerName {
         LanguageServerName("pyright".into())
     }
 
-    fn server_args(&self) -> &[&str] {
-        &["--stdio"]
+    async fn server_args(&self) -> Vec<String> {
+        vec!["--stdio".into()]
     }
 
-    fn fetch_latest_server_version(
+    async fn fetch_latest_server_version(
         &self,
         _: Arc<dyn HttpClient>,
-    ) -> BoxFuture<'static, Result<Box<dyn 'static + Any + Send>>> {
-        async move { Ok(Box::new(npm_package_latest_version("pyright").await?) as Box<_>) }.boxed()
+    ) -> Result<Box<dyn 'static + Any + Send>> {
+        Ok(Box::new(npm_package_latest_version("pyright").await?) as Box<_>)
     }
 
-    fn fetch_server_binary(
+    async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
         _: Arc<dyn HttpClient>,
-        container_dir: Arc<Path>,
-    ) -> BoxFuture<'static, Result<PathBuf>> {
+        container_dir: PathBuf,
+    ) -> Result<PathBuf> {
         let version = version.downcast::<String>().unwrap();
-        async move {
-            let version_dir = container_dir.join(version.as_str());
-            fs::create_dir_all(&version_dir)
-                .await
-                .context("failed to create version directory")?;
-            let binary_path = version_dir.join(Self::BIN_PATH);
+        let version_dir = container_dir.join(version.as_str());
+        fs::create_dir_all(&version_dir)
+            .await
+            .context("failed to create version directory")?;
+        let binary_path = version_dir.join(Self::BIN_PATH);
 
-            if fs::metadata(&binary_path).await.is_err() {
-                npm_install_packages([("pyright", version.as_str())], &version_dir).await?;
+        if fs::metadata(&binary_path).await.is_err() {
+            npm_install_packages([("pyright", version.as_str())], &version_dir).await?;
 
-                if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
-                    while let Some(entry) = entries.next().await {
-                        if let Some(entry) = entry.log_err() {
-                            let entry_path = entry.path();
-                            if entry_path.as_path() != version_dir {
-                                fs::remove_dir_all(&entry_path).await.log_err();
-                            }
+            if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
+                while let Some(entry) = entries.next().await {
+                    if let Some(entry) = entry.log_err() {
+                        let entry_path = entry.path();
+                        if entry_path.as_path() != version_dir {
+                            fs::remove_dir_all(&entry_path).await.log_err();
                         }
                     }
                 }
             }
-
-            Ok(binary_path)
         }
-        .boxed()
+
+        Ok(binary_path)
     }
 
-    fn cached_server_binary(
-        &self,
-        container_dir: Arc<Path>,
-    ) -> BoxFuture<'static, Option<PathBuf>> {
-        async move {
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
+        (|| async move {
             let mut last_version_dir = None;
             let mut entries = fs::read_dir(&container_dir).await?;
             while let Some(entry) = entries.next().await {
@@ -90,12 +82,12 @@ impl LspAdapter for PythonLspAdapter {
                     last_version_dir
                 ))
             }
-        }
+        })()
+        .await
         .log_err()
-        .boxed()
     }
 
-    fn label_for_completion(
+    async fn label_for_completion(
         &self,
         item: &lsp::CompletionItem,
         language: &language::Language,
@@ -116,7 +108,7 @@ impl LspAdapter for PythonLspAdapter {
         })
     }
 
-    fn label_for_symbol(
+    async fn label_for_symbol(
         &self,
         name: &str,
         kind: lsp::SymbolKind,

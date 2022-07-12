@@ -21,6 +21,7 @@ use futures::{
 };
 use gpui::{executor::Background, App, AssetSource, AsyncAppContext, Task};
 use isahc::{config::Configurable, AsyncBody, Request};
+use language::LanguageRegistry;
 use log::LevelFilter;
 use parking_lot::Mutex;
 use project::{Fs, ProjectStore};
@@ -163,7 +164,12 @@ fn main() {
 
     app.run(move |cx| {
         let client = client::Client::new(http.clone());
-        let mut languages = languages::build_language_registry(login_shell_env_loaded);
+        let mut languages = LanguageRegistry::new(login_shell_env_loaded);
+        languages.set_language_server_download_dir(zed::ROOT_PATH.clone());
+        let languages = Arc::new(languages);
+        let init_languages = cx
+            .background()
+            .spawn(languages::init(languages.clone(), cx.background().clone()));
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
 
         context_menu::init(cx);
@@ -208,17 +214,22 @@ fn main() {
         })
         .detach();
 
-        languages.set_language_server_download_dir(zed::ROOT_PATH.clone());
-        let languages = Arc::new(languages);
-
         cx.observe_global::<Settings, _>({
             let languages = languages.clone();
             move |cx| {
-                languages.set_theme(&cx.global::<Settings>().theme.editor.syntax);
+                languages.set_theme(cx.global::<Settings>().theme.clone());
             }
         })
         .detach();
         cx.set_global(settings);
+        cx.spawn({
+            let languages = languages.clone();
+            |cx| async move {
+                cx.read(|cx| languages.set_theme(cx.global::<Settings>().theme.clone()));
+                init_languages.await;
+            }
+        })
+        .detach();
 
         let project_store = cx.add_model(|_| ProjectStore::new(db.clone()));
         let app_state = Arc::new(AppState {

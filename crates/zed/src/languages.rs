@@ -1,12 +1,13 @@
-use gpui::Task;
+use gpui::executor::Background;
 pub use language::*;
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, str, sync::Arc};
+use util::ResultExt;
 
 mod c;
 mod go;
 mod installation;
-mod json;
+mod language_plugin;
 mod python;
 mod rust;
 mod typescript;
@@ -16,28 +17,30 @@ mod typescript;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
-pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegistry {
-    let languages = LanguageRegistry::new(login_shell_env_loaded);
+pub async fn init(languages: Arc<LanguageRegistry>, executor: Arc<Background>) {
     for (name, grammar, lsp_adapter) in [
         (
             "c",
             tree_sitter_c::language(),
-            Some(Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>),
+            Some(CachedLspAdapter::new(c::CLspAdapter).await),
         ),
         (
             "cpp",
             tree_sitter_cpp::language(),
-            Some(Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>),
+            Some(CachedLspAdapter::new(c::CLspAdapter).await),
         ),
         (
             "go",
             tree_sitter_go::language(),
-            Some(Arc::new(go::GoLspAdapter) as Arc<dyn LspAdapter>),
+            Some(CachedLspAdapter::new(go::GoLspAdapter).await),
         ),
         (
             "json",
             tree_sitter_json::language(),
-            Some(Arc::new(json::JsonLspAdapter)),
+            match language_plugin::new_json(executor).await.log_err() {
+                Some(lang) => Some(CachedLspAdapter::new(lang).await),
+                None => None,
+            },
         ),
         (
             "markdown",
@@ -47,12 +50,12 @@ pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegi
         (
             "python",
             tree_sitter_python::language(),
-            Some(Arc::new(python::PythonLspAdapter)),
+            Some(CachedLspAdapter::new(python::PythonLspAdapter).await),
         ),
         (
             "rust",
             tree_sitter_rust::language(),
-            Some(Arc::new(rust::RustLspAdapter)),
+            Some(CachedLspAdapter::new(rust::RustLspAdapter).await),
         ),
         (
             "toml",
@@ -62,28 +65,27 @@ pub fn build_language_registry(login_shell_env_loaded: Task<()>) -> LanguageRegi
         (
             "tsx",
             tree_sitter_typescript::language_tsx(),
-            Some(Arc::new(typescript::TypeScriptLspAdapter)),
+            Some(CachedLspAdapter::new(typescript::TypeScriptLspAdapter).await),
         ),
         (
             "typescript",
             tree_sitter_typescript::language_typescript(),
-            Some(Arc::new(typescript::TypeScriptLspAdapter)),
+            Some(CachedLspAdapter::new(typescript::TypeScriptLspAdapter).await),
         ),
         (
             "javascript",
             tree_sitter_typescript::language_tsx(),
-            Some(Arc::new(typescript::TypeScriptLspAdapter)),
+            Some(CachedLspAdapter::new(typescript::TypeScriptLspAdapter).await),
         ),
     ] {
         languages.add(Arc::new(language(name, grammar, lsp_adapter)));
     }
-    languages
 }
 
 pub(crate) fn language(
     name: &str,
     grammar: tree_sitter::Language,
-    lsp_adapter: Option<Arc<dyn LspAdapter>>,
+    lsp_adapter: Option<Arc<CachedLspAdapter>>,
 ) -> Language {
     let config = toml::from_slice(
         &LanguageDir::get(&format!("{}/config.toml", name))

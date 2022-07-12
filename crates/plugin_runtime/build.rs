@@ -1,0 +1,79 @@
+use std::{io::Write, path::Path};
+use wasmtime::{Config, Engine};
+
+fn main() {
+    let base = Path::new("../../plugins");
+
+    println!("cargo:rerun-if-changed={}", base.display());
+
+    let _ = std::fs::remove_dir_all(base.join("bin"));
+    let _ =
+        std::fs::create_dir_all(base.join("bin")).expect("Could not make plugins bin directory");
+
+    let (profile_flags, profile_target) = match std::env::var("PROFILE").unwrap().as_str() {
+        "debug" => (&[][..], "debug"),
+        "release" => (&["--release"][..], "release"),
+        unknown => panic!("unknown profile `{}`", unknown),
+    };
+
+    let build_successful = std::process::Command::new("cargo")
+        .args([
+            "build",
+            "--target",
+            "wasm32-wasi",
+            "--manifest-path",
+            base.join("Cargo.toml").to_str().unwrap(),
+        ])
+        .args(profile_flags)
+        .status()
+        .expect("Could not build plugins")
+        .success();
+    assert!(build_successful);
+
+    let binaries = std::fs::read_dir(base.join("target/wasm32-wasi").join(profile_target))
+        .expect("Could not find compiled plugins in target");
+
+    let engine = create_default_engine();
+
+    for file in binaries {
+        let is_wasm = || {
+            let path = file.ok()?.path();
+            if path.extension()? == "wasm" {
+                Some(path)
+            } else {
+                None
+            }
+        };
+
+        if let Some(path) = is_wasm() {
+            let out_path = base.join("bin").join(path.file_name().unwrap());
+            std::fs::copy(&path, &out_path).expect("Could not copy compiled plugin to bin");
+            precompile(&out_path, &engine);
+        }
+    }
+}
+
+/// Creates a default engine for compiling Wasm.
+/// N.B.: this must create the same `Engine` as
+/// the `create_default_engine` function
+/// in `plugin_runtime/src/plugin.rs`.
+fn create_default_engine() -> Engine {
+    let mut config = Config::default();
+    config.async_support(true);
+    // config.epoch_interruption(true);
+    Engine::new(&config).expect("Could not create engine")
+}
+
+fn precompile(path: &Path, engine: &Engine) {
+    let bytes = std::fs::read(path).expect("Could not read wasm module");
+    let compiled = engine
+        .precompile_module(&bytes)
+        .expect("Could not precompile module");
+    let out_path = path.parent().unwrap().join(&format!(
+        "{}.pre",
+        path.file_name().unwrap().to_string_lossy()
+    ));
+    let mut out_file = std::fs::File::create(out_path)
+        .expect("Could not create output file for precompiled module");
+    out_file.write_all(&compiled).unwrap();
+}

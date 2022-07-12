@@ -7,6 +7,7 @@ pub mod proto;
 mod tests;
 
 use anyhow::{anyhow, Context, Result};
+use async_trait::async_trait;
 use client::http::HttpClient;
 use collections::HashMap;
 use futures::{
@@ -17,6 +18,7 @@ use gpui::{MutableAppContext, Task};
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock};
+use postage::watch;
 use regex::Regex;
 use serde::{de, Deserialize, Deserializer};
 use serde_json::Value;
@@ -29,7 +31,7 @@ use std::{
     str,
     sync::Arc,
 };
-use theme::SyntaxTheme;
+use theme::{SyntaxTheme, Theme};
 use tree_sitter::{self, Query};
 use util::ResultExt;
 
@@ -43,7 +45,7 @@ pub use outline::{Outline, OutlineItem};
 pub use tree_sitter::{Parser, Tree};
 
 thread_local! {
-    static PARSER: RefCell<Parser>  = RefCell::new(Parser::new());
+    static PARSER: RefCell<Parser> = RefCell::new(Parser::new());
 }
 
 lazy_static! {
@@ -63,48 +65,141 @@ pub trait ToLspPosition {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LanguageServerName(pub Arc<str>);
 
-pub trait LspAdapter: 'static + Send + Sync {
-    fn name(&self) -> LanguageServerName;
-    fn fetch_latest_server_version(
+/// Represents a Language Server, with certain cached sync properties.
+/// Uses [`LspAdapter`] under the hood, but calls all 'static' methods
+/// once at startup, and caches the results.
+pub struct CachedLspAdapter {
+    pub name: LanguageServerName,
+    pub server_args: Vec<String>,
+    pub initialization_options: Option<Value>,
+    pub disk_based_diagnostic_sources: Vec<String>,
+    pub disk_based_diagnostics_progress_token: Option<String>,
+    pub id_for_language: Option<String>,
+    pub adapter: Box<dyn LspAdapter>,
+}
+
+impl CachedLspAdapter {
+    pub async fn new<T: LspAdapter>(adapter: T) -> Arc<Self> {
+        let adapter = Box::new(adapter);
+        let name = adapter.name().await;
+        let server_args = adapter.server_args().await;
+        let initialization_options = adapter.initialization_options().await;
+        let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources().await;
+        let disk_based_diagnostics_progress_token =
+            adapter.disk_based_diagnostics_progress_token().await;
+        let id_for_language = adapter.id_for_language(name.0.as_ref()).await;
+
+        Arc::new(CachedLspAdapter {
+            name,
+            server_args,
+            initialization_options,
+            disk_based_diagnostic_sources,
+            disk_based_diagnostics_progress_token,
+            id_for_language,
+            adapter,
+        })
+    }
+
+    pub async fn fetch_latest_server_version(
         &self,
         http: Arc<dyn HttpClient>,
-    ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>>;
-    fn fetch_server_binary(
+    ) -> Result<Box<dyn 'static + Send + Any>> {
+        self.adapter.fetch_latest_server_version(http).await
+    }
+
+    pub async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
         http: Arc<dyn HttpClient>,
-        container_dir: Arc<Path>,
-    ) -> BoxFuture<'static, Result<PathBuf>>;
-    fn cached_server_binary(&self, container_dir: Arc<Path>)
-        -> BoxFuture<'static, Option<PathBuf>>;
+        container_dir: PathBuf,
+    ) -> Result<PathBuf> {
+        self.adapter
+            .fetch_server_binary(version, http, container_dir)
+            .await
+    }
 
-    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
+    pub async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
+        self.adapter.cached_server_binary(container_dir).await
+    }
 
-    fn label_for_completion(&self, _: &lsp::CompletionItem, _: &Language) -> Option<CodeLabel> {
+    pub async fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
+        self.adapter.process_diagnostics(params).await
+    }
+
+    pub async fn label_for_completion(
+        &self,
+        completion_item: &lsp::CompletionItem,
+        language: &Language,
+    ) -> Option<CodeLabel> {
+        self.adapter
+            .label_for_completion(completion_item, language)
+            .await
+    }
+
+    pub async fn label_for_symbol(
+        &self,
+        name: &str,
+        kind: lsp::SymbolKind,
+        language: &Language,
+    ) -> Option<CodeLabel> {
+        self.adapter.label_for_symbol(name, kind, language).await
+    }
+}
+
+#[async_trait]
+pub trait LspAdapter: 'static + Send + Sync {
+    async fn name(&self) -> LanguageServerName;
+
+    async fn fetch_latest_server_version(
+        &self,
+        http: Arc<dyn HttpClient>,
+    ) -> Result<Box<dyn 'static + Send + Any>>;
+
+    async fn fetch_server_binary(
+        &self,
+        version: Box<dyn 'static + Send + Any>,
+        http: Arc<dyn HttpClient>,
+        container_dir: PathBuf,
+    ) -> Result<PathBuf>;
+
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf>;
+
+    async fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
+
+    async fn label_for_completion(
+        &self,
+        _: &lsp::CompletionItem,
+        _: &Language,
+    ) -> Option<CodeLabel> {
         None
     }
 
-    fn label_for_symbol(&self, _: &str, _: lsp::SymbolKind, _: &Language) -> Option<CodeLabel> {
+    async fn label_for_symbol(
+        &self,
+        _: &str,
+        _: lsp::SymbolKind,
+        _: &Language,
+    ) -> Option<CodeLabel> {
         None
     }
 
-    fn server_args(&self) -> &[&str] {
-        &[]
+    async fn server_args(&self) -> Vec<String> {
+        Vec::new()
     }
 
-    fn initialization_options(&self) -> Option<Value> {
+    async fn initialization_options(&self) -> Option<Value> {
         None
     }
 
-    fn disk_based_diagnostic_sources(&self) -> &'static [&'static str] {
+    async fn disk_based_diagnostic_sources(&self) -> Vec<String> {
         Default::default()
     }
 
-    fn disk_based_diagnostics_progress_token(&self) -> Option<&'static str> {
+    async fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
         None
     }
 
-    fn id_for_language(&self, _name: &str) -> Option<String> {
+    async fn id_for_language(&self, _name: &str) -> Option<String> {
         None
     }
 }
@@ -165,8 +260,8 @@ pub struct FakeLspAdapter {
     pub name: &'static str,
     pub capabilities: lsp::ServerCapabilities,
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
-    pub disk_based_diagnostics_progress_token: Option<&'static str>,
-    pub disk_based_diagnostics_sources: &'static [&'static str],
+    pub disk_based_diagnostics_progress_token: Option<String>,
+    pub disk_based_diagnostics_sources: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -180,7 +275,7 @@ pub struct BracketPair {
 pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
-    pub(crate) adapter: Option<Arc<dyn LspAdapter>>,
+    pub(crate) adapter: Option<Arc<CachedLspAdapter>>,
 
     #[cfg(any(test, feature = "test-support"))]
     fake_adapter: Option<(
@@ -219,6 +314,8 @@ pub struct LanguageRegistry {
             Shared<BoxFuture<'static, Result<PathBuf, Arc<anyhow::Error>>>>,
         >,
     >,
+    subscription: RwLock<(watch::Sender<()>, watch::Receiver<()>)>,
+    theme: RwLock<Option<Arc<Theme>>>,
 }
 
 impl LanguageRegistry {
@@ -231,6 +328,8 @@ impl LanguageRegistry {
             lsp_binary_statuses_rx,
             login_shell_env_loaded: login_shell_env_loaded.shared(),
             lsp_binary_paths: Default::default(),
+            subscription: RwLock::new(watch::channel()),
+            theme: Default::default(),
         }
     }
 
@@ -240,12 +339,21 @@ impl LanguageRegistry {
     }
 
     pub fn add(&self, language: Arc<Language>) {
+        if let Some(theme) = self.theme.read().clone() {
+            language.set_theme(&theme.editor.syntax);
+        }
         self.languages.write().push(language.clone());
+        *self.subscription.write().0.borrow_mut() = ();
     }
 
-    pub fn set_theme(&self, theme: &SyntaxTheme) {
+    pub fn subscribe(&self) -> watch::Receiver<()> {
+        self.subscription.read().1.clone()
+    }
+
+    pub fn set_theme(&self, theme: Arc<Theme>) {
+        *self.theme.write() = Some(theme.clone());
         for language in self.languages.read().iter() {
-            language.set_theme(theme);
+            language.set_theme(&theme.editor.syntax);
         }
     }
 
@@ -345,7 +453,7 @@ impl LanguageRegistry {
             let server_binary_path = this
                 .lsp_binary_paths
                 .lock()
-                .entry(adapter.name())
+                .entry(adapter.name.clone())
                 .or_insert_with(|| {
                     get_server_binary_path(
                         adapter.clone(),
@@ -362,11 +470,11 @@ impl LanguageRegistry {
                 .map_err(|e| anyhow!(e));
 
             let server_binary_path = server_binary_path.await?;
-            let server_args = adapter.server_args();
+            let server_args = &adapter.server_args;
             let server = lsp::LanguageServer::new(
                 server_id,
                 &server_binary_path,
-                server_args,
+                &server_args,
                 &root_path,
                 cx,
             )?;
@@ -382,13 +490,13 @@ impl LanguageRegistry {
 }
 
 async fn get_server_binary_path(
-    adapter: Arc<dyn LspAdapter>,
+    adapter: Arc<CachedLspAdapter>,
     language: Arc<Language>,
     http_client: Arc<dyn HttpClient>,
     download_dir: Arc<Path>,
     statuses: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
 ) -> Result<PathBuf> {
-    let container_dir: Arc<Path> = download_dir.join(adapter.name().0.as_ref()).into();
+    let container_dir = download_dir.join(adapter.name.0.as_ref());
     if !container_dir.exists() {
         smol::fs::create_dir_all(&container_dir)
             .await
@@ -424,7 +532,7 @@ async fn get_server_binary_path(
 }
 
 async fn fetch_latest_server_binary_path(
-    adapter: Arc<dyn LspAdapter>,
+    adapter: Arc<CachedLspAdapter>,
     language: Arc<Language>,
     http_client: Arc<dyn HttpClient>,
     container_dir: &Path,
@@ -444,7 +552,7 @@ async fn fetch_latest_server_binary_path(
         .broadcast((language.clone(), LanguageServerBinaryStatus::Downloading))
         .await?;
     let path = adapter
-        .fetch_server_binary(version_info, http_client, container_dir.clone())
+        .fetch_server_binary(version_info, http_client, container_dir.to_path_buf())
         .await?;
     lsp_binary_statuses_tx
         .broadcast((language.clone(), LanguageServerBinaryStatus::Downloaded))
@@ -473,7 +581,7 @@ impl Language {
         }
     }
 
-    pub fn lsp_adapter(&self) -> Option<Arc<dyn LspAdapter>> {
+    pub fn lsp_adapter(&self) -> Option<Arc<CachedLspAdapter>> {
         self.adapter.clone()
     }
 
@@ -505,19 +613,19 @@ impl Language {
         Arc::get_mut(self.grammar.as_mut().unwrap()).unwrap()
     }
 
-    pub fn with_lsp_adapter(mut self, lsp_adapter: Arc<dyn LspAdapter>) -> Self {
+    pub fn with_lsp_adapter(mut self, lsp_adapter: Arc<CachedLspAdapter>) -> Self {
         self.adapter = Some(lsp_adapter);
         self
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn set_fake_lsp_adapter(
+    pub async fn set_fake_lsp_adapter(
         &mut self,
-        fake_lsp_adapter: FakeLspAdapter,
+        fake_lsp_adapter: Arc<FakeLspAdapter>,
     ) -> mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
         let (servers_tx, servers_rx) = mpsc::unbounded();
-        let adapter = Arc::new(fake_lsp_adapter);
-        self.fake_adapter = Some((servers_tx, adapter.clone()));
+        self.fake_adapter = Some((servers_tx, fake_lsp_adapter.clone()));
+        let adapter = CachedLspAdapter::new(fake_lsp_adapter).await;
         self.adapter = Some(adapter);
         servers_rx
     }
@@ -530,32 +638,42 @@ impl Language {
         self.config.line_comment.as_deref()
     }
 
-    pub fn disk_based_diagnostic_sources(&self) -> &'static [&'static str] {
-        self.adapter.as_ref().map_or(&[] as &[_], |adapter| {
-            adapter.disk_based_diagnostic_sources()
-        })
-    }
-
-    pub fn disk_based_diagnostics_progress_token(&self) -> Option<&'static str> {
-        self.adapter
-            .as_ref()
-            .and_then(|adapter| adapter.disk_based_diagnostics_progress_token())
-    }
-
-    pub fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams) {
-        if let Some(processor) = self.adapter.as_ref() {
-            processor.process_diagnostics(diagnostics);
+    pub async fn disk_based_diagnostic_sources(&self) -> &[String] {
+        match self.adapter.as_ref() {
+            Some(adapter) => &adapter.disk_based_diagnostic_sources,
+            None => &[],
         }
     }
 
-    pub fn label_for_completion(&self, completion: &lsp::CompletionItem) -> Option<CodeLabel> {
+    pub async fn disk_based_diagnostics_progress_token(&self) -> Option<&str> {
+        if let Some(adapter) = self.adapter.as_ref() {
+            adapter.disk_based_diagnostics_progress_token.as_deref()
+        } else {
+            None
+        }
+    }
+
+    pub async fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams) {
+        if let Some(processor) = self.adapter.as_ref() {
+            processor.process_diagnostics(diagnostics).await;
+        }
+    }
+
+    pub async fn label_for_completion(
+        &self,
+        completion: &lsp::CompletionItem,
+    ) -> Option<CodeLabel> {
         self.adapter
             .as_ref()?
             .label_for_completion(completion, self)
+            .await
     }
 
-    pub fn label_for_symbol(&self, name: &str, kind: lsp::SymbolKind) -> Option<CodeLabel> {
-        self.adapter.as_ref()?.label_for_symbol(name, kind, self)
+    pub async fn label_for_symbol(&self, name: &str, kind: lsp::SymbolKind) -> Option<CodeLabel> {
+        self.adapter
+            .as_ref()?
+            .label_for_symbol(name, kind, self)
+            .await
     }
 
     pub fn highlight_text<'a>(
@@ -664,45 +782,46 @@ impl Default for FakeLspAdapter {
             capabilities: lsp::LanguageServer::full_capabilities(),
             initializer: None,
             disk_based_diagnostics_progress_token: None,
-            disk_based_diagnostics_sources: &[],
+            disk_based_diagnostics_sources: Vec::new(),
         }
     }
 }
 
 #[cfg(any(test, feature = "test-support"))]
-impl LspAdapter for FakeLspAdapter {
-    fn name(&self) -> LanguageServerName {
+#[async_trait]
+impl LspAdapter for Arc<FakeLspAdapter> {
+    async fn name(&self) -> LanguageServerName {
         LanguageServerName(self.name.into())
     }
 
-    fn fetch_latest_server_version(
+    async fn fetch_latest_server_version(
         &self,
         _: Arc<dyn HttpClient>,
-    ) -> BoxFuture<'static, Result<Box<dyn 'static + Send + Any>>> {
+    ) -> Result<Box<dyn 'static + Send + Any>> {
         unreachable!();
     }
 
-    fn fetch_server_binary(
+    async fn fetch_server_binary(
         &self,
         _: Box<dyn 'static + Send + Any>,
         _: Arc<dyn HttpClient>,
-        _: Arc<Path>,
-    ) -> BoxFuture<'static, Result<PathBuf>> {
+        _: PathBuf,
+    ) -> Result<PathBuf> {
         unreachable!();
     }
 
-    fn cached_server_binary(&self, _: Arc<Path>) -> BoxFuture<'static, Option<PathBuf>> {
+    async fn cached_server_binary(&self, _: PathBuf) -> Option<PathBuf> {
         unreachable!();
     }
 
-    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
+    async fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
-    fn disk_based_diagnostic_sources(&self) -> &'static [&'static str] {
-        self.disk_based_diagnostics_sources
+    async fn disk_based_diagnostic_sources(&self) -> Vec<String> {
+        self.disk_based_diagnostics_sources.clone()
     }
 
-    fn disk_based_diagnostics_progress_token(&self) -> Option<&'static str> {
-        self.disk_based_diagnostics_progress_token
+    async fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
+        self.disk_based_diagnostics_progress_token.clone()
     }
 }
 

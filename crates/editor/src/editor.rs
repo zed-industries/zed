@@ -9302,13 +9302,15 @@ mod tests {
             },
             Some(tree_sitter_rust::language()),
         );
-        let mut fake_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+        let mut fake_servers = language
+            .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            ..Default::default()
-        });
+            }))
+            .await;
 
         let fs = FakeFs::new(cx.background().clone());
         fs.insert_file("/file.rs", Default::default()).await;
@@ -9414,13 +9416,15 @@ mod tests {
             },
             Some(tree_sitter_rust::language()),
         );
-        let mut fake_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
+        let mut fake_servers = language
+            .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            ..Default::default()
-        });
+            }))
+            .await;
 
         let fs = FakeFs::new(cx.background().clone());
         fs.insert_file("/file.rs", Default::default()).await;
@@ -9526,16 +9530,18 @@ mod tests {
             },
             Some(tree_sitter_rust::language()),
         );
-        let mut fake_servers = language.set_fake_lsp_adapter(FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                completion_provider: Some(lsp::CompletionOptions {
-                    trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+        let mut fake_servers = language
+            .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    completion_provider: Some(lsp::CompletionOptions {
+                        trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                        ..Default::default()
+                    }),
                     ..Default::default()
-                }),
+                },
                 ..Default::default()
-            },
-            ..Default::default()
-        });
+            }))
+            .await;
 
         let text = "
             one

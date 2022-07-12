@@ -28,7 +28,7 @@ rsa = "0.4"
 serde = { version = "1.0", features = ["derive", "rc"] }
 smol-timeout = "0.6"
 tracing = { version = "0.1.34", features = ["log"] }
-zstd = "0.9"
+zstd = "0.11"
 
 [build-dependencies]
 prost-build = "0.9"
