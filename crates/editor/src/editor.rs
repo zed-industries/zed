@@ -6236,7 +6236,7 @@ mod tests {
     use language::{FakeLspAdapter, LanguageConfig};
     use lsp::FakeLanguageServer;
     use project::FakeFs;
-    use settings::LanguageSettings;
+    use settings::EditorSettings;
     use std::{cell::RefCell, rc::Rc, time::Instant};
     use text::Point;
     use unindent::Unindent;
@@ -7696,14 +7696,14 @@ mod tests {
             Settings::test(cx)
                 .with_language_defaults(
                     "TOML",
-                    LanguageSettings {
+                    EditorSettings {
                         tab_size: Some(2.try_into().unwrap()),
                         ..Default::default()
                     },
                 )
                 .with_language_defaults(
                     "Rust",
-                    LanguageSettings {
+                    EditorSettings {
                         tab_size: Some(4.try_into().unwrap()),
                         ..Default::default()
                     },
@@ -9380,7 +9380,7 @@ mod tests {
             cx.update_global::<Settings, _, _>(|settings, _| {
                 settings.language_overrides.insert(
                     "Rust".into(),
-                    LanguageSettings {
+                    EditorSettings {
                         tab_size: Some(8.try_into().unwrap()),
                         ..Default::default()
                     },
@@ -9496,7 +9496,7 @@ mod tests {
             cx.update_global::<Settings, _, _>(|settings, _| {
                 settings.language_overrides.insert(
                     "Rust".into(),
-                    LanguageSettings {
+                    EditorSettings {
                         tab_size: Some(8.try_into().unwrap()),
                         ..Default::default()
                     },

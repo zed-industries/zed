@@ -93,7 +93,7 @@ pub async fn watch_keymap_file(
 mod tests {
     use super::*;
     use project::FakeFs;
-    use settings::{LanguageSettings, SoftWrap};
+    use settings::{EditorSettings, SoftWrap};
 
     #[gpui::test]
     async fn test_settings_from_files(cx: &mut gpui::TestAppContext) {
@@ -128,7 +128,7 @@ mod tests {
 
         let settings = cx.read(Settings::test).with_language_defaults(
             "JavaScript",
-            LanguageSettings {
+            EditorSettings {
                 tab_size: Some(2.try_into().unwrap()),
                 ..Default::default()
             },

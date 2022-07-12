@@ -883,7 +883,7 @@ async fn test_toggling_enable_language_server(
         cx.update_global(|settings: &mut Settings, _| {
             settings.language_overrides.insert(
                 Arc::from("Rust"),
-                settings::LanguageSettings {
+                settings::EditorSettings {
                     enable_language_server: Some(false),
                     ..Default::default()
                 },
@@ -900,14 +900,14 @@ async fn test_toggling_enable_language_server(
         cx.update_global(|settings: &mut Settings, _| {
             settings.language_overrides.insert(
                 Arc::from("Rust"),
-                settings::LanguageSettings {
+                settings::EditorSettings {
                     enable_language_server: Some(true),
                     ..Default::default()
                 },
             );
             settings.language_overrides.insert(
                 Arc::from("JavaScript"),
-                settings::LanguageSettings {
+                settings::EditorSettings {
                     enable_language_server: Some(false),
                     ..Default::default()
                 },

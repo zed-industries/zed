@@ -14,7 +14,7 @@ use schemars::{
 };
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
-use std::{collections::HashMap, num::NonZeroU32, sync::Arc};
+use std::{collections::HashMap, num::NonZeroU32, str, sync::Arc};
 use theme::{Theme, ThemeRegistry};
 use util::ResultExt as _;
 
@@ -29,15 +29,15 @@ pub struct Settings {
     pub hover_popover_enabled: bool,
     pub vim_mode: bool,
     pub autosave: Autosave,
-    pub editor_defaults: LanguageSettings,
-    pub editor_overrides: LanguageSettings,
-    pub language_defaults: HashMap<Arc<str>, LanguageSettings>,
-    pub language_overrides: HashMap<Arc<str>, LanguageSettings>,
+    pub editor_defaults: EditorSettings,
+    pub editor_overrides: EditorSettings,
+    pub language_defaults: HashMap<Arc<str>, EditorSettings>,
+    pub language_overrides: HashMap<Arc<str>, EditorSettings>,
     pub theme: Arc<Theme>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
-pub struct LanguageSettings {
+pub struct EditorSettings {
     pub tab_size: Option<NonZeroU32>,
     pub hard_tabs: Option<bool>,
     pub soft_wrap: Option<SoftWrap>,
@@ -89,9 +89,10 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub autosave: Option<Autosave>,
     #[serde(flatten)]
-    pub editor: LanguageSettings,
+    pub editor: EditorSettings,
     #[serde(default)]
-    pub language_overrides: HashMap<Arc<str>, LanguageSettings>,
+    #[serde(alias = "language_overrides")]
+    pub languages: HashMap<Arc<str>, EditorSettings>,
     #[serde(default)]
     pub theme: Option<String>,
 }
@@ -107,8 +108,10 @@ impl Settings {
             value
         }
 
-        let defaults: SettingsFileContent =
-            serde_json::from_slice(assets.load("default-settings.json").unwrap().as_ref()).unwrap();
+        let defaults: SettingsFileContent = parse_json_with_comments(
+            str::from_utf8(assets.load("default-settings.json").unwrap().as_ref()).unwrap(),
+        )
+        .unwrap();
 
         Self {
             buffer_font_family: font_cache
@@ -120,7 +123,7 @@ impl Settings {
             projects_online_by_default: defaults.projects_online_by_default.unwrap(),
             vim_mode: defaults.vim_mode.unwrap(),
             autosave: defaults.autosave.unwrap(),
-            editor_defaults: LanguageSettings {
+            editor_defaults: EditorSettings {
                 tab_size: required(defaults.editor.tab_size),
                 hard_tabs: required(defaults.editor.hard_tabs),
                 soft_wrap: required(defaults.editor.soft_wrap),
@@ -128,7 +131,7 @@ impl Settings {
                 format_on_save: required(defaults.editor.format_on_save),
                 enable_language_server: required(defaults.editor.enable_language_server),
             },
-            language_defaults: defaults.language_overrides,
+            language_defaults: defaults.languages,
             editor_overrides: Default::default(),
             language_overrides: Default::default(),
             theme: themes.get(&defaults.theme.unwrap()).unwrap(),
@@ -138,7 +141,7 @@ impl Settings {
     pub fn with_language_defaults(
         mut self,
         language_name: impl Into<Arc<str>>,
-        overrides: LanguageSettings,
+        overrides: EditorSettings,
     ) -> Self {
         self.language_defaults
             .insert(language_name.into(), overrides);
@@ -171,7 +174,7 @@ impl Settings {
 
     fn language_setting<F, R>(&self, language: Option<&str>, f: F) -> R
     where
-        F: Fn(&LanguageSettings) -> Option<R>,
+        F: Fn(&EditorSettings) -> Option<R>,
     {
         None.or_else(|| language.and_then(|l| self.language_overrides.get(l).and_then(&f)))
             .or_else(|| f(&self.editor_overrides))
@@ -189,7 +192,7 @@ impl Settings {
             hover_popover_enabled: true,
             vim_mode: false,
             autosave: Autosave::Off,
-            editor_defaults: LanguageSettings {
+            editor_defaults: EditorSettings {
                 tab_size: Some(4.try_into().unwrap()),
                 hard_tabs: Some(false),
                 soft_wrap: Some(SoftWrap::None),
@@ -255,7 +258,7 @@ impl Settings {
             data.editor.preferred_line_length,
         );
 
-        for (language_name, settings) in data.language_overrides.clone().into_iter() {
+        for (language_name, settings) in data.languages.clone().into_iter() {
             let target = self
                 .language_overrides
                 .entry(language_name.into())
