@@ -107,7 +107,7 @@ impl Settings {
         }
 
         let defaults: SettingsFileContent = parse_json_with_comments(
-            str::from_utf8(assets.load("default-settings.json").unwrap().as_ref()).unwrap(),
+            str::from_utf8(assets.load("settings/default.json").unwrap().as_ref()).unwrap(),
         )
         .unwrap();
 

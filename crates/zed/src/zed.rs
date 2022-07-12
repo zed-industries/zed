@@ -18,8 +18,9 @@ use gpui::{
     geometry::vector::vec2f,
     impl_actions,
     platform::{WindowBounds, WindowOptions},
-    AsyncAppContext, ViewContext,
+    AssetSource, AsyncAppContext, ViewContext,
 };
+use language::Rope;
 use lazy_static::lazy_static;
 pub use lsp;
 pub use project::{self, fs};
@@ -100,13 +101,22 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_action({
         let app_state = app_state.clone();
         move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
-            open_config_file(&SETTINGS_PATH, app_state.clone(), cx);
+            open_config_file(&SETTINGS_PATH, app_state.clone(), cx, || {
+                let header = Assets.load("settings/header-comments.json").unwrap();
+                let json = Assets.load("settings/default.json").unwrap();
+                let header = str::from_utf8(header.as_ref()).unwrap();
+                let json = str::from_utf8(json.as_ref()).unwrap();
+                let mut content = Rope::new();
+                content.push(header);
+                content.push(json);
+                content
+            });
         }
     });
     cx.add_action({
         let app_state = app_state.clone();
         move |_: &mut Workspace, _: &OpenKeymap, cx: &mut ViewContext<Workspace>| {
-            open_config_file(&KEYMAP_PATH, app_state.clone(), cx);
+            open_config_file(&KEYMAP_PATH, app_state.clone(), cx, || Default::default());
         }
     });
     cx.add_action({
@@ -129,7 +139,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
             open_bundled_config_file(
                 workspace,
                 app_state.clone(),
-                "default-settings.json",
+                "settings/default.json",
                 "Default Settings",
                 cx,
             );
@@ -367,12 +377,15 @@ fn open_config_file(
     path: &'static Path,
     app_state: Arc<AppState>,
     cx: &mut ViewContext<Workspace>,
+    default_content: impl 'static + Send + FnOnce() -> Rope,
 ) {
     cx.spawn(|workspace, mut cx| async move {
         let fs = &app_state.fs;
         if !fs.is_file(path).await {
             fs.create_dir(&ROOT_PATH).await?;
             fs.create_file(path, Default::default()).await?;
+            fs.save(path, &default_content(), Default::default())
+                .await?;
         }
 
         workspace
