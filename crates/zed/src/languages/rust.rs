@@ -14,7 +14,7 @@ use util::ResultExt;
 pub struct RustLspAdapter;
 
 #[async_trait]
-impl LspAdapterTrait for RustLspAdapter {
+impl LspAdapter for RustLspAdapter {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("rust-analyzer".into())
     }
@@ -255,7 +255,7 @@ impl LspAdapterTrait for RustLspAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::languages::{language, LspAdapter};
+    use crate::languages::{language, CachedLspAdapter};
     use gpui::{color::Color, MutableAppContext};
     use theme::SyntaxTheme;
 
@@ -305,7 +305,7 @@ mod tests {
         let language = language(
             "rust",
             tree_sitter_rust::language(),
-            Some(LspAdapter::new(RustLspAdapter).await),
+            Some(CachedLspAdapter::new(RustLspAdapter).await),
         );
         let grammar = language.grammar().unwrap();
         let theme = SyntaxTheme::new(vec![
@@ -390,7 +390,7 @@ mod tests {
         let language = language(
             "rust",
             tree_sitter_rust::language(),
-            Some(LspAdapter::new(RustLspAdapter).await),
+            Some(CachedLspAdapter::new(RustLspAdapter).await),
         );
         let grammar = language.grammar().unwrap();
         let theme = SyntaxTheme::new(vec![

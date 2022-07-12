@@ -18,7 +18,7 @@ lazy_static! {
 }
 
 #[async_trait]
-impl super::LspAdapterTrait for GoLspAdapter {
+impl super::LspAdapter for GoLspAdapter {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("gopls".into())
     }
@@ -314,7 +314,7 @@ mod tests {
         let language = language(
             "go",
             tree_sitter_go::language(),
-            Some(LspAdapter::new(GoLspAdapter).await),
+            Some(CachedLspAdapter::new(GoLspAdapter).await),
         );
 
         let theme = SyntaxTheme::new(vec![

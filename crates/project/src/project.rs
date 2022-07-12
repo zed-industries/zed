@@ -24,9 +24,9 @@ use language::{
         deserialize_anchor, deserialize_line_ending, deserialize_version, serialize_anchor,
         serialize_version,
     },
-    range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CharKind, CodeAction, CodeLabel,
-    Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent, File as _,
-    Language, LanguageRegistry, LanguageServerName, LineEnding, LocalFile, LspAdapter,
+    range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CharKind, CodeAction,
+    CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Event as BufferEvent,
+    File as _, Language, LanguageRegistry, LanguageServerName, LineEnding, LocalFile,
     OffsetRangeExt, Operation, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
     Transaction,
 };
@@ -200,7 +200,7 @@ pub enum Event {
 pub enum LanguageServerState {
     Starting(Task<Option<Arc<LanguageServer>>>),
     Running {
-        adapter: Arc<LspAdapter>,
+        adapter: Arc<CachedLspAdapter>,
         server: Arc<LanguageServer>,
     },
 }
@@ -2007,7 +2007,7 @@ impl Project {
     fn language_servers_for_worktree(
         &self,
         worktree_id: WorktreeId,
-    ) -> impl Iterator<Item = (&Arc<LspAdapter>, &Arc<LanguageServer>)> {
+    ) -> impl Iterator<Item = (&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> {
         self.language_server_ids
             .iter()
             .filter_map(move |((language_server_worktree_id, _), id)| {
@@ -2648,7 +2648,7 @@ impl Project {
         this: WeakModelHandle<Self>,
         params: lsp::ApplyWorkspaceEditParams,
         server_id: usize,
-        adapter: Arc<LspAdapter>,
+        adapter: Arc<CachedLspAdapter>,
         language_server: Arc<LanguageServer>,
         mut cx: AsyncAppContext,
     ) -> Result<lsp::ApplyWorkspaceEditResponse> {
@@ -3913,7 +3913,7 @@ impl Project {
         this: ModelHandle<Self>,
         edit: lsp::WorkspaceEdit,
         push_to_history: bool,
-        lsp_adapter: Arc<LspAdapter>,
+        lsp_adapter: Arc<CachedLspAdapter>,
         language_server: Arc<LanguageServer>,
         cx: &mut AsyncAppContext,
     ) -> Result<ProjectTransaction> {
@@ -5923,7 +5923,7 @@ impl Project {
         &self,
         buffer: &Buffer,
         cx: &AppContext,
-    ) -> Option<(&Arc<LspAdapter>, &Arc<LanguageServer>)> {
+    ) -> Option<(&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> {
         if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language()) {
             let name = language.lsp_adapter()?.name.clone();
             let worktree_id = file.worktree_id(cx);

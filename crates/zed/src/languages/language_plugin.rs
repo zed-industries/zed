@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::lock::Mutex;
 use gpui::executor::Background;
-use language::{LanguageServerName, LspAdapterTrait};
+use language::{LanguageServerName, LspAdapter};
 use plugin_runtime::{Plugin, PluginBuilder, WasiFn};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
@@ -55,7 +55,7 @@ impl PluginLspAdapter {
 }
 
 #[async_trait]
-impl LspAdapterTrait for PluginLspAdapter {
+impl LspAdapter for PluginLspAdapter {
     async fn name(&self) -> LanguageServerName {
         let name: String = self
             .runtime

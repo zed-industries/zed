@@ -66,20 +66,20 @@ pub trait ToLspPosition {
 pub struct LanguageServerName(pub Arc<str>);
 
 /// Represents a Language Server, with certain cached sync properties.
-/// Uses [`LspAdapterTrait`] under the hood, but calls all 'static' methods
+/// Uses [`LspAdapter`] under the hood, but calls all 'static' methods
 /// once at startup, and caches the results.
-pub struct LspAdapter {
+pub struct CachedLspAdapter {
     pub name: LanguageServerName,
     pub server_args: Vec<String>,
     pub initialization_options: Option<Value>,
     pub disk_based_diagnostic_sources: Vec<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub id_for_language: Option<String>,
-    pub adapter: Box<dyn LspAdapterTrait>,
+    pub adapter: Box<dyn LspAdapter>,
 }
 
-impl LspAdapter {
-    pub async fn new<T: LspAdapterTrait>(adapter: T) -> Arc<Self> {
+impl CachedLspAdapter {
+    pub async fn new<T: LspAdapter>(adapter: T) -> Arc<Self> {
         let adapter = Box::new(adapter);
         let name = adapter.name().await;
         let server_args = adapter.server_args().await;
@@ -89,7 +89,7 @@ impl LspAdapter {
             adapter.disk_based_diagnostics_progress_token().await;
         let id_for_language = adapter.id_for_language(name.0.as_ref()).await;
 
-        Arc::new(LspAdapter {
+        Arc::new(CachedLspAdapter {
             name,
             server_args,
             initialization_options,
@@ -147,7 +147,7 @@ impl LspAdapter {
 }
 
 #[async_trait]
-pub trait LspAdapterTrait: 'static + Send + Sync {
+pub trait LspAdapter: 'static + Send + Sync {
     async fn name(&self) -> LanguageServerName;
 
     async fn fetch_latest_server_version(
@@ -275,7 +275,7 @@ pub struct BracketPair {
 pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
-    pub(crate) adapter: Option<Arc<LspAdapter>>,
+    pub(crate) adapter: Option<Arc<CachedLspAdapter>>,
 
     #[cfg(any(test, feature = "test-support"))]
     fake_adapter: Option<(
@@ -490,7 +490,7 @@ impl LanguageRegistry {
 }
 
 async fn get_server_binary_path(
-    adapter: Arc<LspAdapter>,
+    adapter: Arc<CachedLspAdapter>,
     language: Arc<Language>,
     http_client: Arc<dyn HttpClient>,
     download_dir: Arc<Path>,
@@ -532,7 +532,7 @@ async fn get_server_binary_path(
 }
 
 async fn fetch_latest_server_binary_path(
-    adapter: Arc<LspAdapter>,
+    adapter: Arc<CachedLspAdapter>,
     language: Arc<Language>,
     http_client: Arc<dyn HttpClient>,
     container_dir: &Path,
@@ -581,7 +581,7 @@ impl Language {
         }
     }
 
-    pub fn lsp_adapter(&self) -> Option<Arc<LspAdapter>> {
+    pub fn lsp_adapter(&self) -> Option<Arc<CachedLspAdapter>> {
         self.adapter.clone()
     }
 
@@ -613,7 +613,7 @@ impl Language {
         Arc::get_mut(self.grammar.as_mut().unwrap()).unwrap()
     }
 
-    pub fn with_lsp_adapter(mut self, lsp_adapter: Arc<LspAdapter>) -> Self {
+    pub fn with_lsp_adapter(mut self, lsp_adapter: Arc<CachedLspAdapter>) -> Self {
         self.adapter = Some(lsp_adapter);
         self
     }
@@ -625,7 +625,7 @@ impl Language {
     ) -> mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
         let (servers_tx, servers_rx) = mpsc::unbounded();
         self.fake_adapter = Some((servers_tx, fake_lsp_adapter.clone()));
-        let adapter = LspAdapter::new(fake_lsp_adapter).await;
+        let adapter = CachedLspAdapter::new(fake_lsp_adapter).await;
         self.adapter = Some(adapter);
         servers_rx
     }
@@ -789,7 +789,7 @@ impl Default for FakeLspAdapter {
 
 #[cfg(any(test, feature = "test-support"))]
 #[async_trait]
-impl LspAdapterTrait for Arc<FakeLspAdapter> {
+impl LspAdapter for Arc<FakeLspAdapter> {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName(self.name.into())
     }
