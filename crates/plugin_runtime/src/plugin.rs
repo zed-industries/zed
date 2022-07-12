@@ -62,6 +62,8 @@ pub struct PluginBuilder {
     wasi_ctx: WasiCtx,
     engine: Engine,
     linker: Linker<WasiCtxAlloc>,
+    delta: u64,
+    epoch: std::time::Duration,
 }
 
 /// Creates a default engine for compiling Wasm.
@@ -83,10 +85,11 @@ impl PluginBuilder {
         let linker = Linker::new(&engine);
 
         Ok(PluginBuilder {
-            // host_functions: HashMap::new(),
             wasi_ctx,
             engine,
             linker,
+            delta: 1,
+            epoch: std::time::Duration::from_millis(100),
         })
     }
 
@@ -242,7 +245,17 @@ impl PluginBuilder {
 
     /// Initializes a [`Plugin`] from a given compiled Wasm module.
     /// Both binary (`.wasm`) and text (`.wat`) module formats are supported.
-    pub async fn init<T: AsRef<[u8]>>(self, precompiled: bool, module: T) -> Result<Plugin, Error> {
+    pub async fn init<T: AsRef<[u8]>>(
+        self,
+        precompiled: bool,
+        module: T,
+    ) -> Result<
+        (
+            Plugin,
+            std::pin::Pin<Box<dyn Future<Output = ()> + Send + 'static>>,
+        ),
+        Error,
+    > {
         Plugin::init(precompiled, module.as_ref().to_vec(), self).await
     }
 }
@@ -303,12 +316,17 @@ impl Plugin {
         println!();
     }
 
-    async fn init<T, F: Future<Output = ()> + Send + 'static>(
+    async fn init(
         precompiled: bool,
         module: Vec<u8>,
         plugin: PluginBuilder,
-        spawn_incrementer: impl Fn(F) -> T,
-    ) -> Result<(Self, T), Error> {
+    ) -> Result<
+        (
+            Self,
+            std::pin::Pin<Box<dyn Future<Output = ()> + Send + 'static>>,
+        ),
+        Error,
+    > {
         // initialize the WebAssembly System Interface context
         let engine = plugin.engine;
         let mut linker = plugin.linker;
@@ -323,13 +341,22 @@ impl Plugin {
                 alloc: None,
             },
         );
-        store.epoch_deadline_async_yield_and_update(1);
 
         let module = if precompiled {
             unsafe { Module::deserialize(&engine, module)? }
         } else {
             Module::new(&engine, module)?
         };
+
+        // set up automatic yielding after given duration
+        store.epoch_deadline_async_yield_and_update(plugin.delta);
+        let epoch = plugin.epoch;
+        let incrementer = Box::pin(async move {
+            loop {
+                smol::Timer::after(epoch).await;
+                engine.increment_epoch();
+            }
+        });
 
         // load the provided module into the asynchronous runtime
         linker.module_async(&mut store, "", &module).await?;
@@ -345,13 +372,6 @@ impl Plugin {
         });
 
         let plugin = Plugin { store, instance };
-        let incrementer = spawn_incrementer(async move {
-            loop {
-                smol::Timer::after(std::time::Duration::from_millis(100)).await;
-
-                engine.increment_epoch();
-            }
-        });
 
         Ok((plugin, incrementer))
     }

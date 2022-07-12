@@ -23,7 +23,7 @@ mod tests {
         }
 
         async {
-            let mut runtime = PluginBuilder::new_with_default_ctx()
+            let (mut runtime, incrementer) = PluginBuilder::new_with_default_ctx()
                 .unwrap()
                 .host_function("mystery_number", |input: u32| input + 7)
                 .unwrap()
@@ -52,6 +52,8 @@ mod tests {
                 )
                 .await
                 .unwrap();
+
+            std::thread::spawn(move || incrementer.block_on());
 
             let plugin = TestPlugin {
                 noop: runtime.function("noop").unwrap(),
