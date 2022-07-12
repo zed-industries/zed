@@ -50,7 +50,7 @@ Zed has a Wasm-based plugin runtime which it currently uses to embed plugins. To
 rustup target add wasm32-wasi
 ```
 
-Plugins can be found in the `plugins` folder in the root. For more information about how plugins work, check the (Plugin Guide)[./crates/plugin_runtime/README.md] in `crates/plugin_runtime/README.md`.
+Plugins can be found in the `plugins` folder in the root. For more information about how plugins work, check the [Plugin Guide](./crates/plugin_runtime/README.md) in `crates/plugin_runtime/README.md`.
 
 ## Roadmap
 
