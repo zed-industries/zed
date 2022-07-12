@@ -60,7 +60,7 @@ fn main() {
 fn create_default_engine() -> Engine {
     let mut config = Config::default();
     config.async_support(true);
-    // config.epoch_interruption(true);
+    config.epoch_interruption(true);
     Engine::new(&config).expect("Could not create engine")
 }
 

@@ -71,7 +71,7 @@ pub struct PluginBuilder {
 pub fn create_default_engine() -> Result<Engine, Error> {
     let mut config = Config::default();
     config.async_support(true);
-    // config.epoch_interruption(true);
+    config.epoch_interruption(true);
     Engine::new(&config)
 }
 
@@ -303,11 +303,12 @@ impl Plugin {
         println!();
     }
 
-    async fn init(
+    async fn init<T, F: Future<Output = ()> + Send + 'static>(
         precompiled: bool,
         module: Vec<u8>,
         plugin: PluginBuilder,
-    ) -> Result<Self, Error> {
+        spawn_incrementer: impl Fn(F) -> T,
+    ) -> Result<(Self, T), Error> {
         // initialize the WebAssembly System Interface context
         let engine = plugin.engine;
         let mut linker = plugin.linker;
@@ -322,7 +323,8 @@ impl Plugin {
                 alloc: None,
             },
         );
-        // store.epoch_deadline_async_yield_and_update(todo!());
+        store.epoch_deadline_async_yield_and_update(1);
+
         let module = if precompiled {
             unsafe { Module::deserialize(&engine, module)? }
         } else {
@@ -342,7 +344,16 @@ impl Plugin {
             free_buffer,
         });
 
-        Ok(Plugin { store, instance })
+        let plugin = Plugin { store, instance };
+        let incrementer = spawn_incrementer(async move {
+            loop {
+                smol::Timer::after(std::time::Duration::from_millis(100)).await;
+
+                engine.increment_epoch();
+            }
+        });
+
+        Ok((plugin, incrementer))
     }
 
     /// Attaches a file or directory the the given system path to the runtime.
