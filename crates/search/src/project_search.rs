@@ -911,8 +911,11 @@ mod tests {
         let fonts = cx.font_cache();
         let mut theme = gpui::fonts::with_font_cache(fonts.clone(), || theme::Theme::default());
         theme.search.match_background = Color::red();
-        let settings = Settings::new("Courier", &fonts, Arc::new(theme)).unwrap();
-        cx.update(|cx| cx.set_global(settings));
+        cx.update(|cx| {
+            let mut settings = Settings::test(cx);
+            settings.theme = Arc::new(theme);
+            cx.set_global(settings)
+        });
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(

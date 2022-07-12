@@ -983,7 +983,7 @@ pub mod tests {
         language.set_theme(&theme);
         cx.update(|cx| {
             let mut settings = Settings::test(cx);
-            settings.language_settings.tab_size = Some(2.try_into().unwrap());
+            settings.editor_defaults.tab_size = Some(2.try_into().unwrap());
             cx.set_global(settings);
         });
 

@@ -1,17 +1,18 @@
 mod keymap_file;
 
 use anyhow::Result;
-use gpui::font_cache::{FamilyId, FontCache};
+use gpui::{
+    font_cache::{FamilyId, FontCache},
+    AssetSource,
+};
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},
-    schema::{
-        InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec, SubschemaValidation,
-    },
+    schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
     JsonSchema,
 };
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
-use std::{collections::HashMap, num::NonZeroU32, sync::Arc};
+use std::{collections::HashMap, num::NonZeroU32, str, sync::Arc};
 use theme::{Theme, ThemeRegistry};
 use util::ResultExt as _;
 
@@ -26,14 +27,15 @@ pub struct Settings {
     pub hover_popover_enabled: bool,
     pub vim_mode: bool,
     pub autosave: Autosave,
-    pub language_settings: LanguageSettings,
-    pub language_defaults: HashMap<Arc<str>, LanguageSettings>,
-    pub language_overrides: HashMap<Arc<str>, LanguageSettings>,
+    pub editor_defaults: EditorSettings,
+    pub editor_overrides: EditorSettings,
+    pub language_defaults: HashMap<Arc<str>, EditorSettings>,
+    pub language_overrides: HashMap<Arc<str>, EditorSettings>,
     pub theme: Arc<Theme>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
-pub struct LanguageSettings {
+pub struct EditorSettings {
     pub tab_size: Option<NonZeroU32>,
     pub hard_tabs: Option<bool>,
     pub soft_wrap: Option<SoftWrap>,
@@ -83,44 +85,61 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub vim_mode: Option<bool>,
     #[serde(default)]
-    pub format_on_save: Option<FormatOnSave>,
-    #[serde(default)]
     pub autosave: Option<Autosave>,
-    #[serde(default)]
-    pub enable_language_server: Option<bool>,
     #[serde(flatten)]
-    pub editor: LanguageSettings,
+    pub editor: EditorSettings,
     #[serde(default)]
-    pub language_overrides: HashMap<Arc<str>, LanguageSettings>,
+    #[serde(alias = "language_overrides")]
+    pub languages: HashMap<Arc<str>, EditorSettings>,
     #[serde(default)]
     pub theme: Option<String>,
 }
 
 impl Settings {
-    pub fn new(
-        buffer_font_family: &str,
+    pub fn defaults(
+        assets: impl AssetSource,
         font_cache: &FontCache,
-        theme: Arc<Theme>,
-    ) -> Result<Self> {
-        Ok(Self {
-            buffer_font_family: font_cache.load_family(&[buffer_font_family])?,
-            buffer_font_size: 15.,
-            default_buffer_font_size: 15.,
-            hover_popover_enabled: true,
-            vim_mode: false,
-            autosave: Autosave::Off,
-            language_settings: Default::default(),
-            language_defaults: Default::default(),
+        themes: &ThemeRegistry,
+    ) -> Self {
+        fn required<T>(value: Option<T>) -> Option<T> {
+            assert!(value.is_some(), "missing default setting value");
+            value
+        }
+
+        let defaults: SettingsFileContent = parse_json_with_comments(
+            str::from_utf8(assets.load("settings/default.json").unwrap().as_ref()).unwrap(),
+        )
+        .unwrap();
+
+        Self {
+            buffer_font_family: font_cache
+                .load_family(&[defaults.buffer_font_family.as_ref().unwrap()])
+                .unwrap(),
+            buffer_font_size: defaults.buffer_font_size.unwrap(),
+            default_buffer_font_size: defaults.buffer_font_size.unwrap(),
+            hover_popover_enabled: defaults.hover_popover_enabled.unwrap(),
+            projects_online_by_default: defaults.projects_online_by_default.unwrap(),
+            vim_mode: defaults.vim_mode.unwrap(),
+            autosave: defaults.autosave.unwrap(),
+            editor_defaults: EditorSettings {
+                tab_size: required(defaults.editor.tab_size),
+                hard_tabs: required(defaults.editor.hard_tabs),
+                soft_wrap: required(defaults.editor.soft_wrap),
+                preferred_line_length: required(defaults.editor.preferred_line_length),
+                format_on_save: required(defaults.editor.format_on_save),
+                enable_language_server: required(defaults.editor.enable_language_server),
+            },
+            language_defaults: defaults.languages,
+            editor_overrides: Default::default(),
             language_overrides: Default::default(),
-            projects_online_by_default: true,
-            theme,
-        })
+            theme: themes.get(&defaults.theme.unwrap()).unwrap(),
+        }
     }
 
     pub fn with_language_defaults(
         mut self,
         language_name: impl Into<Arc<str>>,
-        overrides: LanguageSettings,
+        overrides: EditorSettings,
     ) -> Self {
         self.language_defaults
             .insert(language_name.into(), overrides);
@@ -129,48 +148,37 @@ impl Settings {
 
     pub fn tab_size(&self, language: Option<&str>) -> NonZeroU32 {
         self.language_setting(language, |settings| settings.tab_size)
-            .unwrap_or(4.try_into().unwrap())
     }
 
     pub fn hard_tabs(&self, language: Option<&str>) -> bool {
         self.language_setting(language, |settings| settings.hard_tabs)
-            .unwrap_or(false)
     }
 
     pub fn soft_wrap(&self, language: Option<&str>) -> SoftWrap {
         self.language_setting(language, |settings| settings.soft_wrap)
-            .unwrap_or(SoftWrap::None)
     }
 
     pub fn preferred_line_length(&self, language: Option<&str>) -> u32 {
         self.language_setting(language, |settings| settings.preferred_line_length)
-            .unwrap_or(80)
     }
 
     pub fn format_on_save(&self, language: Option<&str>) -> FormatOnSave {
         self.language_setting(language, |settings| settings.format_on_save.clone())
-            .unwrap_or(FormatOnSave::LanguageServer)
     }
 
     pub fn enable_language_server(&self, language: Option<&str>) -> bool {
         self.language_setting(language, |settings| settings.enable_language_server)
-            .unwrap_or(true)
     }
 
-    fn language_setting<F, R>(&self, language: Option<&str>, f: F) -> Option<R>
+    fn language_setting<F, R>(&self, language: Option<&str>, f: F) -> R
     where
-        F: Fn(&LanguageSettings) -> Option<R>,
+        F: Fn(&EditorSettings) -> Option<R>,
     {
-        let mut language_override = None;
-        let mut language_default = None;
-        if let Some(language) = language {
-            language_override = self.language_overrides.get(language).and_then(&f);
-            language_default = self.language_defaults.get(language).and_then(&f);
-        }
-
-        language_override
-            .or_else(|| f(&self.language_settings))
-            .or(language_default)
+        None.or_else(|| language.and_then(|l| self.language_overrides.get(l).and_then(&f)))
+            .or_else(|| f(&self.editor_overrides))
+            .or_else(|| language.and_then(|l| self.language_defaults.get(l).and_then(&f)))
+            .or_else(|| f(&self.editor_defaults))
+            .expect("missing default")
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -182,7 +190,15 @@ impl Settings {
             hover_popover_enabled: true,
             vim_mode: false,
             autosave: Autosave::Off,
-            language_settings: Default::default(),
+            editor_defaults: EditorSettings {
+                tab_size: Some(4.try_into().unwrap()),
+                hard_tabs: Some(false),
+                soft_wrap: Some(SoftWrap::None),
+                preferred_line_length: Some(80),
+                format_on_save: Some(FormatOnSave::LanguageServer),
+                enable_language_server: Some(true),
+            },
+            editor_overrides: Default::default(),
             language_defaults: Default::default(),
             language_overrides: Default::default(),
             projects_online_by_default: true,
@@ -224,22 +240,23 @@ impl Settings {
         merge(&mut self.hover_popover_enabled, data.hover_popover_enabled);
         merge(&mut self.vim_mode, data.vim_mode);
         merge(&mut self.autosave, data.autosave);
+
         merge_option(
-            &mut self.language_settings.format_on_save,
-            data.format_on_save.clone(),
+            &mut self.editor_overrides.format_on_save,
+            data.editor.format_on_save.clone(),
         );
         merge_option(
-            &mut self.language_settings.enable_language_server,
-            data.enable_language_server,
+            &mut self.editor_overrides.enable_language_server,
+            data.editor.enable_language_server,
         );
-        merge_option(&mut self.language_settings.soft_wrap, data.editor.soft_wrap);
-        merge_option(&mut self.language_settings.tab_size, data.editor.tab_size);
+        merge_option(&mut self.editor_overrides.soft_wrap, data.editor.soft_wrap);
+        merge_option(&mut self.editor_overrides.tab_size, data.editor.tab_size);
         merge_option(
-            &mut self.language_settings.preferred_line_length,
+            &mut self.editor_overrides.preferred_line_length,
             data.editor.preferred_line_length,
         );
 
-        for (language_name, settings) in data.language_overrides.clone().into_iter() {
+        for (language_name, settings) in data.languages.clone().into_iter() {
             let target = self
                 .language_overrides
                 .entry(language_name.into())
@@ -270,77 +287,61 @@ pub fn settings_file_json_schema(
     let generator = SchemaGenerator::new(settings);
     let mut root_schema = generator.into_root_schema_for::<SettingsFileContent>();
 
-    // Construct theme names reference type
-    let theme_names = theme_names
-        .into_iter()
-        .map(|name| Value::String(name))
-        .collect();
-    let theme_names_schema = Schema::Object(SchemaObject {
+    // Create a schema for a theme name.
+    let theme_name_schema = SchemaObject {
         instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
-        enum_values: Some(theme_names),
+        enum_values: Some(
+            theme_names
+                .into_iter()
+                .map(|name| Value::String(name))
+                .collect(),
+        ),
         ..Default::default()
-    });
-    root_schema
-        .definitions
-        .insert("ThemeName".to_owned(), theme_names_schema);
+    };
 
-    // Construct language settings reference type
-    let language_settings_schema_reference = Schema::Object(SchemaObject {
-        reference: Some("#/definitions/LanguageSettings".to_owned()),
-        ..Default::default()
-    });
-    let language_settings_properties = language_names
-        .into_iter()
-        .map(|name| {
-            (
-                name,
-                Schema::Object(SchemaObject {
-                    subschemas: Some(Box::new(SubschemaValidation {
-                        all_of: Some(vec![language_settings_schema_reference.clone()]),
-                        ..Default::default()
-                    })),
-                    ..Default::default()
-                }),
-            )
-        })
-        .collect();
-    let language_overrides_schema = Schema::Object(SchemaObject {
+    // Create a schema for a 'languages overrides' object, associating editor
+    // settings with specific langauges.
+    assert!(root_schema.definitions.contains_key("EditorSettings"));
+    let languages_object_schema = SchemaObject {
         instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
         object: Some(Box::new(ObjectValidation {
-            properties: language_settings_properties,
+            properties: language_names
+                .into_iter()
+                .map(|name| (name, Schema::new_ref("#/definitions/EditorSettings".into())))
+                .collect(),
             ..Default::default()
         })),
         ..Default::default()
-    });
+    };
+
+    // Add these new schemas as definitions, and modify properties of the root
+    // schema to reference them.
+    root_schema.definitions.extend([
+        ("ThemeName".into(), theme_name_schema.into()),
+        ("Languages".into(), languages_object_schema.into()),
+    ]);
     root_schema
-        .definitions
-        .insert("LanguageOverrides".to_owned(), language_overrides_schema);
+        .schema
+        .object
+        .as_mut()
+        .unwrap()
+        .properties
+        .extend([
+            (
+                "theme".to_owned(),
+                Schema::new_ref("#/definitions/ThemeName".into()),
+            ),
+            (
+                "languages".to_owned(),
+                Schema::new_ref("#/definitions/Languages".into()),
+            ),
+            // For backward compatibility
+            (
+                "language_overrides".to_owned(),
+                Schema::new_ref("#/definitions/Languages".into()),
+            ),
+        ]);
 
-    // Modify theme property to use new theme reference type
-    let settings_file_schema = root_schema.schema.object.as_mut().unwrap();
-    let language_overrides_schema_reference = Schema::Object(SchemaObject {
-        reference: Some("#/definitions/ThemeName".to_owned()),
-        ..Default::default()
-    });
-    settings_file_schema.properties.insert(
-        "theme".to_owned(),
-        Schema::Object(SchemaObject {
-            subschemas: Some(Box::new(SubschemaValidation {
-                all_of: Some(vec![language_overrides_schema_reference]),
-                ..Default::default()
-            })),
-            ..Default::default()
-        }),
-    );
-
-    // Modify language_overrides property to use LanguageOverrides reference
-    settings_file_schema.properties.insert(
-        "language_overrides".to_owned(),
-        Schema::Object(SchemaObject {
-            reference: Some("#/definitions/LanguageOverrides".to_owned()),
-            ..Default::default()
-        }),
-    );
     serde_json::to_value(root_schema).unwrap()
 }
 

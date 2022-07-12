@@ -18,8 +18,9 @@ use gpui::{
     geometry::vector::vec2f,
     impl_actions,
     platform::{WindowBounds, WindowOptions},
-    AsyncAppContext, ViewContext,
+    AssetSource, AsyncAppContext, ViewContext,
 };
+use language::Rope;
 use lazy_static::lazy_static;
 pub use lsp;
 pub use project::{self, fs};
@@ -52,6 +53,7 @@ actions!(
         DebugElements,
         OpenSettings,
         OpenKeymap,
+        OpenDefaultSettings,
         OpenDefaultKeymap,
         IncreaseBufferFontSize,
         DecreaseBufferFontSize,
@@ -99,39 +101,48 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_action({
         let app_state = app_state.clone();
         move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
-            open_config_file(&SETTINGS_PATH, app_state.clone(), cx);
+            open_config_file(&SETTINGS_PATH, app_state.clone(), cx, || {
+                let header = Assets.load("settings/header-comments.json").unwrap();
+                let json = Assets.load("settings/default.json").unwrap();
+                let header = str::from_utf8(header.as_ref()).unwrap();
+                let json = str::from_utf8(json.as_ref()).unwrap();
+                let mut content = Rope::new();
+                content.push(header);
+                content.push(json);
+                content
+            });
         }
     });
     cx.add_action({
         let app_state = app_state.clone();
         move |_: &mut Workspace, _: &OpenKeymap, cx: &mut ViewContext<Workspace>| {
-            open_config_file(&KEYMAP_PATH, app_state.clone(), cx);
+            open_config_file(&KEYMAP_PATH, app_state.clone(), cx, || Default::default());
         }
     });
     cx.add_action({
         let app_state = app_state.clone();
         move |workspace: &mut Workspace, _: &OpenDefaultKeymap, cx: &mut ViewContext<Workspace>| {
-            workspace.with_local_workspace(cx, app_state.clone(), |workspace, cx| {
-                let project = workspace.project().clone();
-                let buffer = project.update(cx, |project, cx| {
-                    let text = Assets::get("keymaps/default.json").unwrap().data;
-                    let text = str::from_utf8(text.as_ref()).unwrap();
-                    project
-                        .create_buffer(text, project.languages().get_language("JSON"), cx)
-                        .expect("creating buffers on a local workspace always succeeds")
-                });
-                let buffer = cx.add_model(|cx| {
-                    MultiBuffer::singleton(buffer, cx).with_title("Default Key Bindings".into())
-                });
-                workspace.add_item(
-                    Box::new(
-                        cx.add_view(|cx| {
-                            Editor::for_multibuffer(buffer, Some(project.clone()), cx)
-                        }),
-                    ),
-                    cx,
-                );
-            });
+            open_bundled_config_file(
+                workspace,
+                app_state.clone(),
+                "keymaps/default.json",
+                "Default Key Bindings",
+                cx,
+            );
+        }
+    });
+    cx.add_action({
+        let app_state = app_state.clone();
+        move |workspace: &mut Workspace,
+              _: &OpenDefaultSettings,
+              cx: &mut ViewContext<Workspace>| {
+            open_bundled_config_file(
+                workspace,
+                app_state.clone(),
+                "settings/default.json",
+                "Default Settings",
+                cx,
+            );
         }
     });
     cx.add_action(
@@ -366,12 +377,15 @@ fn open_config_file(
     path: &'static Path,
     app_state: Arc<AppState>,
     cx: &mut ViewContext<Workspace>,
+    default_content: impl 'static + Send + FnOnce() -> Rope,
 ) {
     cx.spawn(|workspace, mut cx| async move {
         let fs = &app_state.fs;
         if !fs.is_file(path).await {
             fs.create_dir(&ROOT_PATH).await?;
             fs.create_file(path, Default::default()).await?;
+            fs.save(path, &default_content(), Default::default())
+                .await?;
         }
 
         workspace
@@ -384,6 +398,30 @@ fn open_config_file(
         Ok::<_, anyhow::Error>(())
     })
     .detach_and_log_err(cx)
+}
+
+fn open_bundled_config_file(
+    workspace: &mut Workspace,
+    app_state: Arc<AppState>,
+    asset_path: &'static str,
+    title: &str,
+    cx: &mut ViewContext<Workspace>,
+) {
+    workspace.with_local_workspace(cx, app_state.clone(), |workspace, cx| {
+        let project = workspace.project().clone();
+        let buffer = project.update(cx, |project, cx| {
+            let text = Assets::get(asset_path).unwrap().data;
+            let text = str::from_utf8(text.as_ref()).unwrap();
+            project
+                .create_buffer(text, project.languages().get_language("JSON"), cx)
+                .expect("creating buffers on a local workspace always succeeds")
+        });
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx).with_title(title.into()));
+        workspace.add_item(
+            Box::new(cx.add_view(|cx| Editor::for_multibuffer(buffer, Some(project.clone()), cx))),
+            cx,
+        );
+    });
 }
 
 #[cfg(test)]
@@ -400,7 +438,7 @@ mod tests {
         collections::HashSet,
         path::{Path, PathBuf},
     };
-    use theme::{Theme, ThemeRegistry, DEFAULT_THEME_NAME};
+    use theme::ThemeRegistry;
     use workspace::{
         open_paths, pane, Item, ItemHandle, NewFile, Pane, SplitDirection, WorkspaceHandle,
     };
@@ -1530,23 +1568,29 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_bundled_themes(cx: &mut MutableAppContext) {
+    fn test_bundled_settings_and_themes(cx: &mut MutableAppContext) {
+        cx.platform()
+            .fonts()
+            .add_fonts(&[
+                Assets
+                    .load("fonts/zed-sans/zed-sans-extended.ttf")
+                    .unwrap()
+                    .to_vec()
+                    .into(),
+                Assets
+                    .load("fonts/zed-mono/zed-mono-extended.ttf")
+                    .unwrap()
+                    .to_vec()
+                    .into(),
+            ])
+            .unwrap();
         let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
-
-        lazy_static::lazy_static! {
-            static ref DEFAULT_THEME: parking_lot::Mutex<Option<Arc<Theme>>> = Default::default();
-            static ref FONTS: Vec<Arc<Vec<u8>>> = vec![
-                Assets.load("fonts/zed-sans/zed-sans-extended.ttf").unwrap().to_vec().into(),
-                Assets.load("fonts/zed-mono/zed-mono-extended.ttf").unwrap().to_vec().into(),
-            ];
-        }
-
-        cx.platform().fonts().add_fonts(&FONTS).unwrap();
+        let settings = Settings::defaults(Assets, cx.font_cache(), &themes);
 
         let mut has_default_theme = false;
         for theme_name in themes.list() {
             let theme = themes.get(&theme_name).unwrap();
-            if theme.name == DEFAULT_THEME_NAME {
+            if theme.name == settings.theme.name {
                 has_default_theme = true;
             }
             assert_eq!(theme.name, theme_name);

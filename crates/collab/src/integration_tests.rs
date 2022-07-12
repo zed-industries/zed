@@ -2010,7 +2010,7 @@ async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
     // host's configuration is honored as opposed to using the guest's settings.
     cx_a.update(|cx| {
         cx.update_global(|settings: &mut Settings, _| {
-            settings.language_settings.format_on_save = Some(FormatOnSave::External {
+            settings.editor_defaults.format_on_save = Some(FormatOnSave::External {
                 command: "awk".to_string(),
                 arguments: vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()],
             });

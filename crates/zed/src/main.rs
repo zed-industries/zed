@@ -38,7 +38,7 @@ use std::{
     time::Duration,
 };
 use terminal;
-use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
+use theme::ThemeRegistry;
 use util::{ResultExt, TryFutureExt};
 use workspace::{self, AppState, NewFile, OpenPaths};
 use zed::{
@@ -72,73 +72,7 @@ fn main() {
 
     let fs = Arc::new(RealFs);
     let themes = ThemeRegistry::new(Assets, app.font_cache());
-    let theme = themes.get(DEFAULT_THEME_NAME).unwrap();
-    let default_settings = Settings::new("Zed Mono", &app.font_cache(), theme)
-        .unwrap()
-        .with_language_defaults(
-            languages::PLAIN_TEXT.name(),
-            settings::LanguageSettings {
-                soft_wrap: Some(settings::SoftWrap::PreferredLineLength),
-                ..Default::default()
-            },
-        )
-        .with_language_defaults(
-            "C",
-            settings::LanguageSettings {
-                tab_size: Some(2.try_into().unwrap()),
-                ..Default::default()
-            },
-        )
-        .with_language_defaults(
-            "C++",
-            settings::LanguageSettings {
-                tab_size: Some(2.try_into().unwrap()),
-                ..Default::default()
-            },
-        )
-        .with_language_defaults(
-            "Go",
-            settings::LanguageSettings {
-                tab_size: Some(4.try_into().unwrap()),
-                hard_tabs: Some(true),
-                ..Default::default()
-            },
-        )
-        .with_language_defaults(
-            "Markdown",
-            settings::LanguageSettings {
-                soft_wrap: Some(settings::SoftWrap::PreferredLineLength),
-                ..Default::default()
-            },
-        )
-        .with_language_defaults(
-            "Rust",
-            settings::LanguageSettings {
-                tab_size: Some(4.try_into().unwrap()),
-                ..Default::default()
-            },
-        )
-        .with_language_defaults(
-            "JavaScript",
-            settings::LanguageSettings {
-                tab_size: Some(2.try_into().unwrap()),
-                ..Default::default()
-            },
-        )
-        .with_language_defaults(
-            "TypeScript",
-            settings::LanguageSettings {
-                tab_size: Some(2.try_into().unwrap()),
-                ..Default::default()
-            },
-        )
-        .with_language_defaults(
-            "TSX",
-            settings::LanguageSettings {
-                tab_size: Some(2.try_into().unwrap()),
-                ..Default::default()
-            },
-        );
+    let default_settings = Settings::defaults(Assets, &app.font_cache(), &themes);
 
     let config_files = load_config_files(&app, fs.clone());
 
