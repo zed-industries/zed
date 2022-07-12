@@ -28,8 +28,9 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
-          target: x86_64-apple-darwin
+          target: aarch64-apple-darwin
           profile: minimal
+          default: true
 
       - name: Install Rust wasm32-wasi target
         uses: actions-rs/toolchain@v1
@@ -65,18 +66,19 @@ jobs:
       APPLE_NOTARIZATION_USERNAME: ${{ secrets.APPLE_NOTARIZATION_USERNAME }}
       APPLE_NOTARIZATION_PASSWORD: ${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
     steps:
-      - name: Install Rust x86_64-apple-darwin target
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          target: x86_64-apple-darwin
-          profile: minimal
-
       - name: Install Rust aarch64-apple-darwin target
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           target: aarch64-apple-darwin
+          profile: minimal
+          default: true
+
+      - name: Install Rust x86_64-apple-darwin target
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: x86_64-apple-darwin
           profile: minimal
           
       - name: Install Rust wasm32-wasi target
