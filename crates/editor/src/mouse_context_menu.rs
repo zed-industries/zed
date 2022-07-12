@@ -1,11 +1,9 @@
-use context_menu::{ContextMenu, ContextMenuItem};
-use gpui::{
-    geometry::vector::Vector2F, impl_internal_actions, MutableAppContext, Task, ViewContext,
-    ViewHandle,
-};
+use context_menu::ContextMenuItem;
+use gpui::{geometry::vector::Vector2F, impl_internal_actions, MutableAppContext, ViewContext};
 
 use crate::{
     DisplayPoint, Editor, EditorMode, FindAllReferences, GoToDefinition, Rename, SelectMode,
+    ToggleCodeActions,
 };
 
 #[derive(Clone, PartialEq)]
@@ -18,11 +16,6 @@ impl_internal_actions!(editor, [DeployMouseContextMenu]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(deploy_context_menu);
-}
-
-pub struct MouseContextMenuState {
-    pub context_menu: ViewHandle<ContextMenu>,
-    pub task: Option<Task<()>>,
 }
 
 pub fn deploy_context_menu(
@@ -53,6 +46,12 @@ pub fn deploy_context_menu(
                 ContextMenuItem::item("Rename Symbol", Rename),
                 ContextMenuItem::item("Go To Definition", GoToDefinition),
                 ContextMenuItem::item("Find All References", FindAllReferences),
+                ContextMenuItem::item(
+                    "Code Actions",
+                    ToggleCodeActions {
+                        deployed_from_indicator: false,
+                    },
+                ),
             ],
             cx,
         );
