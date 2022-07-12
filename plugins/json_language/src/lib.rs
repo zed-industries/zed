@@ -94,10 +94,6 @@ pub fn initialization_options() -> Option<String> {
 }
 
 #[export]
-pub fn id_for_language(name: String) -> Option<String> {
-    if name == "JSON" {
-        Some("jsonc".into())
-    } else {
-        None
-    }
+pub fn language_ids() -> Vec<(String, String)> {
+    vec![("JSON".into(), "jsonc".into())]
 }

@@ -1821,7 +1821,7 @@ impl Project {
                 if let Some(language) = buffer.language() {
                     let worktree_id = file.worktree_id(cx);
                     if let Some(adapter) = language.lsp_adapter() {
-                        language_id = adapter.id_for_language.clone();
+                        language_id = adapter.language_ids.get(language.name().as_ref()).cloned();
                         language_server = self
                             .language_server_ids
                             .get(&(worktree_id, adapter.name.clone()))
@@ -2320,8 +2320,9 @@ impl Project {
                                                 text_document: lsp::TextDocumentItem::new(
                                                     uri,
                                                     adapter
-                                                        .id_for_language
-                                                        .clone()
+                                                        .language_ids
+                                                        .get(language.name().as_ref())
+                                                        .cloned()
                                                         .unwrap_or_default(),
                                                     *version,
                                                     initial_snapshot.text(),
