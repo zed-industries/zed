@@ -1,11 +1,17 @@
 {
-    "theme": "cave-light",
+    "theme": "cave-dark",
     "buffer_font_family": "Zed Mono",
     "buffer_font_size": 15,
     "hover_popover_enabled": true,
     "vim_mode": false,
     "autosave": "off",
     "projects_online_by_default": true,
+    "enable_language_server": true,
+    "format_on_save": "language_server",
+    "preferred_line_length": 80,
+    "soft_wrap": "none",
+    "hard_tabs": false,
+    "tab_size": 4,
     "languages_overrides": {
         "Plain Text": {
             "soft_wrap": "preferred_line_length"

@@ -29,7 +29,8 @@ pub struct Settings {
     pub hover_popover_enabled: bool,
     pub vim_mode: bool,
     pub autosave: Autosave,
-    pub language_settings: LanguageSettings,
+    pub editor_defaults: LanguageSettings,
+    pub editor_overrides: LanguageSettings,
     pub language_defaults: HashMap<Arc<str>, LanguageSettings>,
     pub language_overrides: HashMap<Arc<str>, LanguageSettings>,
     pub theme: Arc<Theme>,
@@ -86,11 +87,7 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub vim_mode: Option<bool>,
     #[serde(default)]
-    pub format_on_save: Option<FormatOnSave>,
-    #[serde(default)]
     pub autosave: Option<Autosave>,
-    #[serde(default)]
-    pub enable_language_server: Option<bool>,
     #[serde(flatten)]
     pub editor: LanguageSettings,
     #[serde(default)]
@@ -105,8 +102,14 @@ impl Settings {
         font_cache: &FontCache,
         themes: &ThemeRegistry,
     ) -> Self {
-        let defaults = assets.load("default-settings.json").unwrap();
-        let defaults: SettingsFileContent = serde_json::from_slice(defaults.as_ref()).unwrap();
+        fn required<T>(value: Option<T>) -> Option<T> {
+            assert!(value.is_some(), "missing default setting value");
+            value
+        }
+
+        let defaults: SettingsFileContent =
+            serde_json::from_slice(assets.load("default-settings.json").unwrap().as_ref()).unwrap();
+
         Self {
             buffer_font_family: font_cache
                 .load_family(&[defaults.buffer_font_family.as_ref().unwrap()])
@@ -117,15 +120,16 @@ impl Settings {
             projects_online_by_default: defaults.projects_online_by_default.unwrap(),
             vim_mode: defaults.vim_mode.unwrap(),
             autosave: defaults.autosave.unwrap(),
-            language_settings: LanguageSettings {
-                tab_size: defaults.editor.tab_size,
-                hard_tabs: defaults.editor.hard_tabs,
-                soft_wrap: defaults.editor.soft_wrap,
-                preferred_line_length: defaults.editor.preferred_line_length,
-                format_on_save: defaults.editor.format_on_save,
-                enable_language_server: defaults.editor.enable_language_server,
+            editor_defaults: LanguageSettings {
+                tab_size: required(defaults.editor.tab_size),
+                hard_tabs: required(defaults.editor.hard_tabs),
+                soft_wrap: required(defaults.editor.soft_wrap),
+                preferred_line_length: required(defaults.editor.preferred_line_length),
+                format_on_save: required(defaults.editor.format_on_save),
+                enable_language_server: required(defaults.editor.enable_language_server),
             },
             language_defaults: defaults.language_overrides,
+            editor_overrides: Default::default(),
             language_overrides: Default::default(),
             theme: themes.get(&defaults.theme.unwrap()).unwrap(),
         }
@@ -143,48 +147,37 @@ impl Settings {
 
     pub fn tab_size(&self, language: Option<&str>) -> NonZeroU32 {
         self.language_setting(language, |settings| settings.tab_size)
-            .unwrap_or(4.try_into().unwrap())
     }
 
     pub fn hard_tabs(&self, language: Option<&str>) -> bool {
         self.language_setting(language, |settings| settings.hard_tabs)
-            .unwrap_or(false)
     }
 
     pub fn soft_wrap(&self, language: Option<&str>) -> SoftWrap {
         self.language_setting(language, |settings| settings.soft_wrap)
-            .unwrap_or(SoftWrap::None)
     }
 
     pub fn preferred_line_length(&self, language: Option<&str>) -> u32 {
         self.language_setting(language, |settings| settings.preferred_line_length)
-            .unwrap_or(80)
     }
 
     pub fn format_on_save(&self, language: Option<&str>) -> FormatOnSave {
         self.language_setting(language, |settings| settings.format_on_save.clone())
-            .unwrap_or(FormatOnSave::LanguageServer)
     }
 
     pub fn enable_language_server(&self, language: Option<&str>) -> bool {
         self.language_setting(language, |settings| settings.enable_language_server)
-            .unwrap_or(true)
     }
 
-    fn language_setting<F, R>(&self, language: Option<&str>, f: F) -> Option<R>
+    fn language_setting<F, R>(&self, language: Option<&str>, f: F) -> R
     where
         F: Fn(&LanguageSettings) -> Option<R>,
     {
-        let mut language_override = None;
-        let mut language_default = None;
-        if let Some(language) = language {
-            language_override = self.language_overrides.get(language).and_then(&f);
-            language_default = self.language_defaults.get(language).and_then(&f);
-        }
-
-        language_override
-            .or_else(|| f(&self.language_settings))
-            .or(language_default)
+        None.or_else(|| language.and_then(|l| self.language_overrides.get(l).and_then(&f)))
+            .or_else(|| f(&self.editor_overrides))
+            .or_else(|| language.and_then(|l| self.language_defaults.get(l).and_then(&f)))
+            .or_else(|| f(&self.editor_defaults))
+            .expect("missing default")
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -196,7 +189,15 @@ impl Settings {
             hover_popover_enabled: true,
             vim_mode: false,
             autosave: Autosave::Off,
-            language_settings: Default::default(),
+            editor_defaults: LanguageSettings {
+                tab_size: Some(4.try_into().unwrap()),
+                hard_tabs: Some(false),
+                soft_wrap: Some(SoftWrap::None),
+                preferred_line_length: Some(80),
+                format_on_save: Some(FormatOnSave::LanguageServer),
+                enable_language_server: Some(true),
+            },
+            editor_overrides: Default::default(),
             language_defaults: Default::default(),
             language_overrides: Default::default(),
             projects_online_by_default: true,
@@ -238,18 +239,19 @@ impl Settings {
         merge(&mut self.hover_popover_enabled, data.hover_popover_enabled);
         merge(&mut self.vim_mode, data.vim_mode);
         merge(&mut self.autosave, data.autosave);
+
         merge_option(
-            &mut self.language_settings.format_on_save,
-            data.format_on_save.clone(),
+            &mut self.editor_overrides.format_on_save,
+            data.editor.format_on_save.clone(),
         );
         merge_option(
-            &mut self.language_settings.enable_language_server,
-            data.enable_language_server,
+            &mut self.editor_overrides.enable_language_server,
+            data.editor.enable_language_server,
         );
-        merge_option(&mut self.language_settings.soft_wrap, data.editor.soft_wrap);
-        merge_option(&mut self.language_settings.tab_size, data.editor.tab_size);
+        merge_option(&mut self.editor_overrides.soft_wrap, data.editor.soft_wrap);
+        merge_option(&mut self.editor_overrides.tab_size, data.editor.tab_size);
         merge_option(
-            &mut self.language_settings.preferred_line_length,
+            &mut self.editor_overrides.preferred_line_length,
             data.editor.preferred_line_length,
         );
 

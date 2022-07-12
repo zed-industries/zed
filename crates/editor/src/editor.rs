@@ -7613,7 +7613,7 @@ mod tests {
         let mut cx = EditorTestContext::new(cx).await;
         cx.update(|cx| {
             cx.update_global::<Settings, _, _>(|settings, _| {
-                settings.language_settings.hard_tabs = Some(true);
+                settings.editor_overrides.hard_tabs = Some(true);
             });
         });
 

@@ -400,7 +400,7 @@ mod tests {
         collections::HashSet,
         path::{Path, PathBuf},
     };
-    use theme::{Theme, ThemeRegistry, DEFAULT_THEME_NAME};
+    use theme::ThemeRegistry;
     use workspace::{
         open_paths, pane, Item, ItemHandle, NewFile, Pane, SplitDirection, WorkspaceHandle,
     };
@@ -1530,23 +1530,29 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_bundled_themes(cx: &mut MutableAppContext) {
+    fn test_bundled_settings_and_themes(cx: &mut MutableAppContext) {
+        cx.platform()
+            .fonts()
+            .add_fonts(&[
+                Assets
+                    .load("fonts/zed-sans/zed-sans-extended.ttf")
+                    .unwrap()
+                    .to_vec()
+                    .into(),
+                Assets
+                    .load("fonts/zed-mono/zed-mono-extended.ttf")
+                    .unwrap()
+                    .to_vec()
+                    .into(),
+            ])
+            .unwrap();
         let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
-
-        lazy_static::lazy_static! {
-            static ref DEFAULT_THEME: parking_lot::Mutex<Option<Arc<Theme>>> = Default::default();
-            static ref FONTS: Vec<Arc<Vec<u8>>> = vec![
-                Assets.load("fonts/zed-sans/zed-sans-extended.ttf").unwrap().to_vec().into(),
-                Assets.load("fonts/zed-mono/zed-mono-extended.ttf").unwrap().to_vec().into(),
-            ];
-        }
-
-        cx.platform().fonts().add_fonts(&FONTS).unwrap();
+        let settings = Settings::defaults(Assets, cx.font_cache(), &themes);
 
         let mut has_default_theme = false;
         for theme_name in themes.list() {
             let theme = themes.get(&theme_name).unwrap();
-            if theme.name == DEFAULT_THEME_NAME {
+            if theme.name == settings.theme.name {
                 has_default_theme = true;
             }
             assert_eq!(theme.name, theme_name);
