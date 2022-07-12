@@ -67,7 +67,10 @@ async fn test_populate_and_search(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
+async fn test_managing_language_servers(
+    deterministic: Arc<Deterministic>,
+    cx: &mut gpui::TestAppContext,
+) {
     cx.foreground().forbid_parking();
 
     let mut rust_language = Language::new(
@@ -127,45 +130,6 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
 
-    // Open a buffer before languages have been added
-    let json_buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer("/the-root/package.json", cx)
-        })
-        .await
-        .unwrap();
-
-    // Assert that this buffer does not have a language
-    assert!(json_buffer.read_with(cx, |buffer, _| { buffer.language().is_none() }));
-
-    // Now we add the languages to the project, and subscribe to the watcher
-    project.update(cx, |project, cx| {
-        // Get a handle to the channel and clear out default item
-        let mut recv = project.languages.subscribe();
-        recv.blocking_recv();
-
-        // Add, then wait to be notified that JSON has been added
-        project.languages.add(Arc::new(json_language));
-        recv.blocking_recv();
-
-        // Add, then wait to be notified that Rust has been added
-        project.languages.add(Arc::new(rust_language));
-        recv.blocking_recv();
-        // Uncommenting this would cause the thread to block indefinitely:
-        // recv.blocking_recv();
-
-        // Force the assignment, we know the watcher has been notified
-        // but have no way to wait for the watcher to assign to the project
-        project.assign_language_to_buffer(&json_buffer, cx);
-    });
-
-    // Assert that the opened buffer does have a language, and that it is JSON
-    let name = json_buffer.read_with(cx, |buffer, _| buffer.language().map(|l| l.name()));
-    assert_eq!(name, Some("JSON".into()));
-
-    // Close the JSON buffer we opened
-    cx.update(|_| drop(json_buffer));
-
     // Open a buffer without an associated language server.
     let toml_buffer = project
         .update(cx, |project, cx| {
@@ -174,13 +138,27 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    // Open a buffer with an associated language server.
+    // Open a buffer with an associated language server before the language for it has been loaded.
     let rust_buffer = project
         .update(cx, |project, cx| {
             project.open_local_buffer("/the-root/test.rs", cx)
         })
         .await
         .unwrap();
+    rust_buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.language().map(|l| l.name()), None);
+    });
+
+    // Now we add the languages to the project, and ensure they get assigned to all
+    // the relevant open buffers.
+    project.update(cx, |project, _| {
+        project.languages.add(Arc::new(json_language));
+        project.languages.add(Arc::new(rust_language));
+    });
+    deterministic.run_until_parked();
+    rust_buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.language().map(|l| l.name()), Some("Rust".into()));
+    });
 
     // A server is started up, and it is notified about Rust files.
     let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
