@@ -27,6 +27,10 @@ pub fn menus() -> Vec<Menu<'static>> {
                             action: Box::new(super::OpenKeymap),
                         },
                         MenuItem::Action {
+                            name: "Open Default Settings",
+                            action: Box::new(super::OpenDefaultSettings),
+                        },
+                        MenuItem::Action {
                             name: "Open Default Key Bindings",
                             action: Box::new(super::OpenDefaultKeymap),
                         },
