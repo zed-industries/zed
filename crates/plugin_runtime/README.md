@@ -110,7 +110,7 @@ Here's a quick explainer of what we're doing:
 
 - `plugin = { path = "../../crates/plugin" }` is used so we have access to the prelude, which has a few useful functions and can automatically generate serialization glue code for us.
 
-- `[profile.release]` these options wholistically optimize for size, which will become increasibgly important as we add more plugins.
+- `[profile.release]` these options wholistically optimize for size, which will become increasingly important as we add more plugins.
 
 ### Importing and Exporting functions
 To import or export a function, all you need are two things:
