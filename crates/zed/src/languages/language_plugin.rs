@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use client::http::HttpClient;
+use collections::HashMap;
 use futures::lock::Mutex;
 use gpui::executor::Background;
 use language::{LanguageServerName, LspAdapter};
@@ -35,6 +36,7 @@ pub struct PluginLspAdapter {
     fetch_server_binary: WasiFn<(PathBuf, String), Result<PathBuf, String>>,
     cached_server_binary: WasiFn<PathBuf, Option<PathBuf>>,
     initialization_options: WasiFn<(), String>,
+    language_ids: WasiFn<(), Vec<(String, String)>>,
     executor: Arc<Background>,
     runtime: Arc<Mutex<Plugin>>,
 }
@@ -48,6 +50,7 @@ impl PluginLspAdapter {
             fetch_server_binary: plugin.function("fetch_server_binary")?,
             cached_server_binary: plugin.function("cached_server_binary")?,
             initialization_options: plugin.function("initialization_options")?,
+            language_ids: plugin.function("language_ids")?,
             executor,
             runtime: Arc::new(Mutex::new(plugin)),
         })
@@ -141,5 +144,17 @@ impl LspAdapter for PluginLspAdapter {
             .log_err()?;
 
         serde_json::from_str(&string).ok()
+    }
+
+    async fn language_ids(&self) -> HashMap<String, String> {
+        self.runtime
+            .lock()
+            .await
+            .call(&self.language_ids, ())
+            .await
+            .log_err()
+            .unwrap_or_default()
+            .into_iter()
+            .collect()
     }
 }

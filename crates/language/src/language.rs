@@ -74,7 +74,7 @@ pub struct CachedLspAdapter {
     pub initialization_options: Option<Value>,
     pub disk_based_diagnostic_sources: Vec<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
-    pub id_for_language: Option<String>,
+    pub language_ids: HashMap<String, String>,
     pub adapter: Box<dyn LspAdapter>,
 }
 
@@ -87,7 +87,7 @@ impl CachedLspAdapter {
         let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources().await;
         let disk_based_diagnostics_progress_token =
             adapter.disk_based_diagnostics_progress_token().await;
-        let id_for_language = adapter.id_for_language(name.0.as_ref()).await;
+        let language_ids = adapter.language_ids().await;
 
         Arc::new(CachedLspAdapter {
             name,
@@ -95,7 +95,7 @@ impl CachedLspAdapter {
             initialization_options,
             disk_based_diagnostic_sources,
             disk_based_diagnostics_progress_token,
-            id_for_language,
+            language_ids,
             adapter,
         })
     }
@@ -199,8 +199,8 @@ pub trait LspAdapter: 'static + Send + Sync {
         None
     }
 
-    async fn id_for_language(&self, _name: &str) -> Option<String> {
-        None
+    async fn language_ids(&self) -> HashMap<String, String> {
+        Default::default()
     }
 }
 
