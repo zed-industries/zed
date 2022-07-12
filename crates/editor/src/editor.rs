@@ -1937,6 +1937,10 @@ impl Editor {
     }
 
     fn trigger_completion_on_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
+        if !cx.global::<Settings>().show_completions_on_input {
+            return;
+        }
+
         let selection = self.selections.newest_anchor();
         if self
             .buffer
@@ -6225,7 +6229,8 @@ pub fn styled_runs_for_code_label<'a>(
 #[cfg(test)]
 mod tests {
     use crate::test::{
-        assert_text_with_selections, build_editor, select_ranges, EditorTestContext,
+        assert_text_with_selections, build_editor, select_ranges, EditorLspTestContext,
+        EditorTestContext,
     };
 
     use super::*;
@@ -6236,7 +6241,6 @@ mod tests {
     };
     use indoc::indoc;
     use language::{FakeLspAdapter, LanguageConfig};
-    use lsp::FakeLanguageServer;
     use project::FakeFs;
     use settings::EditorSettings;
     use std::{cell::RefCell, rc::Rc, time::Instant};
@@ -6244,7 +6248,9 @@ mod tests {
     use unindent::Unindent;
     use util::{
         assert_set_eq,
-        test::{marked_text_by, marked_text_ranges, marked_text_ranges_by, sample_text},
+        test::{
+            marked_text_by, marked_text_ranges, marked_text_ranges_by, sample_text, TextRangeMarker,
+        },
     };
     use workspace::{FollowableItem, ItemHandle, NavigationEntry, Pane};
 
@@ -9524,199 +9530,182 @@ mod tests {
 
     #[gpui::test]
     async fn test_completion(cx: &mut gpui::TestAppContext) {
-        let mut language = Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                path_suffixes: vec!["rs".to_string()],
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                    ..Default::default()
+                }),
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
-        );
-        let mut fake_servers = language
-            .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
-                capabilities: lsp::ServerCapabilities {
-                    completion_provider: Some(lsp::CompletionOptions {
-                        trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }))
-            .await;
-
-        let text = "
-            one
-            two
-            three
-        "
-        .unindent();
-
-        let fs = FakeFs::new(cx.background().clone());
-        fs.insert_file("/file.rs", text).await;
-
-        let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
-        project.update(cx, |project, _| project.languages().add(Arc::new(language)));
-        let buffer = project
-            .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
-            .await
-            .unwrap();
-        let mut fake_server = fake_servers.next().await.unwrap();
-
-        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-        let (_, editor) = cx.add_window(|cx| build_editor(buffer, cx));
-
-        editor.update(cx, |editor, cx| {
-            editor.project = Some(project);
-            editor.change_selections(None, cx, |s| {
-                s.select_ranges([Point::new(0, 3)..Point::new(0, 3)])
-            });
-            editor.handle_input(&Input(".".to_string()), cx);
-        });
-
-        handle_completion_request(
-            &mut fake_server,
-            "/file.rs",
-            Point::new(0, 4),
-            vec![
-                (Point::new(0, 4)..Point::new(0, 4), "first_completion"),
-                (Point::new(0, 4)..Point::new(0, 4), "second_completion"),
-            ],
+            cx,
         )
         .await;
-        editor
-            .condition(&cx, |editor, _| editor.context_menu_visible())
-            .await;
 
-        let apply_additional_edits = editor.update(cx, |editor, cx| {
+        cx.set_state(indoc! {"
+            one|
+            two
+            three"});
+        cx.simulate_keystroke(".");
+        handle_completion_request(
+            &mut cx,
+            indoc! {"
+                one.|<>
+                two
+                three"},
+            vec!["first_completion", "second_completion"],
+        )
+        .await;
+        cx.condition(|editor, _| editor.context_menu_visible())
+            .await;
+        let apply_additional_edits = cx.update_editor(|editor, cx| {
             editor.move_down(&MoveDown, cx);
-            let apply_additional_edits = editor
+            editor
                 .confirm_completion(&ConfirmCompletion::default(), cx)
-                .unwrap();
-            assert_eq!(
-                editor.text(cx),
-                "
-                    one.second_completion
-                    two
-                    three
-                "
-                .unindent()
-            );
-            apply_additional_edits
+                .unwrap()
         });
+        cx.assert_editor_state(indoc! {"
+            one.second_completion|
+            two
+            three"});
 
         handle_resolve_completion_request(
-            &mut fake_server,
-            Some((Point::new(2, 5)..Point::new(2, 5), "\nadditional edit")),
-        )
-        .await;
-        apply_additional_edits.await.unwrap();
-        assert_eq!(
-            editor.read_with(cx, |editor, cx| editor.text(cx)),
-            "
-                one.second_completion
-                two
-                three
-                additional edit
-            "
-            .unindent()
-        );
-
-        editor.update(cx, |editor, cx| {
-            editor.change_selections(None, cx, |s| {
-                s.select_ranges([
-                    Point::new(1, 3)..Point::new(1, 3),
-                    Point::new(2, 5)..Point::new(2, 5),
-                ])
-            });
-
-            editor.handle_input(&Input(" ".to_string()), cx);
-            assert!(editor.context_menu.is_none());
-            editor.handle_input(&Input("s".to_string()), cx);
-            assert!(editor.context_menu.is_none());
-        });
-
-        handle_completion_request(
-            &mut fake_server,
-            "/file.rs",
-            Point::new(2, 7),
-            vec![
-                (Point::new(2, 6)..Point::new(2, 7), "fourth_completion"),
-                (Point::new(2, 6)..Point::new(2, 7), "fifth_completion"),
-                (Point::new(2, 6)..Point::new(2, 7), "sixth_completion"),
-            ],
-        )
-        .await;
-        editor
-            .condition(&cx, |editor, _| editor.context_menu_visible())
-            .await;
-
-        editor.update(cx, |editor, cx| {
-            editor.handle_input(&Input("i".to_string()), cx);
-        });
-
-        handle_completion_request(
-            &mut fake_server,
-            "/file.rs",
-            Point::new(2, 8),
-            vec![
-                (Point::new(2, 6)..Point::new(2, 8), "fourth_completion"),
-                (Point::new(2, 6)..Point::new(2, 8), "fifth_completion"),
-                (Point::new(2, 6)..Point::new(2, 8), "sixth_completion"),
-            ],
-        )
-        .await;
-        editor
-            .condition(&cx, |editor, _| editor.context_menu_visible())
-            .await;
-
-        let apply_additional_edits = editor.update(cx, |editor, cx| {
-            let apply_additional_edits = editor
-                .confirm_completion(&ConfirmCompletion::default(), cx)
-                .unwrap();
-            assert_eq!(
-                editor.text(cx),
-                "
+            &mut cx,
+            Some((
+                indoc! {"
                     one.second_completion
-                    two sixth_completion
-                    three sixth_completion
-                    additional edit
-                "
-                .unindent()
-            );
-            apply_additional_edits
+                    two
+                    three<>"},
+                "\nadditional edit",
+            )),
+        )
+        .await;
+        apply_additional_edits.await.unwrap();
+        cx.assert_editor_state(indoc! {"
+            one.second_completion|
+            two
+            three
+            additional edit"});
+
+        cx.set_state(indoc! {"
+            one.second_completion
+            two|
+            three|
+            additional edit"});
+        cx.simulate_keystroke(" ");
+        assert!(cx.editor(|e, _| e.context_menu.is_none()));
+        cx.simulate_keystroke("s");
+        assert!(cx.editor(|e, _| e.context_menu.is_none()));
+
+        cx.assert_editor_state(indoc! {"
+            one.second_completion
+            two s|
+            three s|
+            additional edit"});
+        handle_completion_request(
+            &mut cx,
+            indoc! {"
+                one.second_completion
+                two s
+                three <s|>
+                additional edit"},
+            vec!["fourth_completion", "fifth_completion", "sixth_completion"],
+        )
+        .await;
+        cx.condition(|editor, _| editor.context_menu_visible())
+            .await;
+
+        cx.simulate_keystroke("i");
+
+        handle_completion_request(
+            &mut cx,
+            indoc! {"
+                one.second_completion
+                two si
+                three <si|>
+                additional edit"},
+            vec!["fourth_completion", "fifth_completion", "sixth_completion"],
+        )
+        .await;
+        cx.condition(|editor, _| editor.context_menu_visible())
+            .await;
+
+        let apply_additional_edits = cx.update_editor(|editor, cx| {
+            editor
+                .confirm_completion(&ConfirmCompletion::default(), cx)
+                .unwrap()
         });
-        handle_resolve_completion_request(&mut fake_server, None).await;
+        cx.assert_editor_state(indoc! {"
+            one.second_completion
+            two sixth_completion|
+            three sixth_completion|
+            additional edit"});
+
+        handle_resolve_completion_request(&mut cx, None).await;
         apply_additional_edits.await.unwrap();
 
-        async fn handle_completion_request(
-            fake: &mut FakeLanguageServer,
-            path: &'static str,
-            position: Point,
-            completions: Vec<(Range<Point>, &'static str)>,
+        cx.update(|cx| {
+            cx.update_global::<Settings, _, _>(|settings, _| {
+                settings.show_completions_on_input = false;
+            })
+        });
+        cx.set_state("editor|");
+        cx.simulate_keystroke(".");
+        assert!(cx.editor(|e, _| e.context_menu.is_none()));
+        cx.simulate_keystrokes(["c", "l", "o"]);
+        cx.assert_editor_state("editor.clo|");
+        assert!(cx.editor(|e, _| e.context_menu.is_none()));
+        cx.update_editor(|editor, cx| {
+            editor.show_completions(&ShowCompletions, cx);
+        });
+        handle_completion_request(&mut cx, "editor.<clo|>", vec!["close", "clobber"]).await;
+        cx.condition(|editor, _| editor.context_menu_visible())
+            .await;
+        let apply_additional_edits = cx.update_editor(|editor, cx| {
+            editor
+                .confirm_completion(&ConfirmCompletion::default(), cx)
+                .unwrap()
+        });
+        cx.assert_editor_state("editor.close|");
+        handle_resolve_completion_request(&mut cx, None).await;
+        apply_additional_edits.await.unwrap();
+
+        // Handle completion request passing a marked string specifying where the completion
+        // should be triggered from using '|' character, what range should be replaced, and what completions
+        // should be returned using '<' and '>' to delimit the range
+        async fn handle_completion_request<'a>(
+            cx: &mut EditorLspTestContext<'a>,
+            marked_string: &str,
+            completions: Vec<&'static str>,
         ) {
-            fake.handle_request::<lsp::request::Completion, _, _>(move |params, _| {
+            let complete_from_marker: TextRangeMarker = '|'.into();
+            let replace_range_marker: TextRangeMarker = ('<', '>').into();
+            let (_, mut marked_ranges) = marked_text_ranges_by(
+                marked_string,
+                vec![complete_from_marker.clone(), replace_range_marker.clone()],
+            );
+
+            let complete_from_position =
+                cx.to_lsp(marked_ranges.remove(&complete_from_marker).unwrap()[0].start);
+            let replace_range =
+                cx.to_lsp_range(marked_ranges.remove(&replace_range_marker).unwrap()[0].clone());
+
+            cx.handle_request::<lsp::request::Completion, _, _>(move |url, params, _| {
                 let completions = completions.clone();
                 async move {
-                    assert_eq!(
-                        params.text_document_position.text_document.uri,
-                        lsp::Url::from_file_path(path).unwrap()
-                    );
+                    assert_eq!(params.text_document_position.text_document.uri, url.clone());
                     assert_eq!(
                         params.text_document_position.position,
-                        lsp::Position::new(position.row, position.column)
+                        complete_from_position
                     );
                     Ok(Some(lsp::CompletionResponse::Array(
                         completions
                             .iter()
-                            .map(|(range, new_text)| lsp::CompletionItem {
-                                label: new_text.to_string(),
+                            .map(|completion_text| lsp::CompletionItem {
+                                label: completion_text.to_string(),
                                 text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                                    range: lsp::Range::new(
-                                        lsp::Position::new(range.start.row, range.start.column),
-                                        lsp::Position::new(range.start.row, range.start.column),
-                                    ),
-                                    new_text: new_text.to_string(),
+                                    range: replace_range.clone(),
+                                    new_text: completion_text.to_string(),
                                 })),
                                 ..Default::default()
                             })
@@ -9728,23 +9717,26 @@ mod tests {
             .await;
         }
 
-        async fn handle_resolve_completion_request(
-            fake: &mut FakeLanguageServer,
-            edit: Option<(Range<Point>, &'static str)>,
+        async fn handle_resolve_completion_request<'a>(
+            cx: &mut EditorLspTestContext<'a>,
+            edit: Option<(&'static str, &'static str)>,
         ) {
-            fake.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _| {
+            let edit = edit.map(|(marked_string, new_text)| {
+                let replace_range_marker: TextRangeMarker = ('<', '>').into();
+                let (_, mut marked_ranges) =
+                    marked_text_ranges_by(marked_string, vec![replace_range_marker.clone()]);
+
+                let replace_range = cx
+                    .to_lsp_range(marked_ranges.remove(&replace_range_marker).unwrap()[0].clone());
+
+                vec![lsp::TextEdit::new(replace_range, new_text.to_string())]
+            });
+
+            cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
                 let edit = edit.clone();
                 async move {
                     Ok(lsp::CompletionItem {
-                        additional_text_edits: edit.map(|(range, new_text)| {
-                            vec![lsp::TextEdit::new(
-                                lsp::Range::new(
-                                    lsp::Position::new(range.start.row, range.start.column),
-                                    lsp::Position::new(range.end.row, range.end.column),
-                                ),
-                                new_text.to_string(),
-                            )]
-                        }),
+                        additional_text_edits: edit,
                         ..Default::default()
                     })
                 }
