@@ -74,7 +74,7 @@ Luckily enough for us yet again, the `plugin` prelude defines two ready-made ver
 So, what does importing and exporting functions from a plugin look like in practice? I'm glad you asked...
 
 ## Creating new plugins
-Since Zed's plugin system uses Wasm + WASI, in theory any language that compiles to Wasm can be used to write plugins. In practice, and out of practicallity, however, we currently only really support plugins written in Rust.
+Since Zed's plugin system uses Wasm + WASI, in theory any language that compiles to Wasm can be used to write plugins. In practice, and out of practicality, however, we currently only really support plugins written in Rust.
 
 A plugin is just a rust crate like any other. All plugins embedded in Zed are located in the `plugins` folder in the root. These plugins will automatically be compiled, optimized, and recompiled on change, so it's recommended that when creating a new plugin you create it there.
 
@@ -106,9 +106,9 @@ lto = true
 
 Here's a quick explainer of what we're doing:
 
-- `crate-type = ["cdylib"]` is used because a plugin essintially acts a *library*, exposing functions with specific signatures that perform certain tasks. This key ensures that the library is generated in a reproducible manner with a layout `plugin_runtime` knows how to hook into.
+- `crate-type = ["cdylib"]` is used because a plugin essentially acts a *library*, exposing functions with specific signatures that perform certain tasks. This key ensures that the library is generated in a reproducible manner with a layout `plugin_runtime` knows how to hook into.
 
-- `plugin = { path = "../../crates/plugin" }` is used so we have acces to the prelude, which has a few useful functions and can automatically generate serialization glue code for us.
+- `plugin = { path = "../../crates/plugin" }` is used so we have access to the prelude, which has a few useful functions and can automatically generate serialization glue code for us.
 
 - `[profile.release]` these options wholistically optimize for size, which will become increasibgly important as we add more plugins.
 
@@ -148,7 +148,7 @@ The `#[import]` macro will generate a function body that performs the proper ser
 Currently, plugins are used to add support for language servers to Zed. Plugins should be fairly simple to integrate for library-like applications. Here's a quick overview of how plugins work:
 
 ### Normal vs Precompiled plugins
-Plugins in the `plugins` directory are automatically recompiled and serialized to disk when compiling Zed. The resulting artefacts can be found in the `plugins/bin` directory. For each `plugin`, you should see two files:
+Plugins in the `plugins` directory are automatically recompiled and serialized to disk when compiling Zed. The resulting artifacts can be found in the `plugins/bin` directory. For each `plugin`, you should see two files:
 
 - `plugin.wasm` is the plugin compiled to Wasm. As a baseline, this should be about 4MB for debug builds and 2MB for release builds, but it depends on the specific plugin being built.
 
@@ -179,7 +179,7 @@ pub struct CoolPlugin {
 }
 ```
 
-Note that this plugin also holds an owned reference to the runtime, which is stored in the `Plugin` type. In asyncrhonous or multithreaded contexts, it may be required to put `Plugin` behind an `Arc<Mutex<Plugin>>`. Although plugins expose an asynchronous interface, the underlying Wasm engine can only execute a single function at a time. 
+Note that this plugin also holds an owned reference to the runtime, which is stored in the `Plugin` type. In asynchronous or multithreaded contexts, it may be required to put `Plugin` behind an `Arc<Mutex<Plugin>>`. Although plugins expose an asynchronous interface, the underlying Wasm engine can only execute a single function at a time. 
 
 > **Note**: This is a limitation of the WebAssembly standard itself. In the future, to work around this, we've been considering starting a pool of plugins, or instantiating a new plugin per call (this isn't as bad as it sounds, as instantiating a new plugin only takes about 30µs).
 
@@ -287,7 +287,7 @@ pub fn format(message: String) -> String {
 #[export]
 pub fn process(numbers: Vec<f64>) -> f64 {
     // Process by calculating the average
-    let total = 0.0;
+    let mut total = 0.0;
     for number in numbers.into_iter() {
         total += number;
     }
