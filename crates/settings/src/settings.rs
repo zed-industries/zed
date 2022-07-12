@@ -7,9 +7,7 @@ use gpui::{
 };
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},
-    schema::{
-        InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec, SubschemaValidation,
-    },
+    schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
     JsonSchema,
 };
 use serde::{de::DeserializeOwned, Deserialize};
@@ -289,77 +287,61 @@ pub fn settings_file_json_schema(
     let generator = SchemaGenerator::new(settings);
     let mut root_schema = generator.into_root_schema_for::<SettingsFileContent>();
 
-    // Construct theme names reference type
-    let theme_names = theme_names
-        .into_iter()
-        .map(|name| Value::String(name))
-        .collect();
-    let theme_names_schema = Schema::Object(SchemaObject {
+    // Create a schema for a theme name.
+    let theme_name_schema = SchemaObject {
         instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
-        enum_values: Some(theme_names),
+        enum_values: Some(
+            theme_names
+                .into_iter()
+                .map(|name| Value::String(name))
+                .collect(),
+        ),
         ..Default::default()
-    });
-    root_schema
-        .definitions
-        .insert("ThemeName".to_owned(), theme_names_schema);
+    };
 
-    // Construct language settings reference type
-    let language_settings_schema_reference = Schema::Object(SchemaObject {
-        reference: Some("#/definitions/LanguageSettings".to_owned()),
-        ..Default::default()
-    });
-    let language_settings_properties = language_names
-        .into_iter()
-        .map(|name| {
-            (
-                name,
-                Schema::Object(SchemaObject {
-                    subschemas: Some(Box::new(SubschemaValidation {
-                        all_of: Some(vec![language_settings_schema_reference.clone()]),
-                        ..Default::default()
-                    })),
-                    ..Default::default()
-                }),
-            )
-        })
-        .collect();
-    let language_overrides_schema = Schema::Object(SchemaObject {
+    // Create a schema for a 'languages overrides' object, associating editor
+    // settings with specific langauges.
+    assert!(root_schema.definitions.contains_key("EditorSettings"));
+    let languages_object_schema = SchemaObject {
         instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
         object: Some(Box::new(ObjectValidation {
-            properties: language_settings_properties,
+            properties: language_names
+                .into_iter()
+                .map(|name| (name, Schema::new_ref("#/definitions/EditorSettings".into())))
+                .collect(),
             ..Default::default()
         })),
         ..Default::default()
-    });
+    };
+
+    // Add these new schemas as definitions, and modify properties of the root
+    // schema to reference them.
+    root_schema.definitions.extend([
+        ("ThemeName".into(), theme_name_schema.into()),
+        ("Languages".into(), languages_object_schema.into()),
+    ]);
     root_schema
-        .definitions
-        .insert("LanguageOverrides".to_owned(), language_overrides_schema);
+        .schema
+        .object
+        .as_mut()
+        .unwrap()
+        .properties
+        .extend([
+            (
+                "theme".to_owned(),
+                Schema::new_ref("#/definitions/ThemeName".into()),
+            ),
+            (
+                "languages".to_owned(),
+                Schema::new_ref("#/definitions/Languages".into()),
+            ),
+            // For backward compatibility
+            (
+                "language_overrides".to_owned(),
+                Schema::new_ref("#/definitions/Languages".into()),
+            ),
+        ]);
 
-    // Modify theme property to use new theme reference type
-    let settings_file_schema = root_schema.schema.object.as_mut().unwrap();
-    let language_overrides_schema_reference = Schema::Object(SchemaObject {
-        reference: Some("#/definitions/ThemeName".to_owned()),
-        ..Default::default()
-    });
-    settings_file_schema.properties.insert(
-        "theme".to_owned(),
-        Schema::Object(SchemaObject {
-            subschemas: Some(Box::new(SubschemaValidation {
-                all_of: Some(vec![language_overrides_schema_reference]),
-                ..Default::default()
-            })),
-            ..Default::default()
-        }),
-    );
-
-    // Modify language_overrides property to use LanguageOverrides reference
-    settings_file_schema.properties.insert(
-        "language_overrides".to_owned(),
-        Schema::Object(SchemaObject {
-            reference: Some("#/definitions/LanguageOverrides".to_owned()),
-            ..Default::default()
-        }),
-    );
     serde_json::to_value(root_schema).unwrap()
 }
 
