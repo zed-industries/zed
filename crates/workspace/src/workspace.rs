@@ -805,17 +805,10 @@ enum FollowerItem {
 
 impl Workspace {
     pub fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
-        cx.observe(&project, |_, project, cx| {
-            if project.read(cx).is_read_only() {
-                cx.blur();
-            }
-            cx.notify()
-        })
-        .detach();
         cx.observe_window_activation(Self::on_window_activation_changed)
             .detach();
-
-        cx.subscribe(&project, move |this, project, event, cx| {
+        cx.observe(&project, |_, _, cx| cx.notify()).detach();
+        cx.subscribe(&project, move |this, _, event, cx| {
             match event {
                 project::Event::RemoteIdChanged(remote_id) => {
                     this.project_remote_id_changed(*remote_id, cx);
@@ -826,10 +819,11 @@ impl Workspace {
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded => {
                     this.update_window_title(cx);
                 }
+                project::Event::DisconnectedFromHost => {
+                    this.update_window_edited(cx);
+                    cx.blur();
+                }
                 _ => {}
-            }
-            if project.read(cx).is_read_only() {
-                cx.blur();
             }
             cx.notify()
         })
@@ -1029,6 +1023,10 @@ impl Workspace {
         should_prompt_to_save: bool,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
+        if self.project.read(cx).is_read_only() {
+            return Task::ready(Ok(true));
+        }
+
         let dirty_items = self
             .panes
             .iter()
@@ -1045,11 +1043,10 @@ impl Workspace {
 
         let project = self.project.clone();
         cx.spawn_weak(|_, mut cx| async move {
-            // let mut saved_project_entry_ids = HashSet::default();
             for (pane, item) in dirty_items {
-                let (is_singl, project_entry_ids) =
+                let (singleton, project_entry_ids) =
                     cx.read(|cx| (item.is_singleton(cx), item.project_entry_ids(cx)));
-                if is_singl || !project_entry_ids.is_empty() {
+                if singleton || !project_entry_ids.is_empty() {
                     if let Some(ix) =
                         pane.read_with(&cx, |pane, _| pane.index_for_item(item.as_ref()))
                     {
@@ -1910,9 +1907,10 @@ impl Workspace {
     }
 
     fn update_window_edited(&mut self, cx: &mut ViewContext<Self>) {
-        let is_edited = self
-            .items(cx)
-            .any(|item| item.has_conflict(cx) || item.is_dirty(cx));
+        let is_edited = !self.project.read(cx).is_read_only()
+            && self
+                .items(cx)
+                .any(|item| item.has_conflict(cx) || item.is_dirty(cx));
         if is_edited != self.window_edited {
             self.window_edited = is_edited;
             cx.set_window_edited(self.window_edited)

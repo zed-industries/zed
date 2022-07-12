@@ -190,6 +190,7 @@ pub enum Event {
         language_server_id: usize,
     },
     RemoteIdChanged(Option<u64>),
+    DisconnectedFromHost,
     CollaboratorLeft(PeerId),
     ContactRequestedJoin(Arc<User>),
     ContactCancelledJoinRequest(Arc<User>),
@@ -569,7 +570,7 @@ impl Project {
                             // Even if we're initially connected, any future change of the status means we momentarily disconnected.
                             if !is_connected || status.next().await.is_some() {
                                 if let Some(this) = this.upgrade(&cx) {
-                                    this.update(&mut cx, |this, cx| this.removed_from_project(cx))
+                                    this.update(&mut cx, |this, cx| this.disconnected_from_host(cx))
                                 }
                             }
                             Ok(())
@@ -1434,7 +1435,7 @@ impl Project {
         }
     }
 
-    fn removed_from_project(&mut self, cx: &mut ModelContext<Self>) {
+    fn disconnected_from_host(&mut self, cx: &mut ModelContext<Self>) {
         if let ProjectClientState::Remote {
             sharing_has_stopped,
             ..
@@ -1451,6 +1452,7 @@ impl Project {
                     });
                 }
             }
+            cx.emit(Event::DisconnectedFromHost);
             cx.notify();
         }
     }
@@ -4628,7 +4630,7 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        this.update(&mut cx, |this, cx| this.removed_from_project(cx));
+        this.update(&mut cx, |this, cx| this.disconnected_from_host(cx));
         Ok(())
     }
 
