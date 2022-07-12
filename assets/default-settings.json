@@ -1,0 +1,39 @@
+{
+    "theme": "cave-light",
+    "buffer_font_family": "Zed Mono",
+    "buffer_font_size": 15,
+    "hover_popover_enabled": true,
+    "vim_mode": false,
+    "autosave": "off",
+    "projects_online_by_default": true,
+    "languages_overrides": {
+        "Plain Text": {
+            "soft_wrap": "preferred_line_length"
+        },
+        "C": {
+            "tab_size": 2
+        },
+        "C++": {
+            "tab_size": 2
+        },
+        "Go": {
+            "tab_size": 4,
+            "hard_tabs": true
+        },
+        "Markdown": {
+            "soft_wrap": "preferred_line_length"
+        },
+        "Rust": {
+            "tab_size": 4
+        },
+        "JavaScript": {
+            "tab_size": 2
+        },
+        "TypeScript": {
+            "tab_size": 2
+        },
+        "TSX": {
+            "tab_size": 2
+        }
+    }
+}

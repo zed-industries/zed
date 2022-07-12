@@ -1,7 +1,10 @@
 mod keymap_file;
 
 use anyhow::Result;
-use gpui::font_cache::{FamilyId, FontCache};
+use gpui::{
+    font_cache::{FamilyId, FontCache},
+    AssetSource,
+};
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},
     schema::{
@@ -97,24 +100,35 @@ pub struct SettingsFileContent {
 }
 
 impl Settings {
-    pub fn new(
-        buffer_font_family: &str,
+    pub fn defaults(
+        assets: impl AssetSource,
         font_cache: &FontCache,
-        theme: Arc<Theme>,
-    ) -> Result<Self> {
-        Ok(Self {
-            buffer_font_family: font_cache.load_family(&[buffer_font_family])?,
-            buffer_font_size: 15.,
-            default_buffer_font_size: 15.,
-            hover_popover_enabled: true,
-            vim_mode: false,
-            autosave: Autosave::Off,
-            language_settings: Default::default(),
-            language_defaults: Default::default(),
+        themes: &ThemeRegistry,
+    ) -> Self {
+        let defaults = assets.load("default-settings.json").unwrap();
+        let defaults: SettingsFileContent = serde_json::from_slice(defaults.as_ref()).unwrap();
+        Self {
+            buffer_font_family: font_cache
+                .load_family(&[defaults.buffer_font_family.as_ref().unwrap()])
+                .unwrap(),
+            buffer_font_size: defaults.buffer_font_size.unwrap(),
+            default_buffer_font_size: defaults.buffer_font_size.unwrap(),
+            hover_popover_enabled: defaults.hover_popover_enabled.unwrap(),
+            projects_online_by_default: defaults.projects_online_by_default.unwrap(),
+            vim_mode: defaults.vim_mode.unwrap(),
+            autosave: defaults.autosave.unwrap(),
+            language_settings: LanguageSettings {
+                tab_size: defaults.editor.tab_size,
+                hard_tabs: defaults.editor.hard_tabs,
+                soft_wrap: defaults.editor.soft_wrap,
+                preferred_line_length: defaults.editor.preferred_line_length,
+                format_on_save: defaults.editor.format_on_save,
+                enable_language_server: defaults.editor.enable_language_server,
+            },
+            language_defaults: defaults.language_overrides,
             language_overrides: Default::default(),
-            projects_online_by_default: true,
-            theme,
-        })
+            theme: themes.get(&defaults.theme.unwrap()).unwrap(),
+        }
     }
 
     pub fn with_language_defaults(
