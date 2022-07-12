@@ -267,7 +267,8 @@ async fn test_host_disconnect(
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
-    cx_a.foreground().forbid_parking();
+    cx_b.update(editor::init);
+    deterministic.forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -298,10 +299,23 @@ async fn test_host_disconnect(
     let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
-    project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+    let (_, workspace_b) = cx_b.add_window(|cx| Workspace::new(project_b.clone(), cx));
+    let editor_b = workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path((worktree_id, "b.txt"), true, cx)
+        })
         .await
+        .unwrap()
+        .downcast::<Editor>()
         .unwrap();
+    cx_b.read(|cx| {
+        assert_eq!(
+            cx.focused_view_id(workspace_b.window_id()),
+            Some(editor_b.id())
+        );
+    });
+    editor_b.update(cx_b, |editor, cx| editor.insert("X", cx));
+    assert!(cx_b.is_window_edited(workspace_b.window_id()));
 
     // Request to join that project as client C
     let project_c = cx_c.spawn(|cx| {
@@ -328,13 +342,30 @@ async fn test_host_disconnect(
         .condition(cx_b, |project, _| project.is_read_only())
         .await;
     assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
-    cx_b.update(|_| {
-        drop(project_b);
-    });
     assert!(matches!(
         project_c.await.unwrap_err(),
         project::JoinProjectError::HostWentOffline
     ));
+
+    // Ensure client B's edited state is reset and that the whole window is blurred.
+    cx_b.read(|cx| {
+        assert_eq!(cx.focused_view_id(workspace_b.window_id()), None);
+    });
+    assert!(!cx_b.is_window_edited(workspace_b.window_id()));
+
+    // Ensure client B is not prompted to save edits when closing window after disconnecting.
+    workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.close(&Default::default(), cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    assert_eq!(cx_b.window_ids().len(), 0);
+    cx_b.update(|_| {
+        drop(workspace_b);
+        drop(project_b);
+    });
 
     // Ensure guests can still join.
     let project_b2 = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
