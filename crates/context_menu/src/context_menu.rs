@@ -124,6 +124,10 @@ impl ContextMenu {
         }
     }
 
+    pub fn visible(&self) -> bool {
+        self.visible
+    }
+
     fn action_dispatched(&mut self, action_id: TypeId, cx: &mut ViewContext<Self>) {
         if let Some(ix) = self
             .items

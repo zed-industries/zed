@@ -58,3 +58,46 @@ pub fn deploy_context_menu(
     });
     cx.notify();
 }
+
+#[cfg(test)]
+mod tests {
+    use indoc::indoc;
+
+    use crate::test::EditorLspTestContext;
+
+    use super::*;
+
+    #[gpui::test]
+    async fn test_mouse_context_menu(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            fn te|st()
+                do_work();"});
+        let point = cx.display_point(indoc! {"
+            fn test()
+                do_w|ork();"});
+        cx.update_editor(|editor, cx| {
+            deploy_context_menu(
+                editor,
+                &DeployMouseContextMenu {
+                    position: Default::default(),
+                    point,
+                },
+                cx,
+            )
+        });
+
+        cx.assert_editor_state(indoc! {"
+            fn test()
+                do_w|ork();"});
+        cx.editor(|editor, app| assert!(editor.mouse_context_menu.read(app).visible()));
+    }
+}
