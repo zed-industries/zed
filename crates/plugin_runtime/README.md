@@ -281,7 +281,7 @@ use plugin::prelude::*;
 
 #[export]
 pub fn format(message: String) -> String {
-    format!("Cool Plugin says... "{}!", message)
+    format!("Cool Plugin says... '{}!'", message)
 }
 
 #[export]
