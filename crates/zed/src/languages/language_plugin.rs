@@ -26,7 +26,7 @@ pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
                 .map(|output| output.stdout)
         })?
         .init(PluginBinary::Precompiled(include_bytes!(
-            "../../../../plugins/bin/json_language.wasm.pre"
+            "../../../../plugins/bin/json_language.wasm.epoch.pre"
         )))
         .await?;
 
