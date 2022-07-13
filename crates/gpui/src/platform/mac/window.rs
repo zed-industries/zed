@@ -802,7 +802,7 @@ extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
 
 extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     let window_state = unsafe { get_window_state(this) };
-    let mut window_state_borrow = window_state.as_ref().borrow_mut();
+    let window_state_borrow = window_state.as_ref().borrow();
 
     if window_state_borrow.size() == vec2f(size.width as f32, size.height as f32) {
         return;
@@ -822,6 +822,8 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
         let _: () = msg_send![window_state_borrow.layer, setDrawableSize: drawable_size];
     }
 
+    drop(window_state_borrow);
+    let mut window_state_borrow = window_state.borrow_mut();
     if let Some(mut callback) = window_state_borrow.resize_callback.take() {
         drop(window_state_borrow);
         callback();
