@@ -88,6 +88,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Terminal::paste);
     cx.add_action(Terminal::scroll_terminal);
     cx.add_action(Terminal::input);
+    cx.add_action(Terminal::clear);
     cx.add_action(deploy_modal);
 }
 
@@ -177,15 +178,20 @@ impl Terminal {
     }
 
     fn input(&mut self, Input(text): &Input, cx: &mut ViewContext<Self>) {
-        self.connection.update(cx, |connection, cx| {
+        self.connection.update(cx, |connection, _| {
             //TODO: This is probably not encoding UTF8 correctly (see alacritty/src/input.rs:L825-837)
-            connection.write_to_pty(text.clone(), cx);
+            connection.write_to_pty(text.clone());
         });
 
         if self.has_bell {
             self.has_bell = false;
             cx.emit(Event::TitleChanged);
         }
+    }
+
+    fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
+        self.connection
+            .update(cx, |connection, _| connection.clear());
     }
 
     ///Create a new Terminal in the current working directory or the user's home directory
@@ -212,72 +218,72 @@ impl Terminal {
     ///Attempt to paste the clipboard into the terminal
     fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
         if let Some(item) = cx.read_from_clipboard() {
-            self.connection.update(cx, |connection, cx| {
-                connection.write_to_pty(item.text().to_owned(), cx);
+            self.connection.update(cx, |connection, _| {
+                connection.write_to_pty(item.text().to_owned());
             })
         }
     }
 
     ///Send the `up` key
     fn up(&mut self, _: &Up, cx: &mut ViewContext<Self>) {
-        self.connection.update(cx, |connection, cx| {
-            connection.write_to_pty(UP_SEQ.to_string(), cx);
+        self.connection.update(cx, |connection, _| {
+            connection.write_to_pty(UP_SEQ.to_string());
         });
     }
 
     ///Send the `down` key
     fn down(&mut self, _: &Down, cx: &mut ViewContext<Self>) {
-        self.connection.update(cx, |connection, cx| {
-            connection.write_to_pty(DOWN_SEQ.to_string(), cx);
+        self.connection.update(cx, |connection, _| {
+            connection.write_to_pty(DOWN_SEQ.to_string());
         });
     }
 
     ///Send the `tab` key
     fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
-        self.connection.update(cx, |connection, cx| {
-            connection.write_to_pty(TAB_CHAR.to_string(), cx);
+        self.connection.update(cx, |connection, _| {
+            connection.write_to_pty(TAB_CHAR.to_string());
         });
     }
 
     ///Send `SIGINT` (`ctrl-c`)
     fn send_sigint(&mut self, _: &Sigint, cx: &mut ViewContext<Self>) {
-        self.connection.update(cx, |connection, cx| {
-            connection.write_to_pty(ETX_CHAR.to_string(), cx);
+        self.connection.update(cx, |connection, _| {
+            connection.write_to_pty(ETX_CHAR.to_string());
         });
     }
 
     ///Send the `escape` key
     fn escape(&mut self, _: &Escape, cx: &mut ViewContext<Self>) {
-        self.connection.update(cx, |connection, cx| {
-            connection.write_to_pty(ESC_CHAR.to_string(), cx);
+        self.connection.update(cx, |connection, _| {
+            connection.write_to_pty(ESC_CHAR.to_string());
         });
     }
 
     ///Send the `delete` key. TODO: Difference between this and backspace?
     fn del(&mut self, _: &Del, cx: &mut ViewContext<Self>) {
-        self.connection.update(cx, |connection, cx| {
-            connection.write_to_pty(DEL_CHAR.to_string(), cx);
+        self.connection.update(cx, |connection, _| {
+            connection.write_to_pty(DEL_CHAR.to_string());
         });
     }
 
     ///Send a carriage return. TODO: May need to check the terminal mode.
     fn carriage_return(&mut self, _: &Return, cx: &mut ViewContext<Self>) {
-        self.connection.update(cx, |connection, cx| {
-            connection.write_to_pty(CARRIAGE_RETURN_CHAR.to_string(), cx);
+        self.connection.update(cx, |connection, _| {
+            connection.write_to_pty(CARRIAGE_RETURN_CHAR.to_string());
         });
     }
 
     //Send the `left` key
     fn left(&mut self, _: &Left, cx: &mut ViewContext<Self>) {
-        self.connection.update(cx, |connection, cx| {
-            connection.write_to_pty(LEFT_SEQ.to_string(), cx);
+        self.connection.update(cx, |connection, _| {
+            connection.write_to_pty(LEFT_SEQ.to_string());
         });
     }
 
     //Send the `right` key
     fn right(&mut self, _: &Right, cx: &mut ViewContext<Self>) {
-        self.connection.update(cx, |connection, cx| {
-            connection.write_to_pty(RIGHT_SEQ.to_string(), cx);
+        self.connection.update(cx, |connection, _| {
+            connection.write_to_pty(RIGHT_SEQ.to_string());
         });
     }
 }
@@ -467,8 +473,8 @@ mod tests {
         let terminal = cx.add_view(Default::default(), |cx| Terminal::new(None, false, cx));
 
         terminal.update(cx, |terminal, cx| {
-            terminal.connection.update(cx, |connection, cx| {
-                connection.write_to_pty("expr 3 + 4".to_string(), cx);
+            terminal.connection.update(cx, |connection, _| {
+                connection.write_to_pty("expr 3 + 4".to_string());
             });
             terminal.carriage_return(&Return, cx);
         });
@@ -492,8 +498,8 @@ mod tests {
         cx.set_condition_duration(Some(Duration::from_secs(2)));
 
         terminal.update(cx, |terminal, cx| {
-            terminal.connection.update(cx, |connection, cx| {
-                connection.write_to_pty("expr 3 + 4".to_string(), cx);
+            terminal.connection.update(cx, |connection, _| {
+                connection.write_to_pty("expr 3 + 4".to_string());
             });
             terminal.carriage_return(&Return, cx);
         });
