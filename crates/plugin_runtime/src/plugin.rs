@@ -1,5 +1,6 @@
 use std::future::Future;
 
+use std::time::Duration;
 use std::{fs::File, marker::PhantomData, path::Path};
 
 use anyhow::{anyhow, Error};
@@ -54,6 +55,40 @@ impl<A: Serialize, R: DeserializeOwned> Clone for WasiFn<A, R> {
     }
 }
 
+pub struct PluginYieldEpoch {
+    delta: u64,
+    epoch: std::time::Duration,
+}
+
+pub struct PluginYieldFuel {
+    initial: u64,
+    refill: u64,
+}
+
+pub enum PluginYield {
+    Epoch {
+        yield_epoch: PluginYieldEpoch,
+        initialize_incrementer: Box<dyn FnOnce(Engine) -> () + Send>,
+    },
+    Fuel(PluginYieldFuel),
+}
+
+impl PluginYield {
+    pub fn default_epoch() -> PluginYieldEpoch {
+        PluginYieldEpoch {
+            delta: 1,
+            epoch: Duration::from_millis(1),
+        }
+    }
+
+    pub fn default_fuel() -> PluginYieldFuel {
+        PluginYieldFuel {
+            initial: 1000,
+            refill: 1000,
+        }
+    }
+}
+
 /// This struct is used to build a new [`Plugin`], using the builder pattern.
 /// Create a new default plugin with `PluginBuilder::new_with_default_ctx`,
 /// and add host-side exported functions using `host_function` and `host_function_async`.
@@ -62,42 +97,110 @@ pub struct PluginBuilder {
     wasi_ctx: WasiCtx,
     engine: Engine,
     linker: Linker<WasiCtxAlloc>,
-}
-
-/// Creates a default engine for compiling Wasm.
-/// N.B.: this must create the same `Engine` as
-/// the `create_default_engine` function
-/// in `plugin_runtime/build.rs`.
-pub fn create_default_engine() -> Result<Engine, Error> {
-    let mut config = Config::default();
-    config.async_support(true);
-    // config.epoch_interruption(true);
-    Engine::new(&config)
+    yield_when: PluginYield,
 }
 
 impl PluginBuilder {
+    /// Creates an engine with the proper configuration given the yield mechanism in use
+    fn create_engine(yield_when: &PluginYield) -> Result<(Engine, Linker<WasiCtxAlloc>), Error> {
+        let mut config = Config::default();
+        config.async_support(true);
+
+        match yield_when {
+            PluginYield::Epoch { .. } => {
+                config.epoch_interruption(true);
+            }
+            PluginYield::Fuel(_) => {
+                config.consume_fuel(true);
+            }
+        }
+
+        let engine = Engine::new(&config)?;
+        let linker = Linker::new(&engine);
+        Ok((engine, linker))
+    }
+
     /// Create a new [`PluginBuilder`] with the given WASI context.
     /// Using the default context is a safe bet, see [`new_with_default_context`].
-    pub fn new(wasi_ctx: WasiCtx) -> Result<Self, Error> {
-        let engine = create_default_engine()?;
-        let linker = Linker::new(&engine);
+    /// This plugin will yield after each fixed configurable epoch.
+    pub fn new_epoch<C>(
+        wasi_ctx: WasiCtx,
+        yield_epoch: PluginYieldEpoch,
+        spawn_detached_future: C,
+    ) -> Result<Self, Error>
+    where
+        C: FnOnce(std::pin::Pin<Box<dyn Future<Output = ()> + Send + 'static>>) -> ()
+            + Send
+            + 'static,
+    {
+        // we can't create the future until after initializing
+        // because we need the engine to load the plugin
+        let epoch = yield_epoch.epoch;
+        let initialize_incrementer = Box::new(move |engine: Engine| {
+            spawn_detached_future(Box::pin(async move {
+                loop {
+                    smol::Timer::after(epoch).await;
+                    engine.increment_epoch();
+                }
+            }))
+        });
+
+        let yield_when = PluginYield::Epoch {
+            yield_epoch,
+            initialize_incrementer,
+        };
+        let (engine, linker) = Self::create_engine(&yield_when)?;
 
         Ok(PluginBuilder {
-            // host_functions: HashMap::new(),
             wasi_ctx,
             engine,
             linker,
+            yield_when,
         })
     }
 
-    /// Create a new `PluginBuilder` that inherits the
+    /// Create a new [`PluginBuilder`] with the given WASI context.
+    /// Using the default context is a safe bet, see [`new_with_default_context`].
+    /// This plugin will yield after a configurable amount of fuel is consumed.
+    pub fn new_fuel(wasi_ctx: WasiCtx, yield_fuel: PluginYieldFuel) -> Result<Self, Error> {
+        let yield_when = PluginYield::Fuel(yield_fuel);
+        let (engine, linker) = Self::create_engine(&yield_when)?;
+
+        Ok(PluginBuilder {
+            wasi_ctx,
+            engine,
+            linker,
+            yield_when,
+        })
+    }
+
+    /// Create a new `WasiCtx` that inherits the
     /// host processes' access to `stdout` and `stderr`.
-    pub fn new_with_default_ctx() -> Result<Self, Error> {
-        let wasi_ctx = WasiCtxBuilder::new()
+    fn default_ctx() -> WasiCtx {
+        WasiCtxBuilder::new()
             .inherit_stdout()
             .inherit_stderr()
-            .build();
-        Self::new(wasi_ctx)
+            .build()
+    }
+
+    /// Create a new `PluginBuilder` with the default `WasiCtx` (see [`default_ctx`]).
+    /// This plugin will yield after each fixed configurable epoch.
+    pub fn new_epoch_with_default_ctx<C>(
+        yield_epoch: PluginYieldEpoch,
+        spawn_detached_future: C,
+    ) -> Result<Self, Error>
+    where
+        C: FnOnce(std::pin::Pin<Box<dyn Future<Output = ()> + Send + 'static>>) -> ()
+            + Send
+            + 'static,
+    {
+        Self::new_epoch(Self::default_ctx(), yield_epoch, spawn_detached_future)
+    }
+
+    /// Create a new `PluginBuilder` with the default `WasiCtx` (see [`default_ctx`]).
+    /// This plugin will yield after a configurable amount of fuel is consumed.
+    pub fn new_fuel_with_default_ctx(yield_fuel: PluginYieldFuel) -> Result<Self, Error> {
+        Self::new_fuel(Self::default_ctx(), yield_fuel)
     }
 
     /// Add an `async` host function. See [`host_function`] for details.
@@ -242,8 +345,8 @@ impl PluginBuilder {
 
     /// Initializes a [`Plugin`] from a given compiled Wasm module.
     /// Both binary (`.wasm`) and text (`.wat`) module formats are supported.
-    pub async fn init<T: AsRef<[u8]>>(self, precompiled: bool, module: T) -> Result<Plugin, Error> {
-        Plugin::init(precompiled, module.as_ref().to_vec(), self).await
+    pub async fn init<'a>(self, binary: PluginBinary<'a>) -> Result<Plugin, Error> {
+        Plugin::init(binary, self).await
     }
 }
 
@@ -276,6 +379,11 @@ impl WasiCtxAlloc {
     }
 }
 
+pub enum PluginBinary<'a> {
+    Wasm(&'a [u8]),
+    Precompiled(&'a [u8]),
+}
+
 /// Represents a WebAssembly plugin, with access to the WebAssembly System Inferface.
 /// Build a new plugin using [`PluginBuilder`].
 pub struct Plugin {
@@ -303,11 +411,7 @@ impl Plugin {
         println!();
     }
 
-    async fn init(
-        precompiled: bool,
-        module: Vec<u8>,
-        plugin: PluginBuilder,
-    ) -> Result<Self, Error> {
+    async fn init<'a>(binary: PluginBinary<'a>, plugin: PluginBuilder) -> Result<Self, Error> {
         // initialize the WebAssembly System Interface context
         let engine = plugin.engine;
         let mut linker = plugin.linker;
@@ -322,12 +426,26 @@ impl Plugin {
                 alloc: None,
             },
         );
-        // store.epoch_deadline_async_yield_and_update(todo!());
-        let module = if precompiled {
-            unsafe { Module::deserialize(&engine, module)? }
-        } else {
-            Module::new(&engine, module)?
+
+        let module = match binary {
+            PluginBinary::Precompiled(bytes) => unsafe { Module::deserialize(&engine, bytes)? },
+            PluginBinary::Wasm(bytes) => Module::new(&engine, bytes)?,
         };
+
+        // set up automatic yielding based on configuration
+        match plugin.yield_when {
+            PluginYield::Epoch {
+                yield_epoch: PluginYieldEpoch { delta, .. },
+                initialize_incrementer,
+            } => {
+                store.epoch_deadline_async_yield_and_update(delta);
+                initialize_incrementer(engine);
+            }
+            PluginYield::Fuel(PluginYieldFuel { initial, refill }) => {
+                store.add_fuel(initial).unwrap();
+                store.out_of_fuel_async_yield(u64::MAX, refill);
+            }
+        }
 
         // load the provided module into the asynchronous runtime
         linker.module_async(&mut store, "", &module).await?;

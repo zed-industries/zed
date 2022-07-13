@@ -23,7 +23,7 @@ mod tests {
         }
 
         async {
-            let mut runtime = PluginBuilder::new_with_default_ctx()
+            let mut runtime = PluginBuilder::new_fuel_with_default_ctx(PluginYield::default_fuel())
                 .unwrap()
                 .host_function("mystery_number", |input: u32| input + 7)
                 .unwrap()
@@ -46,10 +46,9 @@ mod tests {
                         .map(|output| output.stdout)
                 })
                 .unwrap()
-                .init(
-                    false,
-                    include_bytes!("../../../plugins/bin/test_plugin.wasm"),
-                )
+                .init(PluginBinary::Wasm(
+                    include_bytes!("../../../plugins/bin/test_plugin.wasm").as_ref(),
+                ))
                 .await
                 .unwrap();
 

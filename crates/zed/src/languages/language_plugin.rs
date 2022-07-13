@@ -5,12 +5,16 @@ use collections::HashMap;
 use futures::lock::Mutex;
 use gpui::executor::Background;
 use language::{LanguageServerName, LspAdapter};
-use plugin_runtime::{Plugin, PluginBuilder, WasiFn};
+use plugin_runtime::{Plugin, PluginBinary, PluginBuilder, PluginYield, WasiFn};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
 
 pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
-    let plugin = PluginBuilder::new_with_default_ctx()?
+    let executor_ref = executor.clone();
+    let plugin =
+        PluginBuilder::new_epoch_with_default_ctx(PluginYield::default_epoch(), move |future| {
+            executor_ref.spawn(future).detach()
+        })?
         .host_function_async("command", |command: String| async move {
             let mut args = command.split(' ');
             let command = args.next().unwrap();
@@ -21,11 +25,11 @@ pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
                 .log_err()
                 .map(|output| output.stdout)
         })?
-        .init(
-            true,
-            include_bytes!("../../../../plugins/bin/json_language.wasm.pre"),
-        )
+        .init(PluginBinary::Precompiled(include_bytes!(
+            "../../../../plugins/bin/json_language.wasm.pre"
+        )))
         .await?;
+
     PluginLspAdapter::new(plugin, executor).await
 }
 
