@@ -43,8 +43,7 @@ fn main() {
     assert!(build_successful);
 
     // Find all compiled binaries
-    let epoch_engine = create_epoch_engine();
-    let fuel_engine = create_fuel_engine();
+    let engine = create_default_engine();
     let binaries = std::fs::read_dir(base.join("target/wasm32-wasi").join(profile_target))
         .expect("Could not find compiled plugins in target");
 
@@ -62,35 +61,29 @@ fn main() {
         if let Some(path) = is_wasm() {
             let out_path = base.join("bin").join(path.file_name().unwrap());
             std::fs::copy(&path, &out_path).expect("Could not copy compiled plugin to bin");
-            precompile(&out_path, &epoch_engine, "epoch");
-            precompile(&out_path, &fuel_engine, "fuel");
+            precompile(&out_path, &engine);
         }
     }
 }
 
-fn create_epoch_engine() -> Engine {
-    let mut config = Config::default();
-    config.async_support(true);
-    config.epoch_interruption(true);
-    Engine::new(&config).expect("Could not create engine")
-}
-
-fn create_fuel_engine() -> Engine {
+/// Creates an engine with the default configuration.
+/// N.B. This must create an engine with the same config as the one
+/// in `plugin_runtime/build.rs`.
+fn create_default_engine() -> Engine {
     let mut config = Config::default();
     config.async_support(true);
     config.consume_fuel(true);
-    Engine::new(&config).expect("Could not create engine")
+    Engine::new(&config).expect("Could not create precompilation engine")
 }
 
-fn precompile(path: &Path, engine: &Engine, engine_name: &str) {
+fn precompile(path: &Path, engine: &Engine) {
     let bytes = std::fs::read(path).expect("Could not read wasm module");
     let compiled = engine
         .precompile_module(&bytes)
         .expect("Could not precompile module");
     let out_path = path.parent().unwrap().join(&format!(
-        "{}.{}",
+        "{}.pre",
         path.file_name().unwrap().to_string_lossy(),
-        engine_name,
     ));
     let mut out_file = std::fs::File::create(out_path)
         .expect("Could not create output file for precompiled module");

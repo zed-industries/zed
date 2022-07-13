@@ -154,8 +154,6 @@ Plugins in the `plugins` directory are automatically recompiled and serialized t
 
 - `plugin.wasm.pre` is the plugin compiled to Wasm *and additionally* precompiled to host-platform-agnostic cranelift-specific IR. This should be about 700KB for debug builds and 500KB in release builds. Each plugin takes about 1 or 2 seconds to compile to native code using cranelift, so precompiling plugins drastically reduces the startup time required to begin to run a plugin.
 
-> TODO: Rework precompiled plugins.
-
 For all intents and purposes, it is *highly recommended* that you use precompiled plugins where possible, as they are much more lightweight and take much less time to instantiate.
 
 ### Instantiating a plugin
