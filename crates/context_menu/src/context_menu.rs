@@ -1,18 +1,23 @@
-use std::{any::TypeId, time::Duration};
-
 use gpui::{
-    elements::*, geometry::vector::Vector2F, keymap, platform::CursorStyle, Action, AppContext,
-    Axis, Entity, MutableAppContext, RenderContext, SizeConstraint, Subscription, View,
-    ViewContext,
+    elements::*, geometry::vector::Vector2F, impl_internal_actions, keymap, platform::CursorStyle,
+    Action, AppContext, Axis, Entity, MutableAppContext, RenderContext, SizeConstraint,
+    Subscription, View, ViewContext,
 };
 use menu::*;
 use settings::Settings;
+use std::{any::TypeId, time::Duration};
+
+#[derive(Copy, Clone, PartialEq)]
+struct Clicked;
+
+impl_internal_actions!(context_menu, [Clicked]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ContextMenu::select_first);
     cx.add_action(ContextMenu::select_last);
     cx.add_action(ContextMenu::select_next);
     cx.add_action(ContextMenu::select_prev);
+    cx.add_action(ContextMenu::clicked);
     cx.add_action(ContextMenu::confirm);
     cx.add_action(ContextMenu::cancel);
 }
@@ -56,6 +61,7 @@ pub struct ContextMenu {
     selected_index: Option<usize>,
     visible: bool,
     previously_focused_view_id: Option<usize>,
+    clicked: bool,
     _actions_observation: Subscription,
 }
 
@@ -113,6 +119,7 @@ impl ContextMenu {
             selected_index: Default::default(),
             visible: Default::default(),
             previously_focused_view_id: Default::default(),
+            clicked: false,
             _actions_observation: cx.observe_actions(Self::action_dispatched),
         }
     }
@@ -123,14 +130,22 @@ impl ContextMenu {
             .iter()
             .position(|item| item.action_id() == Some(action_id))
         {
-            self.selected_index = Some(ix);
-            cx.notify();
-            cx.spawn(|this, mut cx| async move {
-                cx.background().timer(Duration::from_millis(100)).await;
-                this.update(&mut cx, |this, cx| this.cancel(&Default::default(), cx));
-            })
-            .detach();
+            if self.clicked {
+                self.cancel(&Default::default(), cx);
+            } else {
+                self.selected_index = Some(ix);
+                cx.notify();
+                cx.spawn(|this, mut cx| async move {
+                    cx.background().timer(Duration::from_millis(50)).await;
+                    this.update(&mut cx, |this, cx| this.cancel(&Default::default(), cx));
+                })
+                .detach();
+            }
         }
+    }
+
+    fn clicked(&mut self, _: &Clicked, _: &mut ViewContext<Self>) {
+        self.clicked = true;
     }
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
@@ -139,6 +154,7 @@ impl ContextMenu {
                 let window_id = cx.window_id();
                 let view_id = cx.view_id();
                 cx.dispatch_action_at(window_id, view_id, action.as_ref());
+                self.reset(cx);
             }
         }
     }
@@ -158,6 +174,7 @@ impl ContextMenu {
         self.items.clear();
         self.visible = false;
         self.selected_index.take();
+        self.clicked = false;
         cx.notify();
     }
 
@@ -317,8 +334,8 @@ impl ContextMenu {
                             })
                             .with_cursor_style(CursorStyle::PointingHand)
                             .on_click(move |_, _, cx| {
+                                cx.dispatch_action(Clicked);
                                 cx.dispatch_any_action(action.boxed_clone());
-                                cx.dispatch_action(Cancel);
                             })
                             .boxed()
                         }
