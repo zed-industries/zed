@@ -88,7 +88,7 @@ fn precompile(path: &Path, engine: &Engine, engine_name: &str) {
         .precompile_module(&bytes)
         .expect("Could not precompile module");
     let out_path = path.parent().unwrap().join(&format!(
-        "{}.{}.pre",
+        "{}.{}",
         path.file_name().unwrap().to_string_lossy(),
         engine_name,
     ));
