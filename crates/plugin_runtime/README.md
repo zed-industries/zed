@@ -28,6 +28,8 @@ The interface between the host Rust runtime ('Runtime') and plugins implemented 
 
 When calling a guest-side function, all arguments are serialized to bytes and passed through `Buffer`s. We currently use `serde` + [`bincode`](https://docs.rs/bincode/latest/bincode/) to do this serialization. This means that any type that can be serialized using serde can be passed across the ABI boundary. For types that represent resources that cannot pass the ABI boundary (e.g. `Rope`), we are working on an opaque callback-based system.
 
+> **Note**: It's important to note that there is a draft ABI standard for Wasm called WebAssembly Interface Types (often abbreviated `WITX`). This standard is currently not stable and only experimentally supported in some runtimes. Once this proposal becomes stable, it would be a good idea to transition towards using WITX as the ABI, rather than the rather rudimentary `bincode` ABI we have now.
+
 All `Buffer`s are stored in Wasm linear memory (Wasm memory). A `Buffer` is a pointer, length pair to a byte array somewhere in Wasm memory. A `Buffer` itself is represented as a pair of two 4-byte (`u32`) fields:
 
 ```rust
@@ -50,8 +52,6 @@ Which we encode as a single `u64` when crossing the ABI boundary:
 | u64           |
 +---------------+
 ```
-
-This means that all exported and imported functions essentially have the following signature:
 
 All functions that a plugin exports or imports have the following properties:
 
