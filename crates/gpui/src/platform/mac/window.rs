@@ -392,18 +392,33 @@ impl platform::Window for Window {
             });
             let block = block.copy();
             let native_window = self.0.borrow().native_window;
-            let _: () = msg_send![
-                alert,
-                beginSheetModalForWindow: native_window
-                completionHandler: block
-            ];
+            self.0
+                .borrow()
+                .executor
+                .spawn(async move {
+                    let _: () = msg_send![
+                        alert,
+                        beginSheetModalForWindow: native_window
+                        completionHandler: block
+                    ];
+                })
+                .detach();
+
             done_rx
         }
     }
 
     fn activate(&self) {
         let window = self.0.borrow().native_window;
-        unsafe { msg_send![window, makeKeyAndOrderFront: nil] }
+        self.0
+            .borrow()
+            .executor
+            .spawn(async move {
+                unsafe {
+                    let _: () = msg_send![window, makeKeyAndOrderFront: nil];
+                }
+            })
+            .detach();
     }
 
     fn set_title(&mut self, title: &str) {
