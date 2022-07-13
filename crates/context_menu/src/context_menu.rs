@@ -277,6 +277,8 @@ impl ContextMenu {
                                 .boxed(),
                         }
                     }))
+                    .contained()
+                    .with_margin_left(style.keystroke_margin)
                     .boxed(),
             )
             .contained()

@@ -6934,6 +6934,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "context_menu",
  "futures",
  "gpui",
  "language",

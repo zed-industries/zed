@@ -242,6 +242,7 @@ pub struct ContextMenu {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub item: Interactive<ContextMenuItem>,
+    pub keystroke_margin: f32,
     pub separator: ContainerStyle,
 }
 
