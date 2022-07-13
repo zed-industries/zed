@@ -4,12 +4,12 @@ use client::http::HttpClient;
 use futures::lock::Mutex;
 use gpui::executor::Background;
 use language::{LanguageServerName, LspAdapter};
-use plugin_runtime::{Plugin, PluginBuilder, WasiFn};
+use plugin_runtime::{Plugin, PluginBuilder, PluginYield, WasiFn};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
 
 pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
-    let plugin = PluginBuilder::new_with_default_ctx()?
+    let plugin = PluginBuilder::new_with_default_ctx(PluginYield::default_epoch())?
         .host_function_async("command", |command: String| async move {
             let mut args = command.split(' ');
             let command = args.next().unwrap();
