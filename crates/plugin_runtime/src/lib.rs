@@ -46,10 +46,9 @@ mod tests {
                         .map(|output| output.stdout)
                 })
                 .unwrap()
-                .init(
-                    false,
-                    include_bytes!("../../../plugins/bin/test_plugin.wasm"),
-                )
+                .init(PluginBinary::Wasm(
+                    include_bytes!("../../../plugins/bin/test_plugin.wasm").as_ref(),
+                ))
                 .await
                 .unwrap();
 

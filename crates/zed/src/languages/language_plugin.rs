@@ -4,7 +4,7 @@ use client::http::HttpClient;
 use futures::lock::Mutex;
 use gpui::executor::Background;
 use language::{LanguageServerName, LspAdapter};
-use plugin_runtime::{Plugin, PluginBuilder, PluginYield, WasiFn};
+use plugin_runtime::{Plugin, PluginBinary, PluginBuilder, PluginYield, WasiFn};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
 
@@ -24,10 +24,9 @@ pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
                 .log_err()
                 .map(|output| output.stdout)
         })?
-        .init(
-            true,
-            include_bytes!("../../../../plugins/bin/json_language.wasm.pre"),
-        )
+        .init(PluginBinary::Precompiled(include_bytes!(
+            "../../../../plugins/bin/json_language.wasm.pre"
+        )))
         .await?;
 
     PluginLspAdapter::new(plugin, executor).await

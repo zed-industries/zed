@@ -345,8 +345,8 @@ impl PluginBuilder {
 
     /// Initializes a [`Plugin`] from a given compiled Wasm module.
     /// Both binary (`.wasm`) and text (`.wat`) module formats are supported.
-    pub async fn init<T: AsRef<[u8]>>(self, precompiled: bool, module: T) -> Result<Plugin, Error> {
-        Plugin::init(precompiled, module.as_ref(), self).await
+    pub async fn init<'a>(self, binary: PluginBinary<'a>) -> Result<Plugin, Error> {
+        Plugin::init(binary, self).await
     }
 }
 
@@ -379,6 +379,11 @@ impl WasiCtxAlloc {
     }
 }
 
+pub enum PluginBinary<'a> {
+    Wasm(&'a [u8]),
+    Precompiled(&'a [u8]),
+}
+
 /// Represents a WebAssembly plugin, with access to the WebAssembly System Inferface.
 /// Build a new plugin using [`PluginBuilder`].
 pub struct Plugin {
@@ -406,7 +411,7 @@ impl Plugin {
         println!();
     }
 
-    async fn init(precompiled: bool, module: &[u8], plugin: PluginBuilder) -> Result<Self, Error> {
+    async fn init<'a>(binary: PluginBinary<'a>, plugin: PluginBuilder) -> Result<Self, Error> {
         // initialize the WebAssembly System Interface context
         let engine = plugin.engine;
         let mut linker = plugin.linker;
@@ -422,10 +427,9 @@ impl Plugin {
             },
         );
 
-        let module = if precompiled {
-            unsafe { Module::deserialize(&engine, module)? }
-        } else {
-            Module::new(&engine, module)?
+        let module = match binary {
+            PluginBinary::Precompiled(bytes) => unsafe { Module::deserialize(&engine, bytes)? },
+            PluginBinary::Wasm(bytes) => Module::new(&engine, bytes)?,
         };
 
         // set up automatic yielding based on configuration
