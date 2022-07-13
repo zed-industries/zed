@@ -24,7 +24,7 @@ pub fn marked_text(marked_text: &str) -> (String, Vec<usize>) {
     (unmarked_text, markers.remove(&'|').unwrap_or_default())
 }
 
-#[derive(Eq, PartialEq, Hash)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub enum TextRangeMarker {
     Empty(char),
     Range(char, char),
