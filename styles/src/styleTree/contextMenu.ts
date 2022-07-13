@@ -8,13 +8,14 @@ export default function contextMenu(theme: Theme) {
     padding: 6,
     shadow: popoverShadow(theme),
     border: border(theme, "primary"),
+    keystrokeMargin: 30,
     item: {
       padding: { left: 4, right: 4, top: 2, bottom: 2 },
       cornerRadius: 6,
       label: text(theme, "sans", "secondary", { size: "sm" }),
       keystroke: {
-        margin: { left: 60 },
-        ...text(theme, "sans", "muted", { size: "sm", weight: "bold" })
+        ...text(theme, "sans", "muted", { size: "sm", weight: "bold" }),
+        padding: { left: 3, right: 3 }
       },
       hover: {
         background: backgroundColor(theme, 300, "hovered"),

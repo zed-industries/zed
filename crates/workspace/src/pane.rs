@@ -2,11 +2,15 @@ use super::{ItemHandle, SplitDirection};
 use crate::{toolbar::Toolbar, Item, WeakItemHandle, Workspace};
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
+use context_menu::{ContextMenu, ContextMenuItem};
 use futures::StreamExt;
 use gpui::{
     actions,
     elements::*,
-    geometry::{rect::RectF, vector::vec2f},
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
     impl_actions, impl_internal_actions,
     platform::{CursorStyle, NavigationDirection},
     AppContext, AsyncAppContext, Entity, ModelHandle, MutableAppContext, PromptLevel, Quad,
@@ -55,8 +59,13 @@ pub struct GoForward {
     pub pane: Option<WeakViewHandle<Pane>>,
 }
 
+#[derive(Clone, PartialEq)]
+pub struct DeploySplitMenu {
+    position: Vector2F,
+}
+
 impl_actions!(pane, [GoBack, GoForward, ActivateItem]);
-impl_internal_actions!(pane, [CloseItem]);
+impl_internal_actions!(pane, [CloseItem, DeploySplitMenu]);
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
@@ -87,6 +96,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx));
     cx.add_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx));
     cx.add_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx));
+    cx.add_action(Pane::deploy_split_menu);
     cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
         Pane::reopen_closed_item(workspace, cx).detach();
     });
@@ -129,6 +139,7 @@ pub struct Pane {
     autoscroll: bool,
     nav_history: Rc<RefCell<NavHistory>>,
     toolbar: ViewHandle<Toolbar>,
+    split_menu: ViewHandle<ContextMenu>,
 }
 
 pub struct ItemNavHistory {
@@ -169,6 +180,7 @@ pub struct NavigationEntry {
 impl Pane {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let handle = cx.weak_handle();
+        let split_menu = cx.add_view(|cx| ContextMenu::new(cx));
         Self {
             items: Vec::new(),
             active_item_index: 0,
@@ -182,6 +194,7 @@ impl Pane {
                 pane: handle.clone(),
             })),
             toolbar: cx.add_view(|_| Toolbar::new(handle)),
+            split_menu,
         }
     }
 
@@ -786,6 +799,21 @@ impl Pane {
         cx.emit(Event::Split(direction));
     }
 
+    fn deploy_split_menu(&mut self, action: &DeploySplitMenu, cx: &mut ViewContext<Self>) {
+        self.split_menu.update(cx, |menu, cx| {
+            menu.show(
+                action.position,
+                vec![
+                    ContextMenuItem::item("Split Right", SplitRight),
+                    ContextMenuItem::item("Split Left", SplitLeft),
+                    ContextMenuItem::item("Split Up", SplitUp),
+                    ContextMenuItem::item("Split Down", SplitDown),
+                ],
+                cx,
+            );
+        });
+    }
+
     pub fn toolbar(&self) -> &ViewHandle<Toolbar> {
         &self.toolbar
     }
@@ -800,13 +828,13 @@ impl Pane {
         });
     }
 
-    fn render_tabs(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render_tabs(&mut self, cx: &mut RenderContext<Self>) -> impl Element {
         let theme = cx.global::<Settings>().theme.clone();
 
         enum Tabs {}
         enum Tab {}
         let pane = cx.handle();
-        let tabs = MouseEventHandler::new::<Tabs, _, _>(0, cx, |mouse_state, cx| {
+        MouseEventHandler::new::<Tabs, _, _>(0, cx, |mouse_state, cx| {
             let autoscroll = if mem::take(&mut self.autoscroll) {
                 Some(self.active_item_index)
             } else {
@@ -941,11 +969,7 @@ impl Pane {
             );
 
             row.boxed()
-        });
-
-        ConstrainedBox::new(tabs.boxed())
-            .with_height(theme.workspace.tab.height)
-            .named("tabs")
+        })
     }
 }
 
@@ -959,27 +983,72 @@ impl View for Pane {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+        enum SplitIcon {}
+
         let this = cx.handle();
 
-        EventHandler::new(if let Some(active_item) = self.active_item() {
-            Flex::column()
-                .with_child(self.render_tabs(cx))
-                .with_child(ChildView::new(&self.toolbar).boxed())
-                .with_child(ChildView::new(active_item).flex(1., true).boxed())
-                .boxed()
-        } else {
-            Empty::new().boxed()
-        })
-        .on_navigate_mouse_down(move |direction, cx| {
-            let this = this.clone();
-            match direction {
-                NavigationDirection::Back => cx.dispatch_action(GoBack { pane: Some(this) }),
-                NavigationDirection::Forward => cx.dispatch_action(GoForward { pane: Some(this) }),
-            }
+        Stack::new()
+            .with_child(
+                EventHandler::new(if let Some(active_item) = self.active_item() {
+                    Flex::column()
+                        .with_child(
+                            Flex::row()
+                                .with_child(self.render_tabs(cx).flex(1., true).named("tabs"))
+                                .with_child(
+                                    MouseEventHandler::new::<SplitIcon, _, _>(
+                                        0,
+                                        cx,
+                                        |mouse_state, cx| {
+                                            let theme = &cx.global::<Settings>().theme.workspace;
+                                            let style =
+                                                theme.pane_button.style_for(mouse_state, false);
+                                            Svg::new("icons/split.svg")
+                                                .with_color(style.color)
+                                                .constrained()
+                                                .with_width(style.icon_width)
+                                                .aligned()
+                                                .contained()
+                                                .with_style(style.container)
+                                                .constrained()
+                                                .with_width(style.button_width)
+                                                .with_height(style.button_width)
+                                                .aligned()
+                                                .boxed()
+                                        },
+                                    )
+                                    .with_cursor_style(CursorStyle::PointingHand)
+                                    .on_mouse_down(|position, cx| {
+                                        cx.dispatch_action(DeploySplitMenu { position });
+                                    })
+                                    .boxed(),
+                                )
+                                .constrained()
+                                .with_height(cx.global::<Settings>().theme.workspace.tab.height)
+                                .boxed(),
+                        )
+                        .with_child(ChildView::new(&self.toolbar).boxed())
+                        .with_child(ChildView::new(active_item).flex(1., true).boxed())
+                        .boxed()
+                } else {
+                    Empty::new().boxed()
+                })
+                .on_navigate_mouse_down(move |direction, cx| {
+                    let this = this.clone();
+                    match direction {
+                        NavigationDirection::Back => {
+                            cx.dispatch_action(GoBack { pane: Some(this) })
+                        }
+                        NavigationDirection::Forward => {
+                            cx.dispatch_action(GoForward { pane: Some(this) })
+                        }
+                    }
 
-            true
-        })
-        .named("pane")
+                    true
+                })
+                .boxed(),
+            )
+            .with_child(ChildView::new(&self.split_menu).boxed())
+            .named("pane")
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {

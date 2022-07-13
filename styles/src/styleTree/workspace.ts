@@ -55,6 +55,18 @@ export default function workspace(theme: Theme) {
     leaderBorderWidth: 2.0,
     tab,
     activeTab,
+    paneButton: {
+      color: iconColor(theme, "secondary"),
+      border: {
+        ...tab.border
+      },
+      iconWidth: 14,
+      buttonWidth: tab.height,
+      hover: {
+        color: iconColor(theme, "active"),
+        background: backgroundColor(theme, 300),
+      }
+    },
     modal: {
       margin: {
         bottom: 52,

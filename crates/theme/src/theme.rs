@@ -40,6 +40,7 @@ pub struct Workspace {
     pub titlebar: Titlebar,
     pub tab: Tab,
     pub active_tab: Tab,
+    pub pane_button: Interactive<IconButton>,
     pub pane_divider: Border,
     pub leader_border_opacity: f32,
     pub leader_border_width: f32,
@@ -241,6 +242,7 @@ pub struct ContextMenu {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub item: Interactive<ContextMenuItem>,
+    pub keystroke_margin: f32,
     pub separator: ContainerStyle,
 }
 
