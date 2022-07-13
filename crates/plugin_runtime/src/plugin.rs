@@ -62,8 +62,7 @@ pub struct PluginBuilder {
     wasi_ctx: WasiCtx,
     engine: Engine,
     linker: Linker<WasiCtxAlloc>,
-    delta: u64,
-    epoch: std::time::Duration,
+    fuel_refill: u64,
 }
 
 /// Creates a default engine for compiling Wasm.
@@ -73,7 +72,7 @@ pub struct PluginBuilder {
 pub fn create_default_engine() -> Result<Engine, Error> {
     let mut config = Config::default();
     config.async_support(true);
-    config.epoch_interruption(true);
+    config.consume_fuel(true);
     Engine::new(&config)
 }
 
@@ -88,8 +87,7 @@ impl PluginBuilder {
             wasi_ctx,
             engine,
             linker,
-            delta: 1,
-            epoch: std::time::Duration::from_millis(100),
+            fuel_refill: 1000,
         })
     }
 
@@ -245,17 +243,7 @@ impl PluginBuilder {
 
     /// Initializes a [`Plugin`] from a given compiled Wasm module.
     /// Both binary (`.wasm`) and text (`.wat`) module formats are supported.
-    pub async fn init<T: AsRef<[u8]>>(
-        self,
-        precompiled: bool,
-        module: T,
-    ) -> Result<
-        (
-            Plugin,
-            std::pin::Pin<Box<dyn Future<Output = ()> + Send + 'static>>,
-        ),
-        Error,
-    > {
+    pub async fn init<T: AsRef<[u8]>>(self, precompiled: bool, module: T) -> Result<Plugin, Error> {
         Plugin::init(precompiled, module.as_ref().to_vec(), self).await
     }
 }
@@ -320,13 +308,7 @@ impl Plugin {
         precompiled: bool,
         module: Vec<u8>,
         plugin: PluginBuilder,
-    ) -> Result<
-        (
-            Self,
-            std::pin::Pin<Box<dyn Future<Output = ()> + Send + 'static>>,
-        ),
-        Error,
-    > {
+    ) -> Result<Self, Error> {
         // initialize the WebAssembly System Interface context
         let engine = plugin.engine;
         let mut linker = plugin.linker;
@@ -348,15 +330,9 @@ impl Plugin {
             Module::new(&engine, module)?
         };
 
-        // set up automatic yielding after given duration
-        store.epoch_deadline_async_yield_and_update(plugin.delta);
-        let epoch = plugin.epoch;
-        let incrementer = Box::pin(async move {
-            loop {
-                smol::Timer::after(epoch).await;
-                engine.increment_epoch();
-            }
-        });
+        // set up automatic yielding after fuel expires
+        store.out_of_fuel_async_yield(u64::MAX, plugin.fuel_refill);
+        store.add_fuel(plugin.fuel_refill).unwrap();
 
         // load the provided module into the asynchronous runtime
         linker.module_async(&mut store, "", &module).await?;
@@ -371,9 +347,7 @@ impl Plugin {
             free_buffer,
         });
 
-        let plugin = Plugin { store, instance };
-
-        Ok((plugin, incrementer))
+        Ok(Plugin { store, instance })
     }
 
     /// Attaches a file or directory the the given system path to the runtime.

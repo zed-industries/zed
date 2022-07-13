@@ -9,7 +9,7 @@ use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
 
 pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
-    let (plugin, incrementer) = PluginBuilder::new_with_default_ctx()?
+    let plugin = PluginBuilder::new_with_default_ctx()?
         .host_function_async("command", |command: String| async move {
             let mut args = command.split(' ');
             let command = args.next().unwrap();
@@ -26,7 +26,6 @@ pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
         )
         .await?;
 
-    executor.spawn(incrementer).detach();
     PluginLspAdapter::new(plugin, executor).await
 }
 
