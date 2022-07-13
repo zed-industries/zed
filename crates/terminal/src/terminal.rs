@@ -426,6 +426,11 @@ impl Item for Terminal {
     }
 }
 
+///Gets the intuitively correct working directory from the given workspace
+///If there is an active entry for this project, returns that entry's worktree root.
+///If there's no active entry but there is a worktree, returns that worktrees root.
+///If either of these roots are files, or if there are any other query failures,
+///  returns the user's home directory
 fn get_wd_for_workspace(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
     let project = workspace.project().read(cx);
 
@@ -435,19 +440,11 @@ fn get_wd_for_workspace(workspace: &Workspace, cx: &AppContext) -> Option<PathBu
         .or_else(|| workspace.worktrees(cx).next())
         .and_then(|worktree_handle| worktree_handle.read(cx).as_local())
         .and_then(|wt| {
-            println!("{:?}", wt.root_entry());
-            let rs = wt
-                .root_entry()
+            wt.root_entry()
                 .filter(|re| re.is_dir())
-                .map(|_| wt.abs_path().to_path_buf());
-            println!("{:?}", rs);
-
-            rs
+                .map(|_| wt.abs_path().to_path_buf())
         })
-        .or_else(|| {
-            println!("HERE");
-            home_dir()
-        })
+        .or_else(|| home_dir())
 }
 
 #[cfg(test)]
