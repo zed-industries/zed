@@ -1,5 +1,5 @@
 use futures::StreamExt;
-use gpui::{executor, AsyncAppContext};
+use gpui::{executor, MutableAppContext};
 use postage::sink::Sink as _;
 use postage::{prelude::Stream, watch};
 use project::Fs;
@@ -10,7 +10,7 @@ use theme::ThemeRegistry;
 use util::ResultExt;
 
 #[derive(Clone)]
-pub struct WatchedJsonFile<T>(watch::Receiver<T>);
+pub struct WatchedJsonFile<T>(pub watch::Receiver<T>);
 
 impl<T> WatchedJsonFile<T>
 where
@@ -51,33 +51,46 @@ where
     }
 }
 
-pub async fn watch_settings_file(
+pub fn watch_settings_file(
     defaults: Settings,
     mut file: WatchedJsonFile<SettingsFileContent>,
     theme_registry: Arc<ThemeRegistry>,
-    mut cx: AsyncAppContext,
+    cx: &mut MutableAppContext,
 ) {
-    while let Some(content) = file.0.recv().await {
-        cx.update(|cx| {
-            let mut settings = defaults.clone();
-            settings.set_user_settings(content, &theme_registry, &cx.font_cache());
-            cx.set_global(settings);
-            cx.refresh_windows();
-        });
-    }
+    settings_updated(&defaults, file.0.borrow().clone(), &theme_registry, cx);
+    cx.spawn(|mut cx| async move {
+        while let Some(content) = file.0.recv().await {
+            cx.update(|cx| settings_updated(&defaults, content, &theme_registry, cx));
+        }
+    })
+    .detach();
 }
 
-pub async fn watch_keymap_file(
-    mut file: WatchedJsonFile<KeymapFileContent>,
-    mut cx: AsyncAppContext,
+pub fn keymap_updated(content: KeymapFileContent, cx: &mut MutableAppContext) {
+    cx.clear_bindings();
+    settings::KeymapFileContent::load_defaults(cx);
+    content.add(cx).log_err();
+}
+
+pub fn settings_updated(
+    defaults: &Settings,
+    content: SettingsFileContent,
+    theme_registry: &Arc<ThemeRegistry>,
+    cx: &mut MutableAppContext,
 ) {
-    while let Some(content) = file.0.recv().await {
-        cx.update(|cx| {
-            cx.clear_bindings();
-            settings::KeymapFileContent::load_defaults(cx);
-            content.add(cx).log_err();
-        });
-    }
+    let mut settings = defaults.clone();
+    settings.set_user_settings(content, theme_registry, &cx.font_cache());
+    cx.set_global(settings);
+    cx.refresh_windows();
+}
+
+pub fn watch_keymap_file(mut file: WatchedJsonFile<KeymapFileContent>, cx: &mut MutableAppContext) {
+    cx.spawn(|mut cx| async move {
+        while let Some(content) = file.0.recv().await {
+            cx.update(|cx| keymap_updated(content, cx));
+        }
+    })
+    .detach();
 }
 
 #[cfg(test)]
@@ -123,15 +136,14 @@ mod tests {
                 ..Default::default()
             },
         );
-        cx.spawn(|cx| {
+        cx.update(|cx| {
             watch_settings_file(
                 default_settings.clone(),
                 source,
                 ThemeRegistry::new((), font_cache),
                 cx,
             )
-        })
-        .detach();
+        });
 
         cx.foreground().run_until_parked();
         let settings = cx.read(|cx| cx.global::<Settings>().clone());

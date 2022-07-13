@@ -127,10 +127,9 @@ fn main() {
         let db = cx.background().block(db);
         let (settings_file, keymap_file) = cx.background().block(config_files).unwrap();
 
+        watch_settings_file(default_settings, settings_file, themes.clone(), cx);
+        watch_keymap_file(keymap_file, cx);
         cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
-            .detach();
-        cx.spawn(|cx| watch_keymap_file(keymap_file, cx)).detach();
-        cx.spawn(|cx| watch_settings_file(default_settings, settings_file, themes.clone(), cx))
             .detach();
 
         cx.spawn({
