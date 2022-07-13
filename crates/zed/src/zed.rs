@@ -209,7 +209,7 @@ pub fn initialize_workspace(
     cx.emit(workspace::Event::PaneAdded(workspace.active_pane().clone()));
 
     let theme_names = app_state.themes.list().collect();
-    let language_names = app_state.languages.language_names();
+    let language_names = &languages::LANGUAGE_NAMES;
 
     workspace.project().update(cx, |project, cx| {
         let action_names = cx.all_action_names().collect::<Vec<_>>();
