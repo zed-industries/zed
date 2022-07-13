@@ -4979,6 +4979,8 @@ impl Editor {
             self.change_selections(None, cx, |s| {
                 s.select_ranges(vec![cursor_in_editor..cursor_in_editor])
             });
+        } else {
+            self.refresh_document_highlights(cx);
         }
 
         Some(rename)
