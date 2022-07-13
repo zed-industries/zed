@@ -4,18 +4,30 @@ use wasmtime::{Config, Engine};
 fn main() {
     let base = Path::new("../../plugins");
 
-    println!("cargo:rerun-if-changed={}", base.display());
+    // Find all files and folders that don't change when rebuilt
+    let crates = std::fs::read_dir(base).expect("Could not find plugin directory");
+    for dir in crates {
+        let path = dir.unwrap().path();
+        let name = path.file_name().and_then(|x| x.to_str());
+        let is_dir = path.is_dir();
+        if is_dir && name != Some("target") && name != Some("bin") {
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
+    }
 
+    // Clear out and recreate the plugin bin directory
     let _ = std::fs::remove_dir_all(base.join("bin"));
     let _ =
         std::fs::create_dir_all(base.join("bin")).expect("Could not make plugins bin directory");
 
+    // Compile the plugins using the same profile as the current Zed build
     let (profile_flags, profile_target) = match std::env::var("PROFILE").unwrap().as_str() {
         "debug" => (&[][..], "debug"),
         "release" => (&["--release"][..], "release"),
         unknown => panic!("unknown profile `{}`", unknown),
     };
 
+    // Invoke cargo to build the plugins
     let build_successful = std::process::Command::new("cargo")
         .args([
             "build",
@@ -30,11 +42,12 @@ fn main() {
         .success();
     assert!(build_successful);
 
+    // Find all compiled binaries
+    let engine = create_default_engine();
     let binaries = std::fs::read_dir(base.join("target/wasm32-wasi").join(profile_target))
         .expect("Could not find compiled plugins in target");
 
-    let engine = create_default_engine();
-
+    // Copy and precompile all compiled plugins we can find
     for file in binaries {
         let is_wasm = || {
             let path = file.ok()?.path();
