@@ -101,6 +101,7 @@ pub struct PluginBuilder {
 }
 
 impl PluginBuilder {
+    /// Creates an engine with the proper configuration given the yield mechanism in use
     fn create_engine(yield_when: &PluginYield) -> Result<(Engine, Linker<WasiCtxAlloc>), Error> {
         let mut config = Config::default();
         config.async_support(true);
@@ -121,10 +122,11 @@ impl PluginBuilder {
 
     /// Create a new [`PluginBuilder`] with the given WASI context.
     /// Using the default context is a safe bet, see [`new_with_default_context`].
+    /// This plugin will yield after each fixed configurable epoch.
     pub fn new_epoch<C>(
         wasi_ctx: WasiCtx,
         yield_epoch: PluginYieldEpoch,
-        callback: C,
+        spawn_detached_future: C,
     ) -> Result<Self, Error>
     where
         C: FnOnce(std::pin::Pin<Box<dyn Future<Output = ()> + Send + 'static>>) -> ()
@@ -135,7 +137,7 @@ impl PluginBuilder {
         // because we need the engine to load the plugin
         let epoch = yield_epoch.epoch;
         let initialize_incrementer = Box::new(move |engine: Engine| {
-            callback(Box::pin(async move {
+            spawn_detached_future(Box::pin(async move {
                 loop {
                     smol::Timer::after(epoch).await;
                     engine.increment_epoch();
@@ -157,6 +159,9 @@ impl PluginBuilder {
         })
     }
 
+    /// Create a new [`PluginBuilder`] with the given WASI context.
+    /// Using the default context is a safe bet, see [`new_with_default_context`].
+    /// This plugin will yield after a configurable amount of fuel is consumed.
     pub fn new_fuel(wasi_ctx: WasiCtx, yield_fuel: PluginYieldFuel) -> Result<Self, Error> {
         let yield_when = PluginYield::Fuel(yield_fuel);
         let (engine, linker) = Self::create_engine(&yield_when)?;
@@ -178,18 +183,22 @@ impl PluginBuilder {
             .build()
     }
 
+    /// Create a new `PluginBuilder` with the default `WasiCtx` (see [`default_ctx`]).
+    /// This plugin will yield after each fixed configurable epoch.
     pub fn new_epoch_with_default_ctx<C>(
         yield_epoch: PluginYieldEpoch,
-        callback: C,
+        spawn_detached_future: C,
     ) -> Result<Self, Error>
     where
         C: FnOnce(std::pin::Pin<Box<dyn Future<Output = ()> + Send + 'static>>) -> ()
             + Send
             + 'static,
     {
-        Self::new_epoch(Self::default_ctx(), yield_epoch, callback)
+        Self::new_epoch(Self::default_ctx(), yield_epoch, spawn_detached_future)
     }
 
+    /// Create a new `PluginBuilder` with the default `WasiCtx` (see [`default_ctx`]).
+    /// This plugin will yield after a configurable amount of fuel is consumed.
     pub fn new_fuel_with_default_ctx(yield_fuel: PluginYieldFuel) -> Result<Self, Error> {
         Self::new_fuel(Self::default_ctx(), yield_fuel)
     }
@@ -451,25 +460,6 @@ impl Plugin {
 
         Ok(Plugin { store, instance })
     }
-
-    // async fn init_fuel(
-    //     precompiled: bool,
-    //     module: &[u8],
-    //     plugin: PluginBuilder,
-    // ) -> Result<Self, Error> {
-    //     let (_, plugin) = Self::init_inner(precompiled, module, plugin).await?;
-    //     Ok(plugin)
-    // }
-
-    // async fn init_epoch<C>(
-    //     precompiled: bool,
-    //     module: &[u8],
-    //     plugin: PluginBuilder,
-    //     callback: C,
-    // ) -> Result<Self, Error> {
-    //     let (_, plugin) = Self::init_inner(precompiled, module, plugin).await?;
-    //     Ok(plugin)
-    // }
 
     /// Attaches a file or directory the the given system path to the runtime.
     /// Note that the resource must be freed by calling `remove_resource` afterwards.
