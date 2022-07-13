@@ -9,7 +9,7 @@ use alacritty_terminal::{
     },
     Term,
 };
-use editor::{Cursor, CursorShape, HighlightedRange, HighlightedRangeLine, Input};
+use editor::{Cursor, CursorShape, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     color::Color,
     elements::*,
@@ -389,14 +389,18 @@ impl Element for TerminalEl {
                     cx.dispatch_action(ScrollTerminal(vertical_scroll.round() as i32));
                 })
                 .is_some(),
-            Event::KeyDown(KeyDownEvent {
-                input: Some(input), ..
-            }) => cx
-                .is_parent_view_focused()
-                .then(|| {
-                    cx.dispatch_action(Input(input.to_string()));
-                })
-                .is_some(),
+            Event::KeyDown(e @ KeyDownEvent { .. }) => {
+                if !cx.is_parent_view_focused() {
+                    return false;
+                }
+
+                self.connection
+                    .upgrade(cx.app)
+                    .map(|connection| {
+                        connection.update(cx.app, |connection, _| connection.try_keystroke(e))
+                    })
+                    .unwrap_or(false)
+            }
             _ => false,
         }
     }

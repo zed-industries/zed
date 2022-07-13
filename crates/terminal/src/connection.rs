@@ -1,3 +1,5 @@
+mod events;
+
 use alacritty_terminal::{
     ansi::{ClearMode, Handler},
     config::{Config, PtyConfig},
@@ -13,12 +15,14 @@ use futures::{channel::mpsc::unbounded, StreamExt};
 use settings::Settings;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use gpui::{ClipboardItem, CursorStyle, Entity, ModelContext};
+use gpui::{ClipboardItem, CursorStyle, Entity, KeyDownEvent, ModelContext};
 
 use crate::{
     color_translation::{get_color_at_index, to_alac_rgb},
     ZedListener,
 };
+
+use self::events::to_esc_str;
 
 const DEFAULT_TITLE: &str = "Terminal";
 
@@ -181,6 +185,19 @@ impl TerminalConnection {
     pub fn clear(&mut self) {
         self.write_to_pty("\x0c".into());
         self.term.lock().clear_screen(ClearMode::Saved);
+    }
+
+    pub fn try_keystroke(&mut self, key_down: &KeyDownEvent) -> bool {
+        let guard = self.term.lock();
+        let mode = guard.mode();
+        let esc = to_esc_str(key_down, mode);
+        drop(guard);
+        if esc.is_some() {
+            self.write_to_pty(esc.unwrap());
+            true
+        } else {
+            false
+        }
     }
 }
 
