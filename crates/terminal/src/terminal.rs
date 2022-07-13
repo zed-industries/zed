@@ -1,12 +1,10 @@
 mod color_translation;
 pub mod connection;
-mod keyboard_to_esc;
 mod modal;
 pub mod terminal_element;
 
 use alacritty_terminal::{
     event::{Event as AlacTermEvent, EventListener},
-    event_loop::Msg,
     grid::Scroll,
     term::SizeInfo,
 };
@@ -169,14 +167,6 @@ impl Terminal {
         }
     }
 
-    ///Resize the terminal and the PTY. This locks the terminal.
-    fn set_size(&self, new_size: SizeInfo, cx: &mut MutableAppContext) {
-        self.connection.update(cx, |connection, _| {
-            connection.pty_tx.0.send(Msg::Resize(new_size)).ok();
-            connection.term.lock().resize(new_size);
-        })
-    }
-
     ///Scroll the terminal. This locks the terminal
     fn scroll_terminal(&mut self, scroll: &ScrollTerminal, cx: &mut ViewContext<Self>) {
         self.connection
@@ -188,6 +178,7 @@ impl Terminal {
 
     fn input(&mut self, Input(text): &Input, cx: &mut ViewContext<Self>) {
         self.connection.update(cx, |connection, cx| {
+            //TODO: This is probably not encoding UTF8 correctly (see alacritty/src/input.rs:L825-837)
             connection.write_to_pty(text.clone(), cx);
         });
 
@@ -297,7 +288,12 @@ impl View for Terminal {
     }
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
-        let element = TerminalEl::new(cx.handle()).contained();
+        let element = {
+            let connection_handle = self.connection.clone().downgrade();
+            let view_id = cx.view_id();
+            TerminalEl::new(view_id, connection_handle, self.modal).contained()
+        };
+
         if self.modal {
             let settings = cx.global::<Settings>();
             let container_style = settings.theme.terminal.modal_container;

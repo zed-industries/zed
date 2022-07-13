@@ -1,3 +1,5 @@
+mod events;
+
 use alacritty_terminal::{
     config::{Config, PtyConfig},
     event::{Event as AlacTermEvent, Notify},
@@ -123,7 +125,7 @@ impl TerminalConnection {
             AlacTermEvent::PtyWrite(out) => self.write_to_pty(out, cx),
             AlacTermEvent::MouseCursorDirty => {
                 //Calculate new cursor style.
-                //TODO
+                //TODO: alacritty/src/input.rs:L922-L939
                 //Check on correctly handling mouse events for terminals
                 cx.platform().set_cursor_style(CursorStyle::Arrow); //???
             }
@@ -172,6 +174,12 @@ impl TerminalConnection {
     fn write_bytes_to_pty(&mut self, input: Vec<u8>, _: &mut ModelContext<Self>) {
         self.term.lock().scroll_display(Scroll::Bottom);
         self.pty_tx.notify(input);
+    }
+
+    ///Resize the terminal and the PTY. This locks the terminal.
+    pub fn set_size(&mut self, new_size: SizeInfo) {
+        self.pty_tx.0.send(Msg::Resize(new_size)).ok();
+        self.term.lock().resize(new_size);
     }
 }
 

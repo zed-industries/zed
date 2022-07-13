@@ -21,7 +21,7 @@ use gpui::{
     json::json,
     text_layout::{Line, RunStyle},
     Event, FontCache, KeyDownEvent, MouseRegion, PaintContext, Quad, ScrollWheelEvent,
-    SizeConstraint, TextLayoutCache, WeakViewHandle,
+    SizeConstraint, TextLayoutCache, WeakModelHandle,
 };
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
@@ -32,8 +32,7 @@ use std::{cmp::min, ops::Range, rc::Rc, sync::Arc};
 use std::{fmt::Debug, ops::Sub};
 
 use crate::{
-    color_translation::convert_color, keyboard_to_esc::to_esc_str, ScrollTerminal, Terminal,
-    ZedListener,
+    color_translation::convert_color, connection::TerminalConnection, ScrollTerminal, ZedListener,
 };
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
@@ -47,8 +46,11 @@ const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
 const DEBUG_GRID: bool = false;
 
 ///The GPUI element that paints the terminal.
+///We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalEl {
-    view: WeakViewHandle<Terminal>,
+    connection: WeakModelHandle<TerminalConnection>,
+    view_id: usize,
+    modal: bool,
 }
 
 ///New type pattern so I don't mix these two up
@@ -98,8 +100,16 @@ pub struct LayoutState {
 }
 
 impl TerminalEl {
-    pub fn new(view: WeakViewHandle<Terminal>) -> TerminalEl {
-        TerminalEl { view }
+    pub fn new(
+        view_id: usize,
+        connection: WeakModelHandle<TerminalConnection>,
+        modal: bool,
+    ) -> TerminalEl {
+        TerminalEl {
+            view_id,
+            connection,
+            modal,
+        }
     }
 }
 
@@ -121,22 +131,19 @@ impl Element for TerminalEl {
             cx.font_cache()
                 .em_advance(text_style.font_id, text_style.font_size),
         );
-        let view_handle = self.view.upgrade(cx).unwrap();
+        let connection_handle = self.connection.upgrade(cx).unwrap();
 
         //Tell the view our new size. Requires a mutable borrow of cx and the view
         let cur_size = make_new_size(constraint, &cell_width, &line_height);
         //Note that set_size locks and mutates the terminal.
-        view_handle.update(cx.app, |view, cx| view.set_size(cur_size, cx));
-
-        //Now that we're done with the mutable portion, grab the immutable settings and view again
-        let view = view_handle.read(cx);
+        connection_handle.update(cx.app, |connection, _| connection.set_size(cur_size));
 
         let (selection_color, terminal_theme) = {
             let theme = &(cx.global::<Settings>()).theme;
             (theme.editor.selection.selection, &theme.terminal)
         };
 
-        let terminal_mutex = view_handle.read(cx).connection.read(cx).term.clone();
+        let terminal_mutex = connection_handle.read(cx).term.clone();
         let term = terminal_mutex.lock();
         let grid = term.grid();
         let cursor_point = grid.cursor.point;
@@ -149,7 +156,7 @@ impl Element for TerminalEl {
             &text_style,
             terminal_theme,
             cx.text_layout_cache,
-            view.modal,
+            self.modal,
             content.selection,
         );
 
@@ -193,7 +200,7 @@ impl Element for TerminalEl {
         });
         drop(term);
 
-        let background_color = if view.modal {
+        let background_color = if self.modal {
             terminal_theme.colors.modal_background
         } else {
             terminal_theme.colors.background
@@ -232,7 +239,7 @@ impl Element for TerminalEl {
             attach_mouse_handlers(
                 origin,
                 cur_size,
-                self.view.id(),
+                self.view_id,
                 &layout.terminal,
                 visible_bounds,
                 cx,
@@ -352,6 +359,25 @@ impl Element for TerminalEl {
         _paint: &mut Self::PaintState,
         cx: &mut gpui::EventContext,
     ) -> bool {
+        //The problem:
+        //Depending on the terminal mode, we either send an escape sequence
+        //OR update our own data structures.
+        //e.g. scrolling. If we do smooth scrolling, then we need to check if
+        //we own scrolling and then if so, do our scrolling thing.
+        //Ok, so the terminal connection should have APIs for querying it semantically
+        //something like `should_handle_scroll()`. This means we need a handle to the connection.
+        //Actually, this is the only time that this app needs to talk to the outer world.
+        //TODO for scrolling rework: need a way of intercepting Home/End/PageUp etc.
+        //Sometimes going to scroll our own internal buffer, sometimes going to send ESC
+        //
+        //Same goes for key events
+        //Actually, we don't use the terminal at all in dispatch_event code, the view
+        //Handles it all. Check how the editor implements scrolling, is it view-level
+        //or element level?
+
+        //Question: Can we continue dispatching to the view, so it can talk to the connection
+        //Or should we instead add a connection into here?
+
         match event {
             Event::ScrollWheel(ScrollWheelEvent {
                 delta, position, ..
@@ -363,18 +389,14 @@ impl Element for TerminalEl {
                     cx.dispatch_action(ScrollTerminal(vertical_scroll.round() as i32));
                 })
                 .is_some(),
-            Event::KeyDown(
-                e @ KeyDownEvent {
-                    input: Some(input), ..
-                },
-            ) => {
-                dbg!(e);
-                cx.is_parent_view_focused()
-                    .then(|| {
-                        cx.dispatch_action(Input(to_esc_str(e)));
-                    })
-                    .is_some()
-            }
+            Event::KeyDown(KeyDownEvent {
+                input: Some(input), ..
+            }) => cx
+                .is_parent_view_focused()
+                .then(|| {
+                    cx.dispatch_action(Input(input.to_string()));
+                })
+                .is_some(),
             Event::KeyDown(e) => {
                 dbg!(e);
                 false
