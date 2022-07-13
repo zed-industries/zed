@@ -105,8 +105,6 @@ impl PluginBuilder {
     fn create_engine(yield_when: &PluginYield) -> Result<(Engine, Linker<WasiCtxAlloc>), Error> {
         let mut config = Config::default();
         config.async_support(true);
-        let engine = Engine::new(&config)?;
-        let linker = Linker::new(&engine);
 
         match yield_when {
             PluginYield::Epoch { .. } => {
@@ -117,6 +115,8 @@ impl PluginBuilder {
             }
         }
 
+        let engine = Engine::new(&config)?;
+        let linker = Linker::new(&engine);
         Ok((engine, linker))
     }
 
