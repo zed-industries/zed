@@ -7,6 +7,7 @@ use crate::{
     display_map::{BlockStyle, DisplaySnapshot, TransformBlock},
     hover_popover::HoverAt,
     link_go_to_definition::{CmdChanged, GoToFetchedDefinition, UpdateGoToDefinitionLink},
+    mouse_context_menu::DeployMouseContextMenu,
     EditorStyle,
 };
 use clock::ReplicaId;
@@ -149,6 +150,24 @@ impl EditorElement {
             }));
         }
 
+        true
+    }
+
+    fn mouse_right_down(
+        &self,
+        position: Vector2F,
+        layout: &mut LayoutState,
+        paint: &mut PaintState,
+        cx: &mut EventContext,
+    ) -> bool {
+        if !paint.text_bounds.contains_point(position) {
+            return false;
+        }
+
+        let snapshot = self.snapshot(cx.app);
+        let (point, _) = paint.point_for_position(&snapshot, layout, position);
+
+        cx.dispatch_action(DeployMouseContextMenu { position, point });
         true
     }
 
@@ -1482,6 +1501,11 @@ impl Element for EditorElement {
                 paint,
                 cx,
             ),
+            Event::MouseDown(MouseEvent {
+                button: MouseButton::Right,
+                position,
+                ..
+            }) => self.mouse_right_down(*position, layout, paint, cx),
             Event::MouseUp(MouseEvent {
                 button: MouseButton::Left,
                 position,

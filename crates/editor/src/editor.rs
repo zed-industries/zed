@@ -4,6 +4,7 @@ mod highlight_matching_bracket;
 mod hover_popover;
 pub mod items;
 mod link_go_to_definition;
+mod mouse_context_menu;
 pub mod movement;
 mod multi_buffer;
 pub mod selections_collection;
@@ -319,6 +320,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
     hover_popover::init(cx);
     link_go_to_definition::init(cx);
+    mouse_context_menu::init(cx);
 
     workspace::register_project_item::<Editor>(cx);
     workspace::register_followable_item::<Editor>(cx);
@@ -425,6 +427,7 @@ pub struct Editor {
     background_highlights: BTreeMap<TypeId, (fn(&Theme) -> Color, Vec<Range<Anchor>>)>,
     nav_history: Option<ItemNavHistory>,
     context_menu: Option<ContextMenu>,
+    mouse_context_menu: ViewHandle<context_menu::ContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     next_completion_id: CompletionId,
     available_code_actions: Option<(ModelHandle<Buffer>, Arc<[CodeAction]>)>,
@@ -1010,11 +1013,11 @@ impl Editor {
             background_highlights: Default::default(),
             nav_history: None,
             context_menu: None,
+            mouse_context_menu: cx.add_view(|cx| context_menu::ContextMenu::new(cx)),
             completion_tasks: Default::default(),
             next_completion_id: 0,
             available_code_actions: Default::default(),
             code_actions_task: Default::default(),
-
             document_highlights_task: Default::default(),
             pending_rename: Default::default(),
             searchable: true,
@@ -1596,7 +1599,7 @@ impl Editor {
                 s.delete(newest_selection.id)
             }
 
-            s.set_pending_range(start..end, mode);
+            s.set_pending_anchor_range(start..end, mode);
         });
     }
 
@@ -5784,7 +5787,12 @@ impl View for Editor {
             });
         }
 
-        EditorElement::new(self.handle.clone(), style.clone(), self.cursor_shape).boxed()
+        Stack::new()
+            .with_child(
+                EditorElement::new(self.handle.clone(), style.clone(), self.cursor_shape).boxed(),
+            )
+            .with_child(ChildView::new(&self.mouse_context_menu).boxed())
+            .boxed()
     }
 
     fn ui_name() -> &'static str {
