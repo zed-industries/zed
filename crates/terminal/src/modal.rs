@@ -3,6 +3,7 @@ use workspace::Workspace;
 
 use crate::{get_wd_for_workspace, DeployModal, Event, Terminal, TerminalConnection};
 
+#[derive(Debug)]
 struct StoredConnection(ModelHandle<TerminalConnection>);
 
 pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewContext<Workspace>) {
@@ -24,12 +25,18 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
             let this = cx.add_view(|cx| Terminal::new(wd, true, cx));
             let connection_handle = this.read(cx).connection.clone();
             cx.subscribe(&connection_handle, on_event).detach();
+            //Set the global immediately, in case the user opens the command palette
+            cx.set_global::<Option<StoredConnection>>(Some(StoredConnection(
+                connection_handle.clone(),
+            )));
             this
         }) {
             let connection = closed_terminal_handle.read(cx).connection.clone();
             cx.set_global(Some(StoredConnection(connection)));
         }
     }
+
+    //The problem is that the terminal modal is never re-stored.
 }
 
 pub fn on_event(

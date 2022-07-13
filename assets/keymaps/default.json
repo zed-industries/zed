@@ -409,6 +409,7 @@
         "bindings": {
             "ctrl-c": "terminal::Sigint",
             "escape": "terminal::Escape",
+            "shift-escape": "terminal::DeployModal",
             "ctrl-d": "terminal::Quit",
             "backspace": "terminal::Del",
             "enter": "terminal::Return",
