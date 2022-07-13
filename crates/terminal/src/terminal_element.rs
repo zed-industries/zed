@@ -31,7 +31,10 @@ use theme::TerminalStyle;
 use std::{cmp::min, ops::Range, rc::Rc, sync::Arc};
 use std::{fmt::Debug, ops::Sub};
 
-use crate::{color_translation::convert_color, ScrollTerminal, Terminal, ZedListener};
+use crate::{
+    color_translation::convert_color, keyboard_to_esc::to_esc_str, ScrollTerminal, Terminal,
+    ZedListener,
+};
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
@@ -368,7 +371,7 @@ impl Element for TerminalEl {
                 dbg!(e);
                 cx.is_parent_view_focused()
                     .then(|| {
-                        cx.dispatch_action(Input(input.to_string()));
+                        cx.dispatch_action(Input(to_esc_str(e)));
                     })
                     .is_some()
             }
