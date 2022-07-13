@@ -615,9 +615,10 @@ impl TestAppContext {
         })
     }
 
-    pub fn set_condition_duration(&mut self, duration: Duration) {
-        self.condition_duration = Some(duration);
+    pub fn set_condition_duration(&mut self, duration: Option<Duration>) {
+        self.condition_duration = duration;
     }
+
     pub fn condition_duration(&self) -> Duration {
         self.condition_duration.unwrap_or_else(|| {
             if std::env::var("CI").is_ok() {

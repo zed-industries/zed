@@ -1,7 +1,7 @@
 use gpui::{ModelHandle, ViewContext};
 use workspace::Workspace;
 
-use crate::{get_working_directory, DeployModal, Event, Terminal, TerminalConnection};
+use crate::{get_wd_for_workspace, DeployModal, Event, Terminal, TerminalConnection};
 
 struct StoredConnection(ModelHandle<TerminalConnection>);
 
@@ -20,14 +20,8 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
     } else {
         // No connection was stored, create a new terminal
         if let Some(closed_terminal_handle) = workspace.toggle_modal(cx, |workspace, cx| {
-            let project = workspace.project().read(cx);
-            let abs_path = project
-                .active_entry()
-                .and_then(|entry_id| project.worktree_for_entry(entry_id, cx))
-                .and_then(|worktree_handle| worktree_handle.read(cx).as_local())
-                .and_then(get_working_directory);
-
-            let this = cx.add_view(|cx| Terminal::new(abs_path, true, cx));
+            let wd = get_wd_for_workspace(workspace, cx);
+            let this = cx.add_view(|cx| Terminal::new(wd, true, cx));
             let connection_handle = this.read(cx).connection.clone();
             cx.subscribe(&connection_handle, on_event).detach();
             this
