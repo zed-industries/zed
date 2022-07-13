@@ -2,11 +2,11 @@ use gpui::executor::Background;
 pub use language::*;
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, str, sync::Arc};
-use util::ResultExt;
 
 mod c;
 mod go;
 mod installation;
+mod json;
 mod language_plugin;
 mod python;
 mod rust;
@@ -17,7 +17,7 @@ mod typescript;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
-pub async fn init(languages: Arc<LanguageRegistry>, executor: Arc<Background>) {
+pub async fn init(languages: Arc<LanguageRegistry>, _executor: Arc<Background>) {
     for (name, grammar, lsp_adapter) in [
         (
             "c",
@@ -37,10 +37,7 @@ pub async fn init(languages: Arc<LanguageRegistry>, executor: Arc<Background>) {
         (
             "json",
             tree_sitter_json::language(),
-            match language_plugin::new_json(executor).await.log_err() {
-                Some(lang) => Some(CachedLspAdapter::new(lang).await),
-                None => None,
-            },
+            Some(CachedLspAdapter::new(json::JsonLspAdapter).await),
         ),
         (
             "markdown",
