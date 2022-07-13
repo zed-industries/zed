@@ -136,6 +136,37 @@ impl Settings {
         }
     }
 
+    pub fn set_user_settings(
+        &mut self,
+        data: SettingsFileContent,
+        theme_registry: &ThemeRegistry,
+        font_cache: &FontCache,
+    ) {
+        if let Some(value) = &data.buffer_font_family {
+            if let Some(id) = font_cache.load_family(&[value]).log_err() {
+                self.buffer_font_family = id;
+            }
+        }
+        if let Some(value) = &data.theme {
+            if let Some(theme) = theme_registry.get(&value.to_string()).log_err() {
+                self.theme = theme;
+            }
+        }
+
+        merge(
+            &mut self.projects_online_by_default,
+            data.projects_online_by_default,
+        );
+        merge(&mut self.buffer_font_size, data.buffer_font_size);
+        merge(&mut self.default_buffer_font_size, data.buffer_font_size);
+        merge(&mut self.hover_popover_enabled, data.hover_popover_enabled);
+        merge(&mut self.vim_mode, data.vim_mode);
+        merge(&mut self.autosave, data.autosave);
+
+        self.editor_overrides = data.editor;
+        self.language_overrides = data.languages;
+    }
+
     pub fn with_language_defaults(
         mut self,
         language_name: impl Into<Arc<str>>,
@@ -213,68 +244,6 @@ impl Settings {
             cx.set_global(settings.clone());
         });
     }
-
-    pub fn merge(
-        &mut self,
-        data: &SettingsFileContent,
-        theme_registry: &ThemeRegistry,
-        font_cache: &FontCache,
-    ) {
-        if let Some(value) = &data.buffer_font_family {
-            if let Some(id) = font_cache.load_family(&[value]).log_err() {
-                self.buffer_font_family = id;
-            }
-        }
-        if let Some(value) = &data.theme {
-            if let Some(theme) = theme_registry.get(&value.to_string()).log_err() {
-                self.theme = theme;
-            }
-        }
-
-        merge(
-            &mut self.projects_online_by_default,
-            data.projects_online_by_default,
-        );
-        merge(&mut self.buffer_font_size, data.buffer_font_size);
-        merge(&mut self.default_buffer_font_size, data.buffer_font_size);
-        merge(&mut self.hover_popover_enabled, data.hover_popover_enabled);
-        merge(&mut self.vim_mode, data.vim_mode);
-        merge(&mut self.autosave, data.autosave);
-
-        merge_option(
-            &mut self.editor_overrides.format_on_save,
-            data.editor.format_on_save.clone(),
-        );
-        merge_option(
-            &mut self.editor_overrides.enable_language_server,
-            data.editor.enable_language_server,
-        );
-        merge_option(&mut self.editor_overrides.soft_wrap, data.editor.soft_wrap);
-        merge_option(&mut self.editor_overrides.tab_size, data.editor.tab_size);
-        merge_option(
-            &mut self.editor_overrides.preferred_line_length,
-            data.editor.preferred_line_length,
-        );
-
-        for (language_name, settings) in data.languages.clone().into_iter() {
-            let target = self
-                .language_overrides
-                .entry(language_name.into())
-                .or_default();
-
-            merge_option(&mut target.tab_size, settings.tab_size);
-            merge_option(&mut target.soft_wrap, settings.soft_wrap);
-            merge_option(&mut target.format_on_save, settings.format_on_save);
-            merge_option(
-                &mut target.enable_language_server,
-                settings.enable_language_server,
-            );
-            merge_option(
-                &mut target.preferred_line_length,
-                settings.preferred_line_length,
-            );
-        }
-    }
 }
 
 pub fn settings_file_json_schema(
@@ -347,12 +316,6 @@ pub fn settings_file_json_schema(
 
 fn merge<T: Copy>(target: &mut T, value: Option<T>) {
     if let Some(value) = value {
-        *target = value;
-    }
-}
-
-fn merge_option<T>(target: &mut Option<T>, value: Option<T>) {
-    if value.is_some() {
         *target = value;
     }
 }
