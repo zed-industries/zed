@@ -800,13 +800,13 @@ impl Pane {
         });
     }
 
-    fn render_tabs(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render_tabs(&mut self, cx: &mut RenderContext<Self>) -> impl Element {
         let theme = cx.global::<Settings>().theme.clone();
 
         enum Tabs {}
         enum Tab {}
         let pane = cx.handle();
-        let tabs = MouseEventHandler::new::<Tabs, _, _>(0, cx, |mouse_state, cx| {
+        MouseEventHandler::new::<Tabs, _, _>(0, cx, |mouse_state, cx| {
             let autoscroll = if mem::take(&mut self.autoscroll) {
                 Some(self.active_item_index)
             } else {
@@ -941,11 +941,7 @@ impl Pane {
             );
 
             row.boxed()
-        });
-
-        ConstrainedBox::new(tabs.boxed())
-            .with_height(theme.workspace.tab.height)
-            .named("tabs")
+        })
     }
 }
 
@@ -959,11 +955,39 @@ impl View for Pane {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+        enum SplitIcon {}
+
         let this = cx.handle();
 
         EventHandler::new(if let Some(active_item) = self.active_item() {
             Flex::column()
-                .with_child(self.render_tabs(cx))
+                .with_child(
+                    Flex::row()
+                        .with_child(self.render_tabs(cx).flex(1., true).named("tabs"))
+                        .with_child(
+                            MouseEventHandler::new::<SplitIcon, _, _>(0, cx, |mouse_state, cx| {
+                                let theme = &cx.global::<Settings>().theme.workspace;
+                                let style = theme.pane_button.style_for(mouse_state, false);
+                                Svg::new("icons/split.svg")
+                                    .with_color(style.color)
+                                    .constrained()
+                                    .with_width(style.icon_width)
+                                    .aligned()
+                                    .contained()
+                                    .with_style(style.container)
+                                    .constrained()
+                                    .with_width(style.button_width)
+                                    .with_height(style.button_width)
+                                    .aligned()
+                                    .boxed()
+                            })
+                            .with_cursor_style(CursorStyle::PointingHand)
+                            .boxed(),
+                        )
+                        .constrained()
+                        .with_height(cx.global::<Settings>().theme.workspace.tab.height)
+                        .boxed(),
+                )
                 .with_child(ChildView::new(&self.toolbar).boxed())
                 .with_child(ChildView::new(active_item).flex(1., true).boxed())
                 .boxed()
