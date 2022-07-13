@@ -55,27 +55,43 @@ impl<A: Serialize, R: DeserializeOwned> Clone for WasiFn<A, R> {
     }
 }
 
+pub struct PluginYieldEpoch {
+    delta: u64,
+    epoch: std::time::Duration,
+}
+
+impl Into<PluginYield> for PluginYieldEpoch {
+    fn into(self) -> PluginYield {
+        PluginYield::Epoch(self)
+    }
+}
+
+pub struct PluginYieldFuel {
+    initial: u64,
+    refill: u64,
+}
+
+impl Into<PluginYield> for PluginYieldFuel {
+    fn into(self) -> PluginYield {
+        PluginYield::Fuel(self)
+    }
+}
+
 pub enum PluginYield {
-    Epoch {
-        delta: u64,
-        epoch: std::time::Duration,
-    },
-    Fuel {
-        initial: u64,
-        refill: u64,
-    },
+    Epoch(PluginYieldEpoch),
+    Fuel(PluginYieldFuel),
 }
 
 impl PluginYield {
-    pub fn default_epoch() -> Self {
-        PluginYield::Epoch {
+    pub fn default_epoch() -> PluginYieldEpoch {
+        PluginYieldEpoch {
             delta: 1,
             epoch: Duration::from_millis(1),
         }
     }
 
-    pub fn default_fuel() -> Self {
-        PluginYield::Fuel {
+    pub fn default_fuel() -> PluginYieldFuel {
+        PluginYieldFuel {
             initial: 1000,
             refill: 1000,
         }
@@ -91,65 +107,94 @@ pub struct PluginBuilder {
     engine: Engine,
     linker: Linker<WasiCtxAlloc>,
     yield_when: PluginYield,
-    created_epoch_incrementer: bool,
 }
 
 impl PluginBuilder {
-    /// Create a new [`PluginBuilder`] with the given WASI context.
-    /// Using the default context is a safe bet, see [`new_with_default_context`].
-    pub fn new(wasi_ctx: WasiCtx, yield_when: PluginYield) -> Result<Self, Error> {
+    fn create_engine(yield_when: &PluginYield) -> Result<(Engine, Linker<WasiCtxAlloc>), Error> {
         let mut config = Config::default();
         config.async_support(true);
+        let engine = Engine::new(&config)?;
+        let linker = Linker::new(&engine);
 
         match yield_when {
-            PluginYield::Epoch { .. } => {
+            PluginYield::Epoch(_) => {
                 config.epoch_interruption(true);
             }
-            PluginYield::Fuel { .. } => {
+            PluginYield::Fuel(_) => {
                 config.consume_fuel(true);
             }
         }
 
-        let engine = Engine::new(&config)?;
-        let linker = Linker::new(&engine);
+        Ok((engine, linker))
+    }
+
+    /// Create a new [`PluginBuilder`] with the given WASI context.
+    /// Using the default context is a safe bet, see [`new_with_default_context`].
+    pub fn new_epoch<C>(
+        wasi_ctx: WasiCtx,
+        yield_epoch: PluginYieldEpoch,
+        callback: C,
+    ) -> Result<Self, Error>
+    where
+        C: FnOnce(std::pin::Pin<Box<dyn Future<Output = ()> + Send + 'static>>) -> (),
+    {
+        let epoch = yield_epoch.epoch;
+        let yield_when = PluginYield::Epoch(yield_epoch);
+        let (engine, linker) = Self::create_engine(&yield_when)?;
+
+        let engine_ref = &engine;
+
+        // we can't create the future until after initializing
+        // because we need the engine to load the plugin
+        // we could use an Arc, but that'd suck
+        callback(Box::pin(async move {
+            loop {
+                smol::Timer::after(epoch).await;
+                engine_ref.increment_epoch();
+            }
+        }));
 
         Ok(PluginBuilder {
             wasi_ctx,
             engine,
             linker,
             yield_when,
-            created_epoch_incrementer: false,
         })
     }
 
-    /// Create a new `PluginBuilder` that inherits the
-    /// host processes' access to `stdout` and `stderr`.
-    pub fn new_with_default_ctx(yield_when: PluginYield) -> Result<Self, Error> {
-        let wasi_ctx = WasiCtxBuilder::new()
-            .inherit_stdout()
-            .inherit_stderr()
-            .build();
-        Self::new(wasi_ctx, yield_when)
+    pub fn new_fuel(wasi_ctx: WasiCtx, yield_fuel: PluginYieldFuel) -> Result<Self, Error> {
+        let yield_when = PluginYield::Fuel(yield_fuel);
+        let (engine, linker) = Self::create_engine(&yield_when)?;
+
+        Ok(PluginBuilder {
+            wasi_ctx,
+            engine,
+            linker,
+            yield_when,
+        })
     }
 
-    /// Creates a epoch incrementer if this plugin is configured to increment epochs.
-    /// Will panic if this plugin is not configured to increment epochs.
-    pub fn create_epoch_incrementer(
-        &mut self,
-    ) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
-        if let PluginYield::Epoch { epoch, .. } = self.yield_when {
-            self.created_epoch_incrementer = true;
-            let epoch = epoch.clone();
-            let engine = &self.engine;
-            Box::pin(async move {
-                loop {
-                    smol::Timer::after(epoch);
-                    engine.increment_epoch();
-                }
-            })
-        } else {
-            panic!("Tried creating an epoch incrementer, but one does not yet exist.")
-        }
+    /// Create a new `WasiCtx` that inherits the
+    /// host processes' access to `stdout` and `stderr`.
+    fn default_ctx() -> WasiCtx {
+        WasiCtxBuilder::new()
+            .inherit_stdout()
+            .inherit_stderr()
+            .build()
+    }
+
+    pub fn new_epoch_with_default_ctx<C>(
+        yield_epoch: PluginYieldEpoch,
+        callback: C,
+    ) -> Result<Self, Error>
+    where
+        C: FnOnce(std::pin::Pin<Box<dyn Future<Output = ()> + Send + 'static>>) -> (),
+    {
+        Self::new_epoch(Self::default_ctx(), yield_epoch, callback)
+    }
+
+    pub fn new_fuel_with_default_ctx(yield_fuel: PluginYieldFuel) -> Result<Self, Error> {
+        Self::new_fuel(Self::default_ctx(), yield_fuel)
     }
 
     /// Add an `async` host function. See [`host_function`] for details.
@@ -297,11 +342,6 @@ impl PluginBuilder {
     /// Will panic if this is plugin uses `PluginYield::Epoch`,
     /// but an epoch incrementer has not yet been created.
     pub async fn init<T: AsRef<[u8]>>(self, precompiled: bool, module: T) -> Result<Plugin, Error> {
-        if let PluginYield::Epoch { .. } = self.yield_when {
-            if !self.created_epoch_incrementer {
-                panic!("Must create epoch incrementer to run epoch-based plugin");
-            }
-        }
         Plugin::init(precompiled, module.as_ref().to_vec(), self).await
     }
 }
@@ -390,10 +430,10 @@ impl Plugin {
 
         // set up automatic yielding based on configuration
         match plugin.yield_when {
-            PluginYield::Epoch { delta, .. } => {
+            PluginYield::Epoch(PluginYieldEpoch { delta, .. }) => {
                 store.epoch_deadline_async_yield_and_update(delta);
             }
-            PluginYield::Fuel { initial, refill } => {
+            PluginYield::Fuel(PluginYieldFuel { initial, refill }) => {
                 store.add_fuel(initial).unwrap();
                 store.out_of_fuel_async_yield(u64::MAX, refill);
             }

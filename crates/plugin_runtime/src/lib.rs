@@ -23,7 +23,7 @@ mod tests {
         }
 
         async {
-            let mut runtime = PluginBuilder::new_with_default_ctx(PluginYield::default_fuel())
+            let mut runtime = PluginBuilder::new_fuel_with_default_ctx(PluginYield::default_fuel())
                 .unwrap()
                 .host_function("mystery_number", |input: u32| input + 7)
                 .unwrap()
