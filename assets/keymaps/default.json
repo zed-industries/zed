@@ -409,6 +409,7 @@
         "bindings": {
             "ctrl-c": "terminal::Sigint",
             "escape": "terminal::Escape",
+            "shift-escape": "terminal::DeployModal",
             "ctrl-d": "terminal::Quit",
             "backspace": "terminal::Del",
             "enter": "terminal::Return",
@@ -418,7 +419,8 @@
             "down": "terminal::Down",
             "tab": "terminal::Tab",
             "cmd-v": "terminal::Paste",
-            "cmd-c": "terminal::Copy"
+            "cmd-c": "terminal::Copy",
+            "ctrl-l": "terminal::Clear"
         }
     }
 ]

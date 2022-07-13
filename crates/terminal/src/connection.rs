@@ -1,4 +1,5 @@
 use alacritty_terminal::{
+    ansi::{ClearMode, Handler},
     config::{Config, PtyConfig},
     event::{Event as AlacTermEvent, Notify},
     event_loop::{EventLoop, Msg, Notifier},
@@ -120,10 +121,10 @@ impl TerminalConnection {
             AlacTermEvent::Wakeup => {
                 cx.emit(Event::Wakeup);
             }
-            AlacTermEvent::PtyWrite(out) => self.write_to_pty(out, cx),
+            AlacTermEvent::PtyWrite(out) => self.write_to_pty(out),
             AlacTermEvent::MouseCursorDirty => {
                 //Calculate new cursor style.
-                //TODO
+                //TODO: alacritty/src/input.rs:L922-L939
                 //Check on correctly handling mouse events for terminals
                 cx.platform().set_cursor_style(CursorStyle::Arrow); //???
             }
@@ -138,20 +139,17 @@ impl TerminalConnection {
             AlacTermEvent::ClipboardStore(_, data) => {
                 cx.write_to_clipboard(ClipboardItem::new(data))
             }
-            AlacTermEvent::ClipboardLoad(_, format) => self.write_to_pty(
-                format(
-                    &cx.read_from_clipboard()
-                        .map(|ci| ci.text().to_string())
-                        .unwrap_or("".to_string()),
-                ),
-                cx,
-            ),
+            AlacTermEvent::ClipboardLoad(_, format) => self.write_to_pty(format(
+                &cx.read_from_clipboard()
+                    .map(|ci| ci.text().to_string())
+                    .unwrap_or("".to_string()),
+            )),
             AlacTermEvent::ColorRequest(index, format) => {
                 let color = self.term.lock().colors()[index].unwrap_or_else(|| {
                     let term_style = &cx.global::<Settings>().theme.terminal;
                     to_alac_rgb(get_color_at_index(&index, &term_style.colors))
                 });
-                self.write_to_pty(format(color), cx)
+                self.write_to_pty(format(color))
             }
             AlacTermEvent::CursorBlinkingChange => {
                 //TODO: Set a timer to blink the cursor on and off
@@ -164,14 +162,25 @@ impl TerminalConnection {
     }
 
     ///Write the Input payload to the tty. This locks the terminal so we can scroll it.
-    pub fn write_to_pty(&mut self, input: String, cx: &mut ModelContext<Self>) {
-        self.write_bytes_to_pty(input.into_bytes(), cx);
+    pub fn write_to_pty(&mut self, input: String) {
+        self.write_bytes_to_pty(input.into_bytes());
     }
 
     ///Write the Input payload to the tty. This locks the terminal so we can scroll it.
-    fn write_bytes_to_pty(&mut self, input: Vec<u8>, _: &mut ModelContext<Self>) {
+    fn write_bytes_to_pty(&mut self, input: Vec<u8>) {
         self.term.lock().scroll_display(Scroll::Bottom);
         self.pty_tx.notify(input);
+    }
+
+    ///Resize the terminal and the PTY. This locks the terminal.
+    pub fn set_size(&mut self, new_size: SizeInfo) {
+        self.pty_tx.0.send(Msg::Resize(new_size)).ok();
+        self.term.lock().resize(new_size);
+    }
+
+    pub fn clear(&mut self) {
+        self.write_to_pty("\x0c".into());
+        self.term.lock().clear_screen(ClearMode::Saved);
     }
 }
 
