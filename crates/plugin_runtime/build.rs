@@ -68,7 +68,7 @@ fn main() {
 
 /// Creates an engine with the default configuration.
 /// N.B. This must create an engine with the same config as the one
-/// in `plugin_runtime/build.rs`.
+/// in `plugin_runtime/src/plugin.rs`.
 fn create_default_engine() -> Engine {
     let mut config = Config::default();
     config.async_support(true);
