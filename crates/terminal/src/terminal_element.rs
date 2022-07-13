@@ -360,14 +360,22 @@ impl Element for TerminalEl {
                     cx.dispatch_action(ScrollTerminal(vertical_scroll.round() as i32));
                 })
                 .is_some(),
-            Event::KeyDown(KeyDownEvent {
-                input: Some(input), ..
-            }) => cx
-                .is_parent_view_focused()
-                .then(|| {
-                    cx.dispatch_action(Input(input.to_string()));
-                })
-                .is_some(),
+            Event::KeyDown(
+                e @ KeyDownEvent {
+                    input: Some(input), ..
+                },
+            ) => {
+                dbg!(e);
+                cx.is_parent_view_focused()
+                    .then(|| {
+                        cx.dispatch_action(Input(input.to_string()));
+                    })
+                    .is_some()
+            }
+            Event::KeyDown(e) => {
+                dbg!(e);
+                false
+            }
             _ => false,
         }
     }

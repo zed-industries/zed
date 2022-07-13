@@ -1,5 +1,6 @@
-pub mod color_translation;
+mod color_translation;
 pub mod connection;
+mod keyboard_to_esc;
 mod modal;
 pub mod terminal_element;
 
