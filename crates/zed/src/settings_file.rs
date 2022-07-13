@@ -1,5 +1,5 @@
-use futures::{stream, StreamExt};
-use gpui::{executor, AsyncAppContext, FontCache};
+use futures::StreamExt;
+use gpui::{executor, AsyncAppContext};
 use postage::sink::Sink as _;
 use postage::{prelude::Stream, watch};
 use project::Fs;
@@ -51,29 +51,20 @@ where
     }
 }
 
-pub fn settings_from_files(
+pub async fn watch_settings_file(
     defaults: Settings,
-    sources: Vec<WatchedJsonFile<SettingsFileContent>>,
+    mut file: WatchedJsonFile<SettingsFileContent>,
     theme_registry: Arc<ThemeRegistry>,
-    font_cache: Arc<FontCache>,
-) -> impl futures::stream::Stream<Item = Settings> {
-    stream::select_all(sources.iter().enumerate().map(|(i, source)| {
-        let mut rx = source.0.clone();
-        // Consume the initial item from all of the constituent file watches but one.
-        // This way, the stream will yield exactly one item for the files' initial
-        // state, and won't return any more items until the files change.
-        if i > 0 {
-            rx.try_recv().ok();
-        }
-        rx
-    }))
-    .map(move |_| {
-        let mut settings = defaults.clone();
-        for source in &sources {
-            settings.merge(&*source.0.borrow(), &theme_registry, &font_cache);
-        }
-        settings
-    })
+    mut cx: AsyncAppContext,
+) {
+    while let Some(content) = file.0.recv().await {
+        cx.update(|cx| {
+            let mut settings = defaults.clone();
+            settings.set_user_settings(content, &theme_registry, &cx.font_cache());
+            cx.set_global(settings);
+            cx.refresh_windows();
+        });
+    }
 }
 
 pub async fn watch_keymap_file(
@@ -96,12 +87,13 @@ mod tests {
     use settings::{EditorSettings, SoftWrap};
 
     #[gpui::test]
-    async fn test_settings_from_files(cx: &mut gpui::TestAppContext) {
+    async fn test_watch_settings_files(cx: &mut gpui::TestAppContext) {
         let executor = cx.background();
         let fs = FakeFs::new(executor.clone());
+        let font_cache = cx.font_cache();
 
         fs.save(
-            "/settings1.json".as_ref(),
+            "/settings.json".as_ref(),
             &r#"
             {
                 "buffer_font_size": 24,
@@ -122,25 +114,27 @@ mod tests {
         .await
         .unwrap();
 
-        let source1 = WatchedJsonFile::new(fs.clone(), &executor, "/settings1.json".as_ref()).await;
-        let source2 = WatchedJsonFile::new(fs.clone(), &executor, "/settings2.json".as_ref()).await;
-        let source3 = WatchedJsonFile::new(fs.clone(), &executor, "/settings3.json".as_ref()).await;
+        let source = WatchedJsonFile::new(fs.clone(), &executor, "/settings.json".as_ref()).await;
 
-        let settings = cx.read(Settings::test).with_language_defaults(
+        let default_settings = cx.read(Settings::test).with_language_defaults(
             "JavaScript",
             EditorSettings {
                 tab_size: Some(2.try_into().unwrap()),
                 ..Default::default()
             },
         );
-        let mut settings_rx = settings_from_files(
-            settings,
-            vec![source1, source2, source3],
-            ThemeRegistry::new((), cx.font_cache()),
-            cx.font_cache(),
-        );
+        cx.spawn(|cx| {
+            watch_settings_file(
+                default_settings.clone(),
+                source,
+                ThemeRegistry::new((), font_cache),
+                cx,
+            )
+        })
+        .detach();
 
-        let settings = settings_rx.next().await.unwrap();
+        cx.foreground().run_until_parked();
+        let settings = cx.read(|cx| cx.global::<Settings>().clone());
         assert_eq!(settings.buffer_font_size, 24.0);
 
         assert_eq!(settings.soft_wrap(None), SoftWrap::EditorWidth);
@@ -162,47 +156,18 @@ mod tests {
         assert_eq!(settings.tab_size(Some("JavaScript")).get(), 8);
 
         fs.save(
-            "/settings2.json".as_ref(),
-            &r#"
-            {
-                "tab_size": 2,
-                "soft_wrap": "none",
-                "language_overrides": {
-                    "Markdown": {
-                        "preferred_line_length": 120
-                    }
-                }
-            }
-            "#
-            .into(),
+            "/settings.json".as_ref(),
+            &"(garbage)".into(),
             Default::default(),
         )
         .await
         .unwrap();
+        // fs.remove_file("/settings.json".as_ref(), Default::default())
+        //     .await
+        //     .unwrap();
 
-        let settings = settings_rx.next().await.unwrap();
-        assert_eq!(settings.buffer_font_size, 24.0);
-
-        assert_eq!(settings.soft_wrap(None), SoftWrap::None);
-        assert_eq!(
-            settings.soft_wrap(Some("Markdown")),
-            SoftWrap::PreferredLineLength
-        );
-        assert_eq!(settings.soft_wrap(Some("JavaScript")), SoftWrap::None);
-
-        assert_eq!(settings.preferred_line_length(None), 80);
-        assert_eq!(settings.preferred_line_length(Some("Markdown")), 120);
-        assert_eq!(settings.preferred_line_length(Some("JavaScript")), 80);
-
-        assert_eq!(settings.tab_size(None).get(), 2);
-        assert_eq!(settings.tab_size(Some("Markdown")).get(), 2);
-        assert_eq!(settings.tab_size(Some("JavaScript")).get(), 2);
-
-        fs.remove_file("/settings2.json".as_ref(), Default::default())
-            .await
-            .unwrap();
-
-        let settings = settings_rx.next().await.unwrap();
+        cx.foreground().run_until_parked();
+        let settings = cx.read(|cx| cx.global::<Settings>().clone());
         assert_eq!(settings.buffer_font_size, 24.0);
 
         assert_eq!(settings.soft_wrap(None), SoftWrap::EditorWidth);
@@ -222,5 +187,12 @@ mod tests {
         assert_eq!(settings.tab_size(None).get(), 8);
         assert_eq!(settings.tab_size(Some("Markdown")).get(), 2);
         assert_eq!(settings.tab_size(Some("JavaScript")).get(), 8);
+
+        fs.remove_file("/settings.json".as_ref(), Default::default())
+            .await
+            .unwrap();
+        cx.foreground().run_until_parked();
+        let settings = cx.read(|cx| cx.global::<Settings>().clone());
+        assert_eq!(settings.buffer_font_size, default_settings.buffer_font_size);
     }
 }

@@ -45,7 +45,7 @@ use zed::{
     self, build_window_options,
     fs::RealFs,
     initialize_workspace, languages, menus,
-    settings_file::{settings_from_files, watch_keymap_file, WatchedJsonFile},
+    settings_file::{watch_keymap_file, watch_settings_file, WatchedJsonFile},
 };
 
 fn main() {
@@ -126,42 +126,24 @@ fn main() {
 
         let db = cx.background().block(db);
         let (settings_file, keymap_file) = cx.background().block(config_files).unwrap();
-        let mut settings_rx = settings_from_files(
-            default_settings,
-            vec![settings_file],
-            themes.clone(),
-            cx.font_cache().clone(),
-        );
 
         cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
             .detach();
         cx.spawn(|cx| watch_keymap_file(keymap_file, cx)).detach();
+        cx.spawn(|cx| watch_settings_file(default_settings, settings_file, themes.clone(), cx))
+            .detach();
 
-        let settings = cx.background().block(settings_rx.next()).unwrap();
-        cx.spawn(|mut cx| async move {
-            while let Some(settings) = settings_rx.next().await {
-                cx.update(|cx| {
-                    cx.update_global(|s, _| *s = settings);
-                    cx.refresh_windows();
-                });
-            }
-        })
-        .detach();
-
-        cx.observe_global::<Settings, _>({
-            let languages = languages.clone();
-            move |cx| {
-                languages.set_theme(cx.global::<Settings>().theme.clone());
-            }
-        })
-        .detach();
-        cx.set_global(settings);
         cx.spawn({
             let languages = languages.clone();
             |cx| async move {
                 cx.read(|cx| languages.set_theme(cx.global::<Settings>().theme.clone()));
                 init_languages.await;
             }
+        })
+        .detach();
+        cx.observe_global::<Settings, _>({
+            let languages = languages.clone();
+            move |cx| languages.set_theme(cx.global::<Settings>().theme.clone())
         })
         .detach();
 
