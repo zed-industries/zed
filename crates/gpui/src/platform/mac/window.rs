@@ -402,7 +402,8 @@ impl platform::Window for Window {
     }
 
     fn activate(&self) {
-        unsafe { msg_send![self.0.borrow().native_window, makeKeyAndOrderFront: nil] }
+        let window = self.0.borrow().native_window;
+        unsafe { msg_send![window, makeKeyAndOrderFront: nil] }
     }
 
     fn set_title(&mut self, title: &str) {
