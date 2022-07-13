@@ -397,10 +397,6 @@ impl Element for TerminalEl {
                     cx.dispatch_action(Input(input.to_string()));
                 })
                 .is_some(),
-            Event::KeyDown(e) => {
-                dbg!(e);
-                false
-            }
             _ => false,
         }
     }

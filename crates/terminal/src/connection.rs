@@ -1,5 +1,3 @@
-mod events;
-
 use alacritty_terminal::{
     config::{Config, PtyConfig},
     event::{Event as AlacTermEvent, Notify},
