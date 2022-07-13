@@ -60,25 +60,16 @@ pub struct PluginYieldEpoch {
     epoch: std::time::Duration,
 }
 
-impl Into<PluginYield> for PluginYieldEpoch {
-    fn into(self) -> PluginYield {
-        PluginYield::Epoch(self)
-    }
-}
-
 pub struct PluginYieldFuel {
     initial: u64,
     refill: u64,
 }
 
-impl Into<PluginYield> for PluginYieldFuel {
-    fn into(self) -> PluginYield {
-        PluginYield::Fuel(self)
-    }
-}
-
 pub enum PluginYield {
-    Epoch(PluginYieldEpoch),
+    Epoch {
+        yield_epoch: PluginYieldEpoch,
+        initialize_incrementer: Box<dyn FnOnce(Engine) -> () + Send>,
+    },
     Fuel(PluginYieldFuel),
 }
 
@@ -117,7 +108,7 @@ impl PluginBuilder {
         let linker = Linker::new(&engine);
 
         match yield_when {
-            PluginYield::Epoch(_) => {
+            PluginYield::Epoch { .. } => {
                 config.epoch_interruption(true);
             }
             PluginYield::Fuel(_) => {
@@ -136,23 +127,27 @@ impl PluginBuilder {
         callback: C,
     ) -> Result<Self, Error>
     where
-        C: FnOnce(std::pin::Pin<Box<dyn Future<Output = ()> + Send + 'static>>) -> (),
+        C: FnOnce(std::pin::Pin<Box<dyn Future<Output = ()> + Send + 'static>>) -> ()
+            + Send
+            + 'static,
     {
-        let epoch = yield_epoch.epoch;
-        let yield_when = PluginYield::Epoch(yield_epoch);
-        let (engine, linker) = Self::create_engine(&yield_when)?;
-
-        let engine_ref = &engine;
-
         // we can't create the future until after initializing
         // because we need the engine to load the plugin
-        // we could use an Arc, but that'd suck
-        callback(Box::pin(async move {
-            loop {
-                smol::Timer::after(epoch).await;
-                engine_ref.increment_epoch();
-            }
-        }));
+        let epoch = yield_epoch.epoch;
+        let initialize_incrementer = Box::new(move |engine: Engine| {
+            callback(Box::pin(async move {
+                loop {
+                    smol::Timer::after(epoch).await;
+                    engine.increment_epoch();
+                }
+            }))
+        });
+
+        let yield_when = PluginYield::Epoch {
+            yield_epoch,
+            initialize_incrementer,
+        };
+        let (engine, linker) = Self::create_engine(&yield_when)?;
 
         Ok(PluginBuilder {
             wasi_ctx,
@@ -188,7 +183,9 @@ impl PluginBuilder {
         callback: C,
     ) -> Result<Self, Error>
     where
-        C: FnOnce(std::pin::Pin<Box<dyn Future<Output = ()> + Send + 'static>>) -> (),
+        C: FnOnce(std::pin::Pin<Box<dyn Future<Output = ()> + Send + 'static>>) -> ()
+            + Send
+            + 'static,
     {
         Self::new_epoch(Self::default_ctx(), yield_epoch, callback)
     }
@@ -342,7 +339,7 @@ impl PluginBuilder {
     /// Will panic if this is plugin uses `PluginYield::Epoch`,
     /// but an epoch incrementer has not yet been created.
     pub async fn init<T: AsRef<[u8]>>(self, precompiled: bool, module: T) -> Result<Plugin, Error> {
-        Plugin::init(precompiled, module.as_ref().to_vec(), self).await
+        Plugin::init(precompiled, module.as_ref(), self).await
     }
 }
 
@@ -402,11 +399,7 @@ impl Plugin {
         println!();
     }
 
-    async fn init(
-        precompiled: bool,
-        module: Vec<u8>,
-        plugin: PluginBuilder,
-    ) -> Result<Self, Error> {
+    async fn init(precompiled: bool, module: &[u8], plugin: PluginBuilder) -> Result<Self, Error> {
         // initialize the WebAssembly System Interface context
         let engine = plugin.engine;
         let mut linker = plugin.linker;
@@ -430,8 +423,12 @@ impl Plugin {
 
         // set up automatic yielding based on configuration
         match plugin.yield_when {
-            PluginYield::Epoch(PluginYieldEpoch { delta, .. }) => {
+            PluginYield::Epoch {
+                yield_epoch: PluginYieldEpoch { delta, .. },
+                initialize_incrementer,
+            } => {
                 store.epoch_deadline_async_yield_and_update(delta);
+                initialize_incrementer(engine);
             }
             PluginYield::Fuel(PluginYieldFuel { initial, refill }) => {
                 store.add_fuel(initial).unwrap();
@@ -454,6 +451,25 @@ impl Plugin {
 
         Ok(Plugin { store, instance })
     }
+
+    // async fn init_fuel(
+    //     precompiled: bool,
+    //     module: &[u8],
+    //     plugin: PluginBuilder,
+    // ) -> Result<Self, Error> {
+    //     let (_, plugin) = Self::init_inner(precompiled, module, plugin).await?;
+    //     Ok(plugin)
+    // }
+
+    // async fn init_epoch<C>(
+    //     precompiled: bool,
+    //     module: &[u8],
+    //     plugin: PluginBuilder,
+    //     callback: C,
+    // ) -> Result<Self, Error> {
+    //     let (_, plugin) = Self::init_inner(precompiled, module, plugin).await?;
+    //     Ok(plugin)
+    // }
 
     /// Attaches a file or directory the the given system path to the runtime.
     /// Note that the resource must be freed by calling `remove_resource` afterwards.
