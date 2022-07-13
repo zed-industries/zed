@@ -15,12 +15,12 @@ use dirs::home_dir;
 use editor::Input;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
-    actions, elements::*, impl_internal_actions, ClipboardItem, Entity, ModelHandle,
+    actions, elements::*, impl_internal_actions, AppContext, ClipboardItem, Entity, ModelHandle,
     MutableAppContext, View, ViewContext,
 };
 use modal::deploy_modal;
 
-use project::{LocalWorktree, Project, ProjectPath};
+use project::{Project, ProjectPath};
 use settings::Settings;
 use smallvec::SmallVec;
 use std::path::PathBuf;
@@ -42,6 +42,9 @@ const DEBUG_TERMINAL_WIDTH: f32 = 1000.; //This needs to be wide enough that the
 const DEBUG_TERMINAL_HEIGHT: f32 = 200.;
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
+
+//For bel, use a yellow dot. (equivalent to dirty file with conflict)
+//For title, introduce max title length and
 
 ///Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
@@ -115,6 +118,7 @@ impl Entity for Terminal {
 
 impl Terminal {
     ///Create a new Terminal view. This spawns a task, a thread, and opens the TTY devices
+    ///To get the right working directory from a workspace, use: `get_wd_for_workspace()`
     fn new(working_directory: Option<PathBuf>, modal: bool, cx: &mut ViewContext<Self>) -> Self {
         //The details here don't matter, the terminal will be resized on the first layout
         let size_info = SizeInfo::new(
@@ -194,18 +198,8 @@ impl Terminal {
 
     ///Create a new Terminal in the current working directory or the user's home directory
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
-        let project = workspace.project().read(cx);
-
-        let abs_path = project
-            .active_entry()
-            .and_then(|entry_id| project.worktree_for_entry(entry_id, cx))
-            .and_then(|worktree_handle| worktree_handle.read(cx).as_local())
-            .and_then(get_working_directory);
-
-        workspace.add_item(
-            Box::new(cx.add_view(|cx| Terminal::new(abs_path, false, cx))),
-            cx,
-        );
+        let wd = get_wd_for_workspace(workspace, cx);
+        workspace.add_item(Box::new(cx.add_view(|cx| Terminal::new(wd, false, cx))), cx);
     }
 
     ///Tell Zed to close us
@@ -432,9 +426,24 @@ impl Item for Terminal {
     }
 }
 
-fn get_working_directory(wt: &LocalWorktree) -> Option<PathBuf> {
-    Some(wt.abs_path().to_path_buf())
-        .filter(|path| path.is_dir())
+///Gets the intuitively correct working directory from the given workspace
+///If there is an active entry for this project, returns that entry's worktree root.
+///If there's no active entry but there is a worktree, returns that worktrees root.
+///If either of these roots are files, or if there are any other query failures,
+///  returns the user's home directory
+fn get_wd_for_workspace(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
+    let project = workspace.project().read(cx);
+
+    project
+        .active_entry()
+        .and_then(|entry_id| project.worktree_for_entry(entry_id, cx))
+        .or_else(|| workspace.worktrees(cx).next())
+        .and_then(|worktree_handle| worktree_handle.read(cx).as_local())
+        .and_then(|wt| {
+            wt.root_entry()
+                .filter(|re| re.is_dir())
+                .map(|_| wt.abs_path().to_path_buf())
+        })
         .or_else(|| home_dir())
 }
 
@@ -450,19 +459,16 @@ mod tests {
     };
     use gpui::TestAppContext;
     use itertools::Itertools;
-    use project::{FakeFs, Fs, RealFs, RemoveOptions, Worktree};
-    use std::{
-        path::Path,
-        sync::{atomic::AtomicUsize, Arc},
-        time::Duration,
-    };
+
+    use std::{path::Path, time::Duration};
+    use workspace::AppState;
 
     ///Basic integration test, can we get the terminal to show up, execute a command,
     //and produce noticable output?
     #[gpui::test]
     async fn test_terminal(cx: &mut TestAppContext) {
         let terminal = cx.add_view(Default::default(), |cx| Terminal::new(None, false, cx));
-        cx.set_condition_duration(Duration::from_secs(2));
+
         terminal.update(cx, |terminal, cx| {
             terminal.connection.update(cx, |connection, cx| {
                 connection.write_to_pty("expr 3 + 4".to_string(), cx);
@@ -470,6 +476,7 @@ mod tests {
             terminal.carriage_return(&Return, cx);
         });
 
+        cx.set_condition_duration(Some(Duration::from_secs(2)));
         terminal
             .condition(cx, |terminal, cx| {
                 let term = terminal.connection.read(cx).term.clone();
@@ -477,95 +484,15 @@ mod tests {
                 content.contains("7")
             })
             .await;
+        cx.set_condition_duration(None);
     }
 
-    #[gpui::test]
-    async fn single_file_worktree(cx: &mut TestAppContext) {
-        let mut async_cx = cx.to_async();
-        let http_client = client::test::FakeHttpClient::with_404_response();
-        let client = client::Client::new(http_client.clone());
-        let fake_fs = FakeFs::new(cx.background().clone());
-
-        let path = Path::new("/file/");
-        fake_fs.insert_file(path, "a".to_string()).await;
-
-        let worktree_handle = Worktree::local(
-            client,
-            path,
-            true,
-            fake_fs,
-            Arc::new(AtomicUsize::new(0)),
-            &mut async_cx,
-        )
-        .await
-        .ok()
-        .unwrap();
-
-        async_cx.update(|cx| {
-            let wt = worktree_handle.read(cx).as_local().unwrap();
-            let wd = get_working_directory(wt);
-            assert!(wd.is_some());
-            let path = wd.unwrap();
-            //This should be the system's working directory, so querying the real file system is probably ok.
-            assert!(path.is_dir());
-            assert_eq!(path, home_dir().unwrap());
-        });
-    }
-
-    #[gpui::test]
-    async fn test_worktree_directory(cx: &mut TestAppContext) {
-        let mut async_cx = cx.to_async();
-        let http_client = client::test::FakeHttpClient::with_404_response();
-        let client = client::Client::new(http_client.clone());
-
-        let fs = RealFs;
-        let mut test_wd = home_dir().unwrap();
-        test_wd.push("dir");
-
-        fs.create_dir(test_wd.as_path())
-            .await
-            .expect("File could not be created");
-
-        let worktree_handle = Worktree::local(
-            client,
-            test_wd.clone(),
-            true,
-            Arc::new(RealFs),
-            Arc::new(AtomicUsize::new(0)),
-            &mut async_cx,
-        )
-        .await
-        .ok()
-        .unwrap();
-
-        async_cx.update(|cx| {
-            let wt = worktree_handle.read(cx).as_local().unwrap();
-            let wd = get_working_directory(wt);
-            assert!(wd.is_some());
-            let path = wd.unwrap();
-            assert!(path.is_dir());
-            assert_eq!(path, test_wd);
-        });
-
-        //Clean up after ourselves.
-        fs.remove_dir(
-            test_wd.as_path(),
-            RemoveOptions {
-                recursive: false,
-                ignore_if_not_exists: true,
-            },
-        )
-        .await
-        .ok()
-        .expect("Could not remove test directory");
-    }
-
-    ///If this test is failing for you, check that DEBUG_TERMINAL_WIDTH is wide enough to fit your entire command prompt!
+    /// Integration test for selections, clipboard, and terminal execution
     #[gpui::test]
     async fn test_copy(cx: &mut TestAppContext) {
         let mut result_line: i32 = 0;
         let terminal = cx.add_view(Default::default(), |cx| Terminal::new(None, false, cx));
-        cx.set_condition_duration(Duration::from_secs(2));
+        cx.set_condition_duration(Some(Duration::from_secs(2)));
 
         terminal.update(cx, |terminal, cx| {
             terminal.connection.update(cx, |connection, cx| {
@@ -601,6 +528,195 @@ mod tests {
         });
 
         cx.assert_clipboard_content(Some(&"7"));
+        cx.set_condition_duration(None);
+    }
+
+    ///Working directory calculation tests
+
+    ///No Worktrees in project -> home_dir()
+    #[gpui::test]
+    async fn no_worktree(cx: &mut TestAppContext) {
+        //Setup variables
+        let params = cx.update(AppState::test);
+        let project = Project::test(params.fs.clone(), [], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+
+        //Test
+        cx.read(|cx| {
+            let workspace = workspace.read(cx);
+            let active_entry = project.read(cx).active_entry();
+
+            //Make sure enviroment is as expeted
+            assert!(active_entry.is_none());
+            assert!(workspace.worktrees(cx).next().is_none());
+
+            let res = get_wd_for_workspace(workspace, cx);
+            assert_eq!(res, home_dir())
+        });
+    }
+
+    ///No active entry, but a worktree, worktree is a file -> home_dir()
+    #[gpui::test]
+    async fn no_active_entry_worktree_is_file(cx: &mut TestAppContext) {
+        //Setup variables
+        let params = cx.update(AppState::test);
+        let project = Project::test(params.fs.clone(), [], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        let (wt, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/root.txt", true, cx)
+            })
+            .await
+            .unwrap();
+
+        cx.update(|cx| {
+            wt.update(cx, |wt, cx| {
+                wt.as_local()
+                    .unwrap()
+                    .create_entry(Path::new(""), false, cx)
+            })
+        })
+        .await
+        .unwrap();
+
+        //Test
+        cx.read(|cx| {
+            let workspace = workspace.read(cx);
+            let active_entry = project.read(cx).active_entry();
+
+            //Make sure enviroment is as expeted
+            assert!(active_entry.is_none());
+            assert!(workspace.worktrees(cx).next().is_some());
+
+            let res = get_wd_for_workspace(workspace, cx);
+            assert_eq!(res, home_dir())
+        });
+    }
+
+    //No active entry, but a worktree, worktree is a folder -> worktree_folder
+    #[gpui::test]
+    async fn no_active_entry_worktree_is_dir(cx: &mut TestAppContext) {
+        //Setup variables
+        let params = cx.update(AppState::test);
+        let project = Project::test(params.fs.clone(), [], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        let (wt, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/root/", true, cx)
+            })
+            .await
+            .unwrap();
+
+        //Setup root folder
+        cx.update(|cx| {
+            wt.update(cx, |wt, cx| {
+                wt.as_local().unwrap().create_entry(Path::new(""), true, cx)
+            })
+        })
+        .await
+        .unwrap();
+
+        //Test
+        cx.update(|cx| {
+            let workspace = workspace.read(cx);
+            let active_entry = project.read(cx).active_entry();
+
+            assert!(active_entry.is_none());
+            assert!(workspace.worktrees(cx).next().is_some());
+
+            let res = get_wd_for_workspace(workspace, cx);
+            assert_eq!(res, Some((Path::new("/root/")).to_path_buf()));
+        });
+    }
+
+    //Active entry with a work tree, worktree is a file -> home_dir()
+    #[gpui::test]
+    async fn active_entry_worktree_is_file(cx: &mut TestAppContext) {
+        //Setup variables
+        let params = cx.update(AppState::test);
+        let project = Project::test(params.fs.clone(), [], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        let (wt, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/root.txt", true, cx)
+            })
+            .await
+            .unwrap();
+
+        //Setup root
+        let entry = cx
+            .update(|cx| {
+                wt.update(cx, |wt, cx| {
+                    wt.as_local()
+                        .unwrap()
+                        .create_entry(Path::new(""), false, cx)
+                })
+            })
+            .await
+            .unwrap();
+
+        cx.update(|cx| {
+            let p = ProjectPath {
+                worktree_id: wt.read(cx).id(),
+                path: entry.path,
+            };
+            project.update(cx, |project, cx| project.set_active_path(Some(p), cx));
+        });
+
+        //Test
+        cx.update(|cx| {
+            let workspace = workspace.read(cx);
+            let active_entry = project.read(cx).active_entry();
+
+            assert!(active_entry.is_some());
+
+            let res = get_wd_for_workspace(workspace, cx);
+            assert_eq!(res, home_dir());
+        });
+    }
+
+    //Active entry, with a worktree, worktree is a folder -> worktree_folder
+    #[gpui::test]
+    async fn active_entry_worktree_is_dir(cx: &mut TestAppContext) {
+        //Setup variables
+        let params = cx.update(AppState::test);
+        let project = Project::test(params.fs.clone(), [], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        let (wt, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/root/", true, cx)
+            })
+            .await
+            .unwrap();
+
+        //Setup root
+        let entry = cx
+            .update(|cx| {
+                wt.update(cx, |wt, cx| {
+                    wt.as_local().unwrap().create_entry(Path::new(""), true, cx)
+                })
+            })
+            .await
+            .unwrap();
+
+        cx.update(|cx| {
+            let p = ProjectPath {
+                worktree_id: wt.read(cx).id(),
+                path: entry.path,
+            };
+            project.update(cx, |project, cx| project.set_active_path(Some(p), cx));
+        });
+
+        //Test
+        cx.update(|cx| {
+            let workspace = workspace.read(cx);
+            let active_entry = project.read(cx).active_entry();
+
+            assert!(active_entry.is_some());
+
+            let res = get_wd_for_workspace(workspace, cx);
+            assert_eq!(res, Some((Path::new("/root/")).to_path_buf()));
+        });
     }
 
     pub(crate) fn grid_as_str(grid_iterator: GridIterator<Cell>) -> String {
