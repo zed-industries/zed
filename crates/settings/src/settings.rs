@@ -248,7 +248,7 @@ impl Settings {
 
 pub fn settings_file_json_schema(
     theme_names: Vec<String>,
-    language_names: Vec<String>,
+    language_names: &[String],
 ) -> serde_json::Value {
     let settings = SchemaSettings::draft07().with(|settings| {
         settings.option_add_null_type = false;
@@ -275,8 +275,13 @@ pub fn settings_file_json_schema(
         instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
         object: Some(Box::new(ObjectValidation {
             properties: language_names
-                .into_iter()
-                .map(|name| (name, Schema::new_ref("#/definitions/EditorSettings".into())))
+                .iter()
+                .map(|name| {
+                    (
+                        name.clone(),
+                        Schema::new_ref("#/definitions/EditorSettings".into()),
+                    )
+                })
                 .collect(),
             ..Default::default()
         })),

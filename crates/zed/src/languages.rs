@@ -1,5 +1,6 @@
 use gpui::executor::Background;
 pub use language::*;
+use lazy_static::lazy_static;
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, str, sync::Arc};
 
@@ -16,6 +17,21 @@ mod typescript;
 #[folder = "src/languages"]
 #[exclude = "*.rs"]
 struct LanguageDir;
+
+// TODO - Remove this once the `init` function is synchronous again.
+lazy_static! {
+    pub static ref LANGUAGE_NAMES: Vec<String> = LanguageDir::iter()
+        .filter_map(|path| {
+            if path.ends_with("config.toml") {
+                let config = LanguageDir::get(&path)?;
+                let config = toml::from_slice::<LanguageConfig>(&config.data).ok()?;
+                Some(config.name.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+}
 
 pub async fn init(languages: Arc<LanguageRegistry>, _executor: Arc<Background>) {
     for (name, grammar, lsp_adapter) in [
