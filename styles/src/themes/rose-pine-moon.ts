@@ -1,13 +1,13 @@
 import chroma from "chroma-js";
 import { colorRamp, createTheme } from "./common/base16";
 
-const name = "rosé-pine";
+const name = "rosé-pine-moon";
 
 const ramps = {
   neutral: chroma.scale([
-    "#191724",
-    "#1f1d2e",
-    "#26233A",
+    "#232136",
+    "#2A273F",
+    "#393552",
     "#3E3A53",
     "#56526C",
     "#6E6A86",

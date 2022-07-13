@@ -5,23 +5,23 @@ const name = "rosé-pine-dawn";
 
 const ramps = {
   neutral: chroma.scale([
-    "#26233a",
-    "#555169",
     "#575279",
-    "#6e6a86",
-    "#9893a5",
-    "#f2e9de",
-    "#fffaf3",
-    "#faf4ed",
+    "#797593",
+    "#9893A5",
+    "#B5AFB8",
+    "#D3CCCC",
+    "#F2E9E1",
+    "#FFFAF3",
+    "#FAF4ED",
   ]),
-  red: colorRamp(chroma("#1f1d2e")),
-  orange: colorRamp(chroma("#b4637a")),
-  yellow: colorRamp(chroma("#ea9d34")),
-  green: colorRamp(chroma("#d7827e")),
+  red: colorRamp(chroma("#B4637A")),
+  orange: colorRamp(chroma("#D7827E")),
+  yellow: colorRamp(chroma("#EA9D34")),
+  green: colorRamp(chroma("#679967")),
   cyan: colorRamp(chroma("#286983")),
-  blue: colorRamp(chroma("#56949f")),
-  violet: colorRamp(chroma("#907aa9")),
-  magenta: colorRamp(chroma("#c5c3ce")),
+  blue: colorRamp(chroma("#56949F")),
+  violet: colorRamp(chroma("#907AA9")),
+  magenta: colorRamp(chroma("#79549F")),
 };
 
 export const light = createTheme(`${name}`, true, ramps);
