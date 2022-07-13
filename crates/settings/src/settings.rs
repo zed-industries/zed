@@ -164,6 +164,10 @@ impl Settings {
         merge(&mut self.buffer_font_size, data.buffer_font_size);
         merge(&mut self.default_buffer_font_size, data.buffer_font_size);
         merge(&mut self.hover_popover_enabled, data.hover_popover_enabled);
+        merge(
+            &mut self.show_completions_on_input,
+            data.show_completions_on_input,
+        );
         merge(&mut self.vim_mode, data.vim_mode);
         merge(&mut self.autosave, data.autosave);
 
