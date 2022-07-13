@@ -345,8 +345,6 @@ impl PluginBuilder {
 
     /// Initializes a [`Plugin`] from a given compiled Wasm module.
     /// Both binary (`.wasm`) and text (`.wat`) module formats are supported.
-    /// Will panic if this is plugin uses `PluginYield::Epoch`,
-    /// but an epoch incrementer has not yet been created.
     pub async fn init<T: AsRef<[u8]>>(self, precompiled: bool, module: T) -> Result<Plugin, Error> {
         Plugin::init(precompiled, module.as_ref(), self).await
     }
