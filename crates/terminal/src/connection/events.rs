@@ -6,6 +6,10 @@ pub enum ModifierCombinations {
     Alt,
     Ctrl,
     Shift,
+    AltCtrl,
+    AltShift,
+    CtrlShift,
+    AltCtrlShift,
     Other,
 }
 
@@ -16,6 +20,10 @@ impl ModifierCombinations {
             (true, false, false, false) => ModifierCombinations::Alt,
             (false, true, false, false) => ModifierCombinations::Ctrl,
             (false, false, true, false) => ModifierCombinations::Shift,
+            (true, true, false, false) => ModifierCombinations::AltCtrl,
+            (true, false, true, false) => ModifierCombinations::AltShift,
+            (false, true, true, false) => ModifierCombinations::CtrlShift,
+            (true, true, true, false) => ModifierCombinations::AltCtrlShift,
             _ => ModifierCombinations::Other,
         }
     }
@@ -26,7 +34,6 @@ pub fn to_esc_str(event: &KeyDownEvent, mode: &TermMode) -> Option<String> {
 
     // Manual Bindings including modifiers
     let manual_esc_str = match (event.keystroke.key.as_ref(), modifiers) {
-        ("l", ModifierCombinations::Ctrl) => Some("\x0c".to_string()),
         ("tab", ModifierCombinations::Shift) => Some("\x1b[Z".to_string()),
         ("backspace", ModifierCombinations::Alt) => Some("\x1b\x7f".to_string()),
         ("backspace", ModifierCombinations::Shift) => Some("\x7f".to_string()),
@@ -104,6 +111,66 @@ pub fn to_esc_str(event: &KeyDownEvent, mode: &TermMode) -> Option<String> {
         ("f19", ModifierCombinations::None) => Some("\x1b[33~".to_string()),
         ("f20", ModifierCombinations::None) => Some("\x1b[34~".to_string()),
         // NumpadEnter, Action::Esc("\n".into());
+        //Make all mappings for caret notation keys!
+        ("a", ModifierCombinations::Ctrl) => Some("\x01".to_string()), //1
+        ("A", ModifierCombinations::CtrlShift) => Some("\x01".to_string()), //1
+        ("b", ModifierCombinations::Ctrl) => Some("\x02".to_string()), //2
+        ("B", ModifierCombinations::CtrlShift) => Some("\x02".to_string()), //2
+        ("c", ModifierCombinations::Ctrl) => Some("\x03".to_string()), //3
+        ("C", ModifierCombinations::CtrlShift) => Some("\x03".to_string()), //3
+        ("d", ModifierCombinations::Ctrl) => Some("\x04".to_string()), //4
+        ("D", ModifierCombinations::CtrlShift) => Some("\x04".to_string()), //4
+        ("e", ModifierCombinations::Ctrl) => Some("\x05".to_string()), //5
+        ("E", ModifierCombinations::CtrlShift) => Some("\x05".to_string()), //5
+        ("f", ModifierCombinations::Ctrl) => Some("\x06".to_string()), //6
+        ("F", ModifierCombinations::CtrlShift) => Some("\x06".to_string()), //6
+        ("g", ModifierCombinations::Ctrl) => Some("\x07".to_string()), //7
+        ("G", ModifierCombinations::CtrlShift) => Some("\x07".to_string()), //7
+        ("h", ModifierCombinations::Ctrl) => Some("\x08".to_string()), //8
+        ("H", ModifierCombinations::CtrlShift) => Some("\x08".to_string()), //8
+        ("i", ModifierCombinations::Ctrl) => Some("\x09".to_string()), //9
+        ("I", ModifierCombinations::CtrlShift) => Some("\x09".to_string()), //9
+        ("j", ModifierCombinations::Ctrl) => Some("\x0a".to_string()), //10
+        ("J", ModifierCombinations::CtrlShift) => Some("\x0a".to_string()), //10
+        ("k", ModifierCombinations::Ctrl) => Some("\x0b".to_string()), //11
+        ("K", ModifierCombinations::CtrlShift) => Some("\x0b".to_string()), //11
+        ("l", ModifierCombinations::Ctrl) => Some("\x0c".to_string()), //12
+        ("L", ModifierCombinations::CtrlShift) => Some("\x0c".to_string()), //12
+        ("m", ModifierCombinations::Ctrl) => Some("\x0d".to_string()), //13
+        ("M", ModifierCombinations::CtrlShift) => Some("\x0d".to_string()), //13
+        ("n", ModifierCombinations::Ctrl) => Some("\x0e".to_string()), //14
+        ("N", ModifierCombinations::CtrlShift) => Some("\x0e".to_string()), //14
+        ("o", ModifierCombinations::Ctrl) => Some("\x0f".to_string()), //15
+        ("O", ModifierCombinations::CtrlShift) => Some("\x0f".to_string()), //15
+        ("p", ModifierCombinations::Ctrl) => Some("\x10".to_string()), //16
+        ("P", ModifierCombinations::CtrlShift) => Some("\x10".to_string()), //16
+        ("q", ModifierCombinations::Ctrl) => Some("\x11".to_string()), //17
+        ("Q", ModifierCombinations::CtrlShift) => Some("\x11".to_string()), //17
+        ("r", ModifierCombinations::Ctrl) => Some("\x12".to_string()), //18
+        ("R", ModifierCombinations::CtrlShift) => Some("\x12".to_string()), //18
+        ("s", ModifierCombinations::Ctrl) => Some("\x13".to_string()), //19
+        ("S", ModifierCombinations::CtrlShift) => Some("\x13".to_string()), //19
+        ("t", ModifierCombinations::Ctrl) => Some("\x14".to_string()), //20
+        ("T", ModifierCombinations::CtrlShift) => Some("\x14".to_string()), //20
+        ("u", ModifierCombinations::Ctrl) => Some("\x15".to_string()), //21
+        ("U", ModifierCombinations::CtrlShift) => Some("\x15".to_string()), //21
+        ("v", ModifierCombinations::Ctrl) => Some("\x16".to_string()), //22
+        ("V", ModifierCombinations::CtrlShift) => Some("\x16".to_string()), //22
+        ("w", ModifierCombinations::Ctrl) => Some("\x17".to_string()), //23
+        ("W", ModifierCombinations::CtrlShift) => Some("\x17".to_string()), //23
+        ("x", ModifierCombinations::Ctrl) => Some("\x18".to_string()), //24
+        ("X", ModifierCombinations::CtrlShift) => Some("\x18".to_string()), //24
+        ("y", ModifierCombinations::Ctrl) => Some("\x19".to_string()), //25
+        ("Y", ModifierCombinations::CtrlShift) => Some("\x19".to_string()), //25
+        ("z", ModifierCombinations::Ctrl) => Some("\x1a".to_string()), //26
+        ("Z", ModifierCombinations::CtrlShift) => Some("\x1a".to_string()), //26
+        ("@", ModifierCombinations::Ctrl) => Some("\x00".to_string()), //0
+        ("[", ModifierCombinations::Ctrl) => Some("\x1b".to_string()), //27
+        ("\\", ModifierCombinations::Ctrl) => Some("\x1c".to_string()), //28
+        ("]", ModifierCombinations::Ctrl) => Some("\x1d".to_string()), //29
+        ("^", ModifierCombinations::Ctrl) => Some("\x1e".to_string()), //30
+        ("_", ModifierCombinations::Ctrl) => Some("\x1f".to_string()), //31
+        ("?", ModifierCombinations::Ctrl) => Some("\x7f".to_string()), //127
         _ => None,
     };
     if manual_esc_str.is_some() {

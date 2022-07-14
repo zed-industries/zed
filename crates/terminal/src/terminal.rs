@@ -66,7 +66,7 @@ actions!(
         Paste,
         Deploy,
         Quit,
-        DeployModal,
+        DeployModal
     ]
 );
 impl_internal_actions!(terminal, [ScrollTerminal]);
