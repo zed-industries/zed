@@ -26,10 +26,6 @@ fn main() {
         "release" => (&["--release"][..], "release"),
         unknown => panic!("unknown profile `{}`", unknown),
     };
-
-    // Get the target architecture for pre-cross-compilation of plugins
-    let target_triple = std::env::var("TARGET").unwrap().to_string();
-
     // Invoke cargo to build the plugins
     let build_successful = std::process::Command::new("cargo")
         .args([
@@ -45,8 +41,13 @@ fn main() {
         .success();
     assert!(build_successful);
 
-    // Find all compiled binaries
+    // Get the target architecture for pre-cross-compilation of plugins
+    // and create and engine with the appropriate config
+    let target_triple = std::env::var("TARGET").unwrap().to_string();
+    println!("cargo:rerun-if-env-changed=TARGET");
     let engine = create_default_engine(&target_triple);
+
+    // Find all compiled binaries
     let binaries = std::fs::read_dir(base.join("target/wasm32-wasi").join(profile_target))
         .expect("Could not find compiled plugins in target");
 
@@ -64,7 +65,7 @@ fn main() {
         if let Some(path) = is_wasm() {
             let out_path = base.join("bin").join(path.file_name().unwrap());
             std::fs::copy(&path, &out_path).expect("Could not copy compiled plugin to bin");
-            precompile(&out_path, &engine, &target_triple);
+            precompile(&out_path, &engine);
         }
     }
 }
@@ -82,15 +83,14 @@ fn create_default_engine(target_triple: &str) -> Engine {
     Engine::new(&config).expect("Could not create precompilation engine")
 }
 
-fn precompile(path: &Path, engine: &Engine, target_triple: &str) {
+fn precompile(path: &Path, engine: &Engine) {
     let bytes = std::fs::read(path).expect("Could not read wasm module");
     let compiled = engine
         .precompile_module(&bytes)
         .expect("Could not precompile module");
     let out_path = path.parent().unwrap().join(&format!(
-        "{}.{}",
+        "{}.pre",
         path.file_name().unwrap().to_string_lossy(),
-        target_triple,
     ));
     let mut out_file = std::fs::File::create(out_path)
         .expect("Could not create output file for precompiled module");

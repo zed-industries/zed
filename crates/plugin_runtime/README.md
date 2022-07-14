@@ -152,7 +152,7 @@ Plugins in the `plugins` directory are automatically recompiled and serialized t
 
 - `plugin.wasm` is the plugin compiled to Wasm. As a baseline, this should be about 4MB for debug builds and 2MB for release builds, but it depends on the specific plugin being built.
 
-- `plugin.wasm.the-target-triple` is the plugin compiled to Wasm *and additionally* precompiled to host-platform-specific native code, determined by the `TARGET` cargo exposes at compile-time. This should be about 700KB for debug builds and 500KB in release builds. Each plugin takes about 1 or 2 seconds to compile to native code using cranelift, so precompiling plugins drastically reduces the startup time required to begin to run a plugin.
+- `plugin.wasm.pre` is the plugin compiled to Wasm *and additionally* precompiled to host-platform-specific native code, determined by the `TARGET` cargo exposes at compile-time. This should be about 700KB for debug builds and 500KB in release builds. Each plugin takes about 1 or 2 seconds to compile to native code using cranelift, so precompiling plugins drastically reduces the startup time required to begin to run a plugin.
 
 For all intents and purposes, it is *highly recommended* that you use precompiled plugins where possible, as they are much more lightweight and take much less time to instantiate.
 
@@ -256,26 +256,7 @@ The `.init` method takes a single argument containing the plugin binary.
 
 1. If not precompiled, use `PluginBinary::Wasm(bytes)`. This supports both the WebAssembly Textual format (`.wat`) and the WebAssembly Binary format (`.wasm`). 
 
-2. If precompiled, use `PluginBinary::Precompiled(bytes)`. This supports precompiled plugins ending in `.wasm.the-target-triple`. You need to be extra-careful when using precompiled plugins to ensure that the plugin target matches the target of the binary you are compiling:
-
-    a. To tell the current crate what the current `target` triple is, add the following line to the crate's `build.rs`:
-    
-    ```rust
-    println!(
-        "cargo:rustc-env=TARGET_TRIPLE={}",
-        std::env::var("TARGET").unwrap()
-    );
-    ```
-    
-    b. To get the correct precompiled binary in the crate itself, read this exposed environment variable and include the plugin:
-    
-    ```rust
-    let bytes = include_bytes!(concat!(
-        "../../../plugins/bin/plugin.wasm.",
-        env!("TARGET_TRIPLE"),
-    ));
-    let precompiled = PluginBinary::Precompiled(bytes);
-    ```
+2. If precompiled, use `PluginBinary::Precompiled(bytes)`. This supports precompiled plugins ending in `.wasm.pre`. You need to be extra-careful when using precompiled plugins to ensure that the plugin target matches the target of the binary you are compiling.
 
 The `.init` method is asynchronous, and must be `.await`ed upon. If the plugin is malformed or doesn't import the right functions, an error will be raised.
 
