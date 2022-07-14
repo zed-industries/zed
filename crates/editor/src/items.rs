@@ -580,24 +580,28 @@ impl StatusItemView for CursorPosition {
 
 fn path_for_buffer<'a>(
     buffer: &ModelHandle<MultiBuffer>,
-    mut depth: usize,
+    mut height: usize,
     include_filename: bool,
     cx: &'a AppContext,
 ) -> Option<Cow<'a, Path>> {
     let file = buffer.read(cx).as_singleton()?.read(cx).file()?;
+    // Ensure we always render at least the filename.
+    height += 1;
 
-    let mut path = file.path().as_ref();
-    depth += 1;
-    while depth > 0 {
-        if let Some(parent) = path.parent() {
-            path = parent;
-            depth -= 1;
+    let mut prefix = file.path().as_ref();
+    while height > 0 {
+        if let Some(parent) = prefix.parent() {
+            prefix = parent;
+            height -= 1;
         } else {
             break;
         }
     }
 
-    if depth > 0 {
+    // Here we could have just always used `full_path`, but that is very
+    // allocation-heavy and so we try to use a `Cow<Path>` if we haven't
+    // traversed all the way up to the worktree's root.
+    if height > 0 {
         let full_path = file.full_path(cx);
         if include_filename {
             Some(full_path.into())
@@ -605,7 +609,7 @@ fn path_for_buffer<'a>(
             Some(full_path.parent().unwrap().to_path_buf().into())
         }
     } else {
-        let mut path = file.path().strip_prefix(path).unwrap();
+        let mut path = file.path().strip_prefix(prefix).unwrap();
         if !include_filename {
             path = path.parent().unwrap();
         }
