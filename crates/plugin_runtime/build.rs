@@ -28,9 +28,7 @@ fn main() {
     };
 
     // Get the target architecture for pre-cross-compilation of plugins
-    // and write it to disk to be used when embedding plugins
     let target_triple = std::env::var("TARGET").unwrap().to_string();
-    println!("cargo:rerun-if-env-changed=TARGET");
 
     // Invoke cargo to build the plugins
     let build_successful = std::process::Command::new("cargo")
