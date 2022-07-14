@@ -35,6 +35,7 @@ use gpui::{
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
+pub use items::MAX_TAB_TITLE_LEN;
 pub use language::{char_kind, CharKind};
 use language::{
     BracketPair, Buffer, CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticSeverity,

@@ -4,7 +4,7 @@ use crate::{
     ToggleWholeWord,
 };
 use collections::HashMap;
-use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll};
+use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll, MAX_TAB_TITLE_LEN};
 use gpui::{
     actions, elements::*, platform::CursorStyle, Action, AppContext, ElementBox, Entity,
     ModelContext, ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View,
@@ -25,8 +25,6 @@ use workspace::{
 };
 
 actions!(project_search, [Deploy, SearchInNew, ToggleFocus]);
-
-const MAX_TAB_TITLE_LEN: usize = 24;
 
 #[derive(Default)]
 struct ActiveSearches(HashMap<WeakModelHandle<Project>, WeakViewHandle<ProjectSearchView>>);

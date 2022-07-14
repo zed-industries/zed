@@ -23,6 +23,7 @@ use util::TryFutureExt;
 use workspace::{FollowableItem, Item, ItemHandle, ItemNavHistory, ProjectItem, StatusItemView};
 
 pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
+pub const MAX_TAB_TITLE_LEN: usize = 24;
 
 impl FollowableItem for Editor {
     fn from_state_proto(
@@ -320,9 +321,14 @@ impl Item for Editor {
             )
             .with_children(detail.and_then(|detail| {
                 let path = path_for_buffer(&self.buffer, detail, false, cx)?;
+                let description = path.to_string_lossy();
                 Some(
                     Label::new(
-                        path.to_string_lossy().into(),
+                        if description.len() > MAX_TAB_TITLE_LEN {
+                            description[..MAX_TAB_TITLE_LEN].to_string() + "…"
+                        } else {
+                            description.into()
+                        },
                         style.description.text.clone(),
                     )
                     .contained()
