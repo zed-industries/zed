@@ -562,7 +562,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
             if T::should_activate_item_on_event(event) {
                 pane.update(cx, |pane, cx| {
                     if let Some(ix) = pane.index_for_item(&item) {
-                        pane.activate_item(ix, true, true, cx);
+                        pane.activate_item(ix, true, true, false, cx);
                         pane.activate(cx);
                     }
                 });
@@ -1507,7 +1507,7 @@ impl Workspace {
         });
         if let Some((pane, ix)) = result {
             self.activate_pane(pane.clone(), cx);
-            pane.update(cx, |pane, cx| pane.activate_item(ix, true, true, cx));
+            pane.update(cx, |pane, cx| pane.activate_item(ix, true, true, false, cx));
             true
         } else {
             false
@@ -2880,7 +2880,7 @@ mod tests {
 
         let close_items = workspace.update(cx, |workspace, cx| {
             pane.update(cx, |pane, cx| {
-                pane.activate_item(1, true, true, cx);
+                pane.activate_item(1, true, true, false, cx);
                 assert_eq!(pane.active_item().unwrap().id(), item2.id());
             });
 

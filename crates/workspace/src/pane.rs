@@ -71,10 +71,10 @@ const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
-        pane.activate_item(action.0, true, true, cx);
+        pane.activate_item(action.0, true, true, false, cx);
     });
     cx.add_action(|pane: &mut Pane, _: &ActivateLastItem, cx| {
-        pane.activate_item(pane.items.len() - 1, true, true, cx);
+        pane.activate_item(pane.items.len() - 1, true, true, false, cx);
     });
     cx.add_action(|pane: &mut Pane, _: &ActivatePrevItem, cx| {
         pane.activate_prev_item(cx);
@@ -288,7 +288,7 @@ impl Pane {
                 {
                     let prev_active_item_index = pane.active_item_index;
                     pane.nav_history.borrow_mut().set_mode(mode);
-                    pane.activate_item(index, true, true, cx);
+                    pane.activate_item(index, true, true, false, cx);
                     pane.nav_history
                         .borrow_mut()
                         .set_mode(NavigationMode::Normal);
@@ -380,7 +380,7 @@ impl Pane {
                     && item.project_entry_ids(cx).as_slice() == &[project_entry_id]
                 {
                     let item = item.boxed_clone();
-                    pane.activate_item(ix, true, focus_item, cx);
+                    pane.activate_item(ix, true, focus_item, true, cx);
                     return Some(item);
                 }
             }
@@ -404,9 +404,11 @@ impl Pane {
         cx: &mut ViewContext<Workspace>,
     ) {
         // Prevent adding the same item to the pane more than once.
+        // If there is already an active item, reorder the desired item to be after it
+        // and activate it.
         if let Some(item_ix) = pane.read(cx).items.iter().position(|i| i.id() == item.id()) {
             pane.update(cx, |pane, cx| {
-                pane.activate_item(item_ix, activate_pane, focus_item, cx)
+                pane.activate_item(item_ix, activate_pane, focus_item, true, cx)
             });
             return;
         }
@@ -426,7 +428,7 @@ impl Pane {
             };
 
             pane.items.insert(item_ix, item);
-            pane.activate_item(item_ix, activate_pane, focus_item, cx);
+            pane.activate_item(item_ix, activate_pane, focus_item, false, cx);
             cx.notify();
         });
     }
@@ -465,13 +467,31 @@ impl Pane {
 
     pub fn activate_item(
         &mut self,
-        index: usize,
+        mut index: usize,
         activate_pane: bool,
         focus_item: bool,
+        move_after_current_active: bool,
         cx: &mut ViewContext<Self>,
     ) {
         use NavigationMode::{GoingBack, GoingForward};
         if index < self.items.len() {
+            if move_after_current_active {
+                // If there is already an active item, reorder the desired item to be after it
+                // and activate it.
+                if self.active_item_index != index && self.active_item_index < self.items.len() {
+                    let pane_to_activate = self.items.remove(index);
+                    if self.active_item_index < index {
+                        index = self.active_item_index + 1;
+                    } else if self.active_item_index < self.items.len() + 1 {
+                        index = self.active_item_index;
+                        // Index is less than active_item_index. Reordering will decrement the
+                        // active_item_index, so adjust it accordingly
+                        self.active_item_index = index - 1;
+                    }
+                    self.items.insert(index, pane_to_activate);
+                }
+            }
+
             let prev_active_item_ix = mem::replace(&mut self.active_item_index, index);
             if prev_active_item_ix != self.active_item_index
                 || matches!(self.nav_history.borrow().mode, GoingBack | GoingForward)
@@ -502,7 +522,7 @@ impl Pane {
         } else if self.items.len() > 0 {
             index = self.items.len() - 1;
         }
-        self.activate_item(index, true, true, cx);
+        self.activate_item(index, true, true, false, cx);
     }
 
     pub fn activate_next_item(&mut self, cx: &mut ViewContext<Self>) {
@@ -512,7 +532,7 @@ impl Pane {
         } else {
             index = 0;
         }
-        self.activate_item(index, true, true, cx);
+        self.activate_item(index, true, true, false, cx);
     }
 
     pub fn close_active_item(
@@ -641,10 +661,13 @@ impl Pane {
                 pane.update(&mut cx, |pane, cx| {
                     if let Some(item_ix) = pane.items.iter().position(|i| i.id() == item.id()) {
                         if item_ix == pane.active_item_index {
-                            if item_ix + 1 < pane.items.len() {
-                                pane.activate_next_item(cx);
-                            } else if item_ix > 0 {
+                            // Activate the previous item if possible.
+                            // This returns the user to the previously opened tab if they closed
+                            // a ne item they just navigated to.
+                            if item_ix > 0 {
                                 pane.activate_prev_item(cx);
+                            } else if item_ix + 1 < pane.items.len() {
+                                pane.activate_next_item(cx);
                             }
                         }
 
@@ -712,7 +735,7 @@ impl Pane {
 
         if has_conflict && can_save {
             let mut answer = pane.update(cx, |pane, cx| {
-                pane.activate_item(item_ix, true, true, cx);
+                pane.activate_item(item_ix, true, true, false, cx);
                 cx.prompt(
                     PromptLevel::Warning,
                     CONFLICT_MESSAGE,
@@ -733,7 +756,7 @@ impl Pane {
             });
             let should_save = if should_prompt_for_save && !will_autosave {
                 let mut answer = pane.update(cx, |pane, cx| {
-                    pane.activate_item(item_ix, true, true, cx);
+                    pane.activate_item(item_ix, true, true, false, cx);
                     cx.prompt(
                         PromptLevel::Warning,
                         DIRTY_MESSAGE,
