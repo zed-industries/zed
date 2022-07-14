@@ -409,7 +409,6 @@
         "bindings": {
             "ctrl-c": "terminal::Sigint",
             "escape": "terminal::Escape",
-            "shift-escape": "terminal::DeployModal",
             "ctrl-d": "terminal::Quit",
             "backspace": "terminal::Del",
             "enter": "terminal::Return",
@@ -421,6 +420,12 @@
             "cmd-v": "terminal::Paste",
             "cmd-c": "terminal::Copy",
             "ctrl-l": "terminal::Clear"
+        }
+    },
+    {
+        "context": "ModalTerminal",
+        "bindings": {
+            "shift-escape": "terminal::DeployModal"
         }
     }
 ]

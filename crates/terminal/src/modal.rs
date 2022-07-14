@@ -16,8 +16,11 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
     if let Some(StoredConnection(stored_connection)) = possible_connection {
         // Create a view from the stored connection
         workspace.toggle_modal(cx, |_, cx| {
-            cx.add_view(|cx| Terminal::from_connection(stored_connection, true, cx))
+            cx.add_view(|cx| Terminal::from_connection(stored_connection.clone(), true, cx))
         });
+        cx.set_global::<Option<StoredConnection>>(Some(StoredConnection(
+            stored_connection.clone(),
+        )));
     } else {
         // No connection was stored, create a new terminal
         if let Some(closed_terminal_handle) = workspace.toggle_modal(cx, |workspace, cx| {
