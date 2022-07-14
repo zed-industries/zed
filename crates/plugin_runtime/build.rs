@@ -66,11 +66,14 @@ fn main() {
     }
 }
 
-/// Creates a default engine for compiling Wasm.
+/// Creates an engine with the default configuration.
+/// N.B. This must create an engine with the same config as the one
+/// in `plugin_runtime/src/plugin.rs`.
 fn create_default_engine() -> Engine {
     let mut config = Config::default();
     config.async_support(true);
-    Engine::new(&config).expect("Could not create engine")
+    config.consume_fuel(true);
+    Engine::new(&config).expect("Could not create precompilation engine")
 }
 
 fn precompile(path: &Path, engine: &Engine) {
@@ -80,7 +83,7 @@ fn precompile(path: &Path, engine: &Engine) {
         .expect("Could not precompile module");
     let out_path = path.parent().unwrap().join(&format!(
         "{}.pre",
-        path.file_name().unwrap().to_string_lossy()
+        path.file_name().unwrap().to_string_lossy(),
     ));
     let mut out_file = std::fs::File::create(out_path)
         .expect("Could not create output file for precompiled module");
