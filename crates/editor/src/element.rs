@@ -1335,8 +1335,11 @@ impl Element for EditorElement {
                     .map(|indicator| (newest_selection_head.row(), indicator));
             }
 
-            hover = view.hover_state.popover.clone().and_then(|hover| {
+            hover = view.hover_state.info_popover.clone().and_then(|hover| {
                 let (point, rendered) = hover.render(&snapshot, style.clone(), cx);
+                // The scroll position is a fractional point, the whole number of which represents
+                // the top of the window in terms of display rows.
+                // Ensure the hover point is above the scroll position
                 if point.row() >= snapshot.scroll_position().y() as u32 {
                     if line_layouts.len() > (point.row() - start_row) as usize {
                         return Some((point, rendered));

@@ -32,6 +32,21 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(hover_at);
 }
 
+#[derive(Default)]
+pub struct HoverState {
+    pub info_popover: Option<InfoPopover>,
+    pub diagnostic_popover: Option<DiagnosticPopover>,
+    pub triggered_from: Option<Anchor>,
+    pub symbol_range: Option<Range<Anchor>>,
+    pub task: Option<Task<Option<()>>>,
+}
+
+impl HoverState {
+    pub fn visible(&self) -> bool {
+        self.info_popover.is_some()
+    }
+}
+
 /// Bindable action which uses the most recent selection head to trigger a hover
 pub fn hover(editor: &mut Editor, _: &Hover, cx: &mut ViewContext<Editor>) {
     let head = editor.selections.newest_display(cx).head();
@@ -57,8 +72,8 @@ pub fn hide_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
     let mut did_hide = false;
 
     // only notify the context once
-    if editor.hover_state.popover.is_some() {
-        editor.hover_state.popover = None;
+    if editor.hover_state.info_popover.is_some() {
+        editor.hover_state.info_popover = None;
         did_hide = true;
         cx.notify();
     }
@@ -167,6 +182,16 @@ fn show_hover(
                 })
             });
 
+            if let Some(delay) = delay {
+                delay.await;
+            }
+
+            // If there's a diagnostic, assign it on the hover state and notify
+            let diagnostic = snapshot
+                .buffer_snapshot
+                .diagnostics_in_range::<_, usize>(multibuffer_offset..multibuffer_offset, false)
+                .next();
+
             // Construct new hover popover from hover request
             let hover_popover = hover_request.await.ok().flatten().and_then(|hover_result| {
                 if hover_result.contents.is_empty() {
@@ -194,16 +219,12 @@ fn show_hover(
                     });
                 }
 
-                Some(HoverPopover {
+                Some(InfoPopover {
                     project: project.clone(),
                     anchor: range.start.clone(),
                     contents: hover_result.contents,
                 })
             });
-
-            if let Some(delay) = delay {
-                delay.await;
-            }
 
             if let Some(this) = this.upgrade(&cx) {
                 this.update(&mut cx, |this, cx| {
@@ -216,7 +237,7 @@ fn show_hover(
                                 cx,
                             );
                         }
-                        this.hover_state.popover = hover_popover;
+                        this.hover_state.info_popover = hover_popover;
                         cx.notify();
                     } else {
                         if this.hover_state.visible() {
@@ -237,35 +258,21 @@ fn show_hover(
     editor.hover_state.task = Some(task);
 }
 
-#[derive(Default)]
-pub struct HoverState {
-    pub popover: Option<HoverPopover>,
-    pub triggered_from: Option<Anchor>,
-    pub symbol_range: Option<Range<Anchor>>,
-    pub task: Option<Task<Option<()>>>,
-}
-
-impl HoverState {
-    pub fn visible(&self) -> bool {
-        self.popover.is_some()
-    }
-}
-
 #[derive(Debug, Clone)]
-pub struct HoverPopover {
+pub struct InfoPopover {
     pub project: ModelHandle<Project>,
     pub anchor: Anchor,
     pub contents: Vec<HoverBlock>,
 }
 
-impl HoverPopover {
+impl InfoPopover {
     pub fn render(
         &self,
         snapshot: &EditorSnapshot,
         style: EditorStyle,
         cx: &mut RenderContext<Editor>,
     ) -> (DisplayPoint, ElementBox) {
-        let element = MouseEventHandler::new::<HoverPopover, _, _>(0, cx, |_, cx| {
+        let element = MouseEventHandler::new::<InfoPopover, _, _>(0, cx, |_, cx| {
             let mut flex = Flex::new(Axis::Vertical).scrollable::<HoverBlock, _>(1, None, cx);
             flex.extend(self.contents.iter().map(|content| {
                 let project = self.project.read(cx);
@@ -315,6 +322,9 @@ impl HoverPopover {
         (display_point, element)
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct DiagnosticPopover {}
 
 #[cfg(test)]
 mod tests {
@@ -382,7 +392,7 @@ mod tests {
         cx.editor(|editor, _| {
             assert!(editor.hover_state.visible());
             assert_eq!(
-                editor.hover_state.popover.clone().unwrap().contents,
+                editor.hover_state.info_popover.clone().unwrap().contents,
                 vec![
                     HoverBlock {
                         text: "Some basic docs".to_string(),
@@ -446,7 +456,7 @@ mod tests {
         cx.editor(|editor, _| {
             assert!(editor.hover_state.visible());
             assert_eq!(
-                editor.hover_state.popover.clone().unwrap().contents,
+                editor.hover_state.info_popover.clone().unwrap().contents,
                 vec![
                     HoverBlock {
                         text: "Some other basic docs".to_string(),
