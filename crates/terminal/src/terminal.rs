@@ -479,7 +479,7 @@ mod tests {
             terminal.carriage_return(&Return, cx);
         });
 
-        cx.set_condition_duration(Some(Duration::from_secs(2)));
+        cx.set_condition_duration(Some(Duration::from_secs(5)));
         terminal
             .condition(cx, |terminal, cx| {
                 let term = terminal.connection.read(cx).term.clone();
