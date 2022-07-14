@@ -468,7 +468,7 @@ mod tests {
 
     ///Basic integration test, can we get the terminal to show up, execute a command,
     //and produce noticable output?
-    #[gpui::test]
+    #[gpui::test(retries = 5)]
     async fn test_terminal(cx: &mut TestAppContext) {
         let terminal = cx.add_view(Default::default(), |cx| Terminal::new(None, false, cx));
 
