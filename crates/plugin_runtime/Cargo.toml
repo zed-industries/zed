@@ -15,4 +15,4 @@ pollster = "0.2.5"
 smol = "1.2.5"
 
 [build-dependencies]
-wasmtime = "0.38"
+wasmtime = { version = "0.38", features = ["all-arch"] }

@@ -2,6 +2,10 @@ use std::process::Command;
 
 fn main() {
     println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=10.14");
+    println!(
+        "cargo:rustc-env=TARGET_TRIPLE={}",
+        std::env::var("TARGET").unwrap()
+    );
 
     let output = Command::new("npm")
         .current_dir("../../styles")
