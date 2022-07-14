@@ -2701,10 +2701,61 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use super::*;
     use gpui::{executor::Deterministic, ModelHandle, TestAppContext, ViewContext};
     use project::{FakeFs, Project, ProjectEntryId};
     use serde_json::json;
+
+    #[gpui::test]
+    async fn test_tab_disambiguation(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+        Settings::test_async(cx);
+
+        let fs = FakeFs::new(cx.background());
+        let project = Project::test(fs, [], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+
+        // Adding an item with no ambiguity renders the tab without detail.
+        let item1 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.tab_descriptions = Some(vec!["c", "b1/c", "a/b1/c"]);
+            item
+        });
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item(Box::new(item1.clone()), cx);
+        });
+        item1.read_with(cx, |item, _| assert_eq!(item.tab_detail.get(), None));
+
+        // Adding an item that creates ambiguity increases the level of detail on
+        // both tabs.
+        let item2 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
+            item
+        });
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item(Box::new(item2.clone()), cx);
+        });
+        item1.read_with(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(1)));
+        item2.read_with(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(1)));
+
+        // Adding an item that creates ambiguity increases the level of detail only
+        // on the ambiguous tabs. In this case, the ambiguity can't be resolved so
+        // we stop at the highest detail available.
+        let item3 = cx.add_view(window_id, |_| {
+            let mut item = TestItem::new();
+            item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
+            item
+        });
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item(Box::new(item3.clone()), cx);
+        });
+        item1.read_with(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(1)));
+        item2.read_with(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(3)));
+        item3.read_with(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(3)));
+    }
 
     #[gpui::test]
     async fn test_tracking_active_path(cx: &mut TestAppContext) {
@@ -3226,6 +3277,8 @@ mod tests {
         project_entry_ids: Vec<ProjectEntryId>,
         project_path: Option<ProjectPath>,
         nav_history: Option<ItemNavHistory>,
+        tab_descriptions: Option<Vec<&'static str>>,
+        tab_detail: Cell<Option<usize>>,
     }
 
     enum TestItemEvent {
@@ -3245,6 +3298,8 @@ mod tests {
                 project_entry_ids: self.project_entry_ids.clone(),
                 project_path: self.project_path.clone(),
                 nav_history: None,
+                tab_descriptions: None,
+                tab_detail: Default::default(),
             }
         }
     }
@@ -3262,6 +3317,8 @@ mod tests {
                 project_path: None,
                 is_singleton: true,
                 nav_history: None,
+                tab_descriptions: None,
+                tab_detail: Default::default(),
             }
         }
 
@@ -3292,7 +3349,15 @@ mod tests {
     }
 
     impl Item for TestItem {
-        fn tab_content(&self, _: Option<usize>, _: &theme::Tab, _: &AppContext) -> ElementBox {
+        fn tab_description<'a>(&'a self, detail: usize, _: &'a AppContext) -> Option<Cow<'a, str>> {
+            self.tab_descriptions.as_ref().and_then(|descriptions| {
+                let description = *descriptions.get(detail).or(descriptions.last())?;
+                Some(description.into())
+            })
+        }
+
+        fn tab_content(&self, detail: Option<usize>, _: &theme::Tab, _: &AppContext) -> ElementBox {
+            self.tab_detail.set(detail);
             Empty::new().boxed()
         }
 
