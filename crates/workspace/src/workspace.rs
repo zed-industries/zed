@@ -256,7 +256,11 @@ pub trait Item: View {
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
         false
     }
-    fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
+    fn tab_description<'a>(&'a self, _: usize, _: &'a AppContext) -> Option<Cow<'a, str>> {
+        None
+    }
+    fn tab_content(&self, detail: Option<usize>, style: &theme::Tab, cx: &AppContext)
+        -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
     fn is_singleton(&self, cx: &AppContext) -> bool;
@@ -409,7 +413,9 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
 }
 
 pub trait ItemHandle: 'static + fmt::Debug {
-    fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
+    fn tab_description<'a>(&self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>>;
+    fn tab_content(&self, detail: Option<usize>, style: &theme::Tab, cx: &AppContext)
+        -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
     fn is_singleton(&self, cx: &AppContext) -> bool;
@@ -463,8 +469,17 @@ impl dyn ItemHandle {
 }
 
 impl<T: Item> ItemHandle for ViewHandle<T> {
-    fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox {
-        self.read(cx).tab_content(style, cx)
+    fn tab_description<'a>(&self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>> {
+        self.read(cx).tab_description(detail, cx)
+    }
+
+    fn tab_content(
+        &self,
+        detail: Option<usize>,
+        style: &theme::Tab,
+        cx: &AppContext,
+    ) -> ElementBox {
+        self.read(cx).tab_content(detail, style, cx)
     }
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
@@ -3277,7 +3292,7 @@ mod tests {
     }
 
     impl Item for TestItem {
-        fn tab_content(&self, _: &theme::Tab, _: &AppContext) -> ElementBox {
+        fn tab_content(&self, _: Option<usize>, _: &theme::Tab, _: &AppContext) -> ElementBox {
             Empty::new().boxed()
         }
 

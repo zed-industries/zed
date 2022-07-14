@@ -14,6 +14,7 @@ use language::{
 use settings::Settings;
 use smallvec::SmallVec;
 use std::{
+    borrow::Cow,
     cell::{Ref, RefCell},
     cmp, fmt, io,
     iter::{self, FromIterator},
@@ -1194,14 +1195,14 @@ impl MultiBuffer {
             .collect()
     }
 
-    pub fn title(&self, cx: &AppContext) -> String {
-        if let Some(title) = self.title.clone() {
-            return title;
+    pub fn title<'a>(&'a self, cx: &'a AppContext) -> Cow<'a, str> {
+        if let Some(title) = self.title.as_ref() {
+            return title.into();
         }
 
         if let Some(buffer) = self.as_singleton() {
             if let Some(file) = buffer.read(cx).file() {
-                return file.file_name(cx).to_string_lossy().into();
+                return file.file_name(cx).to_string_lossy();
             }
         }
 

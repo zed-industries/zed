@@ -220,7 +220,12 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.deactivated(cx));
     }
 
-    fn tab_content(&self, tab_theme: &theme::Tab, cx: &gpui::AppContext) -> ElementBox {
+    fn tab_content(
+        &self,
+        _detail: Option<usize>,
+        tab_theme: &theme::Tab,
+        cx: &gpui::AppContext,
+    ) -> ElementBox {
         let settings = cx.global::<Settings>();
         let search_theme = &settings.theme.search;
         Flex::row()

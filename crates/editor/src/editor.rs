@@ -1073,7 +1073,7 @@ impl Editor {
         &self.buffer
     }
 
-    pub fn title(&self, cx: &AppContext) -> String {
+    pub fn title<'a>(&self, cx: &'a AppContext) -> Cow<'a, str> {
         self.buffer().read(cx).title(cx)
     }
 
