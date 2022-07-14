@@ -26,7 +26,6 @@ fn main() {
         "release" => (&["--release"][..], "release"),
         unknown => panic!("unknown profile `{}`", unknown),
     };
-
     // Invoke cargo to build the plugins
     let build_successful = std::process::Command::new("cargo")
         .args([
@@ -42,8 +41,13 @@ fn main() {
         .success();
     assert!(build_successful);
 
+    // Get the target architecture for pre-cross-compilation of plugins
+    // and create and engine with the appropriate config
+    let target_triple = std::env::var("TARGET").unwrap().to_string();
+    println!("cargo:rerun-if-env-changed=TARGET");
+    let engine = create_default_engine(&target_triple);
+
     // Find all compiled binaries
-    let engine = create_default_engine();
     let binaries = std::fs::read_dir(base.join("target/wasm32-wasi").join(profile_target))
         .expect("Could not find compiled plugins in target");
 
@@ -69,8 +73,11 @@ fn main() {
 /// Creates an engine with the default configuration.
 /// N.B. This must create an engine with the same config as the one
 /// in `plugin_runtime/src/plugin.rs`.
-fn create_default_engine() -> Engine {
+fn create_default_engine(target_triple: &str) -> Engine {
     let mut config = Config::default();
+    config
+        .target(target_triple)
+        .expect(&format!("Could not set target to `{}`", target_triple));
     config.async_support(true);
     config.consume_fuel(true);
     Engine::new(&config).expect("Could not create precompilation engine")
