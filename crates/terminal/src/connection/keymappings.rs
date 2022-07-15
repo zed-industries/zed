@@ -2,12 +2,9 @@ use alacritty_terminal::term::TermMode;
 use gpui::keymap::Keystroke;
 
 /*
-Design notes:
-I would like terminal mode checking to be concealed behind the TerminalConnection in as many ways as possible.
-Alacritty has a lot of stuff intermixed for it's input handling. TerminalConnection should be in charge
-of anything that needs to conform to a standard that isn't handled by Term, e.g.:
+Connection events still to do:
 - Reporting mouse events correctly.
-- Reporting scrolls -> Depends on MOUSE_MODE, ALT_SCREEN, and ALTERNATE_SCROLL, etc.
+- Reporting scrolls
 - Correctly bracketing a paste
 - Storing changed colors
 - Focus change sequence
@@ -34,13 +31,24 @@ impl Modifiers {
             _ => Modifiers::Other,
         }
     }
+
+    fn any(&self) -> bool {
+        match &self {
+            Modifiers::None => false,
+            Modifiers::Alt => true,
+            Modifiers::Ctrl => true,
+            Modifiers::Shift => true,
+            Modifiers::CtrlShift => true,
+            Modifiers::Other => true,
+        }
+    }
 }
 
 pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode) -> Option<String> {
     let modifiers = Modifiers::new(&keystroke);
 
     // Manual Bindings including modifiers
-    let manual_esc_str = match (keystroke.key.as_ref(), modifiers) {
+    let manual_esc_str = match (keystroke.key.as_ref(), &modifiers) {
         //Basic special keys
         ("space", Modifiers::None) => Some(" ".to_string()),
         ("tab", Modifiers::None) => Some("\x09".to_string()),
@@ -192,50 +200,92 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode) -> Option<String> {
     }
 
     // Automated bindings applying modifiers
-    let modifier_code = modifier_code(&keystroke);
-    let modified_esc_str = match keystroke.key.as_ref() {
-        "up" => Some(format!("\x1b[1;{}A", modifier_code)),
-        "down" => Some(format!("\x1b[1;{}B", modifier_code)),
-        "right" => Some(format!("\x1b[1;{}C", modifier_code)),
-        "left" => Some(format!("\x1b[1;{}D", modifier_code)),
-        "f1" => Some(format!("\x1b[1;{}P", modifier_code)),
-        "f2" => Some(format!("\x1b[1;{}Q", modifier_code)),
-        "f3" => Some(format!("\x1b[1;{}R", modifier_code)),
-        "f4" => Some(format!("\x1b[1;{}S", modifier_code)),
-        "F5" => Some(format!("\x1b[15;{}~", modifier_code)),
-        "f6" => Some(format!("\x1b[17;{}~", modifier_code)),
-        "f7" => Some(format!("\x1b[18;{}~", modifier_code)),
-        "f8" => Some(format!("\x1b[19;{}~", modifier_code)),
-        "f9" => Some(format!("\x1b[20;{}~", modifier_code)),
-        "f10" => Some(format!("\x1b[21;{}~", modifier_code)),
-        "f11" => Some(format!("\x1b[23;{}~", modifier_code)),
-        "f12" => Some(format!("\x1b[24;{}~", modifier_code)),
-        "f13" => Some(format!("\x1b[25;{}~", modifier_code)),
-        "f14" => Some(format!("\x1b[26;{}~", modifier_code)),
-        "f15" => Some(format!("\x1b[28;{}~", modifier_code)),
-        "f16" => Some(format!("\x1b[29;{}~", modifier_code)),
-        "f17" => Some(format!("\x1b[31;{}~", modifier_code)),
-        "f18" => Some(format!("\x1b[32;{}~", modifier_code)),
-        "f19" => Some(format!("\x1b[33;{}~", modifier_code)),
-        "f20" => Some(format!("\x1b[34;{}~", modifier_code)),
-        _ if modifier_code == 2 => None,
-        "insert" => Some(format!("\x1b[2;{}~", modifier_code)),
-        "pageup" => Some(format!("\x1b[5;{}~", modifier_code)),
-        "pagedown" => Some(format!("\x1b[6;{}~", modifier_code)),
-        "end" => Some(format!("\x1b[1;{}F", modifier_code)),
-        "home" => Some(format!("\x1b[1;{}H", modifier_code)),
-        _ => None,
-    };
-    if modified_esc_str.is_some() {
-        return modified_esc_str;
+    if modifiers.any() {
+        let modifier_code = modifier_code(&keystroke);
+        let modified_esc_str = match keystroke.key.as_ref() {
+            "up" => Some(format!("\x1b[1;{}A", modifier_code)),
+            "down" => Some(format!("\x1b[1;{}B", modifier_code)),
+            "right" => Some(format!("\x1b[1;{}C", modifier_code)),
+            "left" => Some(format!("\x1b[1;{}D", modifier_code)),
+            "f1" => Some(format!("\x1b[1;{}P", modifier_code)),
+            "f2" => Some(format!("\x1b[1;{}Q", modifier_code)),
+            "f3" => Some(format!("\x1b[1;{}R", modifier_code)),
+            "f4" => Some(format!("\x1b[1;{}S", modifier_code)),
+            "F5" => Some(format!("\x1b[15;{}~", modifier_code)),
+            "f6" => Some(format!("\x1b[17;{}~", modifier_code)),
+            "f7" => Some(format!("\x1b[18;{}~", modifier_code)),
+            "f8" => Some(format!("\x1b[19;{}~", modifier_code)),
+            "f9" => Some(format!("\x1b[20;{}~", modifier_code)),
+            "f10" => Some(format!("\x1b[21;{}~", modifier_code)),
+            "f11" => Some(format!("\x1b[23;{}~", modifier_code)),
+            "f12" => Some(format!("\x1b[24;{}~", modifier_code)),
+            "f13" => Some(format!("\x1b[25;{}~", modifier_code)),
+            "f14" => Some(format!("\x1b[26;{}~", modifier_code)),
+            "f15" => Some(format!("\x1b[28;{}~", modifier_code)),
+            "f16" => Some(format!("\x1b[29;{}~", modifier_code)),
+            "f17" => Some(format!("\x1b[31;{}~", modifier_code)),
+            "f18" => Some(format!("\x1b[32;{}~", modifier_code)),
+            "f19" => Some(format!("\x1b[33;{}~", modifier_code)),
+            "f20" => Some(format!("\x1b[34;{}~", modifier_code)),
+            _ if modifier_code == 2 => None,
+            "insert" => Some(format!("\x1b[2;{}~", modifier_code)),
+            "pageup" => Some(format!("\x1b[5;{}~", modifier_code)),
+            "pagedown" => Some(format!("\x1b[6;{}~", modifier_code)),
+            "end" => Some(format!("\x1b[1;{}F", modifier_code)),
+            "home" => Some(format!("\x1b[1;{}H", modifier_code)),
+            _ => None,
+        };
+        if modified_esc_str.is_some() {
+            return modified_esc_str;
+        }
     }
 
-    // Fallback to keystroke input sent directly
-    if keystroke.key.chars().count() == 1 {
-        //TODO this might fail on unicode during internationalization
+    //Fallback to sending the keystroke input directly
+    //Skin colors in utf8 are implemented as a seperate, invisible character
+    //that modifies the associated emoji. Some languages may have similarly
+    //implemented modifiers, e.g. certain diacritics that can be typed as a single character.
+    //This means that we need to assume some user input can result in multi-byte,
+    //multi-char strings. This is somewhat difficult, as GPUI normalizes all
+    //keys into a string representation. Hence, the check here to filter out GPUI
+    //keys that weren't captured above.
+    if !matches_gpui_key_str(&keystroke.key) {
         return Some(keystroke.key.clone());
     } else {
         None
+    }
+}
+
+///Checks if the given string matches a GPUI key string.
+///Table made from reading the source at gpui/src/platform/mac/event.rs
+fn matches_gpui_key_str(str: &str) -> bool {
+    match str {
+        "backspace" => true,
+        "up" => true,
+        "down" => true,
+        "left" => true,
+        "right" => true,
+        "pageup" => true,
+        "pagedown" => true,
+        "home" => true,
+        "end" => true,
+        "delete" => true,
+        "enter" => true,
+        "escape" => true,
+        "tab" => true,
+        "f1" => true,
+        "f2" => true,
+        "f3" => true,
+        "f4" => true,
+        "f5" => true,
+        "f6" => true,
+        "f7" => true,
+        "f8" => true,
+        "f9" => true,
+        "f10" => true,
+        "f11" => true,
+        "f12" => true,
+        "space" => true,
+        _ => false,
     }
 }
 
@@ -267,6 +317,61 @@ fn modifier_code(keystroke: &Keystroke) -> u32 {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn test_scroll_keys() {
+        //These keys should be handled by the scrolling element directly
+        //Need to signify this by returning 'None'
+        let shift_pageup = Keystroke::parse("shift-pageup").unwrap();
+        let shift_pagedown = Keystroke::parse("shift-pagedown").unwrap();
+        let shift_home = Keystroke::parse("shift-home").unwrap();
+        let shift_end = Keystroke::parse("shift-end").unwrap();
+
+        let none = TermMode::NONE;
+        assert_eq!(to_esc_str(&shift_pageup, &none), None);
+        assert_eq!(to_esc_str(&shift_pagedown, &none), None);
+        assert_eq!(to_esc_str(&shift_home, &none), None);
+        assert_eq!(to_esc_str(&shift_end, &none), None);
+
+        let alt_screen = TermMode::ALT_SCREEN;
+        assert_eq!(
+            to_esc_str(&shift_pageup, &alt_screen),
+            Some("\x1b[5;2~".to_string())
+        );
+        assert_eq!(
+            to_esc_str(&shift_pagedown, &alt_screen),
+            Some("\x1b[6;2~".to_string())
+        );
+        assert_eq!(
+            to_esc_str(&shift_home, &alt_screen),
+            Some("\x1b[1;2H".to_string())
+        );
+        assert_eq!(
+            to_esc_str(&shift_end, &alt_screen),
+            Some("\x1b[1;2F".to_string())
+        );
+
+        let pageup = Keystroke::parse("pageup").unwrap();
+        let pagedown = Keystroke::parse("pagedown").unwrap();
+        let any = TermMode::ANY;
+
+        assert_eq!(to_esc_str(&pageup, &any), Some("\x1b[5~".to_string()));
+        assert_eq!(to_esc_str(&pagedown, &any), Some("\x1b[6~".to_string()));
+    }
+
+    #[test]
+    fn test_multi_char_fallthrough() {
+        let ks = Keystroke {
+            ctrl: false,
+            alt: false,
+            shift: false,
+            cmd: false,
+
+            key: "🖖🏻".to_string(), //2 char string
+        };
+
+        assert_eq!(to_esc_str(&ks, &TermMode::NONE), Some("🖖🏻".to_string()));
+    }
 
     #[test]
     fn test_application_mode() {
@@ -325,7 +430,7 @@ mod test {
         //    8     | Shift + Alt + Control
         // ---------+---------------------------
         // from: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-PC-Style-Function-Keys
-        // assert_eq!(2, modifier_code(Keystroke::parse("shift-A").unwrap()));
+        assert_eq!(2, modifier_code(&Keystroke::parse("shift-A").unwrap()));
         assert_eq!(3, modifier_code(&Keystroke::parse("alt-A").unwrap()));
         assert_eq!(4, modifier_code(&Keystroke::parse("shift-alt-A").unwrap()));
         assert_eq!(5, modifier_code(&Keystroke::parse("ctrl-A").unwrap()));

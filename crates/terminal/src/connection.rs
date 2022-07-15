@@ -1,4 +1,4 @@
-mod events;
+mod keymappings;
 
 use alacritty_terminal::{
     ansi::{ClearMode, Handler},
@@ -22,7 +22,7 @@ use crate::{
     ZedListener,
 };
 
-use self::events::to_esc_str;
+use self::keymappings::to_esc_str;
 
 const DEFAULT_TITLE: &str = "Terminal";
 
