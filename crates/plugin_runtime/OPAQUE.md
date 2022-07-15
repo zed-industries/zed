@@ -12,9 +12,9 @@ The reason resources are problematic is because, unlike data, we can't pass reso
 
 3. Some sort of way to **modify the resources** we're holding onto. This requires two things: some way for a plugin to request a modification, and some for the runtime to apply that modification. Here I'm using 'modification' in the most general sense, which includes, e.g. reading or writing to the resource, i.e. calling a method on it.
 
-Luckily for us managing resources across boundaries is a problem that languages have had to deal with for eons. File descriptors referencing resources managed by the kernel is the quintessential definition of resource management, but this pattern is oft repeated in games, scripting languages, or surprise surprise, when writing plugins.
+Luckily for us, managing resources across boundaries is a problem that languages have had to deal with for eons. File descriptors referencing resources managed by the kernel quintessentially defines of resource management, but this pattern is oft repeated in games, scripting languages, or surprise surprise, when writing plugins.
 
-To see what managing plugins could look like in Rust, we need look no further than Rhai. Rhai is a scripting language powered by a tree-walk interpreter written in Rust. It's pretty neat, but what we care about is not the language itself, but how it interfaces with Rust types.
+To see what managing resources in plugins could look like in Rust, we need look no further than Rhai. Rhai is a scripting language powered by a tree-walk interpreter written in Rust. It's pretty neat, but what we care about is not the language itself, but how it interfaces with Rust types.
 
 In its [guide](https://rhai.rs/book/rust/custom-types.html), Rhai claims the following:
 
@@ -28,7 +28,7 @@ Given that we have to register a resource with our plugin runtime before we use 
 
 > A custom type is stored in Rhai as a Rust trait object (specifically, a `dyn rhai::Variant`), with no restrictions other than being `Clone` (plus `Send + Sync` under the `sync` feature).
 
-I'd be interested to know how Rhai disambiguates between different types if everything's a trait object under the hood. (Spoilers, but I've done some digging, and it looks like we keep track of the name of the type using some `std::any::type_name` magic).
+I'd be interested to know how Rhai disambiguates between different types if everything's a trait object under the hood.
 
 Rhai actually exposes a pretty nice interface for working with native Rust types. We can register a type using `Engine::register_type::<T: Variant + Clone>()`. Internally, this just grabs the string name of the type for future reference.
 
@@ -36,7 +36,7 @@ Rhai actually exposes a pretty nice interface for working with native Rust types
 
 In Rhai, we can alternatively use the method `Engine::register_type_with_name::<T: Variant + Clone>(name: &str)` if we have a different type name host-side (in Rust) and guest-side (in Rhai). 
 
-With respect to Wasm plugins, I think an interface like this is fairly important, because we don't know whether the original plugin was written in Rust. (This may not be true now, but once we allow packaging and shipping plugins, it's important to maintain a consistent interface, because even Rust changes over time.)
+With respect to Wasm plugins, I think an interface like this is fairly important, because we don't know whether the original plugin was written in Rust. (This may not be true now, because we write all the plugins Zed uses, but once we allow packaging and shipping plugins, it's important to maintain a consistent interface, because even Rust changes over time.)
 
 Once we've registered a type, we can begin using this type in functions. We can add new function using the standard `Engine::register_fn` function, which has the following signature:
 
@@ -47,15 +47,15 @@ where
     F: RegisterNativeFunction<A, ()>,
 ```
 
-This is quite complex, but under the hood it's fairly similar to our own `PluginBuilder::host_function` async method. Looking at `RegisterNativeFunction`, it seems as though this trait essentially provides methods that expose the `TypeID`s as well as type/param names of the arguments and return types of the function (surprise surprise).
+This is quite complex, but under the hood it's fairly similar to our own `PluginBuilder::host_function` async method. Looking at `RegisterNativeFunction`, it seems as though this trait essentially provides methods that expose the `TypeID`s and type/param names of the arguments and return types of the function.
 
-So once we register a function, what happens once we call it? Well, let me introduce you to my friend `Engine::call_native_fn`, whose type signature is too complex to list here.
+So once we register a function, what happens when we call it? Well, let me introduce you to my friend `Engine::call_native_fn`, whose type signature is too complex to list here.
 
 > **Note**: Finding this function took like 7 levels of indirection from `eval`. It's surprising how much shuffling of data Rhai does under the hood, I bet you could probably make it a lot faster.
 
 This takes and returns, like everything else in Rhai, an object of type `Dynamic`. We know that we can use native Rust types, so how does Rhai perform the conversion to and from `Dynamic`?
 
-The secret lies in `Dynamic::try_cast::<T: Any>(self)`. Like most dynamic scripting languages, Rhai uses a tagged `Union` to represent types. Remember `dyn Variant` from earlier? Rhai's `Union` has a variant, `Variant`, to hold the dynamic native types:
+The secret lies in `Dynamic::try_cast::<T: Any>(self) -> Option<T>`. Like most dynamic scripting languages, Rhai uses a tagged `Union` to represent types. Remember `dyn Variant` from earlier? Rhai's `Union` has a variant, `Variant`, to hold the dynamic native types:
 
 ```rust
 /// Any type as a trait object.
@@ -71,19 +71,19 @@ Union::Variant(v, ..) => (*v).as_boxed_any().downcast().ok().map(|x| *x),
 
 Now Rhai can do this because it's implemented in Rust. In other words, unlike Wasm, Rhai scripts can, indirectly, hold references to places in host memory. For us to implement something like this for Wasm plugins, we'd have to keep track of a "`ResourcePool`"—alive for the duration of each function call—that we can check rust types into and out of.
 
- I think I've got what's going on now, let's stop talking about Rhai and discuss what this opaque object system would look like if we implemented it in Rust.
+ I think I've got a handle on how Rhai works now, so let's stop talking about Rhai and discuss what this opaque object system would look like if we implemented it in Rust.
  
  # Design Sketch
  
-First things first, we'd have to generalize the arguments we can pass to functions host-side. Currently, we support anything that's `serde`able. We'd have to create a new trait, say `Value`, that has blanket implementations for both `serde` and `Clone` (or something like this; if a type is both `serde` and `clone`, we'd have to figure out a way to disambiguate).
+First things first, we'd have to generalize the arguments we can pass to and return from functions host-side. Currently, we support anything that's `serde`able. We'd have to create a new trait, say `Value`, that has blanket implementations for both `serde` and `Clone` (or something like this; if a type is both `serde` and `clone`, we'd have to figure out a way to disambiguate).
  
- We'd also create a `ResourcePool` that essentially is a `Vec` of `Box<dyn Any>`. When calling a function, all `Value` arguments that are resources, (e.g. `Clone` instead of `Serde`) would be typecasted to `dyn Any` and stored in the `ResourcePool`. 
+ We'd also create a `ResourcePool` struct that essentially is a `Vec` of `Box<dyn Any>`. When calling a function, all `Value` arguments that are resources (e.g. `Clone` instead of `serde`) would be typecasted to `dyn Any` and stored in the `ResourcePool`. 
  
  We'd probably also need a `Resource` trait that defines an associated handle for a resource. Something like this:
  
  ```rust
  pub trait Resource {
-    type Handle: Serialize + DeserializeOwned
+    type Handle: Serialize + DeserializeOwned;
     fn handle(index: u32) -> Self;
     fn index(handle: Self) -> u32;
  }
@@ -127,7 +127,9 @@ use plugin_handles::RopeHandle;
 pub fn append(rope: RopeHandle, string: &str);
 ```
 
-This allows us to perform an operation on a `Rope`, but how do we get a `RopeHandle` into a plugin? First, we'd define a plugin-side function as follows:
+This allows us to perform an operation on a `Rope`, but how do we get a `RopeHandle` into a plugin? Well, as plugins, we can only aquire resources to handles we're given, so we'd need to expose a fuction that takes a handle. 
+
+To illustrate that point, here's an example. First, we'd define a plugin-side function as follows:
 
 ```rust
 // same file as above ...
@@ -173,6 +175,14 @@ So here's what calling `append_newline` would do, from the top:
 
 5. The Rust async callback actually acquires a lock and appends the newline.
 
-6. And from here on out we return up the callstack, through Wasm, to Rust all the way back to where we started.
+6. And from here on out we return up the callstack, through Wasm, to Rust all the way back to where we started. Right before we return, we clear out the `ResourcePool`, so that we're no longer holding onto the underlying resource.
+
+Throughout this entire chain of calls, the resource remain host-side. By temporarilty checking it into a `ResourcePool`, we're able to keep a reference to the resource that we can use, while avoiding copying the uncopyable resource.
+
+## Final Notes
 
 Using this approach, it should be possible to add fairly good support for resources to Wasm. I've only done a little rough prototyping, so we're bound to run into some issues along the way, but I think this should be a good first approximation.
+
+This next week, I'll try to get a production-ready version of this working, using the `Language` resource required by some Language Server Adapters.
+
+Hope this guide made sense!
