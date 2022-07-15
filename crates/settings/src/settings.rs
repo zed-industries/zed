@@ -25,6 +25,7 @@ pub struct Settings {
     pub buffer_font_size: f32,
     pub default_buffer_font_size: f32,
     pub hover_popover_enabled: bool,
+    pub show_completions_on_input: bool,
     pub vim_mode: bool,
     pub autosave: Autosave,
     pub editor_defaults: EditorSettings,
@@ -83,6 +84,8 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub hover_popover_enabled: Option<bool>,
     #[serde(default)]
+    pub show_completions_on_input: Option<bool>,
+    #[serde(default)]
     pub vim_mode: Option<bool>,
     #[serde(default)]
     pub autosave: Option<Autosave>,
@@ -118,6 +121,7 @@ impl Settings {
             buffer_font_size: defaults.buffer_font_size.unwrap(),
             default_buffer_font_size: defaults.buffer_font_size.unwrap(),
             hover_popover_enabled: defaults.hover_popover_enabled.unwrap(),
+            show_completions_on_input: defaults.show_completions_on_input.unwrap(),
             projects_online_by_default: defaults.projects_online_by_default.unwrap(),
             vim_mode: defaults.vim_mode.unwrap(),
             autosave: defaults.autosave.unwrap(),
@@ -160,6 +164,10 @@ impl Settings {
         merge(&mut self.buffer_font_size, data.buffer_font_size);
         merge(&mut self.default_buffer_font_size, data.buffer_font_size);
         merge(&mut self.hover_popover_enabled, data.hover_popover_enabled);
+        merge(
+            &mut self.show_completions_on_input,
+            data.show_completions_on_input,
+        );
         merge(&mut self.vim_mode, data.vim_mode);
         merge(&mut self.autosave, data.autosave);
 
@@ -219,6 +227,7 @@ impl Settings {
             buffer_font_size: 14.,
             default_buffer_font_size: 14.,
             hover_popover_enabled: true,
+            show_completions_on_input: true,
             vim_mode: false,
             autosave: Autosave::Off,
             editor_defaults: EditorSettings {
@@ -248,7 +257,7 @@ impl Settings {
 
 pub fn settings_file_json_schema(
     theme_names: Vec<String>,
-    language_names: Vec<String>,
+    language_names: &[String],
 ) -> serde_json::Value {
     let settings = SchemaSettings::draft07().with(|settings| {
         settings.option_add_null_type = false;
@@ -275,8 +284,13 @@ pub fn settings_file_json_schema(
         instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
         object: Some(Box::new(ObjectValidation {
             properties: language_names
-                .into_iter()
-                .map(|name| (name, Schema::new_ref("#/definitions/EditorSettings".into())))
+                .iter()
+                .map(|name| {
+                    (
+                        name.clone(),
+                        Schema::new_ref("#/definitions/EditorSettings".into()),
+                    )
+                })
                 .collect(),
             ..Default::default()
         })),

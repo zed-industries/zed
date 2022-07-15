@@ -342,17 +342,16 @@ mod tests {
                 test();"});
 
         let mut requests =
-            cx.lsp
-                .handle_request::<lsp::request::GotoDefinition, _, _>(move |_, _| async move {
-                    Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
-                        lsp::LocationLink {
-                            origin_selection_range: Some(symbol_range),
-                            target_uri: lsp::Url::from_file_path("/root/dir/file.rs").unwrap(),
-                            target_range,
-                            target_selection_range: target_range,
-                        },
-                    ])))
-                });
+            cx.handle_request::<lsp::request::GotoDefinition, _, _>(move |url, _, _| async move {
+                Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
+                    lsp::LocationLink {
+                        origin_selection_range: Some(symbol_range),
+                        target_uri: url.clone(),
+                        target_range,
+                        target_selection_range: target_range,
+                    },
+                ])))
+            });
         cx.update_editor(|editor, cx| {
             update_go_to_definition_link(
                 editor,
@@ -387,18 +386,17 @@ mod tests {
         // Response without source range still highlights word
         cx.update_editor(|editor, _| editor.link_go_to_definition_state.last_mouse_location = None);
         let mut requests =
-            cx.lsp
-                .handle_request::<lsp::request::GotoDefinition, _, _>(move |_, _| async move {
-                    Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
-                        lsp::LocationLink {
-                            // No origin range
-                            origin_selection_range: None,
-                            target_uri: lsp::Url::from_file_path("/root/dir/file.rs").unwrap(),
-                            target_range,
-                            target_selection_range: target_range,
-                        },
-                    ])))
-                });
+            cx.handle_request::<lsp::request::GotoDefinition, _, _>(move |url, _, _| async move {
+                Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
+                    lsp::LocationLink {
+                        // No origin range
+                        origin_selection_range: None,
+                        target_uri: url.clone(),
+                        target_range,
+                        target_selection_range: target_range,
+                    },
+                ])))
+            });
         cx.update_editor(|editor, cx| {
             update_go_to_definition_link(
                 editor,
@@ -495,17 +493,16 @@ mod tests {
                 test();"});
 
         let mut requests =
-            cx.lsp
-                .handle_request::<lsp::request::GotoDefinition, _, _>(move |_, _| async move {
-                    Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
-                        lsp::LocationLink {
-                            origin_selection_range: Some(symbol_range),
-                            target_uri: lsp::Url::from_file_path("/root/dir/file.rs").unwrap(),
-                            target_range,
-                            target_selection_range: target_range,
-                        },
-                    ])))
-                });
+            cx.handle_request::<lsp::request::GotoDefinition, _, _>(move |url, _, _| async move {
+                Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
+                    lsp::LocationLink {
+                        origin_selection_range: Some(symbol_range),
+                        target_uri: url,
+                        target_range,
+                        target_selection_range: target_range,
+                    },
+                ])))
+            });
         cx.update_editor(|editor, cx| {
             cmd_changed(editor, &CmdChanged { cmd_down: true }, cx);
         });
@@ -584,17 +581,16 @@ mod tests {
                 test();"});
 
         let mut requests =
-            cx.lsp
-                .handle_request::<lsp::request::GotoDefinition, _, _>(move |_, _| async move {
-                    Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
-                        lsp::LocationLink {
-                            origin_selection_range: None,
-                            target_uri: lsp::Url::from_file_path("/root/dir/file.rs").unwrap(),
-                            target_range,
-                            target_selection_range: target_range,
-                        },
-                    ])))
-                });
+            cx.handle_request::<lsp::request::GotoDefinition, _, _>(move |url, _, _| async move {
+                Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
+                    lsp::LocationLink {
+                        origin_selection_range: None,
+                        target_uri: url,
+                        target_range,
+                        target_selection_range: target_range,
+                    },
+                ])))
+            });
         cx.update_workspace(|workspace, cx| {
             go_to_fetched_definition(workspace, &GoToFetchedDefinition { point: hover_point }, cx);
         });

@@ -102,14 +102,14 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         let app_state = app_state.clone();
         move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
             open_config_file(&SETTINGS_PATH, app_state.clone(), cx, || {
-                let header = Assets.load("settings/header-comments.json").unwrap();
-                let json = Assets.load("settings/default.json").unwrap();
-                let header = str::from_utf8(header.as_ref()).unwrap();
-                let json = str::from_utf8(json.as_ref()).unwrap();
-                let mut content = Rope::new();
-                content.push(header);
-                content.push(json);
-                content
+                str::from_utf8(
+                    Assets
+                        .load("settings/initial_user_settings.json")
+                        .unwrap()
+                        .as_ref(),
+                )
+                .unwrap()
+                .into()
             });
         }
     });
@@ -209,7 +209,7 @@ pub fn initialize_workspace(
     cx.emit(workspace::Event::PaneAdded(workspace.active_pane().clone()));
 
     let theme_names = app_state.themes.list().collect();
-    let language_names = app_state.languages.language_names();
+    let language_names = &languages::LANGUAGE_NAMES;
 
     workspace.project().update(cx, |project, cx| {
         let action_names = cx.all_action_names().collect::<Vec<_>>();

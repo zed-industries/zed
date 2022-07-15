@@ -1646,11 +1646,10 @@ impl language::File for File {
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
-    fn file_name(&self, cx: &AppContext) -> OsString {
+    fn file_name<'a>(&'a self, cx: &'a AppContext) -> &'a OsStr {
         self.path
             .file_name()
-            .map(|name| name.into())
-            .unwrap_or_else(|| OsString::from(&self.worktree.read(cx).root_name))
+            .unwrap_or_else(|| OsStr::new(&self.worktree.read(cx).root_name))
     }
 
     fn is_deleted(&self) -> bool {

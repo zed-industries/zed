@@ -1611,6 +1611,7 @@ dependencies = [
  "anyhow",
  "clock",
  "collections",
+ "context_menu",
  "ctor",
  "env_logger",
  "futures",
@@ -6990,7 +6991,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.46.0"
+version = "0.47.1"
 dependencies = [
  "activity_indicator",
  "anyhow",

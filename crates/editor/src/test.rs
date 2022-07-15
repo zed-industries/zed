@@ -4,12 +4,14 @@ use std::{
     sync::Arc,
 };
 
-use futures::StreamExt;
+use anyhow::Result;
+use futures::{Future, StreamExt};
 use indoc::indoc;
 
 use collections::BTreeMap;
 use gpui::{json, keymap::Keystroke, AppContext, ModelHandle, ViewContext, ViewHandle};
 use language::{point_to_lsp, FakeLspAdapter, Language, LanguageConfig, Selection};
+use lsp::request;
 use project::Project;
 use settings::Settings;
 use util::{
@@ -108,6 +110,13 @@ impl<'a> EditorTestContext<'a> {
             window_id,
             editor,
         }
+    }
+
+    pub fn condition(
+        &self,
+        predicate: impl FnMut(&Editor, &AppContext) -> bool,
+    ) -> impl Future<Output = ()> {
+        self.editor.condition(self.cx, predicate)
     }
 
     pub fn editor<F, T>(&mut self, read: F) -> T
@@ -424,6 +433,7 @@ pub struct EditorLspTestContext<'a> {
     pub cx: EditorTestContext<'a>,
     pub lsp: lsp::FakeLanguageServer,
     pub workspace: ViewHandle<Workspace>,
+    pub editor_lsp_url: lsp::Url,
 }
 
 impl<'a> EditorLspTestContext<'a> {
@@ -497,6 +507,7 @@ impl<'a> EditorLspTestContext<'a> {
             },
             lsp,
             workspace,
+            editor_lsp_url: lsp::Url::from_file_path("/root/dir/file.rs").unwrap(),
         }
     }
 
@@ -520,11 +531,15 @@ impl<'a> EditorLspTestContext<'a> {
     pub fn lsp_range(&mut self, marked_text: &str) -> lsp::Range {
         let (unmarked, mut ranges) = marked_text_ranges_by(marked_text, vec![('[', ']').into()]);
         assert_eq!(unmarked, self.cx.buffer_text());
-        let snapshot = self.update_editor(|editor, cx| editor.snapshot(cx));
-
         let offset_range = ranges.remove(&('[', ']').into()).unwrap()[0].clone();
-        let start_point = offset_range.start.to_point(&snapshot.buffer_snapshot);
-        let end_point = offset_range.end.to_point(&snapshot.buffer_snapshot);
+        self.to_lsp_range(offset_range)
+    }
+
+    pub fn to_lsp_range(&mut self, range: Range<usize>) -> lsp::Range {
+        let snapshot = self.update_editor(|editor, cx| editor.snapshot(cx));
+        let start_point = range.start.to_point(&snapshot.buffer_snapshot);
+        let end_point = range.end.to_point(&snapshot.buffer_snapshot);
+
         self.editor(|editor, cx| {
             let buffer = editor.buffer().read(cx);
             let start = point_to_lsp(
@@ -546,11 +561,44 @@ impl<'a> EditorLspTestContext<'a> {
         })
     }
 
+    pub fn to_lsp(&mut self, offset: usize) -> lsp::Position {
+        let snapshot = self.update_editor(|editor, cx| editor.snapshot(cx));
+        let point = offset.to_point(&snapshot.buffer_snapshot);
+
+        self.editor(|editor, cx| {
+            let buffer = editor.buffer().read(cx);
+            point_to_lsp(
+                buffer
+                    .point_to_buffer_offset(point, cx)
+                    .unwrap()
+                    .1
+                    .to_point_utf16(&buffer.read(cx)),
+            )
+        })
+    }
+
     pub fn update_workspace<F, T>(&mut self, update: F) -> T
     where
         F: FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
     {
         self.workspace.update(self.cx.cx, update)
+    }
+
+    pub fn handle_request<T, F, Fut>(
+        &self,
+        mut handler: F,
+    ) -> futures::channel::mpsc::UnboundedReceiver<()>
+    where
+        T: 'static + request::Request,
+        T::Params: 'static + Send,
+        F: 'static + Send + FnMut(lsp::Url, T::Params, gpui::AsyncAppContext) -> Fut,
+        Fut: 'static + Send + Future<Output = Result<T::Result>>,
+    {
+        let url = self.editor_lsp_url.clone();
+        self.lsp.handle_request::<T, _, _>(move |params, cx| {
+            let url = url.clone();
+            handler(url, params, cx)
+        })
     }
 }
 

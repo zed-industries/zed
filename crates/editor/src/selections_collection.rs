@@ -384,7 +384,7 @@ impl<'a> MutableSelectionsCollection<'a> {
         }
     }
 
-    pub fn set_pending_range(&mut self, range: Range<Anchor>, mode: SelectMode) {
+    pub fn set_pending_anchor_range(&mut self, range: Range<Anchor>, mode: SelectMode) {
         self.collection.pending = Some(PendingSelection {
             selection: Selection {
                 id: post_inc(&mut self.collection.next_selection_id),
@@ -395,6 +395,42 @@ impl<'a> MutableSelectionsCollection<'a> {
             },
             mode,
         });
+        self.selections_changed = true;
+    }
+
+    pub fn set_pending_display_range(&mut self, range: Range<DisplayPoint>, mode: SelectMode) {
+        let (start, end, reversed) = {
+            let display_map = self.display_map();
+            let buffer = self.buffer();
+            let mut start = range.start;
+            let mut end = range.end;
+            let reversed = if start > end {
+                mem::swap(&mut start, &mut end);
+                true
+            } else {
+                false
+            };
+
+            let end_bias = if end > start { Bias::Left } else { Bias::Right };
+            (
+                buffer.anchor_before(start.to_point(&display_map)),
+                buffer.anchor_at(end.to_point(&display_map), end_bias),
+                reversed,
+            )
+        };
+
+        let new_pending = PendingSelection {
+            selection: Selection {
+                id: post_inc(&mut self.collection.next_selection_id),
+                start,
+                end,
+                reversed,
+                goal: SelectionGoal::None,
+            },
+            mode,
+        };
+
+        self.collection.pending = Some(new_pending);
         self.selections_changed = true;
     }
 

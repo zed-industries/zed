@@ -261,7 +261,12 @@ impl View for Terminal {
 }
 
 impl Item for Terminal {
-    fn tab_content(&self, tab_theme: &theme::Tab, cx: &gpui::AppContext) -> ElementBox {
+    fn tab_content(
+        &self,
+        _detail: Option<usize>,
+        tab_theme: &theme::Tab,
+        cx: &gpui::AppContext,
+    ) -> ElementBox {
         let settings = cx.global::<Settings>();
         let search_theme = &settings.theme.search; //TODO properly integrate themes
 
@@ -405,7 +410,7 @@ mod tests {
 
     ///Basic integration test, can we get the terminal to show up, execute a command,
     //and produce noticable output?
-    #[gpui::test]
+    #[gpui::test(retries = 5)]
     async fn test_terminal(cx: &mut TestAppContext) {
         let terminal = cx.add_view(Default::default(), |cx| Terminal::new(None, false, cx));
 
@@ -416,7 +421,7 @@ mod tests {
             terminal.enter(&Enter, cx);
         });
 
-        cx.set_condition_duration(Some(Duration::from_secs(2)));
+        cx.set_condition_duration(Some(Duration::from_secs(5)));
         terminal
             .condition(cx, |terminal, cx| {
                 let term = terminal.connection.read(cx).term.clone();

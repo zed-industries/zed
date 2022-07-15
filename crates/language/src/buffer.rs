@@ -20,7 +20,7 @@ use std::{
     any::Any,
     cmp::{self, Ordering},
     collections::{BTreeMap, HashMap},
-    ffi::OsString,
+    ffi::OsStr,
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
@@ -185,7 +185,7 @@ pub trait File: Send + Sync {
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
-    fn file_name(&self, cx: &AppContext) -> OsString;
+    fn file_name<'a>(&'a self, cx: &'a AppContext) -> &'a OsStr;
 
     fn is_deleted(&self) -> bool;
 
