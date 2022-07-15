@@ -1,7 +1,20 @@
 use alacritty_terminal::term::TermMode;
 use gpui::keymap::Keystroke;
 
-pub enum ModifierCombinations {
+/*
+Design notes:
+I would like terminal mode checking to be concealed behind the TerminalConnection in as many ways as possible.
+Alacritty has a lot of stuff intermixed for it's input handling. TerminalConnection should be in charge
+of anything that needs to conform to a standard that isn't handled by Term, e.g.:
+- Reporting mouse events correctly.
+- Reporting scrolls -> Depends on MOUSE_MODE, ALT_SCREEN, and ALTERNATE_SCROLL, etc.
+- Correctly bracketing a paste
+- Storing changed colors
+- Focus change sequence
+*/
+
+#[derive(Debug)]
+pub enum Modifiers {
     None,
     Alt,
     Ctrl,
@@ -10,168 +23,168 @@ pub enum ModifierCombinations {
     Other,
 }
 
-impl ModifierCombinations {
+impl Modifiers {
     fn new(ks: &Keystroke) -> Self {
         match (ks.alt, ks.ctrl, ks.shift, ks.cmd) {
-            (false, false, false, false) => ModifierCombinations::None,
-            (true, false, false, false) => ModifierCombinations::Alt,
-            (false, true, false, false) => ModifierCombinations::Ctrl,
-            (false, false, true, false) => ModifierCombinations::Shift,
-            (false, true, true, false) => ModifierCombinations::CtrlShift,
-            _ => ModifierCombinations::Other,
+            (false, false, false, false) => Modifiers::None,
+            (true, false, false, false) => Modifiers::Alt,
+            (false, true, false, false) => Modifiers::Ctrl,
+            (false, false, true, false) => Modifiers::Shift,
+            (false, true, true, false) => Modifiers::CtrlShift,
+            _ => Modifiers::Other,
         }
     }
 }
 
 pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode) -> Option<String> {
-    let modifiers = ModifierCombinations::new(&keystroke);
+    let modifiers = Modifiers::new(&keystroke);
 
     // Manual Bindings including modifiers
     let manual_esc_str = match (keystroke.key.as_ref(), modifiers) {
         //Basic special keys
-        ("space", ModifierCombinations::None) => Some(" ".to_string()),
-        ("tab", ModifierCombinations::None) => Some("\x09".to_string()),
-        ("escape", ModifierCombinations::None) => Some("\x1b".to_string()),
-        ("enter", ModifierCombinations::None) => Some("\x0d".to_string()),
-        ("backspace", ModifierCombinations::None) => Some("\x7f".to_string()),
+        ("space", Modifiers::None) => Some(" ".to_string()),
+        ("tab", Modifiers::None) => Some("\x09".to_string()),
+        ("escape", Modifiers::None) => Some("\x1b".to_string()),
+        ("enter", Modifiers::None) => Some("\x0d".to_string()),
+        ("backspace", Modifiers::None) => Some("\x7f".to_string()),
         //Interesting escape codes
-        ("tab", ModifierCombinations::Shift) => Some("\x1b[Z".to_string()),
-        ("backspace", ModifierCombinations::Alt) => Some("\x1b\x7f".to_string()),
-        ("backspace", ModifierCombinations::Shift) => Some("\x7f".to_string()),
-        ("home", ModifierCombinations::Shift) if mode.contains(TermMode::ALT_SCREEN) => {
+        ("tab", Modifiers::Shift) => Some("\x1b[Z".to_string()),
+        ("backspace", Modifiers::Alt) => Some("\x1b\x7f".to_string()),
+        ("backspace", Modifiers::Shift) => Some("\x7f".to_string()),
+        ("home", Modifiers::Shift) if mode.contains(TermMode::ALT_SCREEN) => {
             Some("\x1b[1;2H".to_string())
         }
-        ("end", ModifierCombinations::Shift) if mode.contains(TermMode::ALT_SCREEN) => {
+        ("end", Modifiers::Shift) if mode.contains(TermMode::ALT_SCREEN) => {
             Some("\x1b[1;2F".to_string())
         }
-        ("pageup", ModifierCombinations::Shift) if mode.contains(TermMode::ALT_SCREEN) => {
+        ("pageup", Modifiers::Shift) if mode.contains(TermMode::ALT_SCREEN) => {
             Some("\x1b[5;2~".to_string())
         }
-        ("pagedown", ModifierCombinations::Shift) if mode.contains(TermMode::ALT_SCREEN) => {
+        ("pagedown", Modifiers::Shift) if mode.contains(TermMode::ALT_SCREEN) => {
             Some("\x1b[6;2~".to_string())
         }
-        ("home", ModifierCombinations::None) if mode.contains(TermMode::APP_CURSOR) => {
+        ("home", Modifiers::None) if mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1bOH".to_string())
         }
-        ("home", ModifierCombinations::None) if !mode.contains(TermMode::APP_CURSOR) => {
+        ("home", Modifiers::None) if !mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1b[H".to_string())
         }
-        ("end", ModifierCombinations::None) if mode.contains(TermMode::APP_CURSOR) => {
+        ("end", Modifiers::None) if mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1bOF".to_string())
         }
-        ("end", ModifierCombinations::None) if !mode.contains(TermMode::APP_CURSOR) => {
+        ("end", Modifiers::None) if !mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1b[F".to_string())
         }
-        ("up", ModifierCombinations::None) if mode.contains(TermMode::APP_CURSOR) => {
+        ("up", Modifiers::None) if mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1bOA".to_string())
         }
-        ("up", ModifierCombinations::None) if !mode.contains(TermMode::APP_CURSOR) => {
+        ("up", Modifiers::None) if !mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1b[A".to_string())
         }
-        ("down", ModifierCombinations::None) if mode.contains(TermMode::APP_CURSOR) => {
+        ("down", Modifiers::None) if mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1bOB".to_string())
         }
-        ("down", ModifierCombinations::None) if !mode.contains(TermMode::APP_CURSOR) => {
+        ("down", Modifiers::None) if !mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1b[B".to_string())
         }
-        ("right", ModifierCombinations::None) if mode.contains(TermMode::APP_CURSOR) => {
+        ("right", Modifiers::None) if mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1bOC".to_string())
         }
-        ("right", ModifierCombinations::None) if !mode.contains(TermMode::APP_CURSOR) => {
+        ("right", Modifiers::None) if !mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1b[C".to_string())
         }
-        ("left", ModifierCombinations::None) if mode.contains(TermMode::APP_CURSOR) => {
+        ("left", Modifiers::None) if mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1bOD".to_string())
         }
-        ("left", ModifierCombinations::None) if !mode.contains(TermMode::APP_CURSOR) => {
+        ("left", Modifiers::None) if !mode.contains(TermMode::APP_CURSOR) => {
             Some("\x1b[D".to_string())
         }
-        ("back", ModifierCombinations::None) => Some("\x7f".to_string()),
-        ("insert", ModifierCombinations::None) => Some("\x1b[2~".to_string()),
-        ("delete", ModifierCombinations::None) => Some("\x1b[3~".to_string()),
-        ("pageup", ModifierCombinations::None) => Some("\x1b[5~".to_string()),
-        ("pagedown", ModifierCombinations::None) => Some("\x1b[6~".to_string()),
-        ("f1", ModifierCombinations::None) => Some("\x1bOP".to_string()),
-        ("f2", ModifierCombinations::None) => Some("\x1bOQ".to_string()),
-        ("f3", ModifierCombinations::None) => Some("\x1bOR".to_string()),
-        ("f4", ModifierCombinations::None) => Some("\x1bOS".to_string()),
-        ("f5", ModifierCombinations::None) => Some("\x1b[15~".to_string()),
-        ("f6", ModifierCombinations::None) => Some("\x1b[17~".to_string()),
-        ("f7", ModifierCombinations::None) => Some("\x1b[18~".to_string()),
-        ("f8", ModifierCombinations::None) => Some("\x1b[19~".to_string()),
-        ("f9", ModifierCombinations::None) => Some("\x1b[20~".to_string()),
-        ("f10", ModifierCombinations::None) => Some("\x1b[21~".to_string()),
-        ("f11", ModifierCombinations::None) => Some("\x1b[23~".to_string()),
-        ("f12", ModifierCombinations::None) => Some("\x1b[24~".to_string()),
-        ("f13", ModifierCombinations::None) => Some("\x1b[25~".to_string()),
-        ("f14", ModifierCombinations::None) => Some("\x1b[26~".to_string()),
-        ("f15", ModifierCombinations::None) => Some("\x1b[28~".to_string()),
-        ("f16", ModifierCombinations::None) => Some("\x1b[29~".to_string()),
-        ("f17", ModifierCombinations::None) => Some("\x1b[31~".to_string()),
-        ("f18", ModifierCombinations::None) => Some("\x1b[32~".to_string()),
-        ("f19", ModifierCombinations::None) => Some("\x1b[33~".to_string()),
-        ("f20", ModifierCombinations::None) => Some("\x1b[34~".to_string()),
+        ("back", Modifiers::None) => Some("\x7f".to_string()),
+        ("insert", Modifiers::None) => Some("\x1b[2~".to_string()),
+        ("delete", Modifiers::None) => Some("\x1b[3~".to_string()),
+        ("pageup", Modifiers::None) => Some("\x1b[5~".to_string()),
+        ("pagedown", Modifiers::None) => Some("\x1b[6~".to_string()),
+        ("f1", Modifiers::None) => Some("\x1bOP".to_string()),
+        ("f2", Modifiers::None) => Some("\x1bOQ".to_string()),
+        ("f3", Modifiers::None) => Some("\x1bOR".to_string()),
+        ("f4", Modifiers::None) => Some("\x1bOS".to_string()),
+        ("f5", Modifiers::None) => Some("\x1b[15~".to_string()),
+        ("f6", Modifiers::None) => Some("\x1b[17~".to_string()),
+        ("f7", Modifiers::None) => Some("\x1b[18~".to_string()),
+        ("f8", Modifiers::None) => Some("\x1b[19~".to_string()),
+        ("f9", Modifiers::None) => Some("\x1b[20~".to_string()),
+        ("f10", Modifiers::None) => Some("\x1b[21~".to_string()),
+        ("f11", Modifiers::None) => Some("\x1b[23~".to_string()),
+        ("f12", Modifiers::None) => Some("\x1b[24~".to_string()),
+        ("f13", Modifiers::None) => Some("\x1b[25~".to_string()),
+        ("f14", Modifiers::None) => Some("\x1b[26~".to_string()),
+        ("f15", Modifiers::None) => Some("\x1b[28~".to_string()),
+        ("f16", Modifiers::None) => Some("\x1b[29~".to_string()),
+        ("f17", Modifiers::None) => Some("\x1b[31~".to_string()),
+        ("f18", Modifiers::None) => Some("\x1b[32~".to_string()),
+        ("f19", Modifiers::None) => Some("\x1b[33~".to_string()),
+        ("f20", Modifiers::None) => Some("\x1b[34~".to_string()),
         // NumpadEnter, Action::Esc("\n".into());
         //Mappings for caret notation keys
-        ("a", ModifierCombinations::Ctrl) => Some("\x01".to_string()), //1
-        ("A", ModifierCombinations::CtrlShift) => Some("\x01".to_string()), //1
-        ("b", ModifierCombinations::Ctrl) => Some("\x02".to_string()), //2
-        ("B", ModifierCombinations::CtrlShift) => Some("\x02".to_string()), //2
-        ("c", ModifierCombinations::Ctrl) => Some("\x03".to_string()), //3
-        ("C", ModifierCombinations::CtrlShift) => Some("\x03".to_string()), //3
-        ("d", ModifierCombinations::Ctrl) => Some("\x04".to_string()), //4
-        ("D", ModifierCombinations::CtrlShift) => Some("\x04".to_string()), //4
-        ("e", ModifierCombinations::Ctrl) => Some("\x05".to_string()), //5
-        ("E", ModifierCombinations::CtrlShift) => Some("\x05".to_string()), //5
-        ("f", ModifierCombinations::Ctrl) => Some("\x06".to_string()), //6
-        ("F", ModifierCombinations::CtrlShift) => Some("\x06".to_string()), //6
-        ("g", ModifierCombinations::Ctrl) => Some("\x07".to_string()), //7
-        ("G", ModifierCombinations::CtrlShift) => Some("\x07".to_string()), //7
-        ("h", ModifierCombinations::Ctrl) => Some("\x08".to_string()), //8
-        ("H", ModifierCombinations::CtrlShift) => Some("\x08".to_string()), //8
-        ("i", ModifierCombinations::Ctrl) => Some("\x09".to_string()), //9
-        ("I", ModifierCombinations::CtrlShift) => Some("\x09".to_string()), //9
-        ("j", ModifierCombinations::Ctrl) => Some("\x0a".to_string()), //10
-        ("J", ModifierCombinations::CtrlShift) => Some("\x0a".to_string()), //10
-        ("k", ModifierCombinations::Ctrl) => Some("\x0b".to_string()), //11
-        ("K", ModifierCombinations::CtrlShift) => Some("\x0b".to_string()), //11
-        ("l", ModifierCombinations::Ctrl) => Some("\x0c".to_string()), //12
-        ("L", ModifierCombinations::CtrlShift) => Some("\x0c".to_string()), //12
-        ("m", ModifierCombinations::Ctrl) => Some("\x0d".to_string()), //13
-        ("M", ModifierCombinations::CtrlShift) => Some("\x0d".to_string()), //13
-        ("n", ModifierCombinations::Ctrl) => Some("\x0e".to_string()), //14
-        ("N", ModifierCombinations::CtrlShift) => Some("\x0e".to_string()), //14
-        ("o", ModifierCombinations::Ctrl) => Some("\x0f".to_string()), //15
-        ("O", ModifierCombinations::CtrlShift) => Some("\x0f".to_string()), //15
-        ("p", ModifierCombinations::Ctrl) => Some("\x10".to_string()), //16
-        ("P", ModifierCombinations::CtrlShift) => Some("\x10".to_string()), //16
-        ("q", ModifierCombinations::Ctrl) => Some("\x11".to_string()), //17
-        ("Q", ModifierCombinations::CtrlShift) => Some("\x11".to_string()), //17
-        ("r", ModifierCombinations::Ctrl) => Some("\x12".to_string()), //18
-        ("R", ModifierCombinations::CtrlShift) => Some("\x12".to_string()), //18
-        ("s", ModifierCombinations::Ctrl) => Some("\x13".to_string()), //19
-        ("S", ModifierCombinations::CtrlShift) => Some("\x13".to_string()), //19
-        ("t", ModifierCombinations::Ctrl) => Some("\x14".to_string()), //20
-        ("T", ModifierCombinations::CtrlShift) => Some("\x14".to_string()), //20
-        ("u", ModifierCombinations::Ctrl) => Some("\x15".to_string()), //21
-        ("U", ModifierCombinations::CtrlShift) => Some("\x15".to_string()), //21
-        ("v", ModifierCombinations::Ctrl) => Some("\x16".to_string()), //22
-        ("V", ModifierCombinations::CtrlShift) => Some("\x16".to_string()), //22
-        ("w", ModifierCombinations::Ctrl) => Some("\x17".to_string()), //23
-        ("W", ModifierCombinations::CtrlShift) => Some("\x17".to_string()), //23
-        ("x", ModifierCombinations::Ctrl) => Some("\x18".to_string()), //24
-        ("X", ModifierCombinations::CtrlShift) => Some("\x18".to_string()), //24
-        ("y", ModifierCombinations::Ctrl) => Some("\x19".to_string()), //25
-        ("Y", ModifierCombinations::CtrlShift) => Some("\x19".to_string()), //25
-        ("z", ModifierCombinations::Ctrl) => Some("\x1a".to_string()), //26
-        ("Z", ModifierCombinations::CtrlShift) => Some("\x1a".to_string()), //26
-        ("@", ModifierCombinations::Ctrl) => Some("\x00".to_string()), //0
-        ("[", ModifierCombinations::Ctrl) => Some("\x1b".to_string()), //27
-        ("\\", ModifierCombinations::Ctrl) => Some("\x1c".to_string()), //28
-        ("]", ModifierCombinations::Ctrl) => Some("\x1d".to_string()), //29
-        ("^", ModifierCombinations::Ctrl) => Some("\x1e".to_string()), //30
-        ("_", ModifierCombinations::Ctrl) => Some("\x1f".to_string()), //31
-        ("?", ModifierCombinations::Ctrl) => Some("\x7f".to_string()), //127
+        ("a", Modifiers::Ctrl) => Some("\x01".to_string()), //1
+        ("A", Modifiers::CtrlShift) => Some("\x01".to_string()), //1
+        ("b", Modifiers::Ctrl) => Some("\x02".to_string()), //2
+        ("B", Modifiers::CtrlShift) => Some("\x02".to_string()), //2
+        ("c", Modifiers::Ctrl) => Some("\x03".to_string()), //3
+        ("C", Modifiers::CtrlShift) => Some("\x03".to_string()), //3
+        ("d", Modifiers::Ctrl) => Some("\x04".to_string()), //4
+        ("D", Modifiers::CtrlShift) => Some("\x04".to_string()), //4
+        ("e", Modifiers::Ctrl) => Some("\x05".to_string()), //5
+        ("E", Modifiers::CtrlShift) => Some("\x05".to_string()), //5
+        ("f", Modifiers::Ctrl) => Some("\x06".to_string()), //6
+        ("F", Modifiers::CtrlShift) => Some("\x06".to_string()), //6
+        ("g", Modifiers::Ctrl) => Some("\x07".to_string()), //7
+        ("G", Modifiers::CtrlShift) => Some("\x07".to_string()), //7
+        ("h", Modifiers::Ctrl) => Some("\x08".to_string()), //8
+        ("H", Modifiers::CtrlShift) => Some("\x08".to_string()), //8
+        ("i", Modifiers::Ctrl) => Some("\x09".to_string()), //9
+        ("I", Modifiers::CtrlShift) => Some("\x09".to_string()), //9
+        ("j", Modifiers::Ctrl) => Some("\x0a".to_string()), //10
+        ("J", Modifiers::CtrlShift) => Some("\x0a".to_string()), //10
+        ("k", Modifiers::Ctrl) => Some("\x0b".to_string()), //11
+        ("K", Modifiers::CtrlShift) => Some("\x0b".to_string()), //11
+        ("l", Modifiers::Ctrl) => Some("\x0c".to_string()), //12
+        ("L", Modifiers::CtrlShift) => Some("\x0c".to_string()), //12
+        ("m", Modifiers::Ctrl) => Some("\x0d".to_string()), //13
+        ("M", Modifiers::CtrlShift) => Some("\x0d".to_string()), //13
+        ("n", Modifiers::Ctrl) => Some("\x0e".to_string()), //14
+        ("N", Modifiers::CtrlShift) => Some("\x0e".to_string()), //14
+        ("o", Modifiers::Ctrl) => Some("\x0f".to_string()), //15
+        ("O", Modifiers::CtrlShift) => Some("\x0f".to_string()), //15
+        ("p", Modifiers::Ctrl) => Some("\x10".to_string()), //16
+        ("P", Modifiers::CtrlShift) => Some("\x10".to_string()), //16
+        ("q", Modifiers::Ctrl) => Some("\x11".to_string()), //17
+        ("Q", Modifiers::CtrlShift) => Some("\x11".to_string()), //17
+        ("r", Modifiers::Ctrl) => Some("\x12".to_string()), //18
+        ("R", Modifiers::CtrlShift) => Some("\x12".to_string()), //18
+        ("s", Modifiers::Ctrl) => Some("\x13".to_string()), //19
+        ("S", Modifiers::CtrlShift) => Some("\x13".to_string()), //19
+        ("t", Modifiers::Ctrl) => Some("\x14".to_string()), //20
+        ("T", Modifiers::CtrlShift) => Some("\x14".to_string()), //20
+        ("u", Modifiers::Ctrl) => Some("\x15".to_string()), //21
+        ("U", Modifiers::CtrlShift) => Some("\x15".to_string()), //21
+        ("v", Modifiers::Ctrl) => Some("\x16".to_string()), //22
+        ("V", Modifiers::CtrlShift) => Some("\x16".to_string()), //22
+        ("w", Modifiers::Ctrl) => Some("\x17".to_string()), //23
+        ("W", Modifiers::CtrlShift) => Some("\x17".to_string()), //23
+        ("x", Modifiers::Ctrl) => Some("\x18".to_string()), //24
+        ("X", Modifiers::CtrlShift) => Some("\x18".to_string()), //24
+        ("y", Modifiers::Ctrl) => Some("\x19".to_string()), //25
+        ("Y", Modifiers::CtrlShift) => Some("\x19".to_string()), //25
+        ("z", Modifiers::Ctrl) => Some("\x1a".to_string()), //26
+        ("Z", Modifiers::CtrlShift) => Some("\x1a".to_string()), //26
+        ("@", Modifiers::Ctrl) => Some("\x00".to_string()), //0
+        ("[", Modifiers::Ctrl) => Some("\x1b".to_string()), //27
+        ("\\", Modifiers::Ctrl) => Some("\x1c".to_string()), //28
+        ("]", Modifiers::Ctrl) => Some("\x1d".to_string()), //29
+        ("^", Modifiers::Ctrl) => Some("\x1e".to_string()), //30
+        ("_", Modifiers::Ctrl) => Some("\x1f".to_string()), //31
+        ("?", Modifiers::Ctrl) => Some("\x7f".to_string()), //127
         _ => None,
     };
     if manual_esc_str.is_some() {
@@ -226,62 +239,6 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode) -> Option<String> {
     }
 }
 
-/*
-New keybindings test plan:
-
-Is the terminal still usable?  YES!
-Do ctrl-shift-[X] and ctrl-[x] do the same thing? I THINK SO
-Does ctrl-l work? YES
-Does tab work? YES
-Do all the global overrides (up, down, enter, escape, ctrl-c) work? => YES
-Space also doesn't work YES!
-
-
-
-So, to match  alacritty keyboard handling, we need to check APP_CURSOR, and ALT_SCREEN
-
-And we need to convert the strings that GPUI returns to keys
-
-And we need a way of easily declaring and matching a modifier pattern on those keys
-
-And we need to block writing the input to the pty if any of these match
-
-And I need to figure out how to express this in a cross platform way
-
-And a way of optionally interfacing this with actions for rebinding in defaults.json
-
-Design notes:
-I would like terminal mode checking to be concealed behind the TerminalConnection in as many ways as possible.
-Alacritty has a lot of stuff intermixed for it's input handling. TerminalConnection should be in charge
-of anything that needs to conform to a standard that isn't handled by Term, e.g.:
-- Reporting mouse events correctly.
-- Reporting scrolls -> Depends on MOUSE_MODE, ALT_SCREEN, and ALTERNATE_SCROLL, etc.
-- Correctly bracketing a paste
-- Storing changed colors
-- Focus change sequence
-
-Scrolling might be handled internally or externally, need a way to ask. Everything else should probably happen internally.
-
-Standards/OS compliance is in connection.rs.
-This takes GPUI events and translates them to the correct terminal stuff
-This means that standards compliance outside of connection should be kept to a minimum. Yes, this feels good.
-Connection needs to be split up then, into a bunch of event handlers
-
-Punting on these by pushing them up to a scrolling element
-(either on dispatch_event directly or a seperate scrollbar)
-        Home,     ModifiersState::SHIFT, ~BindingMode::ALT_SCREEN; Action::ScrollToTop;
-        End,      ModifiersState::SHIFT, ~BindingMode::ALT_SCREEN; Action::ScrollToBottom;
-        PageUp,   ModifiersState::SHIFT, ~BindingMode::ALT_SCREEN; Action::ScrollPageUp;
-        PageDown, ModifiersState::SHIFT, ~BindingMode::ALT_SCREEN; Action::ScrollPageDown;
-
-
-
-NOTE, THE FOLLOWING HAS 2 BINDINGS:
-K, ModifiersState::LOGO, Action::Esc("\x0c".into());
-K, ModifiersState::LOGO, Action::ClearHistory; => ctx.terminal_mut().clear_screen(ClearMode::Saved),
-
-*/
-
 ///   Code     Modifiers
 /// ---------+---------------------------
 ///    2     | Shift
@@ -312,9 +269,47 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_match_alacritty_keybindings() {
-        let bindings = alacritty::config::bindings::default_key_bindings();
-        //TODO
+    fn test_application_mode() {
+        let app_cursor = TermMode::APP_CURSOR;
+        let none = TermMode::NONE;
+
+        let up = Keystroke::parse("up").unwrap();
+        let down = Keystroke::parse("down").unwrap();
+        let left = Keystroke::parse("left").unwrap();
+        let right = Keystroke::parse("right").unwrap();
+
+        assert_eq!(to_esc_str(&up, &none), Some("\x1b[A".to_string()));
+        assert_eq!(to_esc_str(&down, &none), Some("\x1b[B".to_string()));
+        assert_eq!(to_esc_str(&right, &none), Some("\x1b[C".to_string()));
+        assert_eq!(to_esc_str(&left, &none), Some("\x1b[D".to_string()));
+
+        assert_eq!(to_esc_str(&up, &app_cursor), Some("\x1bOA".to_string()));
+        assert_eq!(to_esc_str(&down, &app_cursor), Some("\x1bOB".to_string()));
+        assert_eq!(to_esc_str(&right, &app_cursor), Some("\x1bOC".to_string()));
+        assert_eq!(to_esc_str(&left, &app_cursor), Some("\x1bOD".to_string()));
+    }
+
+    #[test]
+    fn test_ctrl_codes() {
+        let letters_lower = 'a'..='z';
+        let letters_upper = 'A'..='Z';
+        let mode = TermMode::ANY;
+
+        for (lower, upper) in letters_lower.zip(letters_upper) {
+            assert_eq!(
+                to_esc_str(
+                    &Keystroke::parse(&format!("ctrl-{}", lower)).unwrap(),
+                    &mode
+                ),
+                to_esc_str(
+                    &Keystroke::parse(&format!("ctrl-shift-{}", upper)).unwrap(),
+                    &mode
+                ),
+                "On letter: {}/{}",
+                lower,
+                upper
+            )
+        }
     }
 
     #[test]
