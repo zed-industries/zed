@@ -191,7 +191,6 @@ impl TerminalConnection {
         let guard = self.term.lock();
         let mode = guard.mode();
         let esc = to_esc_str(keystroke, mode);
-        dbg!(&esc);
         drop(guard);
         if esc.is_some() {
             self.write_to_pty(esc.unwrap());

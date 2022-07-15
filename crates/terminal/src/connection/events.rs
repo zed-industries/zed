@@ -219,7 +219,7 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode) -> Option<String> {
 
     // Fallback to keystroke input sent directly
     if keystroke.key.chars().count() == 1 {
-        dbg!("This should catch space", &keystroke.key);
+        //TODO this might fail on unicode during internationalization
         return Some(keystroke.key.clone());
     } else {
         None

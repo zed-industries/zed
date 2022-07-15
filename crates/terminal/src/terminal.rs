@@ -219,7 +219,6 @@ impl Terminal {
 
     ///Synthesize the keyboard event corresponding to 'enter'
     fn enter(&mut self, _: &Enter, cx: &mut ViewContext<Self>) {
-        dbg!("Here!");
         self.connection.update(cx, |connection, _| {
             connection.try_keystroke(&Keystroke::parse("enter").unwrap());
         });

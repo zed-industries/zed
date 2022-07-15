@@ -384,9 +384,8 @@ impl Element for TerminalEl {
                 self.connection
                     .upgrade(cx.app)
                     .map(|connection| {
-                        connection.update(cx.app, |connection, _| {
-                            connection.try_keystroke(dbg!(keystroke))
-                        })
+                        connection
+                            .update(cx.app, |connection, _| connection.try_keystroke(keystroke))
                     })
                     .unwrap_or(false)
             }
