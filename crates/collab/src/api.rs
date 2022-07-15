@@ -299,6 +299,13 @@ async fn get_user_activity_timeline(
     Ok(ErasedJson::pretty(summary))
 }
 
+#[derive(Deserialize)]
+struct ActiveUserCountParams {
+    #[serde(flatten)]
+    period: TimePeriodParams,
+    durations_in_minutes: String,
+}
+
 #[derive(Serialize)]
 struct ActiveUserSet {
     active_time_in_minutes: u64,
@@ -306,18 +313,23 @@ struct ActiveUserSet {
 }
 
 async fn get_active_user_counts(
-    Query(params): Query<TimePeriodParams>,
+    Query(params): Query<ActiveUserCountParams>,
     Extension(app): Extension<Arc<AppState>>,
 ) -> Result<ErasedJson> {
-    let durations_in_minutes = [10, 60, 4 * 60, 8 * 60];
-
-    let mut user_sets = Vec::with_capacity(durations_in_minutes.len());
+    let durations_in_minutes = params.durations_in_minutes.split(',');
+    let mut user_sets = Vec::new();
     for duration in durations_in_minutes {
+        let duration = duration
+            .parse()
+            .map_err(|_| anyhow!("invalid duration: {duration}"))?;
         user_sets.push(ActiveUserSet {
             active_time_in_minutes: duration,
             user_count: app
                 .db
-                .get_active_user_count(params.start..params.end, Duration::from_secs(duration * 60))
+                .get_active_user_count(
+                    params.period.start..params.period.end,
+                    Duration::from_secs(duration * 60),
+                )
                 .await?,
         })
     }
