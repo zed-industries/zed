@@ -42,10 +42,10 @@
     // 3. Format code using an external command:
     //     "format_on_save": {
     //       "external": {
-    //         "command": "sed",
-    //         "arguments": ["-e", "s/ *$//"]
+    //         "command": "prettier",
+    //         "arguments": ["--stdin-filepath", "{buffer_path}"]
     //       }
-    //     },
+    //     }
     "format_on_save": "language_server",
     // How to soft-wrap long lines of text. This setting can take
     // three values:
