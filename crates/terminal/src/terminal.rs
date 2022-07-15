@@ -57,7 +57,7 @@ actions!(
 ///Initialize and register all of our action handlers
 pub fn init(cx: &mut MutableAppContext) {
     //Global binding overrrides
-    cx.add_action(Terminal::send_ctrl_c);
+    cx.add_action(Terminal::ctrl_c);
     cx.add_action(Terminal::up);
     cx.add_action(Terminal::down);
     cx.add_action(Terminal::escape);
@@ -204,7 +204,7 @@ impl Terminal {
     }
 
     ///Synthesize the keyboard event corresponding to 'ctrl-c'
-    fn send_ctrl_c(&mut self, _: &CtrlC, cx: &mut ViewContext<Self>) {
+    fn ctrl_c(&mut self, _: &CtrlC, cx: &mut ViewContext<Self>) {
         self.connection.update(cx, |connection, _| {
             connection.try_keystroke(&Keystroke::parse("ctrl-c").unwrap());
         });
