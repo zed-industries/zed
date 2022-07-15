@@ -1,5 +1,5 @@
 use alacritty_terminal::{
-    grid::{Dimensions, GridIterator, Indexed},
+    grid::{Dimensions, GridIterator, Indexed, Scroll},
     index::{Column as GridCol, Line as GridLine, Point, Side},
     selection::{Selection, SelectionRange, SelectionType},
     sync::FairMutex,
@@ -9,7 +9,7 @@ use alacritty_terminal::{
     },
     Term,
 };
-use editor::{Cursor, CursorShape, HighlightedRange, HighlightedRangeLine, Input};
+use editor::{Cursor, CursorShape, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     color::Color,
     elements::*,
@@ -31,9 +31,7 @@ use theme::TerminalStyle;
 use std::{cmp::min, ops::Range, rc::Rc, sync::Arc};
 use std::{fmt::Debug, ops::Sub};
 
-use crate::{
-    color_translation::convert_color, connection::TerminalConnection, ScrollTerminal, ZedListener,
-};
+use crate::{color_translation::convert_color, connection::TerminalConnection, ZedListener};
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
@@ -359,25 +357,6 @@ impl Element for TerminalEl {
         _paint: &mut Self::PaintState,
         cx: &mut gpui::EventContext,
     ) -> bool {
-        //The problem:
-        //Depending on the terminal mode, we either send an escape sequence
-        //OR update our own data structures.
-        //e.g. scrolling. If we do smooth scrolling, then we need to check if
-        //we own scrolling and then if so, do our scrolling thing.
-        //Ok, so the terminal connection should have APIs for querying it semantically
-        //something like `should_handle_scroll()`. This means we need a handle to the connection.
-        //Actually, this is the only time that this app needs to talk to the outer world.
-        //TODO for scrolling rework: need a way of intercepting Home/End/PageUp etc.
-        //Sometimes going to scroll our own internal buffer, sometimes going to send ESC
-        //
-        //Same goes for key events
-        //Actually, we don't use the terminal at all in dispatch_event code, the view
-        //Handles it all. Check how the editor implements scrolling, is it view-level
-        //or element level?
-
-        //Question: Can we continue dispatching to the view, so it can talk to the connection
-        //Or should we instead add a connection into here?
-
         match event {
             Event::ScrollWheel(ScrollWheelEvent {
                 delta, position, ..
@@ -386,17 +365,30 @@ impl Element for TerminalEl {
                 .then(|| {
                     let vertical_scroll =
                         (delta.y() / layout.line_height.0) * ALACRITTY_SCROLL_MULTIPLIER;
-                    cx.dispatch_action(ScrollTerminal(vertical_scroll.round() as i32));
+
+                    if let Some(connection) = self.connection.upgrade(cx.app) {
+                        connection.update(cx.app, |connection, _| {
+                            connection
+                                .term
+                                .lock()
+                                .scroll_display(Scroll::Delta(vertical_scroll.round() as i32));
+                        })
+                    }
                 })
                 .is_some(),
-            Event::KeyDown(KeyDownEvent {
-                input: Some(input), ..
-            }) => cx
-                .is_parent_view_focused()
-                .then(|| {
-                    cx.dispatch_action(Input(input.to_string()));
-                })
-                .is_some(),
+            Event::KeyDown(KeyDownEvent { keystroke, .. }) => {
+                if !cx.is_parent_view_focused() {
+                    return false;
+                }
+
+                self.connection
+                    .upgrade(cx.app)
+                    .map(|connection| {
+                        connection
+                            .update(cx.app, |connection, _| connection.try_keystroke(keystroke))
+                    })
+                    .unwrap_or(false)
+            }
             _ => false,
         }
     }

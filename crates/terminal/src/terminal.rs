@@ -5,7 +5,6 @@ pub mod terminal_element;
 
 use alacritty_terminal::{
     event::{Event as AlacTermEvent, EventListener},
-    grid::Scroll,
     term::SizeInfo,
 };
 
@@ -14,7 +13,7 @@ use dirs::home_dir;
 use editor::Input;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
-    actions, elements::*, impl_internal_actions, AppContext, ClipboardItem, Entity, ModelHandle,
+    actions, elements::*, keymap::Keystroke, AppContext, ClipboardItem, Entity, ModelHandle,
     MutableAppContext, View, ViewContext,
 };
 use modal::deploy_modal;
@@ -27,16 +26,6 @@ use workspace::{Item, Workspace};
 
 use crate::terminal_element::TerminalEl;
 
-//ASCII Control characters on a keyboard
-const ETX_CHAR: char = 3_u8 as char; //'End of text', the control code for 'ctrl-c'
-const TAB_CHAR: char = 9_u8 as char;
-const CARRIAGE_RETURN_CHAR: char = 13_u8 as char;
-const ESC_CHAR: char = 27_u8 as char; // == \x1b
-const DEL_CHAR: char = 127_u8 as char;
-const LEFT_SEQ: &str = "\x1b[D";
-const RIGHT_SEQ: &str = "\x1b[C";
-const UP_SEQ: &str = "\x1b[A";
-const DOWN_SEQ: &str = "\x1b[B";
 const DEBUG_TERMINAL_WIDTH: f32 = 1000.; //This needs to be wide enough that the prompt can fill the whole space.
 const DEBUG_TERMINAL_HEIGHT: f32 = 200.;
 const DEBUG_CELL_WIDTH: f32 = 5.;
@@ -52,44 +41,34 @@ pub struct ScrollTerminal(pub i32);
 actions!(
     terminal,
     [
-        Sigint,
-        Escape,
-        Del,
-        Return,
-        Left,
-        Right,
+        Deploy,
         Up,
         Down,
-        Tab,
+        CtrlC,
+        Escape,
+        Enter,
         Clear,
         Copy,
         Paste,
-        Deploy,
-        Quit,
-        DeployModal,
+        DeployModal
     ]
 );
-impl_internal_actions!(terminal, [ScrollTerminal]);
 
 ///Initialize and register all of our action handlers
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(Terminal::deploy);
-    cx.add_action(Terminal::send_sigint);
-    cx.add_action(Terminal::escape);
-    cx.add_action(Terminal::quit);
-    cx.add_action(Terminal::del);
-    cx.add_action(Terminal::carriage_return);
-    cx.add_action(Terminal::left);
-    cx.add_action(Terminal::right);
+    //Global binding overrrides
+    cx.add_action(Terminal::ctrl_c);
     cx.add_action(Terminal::up);
     cx.add_action(Terminal::down);
-    cx.add_action(Terminal::tab);
+    cx.add_action(Terminal::escape);
+    cx.add_action(Terminal::enter);
+    //Useful terminal actions
+    cx.add_action(Terminal::deploy);
+    cx.add_action(deploy_modal);
     cx.add_action(Terminal::copy);
     cx.add_action(Terminal::paste);
-    cx.add_action(Terminal::scroll_terminal);
     cx.add_action(Terminal::input);
     cx.add_action(Terminal::clear);
-    cx.add_action(deploy_modal);
 }
 
 ///A translation struct for Alacritty to communicate with us from their event loop
@@ -168,15 +147,6 @@ impl Terminal {
         }
     }
 
-    ///Scroll the terminal. This locks the terminal
-    fn scroll_terminal(&mut self, scroll: &ScrollTerminal, cx: &mut ViewContext<Self>) {
-        self.connection
-            .read(cx)
-            .term
-            .lock()
-            .scroll_display(Scroll::Delta(scroll.0));
-    }
-
     fn input(&mut self, Input(text): &Input, cx: &mut ViewContext<Self>) {
         self.connection.update(cx, |connection, _| {
             //TODO: This is probably not encoding UTF8 correctly (see alacritty/src/input.rs:L825-837)
@@ -200,11 +170,6 @@ impl Terminal {
         workspace.add_item(Box::new(cx.add_view(|cx| Terminal::new(wd, false, cx))), cx);
     }
 
-    ///Tell Zed to close us
-    fn quit(&mut self, _: &Quit, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::CloseTerminal);
-    }
-
     ///Attempt to paste the clipboard into the terminal
     fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
         let term = self.connection.read(cx).term.lock();
@@ -224,66 +189,38 @@ impl Terminal {
         }
     }
 
-    ///Send the `up` key
+    ///Synthesize the keyboard event corresponding to 'up'
     fn up(&mut self, _: &Up, cx: &mut ViewContext<Self>) {
         self.connection.update(cx, |connection, _| {
-            connection.write_to_pty(UP_SEQ.to_string());
+            connection.try_keystroke(&Keystroke::parse("up").unwrap());
         });
     }
 
-    ///Send the `down` key
+    ///Synthesize the keyboard event corresponding to 'down'
     fn down(&mut self, _: &Down, cx: &mut ViewContext<Self>) {
         self.connection.update(cx, |connection, _| {
-            connection.write_to_pty(DOWN_SEQ.to_string());
+            connection.try_keystroke(&Keystroke::parse("down").unwrap());
         });
     }
 
-    ///Send the `tab` key
-    fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
+    ///Synthesize the keyboard event corresponding to 'ctrl-c'
+    fn ctrl_c(&mut self, _: &CtrlC, cx: &mut ViewContext<Self>) {
         self.connection.update(cx, |connection, _| {
-            connection.write_to_pty(TAB_CHAR.to_string());
+            connection.try_keystroke(&Keystroke::parse("ctrl-c").unwrap());
         });
     }
 
-    ///Send `SIGINT` (`ctrl-c`)
-    fn send_sigint(&mut self, _: &Sigint, cx: &mut ViewContext<Self>) {
-        self.connection.update(cx, |connection, _| {
-            connection.write_to_pty(ETX_CHAR.to_string());
-        });
-    }
-
-    ///Send the `escape` key
+    ///Synthesize the keyboard event corresponding to 'escape'
     fn escape(&mut self, _: &Escape, cx: &mut ViewContext<Self>) {
         self.connection.update(cx, |connection, _| {
-            connection.write_to_pty(ESC_CHAR.to_string());
+            connection.try_keystroke(&Keystroke::parse("escape").unwrap());
         });
     }
 
-    ///Send the `delete` key. TODO: Difference between this and backspace?
-    fn del(&mut self, _: &Del, cx: &mut ViewContext<Self>) {
+    ///Synthesize the keyboard event corresponding to 'enter'
+    fn enter(&mut self, _: &Enter, cx: &mut ViewContext<Self>) {
         self.connection.update(cx, |connection, _| {
-            connection.write_to_pty(DEL_CHAR.to_string());
-        });
-    }
-
-    ///Send a carriage return. TODO: May need to check the terminal mode.
-    fn carriage_return(&mut self, _: &Return, cx: &mut ViewContext<Self>) {
-        self.connection.update(cx, |connection, _| {
-            connection.write_to_pty(CARRIAGE_RETURN_CHAR.to_string());
-        });
-    }
-
-    //Send the `left` key
-    fn left(&mut self, _: &Left, cx: &mut ViewContext<Self>) {
-        self.connection.update(cx, |connection, _| {
-            connection.write_to_pty(LEFT_SEQ.to_string());
-        });
-    }
-
-    //Send the `right` key
-    fn right(&mut self, _: &Right, cx: &mut ViewContext<Self>) {
-        self.connection.update(cx, |connection, _| {
-            connection.write_to_pty(RIGHT_SEQ.to_string());
+            connection.try_keystroke(&Keystroke::parse("enter").unwrap());
         });
     }
 }
@@ -486,8 +423,8 @@ mod tests {
     ///Integration test for selections, clipboard, and terminal execution
     #[gpui::test(retries = 5)]
     async fn test_copy(cx: &mut TestAppContext) {
-        let mut cx = TerminalTestContext::new(cx);
 
+        let mut cx = TerminalTestContext::new(cx);
         let grid_content = cx
             .execute_and_wait("expr 3 + 4", |content, _cx| content.contains("7"))
             .await;

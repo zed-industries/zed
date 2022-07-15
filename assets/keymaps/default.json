@@ -407,19 +407,16 @@
     {
         "context": "Terminal",
         "bindings": {
-            "ctrl-c": "terminal::Sigint",
-            "escape": "terminal::Escape",
-            "ctrl-d": "terminal::Quit",
-            "backspace": "terminal::Del",
-            "enter": "terminal::Return",
-            "left": "terminal::Left",
-            "right": "terminal::Right",
+            // Overrides for global bindings, remove at your own risk:
             "up": "terminal::Up",
             "down": "terminal::Down",
-            "tab": "terminal::Tab",
-            "cmd-v": "terminal::Paste",
+            "escape": "terminal::Escape",
+            "enter": "terminal::Enter",
+            "ctrl-c": "terminal::CtrlC",
+            // Useful terminal actions:
             "cmd-c": "terminal::Copy",
-            "ctrl-l": "terminal::Clear"
+            "cmd-v": "terminal::Paste",
+            "cmd-k": "terminal::Clear"
         }
     },
     {
