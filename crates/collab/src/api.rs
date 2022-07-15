@@ -17,7 +17,7 @@ use axum::{
 use axum_extra::response::ErasedJson;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use time::OffsetDateTime;
 use tower::ServiceBuilder;
 use tracing::instrument;
@@ -43,6 +43,7 @@ pub fn routes(rpc_server: &Arc<rpc::Server>, state: Arc<AppState>) -> Router<Bod
             "/user_activity/timeline/:user_id",
             get(get_user_activity_timeline),
         )
+        .route("/user_activity/counts", get(get_active_user_counts))
         .route("/project_metadata", get(get_project_metadata))
         .layer(
             ServiceBuilder::new()
@@ -296,6 +297,31 @@ async fn get_user_activity_timeline(
         .get_user_activity_timeline(params.start..params.end, UserId(user_id))
         .await?;
     Ok(ErasedJson::pretty(summary))
+}
+
+#[derive(Serialize)]
+struct ActiveUserSet {
+    active_time_in_minutes: u64,
+    user_count: usize,
+}
+
+async fn get_active_user_counts(
+    Query(params): Query<TimePeriodParams>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<ErasedJson> {
+    let durations_in_minutes = [10, 60, 4 * 60, 8 * 60];
+
+    let mut user_sets = Vec::with_capacity(durations_in_minutes.len());
+    for duration in durations_in_minutes {
+        user_sets.push(ActiveUserSet {
+            active_time_in_minutes: duration,
+            user_count: app
+                .db
+                .get_active_user_count(params.start..params.end, Duration::from_secs(duration * 60))
+                .await?,
+        })
+    }
+    Ok(ErasedJson::pretty(user_sets))
 }
 
 #[derive(Deserialize)]

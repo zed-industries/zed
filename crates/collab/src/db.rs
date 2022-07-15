@@ -69,6 +69,14 @@ pub trait Db: Send + Sync {
         active_projects: &[(UserId, ProjectId)],
     ) -> Result<()>;
 
+    /// Get the number of users who have been active in the given
+    /// time period for at least the given time duration.
+    async fn get_active_user_count(
+        &self,
+        time_period: Range<OffsetDateTime>,
+        min_duration: Duration,
+    ) -> Result<usize>;
+
     /// Get the users that have been most active during the given time period,
     /// along with the amount of time they have been active in each project.
     async fn get_top_users_activity_summary(
@@ -591,6 +599,40 @@ impl Db for PostgresDb {
         tx.commit().await?;
 
         Ok(())
+    }
+
+    async fn get_active_user_count(
+        &self,
+        time_period: Range<OffsetDateTime>,
+        min_duration: Duration,
+    ) -> Result<usize> {
+        let query = "
+            WITH
+                project_durations AS (
+                    SELECT user_id, project_id, SUM(duration_millis) AS project_duration
+                    FROM project_activity_periods
+                    WHERE $1 < ended_at AND ended_at <= $2
+                    GROUP BY user_id, project_id
+                ),
+                user_durations AS (
+                    SELECT user_id, SUM(project_duration) as total_duration
+                    FROM project_durations
+                    GROUP BY user_id
+                    ORDER BY total_duration DESC
+                    LIMIT $3
+                )
+            SELECT count(user_durations.user_id)
+            FROM user_durations
+            WHERE user_durations.total_duration >= $3
+        ";
+
+        let count: i64 = sqlx::query_scalar(query)
+            .bind(time_period.start)
+            .bind(time_period.end)
+            .bind(min_duration.as_millis() as i64)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(count as usize)
     }
 
     async fn get_top_users_activity_summary(
@@ -1544,7 +1586,7 @@ pub mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_project_activity() {
+    async fn test_user_activity() {
         let test_db = TestDb::postgres().await;
         let db = test_db.db();
 
@@ -1641,6 +1683,32 @@ pub mod tests {
                 },
             ]
         );
+
+        assert_eq!(
+            db.get_active_user_count(t0..t6, Duration::from_secs(56))
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            db.get_active_user_count(t0..t6, Duration::from_secs(54))
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            db.get_active_user_count(t0..t6, Duration::from_secs(30))
+                .await
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            db.get_active_user_count(t0..t6, Duration::from_secs(10))
+                .await
+                .unwrap(),
+            3
+        );
+
         assert_eq!(
             db.get_user_activity_timeline(t3..t6, user_1).await.unwrap(),
             &[
@@ -2474,6 +2542,14 @@ pub mod tests {
             _time_period: Range<OffsetDateTime>,
             _active_projects: &[(UserId, ProjectId)],
         ) -> Result<()> {
+            unimplemented!()
+        }
+
+        async fn get_active_user_count(
+            &self,
+            _time_period: Range<OffsetDateTime>,
+            _min_duration: Duration,
+        ) -> Result<usize> {
             unimplemented!()
         }
 
