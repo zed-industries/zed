@@ -15,7 +15,7 @@ use futures::{channel::mpsc::unbounded, StreamExt};
 use settings::Settings;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use gpui::{ClipboardItem, CursorStyle, Entity, KeyDownEvent, ModelContext};
+use gpui::{keymap::Keystroke, ClipboardItem, CursorStyle, Entity, ModelContext};
 
 use crate::{
     color_translation::{get_color_at_index, to_alac_rgb},
@@ -187,10 +187,11 @@ impl TerminalConnection {
         self.term.lock().clear_screen(ClearMode::Saved);
     }
 
-    pub fn try_keystroke(&mut self, key_down: &KeyDownEvent) -> bool {
+    pub fn try_keystroke(&mut self, keystroke: &Keystroke) -> bool {
         let guard = self.term.lock();
         let mode = guard.mode();
-        let esc = to_esc_str(key_down, mode);
+        let esc = to_esc_str(keystroke, mode);
+        dbg!(&esc);
         drop(guard);
         if esc.is_some() {
             self.write_to_pty(esc.unwrap());

@@ -1,15 +1,12 @@
 use alacritty_terminal::term::TermMode;
-use gpui::{keymap::Keystroke, KeyDownEvent};
+use gpui::keymap::Keystroke;
 
 pub enum ModifierCombinations {
     None,
     Alt,
     Ctrl,
     Shift,
-    AltCtrl,
-    AltShift,
     CtrlShift,
-    AltCtrlShift,
     Other,
 }
 
@@ -20,20 +17,24 @@ impl ModifierCombinations {
             (true, false, false, false) => ModifierCombinations::Alt,
             (false, true, false, false) => ModifierCombinations::Ctrl,
             (false, false, true, false) => ModifierCombinations::Shift,
-            (true, true, false, false) => ModifierCombinations::AltCtrl,
-            (true, false, true, false) => ModifierCombinations::AltShift,
             (false, true, true, false) => ModifierCombinations::CtrlShift,
-            (true, true, true, false) => ModifierCombinations::AltCtrlShift,
             _ => ModifierCombinations::Other,
         }
     }
 }
 
-pub fn to_esc_str(event: &KeyDownEvent, mode: &TermMode) -> Option<String> {
-    let modifiers = ModifierCombinations::new(&event.keystroke);
+pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode) -> Option<String> {
+    let modifiers = ModifierCombinations::new(&keystroke);
 
     // Manual Bindings including modifiers
-    let manual_esc_str = match (event.keystroke.key.as_ref(), modifiers) {
+    let manual_esc_str = match (keystroke.key.as_ref(), modifiers) {
+        //Basic special keys
+        ("space", ModifierCombinations::None) => Some(" ".to_string()),
+        ("tab", ModifierCombinations::None) => Some("\x09".to_string()),
+        ("escape", ModifierCombinations::None) => Some("\x1b".to_string()),
+        ("enter", ModifierCombinations::None) => Some("\x0d".to_string()),
+        ("backspace", ModifierCombinations::None) => Some("\x7f".to_string()),
+        //Interesting escape codes
         ("tab", ModifierCombinations::Shift) => Some("\x1b[Z".to_string()),
         ("backspace", ModifierCombinations::Alt) => Some("\x1b\x7f".to_string()),
         ("backspace", ModifierCombinations::Shift) => Some("\x7f".to_string()),
@@ -111,7 +112,7 @@ pub fn to_esc_str(event: &KeyDownEvent, mode: &TermMode) -> Option<String> {
         ("f19", ModifierCombinations::None) => Some("\x1b[33~".to_string()),
         ("f20", ModifierCombinations::None) => Some("\x1b[34~".to_string()),
         // NumpadEnter, Action::Esc("\n".into());
-        //Make all mappings for caret notation keys!
+        //Mappings for caret notation keys
         ("a", ModifierCombinations::Ctrl) => Some("\x01".to_string()), //1
         ("A", ModifierCombinations::CtrlShift) => Some("\x01".to_string()), //1
         ("b", ModifierCombinations::Ctrl) => Some("\x02".to_string()), //2
@@ -178,8 +179,8 @@ pub fn to_esc_str(event: &KeyDownEvent, mode: &TermMode) -> Option<String> {
     }
 
     // Automated bindings applying modifiers
-    let modifier_code = modifier_code(&event.keystroke);
-    let modified_esc_str = match event.keystroke.key.as_ref() {
+    let modifier_code = modifier_code(&keystroke);
+    let modified_esc_str = match keystroke.key.as_ref() {
         "up" => Some(format!("\x1b[1;{}A", modifier_code)),
         "down" => Some(format!("\x1b[1;{}B", modifier_code)),
         "right" => Some(format!("\x1b[1;{}C", modifier_code)),
@@ -217,10 +218,26 @@ pub fn to_esc_str(event: &KeyDownEvent, mode: &TermMode) -> Option<String> {
     }
 
     // Fallback to keystroke input sent directly
-    return event.input.clone();
+    if keystroke.key.chars().count() == 1 {
+        dbg!("This should catch space", &keystroke.key);
+        return Some(keystroke.key.clone());
+    } else {
+        None
+    }
 }
 
 /*
+New keybindings test plan:
+
+Is the terminal still usable?  YES!
+Do ctrl-shift-[X] and ctrl-[x] do the same thing? I THINK SO
+Does ctrl-l work? YES
+Does tab work? YES
+Do all the global overrides (up, down, enter, escape, ctrl-c) work? => YES
+Space also doesn't work YES!
+
+
+
 So, to match  alacritty keyboard handling, we need to check APP_CURSOR, and ALT_SCREEN
 
 And we need to convert the strings that GPUI returns to keys
