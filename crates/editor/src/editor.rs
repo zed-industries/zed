@@ -35,6 +35,7 @@ use gpui::{
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
+pub use items::MAX_TAB_TITLE_LEN;
 pub use language::{char_kind, CharKind};
 use language::{
     BracketPair, Buffer, CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticSeverity,
@@ -1073,7 +1074,7 @@ impl Editor {
         &self.buffer
     }
 
-    pub fn title(&self, cx: &AppContext) -> String {
+    pub fn title<'a>(&self, cx: &'a AppContext) -> Cow<'a, str> {
         self.buffer().read(cx).title(cx)
     }
 

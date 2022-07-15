@@ -324,7 +324,12 @@ impl View for Terminal {
 }
 
 impl Item for Terminal {
-    fn tab_content(&self, tab_theme: &theme::Tab, cx: &gpui::AppContext) -> ElementBox {
+    fn tab_content(
+        &self,
+        _detail: Option<usize>,
+        tab_theme: &theme::Tab,
+        cx: &gpui::AppContext,
+    ) -> ElementBox {
         let settings = cx.global::<Settings>();
         let search_theme = &settings.theme.search; //TODO properly integrate themes
 

@@ -863,8 +863,10 @@ impl Pane {
             } else {
                 None
             };
+
             let mut row = Flex::row().scrollable::<Tabs, _>(1, autoscroll, cx);
-            for (ix, item) in self.items.iter().enumerate() {
+            for (ix, (item, detail)) in self.items.iter().zip(self.tab_details(cx)).enumerate() {
+                let detail = if detail == 0 { None } else { Some(detail) };
                 let is_active = ix == self.active_item_index;
 
                 row.add_child({
@@ -873,7 +875,7 @@ impl Pane {
                     } else {
                         theme.workspace.tab.clone()
                     };
-                    let title = item.tab_content(&tab_style, cx);
+                    let title = item.tab_content(detail, &tab_style, cx);
 
                     let mut style = if is_active {
                         theme.workspace.active_tab.clone()
@@ -993,6 +995,43 @@ impl Pane {
 
             row.boxed()
         })
+    }
+
+    fn tab_details(&self, cx: &AppContext) -> Vec<usize> {
+        let mut tab_details = (0..self.items.len()).map(|_| 0).collect::<Vec<_>>();
+
+        let mut tab_descriptions = HashMap::default();
+        let mut done = false;
+        while !done {
+            done = true;
+
+            // Store item indices by their tab description.
+            for (ix, (item, detail)) in self.items.iter().zip(&tab_details).enumerate() {
+                if let Some(description) = item.tab_description(*detail, cx) {
+                    if *detail == 0
+                        || Some(&description) != item.tab_description(detail - 1, cx).as_ref()
+                    {
+                        tab_descriptions
+                            .entry(description)
+                            .or_insert(Vec::new())
+                            .push(ix);
+                    }
+                }
+            }
+
+            // If two or more items have the same tab description, increase their level
+            // of detail and try again.
+            for (_, item_ixs) in tab_descriptions.drain() {
+                if item_ixs.len() > 1 {
+                    done = false;
+                    for ix in item_ixs {
+                        tab_details[ix] += 1;
+                    }
+                }
+            }
+        }
+
+        tab_details
     }
 }
 
