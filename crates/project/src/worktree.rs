@@ -2813,6 +2813,61 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_circular_symlinks(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "lib": {
+                    "a": {
+                        "a.txt": ""
+                    },
+                    "b": {
+                        "b.txt": ""
+                    }
+                }
+            }),
+        )
+        .await;
+        fs.insert_symlink("/root/lib/a/lib", "..".into()).await;
+        fs.insert_symlink("/root/lib/b/lib", "..".into()).await;
+
+        let http_client = FakeHttpClient::with_404_response();
+        let client = Client::new(http_client);
+        let tree = Worktree::local(
+            client,
+            Arc::from(Path::new("/root")),
+            true,
+            fs,
+            Default::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+
+        tree.read_with(cx, |tree, _| {
+            assert_eq!(
+                tree.entries(false)
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                vec![
+                    Path::new(""),
+                    Path::new("lib"),
+                    Path::new("lib/a"),
+                    Path::new("lib/a/a.txt"),
+                    Path::new("lib/a/lib"),
+                    Path::new("lib/b"),
+                    Path::new("lib/b/b.txt"),
+                    Path::new("lib/b/lib"),
+                ]
+            );
+        })
+    }
+
+    #[gpui::test]
     async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
         let parent_dir = temp_tree(json!({
             ".gitignore": "ancestor-ignored-file1\nancestor-ignored-file2\n",
