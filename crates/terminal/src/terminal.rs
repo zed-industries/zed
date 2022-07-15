@@ -496,11 +496,11 @@ mod tests {
     }
 
     /// Integration test for selections, clipboard, and terminal execution
-    #[gpui::test]
+    #[gpui::test(retries = 5)]
     async fn test_copy(cx: &mut TestAppContext) {
         let mut result_line: i32 = 0;
         let terminal = cx.add_view(Default::default(), |cx| Terminal::new(None, false, cx));
-        cx.set_condition_duration(Some(Duration::from_secs(2)));
+        cx.set_condition_duration(Some(Duration::from_secs(5)));
 
         terminal.update(cx, |terminal, cx| {
             terminal.connection.update(cx, |connection, _| {
