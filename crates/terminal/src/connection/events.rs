@@ -313,7 +313,7 @@ mod test {
 
     #[test]
     fn test_match_alacritty_keybindings() {
-        // let bindings = alacritty::config::bindings::default_key_bindings();
+        let bindings = alacritty::config::bindings::default_key_bindings();
         //TODO
     }
 
