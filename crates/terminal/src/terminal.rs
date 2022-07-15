@@ -395,85 +395,59 @@ fn get_wd_for_workspace(workspace: &Workspace, cx: &AppContext) -> Option<PathBu
 #[cfg(test)]
 mod tests {
 
+    use crate::tests::terminal_test_context::TerminalTestContext;
+
     use super::*;
     use alacritty_terminal::{
-        grid::GridIterator,
         index::{Column, Line, Point, Side},
         selection::{Selection, SelectionType},
-        term::cell::Cell,
     };
     use gpui::TestAppContext;
-    use itertools::Itertools;
 
-    use std::{path::Path, time::Duration};
+    use std::path::Path;
     use workspace::AppState;
+
+    mod terminal_test_context;
 
     ///Basic integration test, can we get the terminal to show up, execute a command,
     //and produce noticable output?
     #[gpui::test(retries = 5)]
     async fn test_terminal(cx: &mut TestAppContext) {
-        let terminal = cx.add_view(Default::default(), |cx| Terminal::new(None, false, cx));
+        let mut cx = TerminalTestContext::new(cx);
 
-        terminal.update(cx, |terminal, cx| {
-            terminal.connection.update(cx, |connection, _| {
-                connection.write_to_pty("expr 3 + 4".to_string());
-            });
-            terminal.enter(&Enter, cx);
-        });
-
-        cx.set_condition_duration(Some(Duration::from_secs(5)));
-        terminal
-            .condition(cx, |terminal, cx| {
-                let term = terminal.connection.read(cx).term.clone();
-                let content = grid_as_str(term.lock().renderable_content().display_iter);
-                content.contains("7")
-            })
+        cx.execute_and_wait("expr 3 + 4", |content, _cx| content.contains("7"))
             .await;
-        cx.set_condition_duration(None);
     }
 
-    /// Integration test for selections, clipboard, and terminal execution
-    #[gpui::test]
+    /// TODO: I don't think this is actually testing anything anymore.
+    ///Integration test for selections, clipboard, and terminal execution
+    #[gpui::test(retries = 5)]
     async fn test_copy(cx: &mut TestAppContext) {
-        let mut result_line: i32 = 0;
-        let terminal = cx.add_view(Default::default(), |cx| Terminal::new(None, false, cx));
-        cx.set_condition_duration(Some(Duration::from_secs(2)));
 
-        terminal.update(cx, |terminal, cx| {
-            terminal.connection.update(cx, |connection, _| {
-                connection.write_to_pty("expr 3 + 4".to_string());
-            });
-            terminal.enter(&Enter, cx);
-        });
-
-        terminal
-            .condition(cx, |terminal, cx| {
-                let term = terminal.connection.read(cx).term.clone();
-                let content = grid_as_str(term.lock().renderable_content().display_iter);
-
-                if content.contains("7") {
-                    let idx = content.chars().position(|c| c == '7').unwrap();
-                    result_line = content.chars().take(idx).filter(|c| *c == '\n').count() as i32;
-                    true
-                } else {
-                    false
-                }
-            })
+        let mut cx = TerminalTestContext::new(cx);
+        let grid_content = cx
+            .execute_and_wait("expr 3 + 4", |content, _cx| content.contains("7"))
             .await;
 
-        terminal.update(cx, |terminal, cx| {
-            let mut term = terminal.connection.read(cx).term.lock();
+        //Get the position of the result
+        let idx = grid_content.chars().position(|c| c == '7').unwrap();
+        let result_line = grid_content
+            .chars()
+            .take(idx)
+            .filter(|c| *c == '\n')
+            .count() as i32;
+
+        let copy_res = cx.update_connection(|connection, _cx| {
+            let mut term = connection.term.lock();
             term.selection = Some(Selection::new(
                 SelectionType::Semantic,
-                Point::new(Line(2), Column(0)),
+                Point::new(Line(result_line), Column(0)),
                 Side::Right,
             ));
-            drop(term);
-            terminal.copy(&Copy, cx)
+            term.selection_to_string()
         });
 
-        cx.assert_clipboard_content(Some(&"7"));
-        cx.set_condition_duration(None);
+        assert_eq!(copy_res.unwrap(), "7");
     }
 
     ///Working directory calculation tests
@@ -662,14 +636,5 @@ mod tests {
             let res = get_wd_for_workspace(workspace, cx);
             assert_eq!(res, Some((Path::new("/root/")).to_path_buf()));
         });
-    }
-
-    pub(crate) fn grid_as_str(grid_iterator: GridIterator<Cell>) -> String {
-        let lines = grid_iterator.group_by(|i| i.point.line.0);
-        lines
-            .into_iter()
-            .map(|(_, line)| line.map(|i| i.c).collect::<String>())
-            .collect::<Vec<String>>()
-            .join("\n")
     }
 }
