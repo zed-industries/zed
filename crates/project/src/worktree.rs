@@ -1,4 +1,4 @@
-use crate::{ProjectEntryId, RemoveOptions};
+use crate::{copy_recursive, ProjectEntryId, RemoveOptions};
 
 use super::{
     fs::{self, Fs},
@@ -731,8 +731,13 @@ impl LocalWorktree {
             let fs = self.fs.clone();
             let abs_new_path = abs_new_path.clone();
             async move {
-                fs.copy(&abs_old_path, &abs_new_path, Default::default())
-                    .await
+                copy_recursive(
+                    fs.as_ref(),
+                    &abs_old_path,
+                    &abs_new_path,
+                    Default::default(),
+                )
+                .await
             }
         });
 
