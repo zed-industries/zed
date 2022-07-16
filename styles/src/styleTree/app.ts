@@ -17,7 +17,7 @@ import tooltip from "./tooltip";
 import terminal from "./terminal";
 
 export const panel = {
-  padding: { top: 12, bottom: 12 },
+  padding: { top: 12, bottom: 12 }
 };
 
 export default function app(theme: Theme): Object {

@@ -35,7 +35,7 @@ export default function statusBar(theme: Theme) {
       iconColor: iconColor(theme, "muted"),
       hover: {
         message: text(theme, "sans", "primary"),
-        iconColor: iconColor(theme, "primary"),
+        iconColor: iconColor(theme, "active"),
         background: backgroundColor(theme, 300, "hovered"),
       }
     },
@@ -49,7 +49,7 @@ export default function statusBar(theme: Theme) {
     },
     diagnosticSummary: {
       height: 16,
-      iconWidth: 14,
+      iconWidth: 16,
       iconSpacing: 2,
       summarySpacing: 6,
       text: text(theme, "sans", "primary", { size: "sm" }),
@@ -71,7 +71,7 @@ export default function statusBar(theme: Theme) {
         border: border(theme, "error"),
       },
       hover: {
-        iconColorOk: iconColor(theme, "primary"),
+        iconColorOk: iconColor(theme, "active"),
         containerOk: {
           cornerRadius: 6,
           padding: { top: 3, bottom: 3, left: 7, right: 7 },
@@ -94,10 +94,10 @@ export default function statusBar(theme: Theme) {
       groupRight: {},
       item: {
         ...statusContainer,
-        iconSize: 14,
+        iconSize: 16,
         iconColor: iconColor(theme, "secondary"),
         hover: {
-          iconColor: iconColor(theme, "primary"),
+          iconColor: iconColor(theme, "active"),
           background: backgroundColor(theme, 300, "hovered"),
         },
         active: {

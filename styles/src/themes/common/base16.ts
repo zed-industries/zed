@@ -62,13 +62,13 @@ export function createTheme(
     },
     on300: {
       base: sample(ramps.neutral, 0),
-      hovered: sample(ramps.neutral, 0.25),
-      active: sample(ramps.neutral, 0.5),
+      hovered: sample(ramps.neutral, 0.5),
+      active: sample(ramps.neutral, 1),
     },
     on500: {
-      base: sample(ramps.neutral, 1.25),
+      base: sample(ramps.neutral, 1),
       hovered: sample(ramps.neutral, 1.5),
-      active: sample(ramps.neutral, 1.75),
+      active: sample(ramps.neutral, 2),
     },
     ok: {
       base: withOpacity(sample(ramps.green, 0.5), 0.15),
