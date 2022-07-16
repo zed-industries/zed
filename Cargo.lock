@@ -5361,6 +5361,7 @@ dependencies = [
  "futures",
  "gpui",
  "itertools",
+ "libc",
  "mio-extras",
  "ordered-float",
  "project",
