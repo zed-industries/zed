@@ -27,6 +27,7 @@ use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use settings::Settings;
 use theme::TerminalStyle;
+use util::ResultExt;
 
 use std::{cmp::min, ops::Range, rc::Rc, sync::Arc};
 use std::{fmt::Debug, ops::Sub};
@@ -256,10 +257,11 @@ impl Element for TerminalEl {
                 for layout_line in &layout.layout_lines {
                     for layout_cell in &layout_line.cells {
                         let position = vec2f(
-                            origin.x() + layout_cell.point.column as f32 * layout.em_width.0,
+                            (origin.x() + layout_cell.point.column as f32 * layout.em_width.0)
+                                .floor(),
                             origin.y() + layout_cell.point.line as f32 * layout.line_height.0,
                         );
-                        let size = vec2f(layout.em_width.0, layout.line_height.0);
+                        let size = vec2f(layout.em_width.0.ceil(), layout.line_height.0);
 
                         cx.scene.push_quad(Quad {
                             bounds: RectF::new(position, size),
@@ -318,7 +320,7 @@ impl Element for TerminalEl {
 
                         //Don't actually know the start_x for a line, until here:
                         let cell_origin = vec2f(
-                            origin.x() + point.column as f32 * layout.em_width.0,
+                            (origin.x() + point.column as f32 * layout.em_width.0).floor(),
                             origin.y() + point.line as f32 * layout.line_height.0,
                         );
 
@@ -420,14 +422,33 @@ pub fn mouse_to_cell_data(
 
 ///Configures a text style from the current settings.
 fn make_text_style(font_cache: &FontCache, settings: &Settings) -> TextStyle {
+    // Pull the font family from settings properly overriding
+    let family_id = settings
+        .terminal_overrides
+        .font_family
+        .as_ref()
+        .and_then(|family_name| font_cache.load_family(&[family_name]).log_err())
+        .or_else(|| {
+            settings
+                .terminal_defaults
+                .font_family
+                .as_ref()
+                .and_then(|family_name| font_cache.load_family(&[family_name]).log_err())
+        })
+        .unwrap_or(settings.buffer_font_family);
+
     TextStyle {
         color: settings.theme.editor.text_color,
-        font_family_id: settings.buffer_font_family,
-        font_family_name: font_cache.family_name(settings.buffer_font_family).unwrap(),
+        font_family_id: family_id,
+        font_family_name: font_cache.family_name(family_id).unwrap(),
         font_id: font_cache
-            .select_font(settings.buffer_font_family, &Default::default())
+            .select_font(family_id, &Default::default())
             .unwrap(),
-        font_size: settings.buffer_font_size,
+        font_size: settings
+            .terminal_overrides
+            .font_size
+            .or(settings.terminal_defaults.font_size)
+            .unwrap_or(settings.buffer_font_size),
         font_properties: Default::default(),
         underline: Default::default(),
     }

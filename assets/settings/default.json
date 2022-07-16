@@ -54,7 +54,7 @@
     //      "soft_wrap": "none",
     // 2. Soft wrap lines that overflow the editor:
     //      "soft_wrap": "editor_width",
-    // 2. Soft wrap lines at the preferred line length
+    // 3. Soft wrap lines at the preferred line length
     //      "soft_wrap": "preferred_line_length",
     "soft_wrap": "none",
     // The column at which to soft-wrap lines, for buffers where soft-wrap
@@ -65,6 +65,54 @@
     "hard_tabs": false,
     // How many columns a tab should occupy.
     "tab_size": 4,
+    // Settings specific to the terminal
+    "terminal": {
+        // What shell to use when opening a terminal. May take 3 values: 
+        // 1. Use the system's default terminal configuration (e.g. $TERM).
+        //      "shell": "system"
+        // 2. A program:
+        //      "shell": {
+        //        "program": "sh"
+        //      }
+        // 3. A program with arguments:
+        //     "shell": {
+        //         "with_arguments": {
+        //           "program": "/bin/bash",
+        //           "arguments": ["--login"]
+        //         }
+        //     }
+        "shell": "system",
+        // What working directory to use when launching the terminal.
+        // May take 4 values:
+        // 1. Use the current file's project directory.
+        //      "working_directory": "current_project_directory"
+        // 2. Use the first project in this workspace's directory
+        //      "working_directory": "first_project_directory"
+        // 3. Always use this platform's home directory (if we can find it)
+        //     "working_directory": "always_home"
+        // 4. Always use a specific directory. This value will be shell expanded.
+        //    If this path is not a valid directory the terminal will default to
+        //    this platform's home directory  (if we can find it)
+        //      "working_directory": { 
+        //        "always": {
+        //          "directory": "~/zed/projects/"
+        //        }
+        //      }
+        //
+        //
+        "working_directory": "current_project_directory",
+        //Any key-value pairs added to this list will be added to the terminal's
+        //enviroment. Use `:` to seperate multiple values, not multiple list items
+        "env": [
+            //["KEY", "value1:value2"]
+        ]
+        //Set the terminal's font size. If this option is not included,
+        //the terminal will default to matching the buffer's font size.
+        //"font_size": "15"
+        //Set the terminal's font family. If this option is not included,
+        //the terminal will default to matching the buffer's font family.
+        //"font_family": "Zed Mono"
+    },
     // Different settings for specific languages.
     "languages": {
         "Plain Text": {

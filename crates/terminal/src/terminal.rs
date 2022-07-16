@@ -18,10 +18,10 @@ use gpui::{
 };
 use modal::deploy_modal;
 
-use project::{Project, ProjectPath};
-use settings::Settings;
+use project::{LocalWorktree, Project, ProjectPath};
+use settings::{Settings, WorkingDirectory};
 use smallvec::SmallVec;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use workspace::{Item, Workspace};
 
 use crate::terminal_element::TerminalEl;
@@ -110,8 +110,15 @@ impl Terminal {
             false,
         );
 
-        let connection =
-            cx.add_model(|cx| TerminalConnection::new(working_directory, size_info, cx));
+        let (shell, envs) = {
+            let settings = cx.global::<Settings>();
+            let shell = settings.terminal_overrides.shell.clone();
+            let envs = settings.terminal_overrides.env.clone(); //Should be short and cheap.
+            (shell, envs)
+        };
+
+        let connection = cx
+            .add_model(|cx| TerminalConnection::new(working_directory, shell, envs, size_info, cx));
 
         Terminal::from_connection(connection, modal, cx)
     }
@@ -371,12 +378,41 @@ impl Item for Terminal {
     }
 }
 
+///Get's the working directory for the given workspace, respecting the user's settings.
+fn get_wd_for_workspace(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
+    let wd_setting = cx
+        .global::<Settings>()
+        .terminal_overrides
+        .working_directory
+        .clone()
+        .unwrap_or(WorkingDirectory::CurrentProjectDirectory);
+    let res = match wd_setting {
+        WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx),
+        WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
+        WorkingDirectory::AlwaysHome => None,
+        WorkingDirectory::Always { directory } => shellexpand::full(&directory)
+            .ok()
+            .map(|dir| Path::new(&dir.to_string()).to_path_buf())
+            .filter(|dir| dir.is_dir()),
+    };
+    res.or_else(|| home_dir())
+}
+
+///Get's the first project's home directory, or the home directory
+fn first_project_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
+    workspace
+        .worktrees(cx)
+        .next()
+        .and_then(|worktree_handle| worktree_handle.read(cx).as_local())
+        .and_then(get_path_from_wt)
+}
+
 ///Gets the intuitively correct working directory from the given workspace
 ///If there is an active entry for this project, returns that entry's worktree root.
 ///If there's no active entry but there is a worktree, returns that worktrees root.
 ///If either of these roots are files, or if there are any other query failures,
 ///  returns the user's home directory
-fn get_wd_for_workspace(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
+fn current_project_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
     let project = workspace.project().read(cx);
 
     project
@@ -384,12 +420,13 @@ fn get_wd_for_workspace(workspace: &Workspace, cx: &AppContext) -> Option<PathBu
         .and_then(|entry_id| project.worktree_for_entry(entry_id, cx))
         .or_else(|| workspace.worktrees(cx).next())
         .and_then(|worktree_handle| worktree_handle.read(cx).as_local())
-        .and_then(|wt| {
-            wt.root_entry()
-                .filter(|re| re.is_dir())
-                .map(|_| wt.abs_path().to_path_buf())
-        })
-        .or_else(|| home_dir())
+        .and_then(get_path_from_wt)
+}
+
+fn get_path_from_wt(wt: &LocalWorktree) -> Option<PathBuf> {
+    wt.root_entry()
+        .filter(|re| re.is_dir())
+        .map(|_| wt.abs_path().to_path_buf())
 }
 
 #[cfg(test)]
@@ -398,10 +435,6 @@ mod tests {
     use crate::tests::terminal_test_context::TerminalTestContext;
 
     use super::*;
-    use alacritty_terminal::{
-        index::{Column, Line, Point, Side},
-        selection::{Selection, SelectionType},
-    };
     use gpui::TestAppContext;
 
     use std::path::Path;
@@ -417,37 +450,6 @@ mod tests {
 
         cx.execute_and_wait("expr 3 + 4", |content, _cx| content.contains("7"))
             .await;
-    }
-
-    /// TODO: I don't think this is actually testing anything anymore.
-    ///Integration test for selections, clipboard, and terminal execution
-    #[gpui::test(retries = 5)]
-    async fn test_copy(cx: &mut TestAppContext) {
-
-        let mut cx = TerminalTestContext::new(cx);
-        let grid_content = cx
-            .execute_and_wait("expr 3 + 4", |content, _cx| content.contains("7"))
-            .await;
-
-        //Get the position of the result
-        let idx = grid_content.chars().position(|c| c == '7').unwrap();
-        let result_line = grid_content
-            .chars()
-            .take(idx)
-            .filter(|c| *c == '\n')
-            .count() as i32;
-
-        let copy_res = cx.update_connection(|connection, _cx| {
-            let mut term = connection.term.lock();
-            term.selection = Some(Selection::new(
-                SelectionType::Semantic,
-                Point::new(Line(result_line), Column(0)),
-                Side::Right,
-            ));
-            term.selection_to_string()
-        });
-
-        assert_eq!(copy_res.unwrap(), "7");
     }
 
     ///Working directory calculation tests
@@ -469,8 +471,10 @@ mod tests {
             assert!(active_entry.is_none());
             assert!(workspace.worktrees(cx).next().is_none());
 
-            let res = get_wd_for_workspace(workspace, cx);
-            assert_eq!(res, home_dir())
+            let res = current_project_directory(workspace, cx);
+            assert_eq!(res, None);
+            let res = first_project_directory(workspace, cx);
+            assert_eq!(res, None);
         });
     }
 
@@ -507,8 +511,10 @@ mod tests {
             assert!(active_entry.is_none());
             assert!(workspace.worktrees(cx).next().is_some());
 
-            let res = get_wd_for_workspace(workspace, cx);
-            assert_eq!(res, home_dir())
+            let res = current_project_directory(workspace, cx);
+            assert_eq!(res, None);
+            let res = first_project_directory(workspace, cx);
+            assert_eq!(res, None);
         });
     }
 
@@ -543,7 +549,9 @@ mod tests {
             assert!(active_entry.is_none());
             assert!(workspace.worktrees(cx).next().is_some());
 
-            let res = get_wd_for_workspace(workspace, cx);
+            let res = current_project_directory(workspace, cx);
+            assert_eq!(res, Some((Path::new("/root/")).to_path_buf()));
+            let res = first_project_directory(workspace, cx);
             assert_eq!(res, Some((Path::new("/root/")).to_path_buf()));
         });
     }
@@ -555,17 +563,32 @@ mod tests {
         let params = cx.update(AppState::test);
         let project = Project::test(params.fs.clone(), [], cx).await;
         let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
-        let (wt, _) = project
+        let (wt1, _) = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root.txt", true, cx)
+                project.find_or_create_local_worktree("/root1/", true, cx)
+            })
+            .await
+            .unwrap();
+
+        let (wt2, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/root2.txt", true, cx)
             })
             .await
             .unwrap();
 
         //Setup root
-        let entry = cx
+        let _ = cx
             .update(|cx| {
-                wt.update(cx, |wt, cx| {
+                wt1.update(cx, |wt, cx| {
+                    wt.as_local().unwrap().create_entry(Path::new(""), true, cx)
+                })
+            })
+            .await
+            .unwrap();
+        let entry2 = cx
+            .update(|cx| {
+                wt2.update(cx, |wt, cx| {
                     wt.as_local()
                         .unwrap()
                         .create_entry(Path::new(""), false, cx)
@@ -576,8 +599,8 @@ mod tests {
 
         cx.update(|cx| {
             let p = ProjectPath {
-                worktree_id: wt.read(cx).id(),
-                path: entry.path,
+                worktree_id: wt2.read(cx).id(),
+                path: entry2.path,
             };
             project.update(cx, |project, cx| project.set_active_path(Some(p), cx));
         });
@@ -589,8 +612,10 @@ mod tests {
 
             assert!(active_entry.is_some());
 
-            let res = get_wd_for_workspace(workspace, cx);
-            assert_eq!(res, home_dir());
+            let res = current_project_directory(workspace, cx);
+            assert_eq!(res, None);
+            let res = first_project_directory(workspace, cx);
+            assert_eq!(res, Some((Path::new("/root1/")).to_path_buf()));
         });
     }
 
@@ -601,17 +626,32 @@ mod tests {
         let params = cx.update(AppState::test);
         let project = Project::test(params.fs.clone(), [], cx).await;
         let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
-        let (wt, _) = project
+        let (wt1, _) = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root/", true, cx)
+                project.find_or_create_local_worktree("/root1/", true, cx)
+            })
+            .await
+            .unwrap();
+
+        let (wt2, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/root2/", true, cx)
             })
             .await
             .unwrap();
 
         //Setup root
-        let entry = cx
+        let _ = cx
             .update(|cx| {
-                wt.update(cx, |wt, cx| {
+                wt1.update(cx, |wt, cx| {
+                    wt.as_local().unwrap().create_entry(Path::new(""), true, cx)
+                })
+            })
+            .await
+            .unwrap();
+        let entry2 = cx
+            .update(|cx| {
+                wt2.update(cx, |wt, cx| {
                     wt.as_local().unwrap().create_entry(Path::new(""), true, cx)
                 })
             })
@@ -620,8 +660,8 @@ mod tests {
 
         cx.update(|cx| {
             let p = ProjectPath {
-                worktree_id: wt.read(cx).id(),
-                path: entry.path,
+                worktree_id: wt2.read(cx).id(),
+                path: entry2.path,
             };
             project.update(cx, |project, cx| project.set_active_path(Some(p), cx));
         });
@@ -633,8 +673,10 @@ mod tests {
 
             assert!(active_entry.is_some());
 
-            let res = get_wd_for_workspace(workspace, cx);
-            assert_eq!(res, Some((Path::new("/root/")).to_path_buf()));
+            let res = current_project_directory(workspace, cx);
+            assert_eq!(res, Some((Path::new("/root2/")).to_path_buf()));
+            let res = first_project_directory(workspace, cx);
+            assert_eq!(res, Some((Path::new("/root1/")).to_path_buf()));
         });
     }
 }

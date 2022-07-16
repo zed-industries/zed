@@ -5365,6 +5365,7 @@ dependencies = [
  "ordered-float",
  "project",
  "settings",
+ "shellexpand",
  "smallvec",
  "theme",
  "util",
