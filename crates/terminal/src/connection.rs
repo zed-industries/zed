@@ -7,7 +7,7 @@ use alacritty_terminal::{
     event_loop::{EventLoop, Msg, Notifier},
     grid::Scroll,
     sync::FairMutex,
-    term::SizeInfo,
+    term::{SizeInfo, TermMode},
     tty::{self, setup_env},
     Term,
 };
@@ -226,6 +226,17 @@ impl TerminalConnection {
             true
         } else {
             false
+        }
+    }
+
+    ///Paste text into the terminal
+    pub fn paste(&mut self, text: &str) {
+        if self.term.lock().mode().contains(TermMode::BRACKETED_PASTE) {
+            self.write_to_pty("\x1b[200~".to_string());
+            self.write_to_pty(text.replace('\x1b', "").to_string());
+            self.write_to_pty("\x1b[201~".to_string());
+        } else {
+            self.write_to_pty(text.replace("\r\n", "\r").replace('\n', "\r"));
         }
     }
 }
