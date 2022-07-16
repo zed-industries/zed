@@ -427,7 +427,7 @@ fn make_text_style(font_cache: &FontCache, settings: &Settings) -> TextStyle {
         .terminal_overrides
         .font_family
         .as_ref()
-        .and_then(|family_name| dbg!(font_cache.load_family(&[family_name]).log_err()))
+        .and_then(|family_name| font_cache.load_family(&[family_name]).log_err())
         .or_else(|| {
             settings
                 .terminal_defaults

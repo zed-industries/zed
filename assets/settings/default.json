@@ -68,8 +68,7 @@
     // Settings specific to the terminal
     "terminal": {
         // What shell to use when opening a terminal. May take 3 values: 
-        // 1. Use the system's terminal configuration (e.g. $TERM). Note this is not
-        //    A substitution, only an exact text match
+        // 1. Use the system's default terminal configuration (e.g. $TERM).
         //      "shell": "system"
         // 2. A program:
         //      "shell": {
@@ -107,10 +106,10 @@
         "env": [
             //["KEY", "value1:value2"]
         ]
-        //Set the terminal's font size. If this option is not listed,
+        //Set the terminal's font size. If this option is not included,
         //the terminal will default to matching the buffer's font size.
         //"font_size": "15"
-        //Set the terminal's font family. If this option is not listed,
+        //Set the terminal's font family. If this option is not included,
         //the terminal will default to matching the buffer's font family.
         //"font_family": "Zed Mono"
     },
