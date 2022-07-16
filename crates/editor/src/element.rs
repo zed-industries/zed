@@ -41,6 +41,10 @@ use std::{
     ops::Range,
 };
 
+const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
+const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
+const HOVER_POPOVER_GAP: f32 = 10.;
+
 struct SelectionLayout {
     head: DisplayPoint,
     range: Range<DisplayPoint>,
@@ -268,8 +272,9 @@ impl EditorElement {
         }
 
         if paint
-            .hover_bounds
-            .map_or(false, |hover_bounds| hover_bounds.contains_point(position))
+            .hover_popover_bounds
+            .iter()
+            .any(|hover_bounds| hover_bounds.contains_point(position))
         {
             return false;
         }
@@ -600,34 +605,77 @@ impl EditorElement {
             cx.scene.pop_stacking_context();
         }
 
-        if let Some((position, hover_popover)) = layout.hover.as_mut() {
+        if let Some((position, hover_popovers)) = layout.hover_popovers.as_mut() {
             cx.scene.push_stacking_context(None);
 
             // This is safe because we check on layout whether the required row is available
             let hovered_row_layout = &layout.line_layouts[(position.row() - start_row) as usize];
-            let size = hover_popover.size();
+
+            // Minimum required size: Take the first popover, and add 1.5 times the minimum popover
+            // height. This is the size we will use to decide whether to render popovers above or below
+            // the hovered line.
+            let first_size = hover_popovers[0].size();
+            let height_to_reserve =
+                first_size.y() + 1.5 * MIN_POPOVER_LINE_HEIGHT as f32 * layout.line_height;
+
+            // Compute Hovered Point
             let x = hovered_row_layout.x_for_index(position.column() as usize) - scroll_left;
-            let y = position.row() as f32 * layout.line_height - scroll_top - size.y();
-            let mut popover_origin = content_origin + vec2f(x, y);
+            let y = position.row() as f32 * layout.line_height - scroll_top;
+            let hovered_point = content_origin + vec2f(x, y);
 
-            if popover_origin.y() < 0.0 {
-                popover_origin.set_y(popover_origin.y() + layout.line_height + size.y());
+            paint.hover_popover_bounds.clear();
+
+            if hovered_point.y() - height_to_reserve > 0.0 {
+                // There is enough space above. Render popovers above the hovered point
+                let mut current_y = hovered_point.y();
+                for hover_popover in hover_popovers {
+                    let size = hover_popover.size();
+                    let mut popover_origin = vec2f(hovered_point.x(), current_y - size.y());
+
+                    let x_out_of_bounds = bounds.max_x() - (popover_origin.x() + size.x());
+                    if x_out_of_bounds < 0.0 {
+                        popover_origin.set_x(popover_origin.x() + x_out_of_bounds);
+                    }
+
+                    hover_popover.paint(
+                        popover_origin,
+                        RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
+                        cx,
+                    );
+
+                    paint.hover_popover_bounds.push(
+                        RectF::new(popover_origin, hover_popover.size())
+                            .dilate(Vector2F::new(0., 5.)),
+                    );
+
+                    current_y = popover_origin.y() - HOVER_POPOVER_GAP;
+                }
+            } else {
+                // There is not enough space above. Render popovers below the hovered point
+                let mut current_y = hovered_point.y() + layout.line_height;
+                for hover_popover in hover_popovers {
+                    let size = hover_popover.size();
+                    let mut popover_origin = vec2f(hovered_point.x(), current_y);
+
+                    let x_out_of_bounds = bounds.max_x() - (popover_origin.x() + size.x());
+                    if x_out_of_bounds < 0.0 {
+                        popover_origin.set_x(popover_origin.x() + x_out_of_bounds);
+                    }
+
+                    hover_popover.paint(
+                        popover_origin,
+                        RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
+                        cx,
+                    );
+
+                    paint.hover_popover_bounds.push(
+                        RectF::new(popover_origin, hover_popover.size())
+                            .dilate(Vector2F::new(0., 5.)),
+                    );
+
+                    current_y = popover_origin.y() + size.y() + HOVER_POPOVER_GAP;
+                }
             }
-
-            let x_out_of_bounds = bounds.max_x() - (popover_origin.x() + size.x());
-            if x_out_of_bounds < 0.0 {
-                popover_origin.set_x(popover_origin.x() + x_out_of_bounds);
-            }
-
-            hover_popover.paint(
-                popover_origin,
-                RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
-                cx,
-            );
-
-            paint.hover_bounds = Some(
-                RectF::new(popover_origin, hover_popover.size()).dilate(Vector2F::new(0., 5.)),
-            );
 
             cx.scene.pop_stacking_context();
         }
@@ -1162,6 +1210,8 @@ impl Element for EditorElement {
         });
 
         let scroll_position = snapshot.scroll_position();
+        // The scroll position is a fractional point, the whole number of which represents
+        // the top of the window in terms of display rows.
         let start_row = scroll_position.y() as u32;
         let scroll_top = scroll_position.y() * line_height;
 
@@ -1335,19 +1385,8 @@ impl Element for EditorElement {
                     .map(|indicator| (newest_selection_head.row(), indicator));
             }
 
-            hover = view.hover_state.info_popover.clone().and_then(|hover| {
-                let (point, rendered) = hover.render(&snapshot, style.clone(), cx);
-                // The scroll position is a fractional point, the whole number of which represents
-                // the top of the window in terms of display rows.
-                // Ensure the hover point is above the scroll position
-                if point.row() >= snapshot.scroll_position().y() as u32 {
-                    if line_layouts.len() > (point.row() - start_row) as usize {
-                        return Some((point, rendered));
-                    }
-                }
-
-                None
-            });
+            let visible_rows = start_row..start_row + line_layouts.len() as u32;
+            hover = view.hover_state.render(&snapshot, &style, visible_rows, cx);
         });
 
         if let Some((_, context_menu)) = context_menu.as_mut() {
@@ -1370,21 +1409,23 @@ impl Element for EditorElement {
             );
         }
 
-        if let Some((_, hover)) = hover.as_mut() {
-            hover.layout(
-                SizeConstraint {
-                    min: Vector2F::zero(),
-                    max: vec2f(
-                        (120. * em_width) // Default size
-                            .min(size.x() / 2.) // Shrink to half of the editor width
-                            .max(20. * em_width), // Apply minimum width of 20 characters
-                        (16. * line_height) // Default size
-                            .min(size.y() / 2.) // Shrink to half of the editor height
-                            .max(4. * line_height), // Apply minimum height of 4 lines
-                    ),
-                },
-                cx,
-            );
+        if let Some((_, hover_popovers)) = hover.as_mut() {
+            for hover_popover in hover_popovers.iter_mut() {
+                hover_popover.layout(
+                    SizeConstraint {
+                        min: Vector2F::zero(),
+                        max: vec2f(
+                            (120. * em_width) // Default size
+                                .min(size.x() / 2.) // Shrink to half of the editor width
+                                .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
+                            (16. * line_height) // Default size
+                                .min(size.y() / 2.) // Shrink to half of the editor height
+                                .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
+                        ),
+                    },
+                    cx,
+                );
+            }
         }
 
         (
@@ -1409,7 +1450,7 @@ impl Element for EditorElement {
                 selections,
                 context_menu,
                 code_actions_indicator,
-                hover,
+                hover_popovers: hover,
             },
         )
     }
@@ -1434,7 +1475,7 @@ impl Element for EditorElement {
             gutter_bounds,
             text_bounds,
             context_menu_bounds: None,
-            hover_bounds: None,
+            hover_popover_bounds: Default::default(),
         };
 
         self.paint_background(gutter_bounds, text_bounds, layout, cx);
@@ -1475,9 +1516,11 @@ impl Element for EditorElement {
             }
         }
 
-        if let Some((_, hover)) = &mut layout.hover {
-            if hover.dispatch_event(event, cx) {
-                return true;
+        if let Some((_, popover_elements)) = &mut layout.hover_popovers {
+            for popover_element in popover_elements.iter_mut() {
+                if popover_element.dispatch_event(event, cx) {
+                    return true;
+                }
             }
         }
 
@@ -1572,7 +1615,7 @@ pub struct LayoutState {
     selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
     context_menu: Option<(DisplayPoint, ElementBox)>,
     code_actions_indicator: Option<(u32, ElementBox)>,
-    hover: Option<(DisplayPoint, ElementBox)>,
+    hover_popovers: Option<(DisplayPoint, Vec<ElementBox>)>,
 }
 
 struct BlockLayout {
@@ -1617,7 +1660,7 @@ pub struct PaintState {
     gutter_bounds: RectF,
     text_bounds: RectF,
     context_menu_bounds: Option<RectF>,
-    hover_bounds: Option<RectF>,
+    hover_popover_bounds: Vec<RectF>,
 }
 
 impl PaintState {

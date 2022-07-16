@@ -54,6 +54,13 @@ impl<T: Clone> Selection<T> {
             goal: self.goal,
         }
     }
+
+    pub fn collapse_to(&mut self, point: T, new_goal: SelectionGoal) {
+        self.start = point.clone();
+        self.end = point;
+        self.goal = new_goal;
+        self.reversed = false;
+    }
 }
 
 impl<T: Copy + Ord> Selection<T> {
@@ -76,13 +83,6 @@ impl<T: Copy + Ord> Selection<T> {
             self.end = head;
         }
         self.goal = new_goal;
-    }
-
-    pub fn collapse_to(&mut self, point: T, new_goal: SelectionGoal) {
-        self.start = point;
-        self.end = point;
-        self.goal = new_goal;
-        self.reversed = false;
     }
 
     pub fn range(&self) -> Range<T> {
