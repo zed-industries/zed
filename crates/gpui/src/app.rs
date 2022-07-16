@@ -1781,6 +1781,21 @@ impl MutableAppContext {
         })
     }
 
+    pub fn try_add_model<T, F>(&mut self, build_model: F) -> Result<ModelHandle<T>>
+    where
+        T: Entity,
+        F: FnOnce(&mut ModelContext<T>) -> Result<T>,
+    {
+        self.update(|this| {
+            let model_id = post_inc(&mut this.next_entity_id);
+            let handle = ModelHandle::new(model_id, &this.cx.ref_counts);
+            let mut cx = ModelContext::new(this, model_id);
+            let model = build_model(&mut cx)?;
+            this.cx.models.insert(model_id, Box::new(model));
+            Ok(handle)
+        })
+    }
+
     pub fn add_window<T, F>(
         &mut self,
         window_options: WindowOptions,

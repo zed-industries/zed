@@ -11,6 +11,7 @@ use alacritty_terminal::{
     tty::{self, setup_env},
     Term,
 };
+use anyhow::Result;
 use futures::{channel::mpsc::unbounded, StreamExt};
 use settings::{Settings, Shell};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
@@ -47,10 +48,10 @@ impl TerminalConnection {
     pub fn new(
         working_directory: Option<PathBuf>,
         shell: Option<Shell>,
-        env_vars: Option<Vec<(String, String)>>,
+        env: Option<HashMap<String, String>>,
         initial_size: SizeInfo,
         cx: &mut ModelContext<Self>,
-    ) -> TerminalConnection {
+    ) -> Result<TerminalConnection> {
         let pty_config = {
             let shell = shell.and_then(|shell| match shell {
                 Shell::System => None,
@@ -65,12 +66,7 @@ impl TerminalConnection {
             }
         };
 
-        let mut env: HashMap<String, String> = HashMap::new();
-        if let Some(envs) = env_vars {
-            for (var, val) in envs {
-                env.insert(var, val);
-            }
-        }
+        let mut env = env.unwrap_or_else(|| HashMap::new());
 
         //TODO: Properly set the current locale,
         env.insert("LC_ALL".to_string(), "en_US.UTF-8".to_string());
@@ -91,20 +87,7 @@ impl TerminalConnection {
         let term = Arc::new(FairMutex::new(term));
 
         //Setup the pty...
-        let pty = {
-            if let Some(pty) = tty::new(&pty_config, &initial_size, None).ok() {
-                pty
-            } else {
-                let pty_config = PtyConfig {
-                    shell: None,
-                    working_directory: working_directory.clone(),
-                    ..Default::default()
-                };
-
-                tty::new(&pty_config, &initial_size, None)
-                    .expect("Failed with default shell too :(")
-            }
-        };
+        let pty = tty::new(&pty_config, &initial_size, None)?;
 
         //And connect them together
         let event_loop = EventLoop::new(
@@ -135,12 +118,12 @@ impl TerminalConnection {
         })
         .detach();
 
-        TerminalConnection {
+        Ok(TerminalConnection {
             pty_tx: Notifier(pty_tx),
             term,
             title: DEFAULT_TITLE.to_string(),
             associated_directory: working_directory,
-        }
+        })
     }
 
     ///Takes events from Alacritty and translates them to behavior on this view

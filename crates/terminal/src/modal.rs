@@ -25,7 +25,12 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
         // No connection was stored, create a new terminal
         if let Some(closed_terminal_handle) = workspace.toggle_modal(cx, |workspace, cx| {
             let wd = get_wd_for_workspace(workspace, cx);
-            let this = cx.add_view(|cx| Terminal::new(wd, true, cx));
+
+            //TODO: Anything other than crash.
+            let this = cx
+                .add_option_view(|cx| Terminal::new(wd, true, cx).ok())
+                .unwrap();
+
             let connection_handle = this.read(cx).connection.clone();
             cx.subscribe(&connection_handle, on_event).detach();
             //Set the global immediately, in case the user opens the command palette
