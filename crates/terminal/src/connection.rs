@@ -117,6 +117,13 @@ impl TerminalConnection {
             }
         };
 
+        let shell = {
+            let mut buf = [0; 1024];
+            let pw = alacritty_unix::get_pw_entry(&mut buf).unwrap();
+            pw.shell.to_string()
+            // alacritty_unix::default_shell(&pw)
+        };
+
         //And connect them together
         let event_loop = EventLoop::new(
             term.clone(),
@@ -149,7 +156,7 @@ impl TerminalConnection {
         TerminalConnection {
             pty_tx: Notifier(pty_tx),
             term,
-            title: DEFAULT_TITLE.to_string(),
+            title: shell.to_string(),
             associated_directory: working_directory,
         }
     }
@@ -260,4 +267,82 @@ impl Drop for TerminalConnection {
 
 impl Entity for TerminalConnection {
     type Event = Event;
+}
+
+mod alacritty_unix {
+    use alacritty_terminal::config::Program;
+    use gpui::anyhow::{bail, Result};
+    use libc::{self};
+    use std::ffi::CStr;
+    use std::mem::MaybeUninit;
+    use std::ptr;
+
+    #[derive(Debug)]
+    pub struct Passwd<'a> {
+        _name: &'a str,
+        _dir: &'a str,
+        pub shell: &'a str,
+    }
+
+    /// Return a Passwd struct with pointers into the provided buf.
+    ///
+    /// # Unsafety
+    ///
+    /// If `buf` is changed while `Passwd` is alive, bad thing will almost certainly happen.
+    pub fn get_pw_entry(buf: &mut [i8; 1024]) -> Result<Passwd<'_>> {
+        // Create zeroed passwd struct.
+        let mut entry: MaybeUninit<libc::passwd> = MaybeUninit::uninit();
+
+        let mut res: *mut libc::passwd = ptr::null_mut();
+
+        // Try and read the pw file.
+        let uid = unsafe { libc::getuid() };
+        let status = unsafe {
+            libc::getpwuid_r(
+                uid,
+                entry.as_mut_ptr(),
+                buf.as_mut_ptr() as *mut _,
+                buf.len(),
+                &mut res,
+            )
+        };
+        let entry = unsafe { entry.assume_init() };
+
+        if status < 0 {
+            bail!("getpwuid_r failed");
+        }
+
+        if res.is_null() {
+            bail!("pw not found");
+        }
+
+        // Sanity check.
+        assert_eq!(entry.pw_uid, uid);
+
+        // Build a borrowed Passwd struct.
+        Ok(Passwd {
+            _name: unsafe { CStr::from_ptr(entry.pw_name).to_str().unwrap() },
+            _dir: unsafe { CStr::from_ptr(entry.pw_dir).to_str().unwrap() },
+            shell: unsafe { CStr::from_ptr(entry.pw_shell).to_str().unwrap() },
+        })
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn _default_shell(pw: &Passwd<'_>) -> Program {
+        let shell_name = pw.shell.rsplit('/').next().unwrap();
+        let argv = vec![
+            String::from("-c"),
+            format!("exec -a -{} {}", shell_name, pw.shell),
+        ];
+
+        Program::WithArgs {
+            program: "/bin/bash".to_owned(),
+            args: argv,
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn default_shell(pw: &Passwd<'_>) -> Program {
+        Program::Just(env::var("SHELL").unwrap_or_else(|_| pw.shell.to_owned()))
+    }
 }
