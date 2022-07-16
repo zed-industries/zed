@@ -44,6 +44,6 @@ export default function terminal(theme: Theme) {
       margin: 25,
       border: border(theme, "primary"),
       shadow: modalShadow(theme),
-    }
+    },
   };
 }

@@ -26,13 +26,13 @@ export default function contactFinder(theme: Theme) {
     contactButton: {
       ...contactButton,
       hover: {
-        background: backgroundColor(theme, 100, "hovered")
-      }
+        background: backgroundColor(theme, 100, "hovered"),
+      },
     },
     disabledContactButton: {
       ...contactButton,
       background: backgroundColor(theme, 100),
       color: iconColor(theme, "muted"),
     },
-  }
+  };
 }

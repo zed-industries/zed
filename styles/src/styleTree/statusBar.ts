@@ -5,13 +5,13 @@ import { workspaceBackground } from "./workspace";
 export default function statusBar(theme: Theme) {
   const statusContainer = {
     cornerRadius: 6,
-    padding: { top: 3, bottom: 3, left: 6, right: 6 }
-  }
+    padding: { top: 3, bottom: 3, left: 6, right: 6 },
+  };
 
   const diagnosticStatusContainer = {
     cornerRadius: 6,
-    padding: { top: 1, bottom: 1, left: 6, right: 6 }
-  }
+    padding: { top: 1, bottom: 1, left: 6, right: 6 },
+  };
 
   return {
     height: 30,
@@ -37,7 +37,7 @@ export default function statusBar(theme: Theme) {
         message: text(theme, "sans", "primary"),
         iconColor: iconColor(theme, "active"),
         background: backgroundColor(theme, 300, "hovered"),
-      }
+      },
     },
     diagnosticMessage: {
       ...text(theme, "sans", "muted"),
@@ -86,7 +86,7 @@ export default function statusBar(theme: Theme) {
           ...diagnosticStatusContainer,
           background: backgroundColor(theme, "error", "hovered"),
           border: border(theme, "error"),
-        }
+        },
       },
     },
     sidebarButtons: {
@@ -103,7 +103,7 @@ export default function statusBar(theme: Theme) {
         active: {
           iconColor: iconColor(theme, "active"),
           background: backgroundColor(theme, 300, "active"),
-        }
+        },
       },
       badge: {
         cornerRadius: 3,
@@ -111,7 +111,7 @@ export default function statusBar(theme: Theme) {
         margin: { bottom: -1, right: -1 },
         border: { width: 1, color: workspaceBackground(theme) },
         background: iconColor(theme, "feature"),
-      }
-    }
-  }
+      },
+    },
+  };
 }

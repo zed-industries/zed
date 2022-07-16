@@ -1,10 +1,16 @@
 import Theme from "../themes/common/theme";
 import { withOpacity } from "../utils/color";
-import { backgroundColor, border, iconColor, modalShadow, text } from "./components";
+import {
+  backgroundColor,
+  border,
+  iconColor,
+  modalShadow,
+  text,
+} from "./components";
 import statusBar from "./statusBar";
 
 export function workspaceBackground(theme: Theme) {
-  return backgroundColor(theme, 300)
+  return backgroundColor(theme, 300);
 }
 
 export default function workspace(theme: Theme) {
@@ -49,7 +55,7 @@ export default function workspace(theme: Theme) {
     },
     joiningProjectMessage: {
       padding: 12,
-      ...text(theme, "sans", "primary", { size: "lg" })
+      ...text(theme, "sans", "primary", { size: "lg" }),
     },
     leaderBorderOpacity: 0.7,
     leaderBorderWidth: 2.0,
@@ -58,21 +64,21 @@ export default function workspace(theme: Theme) {
     paneButton: {
       color: iconColor(theme, "secondary"),
       border: {
-        ...tab.border
+        ...tab.border,
       },
       iconWidth: 12,
       buttonWidth: tab.height,
       hover: {
         color: iconColor(theme, "active"),
         background: backgroundColor(theme, 300),
-      }
+      },
     },
     modal: {
       margin: {
         bottom: 52,
         top: 52,
       },
-      cursor: "Arrow"
+      cursor: "Arrow",
     },
     sidebarResizeHandle: {
       background: border(theme, "primary").color,
@@ -105,7 +111,7 @@ export default function workspace(theme: Theme) {
       avatarRibbon: {
         height: 3,
         width: 12,
-        // TODO: The background for this ideally should be 
+        // TODO: The background for this ideally should be
         // set with a token, not hardcoded in rust
       },
       border: border(theme, "primary", { bottom: true, overlay: true }),
@@ -127,7 +133,7 @@ export default function workspace(theme: Theme) {
           ...text(theme, "sans", "active", { size: "xs" }),
           background: backgroundColor(theme, "on300", "hovered"),
           border: border(theme, "primary"),
-        }
+        },
       },
       offlineIcon: {
         color: iconColor(theme, "secondary"),
@@ -192,6 +198,6 @@ export default function workspace(theme: Theme) {
     notifications: {
       width: 400,
       margin: { right: 10, bottom: 10 },
-    }
+    },
   };
 }

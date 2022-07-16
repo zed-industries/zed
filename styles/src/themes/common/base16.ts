@@ -1,5 +1,5 @@
 import chroma, { Color, Scale } from "chroma-js";
-import { fontWeights, } from "../../common";
+import { fontWeights } from "../../common";
 import { withOpacity } from "../../utils/color";
 import Theme, { buildPlayer, Syntax } from "./theme";
 
@@ -13,25 +13,33 @@ export function colorRamp(color: Color): Scale {
 export function createTheme(
   name: string,
   isLight: boolean,
-  color_ramps: { [rampName: string]: Scale },
+  color_ramps: { [rampName: string]: Scale }
 ): Theme {
   let ramps: typeof color_ramps = {};
   // Chromajs mutates the underlying ramp when you call domain. This causes problems because
-  // we now store the ramps object in the theme so that we can pull colors out of them. 
+  // we now store the ramps object in the theme so that we can pull colors out of them.
   // So instead of calling domain and storing the result, we have to construct new ramps for each
   // theme so that we don't modify the passed in ramps.
   // This combined with an error in the type definitions for chroma js means we have to cast the colors
   // function to any in order to get the colors back out from the original ramps.
   if (isLight) {
     for (var rampName in color_ramps) {
-      ramps[rampName] = chroma.scale((color_ramps[rampName].colors as any)()).domain([1, 0]);
+      ramps[rampName] = chroma
+        .scale((color_ramps[rampName].colors as any)())
+        .domain([1, 0]);
     }
-    ramps.neutral = chroma.scale((color_ramps.neutral.colors as any)()).domain([7, 0]);
+    ramps.neutral = chroma
+      .scale((color_ramps.neutral.colors as any)())
+      .domain([7, 0]);
   } else {
     for (var rampName in color_ramps) {
-      ramps[rampName] = chroma.scale((color_ramps[rampName].colors as any)()).domain([0, 1]);
+      ramps[rampName] = chroma
+        .scale((color_ramps[rampName].colors as any)())
+        .domain([0, 1]);
     }
-    ramps.neutral = chroma.scale((color_ramps.neutral.colors as any)()).domain([0, 7]);
+    ramps.neutral = chroma
+      .scale((color_ramps.neutral.colors as any)())
+      .domain([0, 7]);
   }
 
   let blend = isLight ? 0.12 : 0.24;
@@ -242,8 +250,12 @@ export function createTheme(
   };
 
   const shadow = withOpacity(
-    ramps.neutral(isLight ? 7 : 0).darken().hex(),
-    blend);
+    ramps
+      .neutral(isLight ? 7 : 0)
+      .darken()
+      .hex(),
+    blend
+  );
 
   return {
     name,

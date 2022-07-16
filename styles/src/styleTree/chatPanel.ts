@@ -6,7 +6,7 @@ import {
   player,
   text,
   TextColor,
-  popoverShadow
+  popoverShadow,
 } from "./components";
 
 export default function chatPanel(theme: Theme) {

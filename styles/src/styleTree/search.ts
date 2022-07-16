@@ -2,7 +2,6 @@ import Theme from "../themes/common/theme";
 import { backgroundColor, border, player, text } from "./components";
 
 export default function search(theme: Theme) {
-
   // Search input
   const editor = {
     background: backgroundColor(theme, 500),
@@ -51,7 +50,7 @@ export default function search(theme: Theme) {
         ...text(theme, "mono", "active"),
         background: backgroundColor(theme, "on500", "hovered"),
         border: border(theme, "muted"),
-      }
+      },
     },
     editor,
     invalidEditor: {

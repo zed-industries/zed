@@ -7,14 +7,14 @@ export default function updateNotification(theme: Theme): Object {
   return {
     message: {
       ...text(theme, "sans", "primary", { size: "xs" }),
-      margin: { left: headerPadding, right: headerPadding }
+      margin: { left: headerPadding, right: headerPadding },
     },
     actionMessage: {
       ...text(theme, "sans", "secondary", { size: "xs" }),
       margin: { left: headerPadding, top: 6, bottom: 6 },
       hover: {
-        color: theme.textColor["active"]
-      }
+        color: theme.textColor["active"],
+      },
     },
     dismissButton: {
       color: iconColor(theme, "secondary"),
@@ -23,8 +23,8 @@ export default function updateNotification(theme: Theme): Object {
       buttonWidth: 8,
       buttonHeight: 8,
       hover: {
-        color: iconColor(theme, "primary")
-      }
-    }
-  }
+        color: iconColor(theme, "primary"),
+      },
+    },
+  };
 }

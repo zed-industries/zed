@@ -15,8 +15,8 @@ export default function tooltip(theme: Theme) {
       cornerRadius: 4,
       margin: { left: 6 },
       padding: { left: 4, right: 4 },
-      ...text(theme, "mono", "muted", { size: "xs", weight: "bold" })
+      ...text(theme, "mono", "muted", { size: "xs", weight: "bold" }),
     },
     maxTextWidth: 200,
-  }
+  };
 }

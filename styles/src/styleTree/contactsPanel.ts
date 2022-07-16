@@ -1,6 +1,13 @@
 import Theme from "../themes/common/theme";
 import { panel } from "./app";
-import { backgroundColor, border, borderColor, iconColor, player, text } from "./components";
+import {
+  backgroundColor,
+  border,
+  borderColor,
+  iconColor,
+  player,
+  text,
+} from "./components";
 
 export default function contactsPanel(theme: Theme) {
   const nameMargin = 8;
@@ -24,7 +31,7 @@ export default function contactsPanel(theme: Theme) {
       margin: {
         left: nameMargin,
         right: nameMargin,
-      }
+      },
     },
     padding: {
       left: sidePadding,
@@ -59,7 +66,7 @@ export default function contactsPanel(theme: Theme) {
       margin: {
         left: sidePadding,
         right: sidePadding,
-      }
+      },
     },
     userQueryEditorHeight: 32,
     addContactButton: {
@@ -86,16 +93,16 @@ export default function contactsPanel(theme: Theme) {
       active: {
         ...text(theme, "mono", "primary", { size: "sm" }),
         background: backgroundColor(theme, 100, "active"),
-      }
+      },
     },
     contactRow: {
       padding: {
         left: sidePadding,
-        right: sidePadding
+        right: sidePadding,
       },
       active: {
         background: backgroundColor(theme, 100, "active"),
-      }
+      },
     },
     treeBranch: {
       color: borderColor(theme, "active"),
@@ -105,7 +112,7 @@ export default function contactsPanel(theme: Theme) {
       },
       active: {
         color: borderColor(theme, "active"),
-      }
+      },
     },
     contactAvatar: {
       cornerRadius: 10,
@@ -141,18 +148,18 @@ export default function contactsPanel(theme: Theme) {
       },
       active: {
         background: backgroundColor(theme, 300, "active"),
-      }
+      },
     },
     inviteRow: {
       padding: {
         left: sidePadding,
-        right: sidePadding
+        right: sidePadding,
       },
       border: { top: true, width: 1, color: borderColor(theme, "primary") },
       text: text(theme, "sans", "primary", { size: "sm" }),
       hover: {
-        text: text(theme, "sans", "primary", { size: "sm", underline: true })
-      }
-    }
-  }
+        text: text(theme, "sans", "primary", { size: "sm", underline: true }),
+      },
+    },
+  };
 }
