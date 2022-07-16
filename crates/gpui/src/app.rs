@@ -1970,10 +1970,13 @@ impl MutableAppContext {
             for model_id in dropped_models {
                 self.subscriptions.lock().remove(&model_id);
                 self.observations.lock().remove(&model_id);
-                let mut model = self.cx.models.remove(&model_id).unwrap();
-                model.release(self);
-                self.pending_effects
-                    .push_back(Effect::ModelRelease { model_id, model });
+                //Model handles and IDs may have been created to instantiate a model without
+                //finishing successfully (`try_add_model()`)
+                if let Some(mut model) = self.cx.models.remove(&model_id) {
+                    model.release(self);
+                    self.pending_effects
+                        .push_back(Effect::ModelRelease { model_id, model });
+                }
             }
 
             for (window_id, view_id) in dropped_views {

@@ -1,4 +1,5 @@
 use gpui::{ModelHandle, ViewContext};
+use util::ResultExt;
 use workspace::Workspace;
 
 use crate::{get_wd_for_workspace, DeployModal, Event, Terminal, TerminalConnection};
@@ -26,9 +27,9 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
         if let Some(closed_terminal_handle) = workspace.toggle_modal(cx, |workspace, cx| {
             let wd = get_wd_for_workspace(workspace, cx);
 
-            //TODO: Anything other than crash.
+            //TODO: Create a 'failed to launch' view which prints the error and config details.
             let this = cx
-                .add_option_view(|cx| Terminal::new(wd, true, cx).ok())
+                .add_option_view(|cx| Terminal::new(wd, true, cx).log_err())
                 .unwrap();
 
             let connection_handle = this.read(cx).connection.clone();

@@ -17,6 +17,7 @@ use project::{LocalWorktree, Project, ProjectPath};
 use settings::{Settings, WorkingDirectory};
 use smallvec::SmallVec;
 use std::path::{Path, PathBuf};
+use util::ResultExt;
 use workspace::{Item, Workspace};
 
 use crate::terminal_element::TerminalEl;
@@ -157,7 +158,7 @@ impl Terminal {
     ///Create a new Terminal in the current working directory or the user's home directory
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         let wd = get_wd_for_workspace(workspace, cx);
-        if let Some(view) = cx.add_option_view(|cx| Terminal::new(wd, false, cx).ok()) {
+        if let Some(view) = cx.add_option_view(|cx| Terminal::new(wd, false, cx).log_err()) {
             workspace.add_item(Box::new(view), cx);
         }
     }
