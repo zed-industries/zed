@@ -3,7 +3,7 @@ mod keymappings;
 use alacritty_terminal::{
     ansi::{ClearMode, Handler},
     config::{Config, Program, PtyConfig},
-    event::{Event as AlacTermEvent, Notify},
+    event::{Event as AlacTermEvent, EventListener, Notify},
     event_loop::{EventLoop, Msg, Notifier},
     grid::Scroll,
     sync::FairMutex,
@@ -11,16 +11,16 @@ use alacritty_terminal::{
     tty::{self, setup_env},
     Term,
 };
-use futures::{channel::mpsc::unbounded, StreamExt};
+use futures::{
+    channel::mpsc::{unbounded, UnboundedSender},
+    StreamExt,
+};
 use settings::{Settings, Shell};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use gpui::{keymap::Keystroke, ClipboardItem, CursorStyle, Entity, ModelContext};
 
-use crate::{
-    color_translation::{get_color_at_index, to_alac_rgb},
-    ZedListener,
-};
+use crate::color_translation::{get_color_at_index, to_alac_rgb};
 
 use self::keymappings::to_esc_str;
 
@@ -34,6 +34,17 @@ pub enum Event {
     Activate,
     Wakeup,
     Bell,
+    KeyInput,
+}
+
+///A translation struct for Alacritty to communicate with us from their event loop
+#[derive(Clone)]
+pub struct ZedListener(UnboundedSender<AlacTermEvent>);
+
+impl EventListener for ZedListener {
+    fn send_event(&self, event: AlacTermEvent) {
+        self.0.unbounded_send(event).ok();
+    }
 }
 
 pub struct TerminalConnection {
