@@ -191,7 +191,7 @@ impl Terminal {
     fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
         if let Some(item) = cx.read_from_clipboard() {
             self.connection.update(cx, |connection, _| {
-                connection.write_to_pty(item.text().to_owned());
+                connection.paste(item.text());
             })
         }
     }
