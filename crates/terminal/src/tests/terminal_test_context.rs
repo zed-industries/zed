@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use alacritty_terminal::term::SizeInfo;
-use gpui::{AppContext, ModelContext, ModelHandle, ReadModelWith, TestAppContext};
+use gpui::{AppContext, ModelHandle, ReadModelWith, TestAppContext};
 use itertools::Itertools;
 
 use crate::{
@@ -28,7 +28,8 @@ impl<'a> TerminalTestContext<'a> {
             false,
         );
 
-        let connection = cx.add_model(|cx| TerminalConnection::new(None, size_info, cx));
+        let connection =
+            cx.add_model(|cx| TerminalConnection::new(None, None, None, size_info, cx));
 
         TerminalTestContext { cx, connection }
     }
@@ -54,13 +55,6 @@ impl<'a> TerminalTestContext<'a> {
             .read_model_with(&self.connection, &mut |conn, _: &AppContext| {
                 Self::grid_as_str(conn)
             })
-    }
-
-    pub fn update_connection<F, S>(&mut self, f: F) -> S
-    where
-        F: FnOnce(&mut TerminalConnection, &mut ModelContext<TerminalConnection>) -> S,
-    {
-        self.connection.update(self.cx, |conn, cx| f(conn, cx))
     }
 
     fn grid_as_str(connection: &TerminalConnection) -> String {
