@@ -22,6 +22,7 @@ use gpui::{
     text_layout::{Line, RunStyle},
     Event, FontCache, KeyDownEvent, MouseButton, MouseButtonEvent, MouseMovedEvent, MouseRegion,
     PaintContext, Quad, ScrollWheelEvent, SizeConstraint, TextLayoutCache, WeakModelHandle,
+    WeakViewHandle,
 };
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
@@ -32,7 +33,11 @@ use util::ResultExt;
 use std::{cmp::min, ops::Range, sync::Arc};
 use std::{fmt::Debug, ops::Sub};
 
-use crate::{color_translation::convert_color, connection::TerminalConnection, ZedListener};
+use crate::{
+    color_translation::convert_color,
+    connection::{TerminalConnection, ZedListener},
+    Terminal,
+};
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
@@ -48,7 +53,7 @@ const DEBUG_GRID: bool = false;
 ///We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalEl {
     connection: WeakModelHandle<TerminalConnection>,
-    view_id: usize,
+    view: WeakViewHandle<Terminal>,
     modal: bool,
 }
 
@@ -100,12 +105,12 @@ pub struct LayoutState {
 
 impl TerminalEl {
     pub fn new(
-        view_id: usize,
+        view: WeakViewHandle<Terminal>,
         connection: WeakModelHandle<TerminalConnection>,
         modal: bool,
     ) -> TerminalEl {
         TerminalEl {
-            view_id,
+            view,
             connection,
             modal,
         }
@@ -238,7 +243,7 @@ impl Element for TerminalEl {
             attach_mouse_handlers(
                 origin,
                 cur_size,
-                self.view_id,
+                self.view.id(),
                 &layout.terminal,
                 visible_bounds,
                 cx,
@@ -381,6 +386,11 @@ impl Element for TerminalEl {
             Event::KeyDown(KeyDownEvent { keystroke, .. }) => {
                 if !cx.is_parent_view_focused() {
                     return false;
+                }
+
+                //TODO Talk to keith about how to catch events emitted from an element.
+                if let Some(view) = self.view.upgrade(cx.app) {
+                    view.update(cx.app, |view, cx| view.clear_bel(cx))
                 }
 
                 self.connection

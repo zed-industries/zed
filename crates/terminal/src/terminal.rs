@@ -3,15 +3,10 @@ pub mod connection;
 mod modal;
 pub mod terminal_element;
 
-use alacritty_terminal::{
-    event::{Event as AlacTermEvent, EventListener},
-    term::SizeInfo,
-};
+use alacritty_terminal::term::SizeInfo;
 
 use connection::{Event, TerminalConnection};
 use dirs::home_dir;
-use editor::Input;
-use futures::channel::mpsc::UnboundedSender;
 use gpui::{
     actions, elements::*, keymap::Keystroke, AppContext, ClipboardItem, Entity, ModelHandle,
     MutableAppContext, View, ViewContext,
@@ -30,9 +25,6 @@ const DEBUG_TERMINAL_WIDTH: f32 = 1000.; //This needs to be wide enough that the
 const DEBUG_TERMINAL_HEIGHT: f32 = 200.;
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
-
-//For bel, use a yellow dot. (equivalent to dirty file with conflict)
-//For title, introduce max title length and
 
 ///Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
@@ -67,18 +59,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(deploy_modal);
     cx.add_action(Terminal::copy);
     cx.add_action(Terminal::paste);
-    cx.add_action(Terminal::input);
     cx.add_action(Terminal::clear);
-}
-
-///A translation struct for Alacritty to communicate with us from their event loop
-#[derive(Clone)]
-pub struct ZedListener(UnboundedSender<AlacTermEvent>);
-
-impl EventListener for ZedListener {
-    fn send_event(&self, event: AlacTermEvent) {
-        self.0.unbounded_send(event).ok();
-    }
 }
 
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
@@ -142,6 +123,10 @@ impl Terminal {
                 this.has_bell = true;
                 cx.emit(Event::TitleChanged);
             }
+            // Event::Input => {
+            //     this.has_bell = false;
+            //     cx.emit(Event::TitleChanged);
+            // }
             _ => cx.emit(*event),
         })
         .detach();
@@ -154,16 +139,9 @@ impl Terminal {
         }
     }
 
-    fn input(&mut self, Input(text): &Input, cx: &mut ViewContext<Self>) {
-        self.connection.update(cx, |connection, _| {
-            //TODO: This is probably not encoding UTF8 correctly (see alacritty/src/input.rs:L825-837)
-            connection.write_to_pty(text.clone());
-        });
-
-        if self.has_bell {
-            self.has_bell = false;
-            cx.emit(Event::TitleChanged);
-        }
+    fn clear_bel(&mut self, cx: &mut ViewContext<Self>) {
+        self.has_bell = false;
+        cx.emit(Event::TitleChanged);
     }
 
     fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
@@ -240,8 +218,7 @@ impl View for Terminal {
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
         let element = {
             let connection_handle = self.connection.clone().downgrade();
-            let view_id = cx.view_id();
-            TerminalEl::new(view_id, connection_handle, self.modal).contained()
+            TerminalEl::new(cx.handle(), connection_handle, self.modal).contained()
         };
 
         if self.modal {
@@ -274,37 +251,17 @@ impl Item for Terminal {
         tab_theme: &theme::Tab,
         cx: &gpui::AppContext,
     ) -> ElementBox {
-        let settings = cx.global::<Settings>();
-        let search_theme = &settings.theme.search; //TODO properly integrate themes
-
-        let mut flex = Flex::row();
-
-        if self.has_bell {
-            flex.add_child(
-                Svg::new("icons/bolt_12.svg") //TODO: Swap out for a better icon, or at least resize this
-                    .with_color(tab_theme.label.text.color)
-                    .constrained()
-                    .with_width(search_theme.tab_icon_width)
-                    .aligned()
-                    .boxed(),
-            );
-        };
-
-        flex.with_child(
-            Label::new(
-                self.connection.read(cx).title.clone(),
-                tab_theme.label.clone(),
+        Flex::row()
+            .with_child(
+                Label::new(
+                    self.connection.read(cx).title.clone(),
+                    tab_theme.label.clone(),
+                )
+                .aligned()
+                .contained()
+                .boxed(),
             )
-            .aligned()
-            .contained()
-            .with_margin_left(if self.has_bell {
-                search_theme.tab_icon_spacing
-            } else {
-                0.
-            })
-            .boxed(),
-        )
-        .boxed()
+            .boxed()
     }
 
     fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self> {
@@ -363,6 +320,10 @@ impl Item for Terminal {
 
     fn is_dirty(&self, _: &gpui::AppContext) -> bool {
         self.has_new_content
+    }
+
+    fn has_conflict(&self, _: &AppContext) -> bool {
+        self.has_bell
     }
 
     fn should_update_tab_on_event(event: &Self::Event) -> bool {
