@@ -2909,9 +2909,17 @@ impl Editor {
         if selections.iter().all(|s| s.is_empty()) {
             self.transact(cx, |this, cx| {
                 this.buffer.update(cx, |buffer, cx| {
+                    let mut prev_cursor_row = 0;
+                    let mut row_delta = 0;
                     for selection in &mut selections {
-                        let language_name =
-                            buffer.language_at(selection.start, cx).map(|l| l.name());
+                        let mut cursor = selection.start;
+                        if cursor.row != prev_cursor_row {
+                            row_delta = 0;
+                            prev_cursor_row = cursor.row;
+                        }
+                        cursor.column += row_delta;
+
+                        let language_name = buffer.language_at(cursor, cx).map(|l| l.name());
                         let settings = cx.global::<Settings>();
                         let tab_size = if settings.hard_tabs(language_name.as_deref()) {
                             IndentSize::tab()
@@ -2919,21 +2927,18 @@ impl Editor {
                             let tab_size = settings.tab_size(language_name.as_deref()).get();
                             let char_column = buffer
                                 .read(cx)
-                                .text_for_range(Point::new(selection.start.row, 0)..selection.start)
+                                .text_for_range(Point::new(cursor.row, 0)..cursor)
                                 .flat_map(str::chars)
                                 .count();
                             let chars_to_next_tab_stop = tab_size - (char_column as u32 % tab_size);
                             IndentSize::spaces(chars_to_next_tab_stop)
                         };
-                        buffer.edit(
-                            [(
-                                selection.start..selection.start,
-                                tab_size.chars().collect::<String>(),
-                            )],
-                            cx,
-                        );
-                        selection.start.column += tab_size.len;
-                        selection.end = selection.start;
+                        buffer.edit([(cursor..cursor, tab_size.chars().collect::<String>())], cx);
+                        cursor.column += tab_size.len;
+                        selection.start = cursor;
+                        selection.end = cursor;
+
+                        row_delta += tab_size.len;
                     }
                 });
                 this.change_selections(Some(Autoscroll::Fit), cx, |s| {
@@ -7564,6 +7569,27 @@ mod tests {
             // The selections are moved after the inserted characters
             assert_eq!(editor.selections.ranges(cx), &[3..3, 9..9, 15..15],);
         });
+    }
+
+    #[gpui::test]
+    async fn test_tab(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update(|cx| {
+            cx.update_global::<Settings, _, _>(|settings, _| {
+                settings.editor_overrides.tab_size = Some(NonZeroU32::new(3).unwrap());
+            });
+        });
+        cx.set_state(indoc! {"
+            |ab|c
+            |🏀|🏀|efg
+            d|
+        "});
+        cx.update_editor(|e, cx| e.tab(&Tab, cx));
+        cx.assert_editor_state(indoc! {"
+              |ab |c
+              |🏀  |🏀  |efg
+           d  |
+        "});
     }
 
     #[gpui::test]
