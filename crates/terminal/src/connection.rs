@@ -91,7 +91,20 @@ impl TerminalConnection {
         let term = Arc::new(FairMutex::new(term));
 
         //Setup the pty...
-        let pty = tty::new(&pty_config, &initial_size, None).expect("Could not create tty");
+        let pty = {
+            if let Some(pty) = tty::new(&pty_config, &initial_size, None).ok() {
+                pty
+            } else {
+                let pty_config = PtyConfig {
+                    shell: None,
+                    working_directory: working_directory.clone(),
+                    ..Default::default()
+                };
+
+                tty::new(&pty_config, &initial_size, None)
+                    .expect("Failed with default shell too :(")
+            }
+        };
 
         //And connect them together
         let event_loop = EventLoop::new(
