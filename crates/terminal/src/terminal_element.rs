@@ -1,6 +1,7 @@
 mod terminal_layout_context;
 
 use alacritty_terminal::{
+    ansi::{Color::Named, NamedColor},
     grid::{Dimensions, GridIterator, Indexed, Scroll},
     index::{Column as GridCol, Line as GridLine, Point, Side},
     selection::{Selection, SelectionRange, SelectionType},
@@ -55,11 +56,6 @@ pub struct TerminalEl {
 pub struct CellWidth(f32);
 pub struct LineHeight(f32);
 
-struct LayoutLine {
-    cells: Vec<LayoutCell>,
-    highlighted_range: Option<Range<usize>>,
-}
-
 ///New type pattern to ensure that we use adjusted mouse positions throughout the code base, rather than
 struct PaneRelativePos(Vector2F);
 
@@ -68,26 +64,11 @@ fn relative_pos(mouse_position: Vector2F, origin: Vector2F) -> PaneRelativePos {
     PaneRelativePos(mouse_position.sub(origin)) //Avoid the extra allocation by mutating
 }
 
-#[derive(Clone, Debug, Default)]
-struct LayoutCell {
-    point: Point<i32, i32>,
-    text: Line, //NOTE TO SELF THIS IS BAD PERFORMANCE RN!
-    background_color: Color,
-}
-
-impl LayoutCell {
-    fn new(point: Point<i32, i32>, text: Line, background_color: Color) -> LayoutCell {
-        LayoutCell {
-            point,
-            text,
-            background_color,
-        }
-    }
-}
-
 ///The information generated during layout that is nescessary for painting
 pub struct LayoutState {
-    layout_lines: Vec<LayoutLine>,
+    cells: Vec<LayoutCell>,
+    rects: Vec<LayoutRect>,
+    highlights: Vec<RelativeHighlightedRange>,
     line_height: LineHeight,
     em_width: CellWidth,
     cursor: Option<Cursor>,
@@ -225,19 +206,9 @@ impl Element for TerminalEl {
 
         let content = term.renderable_content();
 
-        /*
-        * TODO for layouts:
-        * - Refactor this whole process to produce 'text cells', 'background rects', and 'selections' which know
-        *   how to paint themselves
-        * - Rather than doing everything per cell, map each cell into a tuple and then unzip the streams
-        * - For efficiency:
-        *  - filter out all background colored background rects
-        *  - filter out all text cells which just contain ' '
-        *  - Smoosh together rectangles on same line
-
-        */
         //Layout grid cells
-        let layout_lines = layout_lines(
+
+        let (cells, rects, highlights) = layout_grid(
             content.display_iter,
             &tcx.text_style,
             tcx.terminal_theme,
@@ -267,12 +238,14 @@ impl Element for TerminalEl {
         (
             constraint.max,
             LayoutState {
-                layout_lines,
                 line_height: tcx.line_height,
                 em_width: tcx.cell_width,
                 cursor,
                 background_color,
                 selection_color: tcx.selection_color,
+                cells,
+                rects,
+                highlights,
             },
         )
     }
@@ -310,7 +283,7 @@ impl Element for TerminalEl {
                 });
 
                 //Draw cell backgrounds
-                for layout_line in &layout.layout_lines {
+                for layout_line in &layout.layout_cells {
                     for layout_cell in &layout_line.cells {
                         let position = vec2f(
                             (origin.x() + layout_cell.point.column as f32 * layout.em_width.0)
@@ -333,7 +306,7 @@ impl Element for TerminalEl {
             cx.paint_layer(clip_bounds, |cx| {
                 let mut highlight_y = None;
                 let highlight_lines = layout
-                    .layout_lines
+                    .layout_cells
                     .iter()
                     .filter_map(|line| {
                         if let Some(range) = &line.highlighted_range {
@@ -370,7 +343,7 @@ impl Element for TerminalEl {
             });
 
             cx.paint_layer(clip_bounds, |cx| {
-                for layout_line in &layout.layout_lines {
+                for layout_line in &layout.layout_cells {
                     for layout_cell in &layout_line.cells {
                         let point = layout_cell.point;
 
@@ -549,57 +522,155 @@ fn make_new_size(
     )
 }
 
-fn layout_lines(
+#[derive(Clone, Debug, Default)]
+struct LayoutCell {
+    point: Point<i32, i32>,
+    text: Line,
+}
+
+impl LayoutCell {
+    fn new(point: Point<i32, i32>, text: Line) -> LayoutCell {
+        LayoutCell { point, text }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct LayoutRect {
+    pos: Point<i32, i32>,
+    num_of_cells: usize,
+    color: Color,
+}
+
+impl LayoutRect {
+    fn new(pos: Point<i32, i32>, num_of_cells: usize, color: Color) -> LayoutRect {
+        LayoutRect {
+            pos,
+            num_of_cells,
+            color,
+        }
+    }
+
+    fn extend(&mut self) {
+        self.num_of_cells += 1;
+    }
+}
+
+struct RelativeHighlightedRange {
+    line_index: usize,
+    range: Range<usize>,
+}
+
+impl RelativeHighlightedRange {
+    fn new(line_index: usize, range: Range<usize>) -> Self {
+        RelativeHighlightedRange { line_index, range }
+    }
+}
+
+fn layout_grid(
     grid: GridIterator<Cell>,
     text_style: &TextStyle,
     terminal_theme: &TerminalStyle,
     text_layout_cache: &TextLayoutCache,
     modal: bool,
     selection_range: Option<SelectionRange>,
-) -> Vec<LayoutLine> {
-    let lines = grid.group_by(|i| i.point.line);
-    lines
-        .into_iter()
-        .enumerate()
-        .map(|(line_index, (_, line))| {
-            let mut highlighted_range = None;
-            let cells = line
-                .enumerate()
-                .map(|(x_index, indexed_cell)| {
-                    if selection_range
-                        .map(|range| range.contains(indexed_cell.point))
-                        .unwrap_or(false)
-                    {
-                        let mut range = highlighted_range.take().unwrap_or(x_index..x_index);
-                        range.end = range.end.max(x_index);
-                        highlighted_range = Some(range);
+) -> (
+    Vec<LayoutCell>,
+    Vec<LayoutRect>,
+    Vec<RelativeHighlightedRange>,
+) {
+    let mut cells = vec![];
+    let mut rects = vec![];
+    let mut highlight_ranges = vec![];
+
+    let mut cur_rect: Option<LayoutRect> = None;
+    let mut cur_alac_color = None;
+    let mut highlighted_range = None;
+
+    let linegroups = grid.group_by(|i| i.point.line);
+    for (line_index, (_, line)) in linegroups.into_iter().enumerate() {
+        for (x_index, cell) in line.enumerate() {
+            //Increase selection range
+            {
+                if selection_range
+                    .map(|range| range.contains(cell.point))
+                    .unwrap_or(false)
+                {
+                    let mut range = highlighted_range.take().unwrap_or(x_index..x_index);
+                    range.end = range.end.max(x_index);
+                    highlighted_range = Some(range);
+                }
+            }
+
+            //Expand background rect range
+            {
+                match (cell.bg, cur_alac_color) {
+                    (Named(NamedColor::Background), Some(_)) => {
+                        //Skip color, end background
+                        cur_alac_color = None;
+                        rects.push(cur_rect.take().unwrap());
                     }
+                    (bg, Some(cur_color)) => {
+                        //If they're the same, extend the match
+                        if bg == cur_color {
+                            cur_rect.unwrap().extend()
+                        } else {
+                            //If they differ, end background and restart
+                            cur_alac_color = None;
+                            rects.push(cur_rect.take().unwrap());
 
-                    let cell_text = &indexed_cell.c.to_string();
+                            cur_alac_color = Some(bg);
+                            cur_rect = Some(LayoutRect::new(
+                                Point::new(line_index as i32, cell.point.column.0 as i32),
+                                1,
+                                convert_color(&bg, &terminal_theme.colors, modal),
+                            ));
+                        }
+                    }
+                    (bg, None) if !matches!(bg, Named(NamedColor::Background)) => {
+                        //install new background
+                        cur_alac_color = Some(bg);
+                        cur_rect = Some(LayoutRect::new(
+                            Point::new(line_index as i32, cell.point.column.0 as i32),
+                            1,
+                            convert_color(&bg, &terminal_theme.colors, modal),
+                        ));
+                    }
+                    (_, _) => {} //Only happens when bg is NamedColor::Background
+                }
+            }
 
-                    let cell_style = cell_style(&indexed_cell, terminal_theme, text_style, modal);
+            //Layout current cell text
+            {
+                let cell_text = &cell.c.to_string();
+                if cell_text != " " {
+                    let cell_style = cell_style(&cell, terminal_theme, text_style, modal);
 
-                    //This is where we might be able to get better performance
                     let layout_cell = text_layout_cache.layout_str(
                         cell_text,
                         text_style.font_size,
                         &[(cell_text.len(), cell_style)],
                     );
 
-                    LayoutCell::new(
-                        Point::new(line_index as i32, indexed_cell.point.column.0 as i32),
+                    cells.push(LayoutCell::new(
+                        Point::new(line_index as i32, cell.point.column.0 as i32),
                         layout_cell,
-                        convert_color(&indexed_cell.bg, &terminal_theme.colors, modal),
-                    )
-                })
-                .collect::<Vec<LayoutCell>>();
+                    ))
+                }
+            };
+        }
 
-            LayoutLine {
-                cells,
-                highlighted_range,
-            }
-        })
-        .collect::<Vec<LayoutLine>>()
+        if highlighted_range.is_some() {
+            highlight_ranges.push(RelativeHighlightedRange::new(
+                line_index,
+                highlighted_range.take().unwrap(),
+            ))
+        }
+
+        if cur_rect.is_some() {
+            rects.push(cur_rect.take().unwrap());
+        }
+    }
+    (cells, rects, highlight_ranges)
 }
 
 // Compute the cursor position and expected block width, may return a zero width if x_for_index returns
