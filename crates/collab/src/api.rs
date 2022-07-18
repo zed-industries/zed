@@ -304,6 +304,8 @@ struct ActiveUserCountParams {
     #[serde(flatten)]
     period: TimePeriodParams,
     durations_in_minutes: String,
+    #[serde(default)]
+    only_collaborative: bool,
 }
 
 #[derive(Serialize)]
@@ -329,6 +331,7 @@ async fn get_active_user_counts(
                 .get_active_user_count(
                     params.period.start..params.period.end,
                     Duration::from_secs(duration * 60),
+                    params.only_collaborative,
                 )
                 .await?,
         })

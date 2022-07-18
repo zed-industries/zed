@@ -75,6 +75,7 @@ pub trait Db: Send + Sync {
         &self,
         time_period: Range<OffsetDateTime>,
         min_duration: Duration,
+        only_collaborative: bool,
     ) -> Result<usize>;
 
     /// Get the users that have been most active during the given time period,
@@ -605,15 +606,48 @@ impl Db for PostgresDb {
         &self,
         time_period: Range<OffsetDateTime>,
         min_duration: Duration,
+        only_collaborative: bool,
     ) -> Result<usize> {
-        let query = "
-            WITH
-                project_durations AS (
-                    SELECT user_id, project_id, SUM(duration_millis) AS project_duration
-                    FROM project_activity_periods
-                    WHERE $1 < ended_at AND ended_at <= $2
-                    GROUP BY user_id, project_id
-                ),
+        let mut with_clause = String::new();
+        with_clause.push_str("WITH\n");
+        with_clause.push_str(
+            "
+            project_durations AS (
+                SELECT user_id, project_id, SUM(duration_millis) AS project_duration
+                FROM project_activity_periods
+                WHERE $1 < ended_at AND ended_at <= $2
+                GROUP BY user_id, project_id
+            ),
+            ",
+        );
+        with_clause.push_str(
+            "
+            project_collaborators as (
+                SELECT project_id, COUNT(DISTINCT user_id) as max_collaborators
+                FROM project_durations
+                GROUP BY project_id
+            ),
+            ",
+        );
+
+        if only_collaborative {
+            with_clause.push_str(
+                "
+                user_durations AS (
+                    SELECT user_id, SUM(project_duration) as total_duration
+                    FROM project_durations, project_collaborators
+                    WHERE
+                        project_durations.project_id = project_collaborators.project_id AND
+                        max_collaborators > 1
+                    GROUP BY user_id
+                    ORDER BY total_duration DESC
+                    LIMIT $3
+                )
+                ",
+            );
+        } else {
+            with_clause.push_str(
+                "
                 user_durations AS (
                     SELECT user_id, SUM(project_duration) as total_duration
                     FROM project_durations
@@ -621,12 +655,20 @@ impl Db for PostgresDb {
                     ORDER BY total_duration DESC
                     LIMIT $3
                 )
+                ",
+            );
+        }
+
+        let query = format!(
+            "
+            {with_clause}
             SELECT count(user_durations.user_id)
             FROM user_durations
             WHERE user_durations.total_duration >= $3
-        ";
+            "
+        );
 
-        let count: i64 = sqlx::query_scalar(query)
+        let count: i64 = sqlx::query_scalar(&query)
             .bind(time_period.start)
             .bind(time_period.end)
             .bind(min_duration.as_millis() as i64)
@@ -656,11 +698,11 @@ impl Db for PostgresDb {
                     LIMIT $3
                 ),
                 project_collaborators as (
-                    SELECT project_id, COUNT(DISTINCT user_id) as project_collaborators
+                    SELECT project_id, COUNT(DISTINCT user_id) as max_collaborators
                     FROM project_durations
                     GROUP BY project_id
                 )
-            SELECT user_durations.user_id, users.github_login, project_durations.project_id, project_duration, project_collaborators
+            SELECT user_durations.user_id, users.github_login, project_durations.project_id, project_duration, max_collaborators
             FROM user_durations, project_durations, project_collaborators, users
             WHERE
                 user_durations.user_id = project_durations.user_id AND
@@ -1719,28 +1761,64 @@ pub mod tests {
         );
 
         assert_eq!(
-            db.get_active_user_count(t0..t6, Duration::from_secs(56))
+            db.get_active_user_count(t0..t6, Duration::from_secs(56), false)
                 .await
                 .unwrap(),
             0
         );
         assert_eq!(
-            db.get_active_user_count(t0..t6, Duration::from_secs(54))
+            db.get_active_user_count(t0..t6, Duration::from_secs(56), true)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            db.get_active_user_count(t0..t6, Duration::from_secs(54), false)
                 .await
                 .unwrap(),
             1
         );
         assert_eq!(
-            db.get_active_user_count(t0..t6, Duration::from_secs(30))
+            db.get_active_user_count(t0..t6, Duration::from_secs(54), true)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            db.get_active_user_count(t0..t6, Duration::from_secs(30), false)
                 .await
                 .unwrap(),
             2
         );
         assert_eq!(
-            db.get_active_user_count(t0..t6, Duration::from_secs(10))
+            db.get_active_user_count(t0..t6, Duration::from_secs(30), true)
+                .await
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            db.get_active_user_count(t0..t6, Duration::from_secs(10), false)
                 .await
                 .unwrap(),
             3
+        );
+        assert_eq!(
+            db.get_active_user_count(t0..t6, Duration::from_secs(10), true)
+                .await
+                .unwrap(),
+            3
+        );
+        assert_eq!(
+            db.get_active_user_count(t0..t1, Duration::from_secs(5), false)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            db.get_active_user_count(t0..t1, Duration::from_secs(5), true)
+                .await
+                .unwrap(),
+            0
         );
 
         assert_eq!(
@@ -2583,6 +2661,7 @@ pub mod tests {
             &self,
             _time_period: Range<OffsetDateTime>,
             _min_duration: Duration,
+            _only_collaborative: bool,
         ) -> Result<usize> {
             unimplemented!()
         }
