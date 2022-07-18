@@ -4,7 +4,7 @@ mod modal;
 pub mod terminal_element;
 
 use alacritty_terminal::term::SizeInfo;
-
+use anyhow::Result;
 use connection::{Event, TerminalConnection};
 use dirs::home_dir;
 use gpui::{
@@ -79,7 +79,11 @@ impl Entity for Terminal {
 impl Terminal {
     ///Create a new Terminal view. This spawns a task, a thread, and opens the TTY devices
     ///To get the right working directory from a workspace, use: `get_wd_for_workspace()`
-    fn new(working_directory: Option<PathBuf>, modal: bool, cx: &mut ViewContext<Self>) -> Self {
+    fn new(
+        working_directory: Option<PathBuf>,
+        modal: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Result<Self> {
         //The details here don't matter, the terminal will be resized on the first layout
         let size_info = SizeInfo::new(
             DEBUG_TERMINAL_WIDTH,
@@ -98,10 +102,11 @@ impl Terminal {
             (shell, envs)
         };
 
-        let connection = cx
-            .add_model(|cx| TerminalConnection::new(working_directory, shell, envs, size_info, cx));
+        let connection = cx.try_add_model(|cx| {
+            TerminalConnection::new(working_directory, shell, envs, size_info, cx)
+        })?;
 
-        Terminal::from_connection(connection, modal, cx)
+        Ok(Terminal::from_connection(connection, modal, cx))
     }
 
     fn from_connection(
@@ -152,7 +157,9 @@ impl Terminal {
     ///Create a new Terminal in the current working directory or the user's home directory
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         let wd = get_wd_for_workspace(workspace, cx);
-        workspace.add_item(Box::new(cx.add_view(|cx| Terminal::new(wd, false, cx))), cx);
+        if let Some(view) = cx.add_option_view(|cx| Terminal::new(wd, false, cx).ok()) {
+            workspace.add_item(Box::new(view), cx);
+        }
     }
 
     ///Attempt to paste the clipboard into the terminal
@@ -266,13 +273,14 @@ impl Item for Terminal {
 
     fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self> {
         //From what I can tell, there's no  way to tell the current working
-        //Directory of the terminal from outside the terminal. There might be
+        //Directory of the terminal from outside the shell. There might be
         //solutions to this, but they are non-trivial and require more IPC
-        Some(Terminal::new(
+        Terminal::new(
             self.connection.read(cx).associated_directory.clone(),
             false,
             cx,
-        ))
+        )
+        .ok()
     }
 
     fn project_path(&self, _cx: &gpui::AppContext) -> Option<ProjectPath> {

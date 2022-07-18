@@ -29,7 +29,7 @@ impl<'a> TerminalTestContext<'a> {
         );
 
         let connection =
-            cx.add_model(|cx| TerminalConnection::new(None, None, None, size_info, cx));
+            cx.add_model(|cx| TerminalConnection::new(None, None, None, size_info, cx).unwrap());
 
         TerminalTestContext { cx, connection }
     }
