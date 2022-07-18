@@ -30,8 +30,8 @@ use gpui::{
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
     text_layout, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
-    ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -707,7 +707,7 @@ impl CompletionsMenu {
                             },
                         )
                         .with_cursor_style(CursorStyle::PointingHand)
-                        .on_mouse_down(move |_, cx| {
+                        .on_mouse_down(MouseButton::Left, move |_, cx| {
                             cx.dispatch_action(ConfirmCompletion {
                                 item_ix: Some(item_ix),
                             });
@@ -840,7 +840,7 @@ impl CodeActionsMenu {
                                 .boxed()
                         })
                         .with_cursor_style(CursorStyle::PointingHand)
-                        .on_mouse_down(move |_, cx| {
+                        .on_mouse_down(MouseButton::Left, move |_, cx| {
                             cx.dispatch_action(ConfirmCodeAction {
                                 item_ix: Some(item_ix),
                             });
@@ -2674,7 +2674,7 @@ impl Editor {
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .with_padding(Padding::uniform(3.))
-                .on_mouse_down(|_, cx| {
+                .on_mouse_down(MouseButton::Left, |_, cx| {
                     cx.dispatch_action(ToggleCodeActions {
                         deployed_from_indicator: true,
                     });

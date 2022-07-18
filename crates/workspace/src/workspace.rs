@@ -21,8 +21,8 @@ use gpui::{
     json::{self, ToJson},
     platform::{CursorStyle, WindowOptions},
     AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Border, Entity, ImageData,
-    ModelContext, ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext,
-    Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    ModelContext, ModelHandle, MouseButton, MutableAppContext, PathPromptOptions, PromptLevel,
+    RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::LanguageRegistry;
 use log::error;
@@ -1980,7 +1980,7 @@ impl Workspace {
                         .with_style(style.container)
                         .boxed()
                 })
-                .on_click(|_, _, cx| cx.dispatch_action(Authenticate))
+                .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(Authenticate))
                 .with_cursor_style(CursorStyle::PointingHand)
                 .aligned()
                 .boxed(),
@@ -2031,7 +2031,9 @@ impl Workspace {
         if let Some((peer_id, peer_github_login)) = peer {
             MouseEventHandler::new::<ToggleFollow, _, _>(replica_id.into(), cx, move |_, _| content)
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(move |_, _, cx| cx.dispatch_action(ToggleFollow(peer_id)))
+                .on_click(MouseButton::Left, move |_, cx| {
+                    cx.dispatch_action(ToggleFollow(peer_id))
+                })
                 .with_tooltip::<ToggleFollow, _>(
                     peer_id.0 as usize,
                     if is_followed {

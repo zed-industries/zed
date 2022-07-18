@@ -25,7 +25,7 @@ use gpui::{
     platform::CursorStyle,
     text_layout::{self, Line, RunStyle, TextLayoutCache},
     AppContext, Axis, Border, CursorRegion, Element, ElementBox, Event, EventContext, KeyDownEvent,
-    LayoutContext, ModifiersChangedEvent, MouseButton, MouseEvent, MouseMovedEvent,
+    LayoutContext, ModifiersChangedEvent, MouseButton, MouseButtonEvent, MouseMovedEvent,
     MutableAppContext, PaintContext, Quad, Scene, ScrollWheelEvent, SizeConstraint, ViewContext,
     WeakViewHandle,
 };
@@ -968,7 +968,9 @@ impl EditorElement {
                                     .boxed()
                             })
                             .with_cursor_style(CursorStyle::PointingHand)
-                            .on_click(move |_, _, cx| cx.dispatch_action(jump_action.clone()))
+                            .on_click(MouseButton::Left, move |_, cx| {
+                                cx.dispatch_action(jump_action.clone())
+                            })
                             .with_tooltip::<JumpIcon, _>(
                                 *key,
                                 "Jump to Buffer".to_string(),
@@ -1483,7 +1485,7 @@ impl Element for EditorElement {
         }
 
         match event {
-            Event::MouseDown(MouseEvent {
+            Event::MouseDown(MouseButtonEvent {
                 button: MouseButton::Left,
                 position,
                 cmd,
@@ -1501,12 +1503,12 @@ impl Element for EditorElement {
                 paint,
                 cx,
             ),
-            Event::MouseDown(MouseEvent {
+            Event::MouseDown(MouseButtonEvent {
                 button: MouseButton::Right,
                 position,
                 ..
             }) => self.mouse_right_down(*position, layout, paint, cx),
-            Event::MouseUp(MouseEvent {
+            Event::MouseUp(MouseButtonEvent {
                 button: MouseButton::Left,
                 position,
                 ..

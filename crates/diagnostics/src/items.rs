@@ -1,8 +1,8 @@
 use collections::HashSet;
 use editor::{Editor, GoToNextDiagnostic};
 use gpui::{
-    elements::*, platform::CursorStyle, serde_json, Entity, ModelHandle, MutableAppContext,
-    RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
+    elements::*, platform::CursorStyle, serde_json, Entity, ModelHandle, MouseButton,
+    MutableAppContext, RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::Diagnostic;
 use project::Project;
@@ -161,7 +161,7 @@ impl View for DiagnosticIndicator {
                     .boxed()
             })
             .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(|_, _, cx| cx.dispatch_action(crate::Deploy))
+            .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(crate::Deploy))
             .with_tooltip::<Summary, _>(
                 0,
                 "Project Diagnostics".to_string(),
@@ -201,7 +201,9 @@ impl View for DiagnosticIndicator {
                     .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(|_, _, cx| cx.dispatch_action(GoToNextDiagnostic))
+                .on_click(MouseButton::Left, |_, cx| {
+                    cx.dispatch_action(GoToNextDiagnostic)
+                })
                 .boxed(),
             );
         }

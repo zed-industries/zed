@@ -20,8 +20,8 @@ use gpui::{
     },
     json::json,
     text_layout::{Line, RunStyle},
-    Event, FontCache, KeyDownEvent, MouseRegion, PaintContext, Quad, ScrollWheelEvent,
-    SizeConstraint, TextLayoutCache, WeakModelHandle,
+    Event, FontCache, KeyDownEvent, MouseButton, MouseButtonEvent, MouseMovedEvent, MouseRegion,
+    PaintContext, Quad, ScrollWheelEvent, SizeConstraint, TextLayoutCache, WeakModelHandle,
 };
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
@@ -29,7 +29,7 @@ use settings::Settings;
 use theme::TerminalStyle;
 use util::ResultExt;
 
-use std::{cmp::min, ops::Range, rc::Rc, sync::Arc};
+use std::{cmp::min, ops::Range, sync::Arc};
 use std::{fmt::Debug, ops::Sub};
 
 use crate::{color_translation::convert_color, connection::TerminalConnection, ZedListener};
@@ -594,63 +594,76 @@ fn attach_mouse_handlers(
     let drag_mutex = terminal_mutex.clone();
     let mouse_down_mutex = terminal_mutex.clone();
 
-    cx.scene.push_mouse_region(MouseRegion {
-        view_id,
-        mouse_down: Some(Rc::new(move |pos, _| {
-            let mut term = mouse_down_mutex.lock();
-            let (point, side) = mouse_to_cell_data(
-                pos,
-                origin,
-                cur_size,
-                term.renderable_content().display_offset,
-            );
-            term.selection = Some(Selection::new(SelectionType::Simple, point, side))
-        })),
-        click: Some(Rc::new(move |pos, click_count, cx| {
-            let mut term = click_mutex.lock();
+    cx.scene.push_mouse_region(
+        MouseRegion::new(view_id, None, visible_bounds)
+            .on_down(
+                MouseButton::Left,
+                move |MouseButtonEvent { position, .. }, _| {
+                    let mut term = mouse_down_mutex.lock();
 
-            let (point, side) = mouse_to_cell_data(
-                pos,
-                origin,
-                cur_size,
-                term.renderable_content().display_offset,
-            );
+                    let (point, side) = mouse_to_cell_data(
+                        position,
+                        origin,
+                        cur_size,
+                        term.renderable_content().display_offset,
+                    );
+                    term.selection = Some(Selection::new(SelectionType::Simple, point, side))
+                },
+            )
+            .on_click(
+                MouseButton::Left,
+                move |MouseButtonEvent {
+                          position,
+                          click_count,
+                          ..
+                      },
+                      cx| {
+                    let mut term = click_mutex.lock();
 
-            let selection_type = match click_count {
-                0 => return, //This is a release
-                1 => Some(SelectionType::Simple),
-                2 => Some(SelectionType::Semantic),
-                3 => Some(SelectionType::Lines),
-                _ => None,
-            };
+                    let (point, side) = mouse_to_cell_data(
+                        position,
+                        origin,
+                        cur_size,
+                        term.renderable_content().display_offset,
+                    );
 
-            let selection =
-                selection_type.map(|selection_type| Selection::new(selection_type, point, side));
+                    let selection_type = match click_count {
+                        0 => return, //This is a release
+                        1 => Some(SelectionType::Simple),
+                        2 => Some(SelectionType::Semantic),
+                        3 => Some(SelectionType::Lines),
+                        _ => None,
+                    };
 
-            term.selection = selection;
-            cx.focus_parent_view();
-            cx.notify();
-        })),
-        bounds: visible_bounds,
-        drag: Some(Rc::new(move |_delta, pos, cx| {
-            let mut term = drag_mutex.lock();
+                    let selection = selection_type
+                        .map(|selection_type| Selection::new(selection_type, point, side));
 
-            let (point, side) = mouse_to_cell_data(
-                pos,
-                origin,
-                cur_size,
-                term.renderable_content().display_offset,
-            );
+                    term.selection = selection;
+                    cx.focus_parent_view();
+                    cx.notify();
+                },
+            )
+            .on_drag(
+                MouseButton::Left,
+                move |_, MouseMovedEvent { position, .. }, cx| {
+                    let mut term = drag_mutex.lock();
 
-            if let Some(mut selection) = term.selection.take() {
-                selection.update(point, side);
-                term.selection = Some(selection);
-            }
+                    let (point, side) = mouse_to_cell_data(
+                        position,
+                        origin,
+                        cur_size,
+                        term.renderable_content().display_offset,
+                    );
 
-            cx.notify();
-        })),
-        ..Default::default()
-    });
+                    if let Some(mut selection) = term.selection.take() {
+                        selection.update(point, side);
+                        term.selection = Some(selection);
+                    }
+
+                    cx.notify();
+                },
+            ),
+    );
 }
 
 ///Copied (with modifications) from alacritty/src/input.rs > Processor::cell_side()
