@@ -61,8 +61,8 @@ impl<'a> TerminalTestContext<'a> {
     }
 
     fn grid_as_str(connection: &TerminalConnection) -> String {
-        let (grid_iterator, _) = connection.get_terminal().unwrap().renderable_content();
-        let lines = grid_iterator.display_iter.group_by(|i| i.point.line.0);
+        let grid = connection.get_terminal().unwrap().grid();
+        let lines = grid.display_iter().group_by(|i| i.point.line.0);
         lines
             .into_iter()
             .map(|(_, line)| line.map(|i| i.c).collect::<String>())

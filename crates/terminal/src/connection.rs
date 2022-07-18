@@ -6,16 +6,16 @@ use alacritty_terminal::{
     event::{Event as AlacTermEvent, EventListener, Notify},
     event_loop::{EventLoop, Msg, Notifier},
     grid::Scroll,
-    selection::Selection,
+    index::{Direction, Point},
+    selection::{Selection, SelectionRange, SelectionType},
     sync::FairMutex,
-    term::{cell::Cell, RenderableContent, SizeInfo, TermMode},
+    term::{cell::Cell, RenderableCursor, SizeInfo, TermMode},
     tty::{self, setup_env},
     Grid, Term,
 };
-use anyhow::Result;
-use futures::channel::mpsc::{
-    unbounded::{self, UndboundedSender},
-    UnboundedSender,
+use futures::{
+    channel::mpsc::{unbounded, UnboundedSender},
+    StreamExt,
 };
 use settings::{Settings, Shell};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
@@ -67,14 +67,14 @@ impl TerminalConnection {
         cx: &mut ModelContext<Self>,
     ) -> TerminalConnection {
         let pty_config = {
-            let shell = shell.and_then(|shell| match shell {
+            let alac_shell = shell.clone().and_then(|shell| match shell {
                 Shell::System => None,
                 Shell::Program(program) => Some(Program::Just(program)),
                 Shell::WithArguments { program, args } => Some(Program::WithArgs { program, args }),
             });
 
             PtyConfig {
-                shell,
+                shell: alac_shell,
                 working_directory: working_directory.clone(),
                 hold: false,
             }
@@ -112,11 +112,10 @@ impl TerminalConnection {
             }
         };
 
-        let shell = {
+        let shell_txt = {
             let mut buf = [0; 1024];
             let pw = alacritty_unix::get_pw_entry(&mut buf).unwrap();
             pw.shell.to_string()
-            // alacritty_unix::default_shell(&pw)
         };
 
         //And connect them together
@@ -135,7 +134,7 @@ impl TerminalConnection {
         let terminal = Terminal {
             pty_tx: Notifier(pty_tx),
             term,
-            title: DEFAULT_TITLE.to_string(),
+            title: shell_txt.to_string(),
             associated_directory: working_directory,
         };
 
@@ -145,7 +144,15 @@ impl TerminalConnection {
                 match this.upgrade(&cx) {
                     Some(this) => {
                         this.update(&mut cx, |this, cx| {
-                            terminal.process_terminal_event(event, cx);
+                            match this {
+                                TerminalConnection::Connected(conn) => {
+                                    conn.process_terminal_event(event, cx)
+                                }
+                                //There should never be a state where the terminal is disconnected
+                                //And receiving events from the pty
+                                TerminalConnection::Disconnected { .. } => unreachable!(),
+                            }
+
                             cx.notify();
                         });
                     }
@@ -280,16 +287,26 @@ impl Terminal {
     pub fn take_selection(&self) -> Option<Selection> {
         self.term.lock().selection.take()
     }
-
     ///Sets the selection object on the terminal
     pub fn set_selection(&self, sel: Option<Selection>) {
         self.term.lock().selection = sel;
     }
 
-    ///Get the relevant rendering values from the terminal
-    pub fn renderable_content(&self) -> (RenderableContent, &Grid<Cell>) {
+    pub fn grid(&self) -> Grid<Cell> {
         let term = self.term.lock();
-        (term.renderable_content(), term.grid())
+        term.grid().clone() //TODO: BAD!!!!!!!!
+    }
+
+    pub fn get_display_offset(&self) -> usize {
+        self.term.lock().renderable_content().display_offset
+    }
+
+    pub fn get_selection(&self) -> Option<SelectionRange> {
+        self.term.lock().renderable_content().selection //TODO: BAD!!!!!
+    }
+
+    pub fn get_cursor(&self) -> RenderableCursor {
+        self.term.lock().renderable_content().cursor
     }
 
     ///Scroll the terminal
@@ -297,11 +314,31 @@ impl Terminal {
         self.term.lock().scroll_display(scroll)
     }
 
-    // pub fn click(&mut self, pos: Vector2F, clicks: usize) {}
+    pub fn click(&self, point: Point, side: Direction, clicks: usize) {
+        let selection_type = match clicks {
+            0 => return, //This is a release
+            1 => Some(SelectionType::Simple),
+            2 => Some(SelectionType::Semantic),
+            3 => Some(SelectionType::Lines),
+            _ => None,
+        };
 
-    // pub fn drag(prev_pos: Vector2F, pos: Vector2F) {}
+        let selection =
+            selection_type.map(|selection_type| Selection::new(selection_type, point, side));
 
-    // pub fn mouse_down(pos: Vector2F) {}
+        self.set_selection(selection);
+    }
+
+    pub fn drag(&self, point: Point, side: Direction) {
+        if let Some(mut selection) = self.take_selection() {
+            selection.update(point, side);
+            self.set_selection(Some(selection));
+        }
+    }
+
+    pub fn mouse_down(&self, point: Point, side: Direction) {
+        self.set_selection(Some(Selection::new(SelectionType::Simple, point, side)));
+    }
 }
 
 impl Drop for TerminalConnection {

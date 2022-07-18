@@ -258,20 +258,19 @@ impl Item for TerminalView {
         tab_theme: &theme::Tab,
         cx: &gpui::AppContext,
     ) -> ElementBox {
-        let mut flex = Flex::row();
-
         let title = match self.connection.read(cx) {
-            TerminalConnection::Connected(conn) => conn.title,
+            TerminalConnection::Connected(conn) => conn.title.clone(),
             TerminalConnection::Disconnected { .. } => "Terminal".to_string(), //TODO ask nate about htis
         };
 
-        flex.with_child(
-            Label::new(title, tab_theme.label.clone())
-                .aligned()
-                .contained()
-                .boxed(),
-        )
-        .boxed()
+        Flex::row()
+            .with_child(
+                Label::new(title, tab_theme.label.clone())
+                    .aligned()
+                    .contained()
+                    .boxed(),
+            )
+            .boxed()
     }
 
     fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self> {
@@ -283,7 +282,7 @@ impl Item for TerminalView {
             .connection
             .read(cx)
             .get_terminal()
-            .and_then(|term| term.associated_directory)
+            .and_then(|term| term.associated_directory.clone())
             .clone();
 
         Some(TerminalView::new(wd, false, cx))
