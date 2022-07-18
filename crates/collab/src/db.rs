@@ -654,16 +654,22 @@ impl Db for PostgresDb {
                     GROUP BY user_id
                     ORDER BY total_duration DESC
                     LIMIT $3
+                ),
+                project_collaborators as (
+                    SELECT project_id, COUNT(DISTINCT user_id) as project_collaborators
+                    FROM project_durations
+                    GROUP BY project_id
                 )
-            SELECT user_durations.user_id, users.github_login, project_id, project_duration
-            FROM user_durations, project_durations, users
+            SELECT user_durations.user_id, users.github_login, project_durations.project_id, project_duration, project_collaborators
+            FROM user_durations, project_durations, project_collaborators, users
             WHERE
                 user_durations.user_id = project_durations.user_id AND
-                user_durations.user_id = users.id
+                user_durations.user_id = users.id AND
+                project_durations.project_id = project_collaborators.project_id
             ORDER BY total_duration DESC, user_id ASC
         ";
 
-        let mut rows = sqlx::query_as::<_, (UserId, String, ProjectId, i64)>(query)
+        let mut rows = sqlx::query_as::<_, (UserId, String, ProjectId, i64, i64)>(query)
             .bind(time_period.start)
             .bind(time_period.end)
             .bind(max_user_count as i32)
@@ -671,18 +677,23 @@ impl Db for PostgresDb {
 
         let mut result = Vec::<UserActivitySummary>::new();
         while let Some(row) = rows.next().await {
-            let (user_id, github_login, project_id, duration_millis) = row?;
+            let (user_id, github_login, project_id, duration_millis, project_collaborators) = row?;
             let project_id = project_id;
             let duration = Duration::from_millis(duration_millis as u64);
+            let project_activity = ProjectActivitySummary {
+                id: project_id,
+                duration,
+                max_collaborators: project_collaborators as usize,
+            };
             if let Some(last_summary) = result.last_mut() {
                 if last_summary.id == user_id {
-                    last_summary.project_activity.push((project_id, duration));
+                    last_summary.project_activity.push(project_activity);
                     continue;
                 }
             }
             result.push(UserActivitySummary {
                 id: user_id,
-                project_activity: vec![(project_id, duration)],
+                project_activity: vec![project_activity],
                 github_login,
             });
         }
@@ -1314,7 +1325,14 @@ pub struct Project {
 pub struct UserActivitySummary {
     pub id: UserId,
     pub github_login: String,
-    pub project_activity: Vec<(ProjectId, Duration)>,
+    pub project_activity: Vec<ProjectActivitySummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ProjectActivitySummary {
+    id: ProjectId,
+    duration: Duration,
+    max_collaborators: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1667,19 +1685,35 @@ pub mod tests {
                     id: user_1,
                     github_login: "user_1".to_string(),
                     project_activity: vec![
-                        (project_1, Duration::from_secs(25)),
-                        (project_2, Duration::from_secs(30)),
+                        ProjectActivitySummary {
+                            id: project_1,
+                            duration: Duration::from_secs(25),
+                            max_collaborators: 2
+                        },
+                        ProjectActivitySummary {
+                            id: project_2,
+                            duration: Duration::from_secs(30),
+                            max_collaborators: 2
+                        }
                     ]
                 },
                 UserActivitySummary {
                     id: user_2,
                     github_login: "user_2".to_string(),
-                    project_activity: vec![(project_2, Duration::from_secs(50))]
+                    project_activity: vec![ProjectActivitySummary {
+                        id: project_2,
+                        duration: Duration::from_secs(50),
+                        max_collaborators: 2
+                    }]
                 },
                 UserActivitySummary {
                     id: user_3,
                     github_login: "user_3".to_string(),
-                    project_activity: vec![(project_1, Duration::from_secs(15))]
+                    project_activity: vec![ProjectActivitySummary {
+                        id: project_1,
+                        duration: Duration::from_secs(15),
+                        max_collaborators: 2
+                    }]
                 },
             ]
         );
