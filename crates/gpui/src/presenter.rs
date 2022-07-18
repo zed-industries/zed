@@ -252,7 +252,6 @@ impl Presenter {
                         } else if let Some(handler) = region
                             .handlers
                             .get(&(MouseRegionEvent::down_out_disc(), Some(*button)))
-                            .cloned()
                         {
                             mouse_down_out_handlers.push((
                                 handler,
