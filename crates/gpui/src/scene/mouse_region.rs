@@ -15,11 +15,20 @@ pub struct MouseRegion {
 
 impl MouseRegion {
     pub fn new(view_id: usize, discriminant: Option<(TypeId, usize)>, bounds: RectF) -> Self {
+        Self::from_handlers(view_id, discriminant, bounds, Default::default())
+    }
+
+    pub fn from_handlers(
+        view_id: usize,
+        discriminant: Option<(TypeId, usize)>,
+        bounds: RectF,
+        handlers: HandlerSet,
+    ) -> Self {
         Self {
             view_id,
             discriminant,
             bounds,
-            handlers: Default::default(),
+            handlers,
         }
     }
 
