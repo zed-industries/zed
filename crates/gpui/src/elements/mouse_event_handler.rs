@@ -1,4 +1,4 @@
-use std::{any::TypeId, rc::Rc};
+use std::any::TypeId;
 
 use super::Padding;
 use crate::{
@@ -8,24 +8,16 @@ use crate::{
     },
     platform::CursorStyle,
     scene::CursorRegion,
-    DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, MouseRegion, MouseState,
-    PaintContext, RenderContext, SizeConstraint, View,
+    DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, MouseButton,
+    MouseButtonEvent, MouseMovedEvent, MouseRegion, MouseState, PaintContext, RenderContext,
+    SizeConstraint, View,
 };
 use serde_json::json;
 
 pub struct MouseEventHandler {
     child: ElementBox,
-    tag: TypeId,
-    id: usize,
     cursor_style: Option<CursorStyle>,
-    mouse_down: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
-    click: Option<Rc<dyn Fn(Vector2F, usize, &mut EventContext)>>,
-    right_mouse_down: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
-    right_click: Option<Rc<dyn Fn(Vector2F, usize, &mut EventContext)>>,
-    mouse_down_out: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
-    right_mouse_down_out: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
-    drag: Option<Rc<dyn Fn(Vector2F, Vector2F, &mut EventContext)>>,
-    hover: Option<Rc<dyn Fn(Vector2F, bool, &mut EventContext)>>,
+    region: MouseRegion,
     padding: Padding,
 }
 
@@ -37,18 +29,9 @@ impl MouseEventHandler {
         F: FnOnce(MouseState, &mut RenderContext<V>) -> ElementBox,
     {
         Self {
-            id,
-            tag: TypeId::of::<Tag>(),
             child: render_child(cx.mouse_state::<Tag>(id), cx),
             cursor_style: None,
-            mouse_down: None,
-            click: None,
-            right_mouse_down: None,
-            right_click: None,
-            mouse_down_out: None,
-            right_mouse_down_out: None,
-            drag: None,
-            hover: None,
+            region: MouseRegion::new(0, Some((TypeId::of::<Tag>(), id)), Default::default()),
             padding: Default::default(),
         }
     }
@@ -60,65 +43,45 @@ impl MouseEventHandler {
 
     pub fn on_mouse_down(
         mut self,
-        handler: impl Fn(Vector2F, &mut EventContext) + 'static,
+        button: MouseButton,
+        handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
     ) -> Self {
-        self.mouse_down = Some(Rc::new(handler));
+        self.region = self.region.on_down(button, handler);
         self
     }
 
     pub fn on_click(
         mut self,
-        handler: impl Fn(Vector2F, usize, &mut EventContext) + 'static,
+        button: MouseButton,
+        handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
     ) -> Self {
-        self.click = Some(Rc::new(handler));
-        self
-    }
-
-    pub fn on_right_mouse_down(
-        mut self,
-        handler: impl Fn(Vector2F, &mut EventContext) + 'static,
-    ) -> Self {
-        self.right_mouse_down = Some(Rc::new(handler));
-        self
-    }
-
-    pub fn on_right_click(
-        mut self,
-        handler: impl Fn(Vector2F, usize, &mut EventContext) + 'static,
-    ) -> Self {
-        self.right_click = Some(Rc::new(handler));
+        self.region = self.region.on_click(button, handler);
         self
     }
 
     pub fn on_mouse_down_out(
         mut self,
-        handler: impl Fn(Vector2F, &mut EventContext) + 'static,
+        button: MouseButton,
+        handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
     ) -> Self {
-        self.mouse_down_out = Some(Rc::new(handler));
-        self
-    }
-
-    pub fn on_right_mouse_down_out(
-        mut self,
-        handler: impl Fn(Vector2F, &mut EventContext) + 'static,
-    ) -> Self {
-        self.right_mouse_down_out = Some(Rc::new(handler));
+        self.region = self.region.on_down_out(button, handler);
         self
     }
 
     pub fn on_drag(
         mut self,
-        handler: impl Fn(Vector2F, Vector2F, &mut EventContext) + 'static,
+        button: MouseButton,
+        handler: impl Fn(Vector2F, MouseMovedEvent, &mut EventContext) + 'static,
     ) -> Self {
-        self.drag = Some(Rc::new(handler));
+        self.region = self.region.on_drag(button, handler);
         self
     }
 
     pub fn on_hover(
         mut self,
-        handler: impl Fn(Vector2F, bool, &mut EventContext) + 'static,
+        handler: impl Fn(bool, MouseMovedEvent, &mut EventContext) + 'static,
     ) -> Self {
-        self.hover = Some(Rc::new(handler));
+        self.region = self.region.on_hover(handler);
         self
     }
 
@@ -163,19 +126,9 @@ impl Element for MouseEventHandler {
             });
         }
 
-        cx.scene.push_mouse_region(MouseRegion {
-            view_id: cx.current_view_id(),
-            discriminant: Some((self.tag, self.id)),
-            bounds: hit_bounds,
-            hover: self.hover.clone(),
-            click: self.click.clone(),
-            mouse_down: self.mouse_down.clone(),
-            right_click: self.right_click.clone(),
-            right_mouse_down: self.right_mouse_down.clone(),
-            mouse_down_out: self.mouse_down_out.clone(),
-            right_mouse_down_out: self.right_mouse_down_out.clone(),
-            drag: self.drag.clone(),
-        });
+        self.region.view_id = cx.current_view_id();
+        self.region.bounds = hit_bounds;
+        cx.scene.push_mouse_region(self.region.clone());
 
         self.child.paint(bounds.origin(), visible_bounds, cx);
     }

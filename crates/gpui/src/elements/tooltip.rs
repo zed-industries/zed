@@ -6,8 +6,8 @@ use crate::{
     fonts::TextStyle,
     geometry::{rect::RectF, vector::Vector2F},
     json::json,
-    Action, Axis, ElementStateHandle, LayoutContext, PaintContext, RenderContext, SizeConstraint,
-    Task, View,
+    Action, Axis, ElementStateHandle, LayoutContext, MouseMovedEvent, PaintContext, RenderContext,
+    SizeConstraint, Task, View,
 };
 use serde::Deserialize;
 use std::{
@@ -91,7 +91,7 @@ impl Tooltip {
         };
         let child =
             MouseEventHandler::new::<MouseEventHandlerState<Tag>, _, _>(id, cx, |_, _| child)
-                .on_hover(move |position, hover, cx| {
+                .on_hover(move |hover, MouseMovedEvent { position, .. }, cx| {
                     let window_id = cx.window_id();
                     if let Some(view_id) = cx.view_id() {
                         if hover {
