@@ -47,7 +47,7 @@ use std::{
     task::Poll,
     time::{Duration, SystemTime},
 };
-use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap};
+use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
 use util::{ResultExt, TryFutureExt};
 
 lazy_static! {
@@ -1491,6 +1491,16 @@ impl LocalSnapshot {
         }
     }
 
+    fn ancestor_inodes_for_path(&self, path: &Path) -> TreeSet<u64> {
+        let mut inodes = TreeSet::default();
+        for ancestor in path.ancestors().skip(1) {
+            if let Some(entry) = self.entry_for_path(ancestor) {
+                inodes.insert(entry.inode);
+            }
+        }
+        inodes
+    }
+
     fn ignore_stack_for_abs_path(&self, abs_path: &Path, is_dir: bool) -> Arc<IgnoreStack> {
         let mut new_ignores = Vec::new();
         for ancestor in abs_path.ancestors().skip(1) {
@@ -2053,14 +2063,16 @@ impl BackgroundScanner {
     async fn scan_dirs(&mut self) -> Result<()> {
         let root_char_bag;
         let root_abs_path;
-        let next_entry_id;
+        let root_inode;
         let is_dir;
+        let next_entry_id;
         {
             let snapshot = self.snapshot.lock();
             root_char_bag = snapshot.root_char_bag;
             root_abs_path = snapshot.abs_path.clone();
+            root_inode = snapshot.root_entry().map(|e| e.inode);
+            is_dir = snapshot.root_entry().map_or(false, |e| e.is_dir());
             next_entry_id = snapshot.next_entry_id.clone();
-            is_dir = snapshot.root_entry().map_or(false, |e| e.is_dir())
         };
 
         // Populate ignores above the root.
@@ -2088,12 +2100,18 @@ impl BackgroundScanner {
 
         if is_dir {
             let path: Arc<Path> = Arc::from(Path::new(""));
+            let mut ancestor_inodes = TreeSet::default();
+            if let Some(root_inode) = root_inode {
+                ancestor_inodes.insert(root_inode);
+            }
+
             let (tx, rx) = channel::unbounded();
             self.executor
                 .block(tx.send(ScanJob {
                     abs_path: root_abs_path.to_path_buf(),
                     path,
                     ignore_stack,
+                    ancestor_inodes,
                     scan_queue: tx.clone(),
                 }))
                 .unwrap();
@@ -2195,24 +2213,30 @@ impl BackgroundScanner {
                 root_char_bag,
             );
 
-            if child_metadata.is_dir {
+            if child_entry.is_dir() {
                 let is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
                 child_entry.is_ignored = is_ignored;
-                new_entries.push(child_entry);
-                new_jobs.push(ScanJob {
-                    abs_path: child_abs_path,
-                    path: child_path,
-                    ignore_stack: if is_ignored {
-                        IgnoreStack::all()
-                    } else {
-                        ignore_stack.clone()
-                    },
-                    scan_queue: job.scan_queue.clone(),
-                });
+
+                if !job.ancestor_inodes.contains(&child_entry.inode) {
+                    let mut ancestor_inodes = job.ancestor_inodes.clone();
+                    ancestor_inodes.insert(child_entry.inode);
+                    new_jobs.push(ScanJob {
+                        abs_path: child_abs_path,
+                        path: child_path,
+                        ignore_stack: if is_ignored {
+                            IgnoreStack::all()
+                        } else {
+                            ignore_stack.clone()
+                        },
+                        ancestor_inodes,
+                        scan_queue: job.scan_queue.clone(),
+                    });
+                }
             } else {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, false);
-                new_entries.push(child_entry);
-            };
+            }
+
+            new_entries.push(child_entry);
         }
 
         self.snapshot
@@ -2292,11 +2316,13 @@ impl BackgroundScanner {
                         fs_entry.is_ignored = ignore_stack.is_all();
                         snapshot.insert_entry(fs_entry, self.fs.as_ref());
                         if metadata.is_dir {
+                            let ancestor_inodes = snapshot.ancestor_inodes_for_path(&path);
                             self.executor
                                 .block(scan_queue_tx.send(ScanJob {
                                     abs_path,
                                     path,
                                     ignore_stack,
+                                    ancestor_inodes,
                                     scan_queue: scan_queue_tx.clone(),
                                 }))
                                 .unwrap();
@@ -2458,6 +2484,7 @@ struct ScanJob {
     path: Arc<Path>,
     ignore_stack: Arc<IgnoreStack>,
     scan_queue: Sender<ScanJob>,
+    ancestor_inodes: TreeSet<u64>,
 }
 
 struct UpdateIgnoreStatusJob {
