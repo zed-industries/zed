@@ -554,12 +554,14 @@ impl Fs for FakeFs {
             state.next_inode += 1;
             state
                 .write_path(&cur_path, |entry| {
-                    entry.or_insert(Arc::new(Mutex::new(FakeFsEntry::Dir {
-                        inode,
-                        mtime: SystemTime::now(),
-                        entries: Default::default(),
-                    })));
-                    created_dirs.push(cur_path.clone());
+                    entry.or_insert_with(|| {
+                        created_dirs.push(cur_path.clone());
+                        Arc::new(Mutex::new(FakeFsEntry::Dir {
+                            inode,
+                            mtime: SystemTime::now(),
+                            entries: Default::default(),
+                        }))
+                    });
                     Ok(())
                 })
                 .await?;
