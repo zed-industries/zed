@@ -184,6 +184,20 @@ impl ProjectPanel {
                 )
             });
 
+            cx.observe_focus(&filename_editor, |this, _, is_focused, cx| {
+                if !is_focused {
+                    if this
+                        .edit_state
+                        .as_ref()
+                        .map_or(false, |state| state.processing_filename.is_none())
+                    {
+                        this.edit_state = None;
+                        this.update_visible_entries(None, cx);
+                    }
+                }
+            })
+            .detach();
+
             let mut this = Self {
                 project: project.clone(),
                 list: Default::default(),
@@ -1529,6 +1543,41 @@ mod tests {
         );
 
         confirm.await.unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    v b",
+                "        > 3  <== selected",
+                "        > 4",
+                "        > new-dir",
+                "          a-different-filename",
+                "    > C",
+                "      .dockerignore",
+            ]
+        );
+
+        panel.update(cx, |panel, cx| panel.rename(&Default::default(), cx));
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    v b",
+                "        > [EDITOR: '3']  <== selected",
+                "        > 4",
+                "        > new-dir",
+                "          a-different-filename",
+                "    > C",
+                "      .dockerignore",
+            ]
+        );
+
+        // Dismiss the rename editor when it loses focus.
+        workspace.update(cx, |_, cx| cx.focus_self());
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
