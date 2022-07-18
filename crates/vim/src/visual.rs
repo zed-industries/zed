@@ -89,7 +89,7 @@ pub fn change(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspac
                 s.select_anchors(new_selections);
             });
         });
-        vim.switch_mode(Mode::Insert, cx);
+        vim.switch_mode(Mode::Insert, false, cx);
     });
 }
 
@@ -130,7 +130,7 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
                 });
             });
         });
-        vim.switch_mode(Mode::Normal, cx);
+        vim.switch_mode(Mode::Normal, false, cx);
     });
 }
 
@@ -158,7 +158,7 @@ pub fn yank(_: &mut Workspace, _: &VisualYank, cx: &mut ViewContext<Workspace>) 
                 });
             });
         });
-        vim.switch_mode(Mode::Normal, cx);
+        vim.switch_mode(Mode::Normal, false, cx);
     });
 }
 
@@ -266,7 +266,7 @@ pub fn paste(_: &mut Workspace, _: &VisualPaste, cx: &mut ViewContext<Workspace>
                 }
             });
         });
-        vim.switch_mode(Mode::Normal, cx);
+        vim.switch_mode(Mode::Normal, false, cx);
     });
 }
 
