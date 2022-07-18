@@ -226,11 +226,13 @@ impl Fs for RealFs {
     ) -> Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>> {
         let (tx, rx) = smol::channel::unbounded();
         let (stream, handle) = EventStream::new(&[path], latency);
-        std::mem::forget(handle);
         std::thread::spawn(move || {
             stream.run(move |events| smol::block_on(tx.send(events)).is_ok());
         });
-        Box::pin(rx)
+        Box::pin(rx.chain(futures::stream::once(async move {
+            drop(handle);
+            vec![]
+        })))
     }
 
     fn is_fake(&self) -> bool {
