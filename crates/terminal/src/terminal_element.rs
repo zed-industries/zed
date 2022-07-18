@@ -105,17 +105,20 @@ impl TerminalEl {
                     MouseButton::Left,
                     move |MouseButtonEvent { position, .. }, cx| {
                         if let Some(conn_handle) = mouse_down_connection.upgrade(cx.app) {
-                            conn_handle.update(cx.app, |conn, _cx| {
-                                let mut term = conn.term.lock();
-                                let (point, side) = mouse_to_cell_data(
-                                    position,
-                                    origin,
-                                    conn.cur_size,
-                                    term.renderable_content().display_offset,
-                                );
-                                term.selection =
-                                    Some(Selection::new(SelectionType::Simple, point, side))
-                            });
+                            conn_handle.update(cx.app, |connection, cx| {
+                                connection.get_terminal().map(|terminal| {
+                                    let (point, side) = mouse_to_cell_data(
+                                        position,
+                                        origin,
+                                        cur_size,
+                                        terminal.get_display_offset(),
+                                    );
+
+                                    terminal.mouse_down(point, side);
+
+                                    cx.notify();
+                                });
+                            })
                         }
                     },
                 )
@@ -130,13 +133,11 @@ impl TerminalEl {
                         cx.focus_parent_view();
                         if let Some(conn_handle) = click_connection.upgrade(cx.app) {
                             conn_handle.update(cx.app, |conn, cx| {
-                                let mut term = conn.term.lock();
-
                                 let (point, side) = mouse_to_cell_data(
                                     position,
                                     origin,
-                                    conn.cur_size,
-                                    term.renderable_content().display_offset,
+                                    // conn.cur_size,
+                                    // term.renderable_content().display_offset,
                                 );
 
                                 let selection_type = match click_count {
@@ -150,9 +151,7 @@ impl TerminalEl {
                                 let selection = selection_type.map(|selection_type| {
                                     Selection::new(selection_type, point, side)
                                 });
-
-                                term.selection = selection;
-
+                                conn.set_selection(selection);
                                 cx.notify();
                             });
                         }
@@ -162,22 +161,19 @@ impl TerminalEl {
                     MouseButton::Left,
                     move |_, MouseMovedEvent { position, .. }, cx| {
                         if let Some(conn_handle) = drag_connection.upgrade(cx.app) {
-                            conn_handle.update(cx.app, |conn, cx| {
-                                let mut term = conn.term.lock();
+                            conn_handle.update(cx.app, |connection, cx| {
+                                connection.get_terminal().map(|terminal| {
+                                    let (point, side) = mouse_to_cell_data(
+                                        position,
+                                        origin,
+                                        cur_size,
+                                        terminal.get_display_offset(),
+                                    );
 
-                                let (point, side) = mouse_to_cell_data(
-                                    position,
-                                    origin,
-                                    conn.cur_size,
-                                    term.renderable_content().display_offset,
-                                );
+                                    terminal.drag(point, side);
 
-                                if let Some(mut selection) = term.selection.take() {
-                                    selection.update(point, side);
-                                    term.selection = Some(selection);
-                                }
-
-                                cx.notify()
+                                    cx.notify()
+                                });
                             });
                         }
                     },
@@ -197,14 +193,17 @@ impl Element for TerminalEl {
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         let tcx = TerminalLayoutContext::new(cx.global::<Settings>(), &cx.font_cache());
 
-        let term = {
-            let connection = self.connection.upgrade(cx).unwrap().read(cx);
-            //This locks the terminal, so resize it first.
-            connection.set_size(make_new_size(constraint, &tcx.cell_width, &tcx.line_height));
-            connection.term.lock()
-        };
+        let terminal = self
+            .connection
+            .upgrade(cx)
+            .unwrap()
+            .read(cx)
+            .get_terminal() //TODO!
+            .unwrap();
+        //This locks the terminal, so resize it first.
+        terminal.set_size(make_new_size(constraint, &tcx.cell_width, &tcx.line_height));
 
-        let content = term.renderable_content();
+        let (content, grid) = terminal.renderable_content();
 
         //Layout grid cells
 
@@ -219,7 +218,7 @@ impl Element for TerminalEl {
 
         //Layout cursor
         let cursor = layout_cursor(
-            term.grid(),
+            grid,
             cx.text_layout_cache,
             &tcx,
             content.cursor.point,
@@ -390,14 +389,12 @@ impl Element for TerminalEl {
                     let vertical_scroll =
                         (delta.y() / layout.line_height.0) * ALACRITTY_SCROLL_MULTIPLIER;
 
-                    if let Some(connection) = self.connection.upgrade(cx.app) {
-                        connection.update(cx.app, |connection, _| {
-                            connection
-                                .term
-                                .lock()
-                                .scroll_display(Scroll::Delta(vertical_scroll.round() as i32));
-                        })
-                    }
+                    self.connection
+                        .upgrade(cx.app)
+                        .and_then(|handle| handle.read(cx.app).get_terminal())
+                        .map(|terminal| {
+                            terminal.scroll(Scroll::Delta(vertical_scroll.round() as i32));
+                        });
                 })
                 .is_some(),
             Event::KeyDown(KeyDownEvent { keystroke, .. }) => {
@@ -412,14 +409,16 @@ impl Element for TerminalEl {
 
                 self.connection
                     .upgrade(cx.app)
-                    .map(|connection| {
-                        connection
-                            .update(cx.app, |connection, _| connection.try_keystroke(keystroke))
-                    })
+                    .and_then(|model_handle| model_handle.read(cx.app).get_terminal())
+                    .map(|term| term.try_keystroke(keystroke))
                     .unwrap_or(false)
             }
             _ => false,
         }
+    }
+
+    fn metadata(&self) -> Option<&dyn std::any::Any> {
+        None
     }
 
     fn debug(

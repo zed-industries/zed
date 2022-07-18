@@ -6,10 +6,11 @@ use alacritty_terminal::{
     event::{Event as AlacTermEvent, EventListener, Notify},
     event_loop::{EventLoop, Msg, Notifier},
     grid::Scroll,
+    selection::Selection,
     sync::FairMutex,
-    term::{SizeInfo, TermMode},
+    term::{cell::Cell, RenderableContent, SizeInfo, TermMode},
     tty::{self, setup_env},
-    Term,
+    Grid, Term,
 };
 use anyhow::Result;
 use futures::channel::mpsc::{
@@ -48,12 +49,13 @@ impl EventListener for ZedListener {
     }
 }
 
-pub struct TerminalConnection {
-    pub pty_tx: Notifier,
-    pub term: Arc<FairMutex<Term<ZedListener>>>,
-    pub title: String,
-    pub associated_directory: Option<PathBuf>,
-    pub cur_size: SizeInfo,
+pub enum TerminalConnection {
+    Connected(Terminal),
+    Disconnected {
+        directory: Option<PathBuf>,
+        shell: Option<Shell>,
+        error: std::io::Error,
+    },
 }
 
 impl TerminalConnection {
@@ -63,7 +65,7 @@ impl TerminalConnection {
         env: Option<HashMap<String, String>>,
         initial_size: SizeInfo,
         cx: &mut ModelContext<Self>,
-    ) -> Result<TerminalConnection> {
+    ) -> TerminalConnection {
         let pty_config = {
             let shell = shell.and_then(|shell| match shell {
                 Shell::System => None,
@@ -99,7 +101,16 @@ impl TerminalConnection {
         let term = Arc::new(FairMutex::new(term));
 
         //Setup the pty...
-        let pty = tty::new(&pty_config, &initial_size, None)?;
+        let pty = match tty::new(&pty_config, &initial_size, None) {
+            Ok(pty) => pty,
+            Err(error) => {
+                return TerminalConnection::Disconnected {
+                    directory: working_directory,
+                    shell,
+                    error,
+                };
+            }
+        };
 
         let shell = {
             let mut buf = [0; 1024];
@@ -121,13 +132,20 @@ impl TerminalConnection {
         let pty_tx = event_loop.channel();
         let _io_thread = event_loop.spawn();
 
+        let terminal = Terminal {
+            pty_tx: Notifier(pty_tx),
+            term,
+            title: DEFAULT_TITLE.to_string(),
+            associated_directory: working_directory,
+        };
+
         cx.spawn_weak(|this, mut cx| async move {
             //Listen for terminal events
             while let Some(event) = events_rx.next().await {
                 match this.upgrade(&cx) {
                     Some(this) => {
                         this.update(&mut cx, |this, cx| {
-                            this.process_terminal_event(event, cx);
+                            terminal.process_terminal_event(event, cx);
                             cx.notify();
                         });
                     }
@@ -137,20 +155,30 @@ impl TerminalConnection {
         })
         .detach();
 
-        Ok(TerminalConnection {
-            pty_tx: Notifier(pty_tx),
-            term,
-            title: shell.to_string(),
-            cur_size: initial_size,
-            associated_directory: working_directory,
-        })
+        TerminalConnection::Connected(terminal)
     }
 
+    pub fn get_terminal(&self) -> Option<&Terminal> {
+        match self {
+            TerminalConnection::Connected(conn) => Some(&conn),
+            TerminalConnection::Disconnected { .. } => None,
+        }
+    }
+}
+
+pub struct Terminal {
+    pty_tx: Notifier,
+    term: Arc<FairMutex<Term<ZedListener>>>,
+    pub title: String,
+    pub associated_directory: Option<PathBuf>,
+}
+
+impl Terminal {
     ///Takes events from Alacritty and translates them to behavior on this view
     fn process_terminal_event(
         &mut self,
         event: alacritty_terminal::event::Event,
-        cx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<TerminalConnection>,
     ) {
         match event {
             // TODO: Handle is_self_focused in subscription on terminal view
@@ -198,12 +226,12 @@ impl TerminalConnection {
     }
 
     ///Write the Input payload to the tty. This locks the terminal so we can scroll it.
-    pub fn write_to_pty(&mut self, input: String) {
+    pub fn write_to_pty(&self, input: String) {
         self.write_bytes_to_pty(input.into_bytes());
     }
 
     ///Write the Input payload to the tty. This locks the terminal so we can scroll it.
-    fn write_bytes_to_pty(&mut self, input: Vec<u8>) {
+    fn write_bytes_to_pty(&self, input: Vec<u8>) {
         self.term.lock().scroll_display(Scroll::Bottom);
         self.pty_tx.notify(input);
     }
@@ -214,12 +242,12 @@ impl TerminalConnection {
         self.term.lock().resize(new_size);
     }
 
-    pub fn clear(&mut self) {
+    pub fn clear(&self) {
         self.write_to_pty("\x0c".into());
         self.term.lock().clear_screen(ClearMode::Saved);
     }
 
-    pub fn try_keystroke(&mut self, keystroke: &Keystroke) -> bool {
+    pub fn try_keystroke(&self, keystroke: &Keystroke) -> bool {
         let guard = self.term.lock();
         let mode = guard.mode();
         let esc = to_esc_str(keystroke, mode);
@@ -233,7 +261,7 @@ impl TerminalConnection {
     }
 
     ///Paste text into the terminal
-    pub fn paste(&mut self, text: &str) {
+    pub fn paste(&self, text: &str) {
         if self.term.lock().mode().contains(TermMode::BRACKETED_PASTE) {
             self.write_to_pty("\x1b[200~".to_string());
             self.write_to_pty(text.replace('\x1b', "").to_string());
@@ -241,6 +269,32 @@ impl TerminalConnection {
         } else {
             self.write_to_pty(text.replace("\r\n", "\r").replace('\n', "\r"));
         }
+    }
+
+    pub fn copy(&self) -> Option<String> {
+        let term = self.term.lock();
+        term.selection_to_string()
+    }
+
+    ///Takes the selection out of the terminal
+    pub fn take_selection(&self) -> Option<Selection> {
+        self.term.lock().selection.take()
+    }
+
+    ///Sets the selection object on the terminal
+    pub fn set_selection(&self, sel: Option<Selection>) {
+        self.term.lock().selection = sel;
+    }
+
+    ///Get the relevant rendering values from the terminal
+    pub fn renderable_content(&self) -> (RenderableContent, &Grid<Cell>) {
+        let term = self.term.lock();
+        (term.renderable_content(), term.grid())
+    }
+
+    ///Scroll the terminal
+    pub fn scroll(&self, scroll: Scroll) {
+        self.term.lock().scroll_display(scroll)
     }
 
     // pub fn click(&mut self, pos: Vector2F, clicks: usize) {}
@@ -252,7 +306,12 @@ impl TerminalConnection {
 
 impl Drop for TerminalConnection {
     fn drop(&mut self) {
-        self.pty_tx.0.send(Msg::Shutdown).ok();
+        match self {
+            TerminalConnection::Connected(conn) => {
+                conn.pty_tx.0.send(Msg::Shutdown).ok();
+            }
+            _ => {}
+        };
     }
 }
 

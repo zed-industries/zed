@@ -29,7 +29,7 @@ impl<'a> TerminalTestContext<'a> {
         );
 
         let connection =
-            cx.add_model(|cx| TerminalConnection::new(None, None, None, size_info, cx).unwrap());
+            cx.add_model(|cx| TerminalConnection::new(None, None, None, size_info, cx));
 
         TerminalTestContext { cx, connection }
     }
@@ -40,8 +40,11 @@ impl<'a> TerminalTestContext<'a> {
     {
         let command = command.to_string();
         self.connection.update(self.cx, |connection, _| {
-            connection.write_to_pty(command);
-            connection.write_to_pty("\r".to_string());
+            connection.get_terminal().unwrap().write_to_pty(command);
+            connection
+                .get_terminal()
+                .unwrap()
+                .write_to_pty("\r".to_string());
         });
 
         self.connection
@@ -58,9 +61,8 @@ impl<'a> TerminalTestContext<'a> {
     }
 
     fn grid_as_str(connection: &TerminalConnection) -> String {
-        let term = connection.term.lock();
-        let grid_iterator = term.renderable_content().display_iter;
-        let lines = grid_iterator.group_by(|i| i.point.line.0);
+        let (grid_iterator, _) = connection.get_terminal().unwrap().renderable_content();
+        let lines = grid_iterator.display_iter.group_by(|i| i.point.line.0);
         lines
             .into_iter()
             .map(|(_, line)| line.map(|i| i.c).collect::<String>())

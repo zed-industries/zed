@@ -1,8 +1,7 @@
 use gpui::{ModelHandle, ViewContext};
-use util::ResultExt;
 use workspace::Workspace;
 
-use crate::{get_wd_for_workspace, DeployModal, Event, Terminal, TerminalConnection};
+use crate::{get_wd_for_workspace, DeployModal, Event, TerminalConnection, TerminalView};
 
 #[derive(Debug)]
 struct StoredConnection(ModelHandle<TerminalConnection>);
@@ -17,7 +16,7 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
     if let Some(StoredConnection(stored_connection)) = possible_connection {
         // Create a view from the stored connection
         workspace.toggle_modal(cx, |_, cx| {
-            cx.add_view(|cx| Terminal::from_connection(stored_connection.clone(), true, cx))
+            cx.add_view(|cx| TerminalView::from_connection(stored_connection.clone(), true, cx))
         });
         cx.set_global::<Option<StoredConnection>>(Some(StoredConnection(
             stored_connection.clone(),
@@ -27,10 +26,7 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
         if let Some(closed_terminal_handle) = workspace.toggle_modal(cx, |workspace, cx| {
             let wd = get_wd_for_workspace(workspace, cx);
 
-            //TODO: Create a 'failed to launch' view which prints the error and config details.
-            let this = cx
-                .add_option_view(|cx| Terminal::new(wd, true, cx).log_err())
-                .unwrap();
+            let this = cx.add_view(|cx| TerminalView::new(wd, true, cx));
 
             let connection_handle = this.read(cx).connection.clone();
             cx.subscribe(&connection_handle, on_event).detach();
@@ -60,7 +56,7 @@ pub fn on_event(
         if workspace
             .modal()
             .cloned()
-            .and_then(|modal| modal.downcast::<Terminal>())
+            .and_then(|modal| modal.downcast::<TerminalView>())
             .is_some()
         {
             workspace.dismiss_modal(cx)
