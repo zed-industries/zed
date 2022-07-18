@@ -541,19 +541,31 @@ impl Fs for FakeFs {
     async fn create_dir(&self, path: &Path) -> Result<()> {
         self.simulate_random_delay().await;
         let mut state = self.state.lock().await;
-        let inode = state.next_inode;
-        state.next_inode += 1;
-        state
-            .write_path(path, |entry| {
-                entry.or_insert(Arc::new(Mutex::new(FakeFsEntry::Dir {
-                    inode,
-                    mtime: SystemTime::now(),
-                    entries: Default::default(),
-                })));
-                Ok(())
-            })
-            .await?;
-        state.emit_event(&[path]);
+
+        let mut created_dirs = Vec::new();
+        let mut cur_path = PathBuf::new();
+        for component in path.components() {
+            cur_path.push(component);
+            if cur_path == Path::new("/") {
+                continue;
+            }
+
+            let inode = state.next_inode;
+            state.next_inode += 1;
+            state
+                .write_path(&cur_path, |entry| {
+                    entry.or_insert(Arc::new(Mutex::new(FakeFsEntry::Dir {
+                        inode,
+                        mtime: SystemTime::now(),
+                        entries: Default::default(),
+                    })));
+                    created_dirs.push(cur_path.clone());
+                    Ok(())
+                })
+                .await?;
+        }
+
+        state.emit_event(&created_dirs);
         Ok(())
     }
 
