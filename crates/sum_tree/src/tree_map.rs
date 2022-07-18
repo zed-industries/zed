@@ -20,6 +20,11 @@ pub struct MapKey<K>(K);
 #[derive(Clone, Debug, Default)]
 pub struct MapKeyRef<'a, K>(Option<&'a K>);
 
+#[derive(Clone)]
+pub struct TreeSet<K>(TreeMap<K, ()>)
+where
+    K: Clone + Debug + Default + Ord;
+
 impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
     pub fn from_ordered_entries(entries: impl IntoIterator<Item = (K, V)>) -> Self {
         let tree = SumTree::from_iter(
@@ -133,6 +138,32 @@ where
 {
     fn cmp(&self, cursor_location: &MapKeyRef<K>, _: &()) -> Ordering {
         self.0.cmp(&cursor_location.0)
+    }
+}
+
+impl<K> Default for TreeSet<K>
+where
+    K: Clone + Debug + Default + Ord,
+{
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
+impl<K> TreeSet<K>
+where
+    K: Clone + Debug + Default + Ord,
+{
+    pub fn insert(&mut self, key: K) {
+        self.0.insert(key, ());
+    }
+
+    pub fn contains(&self, key: &K) -> bool {
+        self.0.get(key).is_some()
+    }
+
+    pub fn iter<'a>(&'a self) -> impl 'a + Iterator<Item = &'a K> {
+        self.0.iter().map(|(k, _)| k)
     }
 }
 
