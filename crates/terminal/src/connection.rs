@@ -52,6 +52,7 @@ pub struct TerminalConnection {
     pub term: Arc<FairMutex<Term<ZedListener>>>,
     pub title: String,
     pub associated_directory: Option<PathBuf>,
+    pub cur_size: SizeInfo,
 }
 
 impl TerminalConnection {
@@ -157,6 +158,7 @@ impl TerminalConnection {
             pty_tx: Notifier(pty_tx),
             term,
             title: shell.to_string(),
+            cur_size: initial_size,
             associated_directory: working_directory,
         }
     }
@@ -224,7 +226,7 @@ impl TerminalConnection {
     }
 
     ///Resize the terminal and the PTY. This locks the terminal.
-    pub fn set_size(&mut self, new_size: SizeInfo) {
+    pub fn set_size(&self, new_size: SizeInfo) {
         self.pty_tx.0.send(Msg::Resize(new_size)).ok();
         self.term.lock().resize(new_size);
     }
@@ -257,6 +259,12 @@ impl TerminalConnection {
             self.write_to_pty(text.replace("\r\n", "\r").replace('\n', "\r"));
         }
     }
+
+    // pub fn click(&mut self, pos: Vector2F, clicks: usize) {}
+
+    // pub fn drag(prev_pos: Vector2F, pos: Vector2F) {}
+
+    // pub fn mouse_down(pos: Vector2F) {}
 }
 
 impl Drop for TerminalConnection {

@@ -1,13 +1,14 @@
+mod terminal_layout_context;
+
 use alacritty_terminal::{
     grid::{Dimensions, GridIterator, Indexed, Scroll},
     index::{Column as GridCol, Line as GridLine, Point, Side},
     selection::{Selection, SelectionRange, SelectionType},
-    sync::FairMutex,
     term::{
         cell::{Cell, Flags},
         SizeInfo,
     },
-    Term,
+    Grid,
 };
 use editor::{Cursor, CursorShape, HighlightedRange, HighlightedRangeLine};
 use gpui::{
@@ -30,24 +31,17 @@ use settings::Settings;
 use theme::TerminalStyle;
 use util::ResultExt;
 
-use std::{cmp::min, ops::Range, sync::Arc};
+use std::{cmp::min, ops::Range};
 use std::{fmt::Debug, ops::Sub};
 
-use crate::{
-    color_translation::convert_color,
-    connection::{TerminalConnection, ZedListener},
-    Terminal,
-};
+use crate::{color_translation::convert_color, connection::TerminalConnection, Terminal};
+
+use self::terminal_layout_context::TerminalLayoutContext;
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
 ///Implement scroll bars.
 const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
-
-///Used to display the grid as passed to Alacritty and the TTY.
-///Useful for debugging inconsistencies between behavior and display
-#[cfg(debug_assertions)]
-const DEBUG_GRID: bool = false;
 
 ///The GPUI element that paints the terminal.
 ///We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
@@ -58,8 +52,8 @@ pub struct TerminalEl {
 }
 
 ///New type pattern so I don't mix these two up
-struct CellWidth(f32);
-struct LineHeight(f32);
+pub struct CellWidth(f32);
+pub struct LineHeight(f32);
 
 struct LayoutLine {
     cells: Vec<LayoutCell>,
@@ -98,8 +92,6 @@ pub struct LayoutState {
     em_width: CellWidth,
     cursor: Option<Cursor>,
     background_color: Color,
-    cur_size: SizeInfo,
-    terminal: Arc<FairMutex<Term<ZedListener>>>,
     selection_color: Color,
 }
 
@@ -115,6 +107,102 @@ impl TerminalEl {
             modal,
         }
     }
+
+    fn attach_mouse_handlers(
+        &self,
+        origin: Vector2F,
+        view_id: usize,
+        visible_bounds: RectF,
+        cx: &mut PaintContext,
+    ) {
+        let mouse_down_connection = self.connection.clone();
+        let click_connection = self.connection.clone();
+        let drag_connection = self.connection.clone();
+        cx.scene.push_mouse_region(
+            MouseRegion::new(view_id, None, visible_bounds)
+                .on_down(
+                    MouseButton::Left,
+                    move |MouseButtonEvent { position, .. }, cx| {
+                        if let Some(conn_handle) = mouse_down_connection.upgrade(cx.app) {
+                            conn_handle.update(cx.app, |conn, _cx| {
+                                let mut term = conn.term.lock();
+                                let (point, side) = mouse_to_cell_data(
+                                    position,
+                                    origin,
+                                    conn.cur_size,
+                                    term.renderable_content().display_offset,
+                                );
+                                term.selection =
+                                    Some(Selection::new(SelectionType::Simple, point, side))
+                            });
+                        }
+                    },
+                )
+                .on_click(
+                    MouseButton::Left,
+                    move |MouseButtonEvent {
+                              position,
+                              click_count,
+                              ..
+                          },
+                          cx| {
+                        cx.focus_parent_view();
+                        if let Some(conn_handle) = click_connection.upgrade(cx.app) {
+                            conn_handle.update(cx.app, |conn, cx| {
+                                let mut term = conn.term.lock();
+
+                                let (point, side) = mouse_to_cell_data(
+                                    position,
+                                    origin,
+                                    conn.cur_size,
+                                    term.renderable_content().display_offset,
+                                );
+
+                                let selection_type = match click_count {
+                                    0 => return, //This is a release
+                                    1 => Some(SelectionType::Simple),
+                                    2 => Some(SelectionType::Semantic),
+                                    3 => Some(SelectionType::Lines),
+                                    _ => None,
+                                };
+
+                                let selection = selection_type.map(|selection_type| {
+                                    Selection::new(selection_type, point, side)
+                                });
+
+                                term.selection = selection;
+
+                                cx.notify();
+                            });
+                        }
+                    },
+                )
+                .on_drag(
+                    MouseButton::Left,
+                    move |_, MouseMovedEvent { position, .. }, cx| {
+                        if let Some(conn_handle) = drag_connection.upgrade(cx.app) {
+                            conn_handle.update(cx.app, |conn, cx| {
+                                let mut term = conn.term.lock();
+
+                                let (point, side) = mouse_to_cell_data(
+                                    position,
+                                    origin,
+                                    conn.cur_size,
+                                    term.renderable_content().display_offset,
+                                );
+
+                                if let Some(mut selection) = term.selection.take() {
+                                    selection.update(point, side);
+                                    term.selection = Some(selection);
+                                }
+
+                                cx.notify()
+                            });
+                        }
+                    },
+                ),
+        );
+    }
 }
 
 impl Element for TerminalEl {
@@ -126,101 +214,65 @@ impl Element for TerminalEl {
         constraint: gpui::SizeConstraint,
         cx: &mut gpui::LayoutContext,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
-        //Settings immutably borrows cx here for the settings and font cache
-        //and we need to modify the cx to resize the terminal. So instead of
-        //storing Settings or the font_cache(), we toss them ASAP and then reborrow later
-        let text_style = make_text_style(cx.font_cache(), cx.global::<Settings>());
-        let line_height = LineHeight(cx.font_cache().line_height(text_style.font_size));
-        let cell_width = CellWidth(
-            cx.font_cache()
-                .em_advance(text_style.font_id, text_style.font_size),
-        );
-        let connection_handle = self.connection.upgrade(cx).unwrap();
+        let tcx = TerminalLayoutContext::new(cx.global::<Settings>(), &cx.font_cache());
 
-        //Tell the view our new size. Requires a mutable borrow of cx and the view
-        let cur_size = make_new_size(constraint, &cell_width, &line_height);
-        //Note that set_size locks and mutates the terminal.
-        connection_handle.update(cx.app, |connection, _| connection.set_size(cur_size));
-
-        let (selection_color, terminal_theme) = {
-            let theme = &(cx.global::<Settings>()).theme;
-            (theme.editor.selection.selection, &theme.terminal)
+        let term = {
+            let connection = self.connection.upgrade(cx).unwrap().read(cx);
+            //This locks the terminal, so resize it first.
+            connection.set_size(make_new_size(constraint, &tcx.cell_width, &tcx.line_height));
+            connection.term.lock()
         };
-
-        let terminal_mutex = connection_handle.read(cx).term.clone();
-        let term = terminal_mutex.lock();
-        let grid = term.grid();
-        let cursor_point = grid.cursor.point;
-        let cursor_text = grid[cursor_point.line][cursor_point.column].c.to_string();
 
         let content = term.renderable_content();
 
+        /*
+        * TODO for layouts:
+        * - Refactor this whole process to produce 'text cells', 'background rects', and 'selections' which know
+        *   how to paint themselves
+        * - Rather than doing everything per cell, map each cell into a tuple and then unzip the streams
+        * - For efficiency:
+        *  - filter out all background colored background rects
+        *  - filter out all text cells which just contain ' '
+        *  - Smoosh together rectangles on same line
+
+        */
+        //Layout grid cells
         let layout_lines = layout_lines(
             content.display_iter,
-            &text_style,
-            terminal_theme,
+            &tcx.text_style,
+            tcx.terminal_theme,
             cx.text_layout_cache,
             self.modal,
             content.selection,
         );
 
-        let block_text = cx.text_layout_cache.layout_str(
-            &cursor_text,
-            text_style.font_size,
-            &[(
-                cursor_text.len(),
-                RunStyle {
-                    font_id: text_style.font_id,
-                    color: terminal_theme.colors.background,
-                    underline: Default::default(),
-                },
-            )],
+        //Layout cursor
+        let cursor = layout_cursor(
+            term.grid(),
+            cx.text_layout_cache,
+            &tcx,
+            content.cursor.point,
+            content.display_offset,
+            constraint,
         );
 
-        let cursor = get_cursor_shape(
-            content.cursor.point.line.0 as usize,
-            content.cursor.point.column.0 as usize,
-            content.display_offset,
-            &line_height,
-            &cell_width,
-            cur_size.total_lines(),
-            &block_text,
-        )
-        .map(move |(cursor_position, block_width)| {
-            let block_width = if block_width != 0.0 {
-                block_width
-            } else {
-                cell_width.0
-            };
-
-            Cursor::new(
-                cursor_position,
-                block_width,
-                line_height.0,
-                terminal_theme.colors.cursor,
-                CursorShape::Block,
-                Some(block_text.clone()),
-            )
-        });
-        drop(term);
-
+        //Select background color
         let background_color = if self.modal {
-            terminal_theme.colors.modal_background
+            tcx.terminal_theme.colors.modal_background
         } else {
-            terminal_theme.colors.background
+            tcx.terminal_theme.colors.background
         };
 
+        //Done!
         (
             constraint.max,
             LayoutState {
                 layout_lines,
-                line_height,
-                em_width: cell_width,
+                line_height: tcx.line_height,
+                em_width: tcx.cell_width,
                 cursor,
-                cur_size,
                 background_color,
-                terminal: terminal_mutex,
-                selection_color,
+                selection_color: tcx.selection_color,
             },
         )
     }
@@ -232,22 +284,21 @@ impl Element for TerminalEl {
         layout: &mut Self::LayoutState,
         cx: &mut gpui::PaintContext,
     ) -> Self::PaintState {
+        /*
+         * For paint, I want to change how mouse events are handled:
+         * - Refactor the mouse handlers to push the grid cell actions into the connection
+         *   - But keep the conversion from GPUI coordinates to grid cells in the Terminal element
+         * - Switch from directly painting things, to calling 'paint' on items produced by layout
+         */
+
         //Setup element stuff
         let clip_bounds = Some(visible_bounds);
 
         cx.paint_layer(clip_bounds, |cx| {
-            let cur_size = layout.cur_size.clone();
             let origin = bounds.origin() + vec2f(layout.em_width.0, 0.);
 
             //Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
-            attach_mouse_handlers(
-                origin,
-                cur_size,
-                self.view.id(),
-                &layout.terminal,
-                visible_bounds,
-                cx,
-            );
+            self.attach_mouse_handlers(origin, self.view.id(), visible_bounds, cx);
 
             cx.paint_layer(clip_bounds, |cx| {
                 //Start with a background color
@@ -345,13 +396,6 @@ impl Element for TerminalEl {
                     cursor.paint(origin, cx);
                 })
             }
-
-            #[cfg(debug_assertions)]
-            if DEBUG_GRID {
-                cx.paint_layer(clip_bounds, |cx| {
-                    draw_debug_grid(bounds, layout, cx);
-                })
-            }
         });
     }
 
@@ -418,6 +462,64 @@ impl Element for TerminalEl {
     }
 }
 
+fn layout_cursor(
+    grid: &Grid<Cell>,
+    text_layout_cache: &TextLayoutCache,
+    tcx: &TerminalLayoutContext,
+    cursor_point: Point,
+    display_offset: usize,
+    constraint: SizeConstraint,
+) -> Option<Cursor> {
+    let cursor_text = layout_cursor_text(grid, text_layout_cache, tcx);
+    get_cursor_shape(
+        cursor_point.line.0 as usize,
+        cursor_point.column.0 as usize,
+        display_offset,
+        &tcx.line_height,
+        &tcx.cell_width,
+        (constraint.max.y() / &tcx.line_height.0) as usize, //TODO
+        &cursor_text,
+    )
+    .map(move |(cursor_position, block_width)| {
+        let block_width = if block_width != 0.0 {
+            block_width
+        } else {
+            tcx.cell_width.0
+        };
+
+        Cursor::new(
+            cursor_position,
+            block_width,
+            tcx.line_height.0,
+            tcx.terminal_theme.colors.cursor,
+            CursorShape::Block,
+            Some(cursor_text.clone()),
+        )
+    })
+}
+
+fn layout_cursor_text(
+    grid: &Grid<Cell>,
+    text_layout_cache: &TextLayoutCache,
+    tcx: &TerminalLayoutContext,
+) -> Line {
+    let cursor_point = grid.cursor.point;
+    let cursor_text = grid[cursor_point.line][cursor_point.column].c.to_string();
+
+    text_layout_cache.layout_str(
+        &cursor_text,
+        tcx.text_style.font_size,
+        &[(
+            cursor_text.len(),
+            RunStyle {
+                font_id: tcx.text_style.font_id,
+                color: tcx.terminal_theme.colors.background,
+                underline: Default::default(),
+            },
+        )],
+    )
+}
+
 pub fn mouse_to_cell_data(
     pos: Vector2F,
     origin: Vector2F,
@@ -428,40 +530,6 @@ pub fn mouse_to_cell_data(
     let point = grid_cell(&relative_pos, cur_size, display_offset);
     let side = cell_side(&relative_pos, cur_size);
     (point, side)
-}
-
-///Configures a text style from the current settings.
-fn make_text_style(font_cache: &FontCache, settings: &Settings) -> TextStyle {
-    // Pull the font family from settings properly overriding
-    let family_id = settings
-        .terminal_overrides
-        .font_family
-        .as_ref()
-        .and_then(|family_name| font_cache.load_family(&[family_name]).log_err())
-        .or_else(|| {
-            settings
-                .terminal_defaults
-                .font_family
-                .as_ref()
-                .and_then(|family_name| font_cache.load_family(&[family_name]).log_err())
-        })
-        .unwrap_or(settings.buffer_font_family);
-
-    TextStyle {
-        color: settings.theme.editor.text_color,
-        font_family_id: family_id,
-        font_family_name: font_cache.family_name(family_id).unwrap(),
-        font_id: font_cache
-            .select_font(family_id, &Default::default())
-            .unwrap(),
-        font_size: settings
-            .terminal_overrides
-            .font_size
-            .or(settings.terminal_defaults.font_size)
-            .unwrap_or(settings.buffer_font_size),
-        font_properties: Default::default(),
-        underline: Default::default(),
-    }
 }
 
 ///Configures a size info object from the given information.
@@ -592,89 +660,89 @@ fn cell_style(
     }
 }
 
-fn attach_mouse_handlers(
-    origin: Vector2F,
-    cur_size: SizeInfo,
-    view_id: usize,
-    terminal_mutex: &Arc<FairMutex<Term<ZedListener>>>,
-    visible_bounds: RectF,
-    cx: &mut PaintContext,
-) {
-    let click_mutex = terminal_mutex.clone();
-    let drag_mutex = terminal_mutex.clone();
-    let mouse_down_mutex = terminal_mutex.clone();
+// fn attach_mouse_handlers(
+//     origin: Vector2F,
+//     cur_size: SizeInfo,
+//     view_id: usize,
+//     terminal_mutex: &Arc<FairMutex<Term<ZedListener>>>,
+//     visible_bounds: RectF,
+//     cx: &mut PaintContext,
+// ) {
+//     let click_mutex = terminal_mutex.clone();
+//     let drag_mutex = terminal_mutex.clone();
+//     let mouse_down_mutex = terminal_mutex.clone();
 
-    cx.scene.push_mouse_region(
-        MouseRegion::new(view_id, None, visible_bounds)
-            .on_down(
-                MouseButton::Left,
-                move |MouseButtonEvent { position, .. }, _| {
-                    let mut term = mouse_down_mutex.lock();
+//     cx.scene.push_mouse_region(
+//         MouseRegion::new(view_id, None, visible_bounds)
+//             .on_down(
+//                 MouseButton::Left,
+//                 move |MouseButtonEvent { position, .. }, _| {
+//                     let mut term = mouse_down_mutex.lock();
 
-                    let (point, side) = mouse_to_cell_data(
-                        position,
-                        origin,
-                        cur_size,
-                        term.renderable_content().display_offset,
-                    );
-                    term.selection = Some(Selection::new(SelectionType::Simple, point, side))
-                },
-            )
-            .on_click(
-                MouseButton::Left,
-                move |MouseButtonEvent {
-                          position,
-                          click_count,
-                          ..
-                      },
-                      cx| {
-                    let mut term = click_mutex.lock();
+//                     let (point, side) = mouse_to_cell_data(
+//                         position,
+//                         origin,
+//                         cur_size,
+//                         term.renderable_content().display_offset,
+//                     );
+//                     term.selection = Some(Selection::new(SelectionType::Simple, point, side))
+//                 },
+//             )
+//             .on_click(
+//                 MouseButton::Left,
+//                 move |MouseButtonEvent {
+//                           position,
+//                           click_count,
+//                           ..
+//                       },
+//                       cx| {
+//                     let mut term = click_mutex.lock();
 
-                    let (point, side) = mouse_to_cell_data(
-                        position,
-                        origin,
-                        cur_size,
-                        term.renderable_content().display_offset,
-                    );
+//                     let (point, side) = mouse_to_cell_data(
+//                         position,
+//                         origin,
+//                         cur_size,
+//                         term.renderable_content().display_offset,
+//                     );
 
-                    let selection_type = match click_count {
-                        0 => return, //This is a release
-                        1 => Some(SelectionType::Simple),
-                        2 => Some(SelectionType::Semantic),
-                        3 => Some(SelectionType::Lines),
-                        _ => None,
-                    };
+//                     let selection_type = match click_count {
+//                         0 => return, //This is a release
+//                         1 => Some(SelectionType::Simple),
+//                         2 => Some(SelectionType::Semantic),
+//                         3 => Some(SelectionType::Lines),
+//                         _ => None,
+//                     };
 
-                    let selection = selection_type
-                        .map(|selection_type| Selection::new(selection_type, point, side));
+//                     let selection = selection_type
+//                         .map(|selection_type| Selection::new(selection_type, point, side));
 
-                    term.selection = selection;
-                    cx.focus_parent_view();
-                    cx.notify();
-                },
-            )
-            .on_drag(
-                MouseButton::Left,
-                move |_, MouseMovedEvent { position, .. }, cx| {
-                    let mut term = drag_mutex.lock();
+//                     term.selection = selection;
+//                     cx.focus_parent_view();
+//                     cx.notify();
+//                 },
+//             )
+//             .on_drag(
+//                 MouseButton::Left,
+//                 move |_, MouseMovedEvent { position, .. }, cx| {
+//                     let mut term = drag_mutex.lock();
 
-                    let (point, side) = mouse_to_cell_data(
-                        position,
-                        origin,
-                        cur_size,
-                        term.renderable_content().display_offset,
-                    );
+//                     let (point, side) = mouse_to_cell_data(
+//                         position,
+//                         origin,
+//                         cur_size,
+//                         term.renderable_content().display_offset,
+//                     );
 
-                    if let Some(mut selection) = term.selection.take() {
-                        selection.update(point, side);
-                        term.selection = Some(selection);
-                    }
+//                     if let Some(mut selection) = term.selection.take() {
+//                         selection.update(point, side);
+//                         term.selection = Some(selection);
+//                     }
 
-                    cx.notify();
-                },
-            ),
-    );
-}
+//                     cx.notify();
+//                 },
+//             ),
+//     );
+// }
 
 ///Copied (with modifications) from alacritty/src/input.rs > Processor::cell_side()
 fn cell_side(pos: &PaneRelativePos, cur_size: SizeInfo) -> Side {
@@ -712,37 +780,6 @@ fn grid_cell(pos: &PaneRelativePos, cur_size: SizeInfo, display_offset: usize) -
     //0 -> total_lines - viewport_height - display_offset + mouse_line
 
     Point::new(GridLine(line - display_offset as i32), col)
-}
-
-///Draws the grid as Alacritty sees it. Useful for checking if there is an inconsistency between
-///Display and conceptual grid.
-#[cfg(debug_assertions)]
-fn draw_debug_grid(bounds: RectF, layout: &mut LayoutState, cx: &mut PaintContext) {
-    let width = layout.cur_size.width();
-    let height = layout.cur_size.height();
-    //Alacritty uses 'as usize', so shall we.
-    for col in 0..(width / layout.em_width.0).round() as usize {
-        cx.scene.push_quad(Quad {
-            bounds: RectF::new(
-                bounds.origin() + vec2f((col + 1) as f32 * layout.em_width.0, 0.),
-                vec2f(1., height),
-            ),
-            background: Some(Color::green()),
-            border: Default::default(),
-            corner_radius: 0.,
-        });
-    }
-    for row in 0..((height / layout.line_height.0) + 1.0).round() as usize {
-        cx.scene.push_quad(Quad {
-            bounds: RectF::new(
-                bounds.origin() + vec2f(layout.em_width.0, row as f32 * layout.line_height.0),
-                vec2f(width, 1.),
-            ),
-            background: Some(Color::green()),
-            border: Default::default(),
-            corner_radius: 0.,
-        });
-    }
 }
 
 mod test {
