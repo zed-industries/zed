@@ -2315,8 +2315,10 @@ impl BackgroundScanner {
                         );
                         fs_entry.is_ignored = ignore_stack.is_all();
                         snapshot.insert_entry(fs_entry, self.fs.as_ref());
-                        if metadata.is_dir {
-                            let ancestor_inodes = snapshot.ancestor_inodes_for_path(&path);
+
+                        let mut ancestor_inodes = snapshot.ancestor_inodes_for_path(&path);
+                        if metadata.is_dir && !ancestor_inodes.contains(&metadata.inode) {
+                            ancestor_inodes.insert(metadata.inode);
                             self.executor
                                 .block(scan_queue_tx.send(ScanJob {
                                     abs_path,
@@ -2771,7 +2773,7 @@ mod tests {
     use anyhow::Result;
     use client::test::FakeHttpClient;
     use fs::RealFs;
-    use gpui::TestAppContext;
+    use gpui::{executor::Deterministic, TestAppContext};
     use rand::prelude::*;
     use serde_json::json;
     use std::{
@@ -2839,8 +2841,8 @@ mod tests {
         })
     }
 
-    #[gpui::test]
-    async fn test_circular_symlinks(cx: &mut TestAppContext) {
+    #[gpui::test(iterations = 10)]
+    async fn test_circular_symlinks(executor: Arc<Deterministic>, cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/root",
@@ -2865,7 +2867,7 @@ mod tests {
             client,
             Arc::from(Path::new("/root")),
             true,
-            fs,
+            fs.clone(),
             Default::default(),
             &mut cx.to_async(),
         )
@@ -2891,7 +2893,33 @@ mod tests {
                     Path::new("lib/b/lib"),
                 ]
             );
-        })
+        });
+
+        fs.rename(
+            Path::new("/root/lib/a/lib"),
+            Path::new("/root/lib/a/lib-2"),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        executor.run_until_parked();
+        tree.read_with(cx, |tree, _| {
+            assert_eq!(
+                tree.entries(false)
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                vec![
+                    Path::new(""),
+                    Path::new("lib"),
+                    Path::new("lib/a"),
+                    Path::new("lib/a/a.txt"),
+                    Path::new("lib/a/lib-2"),
+                    Path::new("lib/b"),
+                    Path::new("lib/b/b.txt"),
+                    Path::new("lib/b/lib"),
+                ]
+            );
+        });
     }
 
     #[gpui::test]
