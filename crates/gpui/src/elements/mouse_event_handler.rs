@@ -7,7 +7,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     platform::CursorStyle,
-    scene::CursorRegion,
+    scene::{CursorRegion, HandlerSet},
     DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, MouseButton,
     MouseButtonEvent, MouseMovedEvent, MouseRegion, MouseState, PaintContext, RenderContext,
     SizeConstraint, View,
@@ -16,8 +16,9 @@ use serde_json::json;
 
 pub struct MouseEventHandler {
     child: ElementBox,
+    discriminant: (TypeId, usize),
     cursor_style: Option<CursorStyle>,
-    region: MouseRegion,
+    handlers: HandlerSet,
     padding: Padding,
 }
 
@@ -31,7 +32,8 @@ impl MouseEventHandler {
         Self {
             child: render_child(cx.mouse_state::<Tag>(id), cx),
             cursor_style: None,
-            region: MouseRegion::new(0, Some((TypeId::of::<Tag>(), id)), Default::default()),
+            discriminant: (TypeId::of::<Tag>(), id),
+            handlers: Default::default(),
             padding: Default::default(),
         }
     }
@@ -46,7 +48,7 @@ impl MouseEventHandler {
         button: MouseButton,
         handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
     ) -> Self {
-        self.region = self.region.on_down(button, handler);
+        self.handlers = self.handlers.on_down(button, handler);
         self
     }
 
@@ -55,7 +57,7 @@ impl MouseEventHandler {
         button: MouseButton,
         handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
     ) -> Self {
-        self.region = self.region.on_click(button, handler);
+        self.handlers = self.handlers.on_click(button, handler);
         self
     }
 
@@ -64,7 +66,7 @@ impl MouseEventHandler {
         button: MouseButton,
         handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
     ) -> Self {
-        self.region = self.region.on_down_out(button, handler);
+        self.handlers = self.handlers.on_down_out(button, handler);
         self
     }
 
@@ -73,7 +75,7 @@ impl MouseEventHandler {
         button: MouseButton,
         handler: impl Fn(Vector2F, MouseMovedEvent, &mut EventContext) + 'static,
     ) -> Self {
-        self.region = self.region.on_drag(button, handler);
+        self.handlers = self.handlers.on_drag(button, handler);
         self
     }
 
@@ -81,7 +83,7 @@ impl MouseEventHandler {
         mut self,
         handler: impl Fn(bool, MouseMovedEvent, &mut EventContext) + 'static,
     ) -> Self {
-        self.region = self.region.on_hover(handler);
+        self.handlers = self.handlers.on_hover(handler);
         self
     }
 
@@ -126,9 +128,12 @@ impl Element for MouseEventHandler {
             });
         }
 
-        self.region.view_id = cx.current_view_id();
-        self.region.bounds = hit_bounds;
-        cx.scene.push_mouse_region(self.region.clone());
+        cx.scene.push_mouse_region(MouseRegion::from_handlers(
+            cx.current_view_id(),
+            Some(self.discriminant.clone()),
+            hit_bounds,
+            self.handlers.clone(),
+        ));
 
         self.child.paint(bounds.origin(), visible_bounds, cx);
     }
