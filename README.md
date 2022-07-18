@@ -23,12 +23,6 @@ script/sqlx migrate run
 script/seed-db
 ```
 
-Install Redis:
-
-```
-brew install redis
-```
-
 Run the web frontend and the collaboration server.
 
 ```
