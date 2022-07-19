@@ -1,24 +1,24 @@
 use super::*;
 
-pub struct TerminalLayoutTheme<'a> {
-    pub line_height: LineHeight,
-    pub cell_width: CellWidth,
+pub struct TerminalLayoutData<'a> {
     pub text_style: TextStyle,
     pub selection_color: Color,
     pub terminal_theme: &'a TerminalStyle,
+    pub size: TerminalDimensions,
 }
 
-impl<'a> TerminalLayoutTheme<'a> {
-    pub fn new(settings: &'a Settings, font_cache: &FontCache) -> Self {
+impl<'a> TerminalLayoutData<'a> {
+    pub fn new(settings: &'a Settings, font_cache: &FontCache, constraint: Vector2F) -> Self {
         let text_style = Self::make_text_style(font_cache, &settings);
-        let line_height = LineHeight(font_cache.line_height(text_style.font_size));
-        let cell_width = CellWidth(font_cache.em_advance(text_style.font_id, text_style.font_size));
         let selection_color = settings.theme.editor.selection.selection;
         let terminal_theme = &settings.theme.terminal;
 
-        TerminalLayoutTheme {
-            line_height,
-            cell_width,
+        let line_height = font_cache.line_height(text_style.font_size);
+        let cell_width = font_cache.em_advance(text_style.font_id, text_style.font_size);
+        let dimensions = TerminalDimensions::new(line_height, cell_width, constraint);
+
+        TerminalLayoutData {
+            size: dimensions,
             text_style,
             selection_color,
             terminal_theme,

@@ -62,8 +62,7 @@ dependencies = [
 [[package]]
 name = "alacritty_config_derive"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77044c45bdb871e501b5789ad16293ecb619e5733b60f4bb01d1cb31c463c336"
+source = "git+https://github.com/zed-industries/alacritty?rev=90647e167c036530176dc5b579222c5886286f63#90647e167c036530176dc5b579222c5886286f63"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -72,14 +71,13 @@ dependencies = [
 
 [[package]]
 name = "alacritty_terminal"
-version = "0.16.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02fb5d4af84e39f9754d039ff6de2233c8996dbae0af74910156e559e5766e2f"
+version = "0.17.0-dev"
+source = "git+https://github.com/zed-industries/alacritty?rev=90647e167c036530176dc5b579222c5886286f63#90647e167c036530176dc5b579222c5886286f63"
 dependencies = [
  "alacritty_config_derive",
  "base64 0.13.0",
  "bitflags",
- "dirs 3.0.2",
+ "dirs 4.0.0",
  "libc",
  "log",
  "mio 0.6.23",

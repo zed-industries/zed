@@ -3,12 +3,11 @@ pub mod connection;
 mod modal;
 pub mod terminal_element;
 
-use alacritty_terminal::term::SizeInfo;
 use connection::{Event, TerminalConnection};
 use dirs::home_dir;
 use gpui::{
-    actions, elements::*, keymap::Keystroke, AppContext, ClipboardItem, Entity, ModelHandle,
-    MutableAppContext, View, ViewContext,
+    actions, elements::*, geometry::vector::vec2f, keymap::Keystroke, AppContext, ClipboardItem,
+    Entity, ModelHandle, MutableAppContext, View, ViewContext,
 };
 use modal::deploy_modal;
 
@@ -16,6 +15,8 @@ use project::{LocalWorktree, Project, ProjectPath};
 use settings::{Settings, WorkingDirectory};
 use smallvec::SmallVec;
 use std::path::{Path, PathBuf};
+use terminal_element::TerminalDimensions;
+
 use workspace::{Item, Workspace};
 
 use crate::terminal_element::TerminalEl;
@@ -80,14 +81,10 @@ impl TerminalView {
     ///To get the right working directory from a workspace, use: `get_wd_for_workspace()`
     fn new(working_directory: Option<PathBuf>, modal: bool, cx: &mut ViewContext<Self>) -> Self {
         //The details here don't matter, the terminal will be resized on the first layout
-        let size_info = SizeInfo::new(
-            DEBUG_TERMINAL_WIDTH,
-            DEBUG_TERMINAL_HEIGHT,
-            DEBUG_CELL_WIDTH,
+        let size_info = TerminalDimensions::new(
             DEBUG_LINE_HEIGHT,
-            0.,
-            0.,
-            false,
+            DEBUG_CELL_WIDTH,
+            vec2f(DEBUG_TERMINAL_WIDTH, DEBUG_TERMINAL_HEIGHT),
         );
 
         let (shell, envs) = {

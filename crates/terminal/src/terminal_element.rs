@@ -1,14 +1,12 @@
-mod terminal_layout_context;
+pub mod terminal_layout_context;
 
 use alacritty_terminal::{
     ansi::{Color::Named, NamedColor},
+    event::WindowSize,
     grid::{Dimensions, GridIterator, Indexed, Scroll},
     index::{Column as GridCol, Line as GridLine, Point, Side},
     selection::SelectionRange,
-    term::{
-        cell::{Cell, Flags},
-        SizeInfo,
-    },
+    term::cell::{Cell, Flags},
 };
 use editor::{Cursor, CursorShape, HighlightedRange, HighlightedRangeLine};
 use gpui::{
@@ -36,7 +34,7 @@ use std::{fmt::Debug, ops::Sub};
 
 use crate::{color_translation::convert_color, connection::TerminalConnection, TerminalView};
 
-use self::terminal_layout_context::TerminalLayoutTheme;
+use self::terminal_layout_context::TerminalLayoutData;
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
@@ -51,12 +49,74 @@ pub struct TerminalEl {
     modal: bool,
 }
 
-///New type pattern so I don't mix these two up
-pub struct CellWidth(f32);
-pub struct LineHeight(f32);
+#[derive(Clone, Copy, Debug)]
+pub struct TerminalDimensions {
+    pub cell_width: f32,
+    pub line_height: f32,
+    pub height: f32,
+    pub width: f32,
+}
 
-///New type pattern to ensure that we use adjusted mouse positions throughout the code base, rather than
-struct PaneRelativePos(Vector2F);
+impl TerminalDimensions {
+    pub fn new(line_height: f32, cell_width: f32, size: Vector2F) -> Self {
+        TerminalDimensions {
+            cell_width,
+            line_height,
+            width: size.x(),
+            height: size.y(),
+        }
+    }
+
+    pub fn num_lines(&self) -> usize {
+        (self.height / self.line_height).floor() as usize
+    }
+
+    pub fn num_columns(&self) -> usize {
+        (self.width / self.cell_width).floor() as usize
+    }
+
+    pub fn height(&self) -> f32 {
+        self.height
+    }
+
+    pub fn width(&self) -> f32 {
+        self.width
+    }
+
+    pub fn cell_width(&self) -> f32 {
+        self.cell_width
+    }
+
+    pub fn line_height(&self) -> f32 {
+        self.line_height
+    }
+}
+
+//TODO look at what TermSize is
+impl Into<WindowSize> for TerminalDimensions {
+    fn into(self) -> WindowSize {
+        WindowSize {
+            num_lines: self.num_lines() as u16,
+            num_cols: self.num_columns() as u16,
+            cell_width: self.cell_width() as u16,
+            cell_height: self.line_height() as u16,
+        }
+    }
+}
+
+impl Dimensions for TerminalDimensions {
+    fn total_lines(&self) -> usize {
+        self.num_lines() //TODO: Check that this is fine. This is supposed to be for the back buffer...
+    }
+
+    fn screen_lines(&self) -> usize {
+        self.num_lines()
+    }
+
+    fn columns(&self) -> usize {
+        self.num_columns()
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 struct LayoutCell {
@@ -78,7 +138,7 @@ impl LayoutCell {
     ) {
         let pos = point_to_absolute(origin, self.point, layout);
         self.text
-            .paint(pos, visible_bounds, layout.line_height.0, cx);
+            .paint(pos, visible_bounds, layout.size.line_height, cx);
     }
 }
 
@@ -110,8 +170,8 @@ impl LayoutRect {
         let position = point_to_absolute(origin, self.point, layout);
 
         let size = vec2f(
-            (layout.em_width.0.ceil() * self.num_of_cells as f32).ceil(),
-            layout.line_height.0,
+            (layout.size.cell_width.ceil() * self.num_of_cells as f32).ceil(),
+            layout.size.line_height,
         );
 
         cx.scene.push_quad(Quad {
@@ -125,8 +185,8 @@ impl LayoutRect {
 
 fn point_to_absolute(origin: Vector2F, point: Point<i32, i32>, layout: &LayoutState) -> Vector2F {
     vec2f(
-        (origin.x() + point.column as f32 * layout.em_width.0).floor(),
-        origin.y() + point.line as f32 * layout.line_height.0,
+        (origin.x() + point.column as f32 * layout.size.cell_width).floor(),
+        origin.y() + point.line as f32 * layout.size.line_height,
     )
 }
 
@@ -146,16 +206,12 @@ impl RelativeHighlightedRange {
         origin: Vector2F,
         layout: &LayoutState,
     ) -> HighlightedRangeLine {
-        let start_x = origin.x() + self.range.start as f32 * layout.em_width.0;
-        let end_x = origin.x() + self.range.end as f32 * layout.em_width.0 + layout.em_width.0;
+        let start_x = origin.x() + self.range.start as f32 * layout.size.cell_width;
+        let end_x =
+            origin.x() + self.range.end as f32 * layout.size.cell_width + layout.size.cell_width;
 
         return HighlightedRangeLine { start_x, end_x };
     }
-}
-
-///Functionally the constructor for the PaneRelativePos type, mutates the mouse_position
-fn relative_pos(mouse_position: Vector2F, origin: Vector2F) -> PaneRelativePos {
-    PaneRelativePos(mouse_position.sub(origin))
 }
 
 ///The information generated during layout that is nescessary for painting
@@ -163,12 +219,10 @@ pub struct LayoutState {
     cells: Vec<LayoutCell>,
     rects: Vec<LayoutRect>,
     highlights: Vec<RelativeHighlightedRange>,
-    line_height: LineHeight,
-    em_width: CellWidth,
     cursor: Option<Cursor>,
     background_color: Color,
     selection_color: Color,
-    cur_size: SizeInfo,
+    size: TerminalDimensions,
 }
 
 impl TerminalEl {
@@ -189,7 +243,7 @@ impl TerminalEl {
         origin: Vector2F,
         view_id: usize,
         visible_bounds: RectF,
-        cur_size: SizeInfo,
+        cur_size: TerminalDimensions,
         cx: &mut PaintContext,
     ) {
         let mouse_down_connection = self.connection.clone();
@@ -279,11 +333,8 @@ impl Element for TerminalEl {
         constraint: gpui::SizeConstraint,
         cx: &mut gpui::LayoutContext,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
-        let tcx = TerminalLayoutTheme::new(cx.global::<Settings>(), &cx.font_cache());
-
-        //This locks the terminal, so resize it first.
-        //Layout grid cells
-        let cur_size = make_new_size(constraint, &tcx.cell_width, &tcx.line_height);
+        let layout =
+            TerminalLayoutData::new(cx.global::<Settings>(), &cx.font_cache(), constraint.max);
 
         let terminal = self
             .connection
@@ -293,34 +344,35 @@ impl Element for TerminalEl {
             .get_terminal()
             .unwrap();
 
-        let (cursor, cells, rects, highlights) = terminal.render_lock(Some(cur_size), |content| {
-            let (cells, rects, highlights) = layout_grid(
-                content.display_iter,
-                &tcx.text_style,
-                tcx.terminal_theme,
-                cx.text_layout_cache,
-                self.modal,
-                content.selection,
-            );
+        let (cursor, cells, rects, highlights) =
+            terminal.render_lock(Some(layout.size.clone()), |content| {
+                let (cells, rects, highlights) = layout_grid(
+                    content.display_iter,
+                    &layout.text_style,
+                    layout.terminal_theme,
+                    cx.text_layout_cache,
+                    self.modal,
+                    content.selection,
+                );
 
-            //Layout cursor
-            let cursor = layout_cursor(
-                // grid,
-                cx.text_layout_cache,
-                &tcx,
-                content.cursor.point,
-                content.display_offset,
-                constraint,
-            );
+                //Layout cursor
+                let cursor = layout_cursor(
+                    // grid,
+                    cx.text_layout_cache,
+                    &layout,
+                    content.cursor.point,
+                    content.display_offset,
+                    constraint,
+                );
 
-            (cursor, cells, rects, highlights)
-        });
+                (cursor, cells, rects, highlights)
+            });
 
         //Select background color
         let background_color = if self.modal {
-            tcx.terminal_theme.colors.modal_background
+            layout.terminal_theme.colors.modal_background
         } else {
-            tcx.terminal_theme.colors.background
+            layout.terminal_theme.colors.background
         };
 
         //Done!
@@ -328,12 +380,10 @@ impl Element for TerminalEl {
             constraint.max,
             LayoutState {
                 cells,
-                line_height: tcx.line_height,
-                em_width: tcx.cell_width,
                 cursor,
                 background_color,
-                selection_color: tcx.selection_color,
-                cur_size,
+                selection_color: layout.selection_color,
+                size: layout.size,
                 rects,
                 highlights,
             },
@@ -358,10 +408,10 @@ impl Element for TerminalEl {
         let clip_bounds = Some(visible_bounds);
 
         cx.paint_layer(clip_bounds, |cx| {
-            let origin = bounds.origin() + vec2f(layout.em_width.0, 0.);
+            let origin = bounds.origin() + vec2f(layout.size.cell_width, 0.);
 
             //Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
-            self.attach_mouse_handlers(origin, self.view.id(), visible_bounds, layout.cur_size, cx);
+            self.attach_mouse_handlers(origin, self.view.id(), visible_bounds, layout.size, cx);
 
             cx.paint_layer(clip_bounds, |cx| {
                 //Start with a background color
@@ -380,7 +430,7 @@ impl Element for TerminalEl {
             //Draw Selection
             cx.paint_layer(clip_bounds, |cx| {
                 let start_y = layout.highlights.get(0).map(|highlight| {
-                    origin.y() + highlight.line_index as f32 * layout.line_height.0
+                    origin.y() + highlight.line_index as f32 * layout.size.line_height
                 });
 
                 if let Some(y) = start_y {
@@ -394,11 +444,11 @@ impl Element for TerminalEl {
 
                     let hr = HighlightedRange {
                         start_y: y, //Need to change this
-                        line_height: layout.line_height.0,
+                        line_height: layout.size.line_height,
                         lines: range_lines,
                         color: layout.selection_color,
                         //Copied from editor. TODO: move to theme or something
-                        corner_radius: 0.15 * layout.line_height.0,
+                        corner_radius: 0.15 * layout.size.line_height,
                     };
                     hr.paint(bounds, cx.scene);
                 }
@@ -436,7 +486,7 @@ impl Element for TerminalEl {
                 .contains_point(*position)
                 .then(|| {
                     let vertical_scroll =
-                        (delta.y() / layout.line_height.0) * ALACRITTY_SCROLL_MULTIPLIER;
+                        (delta.y() / layout.size.line_height) * ALACRITTY_SCROLL_MULTIPLIER;
 
                     self.connection
                         .upgrade(cx.app)
@@ -487,7 +537,7 @@ impl Element for TerminalEl {
 fn layout_cursor(
     // grid: &Grid<Cell>,
     text_layout_cache: &TextLayoutCache,
-    tcx: &TerminalLayoutTheme,
+    tcx: &TerminalLayoutData,
     cursor_point: Point,
     display_offset: usize,
     constraint: SizeConstraint,
@@ -497,22 +547,22 @@ fn layout_cursor(
         cursor_point.line.0 as usize,
         cursor_point.column.0 as usize,
         display_offset,
-        &tcx.line_height,
-        &tcx.cell_width,
-        (constraint.max.y() / &tcx.line_height.0) as usize, //TODO
+        tcx.size.line_height,
+        tcx.size.cell_width,
+        (constraint.max.y() / tcx.size.line_height) as usize, //TODO
         &cursor_text,
     )
     .map(move |(cursor_position, block_width)| {
         let block_width = if block_width != 0.0 {
             block_width
         } else {
-            tcx.cell_width.0
+            tcx.size.cell_width
         };
 
         Cursor::new(
             cursor_position,
             block_width,
-            tcx.line_height.0,
+            tcx.size.line_height,
             tcx.terminal_theme.colors.cursor,
             CursorShape::Block,
             Some(cursor_text.clone()),
@@ -524,7 +574,7 @@ fn layout_cursor_text(
     // grid: &Grid<Cell>,
     _cursor_point: Point,
     text_layout_cache: &TextLayoutCache,
-    tcx: &TerminalLayoutTheme,
+    tcx: &TerminalLayoutData,
 ) -> Line {
     let cursor_text = " "; //grid[cursor_point.line][cursor_point.column].c.to_string();
 
@@ -545,30 +595,41 @@ fn layout_cursor_text(
 pub fn mouse_to_cell_data(
     pos: Vector2F,
     origin: Vector2F,
-    cur_size: SizeInfo,
+    cur_size: TerminalDimensions,
     display_offset: usize,
 ) -> (Point, alacritty_terminal::index::Direction) {
-    let relative_pos = relative_pos(pos, origin);
-    let point = grid_cell(&relative_pos, cur_size, display_offset);
-    let side = cell_side(&relative_pos, cur_size);
-    (point, side)
-}
+    let pos = pos.sub(origin);
+    let point = {
+        let col = pos.x() / cur_size.cell_width; //TODO: underflow...
+        let col = min(GridCol(col as usize), cur_size.last_column());
 
-///Configures a size info object from the given information.
-fn make_new_size(
-    constraint: SizeConstraint,
-    cell_width: &CellWidth,
-    line_height: &LineHeight,
-) -> SizeInfo {
-    SizeInfo::new(
-        constraint.max.x() - cell_width.0,
-        constraint.max.y(),
-        cell_width.0,
-        line_height.0,
-        0.,
-        0.,
-        false,
-    )
+        let line = pos.y() / cur_size.line_height;
+        let line = min(line as i32, cur_size.bottommost_line().0);
+
+        Point::new(GridLine(line - display_offset as i32), col)
+    };
+
+    //Copied (with modifications) from alacritty/src/input.rs > Processor::cell_side()
+    let side = {
+        let x = pos.0.x() as usize;
+        let cell_x = x.saturating_sub(cur_size.cell_width as usize) % cur_size.cell_width as usize;
+        let half_cell_width = (cur_size.cell_width / 2.0) as usize;
+
+        let additional_padding =
+            (cur_size.width() - cur_size.cell_width * 2.) % cur_size.cell_width;
+        let end_of_grid = cur_size.width() - cur_size.cell_width - additional_padding;
+        //Width: Pixels or columns?
+        if cell_x > half_cell_width
+                // Edge case when mouse leaves the window.
+                || x as f32 >= end_of_grid
+        {
+            Side::Right
+        } else {
+            Side::Left
+        }
+    };
+
+    (point, side)
 }
 
 fn layout_grid(
@@ -686,23 +747,23 @@ fn get_cursor_shape(
     line: usize,
     line_index: usize,
     display_offset: usize,
-    line_height: &LineHeight,
-    cell_width: &CellWidth,
+    line_height: f32,
+    cell_width: f32,
     total_lines: usize,
     text_fragment: &Line,
 ) -> Option<(Vector2F, f32)> {
     let cursor_line = line + display_offset;
     if cursor_line <= total_lines {
         let cursor_width = if text_fragment.width() == 0. {
-            cell_width.0
+            cell_width
         } else {
             text_fragment.width()
         };
 
         Some((
             vec2f(
-                line_index as f32 * cell_width.0,
-                cursor_line as f32 * line_height.0,
+                line_index as f32 * cell_width,
+                cursor_line as f32 * line_height,
             ),
             cursor_width,
         ))
@@ -737,128 +798,6 @@ fn cell_style(
     }
 }
 
-// fn attach_mouse_handlers(
-//     origin: Vector2F,
-//     cur_size: SizeInfo,
-//     view_id: usize,
-//     terminal_mutex: &Arc<FairMutex<Term<ZedListener>>>,
-//     visible_bounds: RectF,
-//     cx: &mut PaintContext,
-// ) {
-//     let click_mutex = terminal_mutex.clone();
-//     let drag_mutex = terminal_mutex.clone();
-//     let mouse_down_mutex = terminal_mutex.clone();
-
-//     cx.scene.push_mouse_region(
-//         MouseRegion::new(view_id, None, visible_bounds)
-//             .on_down(
-//                 MouseButton::Left,
-//                 move |MouseButtonEvent { position, .. }, _| {
-//                     let mut term = mouse_down_mutex.lock();
-
-//                     let (point, side) = mouse_to_cell_data(
-//                         position,
-//                         origin,
-//                         cur_size,
-//                         term.renderable_content().display_offset,
-//                     );
-//                     term.selection = Some(Selection::new(SelectionType::Simple, point, side))
-//                 },
-//             )
-//             .on_click(
-//                 MouseButton::Left,
-//                 move |MouseButtonEvent {
-//                           position,
-//                           click_count,
-//                           ..
-//                       },
-//                       cx| {
-//                     let mut term = click_mutex.lock();
-
-//                     let (point, side) = mouse_to_cell_data(
-//                         position,
-//                         origin,
-//                         cur_size,
-//                         term.renderable_content().display_offset,
-//                     );
-
-//                     let selection_type = match click_count {
-//                         0 => return, //This is a release
-//                         1 => Some(SelectionType::Simple),
-//                         2 => Some(SelectionType::Semantic),
-//                         3 => Some(SelectionType::Lines),
-//                         _ => None,
-//                     };
-
-//                     let selection = selection_type
-//                         .map(|selection_type| Selection::new(selection_type, point, side));
-
-//                     term.selection = selection;
-//                     cx.focus_parent_view();
-//                     cx.notify();
-//                 },
-//             )
-//             .on_drag(
-//                 MouseButton::Left,
-//                 move |_, MouseMovedEvent { position, .. }, cx| {
-//                     let mut term = drag_mutex.lock();
-
-//                     let (point, side) = mouse_to_cell_data(
-//                         position,
-//                         origin,
-//                         cur_size,
-//                         term.renderable_content().display_offset,
-//                     );
-
-//                     if let Some(mut selection) = term.selection.take() {
-//                         selection.update(point, side);
-//                         term.selection = Some(selection);
-//                     }
-
-//                     cx.notify();
-//                 },
-//             ),
-//     );
-// }
-
-///Copied (with modifications) from alacritty/src/input.rs > Processor::cell_side()
-fn cell_side(pos: &PaneRelativePos, cur_size: SizeInfo) -> Side {
-    let x = pos.0.x() as usize;
-    let cell_x = x.saturating_sub(cur_size.cell_width() as usize) % cur_size.cell_width() as usize;
-    let half_cell_width = (cur_size.cell_width() / 2.0) as usize;
-
-    let additional_padding =
-        (cur_size.width() - cur_size.cell_width() * 2.) % cur_size.cell_width();
-    let end_of_grid = cur_size.width() - cur_size.cell_width() - additional_padding;
-
-    if cell_x > half_cell_width
-            // Edge case when mouse leaves the window.
-            || x as f32 >= end_of_grid
-    {
-        Side::Right
-    } else {
-        Side::Left
-    }
-}
-
-///Copied (with modifications) from alacritty/src/event.rs > Mouse::point()
-///Position is a pane-relative position. That means the top left corner of the mouse
-///Region should be (0,0)
-fn grid_cell(pos: &PaneRelativePos, cur_size: SizeInfo, display_offset: usize) -> Point {
-    let pos = pos.0;
-    let col = pos.x() / cur_size.cell_width(); //TODO: underflow...
-    let col = min(GridCol(col as usize), cur_size.last_column());
-
-    let line = pos.y() / cur_size.cell_height();
-    let line = min(line as i32, cur_size.bottommost_line().0);
-
-    //when clicking, need to ADD to get to the top left cell
-    //e.g. total_lines - viewport_height, THEN subtract display offset
-    //0 -> total_lines - viewport_height - display_offset + mouse_line
-
-    Point::new(GridLine(line - display_offset as i32), col)
-}
-
 mod test {
 
     #[test]
@@ -872,14 +811,10 @@ mod test {
         let origin_x = 10.;
         let origin_y = 20.;
 
-        let cur_size = alacritty_terminal::term::SizeInfo::new(
-            term_width,
-            term_height,
+        let cur_size = crate::terminal_element::TerminalDimensions::new(
             cell_width,
             line_height,
-            0.,
-            0.,
-            false,
+            gpui::geometry::vector::vec2f(term_width, term_height),
         );
 
         let mouse_pos = gpui::geometry::vector::vec2f(mouse_pos_x, mouse_pos_y);

@@ -1,12 +1,11 @@
 use std::time::Duration;
 
-use alacritty_terminal::term::SizeInfo;
-use gpui::{AppContext, ModelHandle, ReadModelWith, TestAppContext};
+use gpui::{geometry::vector::vec2f, AppContext, ModelHandle, ReadModelWith, TestAppContext};
 use itertools::Itertools;
 
 use crate::{
-    connection::TerminalConnection, DEBUG_CELL_WIDTH, DEBUG_LINE_HEIGHT, DEBUG_TERMINAL_HEIGHT,
-    DEBUG_TERMINAL_WIDTH,
+    connection::TerminalConnection, terminal_element::TerminalDimensions, DEBUG_CELL_WIDTH,
+    DEBUG_LINE_HEIGHT, DEBUG_TERMINAL_HEIGHT, DEBUG_TERMINAL_WIDTH,
 };
 
 pub struct TerminalTestContext<'a> {
@@ -18,14 +17,10 @@ impl<'a> TerminalTestContext<'a> {
     pub fn new(cx: &'a mut TestAppContext) -> Self {
         cx.set_condition_duration(Some(Duration::from_secs(5)));
 
-        let size_info = SizeInfo::new(
-            DEBUG_TERMINAL_WIDTH,
-            DEBUG_TERMINAL_HEIGHT,
+        let size_info = TerminalDimensions::new(
             DEBUG_CELL_WIDTH,
             DEBUG_LINE_HEIGHT,
-            0.,
-            0.,
-            false,
+            vec2f(DEBUG_TERMINAL_WIDTH, DEBUG_TERMINAL_HEIGHT),
         );
 
         let connection =

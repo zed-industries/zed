@@ -3,13 +3,13 @@ mod keymappings;
 use alacritty_terminal::{
     ansi::{ClearMode, Handler},
     config::{Config, Program, PtyConfig},
-    event::{Event as AlacTermEvent, EventListener, Notify},
+    event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
     event_loop::{EventLoop, Msg, Notifier},
     grid::Scroll,
     index::{Direction, Point},
     selection::{Selection, SelectionType},
     sync::FairMutex,
-    term::{RenderableContent, SizeInfo, TermMode},
+    term::{test::TermSize, RenderableContent, TermMode},
     tty::{self, setup_env},
     Term,
 };
@@ -22,7 +22,10 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use gpui::{keymap::Keystroke, ClipboardItem, CursorStyle, Entity, ModelContext};
 
-use crate::color_translation::{get_color_at_index, to_alac_rgb};
+use crate::{
+    color_translation::{get_color_at_index, to_alac_rgb},
+    terminal_element::TerminalDimensions,
+};
 
 use self::keymappings::to_esc_str;
 
@@ -63,7 +66,7 @@ impl TerminalConnection {
         working_directory: Option<PathBuf>,
         shell: Option<Shell>,
         env: Option<HashMap<String, String>>,
-        initial_size: SizeInfo,
+        initial_size: TerminalDimensions,
         cx: &mut ModelContext<Self>,
     ) -> TerminalConnection {
         let pty_config = {
@@ -97,11 +100,11 @@ impl TerminalConnection {
         let (events_tx, mut events_rx) = unbounded();
 
         //Set up the terminal...
-        let term = Term::new(&config, initial_size, ZedListener(events_tx.clone()));
+        let term = Term::new(&config, &initial_size, ZedListener(events_tx.clone()));
         let term = Arc::new(FairMutex::new(term));
 
         //Setup the pty...
-        let pty = match tty::new(&pty_config, &initial_size, None) {
+        let pty = match tty::new(&pty_config, initial_size.into(), None) {
             Ok(pty) => pty,
             Err(error) => {
                 return TerminalConnection::Disconnected {
@@ -237,6 +240,7 @@ impl Terminal {
                 cx.emit(Event::Bell);
             }
             AlacTermEvent::Exit => cx.emit(Event::CloseTerminal),
+            AlacTermEvent::TextAreaSizeRequest(_) => println!("Received text area resize request"),
         }
     }
 
@@ -252,9 +256,11 @@ impl Terminal {
     }
 
     ///Resize the terminal and the PTY. This locks the terminal.
-    pub fn set_size(&self, new_size: SizeInfo) {
+    pub fn set_size(&self, new_size: WindowSize) {
         self.pty_tx.0.send(Msg::Resize(new_size)).ok();
-        self.term.lock().resize(new_size);
+
+        let term_size = TermSize::new(new_size.num_cols as usize, new_size.num_lines as usize);
+        self.term.lock().resize(term_size);
     }
 
     pub fn clear(&self) {
@@ -300,13 +306,13 @@ impl Terminal {
         self.term.lock().selection = sel;
     }
 
-    pub fn render_lock<F, T>(&self, new_size: Option<SizeInfo>, f: F) -> T
+    pub fn render_lock<F, T>(&self, new_size: Option<TerminalDimensions>, f: F) -> T
     where
         F: FnOnce(RenderableContent) -> T,
     {
         if let Some(new_size) = new_size {
-            self.pty_tx.0.send(Msg::Resize(new_size)).ok(); //Give the PTY a chance to react to the new size
-                                                            //TODO: Is this bad for performance?
+            self.pty_tx.0.send(Msg::Resize(new_size.into())).ok(); //Give the PTY a chance to react to the new size
+                                                                   //TODO: Is this bad for performance?
         }
 
         let mut term = self.term.lock(); //Lock
