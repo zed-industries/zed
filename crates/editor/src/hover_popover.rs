@@ -420,7 +420,6 @@ mod tests {
     use indoc::indoc;
 
     use language::{Diagnostic, DiagnosticSet};
-    use lsp::notification;
     use project::HoverBlock;
 
     use crate::test::EditorLspTestContext;

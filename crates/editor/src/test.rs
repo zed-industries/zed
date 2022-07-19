@@ -27,8 +27,7 @@ use workspace::{pane, AppState, Workspace, WorkspaceHandle};
 use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     multi_buffer::ToPointUtf16,
-    AnchorRangeExt, Autoscroll, DisplayPoint, Editor, EditorMode, EditorSnapshot, MultiBuffer,
-    ToPoint,
+    AnchorRangeExt, Autoscroll, DisplayPoint, Editor, EditorMode, MultiBuffer, ToPoint,
 };
 
 #[cfg(test)]
