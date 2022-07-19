@@ -1,6 +1,6 @@
 use super::*;
 
-pub struct TerminalLayoutContext<'a> {
+pub struct TerminalLayoutTheme<'a> {
     pub line_height: LineHeight,
     pub cell_width: CellWidth,
     pub text_style: TextStyle,
@@ -8,7 +8,7 @@ pub struct TerminalLayoutContext<'a> {
     pub terminal_theme: &'a TerminalStyle,
 }
 
-impl<'a> TerminalLayoutContext<'a> {
+impl<'a> TerminalLayoutTheme<'a> {
     pub fn new(settings: &'a Settings, font_cache: &FontCache) -> Self {
         let text_style = Self::make_text_style(font_cache, &settings);
         let line_height = LineHeight(font_cache.line_height(text_style.font_size));
@@ -16,7 +16,7 @@ impl<'a> TerminalLayoutContext<'a> {
         let selection_color = settings.theme.editor.selection.selection;
         let terminal_theme = &settings.theme.terminal;
 
-        TerminalLayoutContext {
+        TerminalLayoutTheme {
             line_height,
             cell_width,
             text_style,

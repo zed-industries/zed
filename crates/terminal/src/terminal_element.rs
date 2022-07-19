@@ -37,7 +37,7 @@ use std::{fmt::Debug, ops::Sub};
 
 use crate::{color_translation::convert_color, connection::TerminalConnection, TerminalView};
 
-use self::terminal_layout_context::TerminalLayoutContext;
+use self::terminal_layout_context::TerminalLayoutTheme;
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
@@ -110,7 +110,10 @@ impl LayoutRect {
     fn paint(&self, origin: Vector2F, layout: &LayoutState, cx: &mut PaintContext) {
         let position = point_to_absolute(origin, self.point, layout);
 
-        let size = vec2f(layout.em_width.0.ceil(), layout.line_height.0);
+        let size = vec2f(
+            (layout.em_width.0.ceil() * self.num_of_cells as f32).ceil(),
+            layout.line_height.0,
+        );
 
         cx.scene.push_quad(Quad {
             bounds: RectF::new(position, size),
@@ -128,6 +131,7 @@ fn point_to_absolute(origin: Vector2F, point: Point<i32, i32>, layout: &LayoutSt
     )
 }
 
+#[derive(Clone, Debug, Default)]
 struct RelativeHighlightedRange {
     line_index: usize,
     range: Range<usize>,
@@ -276,7 +280,7 @@ impl Element for TerminalEl {
         constraint: gpui::SizeConstraint,
         cx: &mut gpui::LayoutContext,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
-        let tcx = TerminalLayoutContext::new(cx.global::<Settings>(), &cx.font_cache());
+        let tcx = TerminalLayoutTheme::new(cx.global::<Settings>(), &cx.font_cache());
 
         let terminal = self
             .connection
@@ -483,7 +487,7 @@ impl Element for TerminalEl {
 fn layout_cursor(
     grid: &Grid<Cell>,
     text_layout_cache: &TextLayoutCache,
-    tcx: &TerminalLayoutContext,
+    tcx: &TerminalLayoutTheme,
     cursor_point: Point,
     display_offset: usize,
     constraint: SizeConstraint,
@@ -519,7 +523,7 @@ fn layout_cursor(
 fn layout_cursor_text(
     grid: &Grid<Cell>,
     text_layout_cache: &TextLayoutCache,
-    tcx: &TerminalLayoutContext,
+    tcx: &TerminalLayoutTheme,
 ) -> Line {
     let cursor_point = grid.cursor.point;
     let cursor_text = grid[cursor_point.line][cursor_point.column].c.to_string();
@@ -611,31 +615,31 @@ fn layout_grid(
                         rects.push(rect);
                         cur_rect = None
                     }
-                }
-
-                match cur_alac_color {
-                    Some(cur_color) => {
-                        if cell.bg == cur_color {
-                            cur_rect = cur_rect.take().map(|rect| rect.extend());
-                        } else {
-                            cur_alac_color = Some(cell.bg);
-                            if let Some(_) = cur_rect {
-                                rects.push(cur_rect.take().unwrap());
+                } else {
+                    match cur_alac_color {
+                        Some(cur_color) => {
+                            if cell.bg == cur_color {
+                                cur_rect = cur_rect.take().map(|rect| rect.extend());
+                            } else {
+                                cur_alac_color = Some(cell.bg);
+                                if let Some(_) = cur_rect {
+                                    rects.push(cur_rect.take().unwrap());
+                                }
+                                cur_rect = Some(LayoutRect::new(
+                                    Point::new(line_index as i32, cell.point.column.0 as i32),
+                                    1,
+                                    convert_color(&cell.bg, &terminal_theme.colors, modal),
+                                ));
                             }
+                        }
+                        None => {
+                            cur_alac_color = Some(cell.bg);
                             cur_rect = Some(LayoutRect::new(
                                 Point::new(line_index as i32, cell.point.column.0 as i32),
                                 1,
                                 convert_color(&cell.bg, &terminal_theme.colors, modal),
                             ));
                         }
-                    }
-                    None => {
-                        cur_alac_color = Some(cell.bg);
-                        cur_rect = Some(LayoutRect::new(
-                            Point::new(line_index as i32, cell.point.column.0 as i32),
-                            1,
-                            convert_color(&cell.bg, &terminal_theme.colors, modal),
-                        ));
                     }
                 }
             }
@@ -671,6 +675,7 @@ fn layout_grid(
             rects.push(cur_rect.take().unwrap());
         }
     }
+
     (cells, rects, highlight_ranges)
 }
 
