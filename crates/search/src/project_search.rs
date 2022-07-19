@@ -7,8 +7,8 @@ use collections::HashMap;
 use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll, MAX_TAB_TITLE_LEN};
 use gpui::{
     actions, elements::*, platform::CursorStyle, Action, AppContext, ElementBox, Entity,
-    ModelContext, ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View,
-    ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
+    ModelContext, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task,
+    View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, Project};
@@ -735,9 +735,9 @@ impl ProjectSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click({
+        .on_click(MouseButton::Left, {
             let action = action.boxed_clone();
-            move |_, _, cx| cx.dispatch_any_action(action.boxed_clone())
+            move |_, cx| cx.dispatch_any_action(action.boxed_clone())
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .with_tooltip::<NavButton, _>(
@@ -770,7 +770,9 @@ impl ProjectSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(move |_, _, cx| cx.dispatch_any_action(option.to_toggle_action()))
+        .on_click(MouseButton::Left, move |_, cx| {
+            cx.dispatch_any_action(option.to_toggle_action())
+        })
         .with_cursor_style(CursorStyle::PointingHand)
         .with_tooltip::<Self, _>(
             option as usize,

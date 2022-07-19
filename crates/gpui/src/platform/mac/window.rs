@@ -6,7 +6,7 @@ use crate::{
     },
     keymap::Keystroke,
     platform::{self, Event, WindowBounds, WindowContext},
-    KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseEvent, MouseMovedEvent, Scene,
+    KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseButtonEvent, MouseMovedEvent, Scene,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -643,7 +643,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                     ))
                     .detach();
             }
-            Event::MouseUp(MouseEvent {
+            Event::MouseUp(MouseButtonEvent {
                 button: MouseButton::Left,
                 ..
             }) => {

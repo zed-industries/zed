@@ -13,8 +13,9 @@ use gpui::{
     },
     impl_actions, impl_internal_actions,
     platform::{CursorStyle, NavigationDirection},
-    AppContext, AsyncAppContext, Entity, ModelHandle, MutableAppContext, PromptLevel, Quad,
-    RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, AsyncAppContext, Entity, ModelHandle, MouseButton, MouseButtonEvent,
+    MutableAppContext, PromptLevel, Quad, RenderContext, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
@@ -955,9 +956,9 @@ impl Pane {
                                             )
                                             .with_padding(Padding::uniform(4.))
                                             .with_cursor_style(CursorStyle::PointingHand)
-                                            .on_click({
+                                            .on_click(MouseButton::Left, {
                                                 let pane = pane.clone();
-                                                move |_, _, cx| {
+                                                move |_, cx| {
                                                     cx.dispatch_action(CloseItem {
                                                         item_id,
                                                         pane: pane.clone(),
@@ -978,7 +979,7 @@ impl Pane {
                         .with_style(style.container)
                         .boxed()
                     })
-                    .on_mouse_down(move |_, cx| {
+                    .on_mouse_down(MouseButton::Left, move |_, cx| {
                         cx.dispatch_action(ActivateItem(ix));
                     })
                     .boxed()
@@ -1079,9 +1080,12 @@ impl View for Pane {
                                         },
                                     )
                                     .with_cursor_style(CursorStyle::PointingHand)
-                                    .on_mouse_down(|position, cx| {
-                                        cx.dispatch_action(DeploySplitMenu { position });
-                                    })
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        |MouseButtonEvent { position, .. }, cx| {
+                                            cx.dispatch_action(DeploySplitMenu { position });
+                                        },
+                                    )
                                     .boxed(),
                                 )
                                 .constrained()

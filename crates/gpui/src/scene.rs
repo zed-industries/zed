@@ -1,6 +1,8 @@
+mod mouse_region;
+
 use serde::Deserialize;
 use serde_json::json;
-use std::{any::TypeId, borrow::Cow, rc::Rc, sync::Arc};
+use std::{borrow::Cow, sync::Arc};
 
 use crate::{
     color::Color,
@@ -8,8 +10,9 @@ use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::ToJson,
     platform::CursorStyle,
-    EventContext, ImageData, MouseEvent, MouseMovedEvent, ScrollWheelEvent,
+    ImageData,
 };
+pub use mouse_region::*;
 
 pub struct Scene {
     scale_factor: f32,
@@ -42,38 +45,6 @@ pub struct Layer {
 pub struct CursorRegion {
     pub bounds: RectF,
     pub style: CursorStyle,
-}
-
-pub enum MouseRegionEvent {
-    Moved(MouseMovedEvent),
-    Hover(MouseEvent),
-    Down(MouseEvent),
-    Up(MouseEvent),
-    Click(MouseEvent),
-    DownOut(MouseEvent),
-    ScrollWheel(ScrollWheelEvent),
-}
-
-#[derive(Clone, Default)]
-pub struct MouseRegion {
-    pub view_id: usize,
-    pub discriminant: Option<(TypeId, usize)>,
-    pub bounds: RectF,
-
-    pub hover: Option<Rc<dyn Fn(Vector2F, bool, &mut EventContext)>>,
-    pub mouse_down: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
-    pub click: Option<Rc<dyn Fn(Vector2F, usize, &mut EventContext)>>,
-    pub right_mouse_down: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
-    pub right_click: Option<Rc<dyn Fn(Vector2F, usize, &mut EventContext)>>,
-    pub drag: Option<Rc<dyn Fn(Vector2F, Vector2F, &mut EventContext)>>,
-    pub mouse_down_out: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
-    pub right_mouse_down_out: Option<Rc<dyn Fn(Vector2F, &mut EventContext)>>,
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
-pub struct MouseRegionId {
-    pub view_id: usize,
-    pub discriminant: (TypeId, usize),
 }
 
 #[derive(Default, Debug)]
