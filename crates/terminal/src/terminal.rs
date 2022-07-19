@@ -364,10 +364,12 @@ fn get_wd_for_workspace(workspace: &Workspace, cx: &AppContext) -> Option<PathBu
         WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx),
         WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
         WorkingDirectory::AlwaysHome => None,
-        WorkingDirectory::Always { directory } => shellexpand::full(&directory)
-            .ok()
-            .map(|dir| Path::new(&dir.to_string()).to_path_buf())
-            .filter(|dir| dir.is_dir()),
+        WorkingDirectory::Always { directory } => {
+            shellexpand::full(&directory) //TODO handle this better
+                .ok()
+                .map(|dir| Path::new(&dir.to_string()).to_path_buf())
+                .filter(|dir| dir.is_dir())
+        }
     };
     res.or_else(|| home_dir())
 }

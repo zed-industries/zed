@@ -9,7 +9,6 @@ use alacritty_terminal::{
         cell::{Cell, Flags},
         SizeInfo,
     },
-    Grid,
 };
 use editor::{Cursor, CursorShape, HighlightedRange, HighlightedRangeLine};
 use gpui::{
@@ -282,41 +281,40 @@ impl Element for TerminalEl {
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         let tcx = TerminalLayoutTheme::new(cx.global::<Settings>(), &cx.font_cache());
 
+        //This locks the terminal, so resize it first.
+        //Layout grid cells
+        let cur_size = make_new_size(constraint, &tcx.cell_width, &tcx.line_height);
+
         let terminal = self
             .connection
             .upgrade(cx)
             .unwrap()
             .read(cx)
-            .get_terminal() //TODO!
+            .get_terminal()
             .unwrap();
-        //This locks the terminal, so resize it first.
-        let cur_size = make_new_size(constraint, &tcx.cell_width, &tcx.line_height);
-        terminal.set_size(cur_size);
 
-        let grid = terminal.grid();
-        let selection = terminal.get_selection();
-        let display_offset = terminal.get_display_offset();
-        let cursor = terminal.get_cursor();
-        //Layout grid cells
+        let (cursor, cells, rects, highlights) = terminal.render_lock(Some(cur_size), |content| {
+            let (cells, rects, highlights) = layout_grid(
+                content.display_iter,
+                &tcx.text_style,
+                tcx.terminal_theme,
+                cx.text_layout_cache,
+                self.modal,
+                content.selection,
+            );
 
-        let (cells, rects, highlights) = layout_grid(
-            grid.display_iter(),
-            &tcx.text_style,
-            tcx.terminal_theme,
-            cx.text_layout_cache,
-            self.modal,
-            selection,
-        );
+            //Layout cursor
+            let cursor = layout_cursor(
+                // grid,
+                cx.text_layout_cache,
+                &tcx,
+                content.cursor.point,
+                content.display_offset,
+                constraint,
+            );
 
-        //Layout cursor
-        let cursor = layout_cursor(
-            &grid,
-            cx.text_layout_cache,
-            &tcx,
-            cursor.point,
-            display_offset,
-            constraint,
-        );
+            (cursor, cells, rects, highlights)
+        });
 
         //Select background color
         let background_color = if self.modal {
@@ -406,6 +404,7 @@ impl Element for TerminalEl {
                 }
             });
 
+            //Draw the text cells
             cx.paint_layer(clip_bounds, |cx| {
                 for cell in &layout.cells {
                     cell.paint(origin, layout, visible_bounds, cx);
@@ -484,15 +483,16 @@ impl Element for TerminalEl {
     }
 }
 
+///TODO: Fix cursor rendering with alacritty fork
 fn layout_cursor(
-    grid: &Grid<Cell>,
+    // grid: &Grid<Cell>,
     text_layout_cache: &TextLayoutCache,
     tcx: &TerminalLayoutTheme,
     cursor_point: Point,
     display_offset: usize,
     constraint: SizeConstraint,
 ) -> Option<Cursor> {
-    let cursor_text = layout_cursor_text(grid, text_layout_cache, tcx);
+    let cursor_text = layout_cursor_text(/*grid,*/ cursor_point, text_layout_cache, tcx);
     get_cursor_shape(
         cursor_point.line.0 as usize,
         cursor_point.column.0 as usize,
@@ -521,12 +521,12 @@ fn layout_cursor(
 }
 
 fn layout_cursor_text(
-    grid: &Grid<Cell>,
+    // grid: &Grid<Cell>,
+    _cursor_point: Point,
     text_layout_cache: &TextLayoutCache,
     tcx: &TerminalLayoutTheme,
 ) -> Line {
-    let cursor_point = grid.cursor.point;
-    let cursor_text = grid[cursor_point.line][cursor_point.column].c.to_string();
+    let cursor_text = " "; //grid[cursor_point.line][cursor_point.column].c.to_string();
 
     text_layout_cache.layout_str(
         &cursor_text,

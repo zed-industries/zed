@@ -7,11 +7,11 @@ use alacritty_terminal::{
     event_loop::{EventLoop, Msg, Notifier},
     grid::Scroll,
     index::{Direction, Point},
-    selection::{Selection, SelectionRange, SelectionType},
+    selection::{Selection, SelectionType},
     sync::FairMutex,
-    term::{cell::Cell, RenderableCursor, SizeInfo, TermMode},
+    term::{RenderableContent, SizeInfo, TermMode},
     tty::{self, setup_env},
-    Grid, Term,
+    Term,
 };
 use futures::{
     channel::mpsc::{unbounded, UnboundedSender},
@@ -54,7 +54,7 @@ pub enum TerminalConnection {
     Disconnected {
         directory: Option<PathBuf>,
         shell: Option<Shell>,
-        error: std::io::Error,
+        error: Option<std::io::Error>,
     },
 }
 
@@ -107,15 +107,23 @@ impl TerminalConnection {
                 return TerminalConnection::Disconnected {
                     directory: working_directory,
                     shell,
-                    error,
+                    error: Some(error),
                 };
             }
         };
 
         let shell_txt = {
-            let mut buf = [0; 1024];
-            let pw = alacritty_unix::get_pw_entry(&mut buf).unwrap();
-            pw.shell.to_string()
+            match shell {
+                Some(Shell::System) | None => {
+                    let mut buf = [0; 1024];
+                    let pw = alacritty_unix::get_pw_entry(&mut buf).unwrap();
+                    pw.shell.to_string()
+                }
+                Some(Shell::Program(program)) => program,
+                Some(Shell::WithArguments { program, args }) => {
+                    format!("{} {}", program, args.join(" "))
+                }
+            }
         };
 
         //And connect them together
@@ -292,21 +300,27 @@ impl Terminal {
         self.term.lock().selection = sel;
     }
 
-    pub fn grid(&self) -> Grid<Cell> {
-        let term = self.term.lock();
-        term.grid().clone() //TODO: BAD!!!!!!!!
+    pub fn render_lock<F, T>(&self, new_size: Option<SizeInfo>, f: F) -> T
+    where
+        F: FnOnce(RenderableContent) -> T,
+    {
+        if let Some(new_size) = new_size {
+            self.pty_tx.0.send(Msg::Resize(new_size)).ok(); //Give the PTY a chance to react to the new size
+                                                            //TODO: Is this bad for performance?
+        }
+
+        let mut term = self.term.lock(); //Lock
+
+        if let Some(new_size) = new_size {
+            term.resize(new_size); //Reflow
+        }
+
+        let content = term.renderable_content();
+        f(content)
     }
 
     pub fn get_display_offset(&self) -> usize {
         self.term.lock().renderable_content().display_offset
-    }
-
-    pub fn get_selection(&self) -> Option<SelectionRange> {
-        self.term.lock().renderable_content().selection //TODO: BAD!!!!!
-    }
-
-    pub fn get_cursor(&self) -> RenderableCursor {
-        self.term.lock().renderable_content().cursor
     }
 
     ///Scroll the terminal
