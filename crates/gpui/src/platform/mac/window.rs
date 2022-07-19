@@ -1,3 +1,4 @@
+use super::{geometry::RectFExt, renderer::Renderer};
 use crate::{
     executor,
     geometry::{
@@ -447,6 +448,14 @@ impl platform::Window for Window {
         // Changing the document edited state resets the traffic light position,
         // so we have to move it again.
         self.0.borrow().move_traffic_light();
+    }
+
+    fn show_character_palette(&self) {
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            let window = self.0.borrow().native_window;
+            let _: () = msg_send![app, orderFrontCharacterPalette: window];
+        }
     }
 }
 

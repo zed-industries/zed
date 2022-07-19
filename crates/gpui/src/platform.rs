@@ -99,6 +99,7 @@ pub trait Window: WindowContext {
     fn activate(&self);
     fn set_title(&mut self, title: &str);
     fn set_edited(&mut self, edited: bool);
+    fn show_character_palette(&self);
 }
 
 pub trait WindowContext {

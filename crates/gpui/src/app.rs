@@ -1195,6 +1195,11 @@ impl MutableAppContext {
             .set_menus(menus, &self.keystroke_matcher);
     }
 
+    fn show_character_palette(&self, window_id: usize) {
+        let (_, window) = &self.presenters_and_platform_windows[&window_id];
+        window.show_character_palette();
+    }
+
     fn prompt(
         &self,
         window_id: usize,
@@ -3487,6 +3492,10 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn platform(&self) -> Arc<dyn Platform> {
         self.app.platform()
+    }
+
+    pub fn show_character_palette(&self) {
+        self.app.show_character_palette(self.window_id);
     }
 
     pub fn prompt(

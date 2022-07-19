@@ -274,6 +274,8 @@ impl super::Window for Window {
     fn on_should_close(&mut self, callback: Box<dyn FnMut() -> bool>) {
         self.should_close_handler = Some(callback);
     }
+
+    fn show_character_palette(&self) {}
 }
 
 pub fn platform() -> Platform {

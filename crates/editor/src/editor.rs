@@ -189,6 +189,7 @@ actions!(
         Tab,
         TabPrev,
         ToggleComments,
+        ShowCharacterPalette,
         SelectLargerSyntaxNode,
         SelectSmallerSyntaxNode,
         GoToDefinition,
@@ -313,6 +314,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::open_excerpts);
     cx.add_action(Editor::jump);
     cx.add_action(Editor::restart_language_server);
+    cx.add_action(Editor::show_character_palette);
     cx.add_async_action(Editor::confirm_completion);
     cx.add_async_action(Editor::confirm_code_action);
     cx.add_async_action(Editor::rename);
@@ -5012,6 +5014,10 @@ impl Editor {
                 });
             })
         }
+    }
+
+    fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
+        cx.show_character_palette();
     }
 
     fn refresh_active_diagnostics(&mut self, cx: &mut ViewContext<Editor>) {

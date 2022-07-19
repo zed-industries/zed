@@ -12,10 +12,19 @@ use cocoa::{
 };
 use std::{borrow::Cow, ffi::CStr, os::raw::c_char};
 
+const BACKSPACE_KEY: u16 = 0x7f;
+const SPACE_KEY: u16 = b' ' as u16;
+const ENTER_KEY: u16 = 0x0d;
+const NUMPAD_ENTER_KEY: u16 = 0x03;
+const ESCAPE_KEY: u16 = 0x1b;
+const TAB_KEY: u16 = 0x09;
+const SHIFT_TAB_KEY: u16 = 0x19;
+
 pub fn key_to_native(key: &str) -> Cow<str> {
     use cocoa::appkit::*;
     let code = match key {
-        "backspace" => 0x7F,
+        "space" => SPACE_KEY,
+        "backspace" => BACKSPACE_KEY,
         "up" => NSUpArrowFunctionKey,
         "down" => NSDownArrowFunctionKey,
         "left" => NSLeftArrowFunctionKey,
@@ -243,13 +252,6 @@ unsafe fn get_key_text(
     let mut input = None;
     let first_char = unmodified_chars.chars().next()?;
     use cocoa::appkit::*;
-    const BACKSPACE_KEY: u16 = 0x7f;
-    const ENTER_KEY: u16 = 0x0d;
-    const NUMPAD_ENTER_KEY: u16 = 0x03;
-    const ESCAPE_KEY: u16 = 0x1b;
-    const TAB_KEY: u16 = 0x09;
-    const SHIFT_TAB_KEY: u16 = 0x19;
-    const SPACE_KEY: u16 = b' ' as u16;
 
     #[allow(non_upper_case_globals)]
     let unmodified_chars = match first_char as u16 {

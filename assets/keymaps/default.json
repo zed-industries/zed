@@ -113,7 +113,8 @@
                 }
             ],
             "pageup": "editor::PageUp",
-            "pagedown": "editor::PageDown"
+            "pagedown": "editor::PageDown",
+            "ctrl-cmd-space": "editor::ShowCharacterPalette"
         }
     },
     {
