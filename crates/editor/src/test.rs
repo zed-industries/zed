@@ -9,9 +9,13 @@ use futures::{Future, StreamExt};
 use indoc::indoc;
 
 use collections::BTreeMap;
-use gpui::{json, keymap::Keystroke, AppContext, ModelHandle, ViewContext, ViewHandle};
-use language::{point_to_lsp, FakeLspAdapter, Language, LanguageConfig, Selection};
-use lsp::request;
+use gpui::{
+    json, keymap::Keystroke, AppContext, ModelContext, ModelHandle, ViewContext, ViewHandle,
+};
+use language::{
+    point_to_lsp, Buffer, BufferSnapshot, FakeLspAdapter, Language, LanguageConfig, Selection,
+};
+use lsp::{notification, request};
 use project::Project;
 use settings::Settings;
 use util::{
@@ -23,7 +27,8 @@ use workspace::{pane, AppState, Workspace, WorkspaceHandle};
 use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     multi_buffer::ToPointUtf16,
-    AnchorRangeExt, Autoscroll, DisplayPoint, Editor, EditorMode, MultiBuffer, ToPoint,
+    AnchorRangeExt, Autoscroll, DisplayPoint, Editor, EditorMode, EditorSnapshot, MultiBuffer,
+    ToPoint,
 };
 
 #[cfg(test)]
@@ -119,7 +124,7 @@ impl<'a> EditorTestContext<'a> {
         self.editor.condition(self.cx, predicate)
     }
 
-    pub fn editor<F, T>(&mut self, read: F) -> T
+    pub fn editor<F, T>(&self, read: F) -> T
     where
         F: FnOnce(&Editor, &AppContext) -> T,
     {
@@ -133,10 +138,46 @@ impl<'a> EditorTestContext<'a> {
         self.editor.update(self.cx, update)
     }
 
-    pub fn buffer_text(&mut self) -> String {
-        self.editor.read_with(self.cx, |editor, cx| {
-            editor.buffer.read(cx).snapshot(cx).text()
+    pub fn multibuffer<F, T>(&self, read: F) -> T
+    where
+        F: FnOnce(&MultiBuffer, &AppContext) -> T,
+    {
+        self.editor(|editor, cx| read(editor.buffer().read(cx), cx))
+    }
+
+    pub fn update_multibuffer<F, T>(&mut self, update: F) -> T
+    where
+        F: FnOnce(&mut MultiBuffer, &mut ModelContext<MultiBuffer>) -> T,
+    {
+        self.update_editor(|editor, cx| editor.buffer().update(cx, update))
+    }
+
+    pub fn buffer_text(&self) -> String {
+        self.multibuffer(|buffer, cx| buffer.snapshot(cx).text())
+    }
+
+    pub fn buffer<F, T>(&self, read: F) -> T
+    where
+        F: FnOnce(&Buffer, &AppContext) -> T,
+    {
+        self.multibuffer(|multibuffer, cx| {
+            let buffer = multibuffer.as_singleton().unwrap().read(cx);
+            read(buffer, cx)
         })
+    }
+
+    pub fn update_buffer<F, T>(&mut self, update: F) -> T
+    where
+        F: FnOnce(&mut Buffer, &mut ModelContext<Buffer>) -> T,
+    {
+        self.update_multibuffer(|multibuffer, cx| {
+            let buffer = multibuffer.as_singleton().unwrap();
+            buffer.update(cx, update)
+        })
+    }
+
+    pub fn buffer_snapshot(&self) -> BufferSnapshot {
+        self.buffer(|buffer, _| buffer.snapshot())
     }
 
     pub fn simulate_keystroke(&mut self, keystroke_text: &str) {
@@ -162,6 +203,18 @@ impl<'a> EditorTestContext<'a> {
             .editor
             .update(self.cx, |editor, cx| editor.snapshot(cx));
         locations[0].to_display_point(&snapshot.display_snapshot)
+    }
+
+    // Returns anchors for the current buffer using `[`..`]`
+    pub fn text_anchor_range(&self, marked_text: &str) -> Range<language::Anchor> {
+        let range_marker: TextRangeMarker = ('[', ']').into();
+        let (unmarked_text, mut ranges) =
+            marked_text_ranges_by(&marked_text, vec![range_marker.clone()]);
+        assert_eq!(self.buffer_text(), unmarked_text);
+        let offset_range = ranges.remove(&range_marker).unwrap()[0].clone();
+        let snapshot = self.buffer_snapshot();
+
+        snapshot.anchor_before(offset_range.start)..snapshot.anchor_after(offset_range.end)
     }
 
     // Sets the editor state via a marked string.
@@ -433,7 +486,7 @@ pub struct EditorLspTestContext<'a> {
     pub cx: EditorTestContext<'a>,
     pub lsp: lsp::FakeLanguageServer,
     pub workspace: ViewHandle<Workspace>,
-    pub editor_lsp_url: lsp::Url,
+    pub buffer_lsp_url: lsp::Url,
 }
 
 impl<'a> EditorLspTestContext<'a> {
@@ -507,7 +560,7 @@ impl<'a> EditorLspTestContext<'a> {
             },
             lsp,
             workspace,
-            editor_lsp_url: lsp::Url::from_file_path("/root/dir/file.rs").unwrap(),
+            buffer_lsp_url: lsp::Url::from_file_path("/root/dir/file.rs").unwrap(),
         }
     }
 
@@ -530,7 +583,7 @@ impl<'a> EditorLspTestContext<'a> {
     // Constructs lsp range using a marked string with '[', ']' range delimiters
     pub fn lsp_range(&mut self, marked_text: &str) -> lsp::Range {
         let (unmarked, mut ranges) = marked_text_ranges_by(marked_text, vec![('[', ']').into()]);
-        assert_eq!(unmarked, self.cx.buffer_text());
+        assert_eq!(unmarked, self.buffer_text());
         let offset_range = ranges.remove(&('[', ']').into()).unwrap()[0].clone();
         self.to_lsp_range(offset_range)
     }
@@ -594,11 +647,15 @@ impl<'a> EditorLspTestContext<'a> {
         F: 'static + Send + FnMut(lsp::Url, T::Params, gpui::AsyncAppContext) -> Fut,
         Fut: 'static + Send + Future<Output = Result<T::Result>>,
     {
-        let url = self.editor_lsp_url.clone();
+        let url = self.buffer_lsp_url.clone();
         self.lsp.handle_request::<T, _, _>(move |params, cx| {
             let url = url.clone();
             handler(url, params, cx)
         })
+    }
+
+    pub fn notify<T: notification::Notification>(&self, params: T::Params) {
+        self.lsp.notify::<T>(params);
     }
 }
 

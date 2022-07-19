@@ -2462,11 +2462,11 @@ impl operation_queue::Operation for Operation {
 impl Default for Diagnostic {
     fn default() -> Self {
         Self {
-            code: Default::default(),
+            code: None,
             severity: DiagnosticSeverity::ERROR,
             message: Default::default(),
-            group_id: Default::default(),
-            is_primary: Default::default(),
+            group_id: 0,
+            is_primary: false,
             is_valid: true,
             is_disk_based: false,
             is_unnecessary: false,

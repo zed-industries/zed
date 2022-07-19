@@ -419,6 +419,8 @@ mod tests {
     use futures::StreamExt;
     use indoc::indoc;
 
+    use language::{Diagnostic, DiagnosticSet};
+    use lsp::notification;
     use project::HoverBlock;
 
     use crate::test::EditorLspTestContext;
@@ -426,7 +428,7 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    async fn test_hover_popover(cx: &mut gpui::TestAppContext) {
+    async fn test_mouse_hover_info_popover(cx: &mut gpui::TestAppContext) {
         let mut cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
@@ -460,19 +462,18 @@ mod tests {
             fn test()
                 [println!]();"});
         let mut requests =
-            cx.lsp
-                .handle_request::<lsp::request::HoverRequest, _, _>(move |_, _| async move {
-                    Ok(Some(lsp::Hover {
-                        contents: lsp::HoverContents::Markup(lsp::MarkupContent {
-                            kind: lsp::MarkupKind::Markdown,
-                            value: indoc! {"
+            cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+                Ok(Some(lsp::Hover {
+                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                        kind: lsp::MarkupKind::Markdown,
+                        value: indoc! {"
                                 # Some basic docs
                                 Some test documentation"}
-                            .to_string(),
-                        }),
-                        range: Some(symbol_range),
-                    }))
-                });
+                        .to_string(),
+                    }),
+                    range: Some(symbol_range),
+                }))
+            });
         cx.foreground()
             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
         requests.next().await;
@@ -498,6 +499,9 @@ mod tests {
         let hover_point = cx.display_point(indoc! {"
             fn te|st()
                 println!();"});
+        let mut request = cx
+            .lsp
+            .handle_request::<lsp::request::HoverRequest, _, _>(|_, _| async move { Ok(None) });
         cx.update_editor(|editor, cx| {
             hover_at(
                 editor,
@@ -507,15 +511,24 @@ mod tests {
                 cx,
             )
         });
-        let mut request = cx
-            .lsp
-            .handle_request::<lsp::request::HoverRequest, _, _>(|_, _| async move { Ok(None) });
         cx.foreground()
             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
         request.next().await;
         cx.editor(|editor, _| {
             assert!(!editor.hover_state.visible());
         });
+    }
+
+    #[gpui::test]
+    async fn test_keyboard_hover_info_popover(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
 
         // Hover with keyboard has no delay
         cx.set_state(indoc! {"
@@ -525,24 +538,23 @@ mod tests {
         let symbol_range = cx.lsp_range(indoc! {"
             [fn] test()
                 println!();"});
-        cx.lsp
-            .handle_request::<lsp::request::HoverRequest, _, _>(move |_, _| async move {
-                Ok(Some(lsp::Hover {
-                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
-                        kind: lsp::MarkupKind::Markdown,
-                        value: indoc! {"
-                            # Some other basic docs
-                            Some other test documentation"}
-                        .to_string(),
-                    }),
-                    range: Some(symbol_range),
-                }))
-            })
-            .next()
-            .await;
-        cx.foreground().run_until_parked();
+        cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::Hover {
+                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                    kind: lsp::MarkupKind::Markdown,
+                    value: indoc! {"
+                        # Some other basic docs
+                        Some other test documentation"}
+                    .to_string(),
+                }),
+                range: Some(symbol_range),
+            }))
+        })
+        .next()
+        .await;
+
+        cx.condition(|editor, _| editor.hover_state.visible()).await;
         cx.editor(|editor, _| {
-            assert!(editor.hover_state.visible());
             assert_eq!(
                 editor.hover_state.info_popover.clone().unwrap().contents,
                 vec![
@@ -557,5 +569,74 @@ mod tests {
                 ]
             )
         });
+    }
+
+    #[gpui::test]
+    async fn test_hover_diagnostic_and_info_popovers(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        // Hover with just diagnostic, pops DiagnosticPopover immediately and then
+        // info popover once request completes
+        cx.set_state(indoc! {"
+            fn te|st()
+                println!();"});
+
+        // Send diagnostic to client
+        let range = cx.text_anchor_range(indoc! {"
+            fn [test]()
+                println!();"});
+        cx.update_buffer(|buffer, cx| {
+            let snapshot = buffer.text_snapshot();
+            let set = DiagnosticSet::from_sorted_entries(
+                vec![DiagnosticEntry {
+                    range,
+                    diagnostic: Diagnostic {
+                        message: "A test diagnostic message.".to_string(),
+                        ..Default::default()
+                    },
+                }],
+                &snapshot,
+            );
+            buffer.update_diagnostics(set, cx);
+        });
+
+        // Hover pops diagnostic immediately
+        cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
+        cx.condition(|Editor { hover_state, .. }, _| {
+            hover_state.diagnostic_popover.is_some() && hover_state.info_popover.is_none()
+        })
+        .await;
+
+        // Info Popover shows after request responded to
+        let range = cx.lsp_range(indoc! {"
+            fn [test]()
+                println!();"});
+        let mut requests =
+            cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+                Ok(Some(lsp::Hover {
+                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                        kind: lsp::MarkupKind::Markdown,
+                        value: indoc! {"
+                        # Some other basic docs
+                        Some other test documentation"}
+                        .to_string(),
+                    }),
+                    range: Some(range),
+                }))
+            });
+        cx.foreground()
+            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+        requests.next().await;
+        cx.condition(|Editor { hover_state, .. }, _| {
+            hover_state.diagnostic_popover.is_some() && hover_state.info_task.is_some()
+        })
+        .await;
     }
 }
