@@ -16,7 +16,7 @@ use cocoa::{
         NSViewHeightSizable, NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowStyleMask,
     },
     base::{id, nil},
-    foundation::{NSAutoreleasePool, NSInteger, NSSize, NSString},
+    foundation::{NSAutoreleasePool, NSInteger, NSPoint, NSRect, NSSize, NSString, NSUInteger},
     quartzcore::AutoresizingMask,
 };
 use core_graphics::display::CGRect;
@@ -42,12 +42,28 @@ use std::{
     time::Duration,
 };
 
-use super::{geometry::RectFExt, renderer::Renderer};
-
 const WINDOW_STATE_IVAR: &'static str = "windowState";
 
 static mut WINDOW_CLASS: *const Class = ptr::null();
 static mut VIEW_CLASS: *const Class = ptr::null();
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct NSRange {
+    pub location: NSUInteger,
+    pub length: NSUInteger,
+}
+
+unsafe impl objc::Encode for NSRange {
+    fn encode() -> objc::Encoding {
+        let encoding = format!(
+            "{{NSRange={}{}}}",
+            NSUInteger::encode().as_str(),
+            NSUInteger::encode().as_str()
+        );
+        unsafe { objc::Encoding::from_str(&encoding) }
+    }
+}
 
 #[allow(non_upper_case_globals)]
 const NSViewLayerContentsRedrawDuringViewResize: NSInteger = 2;
@@ -162,6 +178,37 @@ unsafe fn build_classes() {
         decl.add_method(
             sel!(displayLayer:),
             display_layer as extern "C" fn(&Object, Sel, id),
+        );
+
+        decl.add_protocol(Protocol::get("NSTextInputClient").unwrap());
+        decl.add_method(
+            sel!(validAttributesForMarkedText),
+            valid_attributes_for_marked_text as extern "C" fn(&Object, Sel) -> id,
+        );
+        decl.add_method(
+            sel!(hasMarkedText),
+            has_marked_text as extern "C" fn(&Object, Sel) -> BOOL,
+        );
+        decl.add_method(
+            sel!(selectedRange),
+            selected_range as extern "C" fn(&Object, Sel) -> NSRange,
+        );
+        decl.add_method(
+            sel!(firstRectForCharacterRange:actualRange:),
+            first_rect_for_character_range as extern "C" fn(&Object, Sel, NSRange, id) -> NSRect,
+        );
+        decl.add_method(
+            sel!(insertText:replacementRange:),
+            insert_text as extern "C" fn(&Object, Sel, id, NSRange),
+        );
+        decl.add_method(
+            sel!(setMarkedText:selectedRange:replacementRange:),
+            set_marked_text as extern "C" fn(&Object, Sel, id, NSRange, NSRange),
+        );
+        decl.add_method(
+            sel!(attributedSubstringForProposedRange:actualRange:),
+            attributed_substring_for_proposed_range
+                as extern "C" fn(&Object, Sel, NSRange, id) -> id,
         );
 
         decl.register()
@@ -873,6 +920,33 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
             drawable.present();
         };
     }
+}
+
+extern "C" fn valid_attributes_for_marked_text(_: &Object, _: Sel) -> id {
+    unsafe { msg_send![class!(NSArray), array] }
+}
+
+extern "C" fn has_marked_text(_: &Object, _: Sel) -> BOOL {
+    false as BOOL
+}
+
+extern "C" fn selected_range(_: &Object, _: Sel) -> NSRange {
+    NSRange {
+        location: 0,
+        length: 0,
+    }
+}
+
+extern "C" fn first_rect_for_character_range(_: &Object, _: Sel, _: NSRange, _: id) -> NSRect {
+    NSRect::new(NSPoint::new(0., 0.), NSSize::new(20., 20.))
+}
+
+extern "C" fn insert_text(_: &Object, _: Sel, _: id, _: NSRange) {}
+
+extern "C" fn set_marked_text(_: &Object, _: Sel, _: id, _: NSRange, _: NSRange) {}
+
+extern "C" fn attributed_substring_for_proposed_range(_: &Object, _: Sel, _: NSRange, _: id) -> id {
+    unsafe { msg_send![class!(NSAttributedString), alloc] }
 }
 
 async fn synthetic_drag(
