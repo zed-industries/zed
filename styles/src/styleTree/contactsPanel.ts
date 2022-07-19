@@ -72,11 +72,11 @@ export default function contactsPanel(theme: Theme) {
     addContactButton: {
       margin: { left: 6, right: 12 },
       color: iconColor(theme, "primary"),
-      buttonWidth: 8,
-      iconWidth: 8,
+      buttonWidth: 16,
+      iconWidth: 16,
     },
     privateButton: {
-      iconWidth: 8,
+      iconWidth: 12,
       color: iconColor(theme, "primary"),
       cornerRadius: 5,
       buttonWidth: 12,
@@ -128,7 +128,7 @@ export default function contactsPanel(theme: Theme) {
     contactButton: {
       ...contactButton,
       hover: {
-        background: backgroundColor(theme, 100, "hovered"),
+        background: backgroundColor(theme, "on300", "hovered"),
       },
     },
     disabledButton: {
@@ -156,9 +156,9 @@ export default function contactsPanel(theme: Theme) {
         right: sidePadding,
       },
       border: { top: true, width: 1, color: borderColor(theme, "primary") },
-      text: text(theme, "sans", "primary", { size: "sm" }),
+      text: text(theme, "sans", "secondary", { size: "sm" }),
       hover: {
-        text: text(theme, "sans", "primary", { size: "sm", underline: true }),
+        text: text(theme, "sans", "active", { size: "sm" }),
       },
     },
   };
