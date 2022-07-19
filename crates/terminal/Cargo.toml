@@ -8,7 +8,7 @@ path = "src/terminal.rs"
 doctest = false
 
 [dependencies]
-alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "90647e167c036530176dc5b579222c5886286f63"}
+alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "e9b864860ec79cc1b70042aafce100cdd6985a0a"}
 editor = { path = "../editor" }
 util = { path = "../util" }
 gpui = { path = "../gpui" }
