@@ -9,6 +9,7 @@ use plugin_runtime::{Plugin, PluginBinary, PluginBuilder, WasiFn};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
 
+#[allow(dead_code)]
 pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
     let plugin = PluginBuilder::new_default()?
         .host_function_async("command", |command: String| async move {
