@@ -225,7 +225,7 @@ impl Item for ProjectSearchView {
         let search_theme = &settings.theme.search;
         Flex::row()
             .with_child(
-                Svg::new("icons/magnifier.svg")
+                Svg::new("icons/magnifying_glass_12.svg")
                     .with_color(tab_theme.label.text.color)
                     .constrained()
                     .with_width(search_theme.tab_icon_width)

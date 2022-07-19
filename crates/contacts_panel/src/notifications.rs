@@ -55,7 +55,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                     MouseEventHandler::new::<Dismiss, _, _>(user.id as usize, cx, |state, _| {
                         render_icon_button(
                             theme.dismiss_button.style_for(state, false),
-                            "icons/decline.svg",
+                            "icons/x_mark_thin_8.svg",
                         )
                         .boxed()
                     })

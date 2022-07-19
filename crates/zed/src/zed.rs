@@ -244,7 +244,7 @@ pub fn initialize_workspace(
 
     workspace.left_sidebar().update(cx, |sidebar, cx| {
         sidebar.add_item(
-            "icons/Icon16FolderTree.svg",
+            "icons/folder_tree_16.svg",
             "Project Panel".to_string(),
             project_panel.into(),
             cx,
@@ -252,7 +252,7 @@ pub fn initialize_workspace(
     });
     workspace.right_sidebar().update(cx, |sidebar, cx| {
         sidebar.add_item(
-            "icons/Icon16UserGroup.svg",
+            "icons/user_group_16.svg",
             "Contacts Panel".to_string(),
             contact_panel.into(),
             cx,

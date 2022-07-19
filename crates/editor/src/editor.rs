@@ -2660,7 +2660,7 @@ impl Editor {
             enum Tag {}
             Some(
                 MouseEventHandler::new::<Tag, _, _>(0, cx, |_, _| {
-                    Svg::new("icons/zap.svg")
+                    Svg::new("icons/bolt_8.svg")
                         .with_color(style.code_actions_indicator)
                         .boxed()
                 })
