@@ -1,10 +1,10 @@
 use gpui::{ModelHandle, ViewContext};
 use workspace::Workspace;
 
-use crate::{get_wd_for_workspace, DeployModal, Event, TerminalConnection, TerminalView};
+use crate::{connection::Terminal, get_wd_for_workspace, DeployModal, Event, TerminalView};
 
 #[derive(Debug)]
-struct StoredConnection(ModelHandle<TerminalConnection>);
+struct StoredConnection(ModelHandle<Terminal>);
 
 pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewContext<Workspace>) {
     // Pull the terminal connection out of the global if it has been stored
@@ -46,7 +46,7 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
 
 pub fn on_event(
     workspace: &mut Workspace,
-    _: ModelHandle<TerminalConnection>,
+    _: ModelHandle<Terminal>,
     event: &Event,
     cx: &mut ViewContext<Workspace>,
 ) {

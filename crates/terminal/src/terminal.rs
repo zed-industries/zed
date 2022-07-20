@@ -3,7 +3,7 @@ pub mod connection;
 mod modal;
 pub mod terminal_element;
 
-use connection::{Event, TerminalConnection};
+use connection::{DisconnectedPTY, Event, Terminal, TerminalError};
 use dirs::home_dir;
 use gpui::{
     actions, elements::*, geometry::vector::vec2f, keymap::Keystroke, AppContext, ClipboardItem,
@@ -64,7 +64,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
 pub struct TerminalView {
-    connection: ModelHandle<TerminalConnection>,
+    connection: Result<ModelHandle<Terminal>, TerminalError>,
     has_new_content: bool,
     //Currently using iTerm bell, show bell emoji in tab until input is received
     has_bell: bool,
@@ -94,14 +94,20 @@ impl TerminalView {
             (shell, envs)
         };
 
-        let connection = cx
-            .add_model(|cx| TerminalConnection::new(working_directory, shell, envs, size_info, cx));
+        let connection = DisconnectedPTY::new(working_directory, shell, envs, size_info)
+            .map(|pty| cx.add_model(|cx| pty.connect(cx)))
+            .map_err(|err| {
+                match err.downcast::<TerminalError>() {
+                    Ok(err) => err,
+                    Err(_) => unreachable!(), //This should never happen
+                }
+            });
 
         TerminalView::from_connection(connection, modal, cx)
     }
 
     fn from_connection(
-        connection: ModelHandle<TerminalConnection>,
+        connection: Result<ModelHandle<Terminal>, TerminalError>,
         modal: bool,
         cx: &mut ViewContext<Self>,
     ) -> TerminalView {

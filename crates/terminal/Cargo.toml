@@ -25,6 +25,7 @@ dirs = "4.0.0"
 shellexpand = "2.1.0"
 libc = "0.2"
 anyhow = "1"
+thiserror = "1.0"
 
 
 [dev-dependencies]

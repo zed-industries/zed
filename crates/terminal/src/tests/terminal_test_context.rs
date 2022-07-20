@@ -24,7 +24,7 @@ impl<'a> TerminalTestContext<'a> {
         );
 
         let connection =
-            cx.add_model(|cx| TerminalConnection::new(None, None, None, size_info, cx));
+            cx.add_model(|cx| TerminalConnection::new_tty(None, None, None, size_info, cx));
 
         TerminalTestContext { cx, connection }
     }

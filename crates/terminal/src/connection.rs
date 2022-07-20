@@ -13,12 +13,14 @@ use alacritty_terminal::{
     tty::{self, setup_env},
     Term,
 };
+use anyhow::{bail, Result};
 use futures::{
-    channel::mpsc::{unbounded, UnboundedSender},
+    channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
     StreamExt,
 };
 use settings::{Settings, Shell};
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc};
+use thiserror::Error;
 
 use gpui::{keymap::Keystroke, ClipboardItem, CursorStyle, Entity, ModelContext};
 
@@ -52,23 +54,84 @@ impl EventListener for ZedListener {
     }
 }
 
-pub enum TerminalConnection {
-    Connected(Terminal),
-    Disconnected {
-        directory: Option<PathBuf>,
-        shell: Option<Shell>,
-        error: Option<std::io::Error>,
-    },
+#[derive(Error, Debug)]
+pub struct TerminalError {
+    directory: Option<PathBuf>,
+    shell: Option<Shell>,
+    source: std::io::Error,
 }
 
-impl TerminalConnection {
+impl Display for TerminalError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let dir_string: String = self
+            .directory
+            .map(|path| {
+                match path
+                    .into_os_string()
+                    .into_string()
+                    .map_err(|os_str| format!("<non-utf8 path> {}", os_str.to_string_lossy()))
+                {
+                    Ok(s) => s,
+                    Err(s) => s,
+                }
+            })
+            .unwrap_or_else(|| {
+                let default_dir =
+                    dirs::home_dir().map(|buf| buf.into_os_string().to_string_lossy());
+                match default_dir {
+                    Some(dir) => format!("<none specified, using home> {}", dir),
+                    None => "<none specified, could not find home>".to_string(),
+                }
+            });
+
+        let shell = self
+            .shell
+            .map(|shell| match shell {
+                Shell::System => {
+                    let mut buf = [0; 1024];
+                    let pw = alacritty_unix::get_pw_entry(&mut buf).ok();
+
+                    match pw {
+                        Some(pw) => format!("<system defined shell> {}", pw.shell),
+                        None => "<could not access system defined shell>".to_string(),
+                    }
+                }
+                Shell::Program(s) => s,
+                Shell::WithArguments { program, args } => format!("{} {}", program, args.join(" ")),
+            })
+            .unwrap_or_else(|| {
+                let mut buf = [0; 1024];
+                let pw = alacritty_unix::get_pw_entry(&mut buf).ok();
+                match pw {
+                    Some(pw) => {
+                        format!("<none specified, using system defined shell> {}", pw.shell)
+                    }
+                    None => {
+                        "<none specified, could not access system defined shell> {}".to_string()
+                    }
+                }
+            });
+
+        write!(
+            f,
+            "Working directory: {} Shell command: `{}`, IOError: {}",
+            dir_string, shell, self.source
+        )
+    }
+}
+
+pub struct DisconnectedPTY {
+    terminal: Terminal,
+    events_rx: UnboundedReceiver<AlacTermEvent>,
+}
+
+impl DisconnectedPTY {
     pub fn new(
         working_directory: Option<PathBuf>,
         shell: Option<Shell>,
         env: Option<HashMap<String, String>>,
         initial_size: TerminalDimensions,
-        cx: &mut ModelContext<Self>,
-    ) -> TerminalConnection {
+    ) -> Result<DisconnectedPTY> {
         let pty_config = {
             let alac_shell = shell.clone().and_then(|shell| match shell {
                 Shell::System => None,
@@ -107,11 +170,11 @@ impl TerminalConnection {
         let pty = match tty::new(&pty_config, initial_size.into(), None) {
             Ok(pty) => pty,
             Err(error) => {
-                return TerminalConnection::Disconnected {
+                bail!(TerminalError {
                     directory: working_directory,
                     shell,
-                    error: Some(error),
-                };
+                    source: error,
+                });
             }
         };
 
@@ -149,20 +212,20 @@ impl TerminalConnection {
             associated_directory: working_directory,
         };
 
+        Ok(DisconnectedPTY {
+            terminal,
+            events_rx,
+        })
+    }
+
+    pub fn connect(self, cx: &mut ModelContext<Terminal>) -> Terminal {
         cx.spawn_weak(|this, mut cx| async move {
             //Listen for terminal events
-            while let Some(event) = events_rx.next().await {
+            while let Some(event) = self.events_rx.next().await {
                 match this.upgrade(&cx) {
                     Some(this) => {
                         this.update(&mut cx, |this, cx| {
-                            match this {
-                                TerminalConnection::Connected(conn) => {
-                                    conn.process_terminal_event(event, cx)
-                                }
-                                //There should never be a state where the terminal is disconnected
-                                //And receiving events from the pty
-                                TerminalConnection::Disconnected { .. } => unreachable!(),
-                            }
+                            this.process_terminal_event(event, cx);
 
                             cx.notify();
                         });
@@ -173,14 +236,7 @@ impl TerminalConnection {
         })
         .detach();
 
-        TerminalConnection::Connected(terminal)
-    }
-
-    pub fn get_terminal(&self) -> Option<&Terminal> {
-        match self {
-            TerminalConnection::Connected(conn) => Some(&conn),
-            TerminalConnection::Disconnected { .. } => None,
-        }
+        self.terminal
     }
 }
 
@@ -196,7 +252,7 @@ impl Terminal {
     fn process_terminal_event(
         &mut self,
         event: alacritty_terminal::event::Event,
-        cx: &mut ModelContext<TerminalConnection>,
+        cx: &mut ModelContext<Terminal>,
     ) {
         match event {
             // TODO: Handle is_self_focused in subscription on terminal view
@@ -361,21 +417,23 @@ impl Terminal {
     }
 }
 
-impl Drop for TerminalConnection {
+impl Drop for DisconnectedPTY {
     fn drop(&mut self) {
-        match self {
-            TerminalConnection::Connected(conn) => {
-                conn.pty_tx.0.send(Msg::Shutdown).ok();
-            }
-            _ => {}
-        };
+        self.terminal.pty_tx.0.send(Msg::Shutdown).ok();
     }
 }
 
-impl Entity for TerminalConnection {
+impl Drop for Terminal {
+    fn drop(&mut self) {
+        self.pty_tx.0.send(Msg::Shutdown).ok();
+    }
+}
+
+impl Entity for Terminal {
     type Event = Event;
 }
 
+//TODO Move this around
 mod alacritty_unix {
     use alacritty_terminal::config::Program;
     use gpui::anyhow::{bail, Result};
