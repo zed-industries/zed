@@ -49,7 +49,7 @@ impl View for UpdateNotification {
                         .with_child(
                             MouseEventHandler::new::<Cancel, _, _>(0, cx, |state, _| {
                                 let style = theme.dismiss_button.style_for(state, false);
-                                Svg::new("icons/decline.svg")
+                                Svg::new("icons/x_mark_thin_8.svg")
                                     .with_color(style.color)
                                     .constrained()
                                     .with_width(style.icon_width)

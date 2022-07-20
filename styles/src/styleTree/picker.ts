@@ -1,5 +1,11 @@
 import Theme from "../themes/common/theme";
-import { backgroundColor, border, player, modalShadow, text } from "./components";
+import {
+  backgroundColor,
+  border,
+  player,
+  modalShadow,
+  text,
+} from "./components";
 
 export default function picker(theme: Theme) {
   return {
@@ -22,7 +28,7 @@ export default function picker(theme: Theme) {
       },
       hover: {
         background: backgroundColor(theme, 300, "hovered"),
-      }
+      },
     },
     border: border(theme, "primary"),
     empty: {

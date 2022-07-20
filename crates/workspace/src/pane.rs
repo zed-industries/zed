@@ -941,7 +941,7 @@ impl Pane {
                                         ConstrainedBox::new(if mouse_state.hovered {
                                             let item_id = item.id();
                                             enum TabCloseButton {}
-                                            let icon = Svg::new("icons/x.svg");
+                                            let icon = Svg::new("icons/x_mark_thin_8.svg");
                                             MouseEventHandler::new::<TabCloseButton, _, _>(
                                                 item_id,
                                                 cx,
@@ -1065,7 +1065,7 @@ impl View for Pane {
                                             let theme = &cx.global::<Settings>().theme.workspace;
                                             let style =
                                                 theme.pane_button.style_for(mouse_state, false);
-                                            Svg::new("icons/split.svg")
+                                            Svg::new("icons/split_12.svg")
                                                 .with_color(style.color)
                                                 .constrained()
                                                 .with_width(style.icon_width)

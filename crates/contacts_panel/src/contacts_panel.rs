@@ -282,9 +282,9 @@ impl ContactsPanel {
             Flex::row()
                 .with_child(
                     Svg::new(if is_collapsed {
-                        "icons/disclosure-closed.svg"
+                        "icons/chevron_right_8.svg"
                     } else {
-                        "icons/disclosure-open.svg"
+                        "icons/chevron_down_8.svg"
                     })
                     .with_color(header_style.text.color)
                     .constrained()
@@ -436,7 +436,7 @@ impl ContactsPanel {
                                     if is_going_offline {
                                         icon_style.color = theme.disabled_button.color;
                                     }
-                                    render_icon_button(&icon_style, "icons/lock-8.svg")
+                                    render_icon_button(&icon_style, "icons/lock_8.svg")
                                         .aligned()
                                         .boxed()
                                 },
@@ -554,7 +554,7 @@ impl ContactsPanel {
                             if is_going_online {
                                 style.color = theme.disabled_button.color;
                             }
-                            render_icon_button(&style, "icons/lock-8.svg")
+                            render_icon_button(&style, "icons/lock_8.svg")
                                 .aligned()
                                 .constrained()
                                 .with_width(host_avatar_height)
@@ -643,7 +643,7 @@ impl ContactsPanel {
                     } else {
                         &theme.contact_button.style_for(mouse_state, false)
                     };
-                    render_icon_button(button_style, "icons/decline.svg")
+                    render_icon_button(button_style, "icons/x_mark_8.svg")
                         .aligned()
                         // .flex_float()
                         .boxed()
@@ -665,7 +665,7 @@ impl ContactsPanel {
                     } else {
                         &theme.contact_button.style_for(mouse_state, false)
                     };
-                    render_icon_button(button_style, "icons/accept.svg")
+                    render_icon_button(button_style, "icons/check_8.svg")
                         .aligned()
                         .flex_float()
                         .boxed()
@@ -687,7 +687,7 @@ impl ContactsPanel {
                     } else {
                         &theme.contact_button.style_for(mouse_state, false)
                     };
-                    render_icon_button(button_style, "icons/decline.svg")
+                    render_icon_button(button_style, "icons/x_mark_8.svg")
                         .aligned()
                         .flex_float()
                         .boxed()
@@ -1073,10 +1073,10 @@ impl View for ContactsPanel {
                         )
                         .with_child(
                             MouseEventHandler::new::<AddContact, _, _>(0, cx, |_, _| {
-                                Svg::new("icons/add-contact.svg")
+                                Svg::new("icons/user_plus_16.svg")
                                     .with_color(theme.add_contact_button.color)
                                     .constrained()
-                                    .with_height(12.)
+                                    .with_height(16.)
                                     .contained()
                                     .with_style(theme.add_contact_button.container)
                                     .aligned()

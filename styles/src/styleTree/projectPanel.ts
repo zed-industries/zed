@@ -24,7 +24,7 @@ export default function projectPanel(theme: Theme) {
       activeHover: {
         background: backgroundColor(theme, 300, "hovered"),
         text: text(theme, "mono", "active", { size: "sm" }),
-      }
+      },
     },
     cutEntryFade: 0.4,
     ignoredEntryFade: 0.6,

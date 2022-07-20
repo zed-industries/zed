@@ -118,7 +118,7 @@ impl View for Toolbar {
             .with_child(
                 Flex::row()
                     .with_child(nav_button(
-                        "icons/arrow-left.svg",
+                        "icons/arrow_left_16.svg",
                         button_style,
                         tooltip_style.clone(),
                         enable_go_backward,
@@ -131,7 +131,7 @@ impl View for Toolbar {
                         cx,
                     ))
                     .with_child(nav_button(
-                        "icons/arrow-right.svg",
+                        "icons/arrow_right_16.svg",
                         button_style,
                         tooltip_style.clone(),
                         enable_go_forward,

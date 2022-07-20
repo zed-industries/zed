@@ -1810,7 +1810,7 @@ impl Workspace {
                 Container::new(
                     Align::new(
                         ConstrainedBox::new(
-                            Svg::new("icons/offline-14.svg")
+                            Svg::new("icons/cloud_slash_12.svg")
                                 .with_color(theme.workspace.titlebar.offline_icon.color)
                                 .boxed(),
                         )

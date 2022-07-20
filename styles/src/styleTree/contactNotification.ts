@@ -13,7 +13,7 @@ export default function contactNotification(theme: Theme): Object {
     },
     headerMessage: {
       ...text(theme, "sans", "primary", { size: "xs" }),
-      margin: { left: headerPadding, right: headerPadding }
+      margin: { left: headerPadding, right: headerPadding },
     },
     headerHeight: 18,
     bodyMessage: {
@@ -27,8 +27,8 @@ export default function contactNotification(theme: Theme): Object {
       cornerRadius: 6,
       margin: { left: 6 },
       hover: {
-        background: backgroundColor(theme, "on300", "hovered")
-      }
+        background: backgroundColor(theme, "on300", "hovered"),
+      },
     },
     dismissButton: {
       color: iconColor(theme, "secondary"),
@@ -37,8 +37,8 @@ export default function contactNotification(theme: Theme): Object {
       buttonWidth: 8,
       buttonHeight: 8,
       hover: {
-        color: iconColor(theme, "primary")
-      }
-    }
-  }
+        color: iconColor(theme, "primary"),
+      },
+    },
+  };
 }

@@ -1,7 +1,7 @@
 export const fontFamilies = {
   sans: "Zed Sans",
   mono: "Zed Mono",
-}
+};
 
 export const fontSizes = {
   "3xs": 8,
@@ -13,7 +13,8 @@ export const fontSizes = {
   xl: 20,
 };
 
-export type FontWeight = "thin"
+export type FontWeight =
+  | "thin"
   | "extra_light"
   | "light"
   | "normal"
@@ -31,7 +32,7 @@ export const fontWeights: { [key: string]: FontWeight } = {
   semibold: "semibold",
   bold: "bold",
   extra_bold: "extra_bold",
-  black: "black"
+  black: "black",
 };
 
 export const sizes = {

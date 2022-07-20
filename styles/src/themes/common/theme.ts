@@ -61,7 +61,7 @@ export interface Syntax {
 
 export default interface Theme {
   name: string;
-  isLight: boolean,
+  isLight: boolean;
   backgroundColor: {
     // Basically just Title Bar
     // Lowest background level
@@ -155,7 +155,7 @@ export default interface Theme {
     6: Player;
     7: Player;
     8: Player;
-  },
+  };
   shadow: string;
   ramps: { [rampName: string]: Scale };
 }

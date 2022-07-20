@@ -14,7 +14,7 @@ const ramps = {
     "#d5c4a1",
     "#fdf4c1",
   ]),
-  red: colorRamp(chroma("#83a598")),
+  red: colorRamp(chroma("#B4637A")),
   orange: colorRamp(chroma("#a07e3b")),
   yellow: colorRamp(chroma("#a07e3b")),
   green: colorRamp(chroma("#528b8b")),

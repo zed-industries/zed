@@ -60,10 +60,7 @@ export interface Player {
     selection: string;
   };
 }
-export function player(
-  theme: Theme,
-  playerNumber: PlayerIndex,
-): Player {
+export function player(theme: Theme, playerNumber: PlayerIndex): Player {
   return {
     selection: {
       cursor: theme.player[playerNumber].cursorColor,
@@ -77,7 +74,7 @@ export type BackgroundState = keyof BackgroundColorSet;
 export function backgroundColor(
   theme: Theme,
   name: BackgroundColor,
-  state?: BackgroundState,
+  state?: BackgroundState
 ): string {
   return theme.backgroundColor[name][state || "base"];
 }
