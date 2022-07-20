@@ -746,7 +746,10 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
 
         let pending_event = window_state.borrow_mut().pending_key_event.take().unwrap();
         let mut inserted_text = false;
-        let has_marked_text = pending_event.set_marked_text.is_some();
+        let has_marked_text = pending_event.set_marked_text.is_some()
+            || with_input_handler(this, |input_handler| input_handler.marked_range())
+                .flatten()
+                .is_some();
         if let Some(text) = pending_event.insert_text.as_ref() {
             if !text.is_empty() && (had_marked_text || has_marked_text || text.chars().count() > 1)
             {
@@ -781,7 +784,9 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
                     handled = true;
                 } else {
                     if let Some(text) = pending_event.insert_text {
+                        // TODO: we may not need this anymore.
                         event.input = Some(text);
+
                         if event.input.as_ref().unwrap().chars().count() == 1 {
                             event.keystroke.key = event.input.clone().unwrap();
                         }
@@ -791,8 +796,9 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
                     if !handled {
                         if let Some(input) = event.input {
                             with_input_handler(this, |input_handler| {
-                                handled = input_handler.edit(None, &input);
+                                input_handler.edit(None, &input);
                             });
+                            handled = true;
                         }
                     }
                 }

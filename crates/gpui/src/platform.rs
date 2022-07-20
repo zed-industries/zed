@@ -92,7 +92,7 @@ pub trait Dispatcher: Send + Sync {
 pub trait InputHandler {
     fn select(&mut self, range: Range<usize>);
     fn selected_range(&self) -> Option<Range<usize>>;
-    fn edit(&mut self, replacement_range: Option<Range<usize>>, text: &str) -> bool;
+    fn edit(&mut self, replacement_range: Option<Range<usize>>, text: &str);
     fn compose(
         &mut self,
         marked_text: &str,
