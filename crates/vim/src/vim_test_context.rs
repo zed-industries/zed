@@ -119,7 +119,7 @@ impl<'a> VimTestContext<'a> {
     pub fn set_state(&mut self, text: &str, mode: Mode) {
         self.cx.update(|cx| {
             Vim::update(cx, |vim, cx| {
-                vim.switch_mode(mode, cx);
+                vim.switch_mode(mode, false, cx);
             })
         });
         self.cx.set_state(text);

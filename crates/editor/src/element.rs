@@ -1643,12 +1643,12 @@ impl PaintState {
         } else {
             0
         };
-        let column_overshoot = (0f32.max(x - line.width()) / layout.em_advance) as u32;
 
-        (
-            DisplayPoint::new(row, column),
-            DisplayPoint::new(row_overshoot, column_overshoot),
-        )
+        let point = snapshot.clip_point(DisplayPoint::new(row, column), Bias::Left);
+        let mut column_overshoot = (0f32.max(x - line.width()) / layout.em_advance) as u32;
+        column_overshoot = column_overshoot + column - point.column();
+
+        (point, DisplayPoint::new(row_overshoot, column_overshoot))
     }
 }
 
