@@ -92,13 +92,13 @@ pub trait Dispatcher: Send + Sync {
 pub trait InputHandler {
     fn select(&mut self, range: Range<usize>);
     fn selected_range(&self) -> Option<Range<usize>>;
-    fn set_composition(
+    fn edit(&mut self, replacement_range: Option<Range<usize>>, text: &str) -> bool;
+    fn compose(
         &mut self,
         marked_text: &str,
         new_selected_range: Option<Range<usize>>,
         replacement_range: Option<Range<usize>>,
     );
-    fn commit(&mut self, text: &str, replacement_range: Option<Range<usize>>);
     fn cancel_composition(&mut self);
     fn finish_composition(&mut self);
     fn unmark(&mut self);

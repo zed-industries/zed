@@ -695,9 +695,6 @@ extern "C" fn dealloc_view(this: &Object, _: Sel) {
 }
 
 extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> BOOL {
-    let had_marked_text = with_input_handler(this, |input_handler| input_handler.marked_range())
-        .flatten()
-        .is_some();
     let window_state = unsafe { get_window_state(this) };
 
     let mut window_state_borrow = window_state.as_ref().borrow_mut();
@@ -725,6 +722,10 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
         // TODO: handle "live conversion"
         window_state_borrow.pending_key_event = Some(Default::default());
         drop(window_state_borrow);
+        let had_marked_text =
+            with_input_handler(this, |input_handler| input_handler.marked_range())
+                .flatten()
+                .is_some();
 
         // TODO:
         // Since Mac Eisu Kana keys cannot be handled by interpretKeyEvents to enable/
@@ -747,8 +748,9 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
         let mut inserted_text = false;
         let has_marked_text = pending_event.set_marked_text.is_some();
         if let Some(text) = pending_event.insert_text.as_ref() {
-            if !text.is_empty() && (had_marked_text || has_marked_text || text.len() > 1) {
-                with_input_handler(this, |input_handler| input_handler.commit(&text, None));
+            if !text.is_empty() && (had_marked_text || has_marked_text || text.chars().count() > 1)
+            {
+                with_input_handler(this, |input_handler| input_handler.edit(None, &text));
                 inserted_text = true;
             }
         }
@@ -757,7 +759,7 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
             if let Some((text, new_selected_range, replacement_range)) =
                 pending_event.set_marked_text
             {
-                input_handler.set_composition(&text, new_selected_range, replacement_range)
+                input_handler.compose(&text, new_selected_range, replacement_range)
             } else if had_marked_text && !inserted_text {
                 if pending_event.unmark_text {
                     input_handler.finish_composition();
@@ -777,15 +779,22 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
 
                 if inserted_text {
                     handled = true;
-                } else if let Some(text) = pending_event.insert_text {
-                    if text.len() == 1 {
-                        event.keystroke.key = text;
-                        handled = callback(Event::KeyDown(event));
-                    } else if event.keystroke.cmd || event.keystroke.ctrl {
-                        handled = callback(Event::KeyDown(event));
-                    }
                 } else {
-                    handled = callback(Event::KeyDown(event));
+                    if let Some(text) = pending_event.insert_text {
+                        event.input = Some(text);
+                        if event.input.as_ref().unwrap().chars().count() == 1 {
+                            event.keystroke.key = event.input.clone().unwrap();
+                        }
+                    }
+
+                    handled = callback(Event::KeyDown(event.clone()));
+                    if !handled {
+                        if let Some(input) = event.input {
+                            with_input_handler(this, |input_handler| {
+                                handled = input_handler.edit(None, &input);
+                            });
+                        }
+                    }
                 }
 
                 window_state.borrow_mut().event_callback = Some(callback);
@@ -1093,7 +1102,7 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
         } else {
             drop(window_state);
             with_input_handler(this, |input_handler| {
-                input_handler.commit(text, replacement_range.to_range());
+                input_handler.edit(replacement_range.to_range(), text);
             });
         }
 
@@ -1130,7 +1139,7 @@ extern "C" fn set_marked_text(
         } else {
             drop(window_state);
             with_input_handler(this, |input_handler| {
-                input_handler.set_composition(text, selected_range, replacement_range);
+                input_handler.compose(text, selected_range, replacement_range);
             });
         }
     }

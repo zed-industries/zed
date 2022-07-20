@@ -1521,7 +1521,6 @@ impl Element for EditorElement {
                 delta,
                 precise,
             }) => self.scroll(*position, *delta, *precise, layout, paint, cx),
-            Event::KeyDown(KeyDownEvent { input, .. }) => self.key_down(input.as_deref(), cx),
             Event::ModifiersChanged(ModifiersChangedEvent { cmd, .. }) => {
                 self.modifiers_changed(*cmd, cx)
             }
