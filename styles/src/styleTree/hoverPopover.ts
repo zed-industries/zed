@@ -24,7 +24,7 @@ export default function HoverPopover(theme: Theme) {
       ...baseContainer,
       background: backgroundColor(theme, "on500Info"),
       border: {
-        color: theme.ramps.blue(0.2).hex(),
+        color: theme.ramps.blue(0).hex(),
         width: 1,
       },
     },
@@ -32,7 +32,7 @@ export default function HoverPopover(theme: Theme) {
       ...baseContainer,
       background: backgroundColor(theme, "on500Warning"),
       border: {
-        color: theme.ramps.yellow(0.2).hex(),
+        color: theme.ramps.yellow(0).hex(),
         width: 1,
       },
     },
@@ -40,7 +40,7 @@ export default function HoverPopover(theme: Theme) {
       ...baseContainer,
       background: backgroundColor(theme, "on500Error"),
       border: {
-        color: theme.ramps.red(0.2).hex(),
+        color: theme.ramps.red(0).hex(),
         width: 1,
       }
     },

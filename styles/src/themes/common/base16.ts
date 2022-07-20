@@ -89,9 +89,9 @@ export function createTheme(
       active: withOpacity(sample(ramps.red, 0.5), 0.25),
     },
     on500Error: {
-      base: sample(ramps.red, 0.1),
-      hovered: sample(ramps.red, 0.15),
-      active: sample(ramps.red, 0.2),
+      base: sample(ramps.red, 0.05),
+      hovered: sample(ramps.red, 0.1),
+      active: sample(ramps.red, 0.15),
     },
     warning: {
       base: withOpacity(sample(ramps.yellow, 0.5), 0.15),
@@ -99,9 +99,9 @@ export function createTheme(
       active: withOpacity(sample(ramps.yellow, 0.5), 0.25),
     },
     on500Warning: {
-      base: sample(ramps.yellow, 0.1),
-      hovered: sample(ramps.yellow, 0.15),
-      active: sample(ramps.yellow, 0.2),
+      base: sample(ramps.yellow, 0.05),
+      hovered: sample(ramps.yellow, 0.1),
+      active: sample(ramps.yellow, 0.15),
     },
     info: {
       base: withOpacity(sample(ramps.blue, 0.5), 0.15),
@@ -109,9 +109,9 @@ export function createTheme(
       active: withOpacity(sample(ramps.blue, 0.5), 0.25),
     },
     on500Info: {
-      base: sample(ramps.blue, 0.1),
-      hovered: sample(ramps.blue, 0.15),
-      active: sample(ramps.blue, 0.2),
+      base: sample(ramps.blue, 0.05),
+      hovered: sample(ramps.blue, 0.1),
+      active: sample(ramps.blue, 0.15),
     },
   };
 
