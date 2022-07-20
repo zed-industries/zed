@@ -69,6 +69,15 @@ pub trait Db: Send + Sync {
         active_projects: &[(UserId, ProjectId)],
     ) -> Result<()>;
 
+    /// Get the number of users who have been active in the given
+    /// time period for at least the given time duration.
+    async fn get_active_user_count(
+        &self,
+        time_period: Range<OffsetDateTime>,
+        min_duration: Duration,
+        only_collaborative: bool,
+    ) -> Result<usize>;
+
     /// Get the users that have been most active during the given time period,
     /// along with the amount of time they have been active in each project.
     async fn get_top_users_activity_summary(
@@ -593,6 +602,81 @@ impl Db for PostgresDb {
         Ok(())
     }
 
+    async fn get_active_user_count(
+        &self,
+        time_period: Range<OffsetDateTime>,
+        min_duration: Duration,
+        only_collaborative: bool,
+    ) -> Result<usize> {
+        let mut with_clause = String::new();
+        with_clause.push_str("WITH\n");
+        with_clause.push_str(
+            "
+            project_durations AS (
+                SELECT user_id, project_id, SUM(duration_millis) AS project_duration
+                FROM project_activity_periods
+                WHERE $1 < ended_at AND ended_at <= $2
+                GROUP BY user_id, project_id
+            ),
+            ",
+        );
+        with_clause.push_str(
+            "
+            project_collaborators as (
+                SELECT project_id, COUNT(DISTINCT user_id) as max_collaborators
+                FROM project_durations
+                GROUP BY project_id
+            ),
+            ",
+        );
+
+        if only_collaborative {
+            with_clause.push_str(
+                "
+                user_durations AS (
+                    SELECT user_id, SUM(project_duration) as total_duration
+                    FROM project_durations, project_collaborators
+                    WHERE
+                        project_durations.project_id = project_collaborators.project_id AND
+                        max_collaborators > 1
+                    GROUP BY user_id
+                    ORDER BY total_duration DESC
+                    LIMIT $3
+                )
+                ",
+            );
+        } else {
+            with_clause.push_str(
+                "
+                user_durations AS (
+                    SELECT user_id, SUM(project_duration) as total_duration
+                    FROM project_durations
+                    GROUP BY user_id
+                    ORDER BY total_duration DESC
+                    LIMIT $3
+                )
+                ",
+            );
+        }
+
+        let query = format!(
+            "
+            {with_clause}
+            SELECT count(user_durations.user_id)
+            FROM user_durations
+            WHERE user_durations.total_duration >= $3
+            "
+        );
+
+        let count: i64 = sqlx::query_scalar(&query)
+            .bind(time_period.start)
+            .bind(time_period.end)
+            .bind(min_duration.as_millis() as i64)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(count as usize)
+    }
+
     async fn get_top_users_activity_summary(
         &self,
         time_period: Range<OffsetDateTime>,
@@ -612,16 +696,22 @@ impl Db for PostgresDb {
                     GROUP BY user_id
                     ORDER BY total_duration DESC
                     LIMIT $3
+                ),
+                project_collaborators as (
+                    SELECT project_id, COUNT(DISTINCT user_id) as max_collaborators
+                    FROM project_durations
+                    GROUP BY project_id
                 )
-            SELECT user_durations.user_id, users.github_login, project_id, project_duration
-            FROM user_durations, project_durations, users
+            SELECT user_durations.user_id, users.github_login, project_durations.project_id, project_duration, max_collaborators
+            FROM user_durations, project_durations, project_collaborators, users
             WHERE
                 user_durations.user_id = project_durations.user_id AND
-                user_durations.user_id = users.id
+                user_durations.user_id = users.id AND
+                project_durations.project_id = project_collaborators.project_id
             ORDER BY total_duration DESC, user_id ASC
         ";
 
-        let mut rows = sqlx::query_as::<_, (UserId, String, ProjectId, i64)>(query)
+        let mut rows = sqlx::query_as::<_, (UserId, String, ProjectId, i64, i64)>(query)
             .bind(time_period.start)
             .bind(time_period.end)
             .bind(max_user_count as i32)
@@ -629,18 +719,23 @@ impl Db for PostgresDb {
 
         let mut result = Vec::<UserActivitySummary>::new();
         while let Some(row) = rows.next().await {
-            let (user_id, github_login, project_id, duration_millis) = row?;
+            let (user_id, github_login, project_id, duration_millis, project_collaborators) = row?;
             let project_id = project_id;
             let duration = Duration::from_millis(duration_millis as u64);
+            let project_activity = ProjectActivitySummary {
+                id: project_id,
+                duration,
+                max_collaborators: project_collaborators as usize,
+            };
             if let Some(last_summary) = result.last_mut() {
                 if last_summary.id == user_id {
-                    last_summary.project_activity.push((project_id, duration));
+                    last_summary.project_activity.push(project_activity);
                     continue;
                 }
             }
             result.push(UserActivitySummary {
                 id: user_id,
-                project_activity: vec![(project_id, duration)],
+                project_activity: vec![project_activity],
                 github_login,
             });
         }
@@ -1272,7 +1367,14 @@ pub struct Project {
 pub struct UserActivitySummary {
     pub id: UserId,
     pub github_login: String,
-    pub project_activity: Vec<(ProjectId, Duration)>,
+    pub project_activity: Vec<ProjectActivitySummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ProjectActivitySummary {
+    id: ProjectId,
+    duration: Duration,
+    max_collaborators: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1544,7 +1646,7 @@ pub mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_project_activity() {
+    async fn test_user_activity() {
         let test_db = TestDb::postgres().await;
         let db = test_db.db();
 
@@ -1625,22 +1727,100 @@ pub mod tests {
                     id: user_1,
                     github_login: "user_1".to_string(),
                     project_activity: vec![
-                        (project_1, Duration::from_secs(25)),
-                        (project_2, Duration::from_secs(30)),
+                        ProjectActivitySummary {
+                            id: project_1,
+                            duration: Duration::from_secs(25),
+                            max_collaborators: 2
+                        },
+                        ProjectActivitySummary {
+                            id: project_2,
+                            duration: Duration::from_secs(30),
+                            max_collaborators: 2
+                        }
                     ]
                 },
                 UserActivitySummary {
                     id: user_2,
                     github_login: "user_2".to_string(),
-                    project_activity: vec![(project_2, Duration::from_secs(50))]
+                    project_activity: vec![ProjectActivitySummary {
+                        id: project_2,
+                        duration: Duration::from_secs(50),
+                        max_collaborators: 2
+                    }]
                 },
                 UserActivitySummary {
                     id: user_3,
                     github_login: "user_3".to_string(),
-                    project_activity: vec![(project_1, Duration::from_secs(15))]
+                    project_activity: vec![ProjectActivitySummary {
+                        id: project_1,
+                        duration: Duration::from_secs(15),
+                        max_collaborators: 2
+                    }]
                 },
             ]
         );
+
+        assert_eq!(
+            db.get_active_user_count(t0..t6, Duration::from_secs(56), false)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            db.get_active_user_count(t0..t6, Duration::from_secs(56), true)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            db.get_active_user_count(t0..t6, Duration::from_secs(54), false)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            db.get_active_user_count(t0..t6, Duration::from_secs(54), true)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            db.get_active_user_count(t0..t6, Duration::from_secs(30), false)
+                .await
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            db.get_active_user_count(t0..t6, Duration::from_secs(30), true)
+                .await
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            db.get_active_user_count(t0..t6, Duration::from_secs(10), false)
+                .await
+                .unwrap(),
+            3
+        );
+        assert_eq!(
+            db.get_active_user_count(t0..t6, Duration::from_secs(10), true)
+                .await
+                .unwrap(),
+            3
+        );
+        assert_eq!(
+            db.get_active_user_count(t0..t1, Duration::from_secs(5), false)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            db.get_active_user_count(t0..t1, Duration::from_secs(5), true)
+                .await
+                .unwrap(),
+            0
+        );
+
         assert_eq!(
             db.get_user_activity_timeline(t3..t6, user_1).await.unwrap(),
             &[
@@ -2474,6 +2654,15 @@ pub mod tests {
             _time_period: Range<OffsetDateTime>,
             _active_projects: &[(UserId, ProjectId)],
         ) -> Result<()> {
+            unimplemented!()
+        }
+
+        async fn get_active_user_count(
+            &self,
+            _time_period: Range<OffsetDateTime>,
+            _min_duration: Duration,
+            _only_collaborative: bool,
+        ) -> Result<usize> {
             unimplemented!()
         }
 

@@ -22,11 +22,10 @@ futures = "0.3"
 ordered-float = "2.1.1"
 itertools = "0.10"
 dirs = "4.0.0"
+shellexpand = "2.1.0"
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }
 client = { path = "../client", features = ["test-support"]}
 project = { path = "../project", features = ["test-support"]}
 workspace = { path = "../workspace", features = ["test-support"] }
-
-

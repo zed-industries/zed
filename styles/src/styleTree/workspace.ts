@@ -33,6 +33,10 @@ export default function workspace(theme: Theme) {
       left: 8,
       right: 8,
     },
+    description: {
+      margin: { left: 6, top: 1 },
+      ...text(theme, "sans", "muted", { size: "2xs" })
+    }
   };
 
   const activeTab = {

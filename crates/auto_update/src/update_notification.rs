@@ -2,7 +2,7 @@ use crate::ViewReleaseNotes;
 use gpui::{
     elements::{Flex, MouseEventHandler, Padding, ParentElement, Svg, Text},
     platform::{AppVersion, CursorStyle},
-    Element, Entity, View, ViewContext,
+    Element, Entity, MouseButton, View, ViewContext,
 };
 use menu::Cancel;
 use settings::Settings;
@@ -62,7 +62,7 @@ impl View for UpdateNotification {
                                     .boxed()
                             })
                             .with_padding(Padding::uniform(5.))
-                            .on_click(move |_, _, cx| cx.dispatch_action(Cancel))
+                            .on_click(MouseButton::Left, move |_, cx| cx.dispatch_action(Cancel))
                             .aligned()
                             .constrained()
                             .with_height(cx.font_cache().line_height(theme.message.text.font_size))
@@ -84,7 +84,9 @@ impl View for UpdateNotification {
                 .boxed()
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(|_, _, cx| cx.dispatch_action(ViewReleaseNotes))
+        .on_click(MouseButton::Left, |_, cx| {
+            cx.dispatch_action(ViewReleaseNotes)
+        })
         .boxed()
     }
 }

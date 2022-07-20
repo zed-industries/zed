@@ -22,13 +22,16 @@ pub use keymap_file::{keymap_file_json_schema, KeymapFileContent};
 pub struct Settings {
     pub projects_online_by_default: bool,
     pub buffer_font_family: FamilyId,
-    pub buffer_font_size: f32,
     pub default_buffer_font_size: f32,
+    pub buffer_font_size: f32,
     pub hover_popover_enabled: bool,
+    pub show_completions_on_input: bool,
     pub vim_mode: bool,
     pub autosave: Autosave,
     pub editor_defaults: EditorSettings,
     pub editor_overrides: EditorSettings,
+    pub terminal_defaults: TerminalSettings,
+    pub terminal_overrides: TerminalSettings,
     pub language_defaults: HashMap<Arc<str>, EditorSettings>,
     pub language_overrides: HashMap<Arc<str>, EditorSettings>,
     pub theme: Arc<Theme>,
@@ -73,6 +76,38 @@ pub enum Autosave {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
+pub struct TerminalSettings {
+    pub shell: Option<Shell>,
+    pub working_directory: Option<WorkingDirectory>,
+    pub font_size: Option<f32>,
+    pub font_family: Option<String>,
+    pub env: Option<Vec<(String, String)>>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Shell {
+    System,
+    Program(String),
+    WithArguments { program: String, args: Vec<String> },
+}
+
+impl Default for Shell {
+    fn default() -> Self {
+        Shell::System
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkingDirectory {
+    CurrentProjectDirectory,
+    FirstProjectDirectory,
+    AlwaysHome,
+    Always { directory: String },
+}
+
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct SettingsFileContent {
     #[serde(default)]
     pub projects_online_by_default: Option<bool>,
@@ -83,11 +118,15 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub hover_popover_enabled: Option<bool>,
     #[serde(default)]
+    pub show_completions_on_input: Option<bool>,
+    #[serde(default)]
     pub vim_mode: Option<bool>,
     #[serde(default)]
     pub autosave: Option<Autosave>,
     #[serde(flatten)]
     pub editor: EditorSettings,
+    #[serde(default)]
+    pub terminal: TerminalSettings,
     #[serde(default)]
     #[serde(alias = "language_overrides")]
     pub languages: HashMap<Arc<str>, EditorSettings>,
@@ -118,6 +157,7 @@ impl Settings {
             buffer_font_size: defaults.buffer_font_size.unwrap(),
             default_buffer_font_size: defaults.buffer_font_size.unwrap(),
             hover_popover_enabled: defaults.hover_popover_enabled.unwrap(),
+            show_completions_on_input: defaults.show_completions_on_input.unwrap(),
             projects_online_by_default: defaults.projects_online_by_default.unwrap(),
             vim_mode: defaults.vim_mode.unwrap(),
             autosave: defaults.autosave.unwrap(),
@@ -129,8 +169,10 @@ impl Settings {
                 format_on_save: required(defaults.editor.format_on_save),
                 enable_language_server: required(defaults.editor.enable_language_server),
             },
-            language_defaults: defaults.languages,
             editor_overrides: Default::default(),
+            terminal_defaults: Default::default(),
+            terminal_overrides: Default::default(),
+            language_defaults: defaults.languages,
             language_overrides: Default::default(),
             theme: themes.get(&defaults.theme.unwrap()).unwrap(),
         }
@@ -160,10 +202,21 @@ impl Settings {
         merge(&mut self.buffer_font_size, data.buffer_font_size);
         merge(&mut self.default_buffer_font_size, data.buffer_font_size);
         merge(&mut self.hover_popover_enabled, data.hover_popover_enabled);
+        merge(
+            &mut self.show_completions_on_input,
+            data.show_completions_on_input,
+        );
         merge(&mut self.vim_mode, data.vim_mode);
         merge(&mut self.autosave, data.autosave);
 
+        // Ensure terminal font is loaded, so we can request it in terminal_element layout
+        if let Some(terminal_font) = &data.terminal.font_family {
+            font_cache.load_family(&[terminal_font]).log_err();
+        }
+
         self.editor_overrides = data.editor;
+        self.terminal_defaults.font_size = data.terminal.font_size;
+        self.terminal_overrides = data.terminal;
         self.language_overrides = data.languages;
     }
 
@@ -219,6 +272,7 @@ impl Settings {
             buffer_font_size: 14.,
             default_buffer_font_size: 14.,
             hover_popover_enabled: true,
+            show_completions_on_input: true,
             vim_mode: false,
             autosave: Autosave::Off,
             editor_defaults: EditorSettings {
@@ -230,6 +284,8 @@ impl Settings {
                 enable_language_server: Some(true),
             },
             editor_overrides: Default::default(),
+            terminal_defaults: Default::default(),
+            terminal_overrides: Default::default(),
             language_defaults: Default::default(),
             language_overrides: Default::default(),
             projects_online_by_default: true,
@@ -248,7 +304,7 @@ impl Settings {
 
 pub fn settings_file_json_schema(
     theme_names: Vec<String>,
-    language_names: Vec<String>,
+    language_names: &[String],
 ) -> serde_json::Value {
     let settings = SchemaSettings::draft07().with(|settings| {
         settings.option_add_null_type = false;
@@ -275,8 +331,13 @@ pub fn settings_file_json_schema(
         instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
         object: Some(Box::new(ObjectValidation {
             properties: language_names
-                .into_iter()
-                .map(|name| (name, Schema::new_ref("#/definitions/EditorSettings".into())))
+                .iter()
+                .map(|name| {
+                    (
+                        name.clone(),
+                        Schema::new_ref("#/definitions/EditorSettings".into()),
+                    )
+                })
                 .collect(),
             ..Default::default()
         })),

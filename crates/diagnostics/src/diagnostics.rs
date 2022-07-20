@@ -501,7 +501,12 @@ impl ProjectDiagnosticsEditor {
 }
 
 impl workspace::Item for ProjectDiagnosticsEditor {
-    fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox {
+    fn tab_content(
+        &self,
+        _detail: Option<usize>,
+        style: &theme::Tab,
+        cx: &AppContext,
+    ) -> ElementBox {
         render_summary(
             &self.summary,
             &style.label.text,

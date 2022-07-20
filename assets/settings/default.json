@@ -1,29 +1,25 @@
 {
     // The name of the Zed theme to use for the UI
     "theme": "cave-dark",
-
     // The name of a font to use for rendering text in the editor
     "buffer_font_family": "Zed Mono",
-
     // The default font size for text in the editor
     "buffer_font_size": 15,
-
     // Whether to enable vim modes and key bindings
     "vim_mode": false,
-
     // Whether to show the informational hover box when moving the mouse
     // over symbols in the editor.
     "hover_popover_enabled": true,
-
+    // Whether to pop the completions menu while typing in an editor without
+    // explicitly requesting it.
+    "show_completions_on_input": true,
     // Whether new projects should start out 'online'. Online projects
     // appear in the contacts panel under your name, so that your contacts
     // can see which projects you are working on. Regardless of this
     // setting, projects keep their last online status when you reopen them.
     "projects_online_by_default": true,
-
     // Whether to use language servers to provide code intelligence.
     "enable_language_server": true,
-
     // When to automatically save edited buffers. This setting can
     // take four values.
     //
@@ -36,7 +32,6 @@
     // 4. Save when idle for a certain amount of time:
     //     "autosave": { "after_delay": {"milliseconds": 500} },
     "autosave": "off",
-
     // How to auto-format modified buffers when saving them. This
     // setting can take three values:
     //
@@ -47,12 +42,11 @@
     // 3. Format code using an external command:
     //     "format_on_save": {
     //       "external": {
-    //         "command": "sed",
-    //         "arguments": ["-e", "s/ *$//"]
+    //         "command": "prettier",
+    //         "arguments": ["--stdin-filepath", "{buffer_path}"]
     //       }
-    //     },
+    //     }
     "format_on_save": "language_server",
-
     // How to soft-wrap long lines of text. This setting can take
     // three values:
     //
@@ -60,21 +54,65 @@
     //      "soft_wrap": "none",
     // 2. Soft wrap lines that overflow the editor:
     //      "soft_wrap": "editor_width",
-    // 2. Soft wrap lines at the preferred line length
+    // 3. Soft wrap lines at the preferred line length
     //      "soft_wrap": "preferred_line_length",
     "soft_wrap": "none",
-
     // The column at which to soft-wrap lines, for buffers where soft-wrap
     // is enabled.
     "preferred_line_length": 80,
-
     // Whether to indent lines using tab characters, as opposed to multiple
     // spaces.
     "hard_tabs": false,
-
     // How many columns a tab should occupy.
     "tab_size": 4,
-
+    // Settings specific to the terminal
+    "terminal": {
+        // What shell to use when opening a terminal. May take 3 values: 
+        // 1. Use the system's default terminal configuration (e.g. $TERM).
+        //      "shell": "system"
+        // 2. A program:
+        //      "shell": {
+        //        "program": "sh"
+        //      }
+        // 3. A program with arguments:
+        //     "shell": {
+        //         "with_arguments": {
+        //           "program": "/bin/bash",
+        //           "arguments": ["--login"]
+        //         }
+        //     }
+        "shell": "system",
+        // What working directory to use when launching the terminal.
+        // May take 4 values:
+        // 1. Use the current file's project directory.
+        //      "working_directory": "current_project_directory"
+        // 2. Use the first project in this workspace's directory
+        //      "working_directory": "first_project_directory"
+        // 3. Always use this platform's home directory (if we can find it)
+        //     "working_directory": "always_home"
+        // 4. Always use a specific directory. This value will be shell expanded.
+        //    If this path is not a valid directory the terminal will default to
+        //    this platform's home directory  (if we can find it)
+        //      "working_directory": { 
+        //        "always": {
+        //          "directory": "~/zed/projects/"
+        //        }
+        //      }
+        //
+        //
+        "working_directory": "current_project_directory",
+        //Any key-value pairs added to this list will be added to the terminal's
+        //enviroment. Use `:` to seperate multiple values, not multiple list items
+        "env": [
+            //["KEY", "value1:value2"]
+        ]
+        //Set the terminal's font size. If this option is not included,
+        //the terminal will default to matching the buffer's font size.
+        //"font_size": "15"
+        //Set the terminal's font family. If this option is not included,
+        //the terminal will default to matching the buffer's font family.
+        //"font_family": "Zed Mono"
+    },
     // Different settings for specific languages.
     "languages": {
         "Plain Text": {

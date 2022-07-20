@@ -3,7 +3,7 @@ use editor::Editor;
 use futures::StreamExt;
 use gpui::{
     actions, elements::*, platform::CursorStyle, Action, AppContext, Entity, ModelHandle,
-    MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
+    MouseButton, MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
 };
 use language::{LanguageRegistry, LanguageServerBinaryStatus};
 use project::{LanguageServerProgress, Project};
@@ -317,7 +317,9 @@ impl View for ActivityIndicator {
         if let Some(action) = action {
             element = element
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(move |_, _, cx| cx.dispatch_any_action(action.boxed_clone()));
+                .on_click(MouseButton::Left, move |_, cx| {
+                    cx.dispatch_any_action(action.boxed_clone())
+                });
         }
 
         element.boxed()

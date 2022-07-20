@@ -8,8 +8,8 @@ use gpui::{
     elements::*,
     platform::CursorStyle,
     views::{ItemType, Select, SelectStyle},
-    AppContext, Entity, ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View,
-    ViewContext, ViewHandle,
+    AppContext, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription,
+    Task, View, ViewContext, ViewHandle,
 };
 use menu::Confirm;
 use postage::prelude::Stream;
@@ -320,7 +320,7 @@ impl ChatPanel {
                 .boxed()
             })
             .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(move |_, _, cx| {
+            .on_click(MouseButton::Left, move |_, cx| {
                 let rpc = rpc.clone();
                 let this = this.clone();
                 cx.spawn(|mut cx| async move {

@@ -7,6 +7,7 @@ use crate::{
     display_map::{BlockStyle, DisplaySnapshot, TransformBlock},
     hover_popover::HoverAt,
     link_go_to_definition::{CmdChanged, GoToFetchedDefinition, UpdateGoToDefinitionLink},
+    mouse_context_menu::DeployMouseContextMenu,
     EditorStyle,
 };
 use clock::ReplicaId;
@@ -24,7 +25,7 @@ use gpui::{
     platform::CursorStyle,
     text_layout::{self, Line, RunStyle, TextLayoutCache},
     AppContext, Axis, Border, CursorRegion, Element, ElementBox, Event, EventContext, KeyDownEvent,
-    LayoutContext, ModifiersChangedEvent, MouseButton, MouseEvent, MouseMovedEvent,
+    LayoutContext, ModifiersChangedEvent, MouseButton, MouseButtonEvent, MouseMovedEvent,
     MutableAppContext, PaintContext, Quad, Scene, ScrollWheelEvent, SizeConstraint, ViewContext,
     WeakViewHandle,
 };
@@ -149,6 +150,24 @@ impl EditorElement {
             }));
         }
 
+        true
+    }
+
+    fn mouse_right_down(
+        &self,
+        position: Vector2F,
+        layout: &mut LayoutState,
+        paint: &mut PaintState,
+        cx: &mut EventContext,
+    ) -> bool {
+        if !paint.text_bounds.contains_point(position) {
+            return false;
+        }
+
+        let snapshot = self.snapshot(cx.app);
+        let (point, _) = paint.point_for_position(&snapshot, layout, position);
+
+        cx.dispatch_action(DeployMouseContextMenu { position, point });
         true
     }
 
@@ -949,7 +968,9 @@ impl EditorElement {
                                     .boxed()
                             })
                             .with_cursor_style(CursorStyle::PointingHand)
-                            .on_click(move |_, _, cx| cx.dispatch_action(jump_action.clone()))
+                            .on_click(MouseButton::Left, move |_, cx| {
+                                cx.dispatch_action(jump_action.clone())
+                            })
                             .with_tooltip::<JumpIcon, _>(
                                 *key,
                                 "Jump to Buffer".to_string(),
@@ -1464,7 +1485,7 @@ impl Element for EditorElement {
         }
 
         match event {
-            Event::MouseDown(MouseEvent {
+            Event::MouseDown(MouseButtonEvent {
                 button: MouseButton::Left,
                 position,
                 cmd,
@@ -1482,7 +1503,12 @@ impl Element for EditorElement {
                 paint,
                 cx,
             ),
-            Event::MouseUp(MouseEvent {
+            Event::MouseDown(MouseButtonEvent {
+                button: MouseButton::Right,
+                position,
+                ..
+            }) => self.mouse_right_down(*position, layout, paint, cx),
+            Event::MouseUp(MouseButtonEvent {
                 button: MouseButton::Left,
                 position,
                 ..

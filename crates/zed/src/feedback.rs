@@ -2,7 +2,7 @@ use crate::OpenBrowser;
 use gpui::{
     elements::{MouseEventHandler, Text},
     platform::CursorStyle,
-    Element, Entity, RenderContext, View,
+    Element, Entity, MouseButton, RenderContext, View,
 };
 use settings::Settings;
 use workspace::StatusItemView;
@@ -32,7 +32,7 @@ impl View for FeedbackLink {
             .boxed()
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(|_, _, cx| {
+        .on_click(MouseButton::Left, |_, cx| {
             cx.dispatch_action(OpenBrowser {
                 url: NEW_ISSUE_URL.into(),
             })

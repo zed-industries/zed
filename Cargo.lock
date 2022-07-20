@@ -1611,6 +1611,7 @@ dependencies = [
  "anyhow",
  "clock",
  "collections",
+ "context_menu",
  "ctor",
  "env_logger",
  "futures",
@@ -5364,6 +5365,7 @@ dependencies = [
  "ordered-float",
  "project",
  "settings",
+ "shellexpand",
  "smallvec",
  "theme",
  "util",
@@ -6990,7 +6992,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.46.0"
+version = "0.48.1"
 dependencies = [
  "activity_indicator",
  "anyhow",

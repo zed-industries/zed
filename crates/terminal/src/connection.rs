@@ -1,24 +1,28 @@
+mod keymappings;
+
 use alacritty_terminal::{
     ansi::{ClearMode, Handler},
-    config::{Config, PtyConfig},
+    config::{Config, Program, PtyConfig},
     event::{Event as AlacTermEvent, Notify},
     event_loop::{EventLoop, Msg, Notifier},
     grid::Scroll,
     sync::FairMutex,
-    term::SizeInfo,
+    term::{SizeInfo, TermMode},
     tty::{self, setup_env},
     Term,
 };
 use futures::{channel::mpsc::unbounded, StreamExt};
-use settings::Settings;
+use settings::{Settings, Shell};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use gpui::{ClipboardItem, CursorStyle, Entity, ModelContext};
+use gpui::{keymap::Keystroke, ClipboardItem, CursorStyle, Entity, ModelContext};
 
 use crate::{
     color_translation::{get_color_at_index, to_alac_rgb},
     ZedListener,
 };
+
+use self::keymappings::to_esc_str;
 
 const DEFAULT_TITLE: &str = "Terminal";
 
@@ -42,16 +46,32 @@ pub struct TerminalConnection {
 impl TerminalConnection {
     pub fn new(
         working_directory: Option<PathBuf>,
+        shell: Option<Shell>,
+        env_vars: Option<Vec<(String, String)>>,
         initial_size: SizeInfo,
         cx: &mut ModelContext<Self>,
     ) -> TerminalConnection {
-        let pty_config = PtyConfig {
-            shell: None, //Use the users default shell
-            working_directory: working_directory.clone(),
-            hold: false,
+        let pty_config = {
+            let shell = shell.and_then(|shell| match shell {
+                Shell::System => None,
+                Shell::Program(program) => Some(Program::Just(program)),
+                Shell::WithArguments { program, args } => Some(Program::WithArgs { program, args }),
+            });
+
+            PtyConfig {
+                shell,
+                working_directory: working_directory.clone(),
+                hold: false,
+            }
         };
 
         let mut env: HashMap<String, String> = HashMap::new();
+        if let Some(envs) = env_vars {
+            for (var, val) in envs {
+                env.insert(var, val);
+            }
+        }
+
         //TODO: Properly set the current locale,
         env.insert("LC_ALL".to_string(), "en_US.UTF-8".to_string());
 
@@ -71,7 +91,20 @@ impl TerminalConnection {
         let term = Arc::new(FairMutex::new(term));
 
         //Setup the pty...
-        let pty = tty::new(&pty_config, &initial_size, None).expect("Could not create tty");
+        let pty = {
+            if let Some(pty) = tty::new(&pty_config, &initial_size, None).ok() {
+                pty
+            } else {
+                let pty_config = PtyConfig {
+                    shell: None,
+                    working_directory: working_directory.clone(),
+                    ..Default::default()
+                };
+
+                tty::new(&pty_config, &initial_size, None)
+                    .expect("Failed with default shell too :(")
+            }
+        };
 
         //And connect them together
         let event_loop = EventLoop::new(
@@ -181,6 +214,30 @@ impl TerminalConnection {
     pub fn clear(&mut self) {
         self.write_to_pty("\x0c".into());
         self.term.lock().clear_screen(ClearMode::Saved);
+    }
+
+    pub fn try_keystroke(&mut self, keystroke: &Keystroke) -> bool {
+        let guard = self.term.lock();
+        let mode = guard.mode();
+        let esc = to_esc_str(keystroke, mode);
+        drop(guard);
+        if esc.is_some() {
+            self.write_to_pty(esc.unwrap());
+            true
+        } else {
+            false
+        }
+    }
+
+    ///Paste text into the terminal
+    pub fn paste(&mut self, text: &str) {
+        if self.term.lock().mode().contains(TermMode::BRACKETED_PASTE) {
+            self.write_to_pty("\x1b[200~".to_string());
+            self.write_to_pty(text.replace('\x1b', "").to_string());
+            self.write_to_pty("\x1b[201~".to_string());
+        } else {
+            self.write_to_pty(text.replace("\r\n", "\r").replace('\n', "\r"));
+        }
     }
 }
 

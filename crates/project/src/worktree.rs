@@ -1,4 +1,4 @@
-use crate::{ProjectEntryId, RemoveOptions};
+use crate::{copy_recursive, ProjectEntryId, RemoveOptions};
 
 use super::{
     fs::{self, Fs},
@@ -47,7 +47,7 @@ use std::{
     task::Poll,
     time::{Duration, SystemTime},
 };
-use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap};
+use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
 use util::{ResultExt, TryFutureExt};
 
 lazy_static! {
@@ -731,8 +731,13 @@ impl LocalWorktree {
             let fs = self.fs.clone();
             let abs_new_path = abs_new_path.clone();
             async move {
-                fs.copy(&abs_old_path, &abs_new_path, Default::default())
-                    .await
+                copy_recursive(
+                    fs.as_ref(),
+                    &abs_old_path,
+                    &abs_new_path,
+                    Default::default(),
+                )
+                .await
             }
         });
 
@@ -1486,6 +1491,16 @@ impl LocalSnapshot {
         }
     }
 
+    fn ancestor_inodes_for_path(&self, path: &Path) -> TreeSet<u64> {
+        let mut inodes = TreeSet::default();
+        for ancestor in path.ancestors().skip(1) {
+            if let Some(entry) = self.entry_for_path(ancestor) {
+                inodes.insert(entry.inode);
+            }
+        }
+        inodes
+    }
+
     fn ignore_stack_for_abs_path(&self, abs_path: &Path, is_dir: bool) -> Arc<IgnoreStack> {
         let mut new_ignores = Vec::new();
         for ancestor in abs_path.ancestors().skip(1) {
@@ -1646,11 +1661,10 @@ impl language::File for File {
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
-    fn file_name(&self, cx: &AppContext) -> OsString {
+    fn file_name<'a>(&'a self, cx: &'a AppContext) -> &'a OsStr {
         self.path
             .file_name()
-            .map(|name| name.into())
-            .unwrap_or_else(|| OsString::from(&self.worktree.read(cx).root_name))
+            .unwrap_or_else(|| OsStr::new(&self.worktree.read(cx).root_name))
     }
 
     fn is_deleted(&self) -> bool {
@@ -2049,14 +2063,16 @@ impl BackgroundScanner {
     async fn scan_dirs(&mut self) -> Result<()> {
         let root_char_bag;
         let root_abs_path;
-        let next_entry_id;
+        let root_inode;
         let is_dir;
+        let next_entry_id;
         {
             let snapshot = self.snapshot.lock();
             root_char_bag = snapshot.root_char_bag;
             root_abs_path = snapshot.abs_path.clone();
+            root_inode = snapshot.root_entry().map(|e| e.inode);
+            is_dir = snapshot.root_entry().map_or(false, |e| e.is_dir());
             next_entry_id = snapshot.next_entry_id.clone();
-            is_dir = snapshot.root_entry().map_or(false, |e| e.is_dir())
         };
 
         // Populate ignores above the root.
@@ -2084,12 +2100,18 @@ impl BackgroundScanner {
 
         if is_dir {
             let path: Arc<Path> = Arc::from(Path::new(""));
+            let mut ancestor_inodes = TreeSet::default();
+            if let Some(root_inode) = root_inode {
+                ancestor_inodes.insert(root_inode);
+            }
+
             let (tx, rx) = channel::unbounded();
             self.executor
                 .block(tx.send(ScanJob {
                     abs_path: root_abs_path.to_path_buf(),
                     path,
                     ignore_stack,
+                    ancestor_inodes,
                     scan_queue: tx.clone(),
                 }))
                 .unwrap();
@@ -2191,24 +2213,30 @@ impl BackgroundScanner {
                 root_char_bag,
             );
 
-            if child_metadata.is_dir {
+            if child_entry.is_dir() {
                 let is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
                 child_entry.is_ignored = is_ignored;
-                new_entries.push(child_entry);
-                new_jobs.push(ScanJob {
-                    abs_path: child_abs_path,
-                    path: child_path,
-                    ignore_stack: if is_ignored {
-                        IgnoreStack::all()
-                    } else {
-                        ignore_stack.clone()
-                    },
-                    scan_queue: job.scan_queue.clone(),
-                });
+
+                if !job.ancestor_inodes.contains(&child_entry.inode) {
+                    let mut ancestor_inodes = job.ancestor_inodes.clone();
+                    ancestor_inodes.insert(child_entry.inode);
+                    new_jobs.push(ScanJob {
+                        abs_path: child_abs_path,
+                        path: child_path,
+                        ignore_stack: if is_ignored {
+                            IgnoreStack::all()
+                        } else {
+                            ignore_stack.clone()
+                        },
+                        ancestor_inodes,
+                        scan_queue: job.scan_queue.clone(),
+                    });
+                }
             } else {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, false);
-                new_entries.push(child_entry);
-            };
+            }
+
+            new_entries.push(child_entry);
         }
 
         self.snapshot
@@ -2287,12 +2315,16 @@ impl BackgroundScanner {
                         );
                         fs_entry.is_ignored = ignore_stack.is_all();
                         snapshot.insert_entry(fs_entry, self.fs.as_ref());
-                        if metadata.is_dir {
+
+                        let mut ancestor_inodes = snapshot.ancestor_inodes_for_path(&path);
+                        if metadata.is_dir && !ancestor_inodes.contains(&metadata.inode) {
+                            ancestor_inodes.insert(metadata.inode);
                             self.executor
                                 .block(scan_queue_tx.send(ScanJob {
                                     abs_path,
                                     path,
                                     ignore_stack,
+                                    ancestor_inodes,
                                     scan_queue: scan_queue_tx.clone(),
                                 }))
                                 .unwrap();
@@ -2454,6 +2486,7 @@ struct ScanJob {
     path: Arc<Path>,
     ignore_stack: Arc<IgnoreStack>,
     scan_queue: Sender<ScanJob>,
+    ancestor_inodes: TreeSet<u64>,
 }
 
 struct UpdateIgnoreStatusJob {
@@ -2740,7 +2773,7 @@ mod tests {
     use anyhow::Result;
     use client::test::FakeHttpClient;
     use fs::RealFs;
-    use gpui::TestAppContext;
+    use gpui::{executor::Deterministic, TestAppContext};
     use rand::prelude::*;
     use serde_json::json;
     use std::{
@@ -2806,6 +2839,87 @@ mod tests {
                 ]
             );
         })
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_circular_symlinks(executor: Arc<Deterministic>, cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "lib": {
+                    "a": {
+                        "a.txt": ""
+                    },
+                    "b": {
+                        "b.txt": ""
+                    }
+                }
+            }),
+        )
+        .await;
+        fs.insert_symlink("/root/lib/a/lib", "..".into()).await;
+        fs.insert_symlink("/root/lib/b/lib", "..".into()).await;
+
+        let http_client = FakeHttpClient::with_404_response();
+        let client = Client::new(http_client);
+        let tree = Worktree::local(
+            client,
+            Arc::from(Path::new("/root")),
+            true,
+            fs.clone(),
+            Default::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+
+        tree.read_with(cx, |tree, _| {
+            assert_eq!(
+                tree.entries(false)
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                vec![
+                    Path::new(""),
+                    Path::new("lib"),
+                    Path::new("lib/a"),
+                    Path::new("lib/a/a.txt"),
+                    Path::new("lib/a/lib"),
+                    Path::new("lib/b"),
+                    Path::new("lib/b/b.txt"),
+                    Path::new("lib/b/lib"),
+                ]
+            );
+        });
+
+        fs.rename(
+            Path::new("/root/lib/a/lib"),
+            Path::new("/root/lib/a/lib-2"),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        executor.run_until_parked();
+        tree.read_with(cx, |tree, _| {
+            assert_eq!(
+                tree.entries(false)
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                vec![
+                    Path::new(""),
+                    Path::new("lib"),
+                    Path::new("lib/a"),
+                    Path::new("lib/a/a.txt"),
+                    Path::new("lib/a/lib-2"),
+                    Path::new("lib/b"),
+                    Path::new("lib/b/b.txt"),
+                    Path::new("lib/b/lib"),
+                ]
+            );
+        });
     }
 
     #[gpui::test]

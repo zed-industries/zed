@@ -152,7 +152,7 @@ Plugins in the `plugins` directory are automatically recompiled and serialized t
 
 - `plugin.wasm` is the plugin compiled to Wasm. As a baseline, this should be about 4MB for debug builds and 2MB for release builds, but it depends on the specific plugin being built.
 
-- `plugin.wasm.pre` is the plugin compiled to Wasm *and additionally* precompiled to host-platform-agnostic cranelift-specific IR. This should be about 700KB for debug builds and 500KB in release builds. Each plugin takes about 1 or 2 seconds to compile to native code using cranelift, so precompiling plugins drastically reduces the startup time required to begin to run a plugin.
+- `plugin.wasm.pre` is the plugin compiled to Wasm *and additionally* precompiled to host-platform-specific native code, determined by the `TARGET` cargo exposes at compile-time. This should be about 700KB for debug builds and 500KB in release builds. Each plugin takes about 1 or 2 seconds to compile to native code using cranelift, so precompiling plugins drastically reduces the startup time required to begin to run a plugin.
 
 For all intents and purposes, it is *highly recommended* that you use precompiled plugins where possible, as they are much more lightweight and take much less time to instantiate.
 
@@ -246,18 +246,17 @@ Once all imports are marked, we can instantiate the plugin. To instantiate the p
 ```rust
 let plugin = builder
     .init(
-        true,
-        include_bytes!("../../../plugins/bin/cool_plugin.wasm.pre"),
+        PluginBinary::Precompiled(bytes),
     )
     .await
     .unwrap();
 ```
 
-The `.init` method currently takes two arguments:
+The `.init` method takes a single argument containing the plugin binary. 
 
-1. First, the 'precompiled' flag, indicating whether the plugin is *normal* (`.wasm`) or precompiled (`.wasm.pre`). When using a precompiled plugin, set this flag to `true`.
+1. If not precompiled, use `PluginBinary::Wasm(bytes)`. This supports both the WebAssembly Textual format (`.wat`) and the WebAssembly Binary format (`.wasm`). 
 
-2. Second, the raw plugin Wasm itself, as an array of bytes. When not precompiled, this can be either the Wasm binary format (`.wasm`) or the Wasm textual format (`.wat`). When precompiled, this must be the precompiled plugin (`.wasm.pre`).
+2. If precompiled, use `PluginBinary::Precompiled(bytes)`. This supports precompiled plugins ending in `.wasm.pre`. You need to be extra-careful when using precompiled plugins to ensure that the plugin target matches the target of the binary you are compiling.
 
 The `.init` method is asynchronous, and must be `.await`ed upon. If the plugin is malformed or doesn't import the right functions, an error will be raised.
 

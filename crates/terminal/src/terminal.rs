@@ -5,7 +5,6 @@ pub mod terminal_element;
 
 use alacritty_terminal::{
     event::{Event as AlacTermEvent, EventListener},
-    grid::Scroll,
     term::SizeInfo,
 };
 
@@ -14,29 +13,19 @@ use dirs::home_dir;
 use editor::Input;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
-    actions, elements::*, impl_internal_actions, AppContext, ClipboardItem, Entity, ModelHandle,
+    actions, elements::*, keymap::Keystroke, AppContext, ClipboardItem, Entity, ModelHandle,
     MutableAppContext, View, ViewContext,
 };
 use modal::deploy_modal;
 
-use project::{Project, ProjectPath};
-use settings::Settings;
+use project::{LocalWorktree, Project, ProjectPath};
+use settings::{Settings, WorkingDirectory};
 use smallvec::SmallVec;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use workspace::{Item, Workspace};
 
 use crate::terminal_element::TerminalEl;
 
-//ASCII Control characters on a keyboard
-const ETX_CHAR: char = 3_u8 as char; //'End of text', the control code for 'ctrl-c'
-const TAB_CHAR: char = 9_u8 as char;
-const CARRIAGE_RETURN_CHAR: char = 13_u8 as char;
-const ESC_CHAR: char = 27_u8 as char; // == \x1b
-const DEL_CHAR: char = 127_u8 as char;
-const LEFT_SEQ: &str = "\x1b[D";
-const RIGHT_SEQ: &str = "\x1b[C";
-const UP_SEQ: &str = "\x1b[A";
-const DOWN_SEQ: &str = "\x1b[B";
 const DEBUG_TERMINAL_WIDTH: f32 = 1000.; //This needs to be wide enough that the prompt can fill the whole space.
 const DEBUG_TERMINAL_HEIGHT: f32 = 200.;
 const DEBUG_CELL_WIDTH: f32 = 5.;
@@ -52,44 +41,34 @@ pub struct ScrollTerminal(pub i32);
 actions!(
     terminal,
     [
-        Sigint,
-        Escape,
-        Del,
-        Return,
-        Left,
-        Right,
+        Deploy,
         Up,
         Down,
-        Tab,
+        CtrlC,
+        Escape,
+        Enter,
         Clear,
         Copy,
         Paste,
-        Deploy,
-        Quit,
-        DeployModal,
+        DeployModal
     ]
 );
-impl_internal_actions!(terminal, [ScrollTerminal]);
 
 ///Initialize and register all of our action handlers
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(Terminal::deploy);
-    cx.add_action(Terminal::send_sigint);
-    cx.add_action(Terminal::escape);
-    cx.add_action(Terminal::quit);
-    cx.add_action(Terminal::del);
-    cx.add_action(Terminal::carriage_return);
-    cx.add_action(Terminal::left);
-    cx.add_action(Terminal::right);
+    //Global binding overrrides
+    cx.add_action(Terminal::ctrl_c);
     cx.add_action(Terminal::up);
     cx.add_action(Terminal::down);
-    cx.add_action(Terminal::tab);
+    cx.add_action(Terminal::escape);
+    cx.add_action(Terminal::enter);
+    //Useful terminal actions
+    cx.add_action(Terminal::deploy);
+    cx.add_action(deploy_modal);
     cx.add_action(Terminal::copy);
     cx.add_action(Terminal::paste);
-    cx.add_action(Terminal::scroll_terminal);
     cx.add_action(Terminal::input);
     cx.add_action(Terminal::clear);
-    cx.add_action(deploy_modal);
 }
 
 ///A translation struct for Alacritty to communicate with us from their event loop
@@ -131,8 +110,15 @@ impl Terminal {
             false,
         );
 
-        let connection =
-            cx.add_model(|cx| TerminalConnection::new(working_directory, size_info, cx));
+        let (shell, envs) = {
+            let settings = cx.global::<Settings>();
+            let shell = settings.terminal_overrides.shell.clone();
+            let envs = settings.terminal_overrides.env.clone(); //Should be short and cheap.
+            (shell, envs)
+        };
+
+        let connection = cx
+            .add_model(|cx| TerminalConnection::new(working_directory, shell, envs, size_info, cx));
 
         Terminal::from_connection(connection, modal, cx)
     }
@@ -168,15 +154,6 @@ impl Terminal {
         }
     }
 
-    ///Scroll the terminal. This locks the terminal
-    fn scroll_terminal(&mut self, scroll: &ScrollTerminal, cx: &mut ViewContext<Self>) {
-        self.connection
-            .read(cx)
-            .term
-            .lock()
-            .scroll_display(Scroll::Delta(scroll.0));
-    }
-
     fn input(&mut self, Input(text): &Input, cx: &mut ViewContext<Self>) {
         self.connection.update(cx, |connection, _| {
             //TODO: This is probably not encoding UTF8 correctly (see alacritty/src/input.rs:L825-837)
@@ -200,11 +177,6 @@ impl Terminal {
         workspace.add_item(Box::new(cx.add_view(|cx| Terminal::new(wd, false, cx))), cx);
     }
 
-    ///Tell Zed to close us
-    fn quit(&mut self, _: &Quit, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::CloseTerminal);
-    }
-
     ///Attempt to paste the clipboard into the terminal
     fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
         let term = self.connection.read(cx).term.lock();
@@ -219,71 +191,43 @@ impl Terminal {
     fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
         if let Some(item) = cx.read_from_clipboard() {
             self.connection.update(cx, |connection, _| {
-                connection.write_to_pty(item.text().to_owned());
+                connection.paste(item.text());
             })
         }
     }
 
-    ///Send the `up` key
+    ///Synthesize the keyboard event corresponding to 'up'
     fn up(&mut self, _: &Up, cx: &mut ViewContext<Self>) {
         self.connection.update(cx, |connection, _| {
-            connection.write_to_pty(UP_SEQ.to_string());
+            connection.try_keystroke(&Keystroke::parse("up").unwrap());
         });
     }
 
-    ///Send the `down` key
+    ///Synthesize the keyboard event corresponding to 'down'
     fn down(&mut self, _: &Down, cx: &mut ViewContext<Self>) {
         self.connection.update(cx, |connection, _| {
-            connection.write_to_pty(DOWN_SEQ.to_string());
+            connection.try_keystroke(&Keystroke::parse("down").unwrap());
         });
     }
 
-    ///Send the `tab` key
-    fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
+    ///Synthesize the keyboard event corresponding to 'ctrl-c'
+    fn ctrl_c(&mut self, _: &CtrlC, cx: &mut ViewContext<Self>) {
         self.connection.update(cx, |connection, _| {
-            connection.write_to_pty(TAB_CHAR.to_string());
+            connection.try_keystroke(&Keystroke::parse("ctrl-c").unwrap());
         });
     }
 
-    ///Send `SIGINT` (`ctrl-c`)
-    fn send_sigint(&mut self, _: &Sigint, cx: &mut ViewContext<Self>) {
-        self.connection.update(cx, |connection, _| {
-            connection.write_to_pty(ETX_CHAR.to_string());
-        });
-    }
-
-    ///Send the `escape` key
+    ///Synthesize the keyboard event corresponding to 'escape'
     fn escape(&mut self, _: &Escape, cx: &mut ViewContext<Self>) {
         self.connection.update(cx, |connection, _| {
-            connection.write_to_pty(ESC_CHAR.to_string());
+            connection.try_keystroke(&Keystroke::parse("escape").unwrap());
         });
     }
 
-    ///Send the `delete` key. TODO: Difference between this and backspace?
-    fn del(&mut self, _: &Del, cx: &mut ViewContext<Self>) {
+    ///Synthesize the keyboard event corresponding to 'enter'
+    fn enter(&mut self, _: &Enter, cx: &mut ViewContext<Self>) {
         self.connection.update(cx, |connection, _| {
-            connection.write_to_pty(DEL_CHAR.to_string());
-        });
-    }
-
-    ///Send a carriage return. TODO: May need to check the terminal mode.
-    fn carriage_return(&mut self, _: &Return, cx: &mut ViewContext<Self>) {
-        self.connection.update(cx, |connection, _| {
-            connection.write_to_pty(CARRIAGE_RETURN_CHAR.to_string());
-        });
-    }
-
-    //Send the `left` key
-    fn left(&mut self, _: &Left, cx: &mut ViewContext<Self>) {
-        self.connection.update(cx, |connection, _| {
-            connection.write_to_pty(LEFT_SEQ.to_string());
-        });
-    }
-
-    //Send the `right` key
-    fn right(&mut self, _: &Right, cx: &mut ViewContext<Self>) {
-        self.connection.update(cx, |connection, _| {
-            connection.write_to_pty(RIGHT_SEQ.to_string());
+            connection.try_keystroke(&Keystroke::parse("enter").unwrap());
         });
     }
 }
@@ -324,7 +268,12 @@ impl View for Terminal {
 }
 
 impl Item for Terminal {
-    fn tab_content(&self, tab_theme: &theme::Tab, cx: &gpui::AppContext) -> ElementBox {
+    fn tab_content(
+        &self,
+        _detail: Option<usize>,
+        tab_theme: &theme::Tab,
+        cx: &gpui::AppContext,
+    ) -> ElementBox {
         let settings = cx.global::<Settings>();
         let search_theme = &settings.theme.search; //TODO properly integrate themes
 
@@ -429,12 +378,41 @@ impl Item for Terminal {
     }
 }
 
+///Get's the working directory for the given workspace, respecting the user's settings.
+fn get_wd_for_workspace(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
+    let wd_setting = cx
+        .global::<Settings>()
+        .terminal_overrides
+        .working_directory
+        .clone()
+        .unwrap_or(WorkingDirectory::CurrentProjectDirectory);
+    let res = match wd_setting {
+        WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx),
+        WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
+        WorkingDirectory::AlwaysHome => None,
+        WorkingDirectory::Always { directory } => shellexpand::full(&directory)
+            .ok()
+            .map(|dir| Path::new(&dir.to_string()).to_path_buf())
+            .filter(|dir| dir.is_dir()),
+    };
+    res.or_else(|| home_dir())
+}
+
+///Get's the first project's home directory, or the home directory
+fn first_project_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
+    workspace
+        .worktrees(cx)
+        .next()
+        .and_then(|worktree_handle| worktree_handle.read(cx).as_local())
+        .and_then(get_path_from_wt)
+}
+
 ///Gets the intuitively correct working directory from the given workspace
 ///If there is an active entry for this project, returns that entry's worktree root.
 ///If there's no active entry but there is a worktree, returns that worktrees root.
 ///If either of these roots are files, or if there are any other query failures,
 ///  returns the user's home directory
-fn get_wd_for_workspace(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
+fn current_project_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
     let project = workspace.project().read(cx);
 
     project
@@ -442,96 +420,36 @@ fn get_wd_for_workspace(workspace: &Workspace, cx: &AppContext) -> Option<PathBu
         .and_then(|entry_id| project.worktree_for_entry(entry_id, cx))
         .or_else(|| workspace.worktrees(cx).next())
         .and_then(|worktree_handle| worktree_handle.read(cx).as_local())
-        .and_then(|wt| {
-            wt.root_entry()
-                .filter(|re| re.is_dir())
-                .map(|_| wt.abs_path().to_path_buf())
-        })
-        .or_else(|| home_dir())
+        .and_then(get_path_from_wt)
+}
+
+fn get_path_from_wt(wt: &LocalWorktree) -> Option<PathBuf> {
+    wt.root_entry()
+        .filter(|re| re.is_dir())
+        .map(|_| wt.abs_path().to_path_buf())
 }
 
 #[cfg(test)]
 mod tests {
 
-    use super::*;
-    use alacritty_terminal::{
-        grid::GridIterator,
-        index::{Column, Line, Point, Side},
-        selection::{Selection, SelectionType},
-        term::cell::Cell,
-    };
-    use gpui::TestAppContext;
-    use itertools::Itertools;
+    use crate::tests::terminal_test_context::TerminalTestContext;
 
-    use std::{path::Path, time::Duration};
+    use super::*;
+    use gpui::TestAppContext;
+
+    use std::path::Path;
     use workspace::AppState;
+
+    mod terminal_test_context;
 
     ///Basic integration test, can we get the terminal to show up, execute a command,
     //and produce noticable output?
-    #[gpui::test]
+    #[gpui::test(retries = 5)]
     async fn test_terminal(cx: &mut TestAppContext) {
-        let terminal = cx.add_view(Default::default(), |cx| Terminal::new(None, false, cx));
+        let mut cx = TerminalTestContext::new(cx);
 
-        terminal.update(cx, |terminal, cx| {
-            terminal.connection.update(cx, |connection, _| {
-                connection.write_to_pty("expr 3 + 4".to_string());
-            });
-            terminal.carriage_return(&Return, cx);
-        });
-
-        cx.set_condition_duration(Some(Duration::from_secs(2)));
-        terminal
-            .condition(cx, |terminal, cx| {
-                let term = terminal.connection.read(cx).term.clone();
-                let content = grid_as_str(term.lock().renderable_content().display_iter);
-                content.contains("7")
-            })
+        cx.execute_and_wait("expr 3 + 4", |content, _cx| content.contains("7"))
             .await;
-        cx.set_condition_duration(None);
-    }
-
-    /// Integration test for selections, clipboard, and terminal execution
-    #[gpui::test]
-    async fn test_copy(cx: &mut TestAppContext) {
-        let mut result_line: i32 = 0;
-        let terminal = cx.add_view(Default::default(), |cx| Terminal::new(None, false, cx));
-        cx.set_condition_duration(Some(Duration::from_secs(2)));
-
-        terminal.update(cx, |terminal, cx| {
-            terminal.connection.update(cx, |connection, _| {
-                connection.write_to_pty("expr 3 + 4".to_string());
-            });
-            terminal.carriage_return(&Return, cx);
-        });
-
-        terminal
-            .condition(cx, |terminal, cx| {
-                let term = terminal.connection.read(cx).term.clone();
-                let content = grid_as_str(term.lock().renderable_content().display_iter);
-
-                if content.contains("7") {
-                    let idx = content.chars().position(|c| c == '7').unwrap();
-                    result_line = content.chars().take(idx).filter(|c| *c == '\n').count() as i32;
-                    true
-                } else {
-                    false
-                }
-            })
-            .await;
-
-        terminal.update(cx, |terminal, cx| {
-            let mut term = terminal.connection.read(cx).term.lock();
-            term.selection = Some(Selection::new(
-                SelectionType::Semantic,
-                Point::new(Line(2), Column(0)),
-                Side::Right,
-            ));
-            drop(term);
-            terminal.copy(&Copy, cx)
-        });
-
-        cx.assert_clipboard_content(Some(&"7"));
-        cx.set_condition_duration(None);
     }
 
     ///Working directory calculation tests
@@ -553,8 +471,10 @@ mod tests {
             assert!(active_entry.is_none());
             assert!(workspace.worktrees(cx).next().is_none());
 
-            let res = get_wd_for_workspace(workspace, cx);
-            assert_eq!(res, home_dir())
+            let res = current_project_directory(workspace, cx);
+            assert_eq!(res, None);
+            let res = first_project_directory(workspace, cx);
+            assert_eq!(res, None);
         });
     }
 
@@ -591,8 +511,10 @@ mod tests {
             assert!(active_entry.is_none());
             assert!(workspace.worktrees(cx).next().is_some());
 
-            let res = get_wd_for_workspace(workspace, cx);
-            assert_eq!(res, home_dir())
+            let res = current_project_directory(workspace, cx);
+            assert_eq!(res, None);
+            let res = first_project_directory(workspace, cx);
+            assert_eq!(res, None);
         });
     }
 
@@ -627,7 +549,9 @@ mod tests {
             assert!(active_entry.is_none());
             assert!(workspace.worktrees(cx).next().is_some());
 
-            let res = get_wd_for_workspace(workspace, cx);
+            let res = current_project_directory(workspace, cx);
+            assert_eq!(res, Some((Path::new("/root/")).to_path_buf()));
+            let res = first_project_directory(workspace, cx);
             assert_eq!(res, Some((Path::new("/root/")).to_path_buf()));
         });
     }
@@ -639,17 +563,32 @@ mod tests {
         let params = cx.update(AppState::test);
         let project = Project::test(params.fs.clone(), [], cx).await;
         let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
-        let (wt, _) = project
+        let (wt1, _) = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root.txt", true, cx)
+                project.find_or_create_local_worktree("/root1/", true, cx)
+            })
+            .await
+            .unwrap();
+
+        let (wt2, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/root2.txt", true, cx)
             })
             .await
             .unwrap();
 
         //Setup root
-        let entry = cx
+        let _ = cx
             .update(|cx| {
-                wt.update(cx, |wt, cx| {
+                wt1.update(cx, |wt, cx| {
+                    wt.as_local().unwrap().create_entry(Path::new(""), true, cx)
+                })
+            })
+            .await
+            .unwrap();
+        let entry2 = cx
+            .update(|cx| {
+                wt2.update(cx, |wt, cx| {
                     wt.as_local()
                         .unwrap()
                         .create_entry(Path::new(""), false, cx)
@@ -660,8 +599,8 @@ mod tests {
 
         cx.update(|cx| {
             let p = ProjectPath {
-                worktree_id: wt.read(cx).id(),
-                path: entry.path,
+                worktree_id: wt2.read(cx).id(),
+                path: entry2.path,
             };
             project.update(cx, |project, cx| project.set_active_path(Some(p), cx));
         });
@@ -673,8 +612,10 @@ mod tests {
 
             assert!(active_entry.is_some());
 
-            let res = get_wd_for_workspace(workspace, cx);
-            assert_eq!(res, home_dir());
+            let res = current_project_directory(workspace, cx);
+            assert_eq!(res, None);
+            let res = first_project_directory(workspace, cx);
+            assert_eq!(res, Some((Path::new("/root1/")).to_path_buf()));
         });
     }
 
@@ -685,17 +626,32 @@ mod tests {
         let params = cx.update(AppState::test);
         let project = Project::test(params.fs.clone(), [], cx).await;
         let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
-        let (wt, _) = project
+        let (wt1, _) = project
             .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root/", true, cx)
+                project.find_or_create_local_worktree("/root1/", true, cx)
+            })
+            .await
+            .unwrap();
+
+        let (wt2, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/root2/", true, cx)
             })
             .await
             .unwrap();
 
         //Setup root
-        let entry = cx
+        let _ = cx
             .update(|cx| {
-                wt.update(cx, |wt, cx| {
+                wt1.update(cx, |wt, cx| {
+                    wt.as_local().unwrap().create_entry(Path::new(""), true, cx)
+                })
+            })
+            .await
+            .unwrap();
+        let entry2 = cx
+            .update(|cx| {
+                wt2.update(cx, |wt, cx| {
                     wt.as_local().unwrap().create_entry(Path::new(""), true, cx)
                 })
             })
@@ -704,8 +660,8 @@ mod tests {
 
         cx.update(|cx| {
             let p = ProjectPath {
-                worktree_id: wt.read(cx).id(),
-                path: entry.path,
+                worktree_id: wt2.read(cx).id(),
+                path: entry2.path,
             };
             project.update(cx, |project, cx| project.set_active_path(Some(p), cx));
         });
@@ -717,17 +673,10 @@ mod tests {
 
             assert!(active_entry.is_some());
 
-            let res = get_wd_for_workspace(workspace, cx);
-            assert_eq!(res, Some((Path::new("/root/")).to_path_buf()));
+            let res = current_project_directory(workspace, cx);
+            assert_eq!(res, Some((Path::new("/root2/")).to_path_buf()));
+            let res = first_project_directory(workspace, cx);
+            assert_eq!(res, Some((Path::new("/root1/")).to_path_buf()));
         });
-    }
-
-    pub(crate) fn grid_as_str(grid_iterator: GridIterator<Cell>) -> String {
-        let lines = grid_iterator.group_by(|i| i.point.line.0);
-        lines
-            .into_iter()
-            .map(|(_, line)| line.map(|i| i.c).collect::<String>())
-            .collect::<Vec<String>>()
-            .join("\n")
     }
 }

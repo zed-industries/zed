@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use fsevent::EventStream;
-use futures::{Stream, StreamExt};
+use futures::{future::BoxFuture, Stream, StreamExt};
 use language::LineEnding;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::{
@@ -12,11 +12,18 @@ use std::{
 };
 use text::Rope;
 
+#[cfg(any(test, feature = "test-support"))]
+use collections::{btree_map, BTreeMap};
+#[cfg(any(test, feature = "test-support"))]
+use futures::lock::Mutex;
+#[cfg(any(test, feature = "test-support"))]
+use std::sync::{Arc, Weak};
+
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {
     async fn create_dir(&self, path: &Path) -> Result<()>;
     async fn create_file(&self, path: &Path, options: CreateOptions) -> Result<()>;
-    async fn copy(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()>;
+    async fn copy_file(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()>;
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()>;
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()>;
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
@@ -92,7 +99,7 @@ impl Fs for RealFs {
         Ok(())
     }
 
-    async fn copy(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()> {
+    async fn copy_file(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()> {
         if !options.overwrite && smol::fs::metadata(target).await.is_ok() {
             if options.ignore_if_exists {
                 return Ok(());
@@ -101,23 +108,7 @@ impl Fs for RealFs {
             }
         }
 
-        let metadata = smol::fs::metadata(source).await?;
-        let _ = smol::fs::remove_dir_all(target).await;
-        if metadata.is_dir() {
-            self.create_dir(target).await?;
-            let mut children = smol::fs::read_dir(source).await?;
-            while let Some(child) = children.next().await {
-                if let Ok(child) = child {
-                    let child_source_path = child.path();
-                    let child_target_path = target.join(child.file_name());
-                    self.copy(&child_source_path, &child_target_path, options)
-                        .await?;
-                }
-            }
-        } else {
-            smol::fs::copy(source, target).await?;
-        }
-
+        smol::fs::copy(source, target).await?;
         Ok(())
     }
 
@@ -235,11 +226,13 @@ impl Fs for RealFs {
     ) -> Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>> {
         let (tx, rx) = smol::channel::unbounded();
         let (stream, handle) = EventStream::new(&[path], latency);
-        std::mem::forget(handle);
         std::thread::spawn(move || {
             stream.run(move |events| smol::block_on(tx.send(events)).is_ok());
         });
-        Box::pin(rx)
+        Box::pin(rx.chain(futures::stream::once(async move {
+            drop(handle);
+            vec![]
+        })))
     }
 
     fn is_fake(&self) -> bool {
@@ -252,35 +245,115 @@ impl Fs for RealFs {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-#[derive(Clone, Debug)]
-struct FakeFsEntry {
-    metadata: Metadata,
-    content: Option<String>,
+pub struct FakeFs {
+    // Use an unfair lock to ensure tests are deterministic.
+    state: Mutex<FakeFsState>,
+    executor: Weak<gpui::executor::Background>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
 struct FakeFsState {
-    entries: std::collections::BTreeMap<PathBuf, FakeFsEntry>,
+    root: Arc<Mutex<FakeFsEntry>>,
     next_inode: u64,
     event_txs: Vec<smol::channel::Sender<Vec<fsevent::Event>>>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[derive(Debug)]
+enum FakeFsEntry {
+    File {
+        inode: u64,
+        mtime: SystemTime,
+        content: String,
+    },
+    Dir {
+        inode: u64,
+        mtime: SystemTime,
+        entries: BTreeMap<String, Arc<Mutex<FakeFsEntry>>>,
+    },
+    Symlink {
+        target: PathBuf,
+    },
+}
+
+#[cfg(any(test, feature = "test-support"))]
 impl FakeFsState {
-    fn validate_path(&self, path: &Path) -> Result<()> {
-        if path.is_absolute()
-            && path
-                .parent()
-                .and_then(|path| self.entries.get(path))
-                .map_or(false, |e| e.metadata.is_dir)
-        {
-            Ok(())
-        } else {
-            Err(anyhow!("invalid path {:?}", path))
-        }
+    async fn read_path<'a>(&'a self, target: &Path) -> Result<Arc<Mutex<FakeFsEntry>>> {
+        Ok(self
+            .try_read_path(target)
+            .await
+            .ok_or_else(|| anyhow!("path does not exist: {}", target.display()))?
+            .0)
     }
 
-    async fn emit_event<I, T>(&mut self, paths: I)
+    async fn try_read_path<'a>(
+        &'a self,
+        target: &Path,
+    ) -> Option<(Arc<Mutex<FakeFsEntry>>, PathBuf)> {
+        let mut path = target.to_path_buf();
+        let mut real_path = PathBuf::new();
+        let mut entry_stack = Vec::new();
+        'outer: loop {
+            let mut path_components = path.components().collect::<collections::VecDeque<_>>();
+            while let Some(component) = path_components.pop_front() {
+                match component {
+                    Component::Prefix(_) => panic!("prefix paths aren't supported"),
+                    Component::RootDir => {
+                        entry_stack.clear();
+                        entry_stack.push(self.root.clone());
+                        real_path.clear();
+                        real_path.push("/");
+                    }
+                    Component::CurDir => {}
+                    Component::ParentDir => {
+                        entry_stack.pop()?;
+                        real_path.pop();
+                    }
+                    Component::Normal(name) => {
+                        let current_entry = entry_stack.last().cloned()?;
+                        let current_entry = current_entry.lock().await;
+                        if let FakeFsEntry::Dir { entries, .. } = &*current_entry {
+                            let entry = entries.get(name.to_str().unwrap()).cloned()?;
+                            let _entry = entry.lock().await;
+                            if let FakeFsEntry::Symlink { target, .. } = &*_entry {
+                                let mut target = target.clone();
+                                target.extend(path_components);
+                                path = target;
+                                continue 'outer;
+                            } else {
+                                entry_stack.push(entry.clone());
+                                real_path.push(name);
+                            }
+                        } else {
+                            return None;
+                        }
+                    }
+                }
+            }
+            break;
+        }
+        entry_stack.pop().map(|entry| (entry, real_path))
+    }
+
+    async fn write_path<Fn, T>(&self, path: &Path, callback: Fn) -> Result<T>
+    where
+        Fn: FnOnce(btree_map::Entry<String, Arc<Mutex<FakeFsEntry>>>) -> Result<T>,
+    {
+        let path = normalize_path(path);
+        let filename = path
+            .file_name()
+            .ok_or_else(|| anyhow!("cannot overwrite the root"))?;
+        let parent_path = path.parent().unwrap();
+
+        let parent = self.read_path(parent_path).await?;
+        let mut parent = parent.lock().await;
+        let new_entry = parent
+            .dir_entries(parent_path)?
+            .entry(filename.to_str().unwrap().into());
+        callback(new_entry)
+    }
+
+    fn emit_event<I, T>(&mut self, paths: I)
     where
         I: IntoIterator<Item = T>,
         T: Into<PathBuf>,
@@ -302,32 +375,16 @@ impl FakeFsState {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-pub struct FakeFs {
-    // Use an unfair lock to ensure tests are deterministic.
-    state: futures::lock::Mutex<FakeFsState>,
-    executor: std::sync::Weak<gpui::executor::Background>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
 impl FakeFs {
-    pub fn new(executor: std::sync::Arc<gpui::executor::Background>) -> std::sync::Arc<Self> {
-        let mut entries = std::collections::BTreeMap::new();
-        entries.insert(
-            Path::new("/").to_path_buf(),
-            FakeFsEntry {
-                metadata: Metadata {
+    pub fn new(executor: Arc<gpui::executor::Background>) -> Arc<Self> {
+        Arc::new(Self {
+            executor: Arc::downgrade(&executor),
+            state: Mutex::new(FakeFsState {
+                root: Arc::new(Mutex::new(FakeFsEntry::Dir {
                     inode: 0,
                     mtime: SystemTime::now(),
-                    is_dir: true,
-                    is_symlink: false,
-                },
-                content: None,
-            },
-        );
-        std::sync::Arc::new(Self {
-            executor: std::sync::Arc::downgrade(&executor),
-            state: futures::lock::Mutex::new(FakeFsState {
-                entries,
+                    entries: Default::default(),
+                })),
                 next_inode: 1,
                 event_txs: Default::default(),
             }),
@@ -337,23 +394,48 @@ impl FakeFs {
     pub async fn insert_file(&self, path: impl AsRef<Path>, content: String) {
         let mut state = self.state.lock().await;
         let path = path.as_ref();
-        state.validate_path(path).unwrap();
-
         let inode = state.next_inode;
         state.next_inode += 1;
-        state.entries.insert(
-            path.to_path_buf(),
-            FakeFsEntry {
-                metadata: Metadata {
-                    inode,
-                    mtime: SystemTime::now(),
-                    is_dir: false,
-                    is_symlink: false,
-                },
-                content: Some(content),
-            },
-        );
-        state.emit_event(&[path]).await;
+        let file = Arc::new(Mutex::new(FakeFsEntry::File {
+            inode,
+            mtime: SystemTime::now(),
+            content,
+        }));
+        state
+            .write_path(path, move |entry| {
+                match entry {
+                    btree_map::Entry::Vacant(e) => {
+                        e.insert(file);
+                    }
+                    btree_map::Entry::Occupied(mut e) => {
+                        *e.get_mut() = file;
+                    }
+                }
+                Ok(())
+            })
+            .await
+            .unwrap();
+        state.emit_event(&[path]);
+    }
+
+    pub async fn insert_symlink(&self, path: impl AsRef<Path>, target: PathBuf) {
+        let mut state = self.state.lock().await;
+        let path = path.as_ref();
+        let file = Arc::new(Mutex::new(FakeFsEntry::Symlink { target }));
+        state
+            .write_path(path.as_ref(), move |e| match e {
+                btree_map::Entry::Vacant(e) => {
+                    e.insert(file);
+                    Ok(())
+                }
+                btree_map::Entry::Occupied(mut e) => {
+                    *e.get_mut() = file;
+                    Ok(())
+                }
+            })
+            .await
+            .unwrap();
+        state.emit_event(&[path]);
     }
 
     #[must_use]
@@ -392,13 +474,22 @@ impl FakeFs {
     }
 
     pub async fn files(&self) -> Vec<PathBuf> {
-        self.state
-            .lock()
-            .await
-            .entries
-            .iter()
-            .filter_map(|(path, entry)| entry.content.as_ref().map(|_| path.clone()))
-            .collect()
+        let mut result = Vec::new();
+        let mut queue = collections::VecDeque::new();
+        queue.push_back((PathBuf::from("/"), self.state.lock().await.root.clone()));
+        while let Some((path, entry)) = queue.pop_front() {
+            let e = entry.lock().await;
+            match &*e {
+                FakeFsEntry::File { .. } => result.push(path),
+                FakeFsEntry::Dir { entries, .. } => {
+                    for (name, entry) in entries {
+                        queue.push_back((path.join(name), entry.clone()));
+                    }
+                }
+                FakeFsEntry::Symlink { .. } => {}
+            }
+        }
+        result
     }
 
     async fn simulate_random_delay(&self) {
@@ -411,181 +502,206 @@ impl FakeFs {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+impl FakeFsEntry {
+    fn is_file(&self) -> bool {
+        matches!(self, Self::File { .. })
+    }
+
+    fn file_content(&self, path: &Path) -> Result<&String> {
+        if let Self::File { content, .. } = self {
+            Ok(content)
+        } else {
+            Err(anyhow!("not a file: {}", path.display()))
+        }
+    }
+
+    fn set_file_content(&mut self, path: &Path, new_content: String) -> Result<()> {
+        if let Self::File { content, mtime, .. } = self {
+            *mtime = SystemTime::now();
+            *content = new_content;
+            Ok(())
+        } else {
+            Err(anyhow!("not a file: {}", path.display()))
+        }
+    }
+
+    fn dir_entries(
+        &mut self,
+        path: &Path,
+    ) -> Result<&mut BTreeMap<String, Arc<Mutex<FakeFsEntry>>>> {
+        if let Self::Dir { entries, .. } = self {
+            Ok(entries)
+        } else {
+            Err(anyhow!("not a directory: {}", path.display()))
+        }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
 #[async_trait::async_trait]
 impl Fs for FakeFs {
     async fn create_dir(&self, path: &Path) -> Result<()> {
         self.simulate_random_delay().await;
-        let state = &mut *self.state.lock().await;
-        let path = normalize_path(path);
-        let mut ancestor_path = PathBuf::new();
-        let mut created_dir_paths = Vec::new();
+        let mut state = self.state.lock().await;
+
+        let mut created_dirs = Vec::new();
+        let mut cur_path = PathBuf::new();
         for component in path.components() {
-            ancestor_path.push(component);
-            let entry = state
-                .entries
-                .entry(ancestor_path.clone())
-                .or_insert_with(|| {
-                    let inode = state.next_inode;
-                    state.next_inode += 1;
-                    created_dir_paths.push(ancestor_path.clone());
-                    FakeFsEntry {
-                        metadata: Metadata {
+            cur_path.push(component);
+            if cur_path == Path::new("/") {
+                continue;
+            }
+
+            let inode = state.next_inode;
+            state.next_inode += 1;
+            state
+                .write_path(&cur_path, |entry| {
+                    entry.or_insert_with(|| {
+                        created_dirs.push(cur_path.clone());
+                        Arc::new(Mutex::new(FakeFsEntry::Dir {
                             inode,
                             mtime: SystemTime::now(),
-                            is_dir: true,
-                            is_symlink: false,
-                        },
-                        content: None,
-                    }
-                });
-            if !entry.metadata.is_dir {
-                return Err(anyhow!(
-                    "cannot create directory because {:?} is a file",
-                    ancestor_path
-                ));
-            }
+                            entries: Default::default(),
+                        }))
+                    });
+                    Ok(())
+                })
+                .await?;
         }
-        state.emit_event(&created_dir_paths).await;
 
+        state.emit_event(&created_dirs);
         Ok(())
     }
 
     async fn create_file(&self, path: &Path, options: CreateOptions) -> Result<()> {
         self.simulate_random_delay().await;
         let mut state = self.state.lock().await;
+        let inode = state.next_inode;
+        state.next_inode += 1;
+        let file = Arc::new(Mutex::new(FakeFsEntry::File {
+            inode,
+            mtime: SystemTime::now(),
+            content: String::new(),
+        }));
+        state
+            .write_path(path, |entry| {
+                match entry {
+                    btree_map::Entry::Occupied(mut e) => {
+                        if options.overwrite {
+                            *e.get_mut() = file;
+                        } else if !options.ignore_if_exists {
+                            return Err(anyhow!("path already exists: {}", path.display()));
+                        }
+                    }
+                    btree_map::Entry::Vacant(e) => {
+                        e.insert(file);
+                    }
+                }
+                Ok(())
+            })
+            .await?;
+        state.emit_event(&[path]);
+        Ok(())
+    }
+
+    async fn rename(&self, old_path: &Path, new_path: &Path, options: RenameOptions) -> Result<()> {
+        let old_path = normalize_path(old_path);
+        let new_path = normalize_path(new_path);
+        let mut state = self.state.lock().await;
+        let moved_entry = state
+            .write_path(&old_path, |e| {
+                if let btree_map::Entry::Occupied(e) = e {
+                    Ok(e.remove())
+                } else {
+                    Err(anyhow!("path does not exist: {}", &old_path.display()))
+                }
+            })
+            .await?;
+        state
+            .write_path(&new_path, |e| {
+                match e {
+                    btree_map::Entry::Occupied(mut e) => {
+                        if options.overwrite {
+                            *e.get_mut() = moved_entry;
+                        } else if !options.ignore_if_exists {
+                            return Err(anyhow!("path already exists: {}", new_path.display()));
+                        }
+                    }
+                    btree_map::Entry::Vacant(e) => {
+                        e.insert(moved_entry);
+                    }
+                }
+                Ok(())
+            })
+            .await?;
+        state.emit_event(&[old_path, new_path]);
+        Ok(())
+    }
+
+    async fn copy_file(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()> {
+        let source = normalize_path(source);
+        let target = normalize_path(target);
+        let mut state = self.state.lock().await;
+        let source_entry = state.read_path(&source).await?;
+        let content = source_entry.lock().await.file_content(&source)?.clone();
+        let entry = state
+            .write_path(&target, |e| match e {
+                btree_map::Entry::Occupied(e) => {
+                    if options.overwrite {
+                        Ok(Some(e.get().clone()))
+                    } else if !options.ignore_if_exists {
+                        return Err(anyhow!("{target:?} already exists"));
+                    } else {
+                        Ok(None)
+                    }
+                }
+                btree_map::Entry::Vacant(e) => Ok(Some(
+                    e.insert(Arc::new(Mutex::new(FakeFsEntry::File {
+                        inode: 0,
+                        mtime: SystemTime::now(),
+                        content: String::new(),
+                    })))
+                    .clone(),
+                )),
+            })
+            .await?;
+        if let Some(entry) = entry {
+            entry.lock().await.set_file_content(&target, content)?;
+        }
+        state.emit_event(&[target]);
+        Ok(())
+    }
+
+    async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
         let path = normalize_path(path);
-        state.validate_path(&path)?;
-        if let Some(entry) = state.entries.get_mut(&path) {
-            if entry.metadata.is_dir || entry.metadata.is_symlink {
-                return Err(anyhow!(
-                    "cannot create file because {:?} is a dir or a symlink",
-                    path
-                ));
-            }
+        let parent_path = path
+            .parent()
+            .ok_or_else(|| anyhow!("cannot remove the root"))?;
+        let base_name = path.file_name().unwrap();
 
-            if options.overwrite {
-                entry.metadata.mtime = SystemTime::now();
-                entry.content = Some(Default::default());
-            } else if !options.ignore_if_exists {
-                return Err(anyhow!(
-                    "cannot create file because {:?} already exists",
-                    &path
-                ));
-            }
-        } else {
-            let inode = state.next_inode;
-            state.next_inode += 1;
-            let entry = FakeFsEntry {
-                metadata: Metadata {
-                    inode,
-                    mtime: SystemTime::now(),
-                    is_dir: false,
-                    is_symlink: false,
-                },
-                content: Some(Default::default()),
-            };
-            state.entries.insert(path.to_path_buf(), entry);
-        }
-        state.emit_event(&[path]).await;
+        let state = self.state.lock().await;
+        let parent_entry = state.read_path(parent_path).await?;
+        let mut parent_entry = parent_entry.lock().await;
+        let entry = parent_entry
+            .dir_entries(parent_path)?
+            .entry(base_name.to_str().unwrap().into());
 
-        Ok(())
-    }
-
-    async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()> {
-        let source = normalize_path(source);
-        let target = normalize_path(target);
-
-        let mut state = self.state.lock().await;
-        state.validate_path(&source)?;
-        state.validate_path(&target)?;
-
-        if !options.overwrite && state.entries.contains_key(&target) {
-            if options.ignore_if_exists {
-                return Ok(());
-            } else {
-                return Err(anyhow!("{target:?} already exists"));
-            }
-        }
-
-        let mut removed = Vec::new();
-        state.entries.retain(|path, entry| {
-            if let Ok(relative_path) = path.strip_prefix(&source) {
-                removed.push((relative_path.to_path_buf(), entry.clone()));
-                false
-            } else {
-                true
-            }
-        });
-
-        for (relative_path, entry) in removed {
-            let new_path = normalize_path(&target.join(relative_path));
-            state.entries.insert(new_path, entry);
-        }
-
-        state.emit_event(&[source, target]).await;
-        Ok(())
-    }
-
-    async fn copy(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()> {
-        let source = normalize_path(source);
-        let target = normalize_path(target);
-
-        let mut state = self.state.lock().await;
-        state.validate_path(&source)?;
-        state.validate_path(&target)?;
-
-        if !options.overwrite && state.entries.contains_key(&target) {
-            if options.ignore_if_exists {
-                return Ok(());
-            } else {
-                return Err(anyhow!("{target:?} already exists"));
-            }
-        }
-
-        let mut new_entries = Vec::new();
-        for (path, entry) in &state.entries {
-            if let Ok(relative_path) = path.strip_prefix(&source) {
-                new_entries.push((relative_path.to_path_buf(), entry.clone()));
-            }
-        }
-
-        let mut events = Vec::new();
-        for (relative_path, entry) in new_entries {
-            let new_path = normalize_path(&target.join(relative_path));
-            events.push(new_path.clone());
-            state.entries.insert(new_path, entry);
-        }
-
-        state.emit_event(&events).await;
-        Ok(())
-    }
-
-    async fn remove_dir(&self, dir_path: &Path, options: RemoveOptions) -> Result<()> {
-        let dir_path = normalize_path(dir_path);
-        let mut state = self.state.lock().await;
-        state.validate_path(&dir_path)?;
-        if let Some(entry) = state.entries.get(&dir_path) {
-            if !entry.metadata.is_dir {
-                return Err(anyhow!(
-                    "cannot remove {dir_path:?} because it is not a dir"
-                ));
-            }
-
-            if !options.recursive {
-                let descendants = state
-                    .entries
-                    .keys()
-                    .filter(|path| path.starts_with(path))
-                    .count();
-                if descendants > 1 {
-                    return Err(anyhow!("{dir_path:?} is not empty"));
+        match entry {
+            btree_map::Entry::Vacant(_) => {
+                if !options.ignore_if_not_exists {
+                    return Err(anyhow!("{path:?} does not exist"));
                 }
             }
-
-            state.entries.retain(|path, _| !path.starts_with(&dir_path));
-            state.emit_event(&[dir_path]).await;
-        } else if !options.ignore_if_not_exists {
-            return Err(anyhow!("{dir_path:?} does not exist"));
+            btree_map::Entry::Occupied(e) => {
+                {
+                    let mut entry = e.get().lock().await;
+                    let children = entry.dir_entries(&path)?;
+                    if !options.recursive && !children.is_empty() {
+                        return Err(anyhow!("{path:?} is not empty"));
+                    }
+                }
+                e.remove();
+            }
         }
 
         Ok(())
@@ -593,18 +709,28 @@ impl Fs for FakeFs {
 
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
         let path = normalize_path(path);
+        let parent_path = path
+            .parent()
+            .ok_or_else(|| anyhow!("cannot remove the root"))?;
+        let base_name = path.file_name().unwrap();
         let mut state = self.state.lock().await;
-        state.validate_path(&path)?;
-        if let Some(entry) = state.entries.get(&path) {
-            if entry.metadata.is_dir {
-                return Err(anyhow!("cannot remove {path:?} because it is not a file"));
+        let parent_entry = state.read_path(parent_path).await?;
+        let mut parent_entry = parent_entry.lock().await;
+        let entry = parent_entry
+            .dir_entries(parent_path)?
+            .entry(base_name.to_str().unwrap().into());
+        match entry {
+            btree_map::Entry::Vacant(_) => {
+                if !options.ignore_if_not_exists {
+                    return Err(anyhow!("{path:?} does not exist"));
+                }
             }
-
-            state.entries.remove(&path);
-            state.emit_event(&[path]).await;
-        } else if !options.ignore_if_not_exists {
-            return Err(anyhow!("{path:?} does not exist"));
+            btree_map::Entry::Occupied(e) => {
+                e.get().lock().await.file_content(&path)?;
+                e.remove();
+            }
         }
+        state.emit_event(&[path]);
         Ok(())
     }
 
@@ -617,86 +743,84 @@ impl Fs for FakeFs {
         let path = normalize_path(path);
         self.simulate_random_delay().await;
         let state = self.state.lock().await;
-        let text = state
-            .entries
-            .get(&path)
-            .and_then(|e| e.content.as_ref())
-            .ok_or_else(|| anyhow!("file {:?} does not exist", path))?;
-        Ok(text.clone())
+        let entry = state.read_path(&path).await?;
+        let entry = entry.lock().await;
+        entry.file_content(&path).cloned()
     }
 
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
         self.simulate_random_delay().await;
-        let mut state = self.state.lock().await;
         let path = normalize_path(path);
-        state.validate_path(&path)?;
         let content = chunks(text, line_ending).collect();
-        if let Some(entry) = state.entries.get_mut(&path) {
-            if entry.metadata.is_dir {
-                Err(anyhow!("cannot overwrite a directory with a file"))
-            } else {
-                entry.content = Some(content);
-                entry.metadata.mtime = SystemTime::now();
-                state.emit_event(&[path]).await;
-                Ok(())
-            }
-        } else {
-            let inode = state.next_inode;
-            state.next_inode += 1;
-            let entry = FakeFsEntry {
-                metadata: Metadata {
-                    inode,
-                    mtime: SystemTime::now(),
-                    is_dir: false,
-                    is_symlink: false,
-                },
-                content: Some(content),
-            };
-            state.entries.insert(path.to_path_buf(), entry);
-            state.emit_event(&[path]).await;
-            Ok(())
-        }
+        self.insert_file(path, content).await;
+        Ok(())
     }
 
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
+        let path = normalize_path(path);
         self.simulate_random_delay().await;
-        Ok(normalize_path(path))
+        let state = self.state.lock().await;
+        if let Some((_, real_path)) = state.try_read_path(&path).await {
+            Ok(real_path)
+        } else {
+            Err(anyhow!("path does not exist: {}", path.display()))
+        }
     }
 
     async fn is_file(&self, path: &Path) -> bool {
         let path = normalize_path(path);
         self.simulate_random_delay().await;
         let state = self.state.lock().await;
-        state
-            .entries
-            .get(&path)
-            .map_or(false, |entry| !entry.metadata.is_dir)
+        if let Some((entry, _)) = state.try_read_path(&path).await {
+            entry.lock().await.is_file()
+        } else {
+            false
+        }
     }
 
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>> {
         self.simulate_random_delay().await;
-        let state = self.state.lock().await;
         let path = normalize_path(path);
-        Ok(state.entries.get(&path).map(|entry| entry.metadata.clone()))
+        let state = self.state.lock().await;
+        if let Some((entry, real_path)) = state.try_read_path(&path).await {
+            let entry = entry.lock().await;
+            let is_symlink = real_path != path;
+
+            Ok(Some(match &*entry {
+                FakeFsEntry::File { inode, mtime, .. } => Metadata {
+                    inode: *inode,
+                    mtime: *mtime,
+                    is_dir: false,
+                    is_symlink,
+                },
+                FakeFsEntry::Dir { inode, mtime, .. } => Metadata {
+                    inode: *inode,
+                    mtime: *mtime,
+                    is_dir: true,
+                    is_symlink,
+                },
+                FakeFsEntry::Symlink { .. } => unreachable!(),
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     async fn read_dir(
         &self,
-        abs_path: &Path,
+        path: &Path,
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>> {
-        use futures::{future, stream};
         self.simulate_random_delay().await;
+        let path = normalize_path(path);
         let state = self.state.lock().await;
-        let abs_path = normalize_path(abs_path);
-        Ok(Box::pin(stream::iter(state.entries.clone()).filter_map(
-            move |(child_path, _)| {
-                future::ready(if child_path.parent() == Some(&abs_path) {
-                    Some(Ok(child_path))
-                } else {
-                    None
-                })
-            },
-        )))
+        let entry = state.read_path(&path).await?;
+        let mut entry = entry.lock().await;
+        let children = entry.dir_entries(&path)?;
+        let paths = children
+            .keys()
+            .map(|file_name| Ok(path.join(file_name)))
+            .collect::<Vec<_>>();
+        Ok(Box::pin(futures::stream::iter(paths)))
     }
 
     async fn watch(
@@ -772,4 +896,113 @@ pub fn normalize_path(path: &Path) -> PathBuf {
         }
     }
     ret
+}
+
+pub fn copy_recursive<'a>(
+    fs: &'a dyn Fs,
+    source: &'a Path,
+    target: &'a Path,
+    options: CopyOptions,
+) -> BoxFuture<'a, Result<()>> {
+    use futures::future::FutureExt;
+
+    async move {
+        let metadata = fs
+            .metadata(source)
+            .await?
+            .ok_or_else(|| anyhow!("path does not exist: {}", source.display()))?;
+        if metadata.is_dir {
+            if !options.overwrite && fs.metadata(target).await.is_ok() {
+                if options.ignore_if_exists {
+                    return Ok(());
+                } else {
+                    return Err(anyhow!("{target:?} already exists"));
+                }
+            }
+
+            let _ = fs
+                .remove_dir(
+                    target,
+                    RemoveOptions {
+                        recursive: true,
+                        ignore_if_not_exists: true,
+                    },
+                )
+                .await;
+            fs.create_dir(target).await?;
+            let mut children = fs.read_dir(source).await?;
+            while let Some(child_path) = children.next().await {
+                if let Ok(child_path) = child_path {
+                    if let Some(file_name) = child_path.file_name() {
+                        let child_target_path = target.join(file_name);
+                        copy_recursive(fs, &child_path, &child_target_path, options).await?;
+                    }
+                }
+            }
+
+            Ok(())
+        } else {
+            fs.copy_file(source, target, options).await
+        }
+    }
+    .boxed()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use serde_json::json;
+
+    #[gpui::test]
+    async fn test_fake_fs(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.background());
+
+        fs.insert_tree(
+            "/root",
+            json!({
+                "dir1": {
+                    "a": "A",
+                    "b": "B"
+                },
+                "dir2": {
+                    "c": "C",
+                    "dir3": {
+                        "d": "D"
+                    }
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            fs.files().await,
+            vec![
+                PathBuf::from("/root/dir1/a"),
+                PathBuf::from("/root/dir1/b"),
+                PathBuf::from("/root/dir2/c"),
+                PathBuf::from("/root/dir2/dir3/d"),
+            ]
+        );
+
+        fs.insert_symlink("/root/dir2/link-to-dir3", "./dir3".into())
+            .await;
+
+        assert_eq!(
+            fs.canonicalize("/root/dir2/link-to-dir3".as_ref())
+                .await
+                .unwrap(),
+            PathBuf::from("/root/dir2/dir3"),
+        );
+        assert_eq!(
+            fs.canonicalize("/root/dir2/link-to-dir3/d".as_ref())
+                .await
+                .unwrap(),
+            PathBuf::from("/root/dir2/dir3/d"),
+        );
+        assert_eq!(
+            fs.load("/root/dir2/link-to-dir3/d".as_ref()).await.unwrap(),
+            "D",
+        );
+    }
 }

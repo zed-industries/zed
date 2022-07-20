@@ -21,20 +21,26 @@ pub struct ModifiersChangedEvent {
     pub cmd: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ScrollWheelEvent {
     pub position: Vector2F,
     pub delta: Vector2F,
     pub precise: bool,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
 pub enum NavigationDirection {
     Back,
     Forward,
 }
 
-#[derive(Copy, Clone, Debug)]
+impl Default for NavigationDirection {
+    fn default() -> Self {
+        Self::Back
+    }
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
 pub enum MouseButton {
     Left,
     Right,
@@ -42,8 +48,26 @@ pub enum MouseButton {
     Navigate(NavigationDirection),
 }
 
-#[derive(Clone, Debug)]
-pub struct MouseEvent {
+impl MouseButton {
+    pub fn all() -> Vec<Self> {
+        vec![
+            MouseButton::Left,
+            MouseButton::Right,
+            MouseButton::Middle,
+            MouseButton::Navigate(NavigationDirection::Back),
+            MouseButton::Navigate(NavigationDirection::Forward),
+        ]
+    }
+}
+
+impl Default for MouseButton {
+    fn default() -> Self {
+        Self::Left
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MouseButtonEvent {
     pub button: MouseButton,
     pub position: Vector2F,
     pub ctrl: bool,
@@ -53,7 +77,7 @@ pub struct MouseEvent {
     pub click_count: usize,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct MouseMovedEvent {
     pub position: Vector2F,
     pub pressed_button: Option<MouseButton>,
@@ -68,8 +92,8 @@ pub enum Event {
     KeyDown(KeyDownEvent),
     KeyUp(KeyUpEvent),
     ModifiersChanged(ModifiersChangedEvent),
-    MouseDown(MouseEvent),
-    MouseUp(MouseEvent),
+    MouseDown(MouseButtonEvent),
+    MouseUp(MouseButtonEvent),
     MouseMoved(MouseMovedEvent),
     ScrollWheel(ScrollWheelEvent),
 }

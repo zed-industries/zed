@@ -1,12 +1,13 @@
 use gpui::executor::Background;
 pub use language::*;
+use lazy_static::lazy_static;
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, str, sync::Arc};
-use util::ResultExt;
 
 mod c;
 mod go;
 mod installation;
+mod json;
 mod language_plugin;
 mod python;
 mod rust;
@@ -17,7 +18,22 @@ mod typescript;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
-pub async fn init(languages: Arc<LanguageRegistry>, executor: Arc<Background>) {
+// TODO - Remove this once the `init` function is synchronous again.
+lazy_static! {
+    pub static ref LANGUAGE_NAMES: Vec<String> = LanguageDir::iter()
+        .filter_map(|path| {
+            if path.ends_with("config.toml") {
+                let config = LanguageDir::get(&path)?;
+                let config = toml::from_slice::<LanguageConfig>(&config.data).ok()?;
+                Some(config.name.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+}
+
+pub async fn init(languages: Arc<LanguageRegistry>, _executor: Arc<Background>) {
     for (name, grammar, lsp_adapter) in [
         (
             "c",
@@ -37,10 +53,7 @@ pub async fn init(languages: Arc<LanguageRegistry>, executor: Arc<Background>) {
         (
             "json",
             tree_sitter_json::language(),
-            match language_plugin::new_json(executor).await.log_err() {
-                Some(lang) => Some(CachedLspAdapter::new(lang).await),
-                None => None,
-            },
+            Some(CachedLspAdapter::new(json::JsonLspAdapter).await),
         ),
         (
             "markdown",

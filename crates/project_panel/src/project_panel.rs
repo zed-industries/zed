@@ -11,8 +11,9 @@ use gpui::{
     geometry::vector::Vector2F,
     impl_internal_actions, keymap,
     platform::CursorStyle,
-    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MutableAppContext,
-    PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
+    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MouseButton,
+    MouseButtonEvent, MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext,
+    ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
@@ -183,6 +184,20 @@ impl ProjectPanel {
                     cx,
                 )
             });
+
+            cx.observe_focus(&filename_editor, |this, _, is_focused, cx| {
+                if !is_focused {
+                    if this
+                        .edit_state
+                        .as_ref()
+                        .map_or(false, |state| state.processing_filename.is_none())
+                    {
+                        this.edit_state = None;
+                        this.update_visible_entries(None, cx);
+                    }
+                }
+            })
+            .detach();
 
             let mut this = Self {
                 project: project.clone(),
@@ -1054,19 +1069,25 @@ impl ProjectPanel {
                 .with_padding_left(padding)
                 .boxed()
         })
-        .on_click(move |_, click_count, cx| {
-            if kind == EntryKind::Dir {
-                cx.dispatch_action(ToggleExpanded(entry_id))
-            } else {
-                cx.dispatch_action(Open {
-                    entry_id,
-                    change_focus: click_count > 1,
-                })
-            }
-        })
-        .on_right_mouse_down(move |position, cx| {
-            cx.dispatch_action(DeployContextMenu { entry_id, position })
-        })
+        .on_click(
+            MouseButton::Left,
+            move |MouseButtonEvent { click_count, .. }, cx| {
+                if kind == EntryKind::Dir {
+                    cx.dispatch_action(ToggleExpanded(entry_id))
+                } else {
+                    cx.dispatch_action(Open {
+                        entry_id,
+                        change_focus: click_count > 1,
+                    })
+                }
+            },
+        )
+        .on_mouse_down(
+            MouseButton::Right,
+            move |MouseButtonEvent { position, .. }, cx| {
+                cx.dispatch_action(DeployContextMenu { entry_id, position })
+            },
+        )
         .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
     }
@@ -1113,13 +1134,16 @@ impl View for ProjectPanel {
                     .expanded()
                     .boxed()
                 })
-                .on_right_mouse_down(move |position, cx| {
-                    // When deploying the context menu anywhere below the last project entry,
-                    // act as if the user clicked the root of the last worktree.
-                    if let Some(entry_id) = last_worktree_root_id {
-                        cx.dispatch_action(DeployContextMenu { entry_id, position })
-                    }
-                })
+                .on_mouse_down(
+                    MouseButton::Right,
+                    move |MouseButtonEvent { position, .. }, cx| {
+                        // When deploying the context menu anywhere below the last project entry,
+                        // act as if the user clicked the root of the last worktree.
+                        if let Some(entry_id) = last_worktree_root_id {
+                            cx.dispatch_action(DeployContextMenu { entry_id, position })
+                        }
+                    },
+                )
                 .boxed(),
             )
             .with_child(ChildView::new(&self.context_menu).boxed())
@@ -1529,6 +1553,41 @@ mod tests {
         );
 
         confirm.await.unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    v b",
+                "        > 3  <== selected",
+                "        > 4",
+                "        > new-dir",
+                "          a-different-filename",
+                "    > C",
+                "      .dockerignore",
+            ]
+        );
+
+        panel.update(cx, |panel, cx| panel.rename(&Default::default(), cx));
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    > a",
+                "    v b",
+                "        > [EDITOR: '3']  <== selected",
+                "        > 4",
+                "        > new-dir",
+                "          a-different-filename",
+                "    > C",
+                "      .dockerignore",
+            ]
+        );
+
+        // Dismiss the rename editor when it loses focus.
+        workspace.update(cx, |_, cx| cx.focus_self());
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[

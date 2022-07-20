@@ -1,5 +1,5 @@
 use alacritty_terminal::{
-    grid::{Dimensions, GridIterator, Indexed},
+    grid::{Dimensions, GridIterator, Indexed, Scroll},
     index::{Column as GridCol, Line as GridLine, Point, Side},
     selection::{Selection, SelectionRange, SelectionType},
     sync::FairMutex,
@@ -9,7 +9,7 @@ use alacritty_terminal::{
     },
     Term,
 };
-use editor::{Cursor, CursorShape, HighlightedRange, HighlightedRangeLine, Input};
+use editor::{Cursor, CursorShape, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     color::Color,
     elements::*,
@@ -20,20 +20,19 @@ use gpui::{
     },
     json::json,
     text_layout::{Line, RunStyle},
-    Event, FontCache, KeyDownEvent, MouseRegion, PaintContext, Quad, ScrollWheelEvent,
-    SizeConstraint, TextLayoutCache, WeakModelHandle,
+    Event, FontCache, KeyDownEvent, MouseButton, MouseButtonEvent, MouseMovedEvent, MouseRegion,
+    PaintContext, Quad, ScrollWheelEvent, SizeConstraint, TextLayoutCache, WeakModelHandle,
 };
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use settings::Settings;
 use theme::TerminalStyle;
+use util::ResultExt;
 
-use std::{cmp::min, ops::Range, rc::Rc, sync::Arc};
+use std::{cmp::min, ops::Range, sync::Arc};
 use std::{fmt::Debug, ops::Sub};
 
-use crate::{
-    color_translation::convert_color, connection::TerminalConnection, ScrollTerminal, ZedListener,
-};
+use crate::{color_translation::convert_color, connection::TerminalConnection, ZedListener};
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
@@ -258,10 +257,11 @@ impl Element for TerminalEl {
                 for layout_line in &layout.layout_lines {
                     for layout_cell in &layout_line.cells {
                         let position = vec2f(
-                            origin.x() + layout_cell.point.column as f32 * layout.em_width.0,
+                            (origin.x() + layout_cell.point.column as f32 * layout.em_width.0)
+                                .floor(),
                             origin.y() + layout_cell.point.line as f32 * layout.line_height.0,
                         );
-                        let size = vec2f(layout.em_width.0, layout.line_height.0);
+                        let size = vec2f(layout.em_width.0.ceil(), layout.line_height.0);
 
                         cx.scene.push_quad(Quad {
                             bounds: RectF::new(position, size),
@@ -320,7 +320,7 @@ impl Element for TerminalEl {
 
                         //Don't actually know the start_x for a line, until here:
                         let cell_origin = vec2f(
-                            origin.x() + point.column as f32 * layout.em_width.0,
+                            (origin.x() + point.column as f32 * layout.em_width.0).floor(),
                             origin.y() + point.line as f32 * layout.line_height.0,
                         );
 
@@ -359,25 +359,6 @@ impl Element for TerminalEl {
         _paint: &mut Self::PaintState,
         cx: &mut gpui::EventContext,
     ) -> bool {
-        //The problem:
-        //Depending on the terminal mode, we either send an escape sequence
-        //OR update our own data structures.
-        //e.g. scrolling. If we do smooth scrolling, then we need to check if
-        //we own scrolling and then if so, do our scrolling thing.
-        //Ok, so the terminal connection should have APIs for querying it semantically
-        //something like `should_handle_scroll()`. This means we need a handle to the connection.
-        //Actually, this is the only time that this app needs to talk to the outer world.
-        //TODO for scrolling rework: need a way of intercepting Home/End/PageUp etc.
-        //Sometimes going to scroll our own internal buffer, sometimes going to send ESC
-        //
-        //Same goes for key events
-        //Actually, we don't use the terminal at all in dispatch_event code, the view
-        //Handles it all. Check how the editor implements scrolling, is it view-level
-        //or element level?
-
-        //Question: Can we continue dispatching to the view, so it can talk to the connection
-        //Or should we instead add a connection into here?
-
         match event {
             Event::ScrollWheel(ScrollWheelEvent {
                 delta, position, ..
@@ -386,17 +367,30 @@ impl Element for TerminalEl {
                 .then(|| {
                     let vertical_scroll =
                         (delta.y() / layout.line_height.0) * ALACRITTY_SCROLL_MULTIPLIER;
-                    cx.dispatch_action(ScrollTerminal(vertical_scroll.round() as i32));
+
+                    if let Some(connection) = self.connection.upgrade(cx.app) {
+                        connection.update(cx.app, |connection, _| {
+                            connection
+                                .term
+                                .lock()
+                                .scroll_display(Scroll::Delta(vertical_scroll.round() as i32));
+                        })
+                    }
                 })
                 .is_some(),
-            Event::KeyDown(KeyDownEvent {
-                input: Some(input), ..
-            }) => cx
-                .is_parent_view_focused()
-                .then(|| {
-                    cx.dispatch_action(Input(input.to_string()));
-                })
-                .is_some(),
+            Event::KeyDown(KeyDownEvent { keystroke, .. }) => {
+                if !cx.is_parent_view_focused() {
+                    return false;
+                }
+
+                self.connection
+                    .upgrade(cx.app)
+                    .map(|connection| {
+                        connection
+                            .update(cx.app, |connection, _| connection.try_keystroke(keystroke))
+                    })
+                    .unwrap_or(false)
+            }
             _ => false,
         }
     }
@@ -428,14 +422,33 @@ pub fn mouse_to_cell_data(
 
 ///Configures a text style from the current settings.
 fn make_text_style(font_cache: &FontCache, settings: &Settings) -> TextStyle {
+    // Pull the font family from settings properly overriding
+    let family_id = settings
+        .terminal_overrides
+        .font_family
+        .as_ref()
+        .and_then(|family_name| font_cache.load_family(&[family_name]).log_err())
+        .or_else(|| {
+            settings
+                .terminal_defaults
+                .font_family
+                .as_ref()
+                .and_then(|family_name| font_cache.load_family(&[family_name]).log_err())
+        })
+        .unwrap_or(settings.buffer_font_family);
+
     TextStyle {
         color: settings.theme.editor.text_color,
-        font_family_id: settings.buffer_font_family,
-        font_family_name: font_cache.family_name(settings.buffer_font_family).unwrap(),
+        font_family_id: family_id,
+        font_family_name: font_cache.family_name(family_id).unwrap(),
         font_id: font_cache
-            .select_font(settings.buffer_font_family, &Default::default())
+            .select_font(family_id, &Default::default())
             .unwrap(),
-        font_size: settings.buffer_font_size,
+        font_size: settings
+            .terminal_overrides
+            .font_size
+            .or(settings.terminal_defaults.font_size)
+            .unwrap_or(settings.buffer_font_size),
         font_properties: Default::default(),
         underline: Default::default(),
     }
@@ -581,63 +594,76 @@ fn attach_mouse_handlers(
     let drag_mutex = terminal_mutex.clone();
     let mouse_down_mutex = terminal_mutex.clone();
 
-    cx.scene.push_mouse_region(MouseRegion {
-        view_id,
-        mouse_down: Some(Rc::new(move |pos, _| {
-            let mut term = mouse_down_mutex.lock();
-            let (point, side) = mouse_to_cell_data(
-                pos,
-                origin,
-                cur_size,
-                term.renderable_content().display_offset,
-            );
-            term.selection = Some(Selection::new(SelectionType::Simple, point, side))
-        })),
-        click: Some(Rc::new(move |pos, click_count, cx| {
-            let mut term = click_mutex.lock();
+    cx.scene.push_mouse_region(
+        MouseRegion::new(view_id, None, visible_bounds)
+            .on_down(
+                MouseButton::Left,
+                move |MouseButtonEvent { position, .. }, _| {
+                    let mut term = mouse_down_mutex.lock();
 
-            let (point, side) = mouse_to_cell_data(
-                pos,
-                origin,
-                cur_size,
-                term.renderable_content().display_offset,
-            );
+                    let (point, side) = mouse_to_cell_data(
+                        position,
+                        origin,
+                        cur_size,
+                        term.renderable_content().display_offset,
+                    );
+                    term.selection = Some(Selection::new(SelectionType::Simple, point, side))
+                },
+            )
+            .on_click(
+                MouseButton::Left,
+                move |MouseButtonEvent {
+                          position,
+                          click_count,
+                          ..
+                      },
+                      cx| {
+                    let mut term = click_mutex.lock();
 
-            let selection_type = match click_count {
-                0 => return, //This is a release
-                1 => Some(SelectionType::Simple),
-                2 => Some(SelectionType::Semantic),
-                3 => Some(SelectionType::Lines),
-                _ => None,
-            };
+                    let (point, side) = mouse_to_cell_data(
+                        position,
+                        origin,
+                        cur_size,
+                        term.renderable_content().display_offset,
+                    );
 
-            let selection =
-                selection_type.map(|selection_type| Selection::new(selection_type, point, side));
+                    let selection_type = match click_count {
+                        0 => return, //This is a release
+                        1 => Some(SelectionType::Simple),
+                        2 => Some(SelectionType::Semantic),
+                        3 => Some(SelectionType::Lines),
+                        _ => None,
+                    };
 
-            term.selection = selection;
-            cx.focus_parent_view();
-            cx.notify();
-        })),
-        bounds: visible_bounds,
-        drag: Some(Rc::new(move |_delta, pos, cx| {
-            let mut term = drag_mutex.lock();
+                    let selection = selection_type
+                        .map(|selection_type| Selection::new(selection_type, point, side));
 
-            let (point, side) = mouse_to_cell_data(
-                pos,
-                origin,
-                cur_size,
-                term.renderable_content().display_offset,
-            );
+                    term.selection = selection;
+                    cx.focus_parent_view();
+                    cx.notify();
+                },
+            )
+            .on_drag(
+                MouseButton::Left,
+                move |_, MouseMovedEvent { position, .. }, cx| {
+                    let mut term = drag_mutex.lock();
 
-            if let Some(mut selection) = term.selection.take() {
-                selection.update(point, side);
-                term.selection = Some(selection);
-            }
+                    let (point, side) = mouse_to_cell_data(
+                        position,
+                        origin,
+                        cur_size,
+                        term.renderable_content().display_offset,
+                    );
 
-            cx.notify();
-        })),
-        ..Default::default()
-    });
+                    if let Some(mut selection) = term.selection.take() {
+                        selection.update(point, side);
+                        term.selection = Some(selection);
+                    }
+
+                    cx.notify();
+                },
+            ),
+    );
 }
 
 ///Copied (with modifications) from alacritty/src/input.rs > Processor::cell_side()

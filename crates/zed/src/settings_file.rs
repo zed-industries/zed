@@ -39,15 +39,20 @@ where
         Self(rx)
     }
 
+    ///Loads the given watched JSON file. In the special case that the file is
+    ///empty (ignoring whitespace) or is not a file, this will return T::default()
     async fn load(fs: Arc<dyn Fs>, path: &Path) -> Option<T> {
-        if fs.is_file(&path).await {
-            fs.load(&path)
-                .await
-                .log_err()
-                .and_then(|data| parse_json_with_comments(&data).log_err())
-        } else {
-            Some(T::default())
+        if !fs.is_file(&path).await {
+            return Some(T::default());
         }
+
+        fs.load(&path).await.log_err().and_then(|data| {
+            if data.trim().is_empty() {
+                Some(T::default())
+            } else {
+                parse_json_with_comments(&data).log_err()
+            }
+        })
     }
 }
 

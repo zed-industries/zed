@@ -13,8 +13,9 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
-    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MutableAppContext,
-    RenderContext, Subscription, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
+    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MouseButton,
+    MutableAppContext, RenderContext, Subscription, View, ViewContext, ViewHandle, WeakModelHandle,
+    WeakViewHandle,
 };
 use join_project_notification::JoinProjectNotification;
 use menu::{Confirm, SelectNext, SelectPrev};
@@ -310,7 +311,9 @@ impl ContactsPanel {
                 .boxed()
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(move |_, _, cx| cx.dispatch_action(ToggleExpanded(section)))
+        .on_click(MouseButton::Left, move |_, cx| {
+            cx.dispatch_action(ToggleExpanded(section))
+        })
         .boxed()
     }
 
@@ -445,7 +448,7 @@ impl ContactsPanel {
                                 Some(
                                     button
                                         .with_cursor_style(CursorStyle::PointingHand)
-                                        .on_click(move |_, _, cx| {
+                                        .on_click(MouseButton::Left, move |_, cx| {
                                             cx.dispatch_action(ToggleProjectOnline {
                                                 project: Some(open_project.clone()),
                                             })
@@ -499,7 +502,7 @@ impl ContactsPanel {
         } else {
             CursorStyle::Arrow
         })
-        .on_click(move |_, _, cx| {
+        .on_click(MouseButton::Left, move |_, cx| {
             if !is_host {
                 cx.dispatch_global_action(JoinProject {
                     contact: contact.clone(),
@@ -563,7 +566,7 @@ impl ContactsPanel {
                     } else {
                         button
                             .with_cursor_style(CursorStyle::PointingHand)
-                            .on_click(move |_, _, cx| {
+                            .on_click(MouseButton::Left, move |_, cx| {
                                 let project = project_handle.upgrade(cx.deref_mut());
                                 cx.dispatch_action(ToggleProjectOnline { project })
                             })
@@ -646,7 +649,7 @@ impl ContactsPanel {
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(move |_, _, cx| {
+                .on_click(MouseButton::Left, move |_, cx| {
                     cx.dispatch_action(RespondToContactRequest {
                         user_id,
                         accept: false,
@@ -668,7 +671,7 @@ impl ContactsPanel {
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(move |_, _, cx| {
+                .on_click(MouseButton::Left, move |_, cx| {
                     cx.dispatch_action(RespondToContactRequest {
                         user_id,
                         accept: true,
@@ -691,7 +694,9 @@ impl ContactsPanel {
                 })
                 .with_padding(Padding::uniform(2.))
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(move |_, _, cx| cx.dispatch_action(RemoveContact(user_id)))
+                .on_click(MouseButton::Left, move |_, cx| {
+                    cx.dispatch_action(RemoveContact(user_id))
+                })
                 .flex_float()
                 .boxed(),
             );
@@ -1078,7 +1083,9 @@ impl View for ContactsPanel {
                                     .boxed()
                             })
                             .with_cursor_style(CursorStyle::PointingHand)
-                            .on_click(|_, _, cx| cx.dispatch_action(contact_finder::Toggle))
+                            .on_click(MouseButton::Left, |_, cx| {
+                                cx.dispatch_action(contact_finder::Toggle)
+                            })
                             .boxed(),
                         )
                         .constrained()
@@ -1126,7 +1133,7 @@ impl View for ContactsPanel {
                                         },
                                     )
                                     .with_cursor_style(CursorStyle::PointingHand)
-                                    .on_click(move |_, _, cx| {
+                                    .on_click(MouseButton::Left, move |_, cx| {
                                         cx.write_to_clipboard(ClipboardItem::new(
                                             info.url.to_string(),
                                         ));

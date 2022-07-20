@@ -93,6 +93,7 @@ pub struct Tab {
     pub container: ContainerStyle,
     #[serde(flatten)]
     pub label: LabelStyle,
+    pub description: ContainedText,
     pub spacing: f32,
     pub icon_width: f32,
     pub icon_close: Color,

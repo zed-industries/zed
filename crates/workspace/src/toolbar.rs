@@ -1,7 +1,7 @@
 use crate::{ItemHandle, Pane};
 use gpui::{
     elements::*, platform::CursorStyle, Action, AnyViewHandle, AppContext, ElementBox, Entity,
-    MutableAppContext, RenderContext, View, ViewContext, ViewHandle, WeakViewHandle,
+    MouseButton, MutableAppContext, RenderContext, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
 
@@ -191,7 +191,9 @@ fn nav_button<A: Action + Clone>(
     } else {
         CursorStyle::default()
     })
-    .on_click(move |_, _, cx| cx.dispatch_action(action.clone()))
+    .on_click(MouseButton::Left, move |_, cx| {
+        cx.dispatch_action(action.clone())
+    })
     .with_tooltip::<A, _>(
         0,
         action_name.to_string(),

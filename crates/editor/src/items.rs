@@ -1,4 +1,6 @@
-use crate::{Anchor, Autoscroll, Editor, Event, ExcerptId, NavigationData, ToPoint as _};
+use crate::{
+    Anchor, Autoscroll, Editor, Event, ExcerptId, MultiBuffer, NavigationData, ToPoint as _,
+};
 use anyhow::{anyhow, Result};
 use futures::FutureExt;
 use gpui::{
@@ -10,12 +12,18 @@ use project::{File, Project, ProjectEntryId, ProjectPath};
 use rpc::proto::{self, update_view};
 use settings::Settings;
 use smallvec::SmallVec;
-use std::{fmt::Write, path::PathBuf, time::Duration};
+use std::{
+    borrow::Cow,
+    fmt::Write,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use text::{Point, Selection};
 use util::TryFutureExt;
 use workspace::{FollowableItem, Item, ItemHandle, ItemNavHistory, ProjectItem, StatusItemView};
 
 pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
+pub const MAX_TAB_TITLE_LEN: usize = 24;
 
 impl FollowableItem for Editor {
     fn from_state_proto(
@@ -292,9 +300,44 @@ impl Item for Editor {
         }
     }
 
-    fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox {
-        let title = self.title(cx);
-        Label::new(title, style.label.clone()).boxed()
+    fn tab_description<'a>(&'a self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>> {
+        match path_for_buffer(&self.buffer, detail, true, cx)? {
+            Cow::Borrowed(path) => Some(path.to_string_lossy()),
+            Cow::Owned(path) => Some(path.to_string_lossy().to_string().into()),
+        }
+    }
+
+    fn tab_content(
+        &self,
+        detail: Option<usize>,
+        style: &theme::Tab,
+        cx: &AppContext,
+    ) -> ElementBox {
+        Flex::row()
+            .with_child(
+                Label::new(self.title(cx).into(), style.label.clone())
+                    .aligned()
+                    .boxed(),
+            )
+            .with_children(detail.and_then(|detail| {
+                let path = path_for_buffer(&self.buffer, detail, false, cx)?;
+                let description = path.to_string_lossy();
+                Some(
+                    Label::new(
+                        if description.len() > MAX_TAB_TITLE_LEN {
+                            description[..MAX_TAB_TITLE_LEN].to_string() + "…"
+                        } else {
+                            description.into()
+                        },
+                        style.description.text.clone(),
+                    )
+                    .contained()
+                    .with_style(style.description.container)
+                    .aligned()
+                    .boxed(),
+                )
+            }))
+            .boxed()
     }
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
@@ -532,5 +575,44 @@ impl StatusItemView for CursorPosition {
         }
 
         cx.notify();
+    }
+}
+
+fn path_for_buffer<'a>(
+    buffer: &ModelHandle<MultiBuffer>,
+    mut height: usize,
+    include_filename: bool,
+    cx: &'a AppContext,
+) -> Option<Cow<'a, Path>> {
+    let file = buffer.read(cx).as_singleton()?.read(cx).file()?;
+    // Ensure we always render at least the filename.
+    height += 1;
+
+    let mut prefix = file.path().as_ref();
+    while height > 0 {
+        if let Some(parent) = prefix.parent() {
+            prefix = parent;
+            height -= 1;
+        } else {
+            break;
+        }
+    }
+
+    // Here we could have just always used `full_path`, but that is very
+    // allocation-heavy and so we try to use a `Cow<Path>` if we haven't
+    // traversed all the way up to the worktree's root.
+    if height > 0 {
+        let full_path = file.full_path(cx);
+        if include_filename {
+            Some(full_path.into())
+        } else {
+            Some(full_path.parent().unwrap().to_path_buf().into())
+        }
+    } else {
+        let mut path = file.path().strip_prefix(prefix).unwrap();
+        if !include_filename {
+            path = path.parent().unwrap();
+        }
+        Some(path.into())
     }
 }

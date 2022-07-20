@@ -6,13 +6,13 @@ use crate::{
     },
     keymap::Keystroke,
     platform::{self, Event, WindowBounds, WindowContext},
-    KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseEvent, MouseMovedEvent, Scene,
+    KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseButtonEvent, MouseMovedEvent, Scene,
 };
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        CGPoint, NSApplication, NSBackingStoreBuffered, NSScreen, NSView, NSViewHeightSizable,
-        NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowStyleMask,
+        CGPoint, NSApplication, NSBackingStoreBuffered, NSModalResponse, NSScreen, NSView,
+        NSViewHeightSizable, NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowStyleMask,
     },
     base::{id, nil},
     foundation::{NSAutoreleasePool, NSInteger, NSSize, NSString},
@@ -228,8 +228,16 @@ impl Window {
                 native_window.setFrame_display_(screen.visibleFrame(), YES);
             }
 
-            let device =
-                metal::Device::system_default().expect("could not find default metal device");
+            let device = if let Some(device) = metal::Device::system_default() {
+                device
+            } else {
+                let alert: id = msg_send![class!(NSAlert), alloc];
+                let _: () = msg_send![alert, init];
+                let _: () = msg_send![alert, setAlertStyle: 2];
+                let _: () = msg_send![alert, setMessageText: ns_string("Unable to access a compatible graphics device")];
+                let _: NSModalResponse = msg_send![alert, runModal];
+                std::process::exit(1);
+            };
 
             let layer: id = msg_send![class!(CAMetalLayer), layer];
             let _: () = msg_send![layer, setDevice: device.as_ptr()];
@@ -635,7 +643,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                     ))
                     .detach();
             }
-            Event::MouseUp(MouseEvent {
+            Event::MouseUp(MouseButtonEvent {
                 button: MouseButton::Left,
                 ..
             }) => {
