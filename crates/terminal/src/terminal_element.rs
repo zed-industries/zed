@@ -812,8 +812,8 @@ mod test {
         let origin_y = 20.;
 
         let cur_size = crate::terminal_element::TerminalDimensions::new(
-            cell_width,
             line_height,
+            cell_width,
             gpui::geometry::vector::vec2f(term_width, term_height),
         );
 
