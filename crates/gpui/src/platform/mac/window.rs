@@ -254,6 +254,10 @@ unsafe fn build_classes() {
             attributed_substring_for_proposed_range
                 as extern "C" fn(&Object, Sel, NSRange, *mut c_void) -> id,
         );
+        decl.add_method(
+            sel!(doCommandBySelector:),
+            do_command_by_selector as extern "C" fn(&Object, Sel, Sel),
+        );
 
         decl.register()
     };
@@ -723,7 +727,7 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
         window_state_borrow.pending_key_event = Some(Default::default());
         drop(window_state_borrow);
         let had_marked_text =
-            with_input_handler(this, |input_handler| input_handler.marked_range())
+            with_input_handler(this, |input_handler| input_handler.marked_text_range())
                 .flatten()
                 .is_some();
 
@@ -745,15 +749,19 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
         // }
 
         let pending_event = window_state.borrow_mut().pending_key_event.take().unwrap();
+
+        dbg!(&pending_event);
+
         let mut inserted_text = false;
         let has_marked_text = pending_event.set_marked_text.is_some()
-            || with_input_handler(this, |input_handler| input_handler.marked_range())
+            || with_input_handler(this, |input_handler| input_handler.marked_text_range())
                 .flatten()
                 .is_some();
         if let Some(text) = pending_event.insert_text.as_ref() {
-            if !text.is_empty() && (had_marked_text || has_marked_text || text.chars().count() > 1)
-            {
-                with_input_handler(this, |input_handler| input_handler.edit(None, &text));
+            if !text.is_empty() {
+                with_input_handler(this, |input_handler| {
+                    input_handler.replace_text_in_range(None, &text)
+                });
                 inserted_text = true;
             }
         }
@@ -762,7 +770,11 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
             if let Some((text, new_selected_range, replacement_range)) =
                 pending_event.set_marked_text
             {
-                input_handler.compose(&text, new_selected_range, replacement_range)
+                input_handler.replace_and_mark_text_in_range(
+                    replacement_range,
+                    &text,
+                    new_selected_range,
+                )
             } else if had_marked_text && !inserted_text {
                 if pending_event.unmark_text {
                     input_handler.finish_composition();
@@ -784,23 +796,12 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
                     handled = true;
                 } else {
                     if let Some(text) = pending_event.insert_text {
-                        // TODO: we may not need this anymore.
-                        event.input = Some(text);
-
-                        if event.input.as_ref().unwrap().chars().count() == 1 {
-                            event.keystroke.key = event.input.clone().unwrap();
+                        if text.chars().count() == 1 {
+                            event.keystroke.key = text;
                         }
                     }
 
                     handled = callback(Event::KeyDown(event.clone()));
-                    if !handled {
-                        if let Some(input) = event.input {
-                            with_input_handler(this, |input_handler| {
-                                input_handler.edit(None, &input);
-                            });
-                            handled = true;
-                        }
-                    }
                 }
 
                 window_state.borrow_mut().event_callback = Some(callback);
@@ -1066,19 +1067,19 @@ extern "C" fn valid_attributes_for_marked_text(_: &Object, _: Sel) -> id {
 }
 
 extern "C" fn has_marked_text(this: &Object, _: Sel) -> BOOL {
-    with_input_handler(this, |input_handler| input_handler.marked_range())
+    with_input_handler(this, |input_handler| input_handler.marked_text_range())
         .flatten()
         .is_some() as BOOL
 }
 
 extern "C" fn marked_range(this: &Object, _: Sel) -> NSRange {
-    with_input_handler(this, |input_handler| input_handler.marked_range())
+    with_input_handler(this, |input_handler| input_handler.marked_text_range())
         .flatten()
         .map_or(NSRange::invalid(), |range| range.into())
 }
 
 extern "C" fn selected_range(this: &Object, _: Sel) -> NSRange {
-    with_input_handler(this, |input_handler| input_handler.selected_range())
+    with_input_handler(this, |input_handler| input_handler.selected_text_range())
         .flatten()
         .map_or(NSRange::invalid(), |range| range.into())
 }
@@ -1108,11 +1109,11 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
         } else {
             drop(window_state);
             with_input_handler(this, |input_handler| {
-                input_handler.edit(replacement_range.to_range(), text);
+                input_handler.replace_text_in_range(replacement_range.to_range(), text);
             });
         }
 
-        with_input_handler(this, |input_handler| input_handler.unmark());
+        with_input_handler(this, |input_handler| input_handler.unmark_text());
     }
 }
 
@@ -1145,7 +1146,11 @@ extern "C" fn set_marked_text(
         } else {
             drop(window_state);
             with_input_handler(this, |input_handler| {
-                input_handler.compose(text, selected_range, replacement_range);
+                input_handler.replace_and_mark_text_in_range(
+                    replacement_range,
+                    text,
+                    selected_range,
+                );
             });
         }
     }
@@ -1181,7 +1186,7 @@ extern "C" fn attributed_substring_for_proposed_range(
             return None;
         }
 
-        let selected_range = input_handler.selected_range()?;
+        let selected_range = input_handler.selected_text_range()?;
         let intersection = cmp::max(requested_range.start, selected_range.start)
             ..cmp::min(requested_range.end, selected_range.end);
         if intersection.start >= intersection.end {
@@ -1197,6 +1202,10 @@ extern "C" fn attributed_substring_for_proposed_range(
     })
     .flatten()
     .unwrap_or(nil)
+}
+
+extern "C" fn do_command_by_selector(_: &Object, _: Sel, _: Sel) {
+    //
 }
 
 async fn synthetic_drag(

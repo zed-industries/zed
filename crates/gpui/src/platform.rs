@@ -90,20 +90,20 @@ pub trait Dispatcher: Send + Sync {
 }
 
 pub trait InputHandler {
-    fn select(&mut self, range: Range<usize>);
-    fn selected_range(&self) -> Option<Range<usize>>;
-    fn edit(&mut self, replacement_range: Option<Range<usize>>, text: &str);
-    fn compose(
+    fn selected_text_range(&self) -> Option<Range<usize>>;
+    fn set_selected_text_range(&mut self, range: Range<usize>);
+    fn text_for_range(&self, range: Range<usize>) -> Option<String>;
+    fn replace_text_in_range(&mut self, replacement_range: Option<Range<usize>>, text: &str);
+    fn replace_and_mark_text_in_range(
         &mut self,
-        marked_text: &str,
+        range: Option<Range<usize>>,
+        new_text: &str,
         new_selected_range: Option<Range<usize>>,
-        replacement_range: Option<Range<usize>>,
     );
+    fn marked_text_range(&self) -> Option<Range<usize>>;
+    fn unmark_text(&mut self);
     fn cancel_composition(&mut self);
     fn finish_composition(&mut self);
-    fn unmark(&mut self);
-    fn marked_range(&self) -> Option<Range<usize>>;
-    fn text_for_range(&self, range: Range<usize>) -> Option<String>;
 }
 
 pub trait Window: WindowContext {
