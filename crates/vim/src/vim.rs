@@ -266,7 +266,7 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_buffer_search_switches_mode(cx: &mut gpui::TestAppContext) {
+    async fn test_buffer_search(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.set_state(
@@ -278,7 +278,8 @@ mod test {
         );
         cx.simulate_keystroke("/");
 
-        assert_eq!(cx.mode(), Mode::Visual { line: false });
+        // We now use a weird insert mode with selection when jumping to a single line editor
+        assert_eq!(cx.mode(), Mode::Insert);
 
         let search_bar = cx.workspace(|workspace, cx| {
             workspace
