@@ -255,6 +255,8 @@ impl super::Window for Window {
         self.close_handlers.push(callback);
     }
 
+    fn set_input_handler(&mut self, _: Box<dyn crate::InputHandler>) {}
+
     fn prompt(&self, _: crate::PromptLevel, _: &str, _: &[&str]) -> oneshot::Receiver<usize> {
         let (done_tx, done_rx) = oneshot::channel();
         self.pending_prompts.borrow_mut().push_back(done_tx);

@@ -26,6 +26,7 @@ use serde::Deserialize;
 use std::{
     any::Any,
     fmt::{self, Display},
+    ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
     str::FromStr,
@@ -88,6 +89,23 @@ pub trait Dispatcher: Send + Sync {
     fn run_on_main_thread(&self, task: Runnable);
 }
 
+pub trait InputHandler {
+    fn select(&mut self, range: Range<usize>);
+    fn selected_range(&self) -> Option<Range<usize>>;
+    fn set_composition(
+        &mut self,
+        marked_text: &str,
+        new_selected_range: Option<Range<usize>>,
+        replacement_range: Option<Range<usize>>,
+    );
+    fn commit(&mut self, text: &str, replacement_range: Option<Range<usize>>);
+    fn cancel_composition(&mut self);
+    fn finish_composition(&mut self);
+    fn unmark(&mut self);
+    fn marked_range(&self) -> Option<Range<usize>>;
+    fn text_for_range(&self, range: Range<usize>) -> Option<String>;
+}
+
 pub trait Window: WindowContext {
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn on_event(&mut self, callback: Box<dyn FnMut(Event) -> bool>);
@@ -95,6 +113,7 @@ pub trait Window: WindowContext {
     fn on_resize(&mut self, callback: Box<dyn FnMut()>);
     fn on_should_close(&mut self, callback: Box<dyn FnMut() -> bool>);
     fn on_close(&mut self, callback: Box<dyn FnOnce()>);
+    fn set_input_handler(&mut self, input_handler: Box<dyn InputHandler>);
     fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize>;
     fn activate(&self);
     fn set_title(&mut self, title: &str);

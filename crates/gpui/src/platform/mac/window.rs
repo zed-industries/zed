@@ -7,7 +7,8 @@ use crate::{
     },
     keymap::Keystroke,
     platform::{self, Event, WindowBounds, WindowContext},
-    KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseEvent, MouseMovedEvent, Scene,
+    InputHandler, KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseEvent, MouseMovedEvent,
+    Scene,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -16,7 +17,9 @@ use cocoa::{
         NSViewHeightSizable, NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowStyleMask,
     },
     base::{id, nil},
-    foundation::{NSAutoreleasePool, NSInteger, NSPoint, NSRect, NSSize, NSString, NSUInteger},
+    foundation::{
+        NSAutoreleasePool, NSInteger, NSNotFound, NSPoint, NSRect, NSSize, NSString, NSUInteger,
+    },
     quartzcore::AutoresizingMask,
 };
 use core_graphics::display::CGRect;
@@ -34,9 +37,13 @@ use smol::Timer;
 use std::{
     any::Any,
     cell::{Cell, RefCell},
+    cmp,
     convert::TryInto,
-    ffi::c_void,
-    mem, ptr,
+    ffi::{c_void, CStr},
+    mem,
+    ops::Range,
+    os::raw::c_char,
+    ptr,
     rc::{Rc, Weak},
     sync::Arc,
     time::Duration,
@@ -48,10 +55,42 @@ static mut WINDOW_CLASS: *const Class = ptr::null();
 static mut VIEW_CLASS: *const Class = ptr::null();
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 struct NSRange {
     pub location: NSUInteger,
     pub length: NSUInteger,
+}
+
+impl NSRange {
+    fn invalid() -> Self {
+        Self {
+            location: NSNotFound as NSUInteger,
+            length: 0,
+        }
+    }
+
+    fn is_valid(&self) -> bool {
+        self.location != NSNotFound as NSUInteger
+    }
+
+    fn to_range(&self) -> Option<Range<usize>> {
+        if self.is_valid() {
+            let start = self.location as usize;
+            let end = start + self.length as usize;
+            Some(start..end)
+        } else {
+            None
+        }
+    }
+}
+
+impl From<Range<usize>> for NSRange {
+    fn from(range: Range<usize>) -> Self {
+        NSRange {
+            location: range.start as NSUInteger,
+            length: range.len() as NSUInteger,
+        }
+    }
 }
 
 unsafe impl objc::Encode for NSRange {
@@ -190,6 +229,10 @@ unsafe fn build_classes() {
             has_marked_text as extern "C" fn(&Object, Sel) -> BOOL,
         );
         decl.add_method(
+            sel!(markedRange),
+            marked_range as extern "C" fn(&Object, Sel) -> NSRange,
+        );
+        decl.add_method(
             sel!(selectedRange),
             selected_range as extern "C" fn(&Object, Sel) -> NSRange,
         );
@@ -205,10 +248,11 @@ unsafe fn build_classes() {
             sel!(setMarkedText:selectedRange:replacementRange:),
             set_marked_text as extern "C" fn(&Object, Sel, id, NSRange, NSRange),
         );
+        decl.add_method(sel!(unmarkText), unmark_text as extern "C" fn(&Object, Sel));
         decl.add_method(
             sel!(attributedSubstringForProposedRange:actualRange:),
             attributed_substring_for_proposed_range
-                as extern "C" fn(&Object, Sel, NSRange, id) -> id,
+                as extern "C" fn(&Object, Sel, NSRange, *mut c_void) -> id,
         );
 
         decl.register()
@@ -225,6 +269,8 @@ struct WindowState {
     resize_callback: Option<Box<dyn FnMut()>>,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
+    input_handler: Option<Box<dyn InputHandler>>,
+    pending_key_event: Option<PendingKeyEvent>,
     synthetic_drag_counter: usize,
     executor: Rc<executor::Foreground>,
     scene_to_render: Option<Scene>,
@@ -234,6 +280,13 @@ struct WindowState {
     layer: id,
     traffic_light_position: Option<Vector2F>,
     previous_modifiers_changed_event: Option<Event>,
+}
+
+#[derive(Default, Debug)]
+struct PendingKeyEvent {
+    set_marked_text: Option<(String, Option<Range<usize>>, Option<Range<usize>>)>,
+    unmark_text: bool,
+    insert_text: Option<String>,
 }
 
 impl Window {
@@ -311,6 +364,8 @@ impl Window {
                 should_close_callback: None,
                 close_callback: None,
                 activate_callback: None,
+                input_handler: None,
+                pending_key_event: None,
                 synthetic_drag_counter: 0,
                 executor,
                 scene_to_render: Default::default(),
@@ -417,6 +472,10 @@ impl platform::Window for Window {
 
     fn on_active_status_change(&mut self, callback: Box<dyn FnMut(bool)>) {
         self.0.as_ref().borrow_mut().activate_callback = Some(callback);
+    }
+
+    fn set_input_handler(&mut self, input_handler: Box<dyn InputHandler>) {
+        self.0.as_ref().borrow_mut().input_handler = Some(input_handler);
     }
 
     fn prompt(
@@ -636,38 +695,103 @@ extern "C" fn dealloc_view(this: &Object, _: Sel) {
 }
 
 extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> BOOL {
+    let had_marked_text = with_input_handler(this, |input_handler| input_handler.marked_range())
+        .flatten()
+        .is_some();
     let window_state = unsafe { get_window_state(this) };
+
     let mut window_state_borrow = window_state.as_ref().borrow_mut();
 
     let event = unsafe { Event::from_native(native_event, Some(window_state_borrow.size().y())) };
     if let Some(event) = event {
-        match &event {
-            Event::KeyDown(KeyDownEvent {
-                keystroke,
-                input,
-                is_held,
-            }) => {
-                let keydown = (keystroke.clone(), input.clone());
+        let mut event = match event {
+            Event::KeyDown(event) => {
+                let keydown = (event.keystroke.clone(), event.input.clone());
                 // Ignore events from held-down keys after some of the initially-pressed keys
                 // were released.
-                if *is_held {
+                if event.is_held {
                     if window_state_borrow.last_fresh_keydown.as_ref() != Some(&keydown) {
                         return YES;
                     }
                 } else {
                     window_state_borrow.last_fresh_keydown = Some(keydown);
                 }
+
+                event
             }
             _ => return NO,
+        };
+
+        // TODO: handle "live conversion"
+        window_state_borrow.pending_key_event = Some(Default::default());
+        drop(window_state_borrow);
+
+        // TODO:
+        // Since Mac Eisu Kana keys cannot be handled by interpretKeyEvents to enable/
+        // disable an IME, we need to pass the event to processInputKeyBindings.
+        // processInputKeyBindings is available at least on 10.11-11.0.
+        // if (keyCode == kVK_JIS_Eisu || keyCode == kVK_JIS_Kana) {
+        //     if ([NSTextInputContext
+        //         respondsToSelector:@selector(processInputKeyBindings:)]) {
+        //             [NSTextInputContext performSelector:@selector(processInputKeyBindings:)
+        //                 withObject:theEvent];
+        //         }
+        // } else {
+        unsafe {
+            let input_context: id = msg_send![this, inputContext];
+            let _: BOOL = msg_send![input_context, handleEvent: native_event];
+        }
+        // }
+
+        let pending_event = window_state.borrow_mut().pending_key_event.take().unwrap();
+        let mut inserted_text = false;
+        let has_marked_text = pending_event.set_marked_text.is_some();
+        if let Some(text) = pending_event.insert_text.as_ref() {
+            if !text.is_empty() && (had_marked_text || has_marked_text || text.len() > 1) {
+                with_input_handler(this, |input_handler| input_handler.commit(&text, None));
+                inserted_text = true;
+            }
         }
 
-        if let Some(mut callback) = window_state_borrow.event_callback.take() {
-            drop(window_state_borrow);
-            let handled = callback(event);
-            window_state.borrow_mut().event_callback = Some(callback);
-            handled as BOOL
+        with_input_handler(this, |input_handler| {
+            if let Some((text, new_selected_range, replacement_range)) =
+                pending_event.set_marked_text
+            {
+                input_handler.set_composition(&text, new_selected_range, replacement_range)
+            } else if had_marked_text && !inserted_text {
+                if pending_event.unmark_text {
+                    input_handler.finish_composition();
+                } else {
+                    input_handler.cancel_composition();
+                }
+            }
+        });
+
+        if has_marked_text {
+            YES
         } else {
-            NO
+            let mut handled = false;
+            let mut window_state_borrow = window_state.borrow_mut();
+            if let Some(mut callback) = window_state_borrow.event_callback.take() {
+                drop(window_state_borrow);
+
+                if inserted_text {
+                    handled = true;
+                } else if let Some(text) = pending_event.insert_text {
+                    if text.len() == 1 {
+                        event.keystroke.key = text;
+                        handled = callback(Event::KeyDown(event));
+                    } else if event.keystroke.cmd || event.keystroke.ctrl {
+                        handled = callback(Event::KeyDown(event));
+                    }
+                } else {
+                    handled = callback(Event::KeyDown(event));
+                }
+
+                window_state.borrow_mut().event_callback = Some(callback);
+            }
+
+            handled as BOOL
         }
     } else {
         NO
@@ -926,27 +1050,138 @@ extern "C" fn valid_attributes_for_marked_text(_: &Object, _: Sel) -> id {
     unsafe { msg_send![class!(NSArray), array] }
 }
 
-extern "C" fn has_marked_text(_: &Object, _: Sel) -> BOOL {
-    false as BOOL
+extern "C" fn has_marked_text(this: &Object, _: Sel) -> BOOL {
+    with_input_handler(this, |input_handler| input_handler.marked_range())
+        .flatten()
+        .is_some() as BOOL
 }
 
-extern "C" fn selected_range(_: &Object, _: Sel) -> NSRange {
-    NSRange {
-        location: 0,
-        length: 0,
-    }
+extern "C" fn marked_range(this: &Object, _: Sel) -> NSRange {
+    with_input_handler(this, |input_handler| input_handler.marked_range())
+        .flatten()
+        .map_or(NSRange::invalid(), |range| range.into())
+}
+
+extern "C" fn selected_range(this: &Object, _: Sel) -> NSRange {
+    with_input_handler(this, |input_handler| input_handler.selected_range())
+        .flatten()
+        .map_or(NSRange::invalid(), |range| range.into())
 }
 
 extern "C" fn first_rect_for_character_range(_: &Object, _: Sel, _: NSRange, _: id) -> NSRect {
     NSRect::new(NSPoint::new(0., 0.), NSSize::new(20., 20.))
 }
 
-extern "C" fn insert_text(_: &Object, _: Sel, _: id, _: NSRange) {}
+extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NSRange) {
+    unsafe {
+        let is_attributed_string: BOOL =
+            msg_send![text, isKindOfClass: [class!(NSAttributedString)]];
+        let text: id = if is_attributed_string == YES {
+            msg_send![text, string]
+        } else {
+            text
+        };
+        let text = CStr::from_ptr(text.UTF8String() as *mut c_char)
+            .to_str()
+            .unwrap();
 
-extern "C" fn set_marked_text(_: &Object, _: Sel, _: id, _: NSRange, _: NSRange) {}
+        let window_state = get_window_state(this);
+        let mut window_state = window_state.borrow_mut();
+        if window_state.pending_key_event.is_some() && !replacement_range.is_valid() {
+            window_state.pending_key_event.as_mut().unwrap().insert_text = Some(text.to_string());
+            drop(window_state);
+        } else {
+            drop(window_state);
+            with_input_handler(this, |input_handler| {
+                input_handler.commit(text, replacement_range.to_range());
+            });
+        }
 
-extern "C" fn attributed_substring_for_proposed_range(_: &Object, _: Sel, _: NSRange, _: id) -> id {
-    unsafe { msg_send![class!(NSAttributedString), alloc] }
+        with_input_handler(this, |input_handler| input_handler.unmark());
+    }
+}
+
+extern "C" fn set_marked_text(
+    this: &Object,
+    _: Sel,
+    text: id,
+    selected_range: NSRange,
+    replacement_range: NSRange,
+) {
+    println!("set_marked_text");
+    unsafe {
+        let is_attributed_string: BOOL =
+            msg_send![text, isKindOfClass: [class!(NSAttributedString)]];
+        let text: id = if is_attributed_string == YES {
+            msg_send![text, string]
+        } else {
+            text
+        };
+        let selected_range = selected_range.to_range();
+        let replacement_range = replacement_range.to_range();
+        let text = CStr::from_ptr(text.UTF8String() as *mut c_char)
+            .to_str()
+            .unwrap();
+
+        let window_state = get_window_state(this);
+        let mut window_state = window_state.borrow_mut();
+        if let Some(pending) = window_state.pending_key_event.as_mut() {
+            pending.set_marked_text = Some((text.to_string(), selected_range, replacement_range));
+        } else {
+            drop(window_state);
+            with_input_handler(this, |input_handler| {
+                input_handler.set_composition(text, selected_range, replacement_range);
+            });
+        }
+    }
+}
+
+extern "C" fn unmark_text(this: &Object, _: Sel) {
+    println!("unmark_text");
+    let window_state = unsafe { get_window_state(this) };
+    let mut window_state = window_state.borrow_mut();
+    if let Some(pending) = window_state.pending_key_event.as_mut() {
+        pending.unmark_text = true;
+        pending.set_marked_text.take();
+    } else {
+        drop(window_state);
+        with_input_handler(this, |input_handler| input_handler.finish_composition());
+    }
+}
+
+extern "C" fn attributed_substring_for_proposed_range(
+    this: &Object,
+    _: Sel,
+    range: NSRange,
+    actual_range: *mut c_void,
+) -> id {
+    with_input_handler(this, |input_handler| {
+        let actual_range = actual_range as *mut NSRange;
+        if !actual_range.is_null() {
+            unsafe { *actual_range = NSRange::invalid() };
+        }
+
+        let requested_range = range.to_range()?;
+        if requested_range.is_empty() {
+            return None;
+        }
+
+        let selected_range = input_handler.selected_range()?;
+        let intersection = cmp::max(requested_range.start, selected_range.start)
+            ..cmp::min(requested_range.end, selected_range.end);
+        if intersection.start >= intersection.end {
+            return None;
+        }
+
+        unsafe {
+            let selected_text = ns_string(&input_handler.text_for_range(intersection)?);
+            let string: id = msg_send![class!(NSAttributedString), alloc];
+            let string: id = msg_send![string, initWithString: selected_text];
+            Some(string)
+        }
+    })
+    .flatten()
+    .unwrap_or(nil)
 }
 
 async fn synthetic_drag(
@@ -973,4 +1208,20 @@ async fn synthetic_drag(
 
 unsafe fn ns_string(string: &str) -> id {
     NSString::alloc(nil).init_str(string).autorelease()
+}
+
+fn with_input_handler<F, R>(window: &Object, f: F) -> Option<R>
+where
+    F: FnOnce(&mut dyn InputHandler) -> R,
+{
+    let window_state = unsafe { get_window_state(window) };
+    let mut window_state_borrow = window_state.as_ref().borrow_mut();
+    if let Some(mut input_handler) = window_state_borrow.input_handler.take() {
+        drop(window_state_borrow);
+        let result = f(input_handler.as_mut());
+        window_state.borrow_mut().input_handler = Some(input_handler);
+        Some(result)
+    } else {
+        None
+    }
 }
