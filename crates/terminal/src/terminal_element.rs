@@ -32,7 +32,7 @@ use util::ResultExt;
 use std::{cmp::min, ops::Range};
 use std::{fmt::Debug, ops::Sub};
 
-use crate::{color_translation::convert_color, connection::TerminalConnection, TerminalView};
+use crate::{color_translation::convert_color, connection::Terminal, TerminalView};
 
 use self::terminal_layout_context::TerminalLayoutData;
 
@@ -44,7 +44,7 @@ const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
 ///The GPUI element that paints the terminal.
 ///We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalEl {
-    connection: WeakModelHandle<TerminalConnection>,
+    connection: WeakModelHandle<Terminal>,
     view: WeakViewHandle<TerminalView>,
     modal: bool,
 }
@@ -228,7 +228,7 @@ pub struct LayoutState {
 impl TerminalEl {
     pub fn new(
         view: WeakViewHandle<TerminalView>,
-        connection: WeakModelHandle<TerminalConnection>,
+        connection: WeakModelHandle<Terminal>,
         modal: bool,
     ) -> TerminalEl {
         TerminalEl {
@@ -255,19 +255,17 @@ impl TerminalEl {
                     MouseButton::Left,
                     move |MouseButtonEvent { position, .. }, cx| {
                         if let Some(conn_handle) = mouse_down_connection.upgrade(cx.app) {
-                            conn_handle.update(cx.app, |connection, cx| {
-                                connection.get_terminal().map(|terminal| {
-                                    let (point, side) = mouse_to_cell_data(
-                                        position,
-                                        origin,
-                                        cur_size,
-                                        terminal.get_display_offset(),
-                                    );
+                            conn_handle.update(cx.app, |terminal, cx| {
+                                let (point, side) = mouse_to_cell_data(
+                                    position,
+                                    origin,
+                                    cur_size,
+                                    terminal.get_display_offset(),
+                                );
 
-                                    terminal.mouse_down(point, side);
+                                terminal.mouse_down(point, side);
 
-                                    cx.notify();
-                                });
+                                cx.notify();
                             })
                         }
                     },
@@ -282,19 +280,17 @@ impl TerminalEl {
                           cx| {
                         cx.focus_parent_view();
                         if let Some(conn_handle) = click_connection.upgrade(cx.app) {
-                            conn_handle.update(cx.app, |connection, cx| {
-                                connection.get_terminal().map(|terminal| {
-                                    let (point, side) = mouse_to_cell_data(
-                                        position,
-                                        origin,
-                                        cur_size,
-                                        terminal.get_display_offset(),
-                                    );
+                            conn_handle.update(cx.app, |terminal, cx| {
+                                let (point, side) = mouse_to_cell_data(
+                                    position,
+                                    origin,
+                                    cur_size,
+                                    terminal.get_display_offset(),
+                                );
 
-                                    terminal.click(point, side, click_count);
+                                terminal.click(point, side, click_count);
 
-                                    cx.notify();
-                                })
+                                cx.notify();
                             });
                         }
                     },
@@ -303,19 +299,17 @@ impl TerminalEl {
                     MouseButton::Left,
                     move |_, MouseMovedEvent { position, .. }, cx| {
                         if let Some(conn_handle) = drag_connection.upgrade(cx.app) {
-                            conn_handle.update(cx.app, |connection, cx| {
-                                connection.get_terminal().map(|terminal| {
-                                    let (point, side) = mouse_to_cell_data(
-                                        position,
-                                        origin,
-                                        cur_size,
-                                        terminal.get_display_offset(),
-                                    );
+                            conn_handle.update(cx.app, |terminal, cx| {
+                                let (point, side) = mouse_to_cell_data(
+                                    position,
+                                    origin,
+                                    cur_size,
+                                    terminal.get_display_offset(),
+                                );
 
-                                    terminal.drag(point, side);
+                                terminal.drag(point, side);
 
-                                    cx.notify()
-                                });
+                                cx.notify()
                             });
                         }
                     },
@@ -336,13 +330,7 @@ impl Element for TerminalEl {
         let layout =
             TerminalLayoutData::new(cx.global::<Settings>(), &cx.font_cache(), constraint.max);
 
-        let terminal = self
-            .connection
-            .upgrade(cx)
-            .unwrap()
-            .read(cx)
-            .get_terminal()
-            .unwrap();
+        let terminal = self.connection.upgrade(cx).unwrap().read(cx);
 
         let (cursor, cells, rects, highlights) =
             terminal.render_lock(Some(layout.size.clone()), |content| {
@@ -488,12 +476,11 @@ impl Element for TerminalEl {
                     let vertical_scroll =
                         (delta.y() / layout.size.line_height) * ALACRITTY_SCROLL_MULTIPLIER;
 
-                    self.connection
-                        .upgrade(cx.app)
-                        .and_then(|handle| handle.read(cx.app).get_terminal())
-                        .map(|terminal| {
-                            terminal.scroll(Scroll::Delta(vertical_scroll.round() as i32));
-                        });
+                    self.connection.upgrade(cx.app).map(|terminal| {
+                        terminal
+                            .read(cx.app)
+                            .scroll(Scroll::Delta(vertical_scroll.round() as i32));
+                    });
                 })
                 .is_some(),
             Event::KeyDown(KeyDownEvent { keystroke, .. }) => {
@@ -508,7 +495,7 @@ impl Element for TerminalEl {
 
                 self.connection
                     .upgrade(cx.app)
-                    .and_then(|model_handle| model_handle.read(cx.app).get_terminal())
+                    .map(|model_handle| model_handle.read(cx.app))
                     .map(|term| term.try_keystroke(keystroke))
                     .unwrap_or(false)
             }

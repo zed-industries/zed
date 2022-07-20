@@ -4,13 +4,14 @@ use gpui::{geometry::vector::vec2f, AppContext, ModelHandle, ReadModelWith, Test
 use itertools::Itertools;
 
 use crate::{
-    connection::TerminalConnection, terminal_element::TerminalDimensions, DEBUG_CELL_WIDTH,
-    DEBUG_LINE_HEIGHT, DEBUG_TERMINAL_HEIGHT, DEBUG_TERMINAL_WIDTH,
+    connection::{DisconnectedPTY, Terminal},
+    terminal_element::TerminalDimensions,
+    DEBUG_CELL_WIDTH, DEBUG_LINE_HEIGHT, DEBUG_TERMINAL_HEIGHT, DEBUG_TERMINAL_WIDTH,
 };
 
 pub struct TerminalTestContext<'a> {
     pub cx: &'a mut TestAppContext,
-    pub connection: ModelHandle<TerminalConnection>,
+    pub connection: ModelHandle<Terminal>,
 }
 
 impl<'a> TerminalTestContext<'a> {
@@ -23,8 +24,11 @@ impl<'a> TerminalTestContext<'a> {
             vec2f(DEBUG_TERMINAL_WIDTH, DEBUG_TERMINAL_HEIGHT),
         );
 
-        let connection =
-            cx.add_model(|cx| TerminalConnection::new_tty(None, None, None, size_info, cx));
+        let connection = cx.add_model(|cx| {
+            DisconnectedPTY::new(None, None, None, size_info)
+                .unwrap()
+                .connect(cx)
+        });
 
         TerminalTestContext { cx, connection }
     }
@@ -35,11 +39,8 @@ impl<'a> TerminalTestContext<'a> {
     {
         let command = command.to_string();
         self.connection.update(self.cx, |connection, _| {
-            connection.get_terminal().unwrap().write_to_pty(command);
-            connection
-                .get_terminal()
-                .unwrap()
-                .write_to_pty("\r".to_string());
+            connection.write_to_pty(command);
+            connection.write_to_pty("\r".to_string());
         });
 
         self.connection
@@ -55,18 +56,15 @@ impl<'a> TerminalTestContext<'a> {
             })
     }
 
-    fn grid_as_str(connection: &TerminalConnection) -> String {
-        connection
-            .get_terminal()
-            .unwrap()
-            .render_lock(None, |content| {
-                let lines = content.display_iter.group_by(|i| i.point.line.0);
-                lines
-                    .into_iter()
-                    .map(|(_, line)| line.map(|i| i.c).collect::<String>())
-                    .collect::<Vec<String>>()
-                    .join("\n")
-            })
+    fn grid_as_str(connection: &Terminal) -> String {
+        connection.render_lock(None, |content| {
+            let lines = content.display_iter.group_by(|i| i.point.line.0);
+            lines
+                .into_iter()
+                .map(|(_, line)| line.map(|i| i.c).collect::<String>())
+                .collect::<Vec<String>>()
+                .join("\n")
+        })
     }
 }
 

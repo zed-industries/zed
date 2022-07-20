@@ -14,6 +14,7 @@ impl<'a> TerminalLayoutData<'a> {
         let terminal_theme = &settings.theme.terminal;
 
         let line_height = font_cache.line_height(text_style.font_size);
+
         let cell_width = font_cache.em_advance(text_style.font_id, text_style.font_size);
         let dimensions = TerminalDimensions::new(line_height, cell_width, constraint);
 
@@ -26,7 +27,7 @@ impl<'a> TerminalLayoutData<'a> {
     }
 
     ///Configures a text style from the current settings.
-    fn make_text_style(font_cache: &FontCache, settings: &Settings) -> TextStyle {
+    pub fn make_text_style(font_cache: &FontCache, settings: &Settings) -> TextStyle {
         // Pull the font family from settings properly overriding
         let family_id = settings
             .terminal_overrides

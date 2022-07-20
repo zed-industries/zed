@@ -56,15 +56,16 @@ impl EventListener for ZedListener {
 
 #[derive(Error, Debug)]
 pub struct TerminalError {
-    directory: Option<PathBuf>,
-    shell: Option<Shell>,
-    source: std::io::Error,
+    pub directory: Option<PathBuf>,
+    pub shell: Option<Shell>,
+    pub source: std::io::Error,
 }
 
 impl Display for TerminalError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let dir_string: String = self
             .directory
+            .clone()
             .map(|path| {
                 match path
                     .into_os_string()
@@ -77,7 +78,7 @@ impl Display for TerminalError {
             })
             .unwrap_or_else(|| {
                 let default_dir =
-                    dirs::home_dir().map(|buf| buf.into_os_string().to_string_lossy());
+                    dirs::home_dir().map(|buf| buf.into_os_string().to_string_lossy().to_string());
                 match default_dir {
                     Some(dir) => format!("<none specified, using home> {}", dir),
                     None => "<none specified, could not find home>".to_string(),
@@ -86,6 +87,7 @@ impl Display for TerminalError {
 
         let shell = self
             .shell
+            .clone()
             .map(|shell| match shell {
                 Shell::System => {
                     let mut buf = [0; 1024];
@@ -160,7 +162,7 @@ impl DisconnectedPTY {
         setup_env(&config);
 
         //Spawn a task so the Alacritty EventLoop can communicate with us in a view context
-        let (events_tx, mut events_rx) = unbounded();
+        let (events_tx, events_rx) = unbounded();
 
         //Set up the terminal...
         let term = Term::new(&config, &initial_size, ZedListener(events_tx.clone()));
@@ -218,7 +220,7 @@ impl DisconnectedPTY {
         })
     }
 
-    pub fn connect(self, cx: &mut ModelContext<Terminal>) -> Terminal {
+    pub fn connect(mut self, cx: &mut ModelContext<Terminal>) -> Terminal {
         cx.spawn_weak(|this, mut cx| async move {
             //Listen for terminal events
             while let Some(event) = self.events_rx.next().await {
@@ -414,12 +416,6 @@ impl Terminal {
 
     pub fn mouse_down(&self, point: Point, side: Direction) {
         self.set_selection(Some(Selection::new(SelectionType::Simple, point, side)));
-    }
-}
-
-impl Drop for DisconnectedPTY {
-    fn drop(&mut self) {
-        self.terminal.pty_tx.0.send(Msg::Shutdown).ok();
     }
 }
 

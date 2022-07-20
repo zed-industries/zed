@@ -16,7 +16,13 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
     if let Some(StoredConnection(stored_connection)) = possible_connection {
         // Create a view from the stored connection
         workspace.toggle_modal(cx, |_, cx| {
-            cx.add_view(|cx| TerminalView::from_connection(stored_connection.clone(), true, cx))
+            cx.add_view(|cx| {
+                TerminalView::from_connection(
+                    crate::TerminalConnection(Ok(stored_connection.clone())),
+                    true,
+                    cx,
+                )
+            })
         });
         cx.set_global::<Option<StoredConnection>>(Some(StoredConnection(
             stored_connection.clone(),
@@ -28,7 +34,7 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
 
             let this = cx.add_view(|cx| TerminalView::new(wd, true, cx));
 
-            let connection_handle = this.read(cx).connection.clone();
+            let connection_handle = this.read(cx).connection.0.as_ref().unwrap().clone();
             cx.subscribe(&connection_handle, on_event).detach();
             //Set the global immediately, in case the user opens the command palette
             cx.set_global::<Option<StoredConnection>>(Some(StoredConnection(
@@ -36,7 +42,13 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
             )));
             this
         }) {
-            let connection = closed_terminal_handle.read(cx).connection.clone();
+            let connection = closed_terminal_handle
+                .read(cx)
+                .connection
+                .0
+                .as_ref()
+                .unwrap()
+                .clone();
             cx.set_global(Some(StoredConnection(connection)));
         }
     }
