@@ -756,8 +756,18 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
     });
 
     cx.add_model(|cx| {
-        let text = "fn a() {\n    {\n        b()?\n    }\n\n    Ok(())\n}";
+        let text = "
+            fn a() {
+                {
+                    b()?
+                }
+                Ok(())
+            }
+        "
+        .unindent();
         let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
+
+        // Delete a closing curly brace changes the suggested indent for the line.
         buffer.edit_with_autoindent(
             [(Point::new(3, 4)..Point::new(3, 5), "")],
             IndentSize::spaces(4),
@@ -765,9 +775,19 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
         );
         assert_eq!(
             buffer.text(),
-            "fn a() {\n    {\n        b()?\n            \n\n    Ok(())\n}"
+            "
+            fn a() {
+                {
+                    b()?
+                        |
+                Ok(())
+            }
+            "
+            .replace("|", "") // included in the string to preserve trailing whites
+            .unindent()
         );
 
+        // Manually editing the leading whitespace
         buffer.edit_with_autoindent(
             [(Point::new(3, 0)..Point::new(3, 12), "")],
             IndentSize::spaces(4),
@@ -775,7 +795,15 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
         );
         assert_eq!(
             buffer.text(),
-            "fn a() {\n    {\n        b()?\n\n\n    Ok(())\n}"
+            "
+            fn a() {
+                {
+                    b()?
+
+                Ok(())
+            }
+            "
+            .unindent()
         );
         buffer
     });
@@ -828,6 +856,45 @@ fn test_autoindent_with_edit_at_end_of_buffer(cx: &mut MutableAppContext) {
         let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
         buffer.edit_with_autoindent([(0..1, "\n"), (2..3, "\n")], IndentSize::spaces(4), cx);
         assert_eq!(buffer.text(), "\n\n\n");
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_autoindent_multi_line_insertion(cx: &mut MutableAppContext) {
+    cx.add_model(|cx| {
+        let text = "
+            const a: usize = 1;
+            fn b() {
+                if c {
+                    let d = 2;
+                }
+            }
+        "
+        .unindent();
+
+        let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
+        buffer.edit_with_autoindent(
+            [(Point::new(3, 0)..Point::new(3, 0), "e(\n    f()\n);\n")],
+            IndentSize::spaces(4),
+            cx,
+        );
+        assert_eq!(
+            buffer.text(),
+            "
+                const a: usize = 1;
+                fn b() {
+                    if c {
+                        e(
+                            f()
+                        );
+                        let d = 2;
+                    }
+                }
+            "
+            .unindent()
+        );
+
         buffer
     });
 }

@@ -232,7 +232,7 @@ struct SyntaxTree {
 struct AutoindentRequest {
     before_edit: BufferSnapshot,
     edited: Vec<Anchor>,
-    inserted: Option<Vec<Range<Anchor>>>,
+    inserted: Vec<Range<Anchor>>,
     indent_size: IndentSize,
 }
 
@@ -874,9 +874,10 @@ impl Buffer {
                     yield_now().await;
                 }
 
-                if let Some(inserted) = request.inserted.as_ref() {
+                if !request.inserted.is_empty() {
                     let inserted_row_ranges = contiguous_ranges(
-                        inserted
+                        request
+                            .inserted
                             .iter()
                             .map(|range| range.to_point(&snapshot))
                             .flat_map(|range| range.start.row..range.end.row + 1),
@@ -1203,52 +1204,61 @@ impl Buffer {
 
         self.start_transaction();
         self.pending_autoindent.take();
-        let autoindent_request =
-            self.language
-                .as_ref()
-                .and_then(|_| autoindent_size)
-                .map(|autoindent_size| {
-                    let before_edit = self.snapshot();
-                    let edited = edits
-                        .iter()
-                        .filter_map(|(range, new_text)| {
-                            let start = range.start.to_point(self);
-                            if new_text.starts_with('\n')
-                                && start.column == self.line_len(start.row)
-                            {
-                                None
-                            } else {
-                                Some(self.anchor_before(range.start))
-                            }
-                        })
-                        .collect();
-                    (before_edit, edited, autoindent_size)
-                });
+        let autoindent_request = self
+            .language
+            .as_ref()
+            .and_then(|_| autoindent_size)
+            .map(|autoindent_size| (self.snapshot(), autoindent_size));
 
         let edit_operation = self.text.edit(edits.iter().cloned());
         let edit_id = edit_operation.local_timestamp();
 
-        if let Some((before_edit, edited, size)) = autoindent_request {
-            let mut delta = 0isize;
+        if let Some((before_edit, size)) = autoindent_request {
+            let mut inserted = Vec::new();
+            let mut edited = Vec::new();
 
-            let inserted_ranges = edits
+            let mut delta = 0isize;
+            for ((range, _), new_text) in edits
                 .into_iter()
                 .zip(&edit_operation.as_edit().unwrap().new_text)
-                .filter_map(|((range, _), new_text)| {
-                    let first_newline_ix = new_text.find('\n')?;
-                    let new_text_len = new_text.len();
-                    let start = (delta + range.start as isize) as usize + first_newline_ix + 1;
-                    let end = (delta + range.start as isize) as usize + new_text_len;
-                    delta += new_text_len as isize - (range.end as isize - range.start as isize);
-                    Some(self.anchor_before(start)..self.anchor_after(end))
-                })
-                .collect::<Vec<Range<Anchor>>>();
+            {
+                let new_text_len = new_text.len();
+                let first_newline_ix = new_text.find('\n');
+                let old_start = range.start.to_point(&before_edit);
 
-            let inserted = if inserted_ranges.is_empty() {
-                None
-            } else {
-                Some(inserted_ranges)
-            };
+                let start = (delta + range.start as isize) as usize;
+                delta += new_text_len as isize - (range.end as isize - range.start as isize);
+
+                // When inserting multiple lines of text at the beginning of a line,
+                // treat all of the affected lines as newly-inserted.
+                if first_newline_ix.is_some()
+                    && old_start.column < before_edit.indent_size_for_line(old_start.row).len
+                {
+                    inserted
+                        .push(self.anchor_before(start)..self.anchor_after(start + new_text_len));
+                    continue;
+                }
+
+                // When inserting a newline at the end of an existing line, treat the following
+                // line as newly-inserted.
+                if first_newline_ix == Some(0)
+                    && old_start.column == before_edit.line_len(old_start.row)
+                {
+                    inserted.push(
+                        self.anchor_before(start + 1)..self.anchor_after(start + new_text_len),
+                    );
+                    continue;
+                }
+
+                // Otherwise, mark the start of the edit as edited, and any subsequent
+                // lines as newly inserted.
+                edited.push(before_edit.anchor_before(range.start));
+                if let Some(ix) = first_newline_ix {
+                    inserted.push(
+                        self.anchor_before(start + ix + 1)..self.anchor_after(start + new_text_len),
+                    );
+                }
+            }
 
             self.autoindent_requests.push(Arc::new(AutoindentRequest {
                 before_edit,
