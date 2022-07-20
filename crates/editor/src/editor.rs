@@ -228,6 +228,7 @@ impl_internal_actions!(editor, [Scroll, Select, Jump]);
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
+enum InputComposition {}
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Direction {
@@ -240,7 +241,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|this: &mut Editor, action: &Scroll, cx| this.set_scroll_position(action.0, cx));
     cx.add_action(Editor::select);
     cx.add_action(Editor::cancel);
-    cx.add_action(Editor::handle_input);
     cx.add_action(Editor::newline);
     cx.add_action(Editor::backspace);
     cx.add_action(Editor::delete);
@@ -1813,13 +1813,11 @@ impl Editor {
         cx.propagate_action();
     }
 
-    pub fn handle_input(&mut self, action: &Input, cx: &mut ViewContext<Self>) {
+    pub fn handle_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
         if !self.input_enabled {
-            cx.propagate_action();
             return;
         }
 
-        let text = action.0.as_ref();
         if !self.skip_autoclose_end(text, cx) {
             self.transact(cx, |this, cx| {
                 if !this.surround_with_bracket_pair(text, cx) {
@@ -5522,6 +5520,13 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn text_highlights<'a, T: 'static>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> Option<(HighlightStyle, &'a [Range<Anchor>])> {
+        self.display_map.read(cx).text_highlights(TypeId::of::<T>())
+    }
+
     pub fn clear_text_highlights<T: 'static>(
         &mut self,
         cx: &mut ViewContext<Self>,
@@ -5870,6 +5875,80 @@ impl View for Editor {
         }
 
         context
+    }
+
+    fn text_for_range(&self, range: Range<usize>, cx: &AppContext) -> Option<String> {
+        Some(
+            self.buffer
+                .read(cx)
+                .read(cx)
+                .text_for_range(range)
+                .collect(),
+        )
+    }
+
+    fn selected_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
+        Some(self.selections.newest(cx).range())
+    }
+
+    fn set_selected_text_range(&mut self, range: Range<usize>, cx: &mut ViewContext<Self>) {
+        self.change_selections(None, cx, |selections| selections.select_ranges([range]));
+    }
+
+    fn marked_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
+        let range = self.text_highlights::<InputComposition>(cx)?.1.get(0)?;
+        Some(range.to_offset(&*self.buffer.read(cx).read(cx)))
+    }
+
+    fn unmark_text(&mut self, cx: &mut ViewContext<Self>) {
+        self.clear_text_highlights::<InputComposition>(cx);
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        range: Option<Range<usize>>,
+        text: &str,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.transact(cx, |this, cx| {
+            if let Some(range) = range {
+                this.set_selected_text_range(range, cx);
+            }
+            this.handle_input(text, cx);
+        });
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range: Option<Range<usize>>,
+        text: &str,
+        _new_selected_range: Option<Range<usize>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.transact(cx, |this, cx| {
+            let range = range.or_else(|| {
+                let ranges = this.text_highlights::<InputComposition>(cx)?.1;
+                let range = ranges.first()?;
+                let snapshot = this.buffer.read(cx).read(cx);
+                Some(range.to_offset(&*snapshot))
+            });
+            if let Some(range) = range {
+                this.set_selected_text_range(range, cx);
+            }
+
+            let selection = this.selections.newest_anchor();
+            let marked_range = {
+                let snapshot = this.buffer.read(cx).read(cx);
+                selection.start.bias_left(&*snapshot)..selection.end.bias_right(&*snapshot)
+            };
+            this.highlight_text::<InputComposition>(
+                vec![marked_range],
+                this.style(cx).composition_mark,
+                cx,
+            );
+
+            this.handle_input(text, cx);
+        });
     }
 }
 
@@ -8241,9 +8320,9 @@ mod tests {
         // is pasted at each cursor.
         cx.set_state("|two one✅ four three six five |");
         cx.update_editor(|e, cx| {
-            e.handle_input(&Input("( ".into()), cx);
+            e.handle_input("( ", cx);
             e.paste(&Paste, cx);
-            e.handle_input(&Input(") ".into()), cx);
+            e.handle_input(") ", cx);
         });
         cx.assert_editor_state(indoc! {"
             ( one✅ 
@@ -8918,9 +8997,9 @@ mod tests {
                 ])
             });
 
-            view.handle_input(&Input("{".to_string()), cx);
-            view.handle_input(&Input("{".to_string()), cx);
-            view.handle_input(&Input("{".to_string()), cx);
+            view.handle_input("{", cx);
+            view.handle_input("{", cx);
+            view.handle_input("{", cx);
             assert_eq!(
                 view.text(cx),
                 "
@@ -8933,9 +9012,9 @@ mod tests {
             );
 
             view.move_right(&MoveRight, cx);
-            view.handle_input(&Input("}".to_string()), cx);
-            view.handle_input(&Input("}".to_string()), cx);
-            view.handle_input(&Input("}".to_string()), cx);
+            view.handle_input("}", cx);
+            view.handle_input("}", cx);
+            view.handle_input("}", cx);
             assert_eq!(
                 view.text(cx),
                 "
@@ -8948,8 +9027,8 @@ mod tests {
             );
 
             view.undo(&Undo, cx);
-            view.handle_input(&Input("/".to_string()), cx);
-            view.handle_input(&Input("*".to_string()), cx);
+            view.handle_input("/", cx);
+            view.handle_input("*", cx);
             assert_eq!(
                 view.text(cx),
                 "
@@ -8968,7 +9047,7 @@ mod tests {
                     DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
                 ])
             });
-            view.handle_input(&Input("*".to_string()), cx);
+            view.handle_input("*", cx);
             assert_eq!(
                 view.text(cx),
                 "
@@ -8986,7 +9065,7 @@ mod tests {
             view.change_selections(None, cx, |s| {
                 s.select_display_ranges([DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)])
             });
-            view.handle_input(&Input("{".to_string()), cx);
+            view.handle_input("{", cx);
             assert_eq!(
                 view.text(cx),
                 "
@@ -9002,7 +9081,7 @@ mod tests {
             view.change_selections(None, cx, |s| {
                 s.select_display_ranges([DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1)])
             });
-            view.handle_input(&Input("{".to_string()), cx);
+            view.handle_input("{", cx);
             assert_eq!(
                 view.text(cx),
                 "
@@ -9019,7 +9098,7 @@ mod tests {
             );
 
             view.undo(&Undo, cx);
-            view.handle_input(&Input("[".to_string()), cx);
+            view.handle_input("[", cx);
             assert_eq!(
                 view.text(cx),
                 "
@@ -9039,7 +9118,7 @@ mod tests {
             view.change_selections(None, cx, |s| {
                 s.select_display_ranges([DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)])
             });
-            view.handle_input(&Input("[".to_string()), cx);
+            view.handle_input("[", cx);
             assert_eq!(
                 view.text(cx),
                 "
@@ -9095,9 +9174,9 @@ mod tests {
                 ])
             });
 
-            view.handle_input(&Input("{".to_string()), cx);
-            view.handle_input(&Input("{".to_string()), cx);
-            view.handle_input(&Input("{".to_string()), cx);
+            view.handle_input("{", cx);
+            view.handle_input("{", cx);
+            view.handle_input("{", cx);
             assert_eq!(
                 view.text(cx),
                 "
@@ -9177,9 +9256,9 @@ mod tests {
                 ])
             });
 
-            editor.handle_input(&Input("{".to_string()), cx);
-            editor.handle_input(&Input("{".to_string()), cx);
-            editor.handle_input(&Input("_".to_string()), cx);
+            editor.handle_input("{", cx);
+            editor.handle_input("{", cx);
+            editor.handle_input("_", cx);
             assert_eq!(
                 editor.text(cx),
                 "
@@ -9905,7 +9984,7 @@ mod tests {
                 ])
             });
 
-            view.handle_input(&Input("X".to_string()), cx);
+            view.handle_input("X", cx);
             assert_eq!(view.text(cx), "Xaaaa\nXbbbb");
             assert_eq!(
                 view.selections.ranges(cx),
@@ -9945,7 +10024,7 @@ mod tests {
             assert_eq!(view.text(cx), expected_text);
             view.change_selections(None, cx, |s| s.select_ranges(selection_ranges));
 
-            view.handle_input(&Input("X".to_string()), cx);
+            view.handle_input("X", cx);
 
             let (expected_text, expected_selections) = marked_text_ranges(indoc! {"
                 aaaa

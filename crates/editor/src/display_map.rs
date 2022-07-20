@@ -195,6 +195,11 @@ impl DisplayMap {
             .insert(Some(type_id), Arc::new((style, ranges)));
     }
 
+    pub fn text_highlights(&self, type_id: TypeId) -> Option<(HighlightStyle, &[Range<Anchor>])> {
+        let highlights = self.text_highlights.get(&Some(type_id))?;
+        Some((highlights.0, &highlights.1))
+    }
+
     pub fn clear_text_highlights(
         &mut self,
         type_id: TypeId,

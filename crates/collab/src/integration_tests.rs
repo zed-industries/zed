@@ -11,8 +11,8 @@ use client::{
 };
 use collections::{BTreeMap, HashMap, HashSet};
 use editor::{
-    self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Input, Redo, Rename,
-    ToOffset, ToggleCodeActions, Undo,
+    self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Redo, Rename, ToOffset,
+    ToggleCodeActions, Undo,
 };
 use futures::{channel::mpsc, Future, StreamExt as _};
 use gpui::{
@@ -154,9 +154,7 @@ async fn test_share_project(
     //     .await;
 
     // Edit the buffer as client B and see that edit as client A.
-    editor_b.update(cx_b, |editor, cx| {
-        editor.handle_input(&Input("ok, ".into()), cx)
-    });
+    editor_b.update(cx_b, |editor, cx| editor.handle_input("ok, ", cx));
     buffer_a
         .condition(&cx_a, |buffer, _| buffer.text() == "ok, b-contents")
         .await;
@@ -1751,7 +1749,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     // Type a completion trigger character as the guest.
     editor_b.update(cx_b, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
-        editor.handle_input(&Input(".".into()), cx);
+        editor.handle_input(".", cx);
         cx.focus(&editor_b);
     });
 

@@ -920,11 +920,7 @@ mod tests {
             item.downcast::<Editor>().unwrap()
         });
 
-        cx.update(|cx| {
-            editor.update(cx, |editor, cx| {
-                editor.handle_input(&editor::Input("x".into()), cx)
-            })
-        });
+        cx.update(|cx| editor.update(cx, |editor, cx| editor.handle_input("x", cx)));
         app_state
             .fs
             .as_fake()
@@ -971,7 +967,7 @@ mod tests {
                 editor.language_at(0, cx).unwrap(),
                 &languages::PLAIN_TEXT
             ));
-            editor.handle_input(&editor::Input("hi".into()), cx);
+            editor.handle_input("hi", cx);
             assert!(editor.is_dirty(cx));
         });
 
@@ -997,7 +993,7 @@ mod tests {
 
         // Edit the file and save it again. This time, there is no filename prompt.
         editor.update(cx, |editor, cx| {
-            editor.handle_input(&editor::Input(" there".into()), cx);
+            editor.handle_input(" there", cx);
             assert_eq!(editor.is_dirty(cx.as_ref()), true);
         });
         let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
@@ -1057,7 +1053,7 @@ mod tests {
                 editor.language_at(0, cx).unwrap(),
                 &languages::PLAIN_TEXT
             ));
-            editor.handle_input(&editor::Input("hi".into()), cx);
+            editor.handle_input("hi", cx);
             assert!(editor.is_dirty(cx.as_ref()));
         });
 

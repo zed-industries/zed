@@ -2,6 +2,7 @@ import Theme from "../themes/common/theme";
 import {
   backgroundColor,
   border,
+  borderColor,
   iconColor,
   player,
   popoverShadow,
@@ -138,8 +139,8 @@ export default function editor(theme: Theme) {
     invalidHintDiagnostic: diagnostic(theme, "muted"),
     invalidInformationDiagnostic: diagnostic(theme, "muted"),
     invalidWarningDiagnostic: diagnostic(theme, "muted"),
-    hover_popover: hoverPopover(theme),
-    link_definition: {
+    hoverPopover: hoverPopover(theme),
+    linkDefinition: {
       color: theme.syntax.linkUri.color,
       underline: theme.syntax.linkUri.underline,
     },
@@ -158,6 +159,12 @@ export default function editor(theme: Theme) {
         color: iconColor(theme, "active"),
         background: backgroundColor(theme, "on500", "base"),
       }
+    },
+    compositionMark: {
+      underline: {
+        thickness: 1.0,
+        color: borderColor(theme, "active")
+      },
     },
     syntax,
   };
