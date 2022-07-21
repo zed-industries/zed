@@ -371,46 +371,27 @@ impl WindowInputHandler {
 
 impl InputHandler for WindowInputHandler {
     fn text_for_range(&self, range: Range<usize>) -> Option<String> {
-        let result = self
-            .read_focused_view(|view, cx| view.text_for_range(range.clone(), cx))
-            .flatten();
-
-        eprintln!("text_for_range({range:?}) -> {result:?}");
-
-        result
+        self.read_focused_view(|view, cx| view.text_for_range(range.clone(), cx))
+            .flatten()
     }
 
     fn selected_text_range(&self) -> Option<Range<usize>> {
-        let result = self
-            .read_focused_view(|view, cx| view.selected_text_range(cx))
-            .flatten();
-
-        eprintln!("selected_text_range() -> {result:?}");
-
-        result
+        self.read_focused_view(|view, cx| view.selected_text_range(cx))
+            .flatten()
     }
 
     fn replace_text_in_range(&mut self, range: Option<Range<usize>>, text: &str) {
-        eprintln!("replace_text_in_range({range:?}, {text:?})");
-
         self.update_focused_view(|window_id, view_id, view, cx| {
             view.replace_text_in_range(range, text, cx, window_id, view_id);
         });
     }
 
     fn marked_text_range(&self) -> Option<Range<usize>> {
-        let result = self
-            .read_focused_view(|view, cx| view.marked_text_range(cx))
-            .flatten();
-
-        eprintln!("marked_text_range() -> {result:?}");
-
-        result
+        self.read_focused_view(|view, cx| view.marked_text_range(cx))
+            .flatten()
     }
 
     fn unmark_text(&mut self) {
-        eprintln!("unmark_text()");
-
         self.update_focused_view(|window_id, view_id, view, cx| {
             view.unmark_text(cx, window_id, view_id);
         });
@@ -422,10 +403,6 @@ impl InputHandler for WindowInputHandler {
         new_text: &str,
         new_selected_range: Option<Range<usize>>,
     ) {
-        eprintln!(
-            "replace_and_mark_text_in_range({range:?}, {new_text:?}, {new_selected_range:?})"
-        );
-
         self.update_focused_view(|window_id, view_id, view, cx| {
             view.replace_and_mark_text_in_range(
                 range,
