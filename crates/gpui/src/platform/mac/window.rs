@@ -1097,7 +1097,7 @@ extern "C" fn set_marked_text(
 }
 
 extern "C" fn unmark_text(this: &Object, _: Sel) {
-    with_input_handler(this, |input_handler| input_handler.finish_composition());
+    with_input_handler(this, |input_handler| input_handler.unmark_text());
 }
 
 extern "C" fn attributed_substring_for_proposed_range(

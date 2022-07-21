@@ -102,8 +102,6 @@ pub trait InputHandler {
     );
     fn marked_text_range(&self) -> Option<Range<usize>>;
     fn unmark_text(&mut self);
-    fn cancel_composition(&mut self);
-    fn finish_composition(&mut self);
 }
 
 pub trait Window: WindowContext {
