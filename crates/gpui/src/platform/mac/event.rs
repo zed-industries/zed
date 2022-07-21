@@ -83,10 +83,8 @@ impl Event {
                 let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
                 let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
                 let cmd = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
-                let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask);
 
-                let (unmodified_chars, input) = get_key_text(native_event, cmd, ctrl, function)?;
-
+                let unmodified_chars = get_key_text(native_event)?;
                 Some(Self::KeyDown(KeyDownEvent {
                     keystroke: Keystroke {
                         ctrl,
@@ -95,7 +93,6 @@ impl Event {
                         cmd,
                         key: unmodified_chars.into(),
                     },
-                    input,
                     is_held: native_event.isARepeat() == YES,
                 }))
             }
@@ -105,10 +102,7 @@ impl Event {
                 let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
                 let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
                 let cmd = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
-                let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask);
-
-                let (unmodified_chars, input) = get_key_text(native_event, cmd, ctrl, function)?;
-
+                let unmodified_chars = get_key_text(native_event)?;
                 Some(Self::KeyUp(KeyUpEvent {
                     keystroke: Keystroke {
                         ctrl,
@@ -117,7 +111,6 @@ impl Event {
                         cmd,
                         key: unmodified_chars.into(),
                     },
-                    input,
                 }))
             }
             NSEventType::NSLeftMouseDown
@@ -238,27 +231,18 @@ impl Event {
     }
 }
 
-unsafe fn get_key_text(
-    native_event: id,
-    cmd: bool,
-    ctrl: bool,
-    function: bool,
-) -> Option<(&'static str, Option<String>)> {
+unsafe fn get_key_text(native_event: id) -> Option<&'static str> {
     let unmodified_chars =
         CStr::from_ptr(native_event.charactersIgnoringModifiers().UTF8String() as *mut c_char)
             .to_str()
             .unwrap();
 
-    let mut input = None;
     let first_char = unmodified_chars.chars().next()?;
     use cocoa::appkit::*;
 
     #[allow(non_upper_case_globals)]
     let unmodified_chars = match first_char as u16 {
-        SPACE_KEY => {
-            input = Some(" ".to_string());
-            "space"
-        }
+        SPACE_KEY => "space",
         BACKSPACE_KEY => "backspace",
         ENTER_KEY | NUMPAD_ENTER_KEY => "enter",
         ESCAPE_KEY => "escape",
@@ -284,19 +268,8 @@ unsafe fn get_key_text(
         NSF10FunctionKey => "f10",
         NSF11FunctionKey => "f11",
         NSF12FunctionKey => "f12",
-
-        _ => {
-            if !cmd && !ctrl && !function {
-                input = Some(
-                    CStr::from_ptr(native_event.characters().UTF8String() as *mut c_char)
-                        .to_str()
-                        .unwrap()
-                        .into(),
-                );
-            }
-            unmodified_chars
-        }
+        _ => unmodified_chars,
     };
 
-    Some((unmodified_chars, input))
+    Some(unmodified_chars)
 }

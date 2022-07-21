@@ -498,13 +498,7 @@ impl TestAppContext {
         self.cx.borrow_mut().dispatch_global_action(action);
     }
 
-    pub fn dispatch_keystroke(
-        &mut self,
-        window_id: usize,
-        keystroke: Keystroke,
-        input: Option<String>,
-        is_held: bool,
-    ) {
+    pub fn dispatch_keystroke(&mut self, window_id: usize, keystroke: Keystroke, is_held: bool) {
         self.cx.borrow_mut().update(|cx| {
             let presenter = cx
                 .presenters_and_platform_windows
@@ -515,14 +509,9 @@ impl TestAppContext {
             let dispatch_path = presenter.borrow().dispatch_path(cx.as_ref());
 
             if !cx.dispatch_keystroke(window_id, dispatch_path, &keystroke) {
-                presenter.borrow_mut().dispatch_event(
-                    Event::KeyDown(KeyDownEvent {
-                        keystroke,
-                        input,
-                        is_held,
-                    }),
-                    cx,
-                );
+                presenter
+                    .borrow_mut()
+                    .dispatch_event(Event::KeyDown(KeyDownEvent { keystroke, is_held }), cx);
             }
         });
     }

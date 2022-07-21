@@ -279,7 +279,7 @@ struct WindowState {
     scene_to_render: Option<Scene>,
     renderer: Renderer,
     command_queue: metal::CommandQueue,
-    last_fresh_keydown: Option<(Keystroke, Option<String>)>,
+    last_fresh_keydown: Option<Keystroke>,
     layer: id,
     traffic_light_position: Option<Vector2F>,
     previous_modifiers_changed_event: Option<Event>,
@@ -699,7 +699,7 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
     if let Some(event) = event {
         window_state_borrow.pending_keydown_event = match event {
             Event::KeyDown(event) => {
-                let keydown = (event.keystroke.clone(), event.input.clone());
+                let keydown = event.keystroke.clone();
                 // Ignore events from held-down keys after some of the initially-pressed keys
                 // were released.
                 if event.is_held {
@@ -812,21 +812,19 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut window_state_borrow = window_state.as_ref().borrow_mut();
 
-    let chars = ".".to_string();
     let keystroke = Keystroke {
         cmd: true,
         ctrl: false,
         alt: false,
         shift: false,
-        key: chars.clone(),
+        key: ".".into(),
     };
     let event = Event::KeyDown(KeyDownEvent {
         keystroke: keystroke.clone(),
-        input: Some(chars.clone()),
         is_held: false,
     });
 
-    window_state_borrow.last_fresh_keydown = Some((keystroke, Some(chars)));
+    window_state_borrow.last_fresh_keydown = Some(keystroke);
     if let Some(mut callback) = window_state_borrow.event_callback.take() {
         drop(window_state_borrow);
         callback(event);

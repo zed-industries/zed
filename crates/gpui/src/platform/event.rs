@@ -3,14 +3,12 @@ use crate::{geometry::vector::Vector2F, keymap::Keystroke};
 #[derive(Clone, Debug)]
 pub struct KeyDownEvent {
     pub keystroke: Keystroke,
-    pub input: Option<String>,
     pub is_held: bool,
 }
 
 #[derive(Clone, Debug)]
 pub struct KeyUpEvent {
     pub keystroke: Keystroke,
-    pub input: Option<String>,
 }
 
 #[derive(Clone, Debug)]
