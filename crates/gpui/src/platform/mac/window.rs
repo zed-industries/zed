@@ -1039,14 +1039,11 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
                 input_handler.replace_text_in_range(replacement_range, text)
             });
         } else {
-            let pending_key_down_event = pending_key_down_event.unwrap();
-            let mut window_state_borrow = window_state.borrow_mut();
-            let event_callback = window_state_borrow.event_callback.take();
-            drop(window_state_borrow);
-
             let mut handled = false;
+
+            let event_callback = window_state.borrow_mut().event_callback.take();
             if let Some(mut event_callback) = event_callback {
-                handled = event_callback(Event::KeyDown(pending_key_down_event));
+                handled = event_callback(Event::KeyDown(pending_key_down_event.unwrap()));
                 window_state.borrow_mut().event_callback = Some(event_callback);
             }
 
