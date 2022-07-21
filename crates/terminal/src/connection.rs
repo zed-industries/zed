@@ -366,7 +366,7 @@ impl Terminal {
 
     pub fn render_lock<F, T>(&self, new_size: Option<TerminalDimensions>, f: F) -> T
     where
-        F: FnOnce(RenderableContent) -> T,
+        F: FnOnce(RenderableContent, char) -> T,
     {
         if let Some(new_size) = new_size {
             self.pty_tx.0.send(Msg::Resize(new_size.into())).ok(); //Give the PTY a chance to react to the new size
@@ -380,7 +380,9 @@ impl Terminal {
         }
 
         let content = term.renderable_content();
-        f(content)
+        let cursor_text = term.grid()[content.cursor.point].c;
+
+        f(content, cursor_text)
     }
 
     pub fn get_display_offset(&self) -> usize {

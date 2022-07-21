@@ -333,7 +333,7 @@ impl Element for TerminalEl {
         let terminal = self.connection.upgrade(cx).unwrap().read(cx);
 
         let (cursor, cells, rects, highlights) =
-            terminal.render_lock(Some(layout.size.clone()), |content| {
+            terminal.render_lock(Some(layout.size.clone()), |content, cursor_text| {
                 let (cells, rects, highlights) = layout_grid(
                     content.display_iter,
                     &layout.text_style,
@@ -345,7 +345,7 @@ impl Element for TerminalEl {
 
                 //Layout cursor
                 let cursor = layout_cursor(
-                    // grid,
+                    cursor_text,
                     cx.text_layout_cache,
                     &layout,
                     content.cursor.point,
@@ -522,14 +522,14 @@ impl Element for TerminalEl {
 
 ///TODO: Fix cursor rendering with alacritty fork
 fn layout_cursor(
-    // grid: &Grid<Cell>,
+    cursor_text: char,
     text_layout_cache: &TextLayoutCache,
     tcx: &TerminalLayoutData,
     cursor_point: Point,
     display_offset: usize,
     constraint: SizeConstraint,
 ) -> Option<Cursor> {
-    let cursor_text = layout_cursor_text(/*grid,*/ cursor_point, text_layout_cache, tcx);
+    let cursor_text = layout_cursor_text(cursor_text, cursor_point, text_layout_cache, tcx);
     get_cursor_shape(
         cursor_point.line.0 as usize,
         cursor_point.column.0 as usize,
@@ -558,13 +558,12 @@ fn layout_cursor(
 }
 
 fn layout_cursor_text(
-    // grid: &Grid<Cell>,
+    cursor_text: char,
     _cursor_point: Point,
     text_layout_cache: &TextLayoutCache,
     tcx: &TerminalLayoutData,
 ) -> Line {
-    let cursor_text = " "; //grid[cursor_point.line][cursor_point.column].c.to_string();
-
+    let cursor_text = cursor_text.to_string();
     text_layout_cache.layout_str(
         &cursor_text,
         tcx.text_style.font_size,
