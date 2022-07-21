@@ -5892,12 +5892,6 @@ impl View for Editor {
         Some(range.start.0..range.end.0)
     }
 
-    fn set_selected_text_range(&mut self, range_utf16: Range<usize>, cx: &mut ViewContext<Self>) {
-        self.change_selections(None, cx, |selections| {
-            selections.select_ranges([OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end)])
-        });
-    }
-
     fn marked_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
         let range = self.text_highlights::<InputComposition>(cx)?.1.get(0)?;
         let snapshot = self.buffer.read(cx).read(cx);
@@ -5917,8 +5911,10 @@ impl View for Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
-            if let Some(range_utf16) = range_utf16.or_else(|| this.marked_text_range(cx)) {
-                this.set_selected_text_range(range_utf16, cx);
+            if let Some(range) = range_utf16.or_else(|| this.marked_text_range(cx)) {
+                this.change_selections(None, cx, |selections| {
+                    selections.select_ranges([OffsetUtf16(range.start)..OffsetUtf16(range.end)])
+                });
             }
             this.handle_input(text, cx);
             this.unmark_text(cx);
@@ -5933,15 +5929,22 @@ impl View for Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
-            if let Some(mut marked_range) = this.marked_text_range(cx) {
+            let range_to_replace = if let Some(mut marked_range) = this.marked_text_range(cx) {
                 if let Some(relative_range_utf16) = range_utf16.as_ref() {
                     marked_range.end = marked_range.start + relative_range_utf16.end;
                     marked_range.start += relative_range_utf16.start;
                 }
-
-                this.set_selected_text_range(marked_range, cx);
+                Some(marked_range)
             } else if let Some(range_utf16) = range_utf16 {
-                this.set_selected_text_range(range_utf16, cx);
+                Some(range_utf16)
+            } else {
+                None
+            };
+
+            if let Some(range) = range_to_replace {
+                this.change_selections(None, cx, |s| {
+                    s.select_ranges([OffsetUtf16(range.start)..OffsetUtf16(range.end)])
+                });
             }
 
             let selection = this.selections.newest_anchor();
@@ -5962,15 +5965,17 @@ impl View for Editor {
 
             this.handle_input(text, cx);
 
-            if let Some(new_selected_range) = new_selected_range_utf16 {
+            if let Some(mut new_selected_range) = new_selected_range_utf16 {
                 let snapshot = this.buffer.read(cx).read(cx);
                 let insertion_start = marked_range.start.to_offset_utf16(&snapshot).0;
+                new_selected_range.start += insertion_start;
+                new_selected_range.end += insertion_start;
                 drop(snapshot);
-                this.set_selected_text_range(
-                    insertion_start + new_selected_range.start
-                        ..insertion_start + new_selected_range.end,
-                    cx,
-                );
+                this.change_selections(None, cx, |selections| {
+                    selections
+                        .select_ranges([OffsetUtf16(new_selected_range.start)
+                            ..OffsetUtf16(new_selected_range.end)])
+                });
             }
         });
     }

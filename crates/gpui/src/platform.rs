@@ -91,7 +91,7 @@ pub trait Dispatcher: Send + Sync {
 
 pub trait InputHandler {
     fn selected_text_range(&self) -> Option<Range<usize>>;
-    fn set_selected_text_range(&mut self, range_utf16: Range<usize>);
+    fn marked_text_range(&self) -> Option<Range<usize>>;
     fn text_for_range(&self, range_utf16: Range<usize>) -> Option<String>;
     fn replace_text_in_range(&mut self, replacement_range: Option<Range<usize>>, text: &str);
     fn replace_and_mark_text_in_range(
@@ -100,7 +100,6 @@ pub trait InputHandler {
         new_text: &str,
         new_selected_range: Option<Range<usize>>,
     );
-    fn marked_text_range(&self) -> Option<Range<usize>>;
     fn unmark_text(&mut self);
     fn rect_for_range(&self, range_utf16: Range<usize>) -> Option<RectF>;
 }

@@ -1,6 +1,6 @@
 use super::{
     display_map::{BlockContext, ToDisplayPoint},
-    Anchor, DisplayPoint, Editor, EditorMode, EditorSnapshot, Input, Scroll, Select, SelectPhase,
+    Anchor, DisplayPoint, Editor, EditorMode, EditorSnapshot, Scroll, Select, SelectPhase,
     SoftWrap, ToPoint, MAX_LINE_LEN,
 };
 use crate::{

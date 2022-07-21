@@ -72,7 +72,6 @@ pub trait View: Entity + Sized {
     fn selected_text_range(&self, _: &AppContext) -> Option<Range<usize>> {
         None
     }
-    fn set_selected_text_range(&mut self, _: Range<usize>, _: &mut ViewContext<Self>) {}
     fn marked_text_range(&self, _: &AppContext) -> Option<Range<usize>> {
         None
     }
@@ -389,14 +388,6 @@ impl InputHandler for WindowInputHandler {
         eprintln!("selected_text_range() -> {result:?}");
 
         result
-    }
-
-    fn set_selected_text_range(&mut self, range: Range<usize>) {
-        eprintln!("set_selected_text_range({range:?})");
-
-        self.update_focused_view(|window_id, view_id, view, cx| {
-            view.set_selected_text_range(range, cx, window_id, view_id);
-        });
     }
 
     fn replace_text_in_range(&mut self, range: Option<Range<usize>>, text: &str) {
@@ -3321,13 +3312,6 @@ pub trait AnyView {
 
     fn text_for_range(&self, range: Range<usize>, cx: &AppContext) -> Option<String>;
     fn selected_text_range(&self, cx: &AppContext) -> Option<Range<usize>>;
-    fn set_selected_text_range(
-        &mut self,
-        range: Range<usize>,
-        cx: &mut MutableAppContext,
-        window_id: usize,
-        view_id: usize,
-    );
     fn marked_text_range(&self, cx: &AppContext) -> Option<Range<usize>>;
     fn unmark_text(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
     fn replace_text_in_range(
@@ -3404,17 +3388,6 @@ where
 
     fn selected_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
         View::selected_text_range(self, cx)
-    }
-
-    fn set_selected_text_range(
-        &mut self,
-        range: Range<usize>,
-        cx: &mut MutableAppContext,
-        window_id: usize,
-        view_id: usize,
-    ) {
-        let mut cx = ViewContext::new(cx, window_id, view_id);
-        View::set_selected_text_range(self, range, &mut cx)
     }
 
     fn marked_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
