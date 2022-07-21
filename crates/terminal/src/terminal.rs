@@ -3,11 +3,11 @@ pub mod connection;
 mod modal;
 pub mod terminal_element;
 
-use connection::{DisconnectedPTY, Event, Terminal, TerminalError};
+use connection::{Event, Terminal, TerminalBuilder, TerminalError};
 use dirs::home_dir;
 use gpui::{
-    actions, elements::*, geometry::vector::vec2f, keymap::Keystroke, AppContext, ClipboardItem,
-    Entity, ModelHandle, MutableAppContext, View, ViewContext,
+    actions, elements::*, geometry::vector::vec2f, keymap::Keystroke, AnyViewHandle, AppContext,
+    ClipboardItem, Entity, ModelHandle, MutableAppContext, View, ViewContext, ViewHandle,
 };
 use modal::deploy_modal;
 
@@ -16,7 +16,6 @@ use settings::{Settings, WorkingDirectory};
 use smallvec::SmallVec;
 use std::path::{Path, PathBuf};
 use terminal_element::{terminal_layout_context::TerminalLayoutData, TerminalDimensions};
-use util::ResultExt;
 use workspace::{Item, Workspace};
 
 use crate::terminal_element::TerminalEl;
@@ -49,25 +48,49 @@ actions!(
 ///Initialize and register all of our action handlers
 pub fn init(cx: &mut MutableAppContext) {
     //Global binding overrrides
-    cx.add_action(TerminalView::ctrl_c);
-    cx.add_action(TerminalView::up);
-    cx.add_action(TerminalView::down);
-    cx.add_action(TerminalView::escape);
-    cx.add_action(TerminalView::enter);
+    cx.add_action(ConnectedView::ctrl_c);
+    cx.add_action(ConnectedView::up);
+    cx.add_action(ConnectedView::down);
+    cx.add_action(ConnectedView::escape);
+    cx.add_action(ConnectedView::enter);
     //Useful terminal actions
-    cx.add_action(TerminalView::deploy);
+    cx.add_action(ConnectedView::deploy);
+    cx.add_action(ConnectedView::copy);
+    cx.add_action(ConnectedView::paste);
+    cx.add_action(ConnectedView::clear);
     cx.add_action(deploy_modal);
-    cx.add_action(TerminalView::copy);
-    cx.add_action(TerminalView::paste);
-    cx.add_action(TerminalView::clear);
 }
 
-//New Type to make terminal connection's easier
-struct TerminalConnection(Result<ModelHandle<Terminal>, TerminalError>);
+//Make terminal view an enum, that can give you views for the error and non-error states
+//Take away all the result unwrapping in the current TerminalView by making it 'infallible'
+//Bubble up to deploy(_modal)() calls
+
+enum TerminalContent {
+    Connected(ViewHandle<ConnectedView>),
+    Error(ViewHandle<ErrorView>),
+}
+
+impl TerminalContent {
+    fn handle(&self) -> AnyViewHandle {
+        match self {
+            Self::Connected(handle) => handle.into(),
+            Self::Error(handle) => handle.into(),
+        }
+    }
+}
+
+pub struct TerminalView {
+    modal: bool,
+    content: TerminalContent,
+}
+
+pub struct ErrorView {
+    error: TerminalError,
+}
 
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
-pub struct TerminalView {
-    connection: TerminalConnection,
+pub struct ConnectedView {
+    terminal: ModelHandle<Terminal>,
     has_new_content: bool,
     //Currently using iTerm bell, show bell emoji in tab until input is received
     has_bell: bool,
@@ -79,14 +102,18 @@ impl Entity for TerminalView {
     type Event = Event;
 }
 
+impl Entity for ConnectedView {
+    type Event = Event;
+}
+
+impl Entity for ErrorView {
+    type Event = Event;
+}
+
 impl TerminalView {
     ///Create a new Terminal view. This spawns a task, a thread, and opens the TTY devices
     ///To get the right working directory from a workspace, use: `get_wd_for_workspace()`
-    fn new(
-        working_directory: Option<PathBuf>,
-        modal: bool,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<Self> {
+    fn new(working_directory: Option<PathBuf>, modal: bool, cx: &mut ViewContext<Self>) -> Self {
         //The details here don't matter, the terminal will be resized on the first layout
         let size_info = TerminalDimensions::new(
             DEBUG_LINE_HEIGHT,
@@ -98,155 +125,36 @@ impl TerminalView {
         let shell = settings.terminal_overrides.shell.clone();
         let envs = settings.terminal_overrides.env.clone(); //Should be short and cheap.
 
-        let connection = DisconnectedPTY::new(working_directory, shell, envs, size_info)
-            .map(|pty| cx.add_model(|cx| pty.connect(cx)))
-            .map_err(|err| {
-                match err.downcast::<TerminalError>() {
-                    Ok(err) => err,
-                    Err(_) => unreachable!(), //This should never happen
-                }
-            });
+        let content = match TerminalBuilder::new(working_directory, shell, envs, size_info) {
+            Ok(terminal) => {
+                let terminal = cx.add_model(|cx| terminal.subscribe(cx));
+                let view = cx.add_view(|cx| ConnectedView::from_terminal(terminal, modal, cx));
+                cx.subscribe(&view, |_this, _content, event, cx| cx.emit(event.clone()))
+                    .detach();
+                TerminalContent::Connected(view)
+            }
+            Err(error) => {
+                let view = cx.add_view(|_| ErrorView {
+                    error: error.downcast::<TerminalError>().unwrap(),
+                });
+                TerminalContent::Error(view)
+            }
+        };
+        cx.focus(content.handle());
 
-        if let Ok(_) = connection {
-            Some(TerminalView::from_connection(
-                TerminalConnection(connection),
-                modal,
-                cx,
-            ))
-        } else {
-            connection.log_err();
-            None
-        }
+        TerminalView { modal, content }
     }
 
-    fn from_connection(
-        connection: TerminalConnection,
+    fn from_terminal(
+        terminal: ModelHandle<Terminal>,
         modal: bool,
         cx: &mut ViewContext<Self>,
-    ) -> TerminalView {
-        match connection.0.as_ref() {
-            Ok(conn) => {
-                cx.observe(conn, |_, _, cx| cx.notify()).detach();
-                cx.subscribe(conn, |this, _, event, cx| match event {
-                    Event::Wakeup => {
-                        if cx.is_self_focused() {
-                            cx.notify()
-                        } else {
-                            this.has_new_content = true;
-                            cx.emit(Event::TitleChanged);
-                        }
-                    }
-                    Event::Bell => {
-                        this.has_bell = true;
-                        cx.emit(Event::TitleChanged);
-                    }
-                    _ => cx.emit(*event),
-                })
-                .detach();
-            }
-            Err(_) => { /* Leave it as is */ }
-        }
-
+    ) -> Self {
+        let connected_view = cx.add_view(|cx| ConnectedView::from_terminal(terminal, modal, cx));
         TerminalView {
-            connection,
-            has_new_content: true,
-            has_bell: false,
             modal,
+            content: TerminalContent::Connected(connected_view),
         }
-    }
-
-    fn clear_bel(&mut self, cx: &mut ViewContext<Self>) {
-        self.has_bell = false;
-        cx.emit(Event::TitleChanged);
-    }
-
-    ///Create a new Terminal in the current working directory or the user's home directory
-    fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
-        let wd = get_wd_for_workspace(workspace, cx);
-        if let Some(view) = cx.add_option_view(|cx| TerminalView::new(wd, false, cx)) {
-            workspace.add_item(Box::new(view), cx);
-        }
-    }
-
-    fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
-        self.connection
-            .0
-            .as_ref()
-            .map(|term_handle| term_handle.read(cx).clear())
-            .ok();
-    }
-
-    ///Attempt to paste the clipboard into the terminal
-    fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
-        self.connection
-            .0
-            .as_ref()
-            .map(|handle| handle.read(cx))
-            .map(|term| term.copy())
-            .map(|text| text.map(|text| cx.write_to_clipboard(ClipboardItem::new(text))))
-            .ok();
-    }
-
-    ///Attempt to paste the clipboard into the terminal
-    fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
-        cx.read_from_clipboard().map(|item| {
-            self.connection
-                .0
-                .as_ref()
-                .map(|handle| handle.read(cx))
-                .map(|term| term.paste(item.text()))
-                .ok();
-        });
-    }
-
-    ///Synthesize the keyboard event corresponding to 'up'
-    fn up(&mut self, _: &Up, cx: &mut ViewContext<Self>) {
-        self.connection
-            .0
-            .as_ref()
-            .map(|handle| handle.read(cx))
-            .map(|term| term.try_keystroke(&Keystroke::parse("up").unwrap()))
-            .ok();
-    }
-
-    ///Synthesize the keyboard event corresponding to 'down'
-    fn down(&mut self, _: &Down, cx: &mut ViewContext<Self>) {
-        self.connection
-            .0
-            .as_ref()
-            .map(|handle| handle.read(cx))
-            .map(|term| term.try_keystroke(&Keystroke::parse("down").unwrap()))
-            .ok();
-    }
-
-    ///Synthesize the keyboard event corresponding to 'ctrl-c'
-    fn ctrl_c(&mut self, _: &CtrlC, cx: &mut ViewContext<Self>) {
-        self.connection
-            .0
-            .as_ref()
-            .map(|handle| handle.read(cx))
-            .map(|term| term.try_keystroke(&Keystroke::parse("ctrl-c").unwrap()))
-            .ok();
-    }
-
-    ///Synthesize the keyboard event corresponding to 'escape'
-    fn escape(&mut self, _: &Escape, cx: &mut ViewContext<Self>) {
-        self.connection
-            .0
-            .as_ref()
-            .map(|handle| handle.read(cx))
-            .map(|term| term.try_keystroke(&Keystroke::parse("escape").unwrap()))
-            .ok();
-    }
-
-    ///Synthesize the keyboard event corresponding to 'enter'
-    fn enter(&mut self, _: &Enter, cx: &mut ViewContext<Self>) {
-        self.connection
-            .0
-            .as_ref()
-            .map(|handle| handle.read(cx))
-            .map(|term| term.try_keystroke(&Keystroke::parse("enter").unwrap()))
-            .ok();
     }
 }
 
@@ -256,48 +164,25 @@ impl View for TerminalView {
     }
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
-        let element = match self.connection.0.as_ref() {
-            Ok(handle) => {
-                let connection_handle = handle.clone().downgrade();
-                TerminalEl::new(cx.handle(), connection_handle, self.modal).contained()
-            }
-            Err(e) => {
-                let settings = cx.global::<Settings>();
-                let style = TerminalLayoutData::make_text_style(cx.font_cache(), settings);
-
-                Flex::column()
-                    .with_child(
-                        Flex::row()
-                            .with_child(
-                                Label::new(
-                                    format!(
-                                        "Failed to open the terminal. Info: \n{}",
-                                        e.to_string()
-                                    ),
-                                    style,
-                                )
-                                .boxed(),
-                            )
-                            .aligned()
-                            .boxed(),
-                    )
-                    .aligned()
-                    .contained()
-            }
+        let child_view = match &self.content {
+            TerminalContent::Connected(connected) => ChildView::new(connected),
+            TerminalContent::Error(error) => ChildView::new(error),
         };
 
         if self.modal {
             let settings = cx.global::<Settings>();
             let container_style = settings.theme.terminal.modal_container;
-            element.with_style(container_style).boxed()
+            child_view.contained().with_style(container_style).boxed()
         } else {
-            element.boxed()
+            child_view.boxed()
         }
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
         cx.emit(Event::Activate);
-        self.has_new_content = false;
+        cx.defer(|view, cx| {
+            cx.focus(view.content.handle());
+        });
     }
 
     fn keymap_context(&self, _: &gpui::AppContext) -> gpui::keymap::Context {
@@ -309,6 +194,144 @@ impl View for TerminalView {
     }
 }
 
+impl ConnectedView {
+    fn from_terminal(
+        terminal: ModelHandle<Terminal>,
+        modal: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
+        cx.subscribe(&terminal, |this, _, event, cx| match event {
+            Event::Wakeup => {
+                if cx.is_self_focused() {
+                    cx.notify()
+                } else {
+                    this.has_new_content = true;
+                    cx.emit(Event::TitleChanged);
+                }
+            }
+            Event::Bell => {
+                this.has_bell = true;
+                cx.emit(Event::TitleChanged);
+            }
+            _ => cx.emit(*event),
+        })
+        .detach();
+
+        Self {
+            terminal,
+            has_new_content: true,
+            has_bell: false,
+            modal,
+        }
+    }
+
+    fn clear_bel(&mut self, cx: &mut ViewContext<ConnectedView>) {
+        self.has_bell = false;
+        cx.emit(Event::TitleChanged);
+    }
+
+    ///Create a new Terminal in the current working directory or the user's home directory
+    fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
+        let working_directory = get_working_directory(workspace, cx);
+        let view = cx.add_view(|cx| TerminalView::new(working_directory, false, cx));
+        workspace.add_item(Box::new(view), cx);
+    }
+
+    fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
+        self.terminal.read(cx).clear();
+    }
+
+    ///Attempt to paste the clipboard into the terminal
+    fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
+        self.terminal
+            .read(cx)
+            .copy()
+            .map(|text| cx.write_to_clipboard(ClipboardItem::new(text)));
+    }
+
+    ///Attempt to paste the clipboard into the terminal
+    fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
+        cx.read_from_clipboard().map(|item| {
+            self.terminal.read(cx).paste(item.text());
+        });
+    }
+
+    ///Synthesize the keyboard event corresponding to 'up'
+    fn up(&mut self, _: &Up, cx: &mut ViewContext<Self>) {
+        self.terminal
+            .read(cx)
+            .try_keystroke(&Keystroke::parse("up").unwrap());
+    }
+
+    ///Synthesize the keyboard event corresponding to 'down'
+    fn down(&mut self, _: &Down, cx: &mut ViewContext<Self>) {
+        self.terminal
+            .read(cx)
+            .try_keystroke(&Keystroke::parse("down").unwrap());
+    }
+
+    ///Synthesize the keyboard event corresponding to 'ctrl-c'
+    fn ctrl_c(&mut self, _: &CtrlC, cx: &mut ViewContext<Self>) {
+        self.terminal
+            .read(cx)
+            .try_keystroke(&Keystroke::parse("ctrl-c").unwrap());
+    }
+
+    ///Synthesize the keyboard event corresponding to 'escape'
+    fn escape(&mut self, _: &Escape, cx: &mut ViewContext<Self>) {
+        self.terminal
+            .read(cx)
+            .try_keystroke(&Keystroke::parse("escape").unwrap());
+    }
+
+    ///Synthesize the keyboard event corresponding to 'enter'
+    fn enter(&mut self, _: &Enter, cx: &mut ViewContext<Self>) {
+        self.terminal
+            .read(cx)
+            .try_keystroke(&Keystroke::parse("enter").unwrap());
+    }
+}
+
+impl View for ConnectedView {
+    fn ui_name() -> &'static str {
+        "Connected Terminal View"
+    }
+
+    fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
+        let terminal_handle = self.terminal.clone().downgrade();
+        TerminalEl::new(cx.handle(), terminal_handle, self.modal)
+            .contained()
+            .boxed()
+    }
+
+    fn on_focus(&mut self, _cx: &mut ViewContext<Self>) {
+        self.has_new_content = false;
+    }
+}
+
+impl View for ErrorView {
+    fn ui_name() -> &'static str {
+        "Terminal Error"
+    }
+
+    fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
+        let settings = cx.global::<Settings>();
+        let style = TerminalLayoutData::make_text_style(cx.font_cache(), settings);
+
+        Label::new(
+            format!(
+                "Failed to open the terminal. Info: \n{}",
+                self.error.to_string()
+            ),
+            style,
+        )
+        .aligned()
+        .contained()
+        .boxed()
+    }
+}
+
 impl Item for TerminalView {
     fn tab_content(
         &self,
@@ -316,9 +339,11 @@ impl Item for TerminalView {
         tab_theme: &theme::Tab,
         cx: &gpui::AppContext,
     ) -> ElementBox {
-        let title = match self.connection.0.as_ref() {
-            Ok(handle) => handle.read(cx).title.clone(),
-            Err(_) => "Terminal".to_string(),
+        let title = match &self.content {
+            TerminalContent::Connected(connected) => {
+                connected.read(cx).terminal.read(cx).title.clone()
+            }
+            TerminalContent::Error(_) => "Terminal".to_string(),
         };
 
         Flex::row()
@@ -335,13 +360,17 @@ impl Item for TerminalView {
         //From what I can tell, there's no  way to tell the current working
         //Directory of the terminal from outside the shell. There might be
         //solutions to this, but they are non-trivial and require more IPC
-
-        let wd = match self.connection.0.as_ref() {
-            Ok(term_handle) => term_handle.read(cx).associated_directory.clone(),
-            Err(e) => e.directory.clone(),
-        };
-
-        TerminalView::new(wd, false, cx)
+        if let TerminalContent::Connected(connected) = &self.content {
+            let associated_directory = connected
+                .read(cx)
+                .terminal
+                .read(cx)
+                .associated_directory
+                .clone();
+            Some(TerminalView::new(associated_directory, false, cx))
+        } else {
+            None
+        }
     }
 
     fn project_path(&self, _cx: &gpui::AppContext) -> Option<ProjectPath> {
@@ -387,12 +416,20 @@ impl Item for TerminalView {
         gpui::Task::ready(Ok(()))
     }
 
-    fn is_dirty(&self, _: &gpui::AppContext) -> bool {
-        self.has_new_content
+    fn is_dirty(&self, cx: &gpui::AppContext) -> bool {
+        if let TerminalContent::Connected(connected) = &self.content {
+            connected.read(cx).has_new_content
+        } else {
+            false
+        }
     }
 
-    fn has_conflict(&self, _: &AppContext) -> bool {
-        self.has_bell
+    fn has_conflict(&self, cx: &AppContext) -> bool {
+        if let TerminalContent::Connected(connected) = &self.content {
+            connected.read(cx).has_bell
+        } else {
+            false
+        }
     }
 
     fn should_update_tab_on_event(event: &Self::Event) -> bool {
@@ -409,7 +446,7 @@ impl Item for TerminalView {
 }
 
 ///Get's the working directory for the given workspace, respecting the user's settings.
-fn get_wd_for_workspace(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
+fn get_working_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
     let wd_setting = cx
         .global::<Settings>()
         .terminal_overrides

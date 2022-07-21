@@ -122,18 +122,18 @@ impl Display for TerminalError {
     }
 }
 
-pub struct DisconnectedPTY {
+pub struct TerminalBuilder {
     terminal: Terminal,
     events_rx: UnboundedReceiver<AlacTermEvent>,
 }
 
-impl DisconnectedPTY {
+impl TerminalBuilder {
     pub fn new(
         working_directory: Option<PathBuf>,
         shell: Option<Shell>,
         env: Option<HashMap<String, String>>,
         initial_size: TerminalDimensions,
-    ) -> Result<DisconnectedPTY> {
+    ) -> Result<TerminalBuilder> {
         let pty_config = {
             let alac_shell = shell.clone().and_then(|shell| match shell {
                 Shell::System => None,
@@ -214,13 +214,13 @@ impl DisconnectedPTY {
             associated_directory: working_directory,
         };
 
-        Ok(DisconnectedPTY {
+        Ok(TerminalBuilder {
             terminal,
             events_rx,
         })
     }
 
-    pub fn connect(mut self, cx: &mut ModelContext<Terminal>) -> Terminal {
+    pub fn subscribe(mut self, cx: &mut ModelContext<Terminal>) -> Terminal {
         cx.spawn_weak(|this, mut cx| async move {
             //Listen for terminal events
             while let Some(event) = self.events_rx.next().await {
@@ -435,7 +435,7 @@ impl Entity for Terminal {
 mod alacritty_unix {
     use alacritty_terminal::config::Program;
     use gpui::anyhow::{bail, Result};
-    use libc::{self};
+    use libc;
     use std::ffi::CStr;
     use std::mem::MaybeUninit;
     use std::ptr;

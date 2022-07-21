@@ -1,60 +1,60 @@
 use gpui::{ModelHandle, ViewContext};
 use workspace::Workspace;
 
-use crate::{connection::Terminal, get_wd_for_workspace, DeployModal, Event, TerminalView};
+use crate::{
+    connection::Terminal, get_working_directory, DeployModal, Event, TerminalContent, TerminalView,
+};
 
 #[derive(Debug)]
-struct StoredConnection(ModelHandle<Terminal>);
+struct StoredTerminal(ModelHandle<Terminal>);
 
 pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewContext<Workspace>) {
     // Pull the terminal connection out of the global if it has been stored
-    let possible_connection =
-        cx.update_default_global::<Option<StoredConnection>, _, _>(|possible_connection, _| {
+    let possible_terminal =
+        cx.update_default_global::<Option<StoredTerminal>, _, _>(|possible_connection, _| {
             possible_connection.take()
         });
 
-    if let Some(StoredConnection(stored_connection)) = possible_connection {
-        // Create a view from the stored connection
+    if let Some(StoredTerminal(stored_terminal)) = possible_terminal {
         workspace.toggle_modal(cx, |_, cx| {
-            cx.add_view(|cx| {
-                TerminalView::from_connection(
-                    crate::TerminalConnection(Ok(stored_connection.clone())),
-                    true,
-                    cx,
-                )
-            })
+            // Create a view from the stored connection if the terminal modal is not already shown
+            cx.add_view(|cx| TerminalView::from_terminal(stored_terminal.clone(), true, cx))
         });
-        cx.set_global::<Option<StoredConnection>>(Some(StoredConnection(
-            stored_connection.clone(),
-        )));
+        // Toggle Modal will dismiss the terminal modal if it is currently shown, so we must
+        // store the terminal back in the global
+        cx.set_global::<Option<StoredTerminal>>(Some(StoredTerminal(stored_terminal.clone())));
     } else {
         // No connection was stored, create a new terminal
         if let Some(closed_terminal_handle) = workspace.toggle_modal(cx, |workspace, cx| {
-            let wd = get_wd_for_workspace(workspace, cx);
+            // No terminal modal visible, construct a new one.
+            let working_directory = get_working_directory(workspace, cx);
 
-            //TODO fix this crash
-            let this = cx.add_view(|cx| TerminalView::new(wd, true, cx).unwrap());
+            let this = cx.add_view(|cx| TerminalView::new(working_directory, true, cx));
 
-            let connection_handle = this.read(cx).connection.0.as_ref().unwrap().clone();
-            cx.subscribe(&connection_handle, on_event).detach();
-            //Set the global immediately, in case the user opens the command palette
-            cx.set_global::<Option<StoredConnection>>(Some(StoredConnection(
-                connection_handle.clone(),
-            )));
+            if let TerminalContent::Connected(connected) = &this.read(cx).content {
+                let terminal_handle = connected.read(cx).terminal.clone();
+                cx.subscribe(&terminal_handle, on_event).detach();
+                // Set the global immediately if terminal construction was successful,
+                // in case the user opens the command palette
+                cx.set_global::<Option<StoredTerminal>>(Some(StoredTerminal(
+                    terminal_handle.clone(),
+                )));
+            }
+
             this
         }) {
-            let connection = closed_terminal_handle
-                .read(cx)
-                .connection
-                .0
-                .as_ref()
-                .unwrap()
-                .clone();
-            cx.set_global(Some(StoredConnection(connection)));
+            // Terminal modal was dismissed. Store terminal if the terminal view is connected
+            if let TerminalContent::Connected(connected) = &closed_terminal_handle.read(cx).content
+            {
+                let terminal_handle = connected.read(cx).terminal.clone();
+                // Set the global immediately if terminal construction was successful,
+                // in case the user opens the command palette
+                cx.set_global::<Option<StoredTerminal>>(Some(StoredTerminal(
+                    terminal_handle.clone(),
+                )));
+            }
         }
     }
-
-    //The problem is that the terminal modal is never re-stored.
 }
 
 pub fn on_event(
@@ -65,13 +65,8 @@ pub fn on_event(
 ) {
     // Dismiss the modal if the terminal quit
     if let Event::CloseTerminal = event {
-        cx.set_global::<Option<StoredConnection>>(None);
-        if workspace
-            .modal()
-            .cloned()
-            .and_then(|modal| modal.downcast::<TerminalView>())
-            .is_some()
-        {
+        cx.set_global::<Option<StoredTerminal>>(None);
+        if workspace.modal::<TerminalView>().is_some() {
             workspace.dismiss_modal(cx)
         }
     }

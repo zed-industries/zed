@@ -32,7 +32,7 @@ use util::ResultExt;
 use std::{cmp::min, ops::Range};
 use std::{fmt::Debug, ops::Sub};
 
-use crate::{color_translation::convert_color, connection::Terminal, TerminalView};
+use crate::{color_translation::convert_color, connection::Terminal, ConnectedView};
 
 use self::terminal_layout_context::TerminalLayoutData;
 
@@ -44,8 +44,8 @@ const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
 ///The GPUI element that paints the terminal.
 ///We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalEl {
-    connection: WeakModelHandle<Terminal>,
-    view: WeakViewHandle<TerminalView>,
+    terminal: WeakModelHandle<Terminal>,
+    view: WeakViewHandle<ConnectedView>,
     modal: bool,
 }
 
@@ -227,13 +227,13 @@ pub struct LayoutState {
 
 impl TerminalEl {
     pub fn new(
-        view: WeakViewHandle<TerminalView>,
-        connection: WeakModelHandle<Terminal>,
+        view: WeakViewHandle<ConnectedView>,
+        terminal: WeakModelHandle<Terminal>,
         modal: bool,
     ) -> TerminalEl {
         TerminalEl {
             view,
-            connection,
+            terminal,
             modal,
         }
     }
@@ -246,9 +246,9 @@ impl TerminalEl {
         cur_size: TerminalDimensions,
         cx: &mut PaintContext,
     ) {
-        let mouse_down_connection = self.connection.clone();
-        let click_connection = self.connection.clone();
-        let drag_connection = self.connection.clone();
+        let mouse_down_connection = self.terminal.clone();
+        let click_connection = self.terminal.clone();
+        let drag_connection = self.terminal.clone();
         cx.scene.push_mouse_region(
             MouseRegion::new(view_id, None, visible_bounds)
                 .on_down(
@@ -330,7 +330,7 @@ impl Element for TerminalEl {
         let layout =
             TerminalLayoutData::new(cx.global::<Settings>(), &cx.font_cache(), constraint.max);
 
-        let terminal = self.connection.upgrade(cx).unwrap().read(cx);
+        let terminal = self.terminal.upgrade(cx).unwrap().read(cx);
 
         let (cursor, cells, rects, highlights) =
             terminal.render_lock(Some(layout.size.clone()), |content, cursor_text| {
@@ -476,7 +476,7 @@ impl Element for TerminalEl {
                     let vertical_scroll =
                         (delta.y() / layout.size.line_height) * ALACRITTY_SCROLL_MULTIPLIER;
 
-                    self.connection.upgrade(cx.app).map(|terminal| {
+                    self.terminal.upgrade(cx.app).map(|terminal| {
                         terminal
                             .read(cx.app)
                             .scroll(Scroll::Delta(vertical_scroll.round() as i32));
@@ -493,7 +493,7 @@ impl Element for TerminalEl {
                     view.update(cx.app, |view, cx| view.clear_bel(cx))
                 }
 
-                self.connection
+                self.terminal
                     .upgrade(cx.app)
                     .map(|model_handle| model_handle.read(cx.app))
                     .map(|term| term.try_keystroke(keystroke))

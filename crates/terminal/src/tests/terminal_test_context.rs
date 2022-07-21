@@ -4,7 +4,7 @@ use gpui::{geometry::vector::vec2f, AppContext, ModelHandle, ReadModelWith, Test
 use itertools::Itertools;
 
 use crate::{
-    connection::{DisconnectedPTY, Terminal},
+    connection::{Terminal, TerminalBuilder},
     terminal_element::TerminalDimensions,
     DEBUG_CELL_WIDTH, DEBUG_LINE_HEIGHT, DEBUG_TERMINAL_HEIGHT, DEBUG_TERMINAL_WIDTH,
 };
@@ -25,9 +25,9 @@ impl<'a> TerminalTestContext<'a> {
         );
 
         let connection = cx.add_model(|cx| {
-            DisconnectedPTY::new(None, None, None, size_info)
+            TerminalBuilder::new(None, None, None, size_info)
                 .unwrap()
-                .connect(cx)
+                .subscribe(cx)
         });
 
         TerminalTestContext { cx, connection }

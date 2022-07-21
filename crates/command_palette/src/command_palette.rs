@@ -362,12 +362,7 @@ mod tests {
         });
 
         let palette = workspace.read_with(cx, |workspace, _| {
-            workspace
-                .modal()
-                .unwrap()
-                .clone()
-                .downcast::<CommandPalette>()
-                .unwrap()
+            workspace.modal::<CommandPalette>().unwrap()
         });
 
         palette
@@ -398,12 +393,7 @@ mod tests {
 
         // Assert editor command not present
         let palette = workspace.read_with(cx, |workspace, _| {
-            workspace
-                .modal()
-                .unwrap()
-                .clone()
-                .downcast::<CommandPalette>()
-                .unwrap()
+            workspace.modal::<CommandPalette>().unwrap()
         });
 
         palette
