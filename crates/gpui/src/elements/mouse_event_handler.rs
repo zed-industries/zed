@@ -43,7 +43,7 @@ impl MouseEventHandler {
         self
     }
 
-    pub fn on_mouse_down(
+    pub fn on_down(
         mut self,
         button: MouseButton,
         handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
@@ -61,7 +61,7 @@ impl MouseEventHandler {
         self
     }
 
-    pub fn on_mouse_down_out(
+    pub fn on_down_out(
         mut self,
         button: MouseButton,
         handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,

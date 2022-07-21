@@ -14,7 +14,7 @@ export function workspaceBackground(theme: Theme) {
 }
 
 export default function workspace(theme: Theme) {
-  const tab = {
+  const focusedInactiveTab = {
     height: 32,
     background: workspaceBackground(theme),
     iconClose: iconColor(theme, "muted"),
@@ -39,15 +39,26 @@ export default function workspace(theme: Theme) {
     }
   };
 
-  const activeTab = {
-    ...tab,
+  const focusedActiveTab = {
+    ...focusedInactiveTab,
     background: backgroundColor(theme, 500),
     text: text(theme, "sans", "active", { size: "sm" }),
     border: {
-      ...tab.border,
+      ...focusedInactiveTab.border,
       bottom: false,
     },
   };
+
+  const unfocusedInactiveTab = {
+    ...focusedInactiveTab,
+    background: backgroundColor(theme, 100),
+    text: text(theme, "sans", "placeholder", { size: "sm" }),
+  };
+
+  const unfocusedActiveTab = {
+    ...focusedInactiveTab,
+    text: text(theme, "sans", "placeholder", { size: "sm" }),
+  }
 
   const titlebarPadding = 6;
 
@@ -63,15 +74,17 @@ export default function workspace(theme: Theme) {
     },
     leaderBorderOpacity: 0.7,
     leaderBorderWidth: 2.0,
-    tab,
-    activeTab,
+    focusedActiveTab,
+    focusedInactiveTab,
+    unfocusedActiveTab,
+    unfocusedInactiveTab,
     paneButton: {
       color: iconColor(theme, "secondary"),
       border: {
-        ...tab.border,
+        ...focusedActiveTab.border,
       },
       iconWidth: 12,
-      buttonWidth: tab.height,
+      buttonWidth: focusedActiveTab.height,
       hover: {
         color: iconColor(theme, "active"),
         background: backgroundColor(theme, 300),

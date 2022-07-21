@@ -1,5 +1,5 @@
 use super::{ItemHandle, SplitDirection};
-use crate::{toolbar::Toolbar, Item, WeakItemHandle, Workspace};
+use crate::{toolbar::Toolbar, Item, NewFile, WeakItemHandle, Workspace};
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use context_menu::{ContextMenu, ContextMenuItem};
@@ -136,6 +136,7 @@ pub enum Event {
 
 pub struct Pane {
     items: Vec<Box<dyn ItemHandle>>,
+    is_active: bool,
     active_item_index: usize,
     autoscroll: bool,
     nav_history: Rc<RefCell<NavHistory>>,
@@ -184,6 +185,7 @@ impl Pane {
         let split_menu = cx.add_view(|cx| ContextMenu::new(cx));
         Self {
             items: Vec::new(),
+            is_active: true,
             active_item_index: 0,
             autoscroll: false,
             nav_history: Rc::new(RefCell::new(NavHistory {
@@ -197,6 +199,11 @@ impl Pane {
             toolbar: cx.add_view(|_| Toolbar::new(handle)),
             split_menu,
         }
+    }
+
+    pub fn set_active(&mut self, is_active: bool, cx: &mut ViewContext<Self>) {
+        self.is_active = is_active;
+        cx.notify();
     }
 
     pub fn nav_history_for_item<T: Item>(&self, item: &ViewHandle<T>) -> ItemNavHistory {
@@ -865,26 +872,23 @@ impl Pane {
                 None
             };
 
+            let is_pane_active = self.is_active;
             let mut row = Flex::row().scrollable::<Tabs, _>(1, autoscroll, cx);
             for (ix, (item, detail)) in self.items.iter().zip(self.tab_details(cx)).enumerate() {
                 let detail = if detail == 0 { None } else { Some(detail) };
-                let is_active = ix == self.active_item_index;
+                let is_tab_active = ix == self.active_item_index;
 
                 row.add_child({
-                    let tab_style = if is_active {
-                        theme.workspace.active_tab.clone()
-                    } else {
-                        theme.workspace.tab.clone()
+                    let mut tab_style = match (is_pane_active, is_tab_active) {
+                        (true, true) => theme.workspace.focused_active_tab.clone(),
+                        (true, false) => theme.workspace.focused_inactive_tab.clone(),
+                        (false, true) => theme.workspace.unfocused_active_tab.clone(),
+                        (false, false) => theme.workspace.unfocused_inactive_tab.clone(),
                     };
                     let title = item.tab_content(detail, &tab_style, cx);
 
-                    let mut style = if is_active {
-                        theme.workspace.active_tab.clone()
-                    } else {
-                        theme.workspace.tab.clone()
-                    };
                     if ix == 0 {
-                        style.container.border.left = false;
+                        tab_style.container.border.left = false;
                     }
 
                     MouseEventHandler::new::<Tab, _, _>(ix, cx, |_, cx| {
@@ -894,9 +898,9 @@ impl Pane {
                                     Align::new({
                                         let diameter = 7.0;
                                         let icon_color = if item.has_conflict(cx) {
-                                            Some(style.icon_conflict)
+                                            Some(tab_style.icon_conflict)
                                         } else if item.is_dirty(cx) {
-                                            Some(style.icon_dirty)
+                                            Some(tab_style.icon_dirty)
                                         } else {
                                             None
                                         };
@@ -928,8 +932,8 @@ impl Pane {
                                     Container::new(Align::new(title).boxed())
                                         .with_style(ContainerStyle {
                                             margin: Margin {
-                                                left: style.spacing,
-                                                right: style.spacing,
+                                                left: tab_style.spacing,
+                                                right: tab_style.spacing,
                                                 ..Default::default()
                                             },
                                             ..Default::default()
@@ -947,10 +951,11 @@ impl Pane {
                                                 cx,
                                                 |mouse_state, _| {
                                                     if mouse_state.hovered {
-                                                        icon.with_color(style.icon_close_active)
+                                                        icon.with_color(tab_style.icon_close_active)
                                                             .boxed()
                                                     } else {
-                                                        icon.with_color(style.icon_close).boxed()
+                                                        icon.with_color(tab_style.icon_close)
+                                                            .boxed()
                                                     }
                                                 },
                                             )
@@ -969,27 +974,39 @@ impl Pane {
                                         } else {
                                             Empty::new().boxed()
                                         })
-                                        .with_width(style.icon_width)
+                                        .with_width(tab_style.icon_width)
                                         .boxed(),
                                     )
                                     .boxed(),
                                 )
                                 .boxed(),
                         )
-                        .with_style(style.container)
+                        .with_style(tab_style.container)
                         .boxed()
                     })
-                    .on_mouse_down(MouseButton::Left, move |_, cx| {
+                    .with_cursor_style(if is_tab_active && is_pane_active {
+                        CursorStyle::Arrow
+                    } else {
+                        CursorStyle::PointingHand
+                    })
+                    .on_down(MouseButton::Left, move |_, cx| {
                         cx.dispatch_action(ActivateItem(ix));
                     })
                     .boxed()
                 })
             }
 
+            let filler_style = if is_pane_active {
+                &theme.workspace.focused_inactive_tab
+            } else {
+                &theme.workspace.unfocused_inactive_tab
+            };
+
             row.add_child(
                 Empty::new()
                     .contained()
-                    .with_border(theme.workspace.tab.container.border)
+                    .with_style(filler_style.container)
+                    .with_border(theme.workspace.focused_active_tab.container.border)
                     .flex(0., true)
                     .named("filler"),
             );
@@ -1054,10 +1071,12 @@ impl View for Pane {
             .with_child(
                 EventHandler::new(if let Some(active_item) = self.active_item() {
                     Flex::column()
-                        .with_child(
-                            Flex::row()
-                                .with_child(self.render_tabs(cx).flex(1., true).named("tabs"))
-                                .with_child(
+                        .with_child({
+                            let mut tab_row = Flex::row()
+                                .with_child(self.render_tabs(cx).flex(1., true).named("tabs"));
+
+                            if self.is_active {
+                                tab_row.add_child(
                                     MouseEventHandler::new::<SplitIcon, _, _>(
                                         0,
                                         cx,
@@ -1080,7 +1099,7 @@ impl View for Pane {
                                         },
                                     )
                                     .with_cursor_style(CursorStyle::PointingHand)
-                                    .on_mouse_down(
+                                    .on_down(
                                         MouseButton::Left,
                                         |MouseButtonEvent { position, .. }, cx| {
                                             cx.dispatch_action(DeploySplitMenu { position });
@@ -1088,15 +1107,36 @@ impl View for Pane {
                                     )
                                     .boxed(),
                                 )
+                            }
+
+                            tab_row
                                 .constrained()
-                                .with_height(cx.global::<Settings>().theme.workspace.tab.height)
-                                .boxed(),
-                        )
+                                .with_height(
+                                    cx.global::<Settings>()
+                                        .theme
+                                        .workspace
+                                        .focused_active_tab
+                                        .height,
+                                )
+                                .boxed()
+                        })
                         .with_child(ChildView::new(&self.toolbar).boxed())
                         .with_child(ChildView::new(active_item).flex(1., true).boxed())
                         .boxed()
                 } else {
-                    Empty::new().boxed()
+                    enum EmptyPane {}
+                    let theme = cx.global::<Settings>().theme.clone();
+
+                    MouseEventHandler::new::<EmptyPane, _, _>(0, cx, |_, _| {
+                        Empty::new()
+                            .contained()
+                            .with_background_color(theme.editor.background)
+                            .boxed()
+                    })
+                    .on_down(MouseButton::Left, |_, cx| {
+                        cx.focus_parent_view();
+                    })
+                    .boxed()
                 })
                 .on_navigate_mouse_down(move |direction, cx| {
                     let this = this.clone();

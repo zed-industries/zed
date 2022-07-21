@@ -147,6 +147,7 @@ impl ProjectSearch {
 
 pub enum ViewEvent {
     UpdateTab,
+    Activate,
     EditorEvent(editor::Event),
 }
 
@@ -162,7 +163,9 @@ impl View for ProjectSearchView {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let model = &self.model.read(cx);
         if model.match_ranges.is_empty() {
-            let theme = &cx.global::<Settings>().theme;
+            enum Status {}
+
+            let theme = cx.global::<Settings>().theme.clone();
             let text = if self.query_editor.read(cx).text(cx).is_empty() {
                 ""
             } else if model.pending_search.is_some() {
@@ -170,12 +173,18 @@ impl View for ProjectSearchView {
             } else {
                 "No results"
             };
-            Label::new(text.to_string(), theme.search.results_status.clone())
-                .aligned()
-                .contained()
-                .with_background_color(theme.editor.background)
-                .flex(1., true)
-                .boxed()
+            MouseEventHandler::new::<Status, _, _>(0, cx, |_, _| {
+                Label::new(text.to_string(), theme.search.results_status.clone())
+                    .aligned()
+                    .contained()
+                    .with_background_color(theme.editor.background)
+                    .flex(1., true)
+                    .boxed()
+            })
+            .on_down(MouseButton::Left, |_, cx| {
+                cx.focus_parent_view();
+            })
+            .boxed()
         } else {
             ChildView::new(&self.results_editor).flex(1., true).boxed()
         }
