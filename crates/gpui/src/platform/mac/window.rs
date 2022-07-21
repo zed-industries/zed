@@ -1070,7 +1070,6 @@ extern "C" fn set_marked_text(
     selected_range: NSRange,
     replacement_range: NSRange,
 ) {
-    println!("set_marked_text");
     unsafe {
         get_window_state(this)
             .borrow_mut()
@@ -1106,7 +1105,6 @@ extern "C" fn attributed_substring_for_proposed_range(
     range: NSRange,
     _actual_range: *mut c_void,
 ) -> id {
-    println!("attributed_substring_for_proposed_range({:?})", range);
     with_input_handler(this, |input_handler| {
         let range = range.to_range()?;
         if range.is_empty() {
