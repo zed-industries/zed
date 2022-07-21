@@ -5922,7 +5922,7 @@ impl View for Editor {
         &mut self,
         range: Option<Range<usize>>,
         text: &str,
-        _new_selected_range: Option<Range<usize>>,
+        new_selected_range: Option<Range<usize>>,
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
@@ -5948,6 +5948,10 @@ impl View for Editor {
             );
 
             this.handle_input(text, cx);
+
+            if let Some(new_selected_range) = new_selected_range {
+                this.set_selected_text_range(new_selected_range, cx);
+            }
         });
     }
 }

@@ -775,7 +775,7 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
                     &text,
                     new_selected_range,
                 )
-            } else if had_marked_text && !inserted_text {
+            } else if had_marked_text && !has_marked_text && !inserted_text {
                 if pending_event.unmark_text {
                     input_handler.finish_composition();
                 } else {
@@ -1194,9 +1194,9 @@ extern "C" fn attributed_substring_for_proposed_range(
         }
 
         unsafe {
-            let selected_text = ns_string(&input_handler.text_for_range(intersection)?);
+            let selected_text = input_handler.text_for_range(intersection)?;
             let string: id = msg_send![class!(NSAttributedString), alloc];
-            let string: id = msg_send![string, initWithString: selected_text];
+            let string: id = msg_send![string, initWithString: ns_string(&selected_text)];
             Some(string)
         }
     })

@@ -449,10 +449,12 @@ impl InputHandler for WindowInputHandler {
     // TODO - do these need to be handled separately?
 
     fn cancel_composition(&mut self) {
+        println!("cancel_composition()");
         self.unmark_text();
     }
 
     fn finish_composition(&mut self) {
+        println!("finish_composition()");
         self.unmark_text();
     }
 }
