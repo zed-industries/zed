@@ -10,21 +10,18 @@ use alacritty_terminal::{
 
 use connection::{Event, TerminalConnection};
 use dirs::home_dir;
-use editor::Input;
 use futures::channel::mpsc::UnboundedSender;
 use gpui::{
     actions, elements::*, keymap::Keystroke, AppContext, ClipboardItem, Entity, ModelHandle,
     MutableAppContext, View, ViewContext,
 };
 use modal::deploy_modal;
-
 use project::{LocalWorktree, Project, ProjectPath};
 use settings::{Settings, WorkingDirectory};
 use smallvec::SmallVec;
 use std::path::{Path, PathBuf};
+use terminal_element::TerminalEl;
 use workspace::{Item, Workspace};
-
-use crate::terminal_element::TerminalEl;
 
 const DEBUG_TERMINAL_WIDTH: f32 = 1000.; //This needs to be wide enough that the prompt can fill the whole space.
 const DEBUG_TERMINAL_HEIGHT: f32 = 200.;
@@ -67,7 +64,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(deploy_modal);
     cx.add_action(Terminal::copy);
     cx.add_action(Terminal::paste);
-    cx.add_action(Terminal::input);
     cx.add_action(Terminal::clear);
 }
 
@@ -154,10 +150,10 @@ impl Terminal {
         }
     }
 
-    fn input(&mut self, Input(text): &Input, cx: &mut ViewContext<Self>) {
+    fn input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
         self.connection.update(cx, |connection, _| {
             //TODO: This is probably not encoding UTF8 correctly (see alacritty/src/input.rs:L825-837)
-            connection.write_to_pty(text.clone());
+            connection.write_to_pty(text.to_string());
         });
 
         if self.has_bell {
@@ -264,6 +260,15 @@ impl View for Terminal {
             context.set.insert("ModalTerminal".into());
         }
         context
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        _: Option<std::ops::Range<usize>>,
+        text: &str,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.input(text, cx);
     }
 }
 
