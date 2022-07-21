@@ -32,7 +32,7 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
         if let Some(closed_terminal_handle) = workspace.toggle_modal(cx, |workspace, cx| {
             let wd = get_wd_for_workspace(workspace, cx);
 
-            let this = cx.add_view(|cx| TerminalView::new(wd, true, cx));
+            let this = cx.add_view(|cx| TerminalView::new(wd, true, cx).unwrap());
 
             let connection_handle = this.read(cx).connection.0.as_ref().unwrap().clone();
             cx.subscribe(&connection_handle, on_event).detach();

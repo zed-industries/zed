@@ -82,7 +82,11 @@ impl Entity for TerminalView {
 impl TerminalView {
     ///Create a new Terminal view. This spawns a task, a thread, and opens the TTY devices
     ///To get the right working directory from a workspace, use: `get_wd_for_workspace()`
-    fn new(working_directory: Option<PathBuf>, modal: bool, cx: &mut ViewContext<Self>) -> Self {
+    fn new(
+        working_directory: Option<PathBuf>,
+        modal: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Self> {
         //The details here don't matter, the terminal will be resized on the first layout
         let size_info = TerminalDimensions::new(
             DEBUG_LINE_HEIGHT,
@@ -103,7 +107,15 @@ impl TerminalView {
                 }
             });
 
-        TerminalView::from_connection(TerminalConnection(connection), modal, cx)
+        if let Ok(_) = connection {
+            Some(TerminalView::from_connection(
+                TerminalConnection(connection),
+                modal,
+                cx,
+            ))
+        } else {
+            None
+        }
     }
 
     fn from_connection(
@@ -150,8 +162,9 @@ impl TerminalView {
     ///Create a new Terminal in the current working directory or the user's home directory
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         let wd = get_wd_for_workspace(workspace, cx);
-        let view = cx.add_view(|cx| TerminalView::new(wd, false, cx));
-        workspace.add_item(Box::new(view), cx);
+        if let Some(view) = cx.add_option_view(|cx| TerminalView::new(wd, false, cx)) {
+            workspace.add_item(Box::new(view), cx);
+        }
     }
 
     fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
@@ -327,7 +340,7 @@ impl Item for TerminalView {
             Err(e) => e.directory.clone(),
         };
 
-        Some(TerminalView::new(wd, false, cx))
+        TerminalView::new(wd, false, cx)
     }
 
     fn project_path(&self, _cx: &gpui::AppContext) -> Option<ProjectPath> {
