@@ -880,10 +880,10 @@ impl Pane {
 
                 row.add_child({
                     let mut tab_style = match (is_pane_active, is_tab_active) {
-                        (true, true) => theme.workspace.focused_active_tab.clone(),
-                        (true, false) => theme.workspace.focused_inactive_tab.clone(),
-                        (false, true) => theme.workspace.unfocused_active_tab.clone(),
-                        (false, false) => theme.workspace.unfocused_inactive_tab.clone(),
+                        (true, true) => theme.workspace.active_pane_active_tab.clone(),
+                        (true, false) => theme.workspace.active_pane_inactive_tab.clone(),
+                        (false, true) => theme.workspace.inactive_pane_active_tab.clone(),
+                        (false, false) => theme.workspace.inactive_pane_inactive_tab.clone(),
                     };
                     let title = item.tab_content(detail, &tab_style, cx);
 
@@ -997,16 +997,16 @@ impl Pane {
             }
 
             let filler_style = if is_pane_active {
-                &theme.workspace.focused_inactive_tab
+                &theme.workspace.active_pane_inactive_tab
             } else {
-                &theme.workspace.unfocused_inactive_tab
+                &theme.workspace.inactive_pane_inactive_tab
             };
 
             row.add_child(
                 Empty::new()
                     .contained()
                     .with_style(filler_style.container)
-                    .with_border(theme.workspace.focused_active_tab.container.border)
+                    .with_border(theme.workspace.active_pane_active_tab.container.border)
                     .flex(0., true)
                     .named("filler"),
             );
@@ -1115,7 +1115,7 @@ impl View for Pane {
                                     cx.global::<Settings>()
                                         .theme
                                         .workspace
-                                        .focused_active_tab
+                                        .active_pane_active_tab
                                         .height,
                                 )
                                 .boxed()
@@ -1130,7 +1130,7 @@ impl View for Pane {
                     MouseEventHandler::new::<EmptyPane, _, _>(0, cx, |_, _| {
                         Empty::new()
                             .contained()
-                            .with_background_color(theme.editor.background)
+                            .with_background_color(theme.workspace.background)
                             .boxed()
                     })
                     .on_down(MouseButton::Left, |_, cx| {

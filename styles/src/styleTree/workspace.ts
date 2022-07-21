@@ -14,7 +14,7 @@ export function workspaceBackground(theme: Theme) {
 }
 
 export default function workspace(theme: Theme) {
-  const focusedInactiveTab = {
+  const activePaneInactiveTab = {
     height: 32,
     background: workspaceBackground(theme),
     iconClose: iconColor(theme, "muted"),
@@ -39,24 +39,24 @@ export default function workspace(theme: Theme) {
     }
   };
 
-  const focusedActiveTab = {
-    ...focusedInactiveTab,
+  const activePaneActiveTab = {
+    ...activePaneInactiveTab,
     background: backgroundColor(theme, 500),
     text: text(theme, "sans", "active", { size: "sm" }),
     border: {
-      ...focusedInactiveTab.border,
+      ...activePaneInactiveTab.border,
       bottom: false,
     },
   };
 
-  const unfocusedInactiveTab = {
-    ...focusedInactiveTab,
+  const inactivePaneInactiveTab = {
+    ...activePaneInactiveTab,
     background: backgroundColor(theme, 100),
     text: text(theme, "sans", "placeholder", { size: "sm" }),
   };
 
-  const unfocusedActiveTab = {
-    ...focusedInactiveTab,
+  const inactivePaneActiveTab = {
+    ...activePaneInactiveTab,
     text: text(theme, "sans", "placeholder", { size: "sm" }),
   }
 
@@ -74,17 +74,17 @@ export default function workspace(theme: Theme) {
     },
     leaderBorderOpacity: 0.7,
     leaderBorderWidth: 2.0,
-    focusedActiveTab,
-    focusedInactiveTab,
-    unfocusedActiveTab,
-    unfocusedInactiveTab,
+    activePaneActiveTab,
+    activePaneInactiveTab,
+    inactivePaneActiveTab,
+    inactivePaneInactiveTab,
     paneButton: {
       color: iconColor(theme, "secondary"),
       border: {
-        ...focusedActiveTab.border,
+        ...activePaneActiveTab.border,
       },
       iconWidth: 12,
-      buttonWidth: focusedActiveTab.height,
+      buttonWidth: activePaneActiveTab.height,
       hover: {
         color: iconColor(theme, "active"),
         background: backgroundColor(theme, 300),
