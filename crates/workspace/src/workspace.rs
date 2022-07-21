@@ -3049,18 +3049,17 @@ mod tests {
         //     multi-entry items:   (3, 4)
         let left_pane = workspace.update(cx, |workspace, cx| {
             let left_pane = workspace.active_pane().clone();
-            let right_pane = workspace
-                .split_pane(left_pane.clone(), SplitDirection::Right, cx)
-                .unwrap();
-
-            workspace.activate_pane(left_pane.clone(), cx);
             workspace.add_item(Box::new(cx.add_view(|_| item_2_3.clone())), cx);
             for item in &single_entry_items {
                 workspace.add_item(Box::new(cx.add_view(|_| item.clone())), cx);
             }
+            left_pane.update(cx, |pane, cx| {
+                pane.activate_item(2, true, true, false, cx);
+            });
 
-            workspace.activate_pane(right_pane.clone(), cx);
-            workspace.add_item(Box::new(cx.add_view(|_| single_entry_items[1].clone())), cx);
+            workspace
+                .split_pane(left_pane.clone(), SplitDirection::Right, cx)
+                .unwrap();
             workspace.add_item(Box::new(cx.add_view(|_| item_3_4.clone())), cx);
 
             left_pane
