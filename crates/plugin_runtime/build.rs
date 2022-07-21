@@ -23,7 +23,11 @@ fn main() {
     // Compile the plugins using the same profile as the current Zed build
     let (profile_flags, profile_target) = match std::env::var("PROFILE").unwrap().as_str() {
         "debug" => (&[][..], "debug"),
-        "release" => (&["--release"][..], "release"),
+        "release" => {
+            // Always rerun when doing a release build
+            println!("cargo:rerun-if-changed={}", base.display());
+            (&["--release"][..], "release")
+        }
         unknown => panic!("unknown profile `{}`", unknown),
     };
     // Invoke cargo to build the plugins
