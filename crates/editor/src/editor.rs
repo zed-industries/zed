@@ -5888,6 +5888,12 @@ impl View for Editor {
     }
 
     fn selected_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
+        // Prevent the IME menu from appearing when holding down an alphabetic key
+        // while input is disabled.
+        if !self.input_enabled {
+            return None;
+        }
+
         let range = self.selections.newest::<OffsetUtf16>(cx).range();
         Some(range.start.0..range.end.0)
     }
