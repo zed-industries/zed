@@ -1,11 +1,11 @@
 use crate::{
-    geometry::vector::Vector2F, CursorRegion, DebugContext, Element, ElementBox, Event,
-    EventContext, LayoutContext, MouseButton, MouseEvent, MouseRegion, NavigationDirection,
-    PaintContext, SizeConstraint,
+    geometry::vector::Vector2F, presenter::MeasurementContext, CursorRegion, DebugContext, Element,
+    ElementBox, Event, EventContext, LayoutContext, MouseButton, MouseEvent, MouseRegion,
+    NavigationDirection, PaintContext, SizeConstraint,
 };
 use pathfinder_geometry::rect::RectF;
 use serde_json::json;
-use std::{any::TypeId, rc::Rc};
+use std::{any::TypeId, ops::Range, rc::Rc};
 
 pub struct EventHandler {
     child: ElementBox,
@@ -156,6 +156,18 @@ impl Element for EventHandler {
                 _ => false,
             }
         }
+    }
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        cx: &MeasurementContext,
+    ) -> Option<RectF> {
+        self.child.rect_for_text_range(range_utf16, cx)
     }
 
     fn debug(

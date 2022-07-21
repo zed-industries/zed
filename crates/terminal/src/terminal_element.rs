@@ -395,6 +395,18 @@ impl Element for TerminalEl {
         }
     }
 
+    fn rect_for_text_range(
+        &self,
+        _: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &gpui::MeasurementContext,
+    ) -> Option<RectF> {
+        todo!()
+    }
+
     fn debug(
         &self,
         _bounds: gpui::geometry::rect::RectF,

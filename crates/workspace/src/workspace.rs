@@ -43,6 +43,7 @@ use std::{
     fmt,
     future::Future,
     mem,
+    ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
@@ -2536,6 +2537,18 @@ impl Element for AvatarRibbon {
         _: &mut gpui::EventContext,
     ) -> bool {
         false
+    }
+
+    fn rect_for_text_range(
+        &self,
+        _: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &gpui::MeasurementContext,
+    ) -> Option<RectF> {
+        None
     }
 
     fn debug(

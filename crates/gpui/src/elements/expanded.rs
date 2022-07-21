@@ -1,6 +1,10 @@
+use std::ops::Range;
+
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    json, DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
+    json,
+    presenter::MeasurementContext,
+    DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
     SizeConstraint,
 };
 use serde_json::json;
@@ -72,6 +76,18 @@ impl Element for Expanded {
         cx: &mut EventContext,
     ) -> bool {
         self.child.dispatch_event(event, cx)
+    }
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        cx: &MeasurementContext,
+    ) -> Option<RectF> {
+        self.child.rect_for_text_range(range_utf16, cx)
     }
 
     fn debug(

@@ -4,6 +4,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::json,
+    presenter::MeasurementContext,
     DebugContext, Element, ElementBox, ElementRc, Event, EventContext, LayoutContext, PaintContext,
     RenderContext, ScrollWheelEvent, SizeConstraint, View, ViewContext,
 };
@@ -326,6 +327,39 @@ impl Element for List {
         }
 
         handled
+    }
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        bounds: RectF,
+        _: RectF,
+        scroll_top: &Self::LayoutState,
+        _: &Self::PaintState,
+        cx: &MeasurementContext,
+    ) -> Option<RectF> {
+        let state = self.state.0.borrow();
+        let mut item_origin = bounds.origin() - vec2f(0., scroll_top.offset_in_item);
+        let mut cursor = state.items.cursor::<Count>();
+        cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
+        while let Some(item) = cursor.item() {
+            if item_origin.y() > bounds.max_y() {
+                break;
+            }
+
+            if let ListItem::Rendered(element) = item {
+                if let Some(rect) = element.rect_for_text_range(range_utf16.clone(), cx) {
+                    return Some(rect);
+                }
+
+                item_origin.set_y(item_origin.y() + element.size().y());
+                cursor.next(&());
+            } else {
+                unreachable!();
+            }
+        }
+
+        None
     }
 
     fn debug(
@@ -936,6 +970,18 @@ mod tests {
             _: &mut (),
             _: &mut EventContext,
         ) -> bool {
+            todo!()
+        }
+
+        fn rect_for_text_range(
+            &self,
+            _: Range<usize>,
+            _: RectF,
+            _: RectF,
+            _: &Self::LayoutState,
+            _: &Self::PaintState,
+            _: &MeasurementContext,
+        ) -> Option<RectF> {
             todo!()
         }
 

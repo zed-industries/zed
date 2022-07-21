@@ -1003,8 +1003,33 @@ extern "C" fn selected_range(this: &Object, _: Sel) -> NSRange {
         .map_or(NSRange::invalid(), |range| range.into())
 }
 
-extern "C" fn first_rect_for_character_range(_: &Object, _: Sel, _: NSRange, _: id) -> NSRect {
-    NSRect::new(NSPoint::new(0., 0.), NSSize::new(20., 20.))
+extern "C" fn first_rect_for_character_range(
+    this: &Object,
+    _: Sel,
+    range: NSRange,
+    _: id,
+) -> NSRect {
+    let frame = unsafe {
+        let window = get_window_state(this).borrow().native_window;
+        NSView::frame(window)
+    };
+
+    with_input_handler(this, |input_handler| {
+        input_handler.rect_for_range(range.to_range()?)
+    })
+    .flatten()
+    .map_or(
+        NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.)),
+        |rect| {
+            NSRect::new(
+                NSPoint::new(
+                    frame.origin.x + rect.origin_x() as f64,
+                    frame.origin.y + frame.size.height - rect.origin_y() as f64,
+                ),
+                NSSize::new(rect.width() as f64, rect.height() as f64),
+            )
+        },
+    )
 }
 
 extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NSRange) {

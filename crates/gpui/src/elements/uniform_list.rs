@@ -5,6 +5,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{self, json},
+    presenter::MeasurementContext,
     ElementBox, RenderContext, ScrollWheelEvent, View,
 };
 use json::ToJson;
@@ -325,6 +326,21 @@ impl Element for UniformList {
         }
 
         handled
+    }
+
+    fn rect_for_text_range(
+        &self,
+        range: Range<usize>,
+        _: RectF,
+        _: RectF,
+        layout: &Self::LayoutState,
+        _: &Self::PaintState,
+        cx: &MeasurementContext,
+    ) -> Option<RectF> {
+        layout
+            .items
+            .iter()
+            .find_map(|child| child.rect_for_text_range(range.clone(), cx))
     }
 
     fn debug(

@@ -76,6 +76,18 @@ impl Element for KeystrokeLabel {
         element.dispatch_event(event, cx)
     }
 
+    fn rect_for_text_range(
+        &self,
+        _: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &MeasurementContext,
+    ) -> Option<RectF> {
+        None
+    }
+
     fn debug(
         &self,
         _: RectF,

@@ -31,7 +31,9 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    json, Action, DebugContext, Event, EventContext, LayoutContext, PaintContext, RenderContext,
+    json,
+    presenter::MeasurementContext,
+    Action, DebugContext, Event, EventContext, LayoutContext, PaintContext, RenderContext,
     SizeConstraint, View,
 };
 use core::panic;
@@ -41,7 +43,7 @@ use std::{
     borrow::Cow,
     cell::RefCell,
     mem,
-    ops::{Deref, DerefMut},
+    ops::{Deref, DerefMut, Range},
     rc::Rc,
 };
 
@@ -49,6 +51,11 @@ trait AnyElement {
     fn layout(&mut self, constraint: SizeConstraint, cx: &mut LayoutContext) -> Vector2F;
     fn paint(&mut self, origin: Vector2F, visible_bounds: RectF, cx: &mut PaintContext);
     fn dispatch_event(&mut self, event: &Event, cx: &mut EventContext) -> bool;
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        cx: &MeasurementContext,
+    ) -> Option<RectF>;
     fn debug(&self, cx: &DebugContext) -> serde_json::Value;
 
     fn size(&self) -> Vector2F;
@@ -82,6 +89,16 @@ pub trait Element {
         paint: &mut Self::PaintState,
         cx: &mut EventContext,
     ) -> bool;
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        bounds: RectF,
+        visible_bounds: RectF,
+        layout: &Self::LayoutState,
+        paint: &Self::PaintState,
+        cx: &MeasurementContext,
+    ) -> Option<RectF>;
 
     fn metadata(&self) -> Option<&dyn Any> {
         None
@@ -287,6 +304,26 @@ impl<T: Element> AnyElement for Lifecycle<T> {
         }
     }
 
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        cx: &MeasurementContext,
+    ) -> Option<RectF> {
+        if let Lifecycle::PostPaint {
+            element,
+            bounds,
+            visible_bounds,
+            layout,
+            paint,
+            ..
+        } = self
+        {
+            element.rect_for_text_range(range_utf16, *bounds, *visible_bounds, layout, paint, cx)
+        } else {
+            None
+        }
+    }
+
     fn size(&self) -> Vector2F {
         match self {
             Lifecycle::Empty | Lifecycle::Init { .. } => panic!("invalid element lifecycle state"),
@@ -383,6 +420,14 @@ impl ElementRc {
 
     pub fn dispatch_event(&mut self, event: &Event, cx: &mut EventContext) -> bool {
         self.element.borrow_mut().dispatch_event(event, cx)
+    }
+
+    pub fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        cx: &MeasurementContext,
+    ) -> Option<RectF> {
+        self.element.borrow().rect_for_text_range(range_utf16, cx)
     }
 
     pub fn size(&self) -> Vector2F {

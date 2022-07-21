@@ -30,7 +30,8 @@ pub mod platform;
 pub use gpui_macros::test;
 pub use platform::*;
 pub use presenter::{
-    Axis, DebugContext, EventContext, LayoutContext, PaintContext, SizeConstraint, Vector2FExt,
+    Axis, DebugContext, EventContext, LayoutContext, MeasurementContext, PaintContext,
+    SizeConstraint, Vector2FExt,
 };
 
 pub use anyhow;

@@ -19,7 +19,7 @@ use smallvec::SmallVec;
 use std::{
     collections::{HashMap, HashSet},
     marker::PhantomData,
-    ops::{Deref, DerefMut},
+    ops::{Deref, DerefMut, Range},
     sync::Arc,
 };
 
@@ -222,6 +222,17 @@ impl Presenter {
             view_stack: Vec::new(),
             app: cx,
         }
+    }
+
+    pub fn rect_for_text_range(&self, range_utf16: Range<usize>, cx: &AppContext) -> Option<RectF> {
+        cx.focused_view_id(self.window_id).and_then(|view_id| {
+            let cx = MeasurementContext {
+                app: cx,
+                rendered_views: &self.rendered_views,
+                window_id: self.window_id,
+            };
+            cx.rect_for_text_range(view_id, range_utf16)
+        })
     }
 
     pub fn dispatch_event(&mut self, event: Event, cx: &mut MutableAppContext) -> bool {
@@ -777,6 +788,27 @@ impl<'a> DerefMut for EventContext<'a> {
     }
 }
 
+pub struct MeasurementContext<'a> {
+    app: &'a AppContext,
+    rendered_views: &'a HashMap<usize, ElementBox>,
+    pub window_id: usize,
+}
+
+impl<'a> Deref for MeasurementContext<'a> {
+    type Target = AppContext;
+
+    fn deref(&self) -> &Self::Target {
+        self.app
+    }
+}
+
+impl<'a> MeasurementContext<'a> {
+    fn rect_for_text_range(&self, view_id: usize, range_utf16: Range<usize>) -> Option<RectF> {
+        let element = self.rendered_views.get(&view_id)?;
+        element.rect_for_text_range(range_utf16, self)
+    }
+}
+
 pub struct DebugContext<'a> {
     rendered_views: &'a HashMap<usize, ElementBox>,
     pub font_cache: &'a FontCache,
@@ -934,6 +966,18 @@ impl Element for ChildView {
         cx: &mut EventContext,
     ) -> bool {
         cx.dispatch_event(self.view.id(), event)
+    }
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        cx: &MeasurementContext,
+    ) -> Option<RectF> {
+        cx.rect_for_text_range(self.view.id(), range_utf16)
     }
 
     fn debug(

@@ -1,6 +1,7 @@
 use super::Element;
 use crate::{
     json::{self, json},
+    presenter::MeasurementContext,
     DebugContext, PaintContext,
 };
 use json::ToJson;
@@ -65,6 +66,18 @@ where
         _: &mut crate::EventContext,
     ) -> bool {
         false
+    }
+
+    fn rect_for_text_range(
+        &self,
+        _: std::ops::Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &MeasurementContext,
+    ) -> Option<RectF> {
+        None
     }
 
     fn debug(

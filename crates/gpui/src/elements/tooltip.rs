@@ -6,12 +6,14 @@ use crate::{
     fonts::TextStyle,
     geometry::{rect::RectF, vector::Vector2F},
     json::json,
+    presenter::MeasurementContext,
     Action, Axis, ElementStateHandle, LayoutContext, PaintContext, RenderContext, SizeConstraint,
     Task, View,
 };
 use serde::Deserialize;
 use std::{
     cell::{Cell, RefCell},
+    ops::Range,
     rc::Rc,
     time::Duration,
 };
@@ -194,6 +196,18 @@ impl Element for Tooltip {
         cx: &mut crate::EventContext,
     ) -> bool {
         self.child.dispatch_event(event, cx)
+    }
+
+    fn rect_for_text_range(
+        &self,
+        range: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        cx: &MeasurementContext,
+    ) -> Option<RectF> {
+        self.child.rect_for_text_range(range, cx)
     }
 
     fn debug(

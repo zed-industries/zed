@@ -1,6 +1,9 @@
+use std::ops::Range;
+
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::{self, json, ToJson},
+    presenter::MeasurementContext,
     DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, PaintContext,
     SizeConstraint,
 };
@@ -62,6 +65,21 @@ impl Element for Stack {
             }
         }
         false
+    }
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        cx: &MeasurementContext,
+    ) -> Option<RectF> {
+        self.children
+            .iter()
+            .rev()
+            .find_map(|child| child.rect_for_text_range(range_utf16.clone(), cx))
     }
 
     fn debug(

@@ -30,7 +30,7 @@ use gpui::{
     WeakViewHandle,
 };
 use json::json;
-use language::{Bias, DiagnosticSeverity, Selection};
+use language::{Bias, DiagnosticSeverity, OffsetUtf16, Selection};
 use project::ProjectPath;
 use settings::Settings;
 use smallvec::SmallVec;
@@ -1515,6 +1515,43 @@ impl Element for EditorElement {
 
             _ => false,
         }
+    }
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        bounds: RectF,
+        _: RectF,
+        layout: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &gpui::MeasurementContext,
+    ) -> Option<RectF> {
+        let text_bounds = RectF::new(
+            bounds.origin() + vec2f(layout.gutter_size.x(), 0.0),
+            layout.text_size,
+        );
+        let content_origin = text_bounds.origin() + vec2f(layout.gutter_margin, 0.);
+        let scroll_position = layout.snapshot.scroll_position();
+        let start_row = scroll_position.y() as u32;
+        let scroll_top = scroll_position.y() * layout.line_height;
+        let scroll_left = scroll_position.x() * layout.em_width;
+
+        let range_start =
+            OffsetUtf16(range_utf16.start).to_display_point(&layout.snapshot.display_snapshot);
+        if range_start.row() < start_row {
+            return None;
+        }
+
+        let line = layout
+            .line_layouts
+            .get((range_start.row() - start_row) as usize)?;
+        let range_start_x = line.x_for_index(range_start.column() as usize);
+        let range_start_y = range_start.row() as f32 * layout.line_height;
+        Some(RectF::new(
+            content_origin + vec2f(range_start_x, range_start_y + layout.line_height)
+                - vec2f(scroll_left, scroll_top),
+            vec2f(layout.em_width, layout.line_height),
+        ))
     }
 
     fn debug(

@@ -1,4 +1,4 @@
-use std::{any::TypeId, rc::Rc};
+use std::{any::TypeId, ops::Range, rc::Rc};
 
 use super::Padding;
 use crate::{
@@ -8,8 +8,8 @@ use crate::{
     },
     platform::CursorStyle,
     scene::CursorRegion,
-    DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, MouseRegion, MouseState,
-    PaintContext, RenderContext, SizeConstraint, View,
+    DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, MouseRegion,
+    MouseState, PaintContext, RenderContext, SizeConstraint, View, presenter::MeasurementContext,
 };
 use serde_json::json;
 
@@ -190,6 +190,18 @@ impl Element for MouseEventHandler {
         cx: &mut EventContext,
     ) -> bool {
         self.child.dispatch_event(event, cx)
+    }
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        cx: &MeasurementContext,
+    ) -> Option<RectF> {
+        self.child.rect_for_text_range(range_utf16, cx)
     }
 
     fn debug(

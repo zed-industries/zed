@@ -3,6 +3,7 @@ pub mod action;
 use crate::{
     elements::ElementBox,
     executor::{self, Task},
+    geometry::rect::RectF,
     keymap::{self, Binding, Keystroke},
     platform::{self, KeyDownEvent, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
@@ -444,6 +445,13 @@ impl InputHandler for WindowInputHandler {
                 view_id,
             );
         });
+    }
+
+    fn rect_for_range(&self, range_utf16: Range<usize>) -> Option<RectF> {
+        let app = self.app.borrow();
+        let (presenter, _) = app.presenters_and_platform_windows.get(&self.window_id)?;
+        let presenter = presenter.borrow();
+        presenter.rect_for_text_range(range_utf16, &app)
     }
 }
 
