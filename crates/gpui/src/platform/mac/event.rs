@@ -237,37 +237,36 @@ unsafe fn get_key_text(native_event: id) -> Option<&'static str> {
             .to_str()
             .unwrap();
 
-    let first_char = unmodified_chars.chars().next()?;
+    let first_char = unmodified_chars.chars().next().map(|ch| ch as u16);
     use cocoa::appkit::*;
 
     #[allow(non_upper_case_globals)]
-    let unmodified_chars = match first_char as u16 {
-        SPACE_KEY => "space",
-        BACKSPACE_KEY => "backspace",
-        ENTER_KEY | NUMPAD_ENTER_KEY => "enter",
-        ESCAPE_KEY => "escape",
-        TAB_KEY => "tab",
-        SHIFT_TAB_KEY => "tab",
-
-        NSUpArrowFunctionKey => "up",
-        NSDownArrowFunctionKey => "down",
-        NSLeftArrowFunctionKey => "left",
-        NSRightArrowFunctionKey => "right",
-        NSPageUpFunctionKey => "pageup",
-        NSPageDownFunctionKey => "pagedown",
-        NSDeleteFunctionKey => "delete",
-        NSF1FunctionKey => "f1",
-        NSF2FunctionKey => "f2",
-        NSF3FunctionKey => "f3",
-        NSF4FunctionKey => "f4",
-        NSF5FunctionKey => "f5",
-        NSF6FunctionKey => "f6",
-        NSF7FunctionKey => "f7",
-        NSF8FunctionKey => "f8",
-        NSF9FunctionKey => "f9",
-        NSF10FunctionKey => "f10",
-        NSF11FunctionKey => "f11",
-        NSF12FunctionKey => "f12",
+    let unmodified_chars = match first_char {
+        Some(SPACE_KEY) => "space",
+        Some(BACKSPACE_KEY) => "backspace",
+        Some(ENTER_KEY) | Some(NUMPAD_ENTER_KEY) => "enter",
+        Some(ESCAPE_KEY) => "escape",
+        Some(TAB_KEY) => "tab",
+        Some(SHIFT_TAB_KEY) => "tab",
+        Some(NSUpArrowFunctionKey) => "up",
+        Some(NSDownArrowFunctionKey) => "down",
+        Some(NSLeftArrowFunctionKey) => "left",
+        Some(NSRightArrowFunctionKey) => "right",
+        Some(NSPageUpFunctionKey) => "pageup",
+        Some(NSPageDownFunctionKey) => "pagedown",
+        Some(NSDeleteFunctionKey) => "delete",
+        Some(NSF1FunctionKey) => "f1",
+        Some(NSF2FunctionKey) => "f2",
+        Some(NSF3FunctionKey) => "f3",
+        Some(NSF4FunctionKey) => "f4",
+        Some(NSF5FunctionKey) => "f5",
+        Some(NSF6FunctionKey) => "f6",
+        Some(NSF7FunctionKey) => "f7",
+        Some(NSF8FunctionKey) => "f8",
+        Some(NSF9FunctionKey) => "f9",
+        Some(NSF10FunctionKey) => "f10",
+        Some(NSF11FunctionKey) => "f11",
+        Some(NSF12FunctionKey) => "f12",
         _ => unmodified_chars,
     };
 

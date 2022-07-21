@@ -273,7 +273,7 @@ struct WindowState {
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     input_handler: Option<Box<dyn InputHandler>>,
-    pending_keydown_event: Option<KeyDownEvent>,
+    pending_key_down_event: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
     executor: Rc<executor::Foreground>,
     scene_to_render: Option<Scene>,
@@ -361,7 +361,7 @@ impl Window {
                 close_callback: None,
                 activate_callback: None,
                 input_handler: None,
-                pending_keydown_event: None,
+                pending_key_down_event: None,
                 synthetic_drag_counter: 0,
                 executor,
                 scene_to_render: Default::default(),
@@ -697,7 +697,7 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
 
     let event = unsafe { Event::from_native(native_event, Some(window_state_borrow.size().y())) };
     if let Some(event) = event {
-        window_state_borrow.pending_keydown_event = match event {
+        window_state_borrow.pending_key_down_event = match event {
             Event::KeyDown(event) => {
                 let keydown = event.keystroke.clone();
                 // Ignore events from held-down keys after some of the initially-pressed keys
@@ -723,10 +723,10 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
 
         let mut handled = false;
         let mut window_state_borrow = window_state.borrow_mut();
-        if let Some(event) = window_state_borrow.pending_keydown_event.take() {
+        if let Some(event) = window_state_borrow.pending_key_down_event.take() {
             if let Some(mut callback) = window_state_borrow.event_callback.take() {
                 drop(window_state_borrow);
-                handled = callback(Event::KeyDown(event.clone()));
+                handled = callback(Event::KeyDown(event));
                 window_state.borrow_mut().event_callback = Some(callback);
             }
         } else {
@@ -745,7 +745,6 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let mut window_state_borrow = window_state.as_ref().borrow_mut();
 
     let event = unsafe { Event::from_native(native_event, Some(window_state_borrow.size().y())) };
-
     if let Some(event) = event {
         match &event {
             Event::MouseMoved(
@@ -1015,7 +1014,7 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
     unsafe {
         let window_state = get_window_state(this);
         let mut window_state_borrow = window_state.borrow_mut();
-        let pending_keydown_event = window_state_borrow.pending_keydown_event.take();
+        let pending_key_down_event = window_state_borrow.pending_key_down_event.take();
         drop(window_state_borrow);
 
         let is_attributed_string: BOOL =
@@ -1035,20 +1034,19 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
                 .flatten()
                 .is_some();
 
-        if is_composing || text.chars().count() > 1 || pending_keydown_event.is_none() {
+        if is_composing || text.chars().count() > 1 || pending_key_down_event.is_none() {
             with_input_handler(this, |input_handler| {
                 input_handler.replace_text_in_range(replacement_range, text)
             });
         } else {
-            let mut pending_keydown_event = pending_keydown_event.unwrap();
-            pending_keydown_event.keystroke.key = text.into();
+            let pending_key_down_event = pending_key_down_event.unwrap();
             let mut window_state_borrow = window_state.borrow_mut();
             let event_callback = window_state_borrow.event_callback.take();
             drop(window_state_borrow);
 
             let mut handled = false;
             if let Some(mut event_callback) = event_callback {
-                handled = event_callback(Event::KeyDown(pending_keydown_event));
+                handled = event_callback(Event::KeyDown(pending_key_down_event));
                 window_state.borrow_mut().event_callback = Some(event_callback);
             }
 
@@ -1071,7 +1069,7 @@ extern "C" fn set_marked_text(
     unsafe {
         get_window_state(this)
             .borrow_mut()
-            .pending_keydown_event
+            .pending_key_down_event
             .take();
 
         let is_attributed_string: BOOL =
