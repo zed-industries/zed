@@ -1,6 +1,8 @@
 use std::{io::Write, path::Path};
 use wasmtime::{Config, Engine};
 
+const TARGETS: [&'static str; 2] = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
+
 fn main() {
     let base = Path::new("../../plugins");
 
@@ -21,13 +23,10 @@ fn main() {
         std::fs::create_dir_all(base.join("bin")).expect("Could not make plugins bin directory");
 
     // Compile the plugins using the same profile as the current Zed build
+    println!("cargo:rerun-if-env-changed=PROFILE");
     let (profile_flags, profile_target) = match std::env::var("PROFILE").unwrap().as_str() {
         "debug" => (&[][..], "debug"),
-        "release" => {
-            // Always rerun when doing a release build
-            println!("cargo:rerun-if-changed={}", base.display());
-            (&["--release"][..], "release")
-        }
+        "release" => (&["--release"][..], "release"),
         unknown => panic!("unknown profile `{}`", unknown),
     };
 
@@ -46,12 +45,6 @@ fn main() {
         .success();
     assert!(build_successful);
 
-    // Get the target architecture for pre-cross-compilation of plugins
-    // and create and engine with the appropriate config
-    let target_triple = std::env::var("TARGET").unwrap().to_string();
-    println!("cargo:rerun-if-env-changed=TARGET");
-    let engine = create_default_engine(&target_triple);
-
     // Find all compiled binaries
     let binaries = std::fs::read_dir(base.join("target/wasm32-wasi").join(profile_target))
         .expect("Could not find compiled plugins in target");
@@ -68,9 +61,11 @@ fn main() {
         };
 
         if let Some(path) = is_wasm() {
-            let out_path = base.join("bin").join(path.file_name().unwrap());
-            std::fs::copy(&path, &out_path).expect("Could not copy compiled plugin to bin");
-            precompile(&out_path, &engine);
+            for target in TARGETS {
+                let out_path = base.join("bin").join(path.file_name().unwrap());
+                std::fs::copy(&path, &out_path).expect("Could not copy compiled plugin to bin");
+                precompile(&out_path, &target);
+            }
         }
     }
 }
@@ -88,14 +83,16 @@ fn create_default_engine(target_triple: &str) -> Engine {
     Engine::new(&config).expect("Could not create precompilation engine")
 }
 
-fn precompile(path: &Path, engine: &Engine) {
+fn precompile(path: &Path, target_triple: &str) {
+    let engine = create_default_engine(target_triple);
     let bytes = std::fs::read(path).expect("Could not read wasm module");
     let compiled = engine
         .precompile_module(&bytes)
         .expect("Could not precompile module");
     let out_path = path.parent().unwrap().join(&format!(
-        "{}.pre",
+        "{}.{}",
         path.file_name().unwrap().to_string_lossy(),
+        target_triple,
     ));
     let mut out_file = std::fs::File::create(out_path)
         .expect("Could not create output file for precompiled module");

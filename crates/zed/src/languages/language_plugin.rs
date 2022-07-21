@@ -10,6 +10,12 @@ use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
 
 pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
+    let bytes = include_bytes!(concat!(
+        "../../../../plugins/bin/json_language.wasm.",
+        env!("TARGET_TRIPLE"),
+    ));
+    let precompiled = PluginBinary::Precompiled(bytes);
+
     let plugin = PluginBuilder::new_default()?
         .host_function_async("command", |command: String| async move {
             let mut args = command.split(' ');
@@ -21,9 +27,7 @@ pub async fn new_json(executor: Arc<Background>) -> Result<PluginLspAdapter> {
                 .log_err()
                 .map(|output| output.stdout)
         })?
-        .init(PluginBinary::Precompiled(include_bytes!(
-            "../../../../plugins/bin/json_language.wasm.pre",
-        )))
+        .init(precompiled)
         .await?;
 
     PluginLspAdapter::new(plugin, executor).await
