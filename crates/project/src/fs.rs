@@ -162,7 +162,7 @@ impl Fs for RealFs {
     }
 
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
-        let buffer_size = text.summary().bytes.min(10 * 1024);
+        let buffer_size = text.summary().len.min(10 * 1024);
         let file = smol::fs::File::create(path).await?;
         let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
         for chunk in chunks(text, line_ending) {

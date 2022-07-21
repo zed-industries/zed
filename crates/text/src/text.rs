@@ -2,6 +2,7 @@ mod anchor;
 pub mod locator;
 #[cfg(any(test, feature = "test-support"))]
 pub mod network;
+mod offset_utf16;
 pub mod operation_queue;
 mod patch;
 mod point;
@@ -20,6 +21,7 @@ use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use lazy_static::lazy_static;
 use locator::Locator;
+pub use offset_utf16::*;
 use operation_queue::OperationQueue;
 pub use patch::Patch;
 pub use point::*;
@@ -1621,6 +1623,14 @@ impl BufferSnapshot {
         self.visible_text.point_utf16_to_point(point)
     }
 
+    pub fn offset_utf16_to_offset(&self, offset: OffsetUtf16) -> usize {
+        self.visible_text.offset_utf16_to_offset(offset)
+    }
+
+    pub fn offset_to_offset_utf16(&self, offset: usize) -> OffsetUtf16 {
+        self.visible_text.offset_to_offset_utf16(offset)
+    }
+
     pub fn offset_to_point(&self, offset: usize) -> Point {
         self.visible_text.offset_to_point(offset)
     }
@@ -2423,6 +2433,12 @@ impl ToOffset for usize {
     }
 }
 
+impl ToOffset for OffsetUtf16 {
+    fn to_offset<'a>(&self, snapshot: &BufferSnapshot) -> usize {
+        snapshot.offset_utf16_to_offset(*self)
+    }
+}
+
 impl ToOffset for Anchor {
     fn to_offset<'a>(&self, snapshot: &BufferSnapshot) -> usize {
         snapshot.summary_for_anchor(self)
@@ -2488,6 +2504,28 @@ impl ToPointUtf16 for PointUtf16 {
 impl ToPointUtf16 for Point {
     fn to_point_utf16<'a>(&self, snapshot: &BufferSnapshot) -> PointUtf16 {
         snapshot.point_to_point_utf16(*self)
+    }
+}
+
+pub trait ToOffsetUtf16 {
+    fn to_offset_utf16<'a>(&self, snapshot: &BufferSnapshot) -> OffsetUtf16;
+}
+
+impl ToOffsetUtf16 for Anchor {
+    fn to_offset_utf16<'a>(&self, snapshot: &BufferSnapshot) -> OffsetUtf16 {
+        snapshot.summary_for_anchor(self)
+    }
+}
+
+impl ToOffsetUtf16 for usize {
+    fn to_offset_utf16<'a>(&self, snapshot: &BufferSnapshot) -> OffsetUtf16 {
+        snapshot.offset_to_offset_utf16(*self)
+    }
+}
+
+impl ToOffsetUtf16 for OffsetUtf16 {
+    fn to_offset_utf16<'a>(&self, _snapshot: &BufferSnapshot) -> OffsetUtf16 {
+        *self
     }
 }
 

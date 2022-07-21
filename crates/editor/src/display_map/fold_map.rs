@@ -63,14 +63,14 @@ impl FoldPoint {
             .cursor::<(FoldPoint, TransformSummary)>();
         cursor.seek(self, Bias::Right, &());
         let overshoot = self.0 - cursor.start().1.output.lines;
-        let mut offset = cursor.start().1.output.bytes;
+        let mut offset = cursor.start().1.output.len;
         if !overshoot.is_zero() {
             let transform = cursor.item().expect("display point out of range");
             assert!(transform.output_text.is_none());
             let end_buffer_offset = snapshot
                 .buffer_snapshot
                 .point_to_offset(cursor.start().1.input.lines + overshoot);
-            offset += end_buffer_offset - cursor.start().1.input.bytes;
+            offset += end_buffer_offset - cursor.start().1.input.len;
         }
         FoldOffset(offset)
     }
@@ -249,7 +249,7 @@ impl FoldMap {
     fn check_invariants(&self) {
         if cfg!(test) {
             assert_eq!(
-                self.transforms.lock().summary().input.bytes,
+                self.transforms.lock().summary().input.len,
                 self.buffer.lock().len(),
                 "transform tree does not match buffer's length"
             );
@@ -341,7 +341,7 @@ impl FoldMap {
                     let mut fold = folds.next().unwrap();
                     let sum = new_transforms.summary();
 
-                    assert!(fold.start >= sum.input.bytes);
+                    assert!(fold.start >= sum.input.len);
 
                     while folds
                         .peek()
@@ -353,9 +353,9 @@ impl FoldMap {
                         }
                     }
 
-                    if fold.start > sum.input.bytes {
+                    if fold.start > sum.input.len {
                         let text_summary = new_buffer
-                            .text_summary_for_range::<TextSummary, _>(sum.input.bytes..fold.start);
+                            .text_summary_for_range::<TextSummary, _>(sum.input.len..fold.start);
                         new_transforms.push(
                             Transform {
                                 summary: TransformSummary {
@@ -384,9 +384,9 @@ impl FoldMap {
                 }
 
                 let sum = new_transforms.summary();
-                if sum.input.bytes < edit.new.end {
+                if sum.input.len < edit.new.end {
                     let text_summary = new_buffer
-                        .text_summary_for_range::<TextSummary, _>(sum.input.bytes..edit.new.end);
+                        .text_summary_for_range::<TextSummary, _>(sum.input.len..edit.new.end);
                     new_transforms.push(
                         Transform {
                             summary: TransformSummary {
@@ -558,7 +558,7 @@ impl FoldSnapshot {
     }
 
     pub fn len(&self) -> FoldOffset {
-        FoldOffset(self.transforms.summary().output.bytes)
+        FoldOffset(self.transforms.summary().output.len)
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
@@ -766,7 +766,7 @@ impl FoldSnapshot {
                 )
             }
         } else {
-            FoldOffset(self.transforms.summary().output.bytes)
+            FoldOffset(self.transforms.summary().output.len)
         }
     }
 
@@ -1050,7 +1050,7 @@ impl<'a> Iterator for FoldChunks<'a> {
         // advance the transform and buffer cursors to the end of the fold.
         if let Some(output_text) = transform.output_text {
             self.buffer_chunk.take();
-            self.buffer_offset += transform.summary.input.bytes;
+            self.buffer_offset += transform.summary.input.len;
             self.buffer_chunks.seek(self.buffer_offset);
 
             while self.buffer_offset >= self.transform_cursor.end(&()).1
@@ -1158,7 +1158,7 @@ impl FoldOffset {
         let overshoot = if cursor.item().map_or(true, |t| t.is_fold()) {
             Point::new(0, (self.0 - cursor.start().0 .0) as u32)
         } else {
-            let buffer_offset = cursor.start().1.input.bytes + self.0 - cursor.start().0 .0;
+            let buffer_offset = cursor.start().1.input.len + self.0 - cursor.start().0 .0;
             let buffer_point = snapshot.buffer_snapshot.offset_to_point(buffer_offset);
             buffer_point - cursor.start().1.input.lines
         };
@@ -1176,7 +1176,7 @@ impl Sub for FoldOffset {
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for FoldOffset {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
-        self.0 += &summary.output.bytes;
+        self.0 += &summary.output.len;
     }
 }
 
@@ -1188,7 +1188,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for Point {
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for usize {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
-        *self += &summary.input.bytes;
+        *self += &summary.input.len;
     }
 }
 

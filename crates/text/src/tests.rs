@@ -247,7 +247,8 @@ fn test_text_summary_for_range() {
     assert_eq!(
         buffer.text_summary_for_range::<TextSummary, _>(1..3),
         TextSummary {
-            bytes: 2,
+            len: 2,
+            len_utf16: 2,
             lines: Point::new(1, 0),
             lines_utf16: PointUtf16::new(1, 0),
             first_line_chars: 1,
@@ -259,7 +260,8 @@ fn test_text_summary_for_range() {
     assert_eq!(
         buffer.text_summary_for_range::<TextSummary, _>(1..12),
         TextSummary {
-            bytes: 11,
+            len: 11,
+            len_utf16: 11,
             lines: Point::new(3, 0),
             lines_utf16: PointUtf16::new(3, 0),
             first_line_chars: 1,
@@ -271,7 +273,8 @@ fn test_text_summary_for_range() {
     assert_eq!(
         buffer.text_summary_for_range::<TextSummary, _>(0..20),
         TextSummary {
-            bytes: 20,
+            len: 20,
+            len_utf16: 20,
             lines: Point::new(4, 1),
             lines_utf16: PointUtf16::new(4, 1),
             first_line_chars: 2,
@@ -283,7 +286,8 @@ fn test_text_summary_for_range() {
     assert_eq!(
         buffer.text_summary_for_range::<TextSummary, _>(0..22),
         TextSummary {
-            bytes: 22,
+            len: 22,
+            len_utf16: 22,
             lines: Point::new(4, 3),
             lines_utf16: PointUtf16::new(4, 3),
             first_line_chars: 2,
@@ -295,7 +299,8 @@ fn test_text_summary_for_range() {
     assert_eq!(
         buffer.text_summary_for_range::<TextSummary, _>(7..22),
         TextSummary {
-            bytes: 15,
+            len: 15,
+            len_utf16: 15,
             lines: Point::new(2, 3),
             lines_utf16: PointUtf16::new(2, 3),
             first_line_chars: 4,
