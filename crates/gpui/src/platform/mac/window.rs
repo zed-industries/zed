@@ -37,7 +37,6 @@ use smol::Timer;
 use std::{
     any::Any,
     cell::{Cell, RefCell},
-    cmp,
     convert::TryInto,
     ffi::{c_void, CStr},
     mem,
@@ -274,7 +273,7 @@ struct WindowState {
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     input_handler: Option<Box<dyn InputHandler>>,
-    pending_key_event: Option<PendingKeyEvent>,
+    pending_keydown_event: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
     executor: Rc<executor::Foreground>,
     scene_to_render: Option<Scene>,
@@ -284,13 +283,6 @@ struct WindowState {
     layer: id,
     traffic_light_position: Option<Vector2F>,
     previous_modifiers_changed_event: Option<Event>,
-}
-
-#[derive(Default, Debug)]
-struct PendingKeyEvent {
-    set_marked_text: Option<(String, Option<Range<usize>>, Option<Range<usize>>)>,
-    unmark_text: bool,
-    insert_text: Option<String>,
 }
 
 impl Window {
@@ -369,7 +361,7 @@ impl Window {
                 close_callback: None,
                 activate_callback: None,
                 input_handler: None,
-                pending_key_event: None,
+                pending_keydown_event: None,
                 synthetic_drag_counter: 0,
                 executor,
                 scene_to_render: Default::default(),
@@ -705,7 +697,7 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
 
     let event = unsafe { Event::from_native(native_event, Some(window_state_borrow.size().y())) };
     if let Some(event) = event {
-        let mut event = match event {
+        window_state_borrow.pending_keydown_event = match event {
             Event::KeyDown(event) => {
                 let keydown = (event.keystroke.clone(), event.input.clone());
                 // Ignore events from held-down keys after some of the initially-pressed keys
@@ -718,97 +710,30 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
                     window_state_borrow.last_fresh_keydown = Some(keydown);
                 }
 
-                event
+                Some(event)
             }
             _ => return NO,
         };
-
-        // TODO: handle "live conversion"
-        window_state_borrow.pending_key_event = Some(Default::default());
         drop(window_state_borrow);
-        let had_marked_text =
-            with_input_handler(this, |input_handler| input_handler.marked_text_range())
-                .flatten()
-                .is_some();
 
-        // TODO:
-        // Since Mac Eisu Kana keys cannot be handled by interpretKeyEvents to enable/
-        // disable an IME, we need to pass the event to processInputKeyBindings.
-        // processInputKeyBindings is available at least on 10.11-11.0.
-        // if (keyCode == kVK_JIS_Eisu || keyCode == kVK_JIS_Kana) {
-        //     if ([NSTextInputContext
-        //         respondsToSelector:@selector(processInputKeyBindings:)]) {
-        //             [NSTextInputContext performSelector:@selector(processInputKeyBindings:)
-        //                 withObject:theEvent];
-        //         }
-        // } else {
         unsafe {
             let input_context: id = msg_send![this, inputContext];
             let _: BOOL = msg_send![input_context, handleEvent: native_event];
         }
-        // }
 
-        let pending_event = window_state.borrow_mut().pending_key_event.take().unwrap();
-
-        dbg!(&pending_event);
-
-        let mut inserted_text = false;
-        let has_marked_text = pending_event.set_marked_text.is_some()
-            || with_input_handler(this, |input_handler| input_handler.marked_text_range())
-                .flatten()
-                .is_some();
-        if let Some(text) = pending_event.insert_text.as_ref() {
-            if !text.is_empty() {
-                with_input_handler(this, |input_handler| {
-                    input_handler.replace_text_in_range(None, &text)
-                });
-                inserted_text = true;
-            }
-        }
-
-        with_input_handler(this, |input_handler| {
-            if let Some((text, new_selected_range, replacement_range)) =
-                pending_event.set_marked_text
-            {
-                input_handler.replace_and_mark_text_in_range(
-                    replacement_range,
-                    &text,
-                    new_selected_range,
-                )
-            } else if had_marked_text && !has_marked_text && !inserted_text {
-                if pending_event.unmark_text {
-                    input_handler.finish_composition();
-                } else {
-                    input_handler.cancel_composition();
-                }
-            }
-        });
-
-        if has_marked_text {
-            YES
-        } else {
-            let mut handled = false;
-            let mut window_state_borrow = window_state.borrow_mut();
+        let mut handled = false;
+        let mut window_state_borrow = window_state.borrow_mut();
+        if let Some(event) = window_state_borrow.pending_keydown_event.take() {
             if let Some(mut callback) = window_state_borrow.event_callback.take() {
                 drop(window_state_borrow);
-
-                if inserted_text {
-                    handled = true;
-                } else {
-                    if let Some(text) = pending_event.insert_text {
-                        if text.chars().count() == 1 {
-                            event.keystroke.key = text;
-                        }
-                    }
-
-                    handled = callback(Event::KeyDown(event.clone()));
-                }
-
+                handled = callback(Event::KeyDown(event.clone()));
                 window_state.borrow_mut().event_callback = Some(callback);
             }
-
-            handled as BOOL
+        } else {
+            handled = true;
         }
+
+        handled as BOOL
     } else {
         NO
     }
@@ -1090,6 +1015,11 @@ extern "C" fn first_rect_for_character_range(_: &Object, _: Sel, _: NSRange, _: 
 
 extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NSRange) {
     unsafe {
+        let window_state = get_window_state(this);
+        let mut window_state_borrow = window_state.borrow_mut();
+        let pending_keydown_event = window_state_borrow.pending_keydown_event.take();
+        drop(window_state_borrow);
+
         let is_attributed_string: BOOL =
             msg_send![text, isKindOfClass: [class!(NSAttributedString)]];
         let text: id = if is_attributed_string == YES {
@@ -1100,20 +1030,36 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
         let text = CStr::from_ptr(text.UTF8String() as *mut c_char)
             .to_str()
             .unwrap();
+        let replacement_range = replacement_range.to_range();
 
-        let window_state = get_window_state(this);
-        let mut window_state = window_state.borrow_mut();
-        if window_state.pending_key_event.is_some() && !replacement_range.is_valid() {
-            window_state.pending_key_event.as_mut().unwrap().insert_text = Some(text.to_string());
-            drop(window_state);
-        } else {
-            drop(window_state);
+        let is_composing =
+            with_input_handler(this, |input_handler| input_handler.marked_text_range())
+                .flatten()
+                .is_some();
+
+        if is_composing || text.chars().count() > 1 || pending_keydown_event.is_none() {
             with_input_handler(this, |input_handler| {
-                input_handler.replace_text_in_range(replacement_range.to_range(), text);
+                input_handler.replace_text_in_range(replacement_range, text)
             });
-        }
+        } else {
+            let mut pending_keydown_event = pending_keydown_event.unwrap();
+            pending_keydown_event.keystroke.key = text.into();
+            let mut window_state_borrow = window_state.borrow_mut();
+            let event_callback = window_state_borrow.event_callback.take();
+            drop(window_state_borrow);
 
-        with_input_handler(this, |input_handler| input_handler.unmark_text());
+            let mut handled = false;
+            if let Some(mut event_callback) = event_callback {
+                handled = event_callback(Event::KeyDown(pending_keydown_event));
+                window_state.borrow_mut().event_callback = Some(event_callback);
+            }
+
+            if !handled {
+                with_input_handler(this, |input_handler| {
+                    input_handler.replace_text_in_range(replacement_range, text)
+                });
+            }
+        }
     }
 }
 
@@ -1126,6 +1072,11 @@ extern "C" fn set_marked_text(
 ) {
     println!("set_marked_text");
     unsafe {
+        get_window_state(this)
+            .borrow_mut()
+            .pending_keydown_event
+            .take();
+
         let is_attributed_string: BOOL =
             msg_send![text, isKindOfClass: [class!(NSAttributedString)]];
         let text: id = if is_attributed_string == YES {
