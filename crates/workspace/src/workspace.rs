@@ -1566,7 +1566,11 @@ impl Workspace {
 
     fn activate_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
         if self.active_pane != pane {
+            self.active_pane
+                .update(cx, |pane, cx| pane.set_active(false, cx));
             self.active_pane = pane.clone();
+            self.active_pane
+                .update(cx, |pane, cx| pane.set_active(true, cx));
             self.status_bar.update(cx, |status_bar, cx| {
                 status_bar.set_active_pane(&self.active_pane, cx);
             });
@@ -1629,17 +1633,17 @@ impl Workspace {
         pane: ViewHandle<Pane>,
         direction: SplitDirection,
         cx: &mut ViewContext<Self>,
-    ) -> ViewHandle<Pane> {
-        let new_pane = self.add_pane(cx);
-        self.activate_pane(new_pane.clone(), cx);
-        if let Some(item) = pane.read(cx).active_item() {
+    ) -> Option<ViewHandle<Pane>> {
+        pane.read(cx).active_item().map(|item| {
+            let new_pane = self.add_pane(cx);
+            self.activate_pane(new_pane.clone(), cx);
             if let Some(clone) = item.clone_on_split(cx.as_mut()) {
                 Pane::add_item(self, new_pane.clone(), clone, true, true, cx);
             }
-        }
-        self.center.split(&pane, &new_pane, direction).unwrap();
-        cx.notify();
-        new_pane
+            self.center.split(&pane, &new_pane, direction).unwrap();
+            cx.notify();
+            new_pane
+        })
     }
 
     fn remove_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
@@ -3045,16 +3049,17 @@ mod tests {
         //     multi-entry items:   (3, 4)
         let left_pane = workspace.update(cx, |workspace, cx| {
             let left_pane = workspace.active_pane().clone();
-            let right_pane = workspace.split_pane(left_pane.clone(), SplitDirection::Right, cx);
-
-            workspace.activate_pane(left_pane.clone(), cx);
             workspace.add_item(Box::new(cx.add_view(|_| item_2_3.clone())), cx);
             for item in &single_entry_items {
                 workspace.add_item(Box::new(cx.add_view(|_| item.clone())), cx);
             }
+            left_pane.update(cx, |pane, cx| {
+                pane.activate_item(2, true, true, false, cx);
+            });
 
-            workspace.activate_pane(right_pane.clone(), cx);
-            workspace.add_item(Box::new(cx.add_view(|_| single_entry_items[1].clone())), cx);
+            workspace
+                .split_pane(left_pane.clone(), SplitDirection::Right, cx)
+                .unwrap();
             workspace.add_item(Box::new(cx.add_view(|_| item_3_4.clone())), cx);
 
             left_pane

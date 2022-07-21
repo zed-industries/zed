@@ -187,7 +187,7 @@ impl Sidebar {
             ..Default::default()
         })
         .with_cursor_style(CursorStyle::ResizeLeftRight)
-        .on_mouse_down(MouseButton::Left, |_, _| {}) // This prevents the mouse down event from being propagated elsewhere
+        .on_down(MouseButton::Left, |_, _| {}) // This prevents the mouse down event from being propagated elsewhere
         .on_drag(
             MouseButton::Left,
             move |old_position,

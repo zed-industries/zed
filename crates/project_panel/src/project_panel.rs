@@ -1082,7 +1082,7 @@ impl ProjectPanel {
                 }
             },
         )
-        .on_mouse_down(
+        .on_down(
             MouseButton::Right,
             move |MouseButtonEvent { position, .. }, cx| {
                 cx.dispatch_action(DeployContextMenu { entry_id, position })
@@ -1134,7 +1134,7 @@ impl View for ProjectPanel {
                     .expanded()
                     .boxed()
                 })
-                .on_mouse_down(
+                .on_down(
                     MouseButton::Right,
                     move |MouseButtonEvent { position, .. }, cx| {
                         // When deploying the context menu anywhere below the last project entry,
