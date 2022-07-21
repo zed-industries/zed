@@ -11,7 +11,7 @@ mod visual;
 
 use collections::HashMap;
 use command_palette::CommandPaletteFilter;
-use editor::{Bias, Cancel, CursorShape, Editor, Input};
+use editor::{Bias, Cancel, CursorShape, Editor};
 use gpui::{impl_actions, MutableAppContext, Subscription, ViewContext, WeakViewHandle};
 use serde::Deserialize;
 
@@ -45,16 +45,6 @@ pub fn init(cx: &mut MutableAppContext) {
     );
 
     // Editor Actions
-    cx.add_action(|_: &mut Editor, _: &Input, cx| {
-        // If we have an unbound input with an active operator, cancel that operator. Otherwise forward
-        // the input to the editor
-        if Vim::read(cx).active_operator().is_some() {
-            // Defer without updating editor
-            MutableAppContext::defer(cx, |cx| Vim::update(cx, |vim, cx| vim.clear_operator(cx)))
-        } else {
-            cx.propagate_action()
-        }
-    });
     cx.add_action(|_: &mut Editor, _: &Cancel, cx| {
         // If we are in a non normal mode or have an active operator, swap to normal mode
         // Otherwise forward cancel on to the editor

@@ -99,9 +99,6 @@ pub struct Jump {
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
-pub struct Input(pub String);
-
-#[derive(Clone, Deserialize, PartialEq)]
 pub struct SelectToBeginningOfLine {
     #[serde(default)]
     stop_at_soft_wraps: bool,
@@ -214,7 +211,6 @@ actions!(
 impl_actions!(
     editor,
     [
-        Input,
         SelectNext,
         SelectToBeginningOfLine,
         SelectToEndOfLine,
@@ -5772,6 +5768,7 @@ pub enum Event {
     SelectionsChanged { local: bool },
     ScrollPositionChanged { local: bool },
     Closed,
+    IgnoredInput,
 }
 
 pub struct EditorFocused(pub ViewHandle<Editor>);
@@ -5916,6 +5913,11 @@ impl View for Editor {
         text: &str,
         cx: &mut ViewContext<Self>,
     ) {
+        if !self.input_enabled {
+            cx.emit(Event::IgnoredInput);
+            return;
+        }
+
         self.transact(cx, |this, cx| {
             if let Some(range) = range_utf16.or_else(|| this.marked_text_range(cx)) {
                 this.change_selections(None, cx, |selections| {
@@ -5934,6 +5936,11 @@ impl View for Editor {
         new_selected_range_utf16: Option<Range<usize>>,
         cx: &mut ViewContext<Self>,
     ) {
+        if !self.input_enabled {
+            cx.emit(Event::IgnoredInput);
+            return;
+        }
+
         self.transact(cx, |this, cx| {
             let range_to_replace = if let Some(mut marked_range) = this.marked_text_range(cx) {
                 if let Some(relative_range_utf16) = range_utf16.as_ref() {

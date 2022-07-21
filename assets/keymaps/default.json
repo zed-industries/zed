@@ -138,10 +138,7 @@
     {
         "context": "Editor && mode == auto_height",
         "bindings": {
-            "alt-enter": [
-                "editor::Input",
-                "\n"
-            ]
+            "alt-enter": "editor::Newline"
         }
     },
     {
