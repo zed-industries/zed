@@ -1139,62 +1139,31 @@ extern "C" fn set_marked_text(
             .to_str()
             .unwrap();
 
-        let window_state = get_window_state(this);
-        let mut window_state = window_state.borrow_mut();
-        if let Some(pending) = window_state.pending_key_event.as_mut() {
-            pending.set_marked_text = Some((text.to_string(), selected_range, replacement_range));
-        } else {
-            drop(window_state);
-            with_input_handler(this, |input_handler| {
-                input_handler.replace_and_mark_text_in_range(
-                    replacement_range,
-                    text,
-                    selected_range,
-                );
-            });
-        }
+        with_input_handler(this, |input_handler| {
+            input_handler.replace_and_mark_text_in_range(replacement_range, text, selected_range);
+        });
     }
 }
 
 extern "C" fn unmark_text(this: &Object, _: Sel) {
-    println!("unmark_text");
-    let window_state = unsafe { get_window_state(this) };
-    let mut window_state = window_state.borrow_mut();
-    if let Some(pending) = window_state.pending_key_event.as_mut() {
-        pending.unmark_text = true;
-        pending.set_marked_text.take();
-    } else {
-        drop(window_state);
-        with_input_handler(this, |input_handler| input_handler.finish_composition());
-    }
+    with_input_handler(this, |input_handler| input_handler.finish_composition());
 }
 
 extern "C" fn attributed_substring_for_proposed_range(
     this: &Object,
     _: Sel,
     range: NSRange,
-    actual_range: *mut c_void,
+    _actual_range: *mut c_void,
 ) -> id {
+    println!("attributed_substring_for_proposed_range({:?})", range);
     with_input_handler(this, |input_handler| {
-        let actual_range = actual_range as *mut NSRange;
-        if !actual_range.is_null() {
-            unsafe { *actual_range = NSRange::invalid() };
-        }
-
-        let requested_range = range.to_range()?;
-        if requested_range.is_empty() {
+        let range = range.to_range()?;
+        if range.is_empty() {
             return None;
         }
 
-        let selected_range = input_handler.selected_text_range()?;
-        let intersection = cmp::max(requested_range.start, selected_range.start)
-            ..cmp::min(requested_range.end, selected_range.end);
-        if intersection.start >= intersection.end {
-            return None;
-        }
-
+        let selected_text = input_handler.text_for_range(range)?;
         unsafe {
-            let selected_text = input_handler.text_for_range(intersection)?;
             let string: id = msg_send![class!(NSAttributedString), alloc];
             let string: id = msg_send![string, initWithString: ns_string(&selected_text)];
             Some(string)

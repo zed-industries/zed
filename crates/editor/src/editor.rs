@@ -39,15 +39,15 @@ pub use items::MAX_TAB_TITLE_LEN;
 pub use language::{char_kind, CharKind};
 use language::{
     BracketPair, Buffer, CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticSeverity,
-    IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal,
+    IndentKind, IndentSize, Language, OffsetRangeExt, OffsetUtf16, Point, Selection, SelectionGoal,
     TransactionId,
 };
 use link_go_to_definition::LinkGoToDefinitionState;
-use multi_buffer::MultiBufferChunks;
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
     ToPoint,
 };
+use multi_buffer::{MultiBufferChunks, ToOffsetUtf16};
 use ordered_float::OrderedFloat;
 use project::{LocationLink, Project, ProjectPath, ProjectTransaction};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
@@ -5877,27 +5877,33 @@ impl View for Editor {
         context
     }
 
-    fn text_for_range(&self, range: Range<usize>, cx: &AppContext) -> Option<String> {
+    fn text_for_range(&self, range_utf16: Range<usize>, cx: &AppContext) -> Option<String> {
         Some(
             self.buffer
                 .read(cx)
                 .read(cx)
-                .text_for_range(range)
+                .text_for_range(OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end))
                 .collect(),
         )
     }
 
     fn selected_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
-        Some(self.selections.newest(cx).range())
+        let range = self.selections.newest::<OffsetUtf16>(cx).range();
+        Some(range.start.0..range.end.0)
     }
 
-    fn set_selected_text_range(&mut self, range: Range<usize>, cx: &mut ViewContext<Self>) {
-        self.change_selections(None, cx, |selections| selections.select_ranges([range]));
+    fn set_selected_text_range(&mut self, range_utf16: Range<usize>, cx: &mut ViewContext<Self>) {
+        self.change_selections(None, cx, |selections| {
+            selections.select_ranges([OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end)])
+        });
     }
 
     fn marked_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
         let range = self.text_highlights::<InputComposition>(cx)?.1.get(0)?;
-        Some(range.to_offset(&*self.buffer.read(cx).read(cx)))
+        let snapshot = self.buffer.read(cx).read(cx);
+        let range_utf16 =
+            range.start.to_offset_utf16(&snapshot)..range.end.to_offset_utf16(&snapshot);
+        Some(range_utf16.start.0..range_utf16.end.0)
     }
 
     fn unmark_text(&mut self, cx: &mut ViewContext<Self>) {
@@ -5906,34 +5912,36 @@ impl View for Editor {
 
     fn replace_text_in_range(
         &mut self,
-        range: Option<Range<usize>>,
+        range_utf16: Option<Range<usize>>,
         text: &str,
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
-            if let Some(range) = range {
-                this.set_selected_text_range(range, cx);
+            if let Some(range_utf16) = range_utf16.or_else(|| this.marked_text_range(cx)) {
+                this.set_selected_text_range(range_utf16, cx);
             }
             this.handle_input(text, cx);
+            this.unmark_text(cx);
         });
     }
 
     fn replace_and_mark_text_in_range(
         &mut self,
-        range: Option<Range<usize>>,
+        range_utf16: Option<Range<usize>>,
         text: &str,
-        new_selected_range: Option<Range<usize>>,
+        new_selected_range_utf16: Option<Range<usize>>,
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
-            let range = range.or_else(|| {
-                let ranges = this.text_highlights::<InputComposition>(cx)?.1;
-                let range = ranges.first()?;
-                let snapshot = this.buffer.read(cx).read(cx);
-                Some(range.to_offset(&*snapshot))
-            });
-            if let Some(range) = range {
-                this.set_selected_text_range(range, cx);
+            if let Some(mut marked_range) = this.marked_text_range(cx) {
+                if let Some(relative_range_utf16) = range_utf16.as_ref() {
+                    marked_range.end = marked_range.start + relative_range_utf16.end;
+                    marked_range.start += relative_range_utf16.start;
+                }
+
+                this.set_selected_text_range(marked_range, cx);
+            } else if let Some(range_utf16) = range_utf16 {
+                this.set_selected_text_range(range_utf16, cx);
             }
 
             let selection = this.selections.newest_anchor();
@@ -5941,16 +5949,28 @@ impl View for Editor {
                 let snapshot = this.buffer.read(cx).read(cx);
                 selection.start.bias_left(&*snapshot)..selection.end.bias_right(&*snapshot)
             };
-            this.highlight_text::<InputComposition>(
-                vec![marked_range],
-                this.style(cx).composition_mark,
-                cx,
-            );
+
+            if text.is_empty() {
+                this.unmark_text(cx);
+            } else {
+                this.highlight_text::<InputComposition>(
+                    vec![marked_range.clone()],
+                    this.style(cx).composition_mark,
+                    cx,
+                );
+            }
 
             this.handle_input(text, cx);
 
-            if let Some(new_selected_range) = new_selected_range {
-                this.set_selected_text_range(new_selected_range, cx);
+            if let Some(new_selected_range) = new_selected_range_utf16 {
+                let snapshot = this.buffer.read(cx).read(cx);
+                let insertion_start = marked_range.start.to_offset_utf16(&snapshot).0;
+                drop(snapshot);
+                this.set_selected_text_range(
+                    insertion_start + new_selected_range.start
+                        ..insertion_start + new_selected_range.end,
+                    cx,
+                );
             }
         });
     }
