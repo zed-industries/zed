@@ -16,7 +16,7 @@ use settings::{Settings, WorkingDirectory};
 use smallvec::SmallVec;
 use std::path::{Path, PathBuf};
 use terminal_element::{terminal_layout_context::TerminalLayoutData, TerminalDimensions};
-
+use util::ResultExt;
 use workspace::{Item, Workspace};
 
 use crate::terminal_element::TerminalEl;
@@ -114,6 +114,7 @@ impl TerminalView {
                 cx,
             ))
         } else {
+            connection.log_err();
             None
         }
     }
