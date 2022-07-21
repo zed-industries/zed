@@ -725,7 +725,15 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
         if let Some(event) = window_state_borrow.pending_key_down_event.take() {
             if let Some(mut callback) = window_state_borrow.event_callback.take() {
                 drop(window_state_borrow);
-                callback(Event::KeyDown(event));
+
+                let is_composing =
+                    with_input_handler(this, |input_handler| input_handler.marked_text_range())
+                        .flatten()
+                        .is_some();
+                if !is_composing {
+                    callback(Event::KeyDown(event));
+                }
+
                 window_state.borrow_mut().event_callback = Some(callback);
             }
         }
