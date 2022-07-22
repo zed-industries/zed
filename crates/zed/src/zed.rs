@@ -52,6 +52,7 @@ actions!(
         Quit,
         DebugElements,
         OpenSettings,
+        OpenLog,
         OpenKeymap,
         OpenDefaultSettings,
         OpenDefaultKeymap,
@@ -65,9 +66,10 @@ actions!(
 const MIN_FONT_SIZE: f32 = 6.0;
 
 lazy_static! {
-    pub static ref ROOT_PATH: PathBuf = dirs::home_dir()
-        .expect("failed to determine home directory")
-        .join(".zed");
+    pub static ref HOME_PATH: PathBuf =
+        dirs::home_dir().expect("failed to determine home directory");
+    pub static ref LOG_PATH: PathBuf = HOME_PATH.join("Library/Logs/Zed/Zed.log");
+    pub static ref ROOT_PATH: PathBuf = HOME_PATH.join(".zed");
     pub static ref SETTINGS_PATH: PathBuf = ROOT_PATH.join("settings.json");
     pub static ref KEYMAP_PATH: PathBuf = ROOT_PATH.join("keymap.json");
 }
@@ -118,6 +120,12 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
                 .unwrap()
                 .into()
             });
+        }
+    });
+    cx.add_action({
+        let app_state = app_state.clone();
+        move |_: &mut Workspace, _: &OpenLog, cx: &mut ViewContext<Workspace>| {
+            open_config_file(&LOG_PATH, app_state.clone(), cx, || Default::default());
         }
     });
     cx.add_action({
