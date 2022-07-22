@@ -507,7 +507,6 @@ mod tests {
     use gpui::TestAppContext;
 
     use std::path::Path;
-    use workspace::AppState;
 
     mod terminal_test_context;
 
@@ -515,7 +514,7 @@ mod tests {
     //and produce noticable output?
     #[gpui::test(retries = 5)]
     async fn test_terminal(cx: &mut TestAppContext) {
-        let mut cx = TerminalTestContext::new(cx);
+        let mut cx = TerminalTestContext::new(cx, true);
 
         cx.execute_and_wait("expr 3 + 4", |content, _cx| content.contains("7"))
             .await;
@@ -527,12 +526,10 @@ mod tests {
     #[gpui::test]
     async fn no_worktree(cx: &mut TestAppContext) {
         //Setup variables
-        let params = cx.update(AppState::test);
-        let project = Project::test(params.fs.clone(), [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
-
+        let mut cx = TerminalTestContext::new(cx, true);
+        let (project, workspace) = cx.blank_workspace().await;
         //Test
-        cx.read(|cx| {
+        cx.cx.read(|cx| {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
 
@@ -551,28 +548,12 @@ mod tests {
     #[gpui::test]
     async fn no_active_entry_worktree_is_file(cx: &mut TestAppContext) {
         //Setup variables
-        let params = cx.update(AppState::test);
-        let project = Project::test(params.fs.clone(), [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
-        let (wt, _) = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root.txt", true, cx)
-            })
-            .await
-            .unwrap();
 
-        cx.update(|cx| {
-            wt.update(cx, |wt, cx| {
-                wt.as_local()
-                    .unwrap()
-                    .create_entry(Path::new(""), false, cx)
-            })
-        })
-        .await
-        .unwrap();
+        let mut cx = TerminalTestContext::new(cx, true);
+        let (project, workspace) = cx.blank_workspace().await;
+        cx.create_file_wt(project.clone(), "/root.txt").await;
 
-        //Test
-        cx.read(|cx| {
+        cx.cx.read(|cx| {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
 
@@ -591,27 +572,12 @@ mod tests {
     #[gpui::test]
     async fn no_active_entry_worktree_is_dir(cx: &mut TestAppContext) {
         //Setup variables
-        let params = cx.update(AppState::test);
-        let project = Project::test(params.fs.clone(), [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
-        let (wt, _) = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root/", true, cx)
-            })
-            .await
-            .unwrap();
-
-        //Setup root folder
-        cx.update(|cx| {
-            wt.update(cx, |wt, cx| {
-                wt.as_local().unwrap().create_entry(Path::new(""), true, cx)
-            })
-        })
-        .await
-        .unwrap();
+        let mut cx = TerminalTestContext::new(cx, true);
+        let (project, workspace) = cx.blank_workspace().await;
+        let (_wt, _entry) = cx.create_folder_wt(project.clone(), "/root/").await;
 
         //Test
-        cx.update(|cx| {
+        cx.cx.update(|cx| {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
 
@@ -629,53 +595,14 @@ mod tests {
     #[gpui::test]
     async fn active_entry_worktree_is_file(cx: &mut TestAppContext) {
         //Setup variables
-        let params = cx.update(AppState::test);
-        let project = Project::test(params.fs.clone(), [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
-        let (wt1, _) = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root1/", true, cx)
-            })
-            .await
-            .unwrap();
-
-        let (wt2, _) = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root2.txt", true, cx)
-            })
-            .await
-            .unwrap();
-
-        //Setup root
-        let _ = cx
-            .update(|cx| {
-                wt1.update(cx, |wt, cx| {
-                    wt.as_local().unwrap().create_entry(Path::new(""), true, cx)
-                })
-            })
-            .await
-            .unwrap();
-        let entry2 = cx
-            .update(|cx| {
-                wt2.update(cx, |wt, cx| {
-                    wt.as_local()
-                        .unwrap()
-                        .create_entry(Path::new(""), false, cx)
-                })
-            })
-            .await
-            .unwrap();
-
-        cx.update(|cx| {
-            let p = ProjectPath {
-                worktree_id: wt2.read(cx).id(),
-                path: entry2.path,
-            };
-            project.update(cx, |project, cx| project.set_active_path(Some(p), cx));
-        });
+        let mut cx = TerminalTestContext::new(cx, true);
+        let (project, workspace) = cx.blank_workspace().await;
+        let (_wt, _entry) = cx.create_folder_wt(project.clone(), "/root1/").await;
+        let (wt2, entry2) = cx.create_file_wt(project.clone(), "/root2.txt").await;
+        cx.insert_active_entry_for(wt2, entry2, project.clone());
 
         //Test
-        cx.update(|cx| {
+        cx.cx.update(|cx| {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
 
@@ -692,51 +619,14 @@ mod tests {
     #[gpui::test]
     async fn active_entry_worktree_is_dir(cx: &mut TestAppContext) {
         //Setup variables
-        let params = cx.update(AppState::test);
-        let project = Project::test(params.fs.clone(), [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
-        let (wt1, _) = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root1/", true, cx)
-            })
-            .await
-            .unwrap();
-
-        let (wt2, _) = project
-            .update(cx, |project, cx| {
-                project.find_or_create_local_worktree("/root2/", true, cx)
-            })
-            .await
-            .unwrap();
-
-        //Setup root
-        let _ = cx
-            .update(|cx| {
-                wt1.update(cx, |wt, cx| {
-                    wt.as_local().unwrap().create_entry(Path::new(""), true, cx)
-                })
-            })
-            .await
-            .unwrap();
-        let entry2 = cx
-            .update(|cx| {
-                wt2.update(cx, |wt, cx| {
-                    wt.as_local().unwrap().create_entry(Path::new(""), true, cx)
-                })
-            })
-            .await
-            .unwrap();
-
-        cx.update(|cx| {
-            let p = ProjectPath {
-                worktree_id: wt2.read(cx).id(),
-                path: entry2.path,
-            };
-            project.update(cx, |project, cx| project.set_active_path(Some(p), cx));
-        });
+        let mut cx = TerminalTestContext::new(cx, true);
+        let (project, workspace) = cx.blank_workspace().await;
+        let (_wt, _entry) = cx.create_folder_wt(project.clone(), "/root1/").await;
+        let (wt2, entry2) = cx.create_folder_wt(project.clone(), "/root2/").await;
+        cx.insert_active_entry_for(wt2, entry2, project.clone());
 
         //Test
-        cx.update(|cx| {
+        cx.cx.update(|cx| {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
 
