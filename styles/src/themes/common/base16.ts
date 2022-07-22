@@ -115,8 +115,8 @@ export function createTheme(
   const textColor = {
     primary: sample(ramps.neutral, 6),
     secondary: sample(ramps.neutral, 5),
-    muted: sample(ramps.neutral, 5),
-    placeholder: sample(ramps.neutral, 4),
+    muted: sample(ramps.neutral, 4),
+    placeholder: sample(ramps.neutral, 3),
     active: sample(ramps.neutral, 7),
     feature: sample(ramps.blue, 0.5),
     ok: sample(ramps.green, 0.5),

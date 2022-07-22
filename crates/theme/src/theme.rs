@@ -38,11 +38,7 @@ pub struct Theme {
 pub struct Workspace {
     pub background: Color,
     pub titlebar: Titlebar,
-    pub active_pane_active_tab: Tab,
-    pub active_pane_inactive_tab: Tab,
-    pub inactive_pane_active_tab: Tab,
-    pub inactive_pane_inactive_tab: Tab,
-    pub pane_button: Interactive<IconButton>,
+    pub tab_bar: TabBar,
     pub pane_divider: Border,
     pub leader_border_opacity: f32,
     pub leader_border_width: f32,
@@ -70,6 +66,21 @@ pub struct Titlebar {
     pub avatar: ImageStyle,
     pub sign_in_prompt: Interactive<ContainedText>,
     pub outdated_warning: ContainedText,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct TabBar {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub pane_button: Interactive<IconButton>,
+    pub active_pane: TabStyles,
+    pub inactive_pane: TabStyles,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct TabStyles {
+    active_tab: Tab,
+    inactive_tab: Tab,
 }
 
 #[derive(Clone, Deserialize, Default)]
