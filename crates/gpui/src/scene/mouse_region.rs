@@ -106,7 +106,7 @@ impl MouseRegion {
     pub fn on_drag_over(
         mut self,
         button: MouseButton,
-        handler: impl Fn(Vector2F, MouseMovedEvent, &mut EventContext) + 'static,
+        handler: impl Fn(bool, MouseMovedEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_drag_over(button, handler);
         self
@@ -353,41 +353,59 @@ impl MouseRegionEvent {
     pub fn move_disc() -> Discriminant<MouseRegionEvent> {
         discriminant(&MouseRegionEvent::Move(Default::default()))
     }
+
     pub fn drag_disc() -> Discriminant<MouseRegionEvent> {
         discriminant(&MouseRegionEvent::Drag(
             Default::default(),
             Default::default(),
         ))
     }
+
     pub fn drag_over_disc() -> Discriminant<MouseRegionEvent> {
         discriminant(&MouseRegionEvent::DragOver(
             Default::default(),
             Default::default(),
         ))
     }
+
     pub fn hover_disc() -> Discriminant<MouseRegionEvent> {
         discriminant(&MouseRegionEvent::Hover(
             Default::default(),
             Default::default(),
         ))
     }
+
     pub fn down_disc() -> Discriminant<MouseRegionEvent> {
         discriminant(&MouseRegionEvent::Down(Default::default()))
     }
+
     pub fn up_disc() -> Discriminant<MouseRegionEvent> {
         discriminant(&MouseRegionEvent::Up(Default::default()))
     }
+
     pub fn up_out_disc() -> Discriminant<MouseRegionEvent> {
         discriminant(&MouseRegionEvent::UpOut(Default::default()))
     }
+
     pub fn click_disc() -> Discriminant<MouseRegionEvent> {
         discriminant(&MouseRegionEvent::Click(Default::default()))
     }
+
     pub fn down_out_disc() -> Discriminant<MouseRegionEvent> {
         discriminant(&MouseRegionEvent::DownOut(Default::default()))
     }
+
     pub fn scroll_wheel_disc() -> Discriminant<MouseRegionEvent> {
-        std::mem::discriminant(&MouseRegionEvent::ScrollWheel(Default::default()))
+        discriminant(&MouseRegionEvent::ScrollWheel(Default::default()))
+    }
+
+    pub fn is_local(&self) -> bool {
+        match self {
+            MouseRegionEvent::DownOut(_)
+            | MouseRegionEvent::UpOut(_)
+            | MouseRegionEvent::DragOver(_, _) => false,
+            _ => true,
+        }
     }
 
     pub fn handler_key(&self) -> (Discriminant<MouseRegionEvent>, Option<MouseButton>) {
