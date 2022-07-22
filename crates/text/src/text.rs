@@ -35,7 +35,7 @@ pub use rope::{Chunks, Rope, TextSummary};
 pub use selection::*;
 use std::{
     borrow::Cow,
-    cmp::{self, Ordering},
+    cmp::{self, Ordering, Reverse},
     future::Future,
     iter::Iterator,
     ops::{self, Deref, Range, Sub},
@@ -93,7 +93,6 @@ pub struct Transaction {
     pub edit_ids: Vec<clock::Local>,
     pub start: clock::Global,
     pub end: clock::Global,
-    pub ranges: Vec<Range<FullOffset>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -114,64 +113,24 @@ impl HistoryEntry {
         self.transaction
             .end
             .observe(edit_operation.timestamp.local());
-
-        let mut edits = edit_operation
-            .ranges
-            .iter()
-            .zip(edit_operation.new_text.iter())
-            .peekable();
-        let mut new_ranges = Vec::new();
-        let mut delta = 0;
-
-        for mut self_range in self.transaction.ranges.iter().cloned() {
-            self_range.start += delta;
-            self_range.end += delta;
-
-            while let Some((other_range, new_text)) = edits.peek() {
-                let insertion_len = new_text.len();
-                let mut other_range = (*other_range).clone();
-                other_range.start += delta;
-                other_range.end += delta;
-
-                if other_range.start <= self_range.end {
-                    edits.next().unwrap();
-                    delta += insertion_len;
-
-                    if other_range.end < self_range.start {
-                        new_ranges.push(other_range.start..other_range.end + insertion_len);
-                        self_range.start += insertion_len;
-                        self_range.end += insertion_len;
-                    } else {
-                        self_range.start = cmp::min(self_range.start, other_range.start);
-                        self_range.end = cmp::max(self_range.end, other_range.end) + insertion_len;
-                    }
-                } else {
-                    break;
-                }
-            }
-
-            new_ranges.push(self_range);
-        }
-
-        for (other_range, new_text) in edits {
-            let insertion_len = new_text.len();
-            new_ranges.push(other_range.start + delta..other_range.end + delta + insertion_len);
-            delta += insertion_len;
-        }
-
-        self.transaction.ranges = new_ranges;
     }
 }
 
-#[derive(Clone)]
 struct History {
     // TODO: Turn this into a String or Rope, maybe.
     base_text: Arc<str>,
     operations: HashMap<clock::Local, Operation>,
+    insertion_slices: HashMap<clock::Local, Vec<InsertionSlice>>,
     undo_stack: Vec<HistoryEntry>,
     redo_stack: Vec<HistoryEntry>,
     transaction_depth: usize,
     group_interval: Duration,
+}
+
+#[derive(Clone, Debug)]
+struct InsertionSlice {
+    insertion_id: clock::Local,
+    range: Range<usize>,
 }
 
 impl History {
@@ -179,6 +138,7 @@ impl History {
         Self {
             base_text,
             operations: Default::default(),
+            insertion_slices: Default::default(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             transaction_depth: 0,
@@ -205,7 +165,6 @@ impl History {
                     start: start.clone(),
                     end: start,
                     edit_ids: Default::default(),
-                    ranges: Default::default(),
                 },
                 first_edit_at: now,
                 last_edit_at: now,
@@ -226,7 +185,7 @@ impl History {
                 .last()
                 .unwrap()
                 .transaction
-                .ranges
+                .edit_ids
                 .is_empty()
             {
                 self.undo_stack.pop();
@@ -549,7 +508,6 @@ pub struct EditOperation {
 pub struct UndoOperation {
     pub id: clock::Local,
     pub counts: HashMap<clock::Local, u32>,
-    pub transaction_ranges: Vec<Range<FullOffset>>,
     pub transaction_version: clock::Global,
     pub version: clock::Global,
 }
@@ -679,6 +637,7 @@ impl Buffer {
         };
         let mut new_insertions = Vec::new();
         let mut insertion_offset = 0;
+        let mut insertion_slices = Vec::new();
 
         let mut edits = edits
             .map(|(range, new_text)| (range.to_offset(&*self), new_text))
@@ -737,10 +696,6 @@ impl Buffer {
             if !new_text.is_empty() {
                 let new_start = new_fragments.summary().text.visible;
 
-                edits_patch.push(Edit {
-                    old: fragment_start..fragment_start,
-                    new: new_start..new_start + new_text.len(),
-                });
                 let fragment = Fragment {
                     id: Locator::between(
                         &new_fragments.summary().max_id,
@@ -755,6 +710,11 @@ impl Buffer {
                     max_undos: Default::default(),
                     visible: true,
                 };
+                edits_patch.push(Edit {
+                    old: fragment_start..fragment_start,
+                    new: new_start..new_start + new_text.len(),
+                });
+                insertion_slices.push(fragment.insertion_slice());
                 new_insertions.push(InsertionFragment::insert_new(&fragment));
                 new_ropes.push_str(new_text.as_ref());
                 new_fragments.push(fragment, &None);
@@ -783,6 +743,7 @@ impl Buffer {
                             old: fragment_start..intersection_end,
                             new: new_start..new_start,
                         });
+                        insertion_slices.push(intersection.insertion_slice());
                     }
                     new_insertions.push(InsertionFragment::insert_new(&intersection));
                     new_ropes.push_fragment(&intersection, fragment.visible);
@@ -825,6 +786,9 @@ impl Buffer {
         self.snapshot.visible_text = visible_text;
         self.snapshot.deleted_text = deleted_text;
         self.subscriptions.publish_mut(&edits_patch);
+        self.history
+            .insertion_slices
+            .insert(timestamp.local(), insertion_slices);
         edit_op
     }
 
@@ -894,6 +858,7 @@ impl Buffer {
 
         let edits = ranges.into_iter().zip(new_text.into_iter());
         let mut edits_patch = Patch::default();
+        let mut insertion_slices = Vec::new();
         let cx = Some(version.clone());
         let mut new_insertions = Vec::new();
         let mut insertion_offset = 0;
@@ -984,10 +949,6 @@ impl Buffer {
                     old_start += fragment_start.0 - old_fragments.start().0.full_offset().0;
                 }
                 let new_start = new_fragments.summary().text.visible;
-                edits_patch.push(Edit {
-                    old: old_start..old_start,
-                    new: new_start..new_start + new_text.len(),
-                });
                 let fragment = Fragment {
                     id: Locator::between(
                         &new_fragments.summary().max_id,
@@ -1002,6 +963,11 @@ impl Buffer {
                     max_undos: Default::default(),
                     visible: true,
                 };
+                edits_patch.push(Edit {
+                    old: old_start..old_start,
+                    new: new_start..new_start + new_text.len(),
+                });
+                insertion_slices.push(fragment.insertion_slice());
                 new_insertions.push(InsertionFragment::insert_new(&fragment));
                 new_ropes.push_str(new_text);
                 new_fragments.push(fragment, &None);
@@ -1023,6 +989,7 @@ impl Buffer {
                         Locator::between(&new_fragments.summary().max_id, &intersection.id);
                     intersection.deletions.insert(timestamp.local());
                     intersection.visible = false;
+                    insertion_slices.push(intersection.insertion_slice());
                 }
                 if intersection.len > 0 {
                     if fragment.visible && !intersection.visible {
@@ -1070,90 +1037,105 @@ impl Buffer {
         self.snapshot.visible_text = visible_text;
         self.snapshot.deleted_text = deleted_text;
         self.snapshot.insertions.edit(new_insertions, &());
+        self.history
+            .insertion_slices
+            .insert(timestamp.local(), insertion_slices);
         self.subscriptions.publish_mut(&edits_patch)
     }
 
-    fn apply_undo(&mut self, undo: &UndoOperation) -> Result<()> {
-        let mut edits = Patch::default();
-        self.snapshot.undo_map.insert(undo);
-
-        let mut cx = undo.transaction_version.clone();
-        for edit_id in undo.counts.keys().copied() {
-            cx.observe(edit_id);
-        }
-        let cx = Some(cx);
-
-        let mut old_fragments = self.fragments.cursor::<(VersionedFullOffset, usize)>();
-        let mut new_fragments = old_fragments.slice(
-            &VersionedFullOffset::Offset(undo.transaction_ranges[0].start),
-            Bias::Right,
-            &cx,
-        );
-        let mut new_ropes =
-            RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
-        new_ropes.push_tree(new_fragments.summary().text);
-
-        for range in &undo.transaction_ranges {
-            let mut end_offset = old_fragments.end(&cx).0.full_offset();
-
-            if end_offset < range.start {
-                let preceding_fragments = old_fragments.slice(
-                    &VersionedFullOffset::Offset(range.start),
-                    Bias::Right,
-                    &cx,
-                );
-                new_ropes.push_tree(preceding_fragments.summary().text);
-                new_fragments.push_tree(preceding_fragments, &None);
+    fn fragment_ids_for_edits<'a>(
+        &'a self,
+        edit_ids: impl Iterator<Item = &'a clock::Local>,
+    ) -> Vec<&'a Locator> {
+        // Get all of the insertion slices changed by the given edits.
+        let mut insertion_slices = Vec::new();
+        for edit_id in edit_ids {
+            if let Some(slices) = self.history.insertion_slices.get(edit_id) {
+                insertion_slices.extend_from_slice(slices)
             }
+        }
+        insertion_slices
+            .sort_unstable_by_key(|s| (s.insertion_id, s.range.start, Reverse(s.range.end)));
 
-            while end_offset <= range.end {
-                if let Some(fragment) = old_fragments.item() {
-                    let mut fragment = fragment.clone();
-                    let fragment_was_visible = fragment.visible;
-
-                    if fragment.was_visible(&undo.transaction_version, &self.undo_map)
-                        || undo
-                            .counts
-                            .contains_key(&fragment.insertion_timestamp.local())
-                    {
-                        fragment.visible = fragment.is_visible(&self.undo_map);
-                        fragment.max_undos.observe(undo.id);
-                    }
-
-                    let old_start = old_fragments.start().1;
-                    let new_start = new_fragments.summary().text.visible;
-                    if fragment_was_visible && !fragment.visible {
-                        edits.push(Edit {
-                            old: old_start..old_start + fragment.len,
-                            new: new_start..new_start,
-                        });
-                    } else if !fragment_was_visible && fragment.visible {
-                        edits.push(Edit {
-                            old: old_start..old_start,
-                            new: new_start..new_start + fragment.len,
-                        });
-                    }
-                    new_ropes.push_fragment(&fragment, fragment_was_visible);
-                    new_fragments.push(fragment, &None);
-
-                    old_fragments.next(&cx);
-                    if end_offset == old_fragments.end(&cx).0.full_offset() {
-                        let unseen_fragments = old_fragments.slice(
-                            &VersionedFullOffset::Offset(end_offset),
-                            Bias::Right,
-                            &cx,
-                        );
-                        new_ropes.push_tree(unseen_fragments.summary().text);
-                        new_fragments.push_tree(unseen_fragments, &None);
-                    }
-                    end_offset = old_fragments.end(&cx).0.full_offset();
-                } else {
+        // Get all of the fragments corresponding to these insertion slices.
+        let mut fragment_ids = Vec::new();
+        let mut insertions_cursor = self.insertions.cursor::<InsertionFragmentKey>();
+        for insertion_slice in &insertion_slices {
+            if insertion_slice.insertion_id != insertions_cursor.start().timestamp
+                || insertion_slice.range.start > insertions_cursor.start().split_offset
+            {
+                insertions_cursor.seek_forward(
+                    &InsertionFragmentKey {
+                        timestamp: insertion_slice.insertion_id,
+                        split_offset: insertion_slice.range.start,
+                    },
+                    Bias::Left,
+                    &(),
+                );
+            }
+            while let Some(item) = insertions_cursor.item() {
+                if item.timestamp != insertion_slice.insertion_id
+                    || item.split_offset >= insertion_slice.range.end
+                {
                     break;
                 }
+                fragment_ids.push(&item.fragment_id);
+                insertions_cursor.next(&());
+            }
+        }
+        fragment_ids.sort_unstable();
+        fragment_ids
+    }
+
+    fn apply_undo(&mut self, undo: &UndoOperation) -> Result<()> {
+        self.snapshot.undo_map.insert(undo);
+
+        let mut edits = Patch::default();
+        let mut old_fragments = self.fragments.cursor::<(Option<&Locator>, usize)>();
+        let mut new_fragments = SumTree::new();
+        let mut new_ropes =
+            RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
+
+        let fragment_ids = self.fragment_ids_for_edits(undo.counts.keys());
+        for fragment_id in fragment_ids {
+            let preceding_fragments = old_fragments.slice(&Some(fragment_id), Bias::Left, &None);
+            new_ropes.push_tree(preceding_fragments.summary().text);
+            new_fragments.push_tree(preceding_fragments, &None);
+
+            if let Some(fragment) = old_fragments.item() {
+                let mut fragment = fragment.clone();
+                let fragment_was_visible = fragment.visible;
+
+                if fragment.was_visible(&undo.transaction_version, &self.undo_map)
+                    || undo
+                        .counts
+                        .contains_key(&fragment.insertion_timestamp.local())
+                {
+                    fragment.visible = fragment.is_visible(&self.undo_map);
+                    fragment.max_undos.observe(undo.id);
+                }
+
+                let old_start = old_fragments.start().1;
+                let new_start = new_fragments.summary().text.visible;
+                if fragment_was_visible && !fragment.visible {
+                    edits.push(Edit {
+                        old: old_start..old_start + fragment.len,
+                        new: new_start..new_start,
+                    });
+                } else if !fragment_was_visible && fragment.visible {
+                    edits.push(Edit {
+                        old: old_start..old_start,
+                        new: new_start..new_start + fragment.len,
+                    });
+                }
+                new_ropes.push_fragment(&fragment, fragment_was_visible);
+                new_fragments.push(fragment, &None);
+
+                old_fragments.next(&None);
             }
         }
 
-        let suffix = old_fragments.suffix(&cx);
+        let suffix = old_fragments.suffix(&None);
         new_ropes.push_tree(suffix.summary().text);
         new_fragments.push_tree(suffix, &None);
 
@@ -1304,7 +1286,6 @@ impl Buffer {
             id: self.local_clock.tick(),
             version: self.version(),
             counts,
-            transaction_ranges: transaction.ranges,
             transaction_version: transaction.start.clone(),
         };
         self.apply_undo(&undo)?;
@@ -1329,33 +1310,22 @@ impl Buffer {
     where
         D: TextDimension,
     {
-        let mut cursor = self.fragments.cursor::<(VersionedFullOffset, usize)>();
+        let mut cursor = self.fragments.cursor::<(Option<&Locator>, usize)>();
         let mut rope_cursor = self.visible_text.cursor(0);
-        let cx = Some(transaction.end.clone());
         let mut position = D::default();
-        transaction.ranges.iter().map(move |range| {
-            cursor.seek_forward(&VersionedFullOffset::Offset(range.start), Bias::Right, &cx);
-            let mut start_offset = cursor.start().1;
-            if cursor
-                .item()
-                .map_or(false, |fragment| fragment.is_visible(&self.undo_map))
-            {
-                start_offset += range.start - cursor.start().0.full_offset()
-            }
-            position.add_assign(&rope_cursor.summary(start_offset));
-            let start = position.clone();
-
-            cursor.seek_forward(&VersionedFullOffset::Offset(range.end), Bias::Left, &cx);
-            let mut end_offset = cursor.start().1;
-            if cursor
-                .item()
-                .map_or(false, |fragment| fragment.is_visible(&self.undo_map))
-            {
-                end_offset += range.end - cursor.start().0.full_offset();
-            }
-            position.add_assign(&rope_cursor.summary(end_offset));
-            start..position.clone()
-        })
+        self.fragment_ids_for_edits(transaction.edit_ids.iter())
+            .into_iter()
+            .filter_map(move |fragment_id| {
+                cursor.seek_forward(&Some(fragment_id), Bias::Left, &None);
+                let fragment = cursor.item()?;
+                let start_offset = cursor.start().1;
+                let end_offset = start_offset + if fragment.visible { fragment.len } else { 0 };
+                position.add_assign(&rope_cursor.summary(start_offset));
+                let start = position.clone();
+                position.add_assign(&rope_cursor.summary(end_offset));
+                let end = position.clone();
+                Some(start..end)
+            })
     }
 
     pub fn subscribe(&mut self) -> Subscription {
@@ -2100,6 +2070,13 @@ impl<'a, D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator fo
 }
 
 impl Fragment {
+    fn insertion_slice(&self) -> InsertionSlice {
+        InsertionSlice {
+            insertion_id: self.insertion_timestamp.local(),
+            range: self.insertion_offset..self.insertion_offset + self.len,
+        }
+    }
+
     fn is_visible(&self, undos: &UndoMap) -> bool {
         !undos.is_undone(self.insertion_timestamp.local())
             && self.deletions.iter().all(|d| undos.is_undone(*d))

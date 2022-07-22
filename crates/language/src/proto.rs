@@ -39,11 +39,6 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                 local_timestamp: undo.id.value,
                 lamport_timestamp: lamport_timestamp.value,
                 version: serialize_version(&undo.version),
-                transaction_ranges: undo
-                    .transaction_ranges
-                    .iter()
-                    .map(serialize_range)
-                    .collect(),
                 transaction_version: serialize_version(&undo.transaction_version),
                 counts: undo
                     .counts
@@ -203,11 +198,6 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                                 c.count,
                             )
                         })
-                        .collect(),
-                    transaction_ranges: undo
-                        .transaction_ranges
-                        .into_iter()
-                        .map(deserialize_range)
                         .collect(),
                     transaction_version: deserialize_version(undo.transaction_version),
                 },
@@ -461,7 +451,6 @@ pub fn serialize_transaction(transaction: &Transaction) -> proto::Transaction {
             .collect(),
         start: serialize_version(&transaction.start),
         end: serialize_version(&transaction.end),
-        ranges: transaction.ranges.iter().map(serialize_range).collect(),
     }
 }
 
@@ -479,11 +468,6 @@ pub fn deserialize_transaction(transaction: proto::Transaction) -> Result<Transa
             .collect(),
         start: deserialize_version(transaction.start.into()),
         end: deserialize_version(transaction.end),
-        ranges: transaction
-            .ranges
-            .into_iter()
-            .map(deserialize_range)
-            .collect(),
     })
 }
 
