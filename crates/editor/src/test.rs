@@ -139,6 +139,12 @@ impl<'a> EditorTestContext<'a> {
         })
     }
 
+    pub fn simulate_input(&mut self, input: &str) {
+        self.editor.update(self.cx, |editor, cx| {
+            editor.handle_input(input, cx);
+        });
+    }
+
     pub fn simulate_keystroke(&mut self, keystroke_text: &str) {
         let keystroke = Keystroke::parse(keystroke_text).unwrap();
         self.cx.dispatch_keystroke(self.window_id, keystroke, false);
