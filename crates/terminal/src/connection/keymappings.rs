@@ -314,20 +314,6 @@ mod test {
     }
 
     #[test]
-    fn test_multi_char_fallthrough() {
-        let ks = Keystroke {
-            ctrl: false,
-            alt: false,
-            shift: false,
-            cmd: false,
-
-            key: "🖖🏻".to_string(), //2 char string
-        };
-
-        assert_eq!(to_esc_str(&ks, &TermMode::NONE), Some("🖖🏻".to_string()));
-    }
-
-    #[test]
     fn test_application_mode() {
         let app_cursor = TermMode::APP_CURSOR;
         let none = TermMode::NONE;
