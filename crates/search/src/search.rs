@@ -21,6 +21,7 @@ actions!(
         ToggleWholeWord,
         ToggleCaseSensitive,
         ToggleRegex,
+        ToggleSelection,
         SelectNextMatch,
         SelectPrevMatch
     ]
@@ -31,6 +32,7 @@ pub enum SearchOption {
     WholeWord,
     CaseSensitive,
     Regex,
+    Selection,
 }
 
 impl SearchOption {
@@ -39,6 +41,7 @@ impl SearchOption {
             SearchOption::WholeWord => "Match Whole Word",
             SearchOption::CaseSensitive => "Match Case",
             SearchOption::Regex => "Use Regular Expression",
+            SearchOption::Selection => "Only in Selection",
         }
     }
 
@@ -47,6 +50,7 @@ impl SearchOption {
             SearchOption::WholeWord => Box::new(ToggleWholeWord),
             SearchOption::CaseSensitive => Box::new(ToggleCaseSensitive),
             SearchOption::Regex => Box::new(ToggleRegex),
+            SearchOption::Selection => Box::new(ToggleSelection),
         }
     }
 }

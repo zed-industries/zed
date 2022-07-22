@@ -4643,6 +4643,7 @@ dependencies = [
  "anyhow",
  "collections",
  "editor",
+ "futures",
  "gpui",
  "language",
  "log",

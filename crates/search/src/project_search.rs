@@ -71,6 +71,7 @@ pub struct ProjectSearchView {
     case_sensitive: bool,
     whole_word: bool,
     regex: bool,
+    selection: bool,
     query_contains_error: bool,
     active_match_index: Option<usize>,
     results_editor_was_focused: bool,
@@ -359,6 +360,7 @@ impl ProjectSearchView {
         let mut regex = false;
         let mut case_sensitive = false;
         let mut whole_word = false;
+        let mut selection = false;
 
         {
             let model = model.read(cx);
@@ -367,6 +369,7 @@ impl ProjectSearchView {
             if let Some(active_query) = model.active_query.as_ref() {
                 query_text = active_query.as_str().to_string();
                 regex = active_query.is_regex();
+                selection = active_query.is_selection();
                 case_sensitive = active_query.case_sensitive();
                 whole_word = active_query.whole_word();
             }
@@ -421,6 +424,7 @@ impl ProjectSearchView {
             case_sensitive,
             whole_word,
             regex,
+            selection,
             query_contains_error: false,
             active_match_index: None,
             results_editor_was_focused: false,
@@ -700,6 +704,7 @@ impl ProjectSearchBar {
                     SearchOption::WholeWord => &mut search_view.whole_word,
                     SearchOption::CaseSensitive => &mut search_view.case_sensitive,
                     SearchOption::Regex => &mut search_view.regex,
+                    SearchOption::Selection => &mut search_view.selection,
                 };
                 *value = !*value;
                 search_view.search(cx);
@@ -800,6 +805,7 @@ impl ProjectSearchBar {
                 SearchOption::WholeWord => search.whole_word,
                 SearchOption::CaseSensitive => search.case_sensitive,
                 SearchOption::Regex => search.regex,
+                SearchOption::Selection => search.selection,
             }
         } else {
             false
@@ -874,6 +880,11 @@ impl View for ProjectSearchBar {
                         ))
                         .with_child(self.render_option_button("Word", SearchOption::WholeWord, cx))
                         .with_child(self.render_option_button("Regex", SearchOption::Regex, cx))
+                        // .with_child(self.render_option_button(
+                        //     "Selection",
+                        //     SearchOption::Selection,
+                        //     cx,
+                        // ))
                         .contained()
                         .with_style(theme.search.option_button_group)
                         .aligned()

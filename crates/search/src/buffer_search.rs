@@ -1,7 +1,7 @@
 use crate::{
     active_match_index, match_index_for_direction, query_suggestion_for_editor, Direction,
     SearchOption, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
-    ToggleWholeWord,
+    ToggleSelection, ToggleWholeWord,
 };
 use collections::HashMap;
 use editor::{Anchor, Autoscroll, Editor};
@@ -10,7 +10,7 @@ use gpui::{
     MouseButton, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
-use language::OffsetRangeExt;
+use language::{OffsetRangeExt, Point};
 use project::search::SearchQuery;
 use serde::Deserialize;
 use settings::Settings;
@@ -41,6 +41,7 @@ pub fn init(cx: &mut MutableAppContext) {
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOption::CaseSensitive, cx);
     add_toggle_option_action::<ToggleWholeWord>(SearchOption::WholeWord, cx);
     add_toggle_option_action::<ToggleRegex>(SearchOption::Regex, cx);
+    add_toggle_option_action::<ToggleSelection>(SearchOption::Selection, cx);
 }
 
 fn add_toggle_option_action<A: Action>(option: SearchOption, cx: &mut MutableAppContext) {
@@ -67,6 +68,7 @@ pub struct BufferSearchBar {
     case_sensitive: bool,
     whole_word: bool,
     regex: bool,
+    selection: bool,
     query_contains_error: bool,
     dismissed: bool,
 }
@@ -138,6 +140,7 @@ impl View for BufferSearchBar {
                     .with_child(self.render_search_option("Case", SearchOption::CaseSensitive, cx))
                     .with_child(self.render_search_option("Word", SearchOption::WholeWord, cx))
                     .with_child(self.render_search_option("Regex", SearchOption::Regex, cx))
+                    .with_child(self.render_search_option("Selection", SearchOption::Selection, cx))
                     .contained()
                     .with_style(theme.search.option_button_group)
                     .aligned()
@@ -206,6 +209,7 @@ impl BufferSearchBar {
             case_sensitive: false,
             whole_word: false,
             regex: false,
+            selection: false,
             pending_search: None,
             query_contains_error: false,
             dismissed: true,
@@ -377,6 +381,7 @@ impl BufferSearchBar {
             SearchOption::WholeWord => self.whole_word,
             SearchOption::CaseSensitive => self.case_sensitive,
             SearchOption::Regex => self.regex,
+            SearchOption::Selection => self.selection,
         }
     }
 
@@ -385,6 +390,7 @@ impl BufferSearchBar {
             SearchOption::WholeWord => &mut self.whole_word,
             SearchOption::CaseSensitive => &mut self.case_sensitive,
             SearchOption::Regex => &mut self.regex,
+            SearchOption::Selection => &mut self.selection,
         };
         *value = !*value;
         self.update_matches(false, cx);
@@ -452,7 +458,7 @@ impl BufferSearchBar {
             editor::Event::BufferEdited { .. } => {
                 self.query_contains_error = false;
                 self.clear_matches(cx);
-                self.update_matches(true, cx);
+                self.update_matches(false, cx);
                 cx.notify();
             }
             _ => {}
@@ -498,6 +504,7 @@ impl BufferSearchBar {
                     editor.clear_background_highlights::<Self>(cx)
                 });
             } else {
+                let selections = editor.read(cx).selections.all::<Point>(cx);
                 let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
                 let query = if self.regex {
                     match SearchQuery::regex(query, self.whole_word, self.case_sensitive) {
@@ -512,19 +519,31 @@ impl BufferSearchBar {
                     SearchQuery::text(query, self.whole_word, self.case_sensitive)
                 };
 
+                let selection = self.selection;
                 let ranges = cx.background().spawn(async move {
                     let mut ranges = Vec::new();
                     if let Some((_, _, excerpt_buffer)) = buffer.as_singleton() {
-                        ranges.extend(
-                            query
-                                .search(excerpt_buffer.as_rope())
-                                .await
-                                .into_iter()
-                                .map(|range| {
-                                    buffer.anchor_after(range.start)
-                                        ..buffer.anchor_before(range.end)
-                                }),
-                        );
+                        let results: Vec<Range<usize>> =
+                            if selection {
+                                let mut results = Vec::new();
+                                for selection in selections {
+                                    let start = excerpt_buffer.point_to_offset(selection.start);
+                                    let end = excerpt_buffer.point_to_offset(selection.end);
+                                    let rope = excerpt_buffer.as_rope().slice(start..end);
+                                    dbg!(&rope);
+                                    results.extend(
+                                        query.search(&rope).await.into_iter().map(|range| {
+                                            (range.start + start)..(range.end + start)
+                                        }),
+                                    )
+                                }
+                                results
+                            } else {
+                                query.search(excerpt_buffer.as_rope()).await
+                            };
+                        ranges.extend(results.into_iter().map(|range| {
+                            buffer.anchor_after(range.start)..buffer.anchor_before(range.end)
+                        }));
                     } else {
                         for excerpt in buffer.excerpt_boundaries_in_range(0..buffer.len()) {
                             let excerpt_range = excerpt.range.context.to_offset(&excerpt.buffer);
@@ -545,6 +564,7 @@ impl BufferSearchBar {
                 });
 
                 let editor = editor.downgrade();
+                let selection = self.selection;
                 self.pending_search = Some(cx.spawn_weak(|this, mut cx| async move {
                     let ranges = ranges.await;
                     if let Some((this, editor)) = this.upgrade(&cx).zip(editor.upgrade(&cx)) {
@@ -554,7 +574,7 @@ impl BufferSearchBar {
                             this.update_match_index(cx);
                             if !this.dismissed {
                                 editor.update(cx, |editor, cx| {
-                                    if select_closest_match {
+                                    if select_closest_match && !selection {
                                         if let Some(match_ix) = this.active_match_index {
                                             editor.change_selections(
                                                 Some(Autoscroll::Fit),

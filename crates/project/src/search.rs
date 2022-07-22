@@ -224,4 +224,8 @@ impl SearchQuery {
     pub fn is_regex(&self) -> bool {
         matches!(self, Self::Regex { .. })
     }
+
+    pub fn is_selection(&self) -> bool {
+        matches!(self, Self::Regex { .. })
+    }
 }
