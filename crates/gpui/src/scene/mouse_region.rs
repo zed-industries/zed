@@ -273,10 +273,12 @@ impl HandlerSet {
 pub enum MouseRegionEvent {
     Move(MouseMovedEvent),
     Drag(Vector2F, MouseMovedEvent),
+    DragOver(Vector2F, MouseMovedEvent),
     Hover(bool, MouseMovedEvent),
     Down(MouseButtonEvent),
     Up(MouseButtonEvent),
     Click(MouseButtonEvent),
+    UpOut(MouseButtonEvent),
     DownOut(MouseButtonEvent),
     ScrollWheel(ScrollWheelEvent),
 }
@@ -287,6 +289,12 @@ impl MouseRegionEvent {
     }
     pub fn drag_disc() -> Discriminant<MouseRegionEvent> {
         std::mem::discriminant(&MouseRegionEvent::Drag(
+            Default::default(),
+            Default::default(),
+        ))
+    }
+    pub fn drag_over_disc() -> Discriminant<MouseRegionEvent> {
+        std::mem::discriminant(&MouseRegionEvent::DragOver(
             Default::default(),
             Default::default(),
         ))
@@ -302,6 +310,9 @@ impl MouseRegionEvent {
     }
     pub fn up_disc() -> Discriminant<MouseRegionEvent> {
         std::mem::discriminant(&MouseRegionEvent::Up(Default::default()))
+    }
+    pub fn up_out_disc() -> Discriminant<MouseRegionEvent> {
+        std::mem::discriminant(&MouseRegionEvent::UpOut(Default::default()))
     }
     pub fn click_disc() -> Discriminant<MouseRegionEvent> {
         std::mem::discriminant(&MouseRegionEvent::Click(Default::default()))
@@ -319,6 +330,9 @@ impl MouseRegionEvent {
             MouseRegionEvent::Drag(_, MouseMovedEvent { pressed_button, .. }) => {
                 (Self::drag_disc(), *pressed_button)
             }
+            MouseRegionEvent::DragOver(_, MouseMovedEvent { pressed_button, .. }) => {
+                (Self::drag_over_disc(), *pressed_button)
+            }
             MouseRegionEvent::Hover(_, _) => (Self::hover_disc(), None),
             MouseRegionEvent::Down(MouseButtonEvent { button, .. }) => {
                 (Self::down_disc(), Some(*button))
@@ -328,6 +342,9 @@ impl MouseRegionEvent {
             }
             MouseRegionEvent::Click(MouseButtonEvent { button, .. }) => {
                 (Self::click_disc(), Some(*button))
+            }
+            MouseRegionEvent::UpOut(MouseButtonEvent { button, .. }) => {
+                (Self::up_out_disc(), Some(*button))
             }
             MouseRegionEvent::DownOut(MouseButtonEvent { button, .. }) => {
                 (Self::down_out_disc(), Some(*button))

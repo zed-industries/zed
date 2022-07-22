@@ -1022,6 +1022,19 @@ impl Pane {
                         cx.dispatch_action(ActivateItem(ix));
                     })
                     .on_click(MouseButton::Middle, close_tab_callback)
+                    .on_drag(MouseButton::Left, |_, cx| {
+                        cx.global::<DragAndDrop>().dragging(some view handle)
+                    })
+                    .on_mouse_up_out(MouseButton::Left, |_, cx| {
+                        cx.global::<DragAndDrop>().stopped_dragging(some view handle)
+                    })
+                    .on_drag_over(MouseButton::Left, |started, _, cx| {
+                        if started {
+                            if let Some(tab) = cx.global::<DragAndDrop>().current_dragged::<Tab>() {
+                                cx.dispatch_action(ReceivingTab)
+                            }
+                        }
+                    })
                     .boxed()
                 })
             }
