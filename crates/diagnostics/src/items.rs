@@ -1,5 +1,5 @@
 use collections::HashSet;
-use editor::{Editor, GoToNextDiagnostic};
+use editor::{Editor, GoToDiagnostic};
 use gpui::{
     elements::*, platform::CursorStyle, serde_json, Entity, ModelHandle, MouseButton,
     MutableAppContext, RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
@@ -48,10 +48,10 @@ impl DiagnosticIndicator {
         }
     }
 
-    fn go_to_next_diagnostic(&mut self, _: &GoToNextDiagnostic, cx: &mut ViewContext<Self>) {
+    fn go_to_next_diagnostic(&mut self, _: &GoToDiagnostic, cx: &mut ViewContext<Self>) {
         if let Some(editor) = self.active_editor.as_ref().and_then(|e| e.upgrade(cx)) {
             editor.update(cx, |editor, cx| {
-                editor.go_to_diagnostic(editor::Direction::Next, cx);
+                editor.go_to_diagnostic_impl(editor::Direction::Next, cx);
             })
         }
     }
@@ -202,7 +202,7 @@ impl View for DiagnosticIndicator {
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, |_, cx| {
-                    cx.dispatch_action(GoToNextDiagnostic)
+                    cx.dispatch_action(GoToDiagnostic)
                 })
                 .boxed(),
             );

@@ -3,9 +3,10 @@ use gpui::{
     elements::{Flex, MouseEventHandler, Padding, Text},
     impl_internal_actions,
     platform::CursorStyle,
-    Axis, Element, ElementBox, ModelHandle, MutableAppContext, RenderContext, Task, ViewContext,
+    Axis, Element, ElementBox, ModelHandle, MouseButton, MutableAppContext, RenderContext, Task,
+    ViewContext,
 };
-use language::Bias;
+use language::{Bias, DiagnosticEntry, DiagnosticSeverity};
 use project::{HoverBlock, Project};
 use settings::Settings;
 use std::{ops::Range, time::Duration};
@@ -13,7 +14,7 @@ use util::TryFutureExt;
 
 use crate::{
     display_map::ToDisplayPoint, Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSnapshot,
-    EditorStyle,
+    EditorStyle, GoToDiagnostic, RangeToAnchorExt,
 };
 
 pub const HOVER_DELAY_MILLIS: u64 = 350;
@@ -54,17 +55,11 @@ pub fn hover_at(editor: &mut Editor, action: &HoverAt, cx: &mut ViewContext<Edit
 /// Triggered by the `Hover` action when the cursor is not over a symbol or when the
 /// selections changed.
 pub fn hide_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
-    let mut did_hide = false;
+    let did_hide = editor.hover_state.info_popover.take().is_some()
+        | editor.hover_state.diagnostic_popover.take().is_some();
 
-    // only notify the context once
-    if editor.hover_state.popover.is_some() {
-        editor.hover_state.popover = None;
-        did_hide = true;
-        cx.notify();
-    }
-    editor.hover_state.task = None;
+    editor.hover_state.info_task = None;
     editor.hover_state.triggered_from = None;
-    editor.hover_state.symbol_range = None;
 
     editor.clear_background_highlights::<HoverState>(cx);
 
@@ -114,8 +109,8 @@ fn show_hover(
     };
 
     if !ignore_timeout {
-        if let Some(range) = &editor.hover_state.symbol_range {
-            if range
+        if let Some(InfoPopover { symbol_range, .. }) = &editor.hover_state.info_popover {
+            if symbol_range
                 .to_offset(&snapshot.buffer_snapshot)
                 .contains(&multibuffer_offset)
             {
@@ -167,6 +162,43 @@ fn show_hover(
                 })
             });
 
+            if let Some(delay) = delay {
+                delay.await;
+            }
+
+            // If there's a diagnostic, assign it on the hover state and notify
+            let local_diagnostic = snapshot
+                .buffer_snapshot
+                .diagnostics_in_range::<_, usize>(multibuffer_offset..multibuffer_offset, false)
+                // Find the entry with the most specific range
+                .min_by_key(|entry| entry.range.end - entry.range.start)
+                .map(|entry| DiagnosticEntry {
+                    diagnostic: entry.diagnostic,
+                    range: entry.range.to_anchors(&snapshot.buffer_snapshot),
+                });
+
+            // Pull the primary diagnostic out so we can jump to it if the popover is clicked
+            let primary_diagnostic = local_diagnostic.as_ref().and_then(|local_diagnostic| {
+                snapshot
+                    .buffer_snapshot
+                    .diagnostic_group::<usize>(local_diagnostic.diagnostic.group_id)
+                    .find(|diagnostic| diagnostic.diagnostic.is_primary)
+                    .map(|entry| DiagnosticEntry {
+                        diagnostic: entry.diagnostic,
+                        range: entry.range.to_anchors(&snapshot.buffer_snapshot),
+                    })
+            });
+
+            if let Some(this) = this.upgrade(&cx) {
+                this.update(&mut cx, |this, _| {
+                    this.hover_state.diagnostic_popover =
+                        local_diagnostic.map(|local_diagnostic| DiagnosticPopover {
+                            local_diagnostic,
+                            primary_diagnostic,
+                        });
+                });
+            }
+
             // Construct new hover popover from hover request
             let hover_popover = hover_request.await.ok().flatten().and_then(|hover_result| {
                 if hover_result.contents.is_empty() {
@@ -188,45 +220,28 @@ fn show_hover(
                     anchor.clone()..anchor.clone()
                 };
 
-                if let Some(this) = this.upgrade(&cx) {
-                    this.update(&mut cx, |this, _| {
-                        this.hover_state.symbol_range = Some(range.clone());
-                    });
-                }
-
-                Some(HoverPopover {
+                Some(InfoPopover {
                     project: project.clone(),
-                    anchor: range.start.clone(),
+                    symbol_range: range.clone(),
                     contents: hover_result.contents,
                 })
             });
 
-            if let Some(delay) = delay {
-                delay.await;
-            }
-
             if let Some(this) = this.upgrade(&cx) {
                 this.update(&mut cx, |this, cx| {
-                    if hover_popover.is_some() {
+                    if let Some(hover_popover) = hover_popover.as_ref() {
                         // Highlight the selected symbol using a background highlight
-                        if let Some(range) = this.hover_state.symbol_range.clone() {
-                            this.highlight_background::<HoverState>(
-                                vec![range],
-                                |theme| theme.editor.hover_popover.highlight,
-                                cx,
-                            );
-                        }
-                        this.hover_state.popover = hover_popover;
-                        cx.notify();
+                        this.highlight_background::<HoverState>(
+                            vec![hover_popover.symbol_range.clone()],
+                            |theme| theme.editor.hover_popover.highlight,
+                            cx,
+                        );
                     } else {
-                        if this.hover_state.visible() {
-                            // Popover was visible, but now is hidden. Dismiss it
-                            hide_hover(this, cx);
-                        } else {
-                            // Clear selected symbol range for future requests
-                            this.hover_state.symbol_range = None;
-                        }
+                        this.clear_background_highlights::<HoverState>(cx);
                     }
+
+                    this.hover_state.info_popover = hover_popover;
+                    cx.notify();
                 });
             }
             Ok::<_, anyhow::Error>(())
@@ -234,38 +249,70 @@ fn show_hover(
         .log_err()
     });
 
-    editor.hover_state.task = Some(task);
+    editor.hover_state.info_task = Some(task);
 }
 
 #[derive(Default)]
 pub struct HoverState {
-    pub popover: Option<HoverPopover>,
+    pub info_popover: Option<InfoPopover>,
+    pub diagnostic_popover: Option<DiagnosticPopover>,
     pub triggered_from: Option<Anchor>,
-    pub symbol_range: Option<Range<Anchor>>,
-    pub task: Option<Task<Option<()>>>,
+    pub info_task: Option<Task<Option<()>>>,
 }
 
 impl HoverState {
     pub fn visible(&self) -> bool {
-        self.popover.is_some()
+        self.info_popover.is_some() || self.diagnostic_popover.is_some()
+    }
+
+    pub fn render(
+        &self,
+        snapshot: &EditorSnapshot,
+        style: &EditorStyle,
+        visible_rows: Range<u32>,
+        cx: &mut RenderContext<Editor>,
+    ) -> Option<(DisplayPoint, Vec<ElementBox>)> {
+        // If there is a diagnostic, position the popovers based on that.
+        // Otherwise use the start of the hover range
+        let anchor = self
+            .diagnostic_popover
+            .as_ref()
+            .map(|diagnostic_popover| &diagnostic_popover.local_diagnostic.range.start)
+            .or_else(|| {
+                self.info_popover
+                    .as_ref()
+                    .map(|info_popover| &info_popover.symbol_range.start)
+            })?;
+        let point = anchor.to_display_point(&snapshot.display_snapshot);
+
+        // Don't render if the relevant point isn't on screen
+        if !self.visible() || !visible_rows.contains(&point.row()) {
+            return None;
+        }
+
+        let mut elements = Vec::new();
+
+        if let Some(diagnostic_popover) = self.diagnostic_popover.as_ref() {
+            elements.push(diagnostic_popover.render(style, cx));
+        }
+        if let Some(info_popover) = self.info_popover.as_ref() {
+            elements.push(info_popover.render(style, cx));
+        }
+
+        Some((point, elements))
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct HoverPopover {
+pub struct InfoPopover {
     pub project: ModelHandle<Project>,
-    pub anchor: Anchor,
+    pub symbol_range: Range<Anchor>,
     pub contents: Vec<HoverBlock>,
 }
 
-impl HoverPopover {
-    pub fn render(
-        &self,
-        snapshot: &EditorSnapshot,
-        style: EditorStyle,
-        cx: &mut RenderContext<Editor>,
-    ) -> (DisplayPoint, ElementBox) {
-        let element = MouseEventHandler::new::<HoverPopover, _, _>(0, cx, |_, cx| {
+impl InfoPopover {
+    pub fn render(&self, style: &EditorStyle, cx: &mut RenderContext<Editor>) -> ElementBox {
+        MouseEventHandler::new::<InfoPopover, _, _>(0, cx, |_, cx| {
             let mut flex = Flex::new(Axis::Vertical).scrollable::<HoverBlock, _>(1, None, cx);
             flex.extend(self.contents.iter().map(|content| {
                 let project = self.project.read(cx);
@@ -309,10 +356,61 @@ impl HoverPopover {
             top: 5.,
             ..Default::default()
         })
-        .boxed();
+        .boxed()
+    }
+}
 
-        let display_point = self.anchor.to_display_point(&snapshot.display_snapshot);
-        (display_point, element)
+#[derive(Debug, Clone)]
+pub struct DiagnosticPopover {
+    local_diagnostic: DiagnosticEntry<Anchor>,
+    primary_diagnostic: Option<DiagnosticEntry<Anchor>>,
+}
+
+impl DiagnosticPopover {
+    pub fn render(&self, style: &EditorStyle, cx: &mut RenderContext<Editor>) -> ElementBox {
+        enum PrimaryDiagnostic {}
+
+        let mut text_style = style.hover_popover.prose.clone();
+        text_style.font_size = style.text.font_size;
+
+        let container_style = match self.local_diagnostic.diagnostic.severity {
+            DiagnosticSeverity::HINT => style.hover_popover.info_container,
+            DiagnosticSeverity::INFORMATION => style.hover_popover.info_container,
+            DiagnosticSeverity::WARNING => style.hover_popover.warning_container,
+            DiagnosticSeverity::ERROR => style.hover_popover.error_container,
+            _ => style.hover_popover.container,
+        };
+
+        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
+
+        MouseEventHandler::new::<DiagnosticPopover, _, _>(0, cx, |_, _| {
+            Text::new(self.local_diagnostic.diagnostic.message.clone(), text_style)
+                .with_soft_wrap(true)
+                .contained()
+                .with_style(container_style)
+                .boxed()
+        })
+        .on_click(MouseButton::Left, |_, cx| {
+            cx.dispatch_action(GoToDiagnostic)
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .with_tooltip::<PrimaryDiagnostic, _>(
+            0,
+            "Go To Diagnostic".to_string(),
+            Some(Box::new(crate::GoToDiagnostic)),
+            tooltip_style,
+            cx,
+        )
+        .boxed()
+    }
+
+    pub fn activation_info(&self) -> (usize, Anchor) {
+        let entry = self
+            .primary_diagnostic
+            .as_ref()
+            .unwrap_or(&self.local_diagnostic);
+
+        (entry.diagnostic.group_id, entry.range.start.clone())
     }
 }
 
@@ -321,6 +419,7 @@ mod tests {
     use futures::StreamExt;
     use indoc::indoc;
 
+    use language::{Diagnostic, DiagnosticSet};
     use project::HoverBlock;
 
     use crate::test::EditorLspTestContext;
@@ -328,7 +427,7 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    async fn test_hover_popover(cx: &mut gpui::TestAppContext) {
+    async fn test_mouse_hover_info_popover(cx: &mut gpui::TestAppContext) {
         let mut cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
@@ -362,19 +461,18 @@ mod tests {
             fn test()
                 [println!]();"});
         let mut requests =
-            cx.lsp
-                .handle_request::<lsp::request::HoverRequest, _, _>(move |_, _| async move {
-                    Ok(Some(lsp::Hover {
-                        contents: lsp::HoverContents::Markup(lsp::MarkupContent {
-                            kind: lsp::MarkupKind::Markdown,
-                            value: indoc! {"
+            cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+                Ok(Some(lsp::Hover {
+                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                        kind: lsp::MarkupKind::Markdown,
+                        value: indoc! {"
                                 # Some basic docs
                                 Some test documentation"}
-                            .to_string(),
-                        }),
-                        range: Some(symbol_range),
-                    }))
-                });
+                        .to_string(),
+                    }),
+                    range: Some(symbol_range),
+                }))
+            });
         cx.foreground()
             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
         requests.next().await;
@@ -382,7 +480,7 @@ mod tests {
         cx.editor(|editor, _| {
             assert!(editor.hover_state.visible());
             assert_eq!(
-                editor.hover_state.popover.clone().unwrap().contents,
+                editor.hover_state.info_popover.clone().unwrap().contents,
                 vec![
                     HoverBlock {
                         text: "Some basic docs".to_string(),
@@ -400,6 +498,9 @@ mod tests {
         let hover_point = cx.display_point(indoc! {"
             fn te|st()
                 println!();"});
+        let mut request = cx
+            .lsp
+            .handle_request::<lsp::request::HoverRequest, _, _>(|_, _| async move { Ok(None) });
         cx.update_editor(|editor, cx| {
             hover_at(
                 editor,
@@ -409,15 +510,24 @@ mod tests {
                 cx,
             )
         });
-        let mut request = cx
-            .lsp
-            .handle_request::<lsp::request::HoverRequest, _, _>(|_, _| async move { Ok(None) });
         cx.foreground()
             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
         request.next().await;
         cx.editor(|editor, _| {
             assert!(!editor.hover_state.visible());
         });
+    }
+
+    #[gpui::test]
+    async fn test_keyboard_hover_info_popover(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
 
         // Hover with keyboard has no delay
         cx.set_state(indoc! {"
@@ -427,26 +537,25 @@ mod tests {
         let symbol_range = cx.lsp_range(indoc! {"
             [fn] test()
                 println!();"});
-        cx.lsp
-            .handle_request::<lsp::request::HoverRequest, _, _>(move |_, _| async move {
-                Ok(Some(lsp::Hover {
-                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
-                        kind: lsp::MarkupKind::Markdown,
-                        value: indoc! {"
-                            # Some other basic docs
-                            Some other test documentation"}
-                        .to_string(),
-                    }),
-                    range: Some(symbol_range),
-                }))
-            })
-            .next()
-            .await;
-        cx.foreground().run_until_parked();
+        cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::Hover {
+                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                    kind: lsp::MarkupKind::Markdown,
+                    value: indoc! {"
+                        # Some other basic docs
+                        Some other test documentation"}
+                    .to_string(),
+                }),
+                range: Some(symbol_range),
+            }))
+        })
+        .next()
+        .await;
+
+        cx.condition(|editor, _| editor.hover_state.visible()).await;
         cx.editor(|editor, _| {
-            assert!(editor.hover_state.visible());
             assert_eq!(
-                editor.hover_state.popover.clone().unwrap().contents,
+                editor.hover_state.info_popover.clone().unwrap().contents,
                 vec![
                     HoverBlock {
                         text: "Some other basic docs".to_string(),
@@ -458,6 +567,75 @@ mod tests {
                     }
                 ]
             )
+        });
+    }
+
+    #[gpui::test]
+    async fn test_hover_diagnostic_and_info_popovers(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        // Hover with just diagnostic, pops DiagnosticPopover immediately and then
+        // info popover once request completes
+        cx.set_state(indoc! {"
+            fn te|st()
+                println!();"});
+
+        // Send diagnostic to client
+        let range = cx.text_anchor_range(indoc! {"
+            fn [test]()
+                println!();"});
+        cx.update_buffer(|buffer, cx| {
+            let snapshot = buffer.text_snapshot();
+            let set = DiagnosticSet::from_sorted_entries(
+                vec![DiagnosticEntry {
+                    range,
+                    diagnostic: Diagnostic {
+                        message: "A test diagnostic message.".to_string(),
+                        ..Default::default()
+                    },
+                }],
+                &snapshot,
+            );
+            buffer.update_diagnostics(set, cx);
+        });
+
+        // Hover pops diagnostic immediately
+        cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
+        cx.foreground().run_until_parked();
+
+        cx.editor(|Editor { hover_state, .. }, _| {
+            assert!(hover_state.diagnostic_popover.is_some() && hover_state.info_popover.is_none())
+        });
+
+        // Info Popover shows after request responded to
+        let range = cx.lsp_range(indoc! {"
+            fn [test]()
+                println!();"});
+        cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::Hover {
+                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                    kind: lsp::MarkupKind::Markdown,
+                    value: indoc! {"
+                    # Some other basic docs
+                    Some other test documentation"}
+                    .to_string(),
+                }),
+                range: Some(range),
+            }))
+        });
+        cx.foreground()
+            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+
+        cx.foreground().run_until_parked();
+        cx.editor(|Editor { hover_state, .. }, _| {
+            hover_state.diagnostic_popover.is_some() && hover_state.info_task.is_some()
         });
     }
 }

@@ -79,8 +79,11 @@ export default interface Theme {
     on500: BackgroundColorSet;
     ok: BackgroundColorSet;
     error: BackgroundColorSet;
+    on500Error: BackgroundColorSet;
     warning: BackgroundColorSet;
+    on500Warning: BackgroundColorSet;
     info: BackgroundColorSet;
+    on500Info: BackgroundColorSet;
   };
   borderColor: {
     primary: string;
