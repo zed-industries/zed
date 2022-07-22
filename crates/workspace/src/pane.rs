@@ -1025,13 +1025,13 @@ impl Pane {
                     .on_drag(MouseButton::Left, |_, cx| {
                         cx.global::<DragAndDrop>().dragging(some view handle)
                     })
-                    .on_mouse_up_out(MouseButton::Left, |_, cx| {
+                    .on_up_out(MouseButton::Left, |_, cx| {
                         cx.global::<DragAndDrop>().stopped_dragging(some view handle)
                     })
-                    .on_drag_over(MouseButton::Left, |started, _, cx| {
+                    .on_drag_over(MouseButton::Left, |started, _, _, cx| {
                         if started {
                             if let Some(tab) = cx.global::<DragAndDrop>().current_dragged::<Tab>() {
-                                cx.dispatch_action(ReceivingTab)
+                                cx.dispatch_action(ReceivingTab);
                             }
                         }
                     })

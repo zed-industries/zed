@@ -1,4 +1,8 @@
-use std::{any::TypeId, mem::Discriminant, rc::Rc};
+use std::{
+    any::TypeId,
+    mem::{discriminant, Discriminant},
+    rc::Rc,
+};
 
 use collections::HashMap;
 use pathfinder_geometry::{rect::RectF, vector::Vector2F};
@@ -81,12 +85,30 @@ impl MouseRegion {
         self
     }
 
+    pub fn on_up_out(
+        mut self,
+        button: MouseButton,
+        handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
+    ) -> Self {
+        self.handlers = self.handlers.on_up_out(button, handler);
+        self
+    }
+
     pub fn on_drag(
         mut self,
         button: MouseButton,
         handler: impl Fn(Vector2F, MouseMovedEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_drag(button, handler);
+        self
+    }
+
+    pub fn on_drag_over(
+        mut self,
+        button: MouseButton,
+        handler: impl Fn(Vector2F, MouseMovedEvent, &mut EventContext) + 'static,
+    ) -> Self {
+        self.handlers = self.handlers.on_drag_over(button, handler);
         self
     }
 
@@ -130,6 +152,10 @@ impl HandlerSet {
                 Rc::new(|_, _| {}),
             );
             set.insert(
+                (MouseRegionEvent::drag_over_disc(), Some(button)),
+                Rc::new(|_, _| {}),
+            );
+            set.insert(
                 (MouseRegionEvent::down_disc(), Some(button)),
                 Rc::new(|_, _| {}),
             );
@@ -143,6 +169,10 @@ impl HandlerSet {
             );
             set.insert(
                 (MouseRegionEvent::down_out_disc(), Some(button)),
+                Rc::new(|_, _| {}),
+            );
+            set.insert(
+                (MouseRegionEvent::up_out_disc(), Some(button)),
                 Rc::new(|_, _| {}),
             );
         }
@@ -233,6 +263,24 @@ impl HandlerSet {
         self
     }
 
+    pub fn on_up_out(
+        mut self,
+        button: MouseButton,
+        handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
+    ) -> Self {
+        self.set.insert((MouseRegionEvent::up_out_disc(), Some(button)),
+            Rc::new(move |region_event, cx| {
+                if let MouseRegionEvent::UpOut(mouse_button_event) = region_event {
+                    handler(mouse_button_event, cx);
+                } else {
+                    panic!(
+                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::UpOut, found {:?}", 
+                        region_event);
+                }
+            }));
+        self
+    }
+
     pub fn on_drag(
         mut self,
         button: MouseButton,
@@ -251,14 +299,32 @@ impl HandlerSet {
         self
     }
 
+    pub fn on_drag_over(
+        mut self,
+        button: MouseButton,
+        handler: impl Fn(bool, MouseMovedEvent, &mut EventContext) + 'static,
+    ) -> Self {
+        self.set.insert((MouseRegionEvent::drag_over_disc(), Some(button)),
+            Rc::new(move |region_event, cx| {
+                if let MouseRegionEvent::DragOver(started, mouse_moved_event) = region_event {
+                    handler(started, mouse_moved_event, cx);
+                } else {
+                    panic!(
+                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::DragOver, found {:?}", 
+                        region_event);
+                }
+            }));
+        self
+    }
+
     pub fn on_hover(
         mut self,
         handler: impl Fn(bool, MouseMovedEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.set.insert((MouseRegionEvent::hover_disc(), None),
             Rc::new(move |region_event, cx| {
-                if let MouseRegionEvent::Hover(hover, mouse_moved_event) = region_event {
-                    handler(hover, mouse_moved_event, cx);
+                if let MouseRegionEvent::Hover(started, mouse_moved_event) = region_event {
+                    handler(started, mouse_moved_event, cx);
                 } else {
                     panic!(
                         "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Hover, found {:?}", 
@@ -273,7 +339,7 @@ impl HandlerSet {
 pub enum MouseRegionEvent {
     Move(MouseMovedEvent),
     Drag(Vector2F, MouseMovedEvent),
-    DragOver(Vector2F, MouseMovedEvent),
+    DragOver(bool, MouseMovedEvent),
     Hover(bool, MouseMovedEvent),
     Down(MouseButtonEvent),
     Up(MouseButtonEvent),
@@ -285,40 +351,40 @@ pub enum MouseRegionEvent {
 
 impl MouseRegionEvent {
     pub fn move_disc() -> Discriminant<MouseRegionEvent> {
-        std::mem::discriminant(&MouseRegionEvent::Move(Default::default()))
+        discriminant(&MouseRegionEvent::Move(Default::default()))
     }
     pub fn drag_disc() -> Discriminant<MouseRegionEvent> {
-        std::mem::discriminant(&MouseRegionEvent::Drag(
+        discriminant(&MouseRegionEvent::Drag(
             Default::default(),
             Default::default(),
         ))
     }
     pub fn drag_over_disc() -> Discriminant<MouseRegionEvent> {
-        std::mem::discriminant(&MouseRegionEvent::DragOver(
+        discriminant(&MouseRegionEvent::DragOver(
             Default::default(),
             Default::default(),
         ))
     }
     pub fn hover_disc() -> Discriminant<MouseRegionEvent> {
-        std::mem::discriminant(&MouseRegionEvent::Hover(
+        discriminant(&MouseRegionEvent::Hover(
             Default::default(),
             Default::default(),
         ))
     }
     pub fn down_disc() -> Discriminant<MouseRegionEvent> {
-        std::mem::discriminant(&MouseRegionEvent::Down(Default::default()))
+        discriminant(&MouseRegionEvent::Down(Default::default()))
     }
     pub fn up_disc() -> Discriminant<MouseRegionEvent> {
-        std::mem::discriminant(&MouseRegionEvent::Up(Default::default()))
+        discriminant(&MouseRegionEvent::Up(Default::default()))
     }
     pub fn up_out_disc() -> Discriminant<MouseRegionEvent> {
-        std::mem::discriminant(&MouseRegionEvent::UpOut(Default::default()))
+        discriminant(&MouseRegionEvent::UpOut(Default::default()))
     }
     pub fn click_disc() -> Discriminant<MouseRegionEvent> {
-        std::mem::discriminant(&MouseRegionEvent::Click(Default::default()))
+        discriminant(&MouseRegionEvent::Click(Default::default()))
     }
     pub fn down_out_disc() -> Discriminant<MouseRegionEvent> {
-        std::mem::discriminant(&MouseRegionEvent::DownOut(Default::default()))
+        discriminant(&MouseRegionEvent::DownOut(Default::default()))
     }
     pub fn scroll_wheel_disc() -> Discriminant<MouseRegionEvent> {
         std::mem::discriminant(&MouseRegionEvent::ScrollWheel(Default::default()))

@@ -234,10 +234,7 @@ impl Presenter {
     pub fn dispatch_event(&mut self, event: Event, cx: &mut MutableAppContext) -> bool {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
             let mut invalidated_views = Vec::new();
-            let mut mouse_down_out_handlers = Vec::new();
-            let mut mouse_down_region = None;
-            let mut clicked_region = None;
-            let mut dragged_region = None;
+            let mut events_to_send = Vec::new();
 
             match &event {
                 Event::MouseDown(
@@ -248,32 +245,42 @@ impl Presenter {
                     let mut hit = false;
                     for (region, _) in self.mouse_regions.iter().rev() {
                         if region.bounds.contains_point(*position) {
-                            if !hit {
-                                hit = true;
+                            if !std::mem::replace(&mut hit, true) {
                                 invalidated_views.push(region.view_id);
-                                mouse_down_region =
-                                    Some((region.clone(), MouseRegionEvent::Down(e.clone())));
+                                events_to_send
+                                    .push((region.clone(), MouseRegionEvent::Down(e.clone())));
                                 self.clicked_region = Some(region.clone());
                                 self.prev_drag_position = Some(*position);
                             }
-                        } else if let Some(handler) = region
-                            .handlers
-                            .get(&(MouseRegionEvent::down_out_disc(), Some(*button)))
-                        {
-                            mouse_down_out_handlers.push((
-                                handler,
-                                region.view_id,
-                                MouseRegionEvent::DownOut(e.clone()),
-                            ));
+                        } else {
+                            events_to_send
+                                .push((region.clone(), MouseRegionEvent::DownOut(e.clone())));
                         }
                     }
                 }
-                Event::MouseUp(e @ MouseButtonEvent { position, .. }) => {
+                Event::MouseUp(
+                    e @ MouseButtonEvent {
+                        position, button, ..
+                    },
+                ) => {
+                    let mut hit = false;
+                    for (region, _) in self.mouse_regions.iter().rev() {
+                        if region.bounds.contains_point(*position) {
+                            if !std::mem::replace(&mut hit, true) {
+                                invalidated_views.push(region.view_id);
+                                events_to_send
+                                    .push((region.clone(), MouseRegionEvent::Up(e.clone())));
+                            }
+                        } else {
+                            events_to_send
+                                .push((region.clone(), MouseRegionEvent::UpOut(e.clone())));
+                        }
+                    }
                     self.prev_drag_position.take();
                     if let Some(region) = self.clicked_region.take() {
                         invalidated_views.push(region.view_id);
                         if region.bounds.contains_point(*position) {
-                            clicked_region = Some((region, MouseRegionEvent::Click(e.clone())));
+                            events_to_send.push((region, MouseRegionEvent::Click(e.clone())));
                         }
                     }
                 }
@@ -283,7 +290,7 @@ impl Presenter {
                         .as_ref()
                         .zip(self.prev_drag_position.as_mut())
                     {
-                        dragged_region = Some((
+                        events_to_send.push((
                             clicked_region.clone(),
                             MouseRegionEvent::Drag(*prev_drag_position, *e),
                         ));
@@ -298,39 +305,11 @@ impl Presenter {
             let (mut handled, mut event_cx) =
                 self.handle_hover_events(&event, &mut invalidated_views, cx);
 
-            for (handler, view_id, region_event) in mouse_down_out_handlers {
-                event_cx.with_current_view(view_id, |event_cx| handler(region_event, event_cx))
-            }
-
-            if let Some((mouse_down_region, region_event)) = mouse_down_region {
+            for (region, event) in events_to_send {
                 handled = true;
-                if let Some(mouse_down_callback) =
-                    mouse_down_region.handlers.get(&region_event.handler_key())
-                {
-                    event_cx.with_current_view(mouse_down_region.view_id, |event_cx| {
-                        mouse_down_callback(region_event, event_cx);
-                    })
-                }
-            }
-
-            if let Some((clicked_region, region_event)) = clicked_region {
-                handled = true;
-                if let Some(click_callback) =
-                    clicked_region.handlers.get(&region_event.handler_key())
-                {
-                    event_cx.with_current_view(clicked_region.view_id, |event_cx| {
-                        click_callback(region_event, event_cx);
-                    })
-                }
-            }
-
-            if let Some((dragged_region, region_event)) = dragged_region {
-                handled = true;
-                if let Some(drag_callback) =
-                    dragged_region.handlers.get(&region_event.handler_key())
-                {
-                    event_cx.with_current_view(dragged_region.view_id, |event_cx| {
-                        drag_callback(region_event, event_cx);
+                if let Some(callback) = region.handlers.get(&event.handler_key()) {
+                    event_cx.with_current_view(region.view_id, |event_cx| {
+                        callback(event, event_cx);
                     })
                 }
             }
@@ -366,37 +345,43 @@ impl Presenter {
             },
         ) = event
         {
-            if pressed_button.is_none() {
-                let mut style_to_assign = CursorStyle::Arrow;
-                for region in self.cursor_regions.iter().rev() {
-                    if region.bounds.contains_point(*position) {
-                        style_to_assign = region.style;
-                        break;
-                    }
+            let mut style_to_assign = CursorStyle::Arrow;
+            for region in self.cursor_regions.iter().rev() {
+                if region.bounds.contains_point(*position) {
+                    style_to_assign = region.style;
+                    break;
                 }
-                cx.platform().set_cursor_style(style_to_assign);
+            }
+            cx.platform().set_cursor_style(style_to_assign);
 
-                let mut hover_depth = None;
-                for (region, depth) in self.mouse_regions.iter().rev() {
-                    if region.bounds.contains_point(*position)
-                        && hover_depth.map_or(true, |hover_depth| hover_depth == *depth)
-                    {
-                        hover_depth = Some(*depth);
-                        if let Some(region_id) = region.id() {
-                            if !self.hovered_region_ids.contains(&region_id) {
-                                invalidated_views.push(region.view_id);
-                                hover_regions
-                                    .push((region.clone(), MouseRegionEvent::Hover(true, *e)));
-                                self.hovered_region_ids.insert(region_id);
-                            }
-                        }
-                    } else if let Some(region_id) = region.id() {
-                        if self.hovered_region_ids.contains(&region_id) {
+            let mut hover_depth = None;
+            for (region, depth) in self.mouse_regions.iter().rev() {
+                if region.bounds.contains_point(*position)
+                    && hover_depth.map_or(true, |hover_depth| hover_depth == *depth)
+                {
+                    hover_depth = Some(*depth);
+                    if let Some(region_id) = region.id() {
+                        if !self.hovered_region_ids.contains(&region_id) {
                             invalidated_views.push(region.view_id);
-                            hover_regions
-                                .push((region.clone(), MouseRegionEvent::Hover(false, *e)));
-                            self.hovered_region_ids.remove(&region_id);
+                            let region_event = if let Some(pressed_button) = pressed_button {
+                                MouseRegionEvent::DragOver(true, e.clone())
+                            } else {
+                                MouseRegionEvent::Hover(true, e.clone())
+                            };
+                            hover_regions.push((region.clone(), region_event));
+                            self.hovered_region_ids.insert(region_id);
                         }
+                    }
+                } else if let Some(region_id) = region.id() {
+                    if self.hovered_region_ids.contains(&region_id) {
+                        invalidated_views.push(region.view_id);
+                        let region_event = if let Some(pressed_button) = pressed_button {
+                            MouseRegionEvent::DragOver(false, e.clone())
+                        } else {
+                            MouseRegionEvent::Hover(false, e.clone())
+                        };
+                        hover_regions.push((region.clone(), region_event));
+                        self.hovered_region_ids.remove(&region_id);
                     }
                 }
             }
@@ -407,9 +392,9 @@ impl Presenter {
 
         for (hover_region, region_event) in hover_regions {
             handled = true;
-            if let Some(hover_callback) = hover_region.handlers.get(&region_event.handler_key()) {
+            if let Some(callback) = hover_region.handlers.get(&region_event.handler_key()) {
                 event_cx.with_current_view(hover_region.view_id, |event_cx| {
-                    hover_callback(region_event, event_cx);
+                    callback(region_event, event_cx);
                 })
             }
         }

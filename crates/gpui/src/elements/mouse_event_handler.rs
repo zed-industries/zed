@@ -51,6 +51,15 @@ impl MouseEventHandler {
         self
     }
 
+    pub fn on_up(
+        mut self,
+        button: MouseButton,
+        handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
+    ) -> Self {
+        self.handlers = self.handlers.on_up(button, handler);
+        self
+    }
+
     pub fn on_click(
         mut self,
         button: MouseButton,
@@ -69,12 +78,30 @@ impl MouseEventHandler {
         self
     }
 
+    pub fn on_up_out(
+        mut self,
+        button: MouseButton,
+        handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
+    ) -> Self {
+        self.handlers = self.handlers.on_up(button, handler);
+        self
+    }
+
     pub fn on_drag(
         mut self,
         button: MouseButton,
         handler: impl Fn(Vector2F, MouseMovedEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_drag(button, handler);
+        self
+    }
+
+    pub fn on_drag_over(
+        mut self,
+        button: MouseButton,
+        handler: impl Fn(bool, MouseMovedEvent, &mut EventContext) + 'static,
+    ) -> Self {
+        self.handlers = self.handlers.on_drag_over(button, handler);
         self
     }
 
