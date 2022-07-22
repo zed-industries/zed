@@ -1,35 +1,40 @@
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
-use alacritty_terminal::term::SizeInfo;
-use gpui::{AppContext, ModelHandle, ReadModelWith, TestAppContext};
+use gpui::{
+    geometry::vector::vec2f, AppContext, ModelHandle, ReadModelWith, TestAppContext, ViewHandle,
+};
 use itertools::Itertools;
+use project::{Entry, Project, ProjectPath, Worktree};
+use workspace::{AppState, Workspace};
 
 use crate::{
-    connection::TerminalConnection, DEBUG_CELL_WIDTH, DEBUG_LINE_HEIGHT, DEBUG_TERMINAL_HEIGHT,
-    DEBUG_TERMINAL_WIDTH,
+    connected_el::TermDimensions,
+    model::{Terminal, TerminalBuilder},
+    DEBUG_CELL_WIDTH, DEBUG_LINE_HEIGHT, DEBUG_TERMINAL_HEIGHT, DEBUG_TERMINAL_WIDTH,
 };
 
 pub struct TerminalTestContext<'a> {
     pub cx: &'a mut TestAppContext,
-    pub connection: ModelHandle<TerminalConnection>,
+    pub connection: Option<ModelHandle<Terminal>>,
 }
 
 impl<'a> TerminalTestContext<'a> {
-    pub fn new(cx: &'a mut TestAppContext) -> Self {
+    pub fn new(cx: &'a mut TestAppContext, term: bool) -> Self {
         cx.set_condition_duration(Some(Duration::from_secs(5)));
 
-        let size_info = SizeInfo::new(
-            DEBUG_TERMINAL_WIDTH,
-            DEBUG_TERMINAL_HEIGHT,
+        let size_info = TermDimensions::new(
             DEBUG_CELL_WIDTH,
             DEBUG_LINE_HEIGHT,
-            0.,
-            0.,
-            false,
+            vec2f(DEBUG_TERMINAL_WIDTH, DEBUG_TERMINAL_HEIGHT),
         );
 
-        let connection =
-            cx.add_model(|cx| TerminalConnection::new(None, None, None, size_info, cx));
+        let connection = term.then(|| {
+            cx.add_model(|cx| {
+                TerminalBuilder::new(None, None, None, size_info)
+                    .unwrap()
+                    .subscribe(cx)
+            })
+        });
 
         TerminalTestContext { cx, connection }
     }
@@ -38,34 +43,112 @@ impl<'a> TerminalTestContext<'a> {
     where
         F: Fn(String, &AppContext) -> bool,
     {
+        let connection = self.connection.take().unwrap();
+
         let command = command.to_string();
-        self.connection.update(self.cx, |connection, _| {
+        connection.update(self.cx, |connection, _| {
             connection.write_to_pty(command);
             connection.write_to_pty("\r".to_string());
         });
 
-        self.connection
+        connection
             .condition(self.cx, |conn, cx| {
                 let content = Self::grid_as_str(conn);
                 f(content, cx)
             })
             .await;
 
-        self.cx
-            .read_model_with(&self.connection, &mut |conn, _: &AppContext| {
+        let res = self
+            .cx
+            .read_model_with(&connection, &mut |conn, _: &AppContext| {
                 Self::grid_as_str(conn)
-            })
+            });
+
+        self.connection = Some(connection);
+
+        res
     }
 
-    fn grid_as_str(connection: &TerminalConnection) -> String {
-        let term = connection.term.lock();
-        let grid_iterator = term.renderable_content().display_iter;
-        let lines = grid_iterator.group_by(|i| i.point.line.0);
-        lines
-            .into_iter()
-            .map(|(_, line)| line.map(|i| i.c).collect::<String>())
-            .collect::<Vec<String>>()
-            .join("\n")
+    ///Creates a worktree with 1 file: /root.txt
+    pub async fn blank_workspace(&mut self) -> (ModelHandle<Project>, ViewHandle<Workspace>) {
+        let params = self.cx.update(AppState::test);
+
+        let project = Project::test(params.fs.clone(), [], self.cx).await;
+        let (_, workspace) = self.cx.add_window(|cx| Workspace::new(project.clone(), cx));
+
+        (project, workspace)
+    }
+
+    ///Creates a worktree with 1 folder: /root{suffix}/
+    pub async fn create_folder_wt(
+        &mut self,
+        project: ModelHandle<Project>,
+        path: impl AsRef<Path>,
+    ) -> (ModelHandle<Worktree>, Entry) {
+        self.create_wt(project, true, path).await
+    }
+
+    ///Creates a worktree with 1 file: /root{suffix}.txt
+    pub async fn create_file_wt(
+        &mut self,
+        project: ModelHandle<Project>,
+        path: impl AsRef<Path>,
+    ) -> (ModelHandle<Worktree>, Entry) {
+        self.create_wt(project, false, path).await
+    }
+
+    async fn create_wt(
+        &mut self,
+        project: ModelHandle<Project>,
+        is_dir: bool,
+        path: impl AsRef<Path>,
+    ) -> (ModelHandle<Worktree>, Entry) {
+        let (wt, _) = project
+            .update(self.cx, |project, cx| {
+                project.find_or_create_local_worktree(path, true, cx)
+            })
+            .await
+            .unwrap();
+
+        let entry = self
+            .cx
+            .update(|cx| {
+                wt.update(cx, |wt, cx| {
+                    wt.as_local()
+                        .unwrap()
+                        .create_entry(Path::new(""), is_dir, cx)
+                })
+            })
+            .await
+            .unwrap();
+
+        (wt, entry)
+    }
+
+    pub fn insert_active_entry_for(
+        &mut self,
+        wt: ModelHandle<Worktree>,
+        entry: Entry,
+        project: ModelHandle<Project>,
+    ) {
+        self.cx.update(|cx| {
+            let p = ProjectPath {
+                worktree_id: wt.read(cx).id(),
+                path: entry.path,
+            };
+            project.update(cx, |project, cx| project.set_active_path(Some(p), cx));
+        });
+    }
+
+    fn grid_as_str(connection: &Terminal) -> String {
+        connection.render_lock(None, |content, _| {
+            let lines = content.display_iter.group_by(|i| i.point.line.0);
+            lines
+                .into_iter()
+                .map(|(_, line)| line.map(|i| i.c).collect::<String>())
+                .collect::<Vec<String>>()
+                .join("\n")
+        })
     }
 }
 

@@ -8,7 +8,7 @@ path = "src/terminal.rs"
 doctest = false
 
 [dependencies]
-alacritty_terminal = "0.16.1"
+alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "e9b864860ec79cc1b70042aafce100cdd6985a0a"}
 editor = { path = "../editor" }
 util = { path = "../util" }
 gpui = { path = "../gpui" }
@@ -23,6 +23,10 @@ ordered-float = "2.1.1"
 itertools = "0.10"
 dirs = "4.0.0"
 shellexpand = "2.1.0"
+libc = "0.2"
+anyhow = "1"
+thiserror = "1.0"
+
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }
