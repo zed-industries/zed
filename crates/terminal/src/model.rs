@@ -60,10 +60,9 @@ pub struct TerminalError {
     pub source: std::io::Error,
 }
 
-impl Display for TerminalError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let dir_string: String = self
-            .directory
+impl TerminalError {
+    pub fn fmt_directory(&self) -> String {
+        self.directory
             .clone()
             .map(|path| {
                 match path
@@ -79,13 +78,22 @@ impl Display for TerminalError {
                 let default_dir =
                     dirs::home_dir().map(|buf| buf.into_os_string().to_string_lossy().to_string());
                 match default_dir {
-                    Some(dir) => format!("<none specified, using home> {}", dir),
-                    None => "<none specified, could not find home>".to_string(),
+                    Some(dir) => format!("<none specified, using home directory> {}", dir),
+                    None => "<none specified, could not find home directory>".to_string(),
                 }
-            });
+            })
+    }
 
-        let shell = self
-            .shell
+    pub fn shell_to_string(&self) -> Option<String> {
+        self.shell.as_ref().map(|shell| match shell {
+            Shell::System => "<system shell>".to_string(),
+            Shell::Program(p) => p.to_string(),
+            Shell::WithArguments { program, args } => format!("{} {}", program, args.join(" ")),
+        })
+    }
+
+    pub fn fmt_shell(&self) -> String {
+        self.shell
             .clone()
             .map(|shell| match shell {
                 Shell::System => {
@@ -94,7 +102,7 @@ impl Display for TerminalError {
 
                     match pw {
                         Some(pw) => format!("<system defined shell> {}", pw.shell),
-                        None => "<could not access system defined shell>".to_string(),
+                        None => "<could not access the password file>".to_string(),
                     }
                 }
                 Shell::Program(s) => s,
@@ -107,11 +115,17 @@ impl Display for TerminalError {
                     Some(pw) => {
                         format!("<none specified, using system defined shell> {}", pw.shell)
                     }
-                    None => {
-                        "<none specified, could not access system defined shell> {}".to_string()
-                    }
+                    None => "<none specified, could not access the password file> {}".to_string(),
                 }
-            });
+            })
+    }
+}
+
+impl Display for TerminalError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let dir_string: String = self.fmt_directory();
+
+        let shell = self.fmt_shell();
 
         write!(
             f,
@@ -210,7 +224,6 @@ impl TerminalBuilder {
             pty_tx: Notifier(pty_tx),
             term,
             title: shell_txt.to_string(),
-            associated_directory: working_directory,
         };
 
         Ok(TerminalBuilder {
@@ -245,7 +258,6 @@ pub struct Terminal {
     pty_tx: Notifier,
     term: Arc<FairMutex<Term<ZedListener>>>,
     pub title: String,
-    pub associated_directory: Option<PathBuf>,
 }
 
 impl Terminal {

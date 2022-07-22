@@ -58,6 +58,7 @@ impl TerminalContent {
 pub struct TerminalView {
     modal: bool,
     content: TerminalContent,
+    associated_directory: Option<PathBuf>,
 }
 
 pub struct ErrorView {
@@ -98,7 +99,8 @@ impl TerminalView {
         let shell = settings.terminal_overrides.shell.clone();
         let envs = settings.terminal_overrides.env.clone(); //Should be short and cheap.
 
-        let content = match TerminalBuilder::new(working_directory, shell, envs, size_info) {
+        let content = match TerminalBuilder::new(working_directory.clone(), shell, envs, size_info)
+        {
             Ok(terminal) => {
                 let terminal = cx.add_model(|cx| terminal.subscribe(cx));
                 let view = cx.add_view(|cx| ConnectedView::from_terminal(terminal, modal, cx));
@@ -115,7 +117,11 @@ impl TerminalView {
         };
         cx.focus(content.handle());
 
-        TerminalView { modal, content }
+        TerminalView {
+            modal,
+            content,
+            associated_directory: working_directory,
+        }
     }
 
     fn from_terminal(
@@ -127,6 +133,7 @@ impl TerminalView {
         TerminalView {
             modal,
             content: TerminalContent::Connected(connected_view),
+            associated_directory: None,
         }
     }
 }
@@ -176,16 +183,39 @@ impl View for ErrorView {
         let settings = cx.global::<Settings>();
         let style = TerminalEl::make_text_style(cx.font_cache(), settings);
 
-        Label::new(
-            format!(
-                "Failed to open the terminal. Info: \n{}",
-                self.error.to_string()
-            ),
-            style,
-        )
-        .aligned()
-        .contained()
-        .boxed()
+        //TODO:
+        //We want markdown style highlighting so we can format the program and working directory with ``
+        //We want a max-width of 75% with word-wrap
+        //We want to be able to select the text
+        //Want to be able to scroll if the error message is massive somehow (resiliency)
+
+        let program_text = {
+            match self.error.shell_to_string() {
+                Some(shell_txt) => format!("Shell Program: `{}`", shell_txt),
+                None => "No program specified".to_string(),
+            }
+        };
+
+        let directory_text = {
+            match self.error.directory.as_ref() {
+                Some(path) => format!("Working directory: `{}`", path.to_string_lossy()),
+                None => "No working directory specified".to_string(),
+            }
+        };
+
+        let error_text = self.error.source.to_string();
+
+        Flex::column()
+            .with_child(
+                Text::new("Failed to open the terminal.".to_string(), style.clone())
+                    .contained()
+                    .boxed(),
+            )
+            .with_child(Text::new(program_text, style.clone()).contained().boxed())
+            .with_child(Text::new(directory_text, style.clone()).contained().boxed())
+            .with_child(Text::new(error_text, style.clone()).contained().boxed())
+            .aligned()
+            .boxed()
     }
 }
 
@@ -217,17 +247,11 @@ impl Item for TerminalView {
         //From what I can tell, there's no  way to tell the current working
         //Directory of the terminal from outside the shell. There might be
         //solutions to this, but they are non-trivial and require more IPC
-        if let TerminalContent::Connected(connected) = &self.content {
-            let associated_directory = connected
-                .read(cx)
-                .handle()
-                .read(cx)
-                .associated_directory
-                .clone();
-            Some(TerminalView::new(associated_directory, false, cx))
-        } else {
-            None
-        }
+        Some(TerminalView::new(
+            self.associated_directory.clone(),
+            false,
+            cx,
+        ))
     }
 
     fn project_path(&self, _cx: &gpui::AppContext) -> Option<ProjectPath> {
