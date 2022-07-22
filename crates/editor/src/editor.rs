@@ -2480,14 +2480,17 @@ impl Editor {
                 });
                 if let Some((_, excerpted_buffer, excerpt_range)) = excerpt {
                     if excerpted_buffer == *buffer {
-                        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-                        let excerpt_range = excerpt_range.to_offset(&snapshot);
-                        if snapshot
-                            .edited_ranges_for_transaction(transaction)
-                            .all(|range| {
-                                excerpt_range.start <= range.start && excerpt_range.end >= range.end
-                            })
-                        {
+                        let all_edits_within_excerpt = buffer.read_with(&cx, |buffer, _| {
+                            let excerpt_range = excerpt_range.to_offset(buffer);
+                            buffer
+                                .edited_ranges_for_transaction(transaction)
+                                .all(|range| {
+                                    excerpt_range.start <= range.start
+                                        && excerpt_range.end >= range.end
+                                })
+                        });
+
+                        if all_edits_within_excerpt {
                             return Ok(());
                         }
                     }
@@ -2500,12 +2503,12 @@ impl Editor {
         let mut ranges_to_highlight = Vec::new();
         let excerpt_buffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(replica_id).with_title(title);
-            for (buffer, transaction) in &entries {
-                let snapshot = buffer.read(cx).snapshot();
+            for (buffer_handle, transaction) in &entries {
+                let buffer = buffer_handle.read(cx);
                 ranges_to_highlight.extend(
                     multibuffer.push_excerpts_with_context_lines(
-                        buffer.clone(),
-                        snapshot
+                        buffer_handle.clone(),
+                        buffer
                             .edited_ranges_for_transaction::<usize>(transaction)
                             .collect(),
                         1,
