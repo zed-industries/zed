@@ -10,6 +10,7 @@ use cocoa::{
     base::{id, YES},
     foundation::NSString as _,
 };
+use objc::{msg_send, sel, sel_impl};
 use std::{borrow::Cow, ffi::CStr, os::raw::c_char};
 
 const BACKSPACE_KEY: u16 = 0x7f;
@@ -77,42 +78,13 @@ impl Event {
                     cmd,
                 }))
             }
-            NSEventType::NSKeyDown => {
-                let modifiers = native_event.modifierFlags();
-                let ctrl = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
-                let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
-                let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
-                let cmd = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
-
-                let unmodified_chars = get_key_text(native_event)?;
-                Some(Self::KeyDown(KeyDownEvent {
-                    keystroke: Keystroke {
-                        ctrl,
-                        alt,
-                        shift,
-                        cmd,
-                        key: unmodified_chars.into(),
-                    },
-                    is_held: native_event.isARepeat() == YES,
-                }))
-            }
-            NSEventType::NSKeyUp => {
-                let modifiers = native_event.modifierFlags();
-                let ctrl = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
-                let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
-                let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
-                let cmd = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
-                let unmodified_chars = get_key_text(native_event)?;
-                Some(Self::KeyUp(KeyUpEvent {
-                    keystroke: Keystroke {
-                        ctrl,
-                        alt,
-                        shift,
-                        cmd,
-                        key: unmodified_chars.into(),
-                    },
-                }))
-            }
+            NSEventType::NSKeyDown => Some(Self::KeyDown(KeyDownEvent {
+                keystroke: parse_keystroke(native_event),
+                is_held: native_event.isARepeat() == YES,
+            })),
+            NSEventType::NSKeyUp => Some(Self::KeyUp(KeyUpEvent {
+                keystroke: parse_keystroke(native_event),
+            })),
             NSEventType::NSLeftMouseDown
             | NSEventType::NSRightMouseDown
             | NSEventType::NSOtherMouseDown => {
@@ -231,17 +203,21 @@ impl Event {
     }
 }
 
-unsafe fn get_key_text(native_event: id) -> Option<&'static str> {
+unsafe fn parse_keystroke(native_event: id) -> Keystroke {
+    use cocoa::appkit::*;
+
+    let modifiers = native_event.modifierFlags();
+    let ctrl = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
+    let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
+    let mut shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
+    let cmd = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
     let unmodified_chars =
         CStr::from_ptr(native_event.charactersIgnoringModifiers().UTF8String() as *mut c_char)
             .to_str()
             .unwrap();
 
-    let first_char = unmodified_chars.chars().next().map(|ch| ch as u16);
-    use cocoa::appkit::*;
-
     #[allow(non_upper_case_globals)]
-    let unmodified_chars = match first_char {
+    let key = match unmodified_chars.chars().next().map(|ch| ch as u16) {
         Some(SPACE_KEY) => "space",
         Some(BACKSPACE_KEY) => "backspace",
         Some(ENTER_KEY) | Some(NUMPAD_ENTER_KEY) => "enter",
@@ -267,8 +243,36 @@ unsafe fn get_key_text(native_event: id) -> Option<&'static str> {
         Some(NSF10FunctionKey) => "f10",
         Some(NSF11FunctionKey) => "f11",
         Some(NSF12FunctionKey) => "f12",
-        _ => unmodified_chars,
+        _ => {
+            if shift {
+                let chars_without_shift: id = msg_send![
+                    native_event,
+                    charactersByApplyingModifiers: NSEventModifierFlags::empty()
+                ];
+                let chars_without_shift =
+                    CStr::from_ptr(chars_without_shift.UTF8String() as *mut c_char)
+                        .to_str()
+                        .unwrap();
+
+                if chars_without_shift == unmodified_chars.to_ascii_lowercase() {
+                    chars_without_shift
+                } else if chars_without_shift != unmodified_chars {
+                    shift = false;
+                    unmodified_chars
+                } else {
+                    unmodified_chars
+                }
+            } else {
+                unmodified_chars
+            }
+        }
     };
 
-    Some(unmodified_chars)
+    Keystroke {
+        ctrl,
+        alt,
+        shift,
+        cmd,
+        key: key.into(),
+    }
 }
