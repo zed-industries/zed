@@ -290,7 +290,7 @@ impl Item for Terminal {
 
         if self.has_bell {
             flex.add_child(
-                Svg::new("icons/zap.svg") //TODO: Swap out for a better icon, or at least resize this
+                Svg::new("icons/bolt_12.svg") //TODO: Swap out for a better icon, or at least resize this
                     .with_color(tab_theme.label.text.color)
                     .constrained()
                     .with_width(search_theme.tab_icon_width)

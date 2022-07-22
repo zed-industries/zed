@@ -1,5 +1,11 @@
 import Theme from "../themes/common/theme";
-import { backgroundColor, border, borderColor, popoverShadow, text } from "./components";
+import {
+  backgroundColor,
+  border,
+  borderColor,
+  popoverShadow,
+  text,
+} from "./components";
 
 export default function contextMenu(theme: Theme) {
   return {
@@ -15,7 +21,7 @@ export default function contextMenu(theme: Theme) {
       label: text(theme, "sans", "secondary", { size: "sm" }),
       keystroke: {
         ...text(theme, "sans", "muted", { size: "sm", weight: "bold" }),
-        padding: { left: 3, right: 3 }
+        padding: { left: 3, right: 3 },
       },
       hover: {
         background: backgroundColor(theme, 300, "hovered"),
@@ -28,11 +34,11 @@ export default function contextMenu(theme: Theme) {
       activeHover: {
         background: backgroundColor(theme, 300, "hovered"),
         text: text(theme, "sans", "active", { size: "sm" }),
-      }
+      },
     },
     separator: {
       background: borderColor(theme, "primary"),
-      margin: { top: 2, bottom: 2 }
+      margin: { top: 2, bottom: 2 },
     },
-  }
+  };
 }

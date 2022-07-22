@@ -5581,7 +5581,7 @@ impl RefCounts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{actions, elements::*, impl_actions, MouseButton, MouseEvent};
+    use crate::{actions, elements::*, impl_actions, MouseButton, MouseButtonEvent};
     use serde::Deserialize;
     use smol::future::poll_once;
     use std::{
@@ -5934,7 +5934,7 @@ mod tests {
         let presenter = cx.presenters_and_platform_windows[&window_id].0.clone();
         // Ensure window's root element is in a valid lifecycle state.
         presenter.borrow_mut().dispatch_event(
-            Event::MouseDown(MouseEvent {
+            Event::MouseDown(MouseButtonEvent {
                 position: Default::default(),
                 button: MouseButton::Left,
                 ctrl: false,

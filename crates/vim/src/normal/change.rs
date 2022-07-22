@@ -31,7 +31,7 @@ pub fn change_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
             editor.insert(&"", cx);
         });
     });
-    vim.switch_mode(Mode::Insert, cx)
+    vim.switch_mode(Mode::Insert, false, cx)
 }
 
 // From the docs https://vimhelp.org/change.txt.html#cw
@@ -70,7 +70,7 @@ fn change_word(
                 editor.insert(&"", cx);
             });
         });
-        vim.switch_mode(Mode::Insert, cx);
+        vim.switch_mode(Mode::Insert, false, cx);
     });
 }
 

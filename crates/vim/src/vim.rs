@@ -36,7 +36,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
     // Vim Actions
     cx.add_action(|_: &mut Workspace, &SwitchMode(mode): &SwitchMode, cx| {
-        Vim::update(cx, |vim, cx| vim.switch_mode(mode, cx))
+        Vim::update(cx, |vim, cx| vim.switch_mode(mode, false, cx))
     });
     cx.add_action(
         |_: &mut Workspace, &PushOperator(operator): &PushOperator, cx| {
@@ -52,7 +52,7 @@ pub fn init(cx: &mut MutableAppContext) {
         if vim.state.mode != Mode::Normal || vim.active_operator().is_some() {
             MutableAppContext::defer(cx, |cx| {
                 Vim::update(cx, |state, cx| {
-                    state.switch_mode(Mode::Normal, cx);
+                    state.switch_mode(Mode::Normal, false, cx);
                 });
             });
         } else {
@@ -105,13 +105,16 @@ impl Vim {
             .map(|ae| ae.update(cx, update))
     }
 
-    fn switch_mode(&mut self, mode: Mode, cx: &mut MutableAppContext) {
-        let previous_mode = self.state.mode;
+    fn switch_mode(&mut self, mode: Mode, leave_selections: bool, cx: &mut MutableAppContext) {
         self.state.mode = mode;
         self.state.operator_stack.clear();
 
         // Sync editor settings like clip mode
         self.sync_vim_settings(cx);
+
+        if leave_selections {
+            return;
+        }
 
         // Adjust selections
         for editor in self.editors.values() {
@@ -119,23 +122,10 @@ impl Vim {
                 editor.update(cx, |editor, cx| {
                     editor.change_selections(None, cx, |s| {
                         s.move_with(|map, selection| {
-                            // If empty selections
                             if self.state.empty_selections_only() {
                                 let new_head = map.clip_point(selection.head(), Bias::Left);
                                 selection.collapse_to(new_head, selection.goal)
                             } else {
-                                if matches!(mode, Mode::Visual { line: false })
-                                    && !matches!(previous_mode, Mode::Visual { .. })
-                                    && !selection.reversed
-                                    && !selection.is_empty()
-                                {
-                                    // Mode wasn't visual mode before, but is now. We need to move the end
-                                    // back by one character so that the region to be modifed stays the same
-                                    *selection.end.column_mut() =
-                                        selection.end.column().saturating_sub(1);
-                                    selection.end = map.clip_point(selection.end, Bias::Left);
-                                }
-
                                 selection.set_head(
                                     map.clip_point(selection.head(), Bias::Left),
                                     selection.goal,
@@ -173,7 +163,7 @@ impl Vim {
             self.enabled = enabled;
             self.state = Default::default();
             if enabled {
-                self.switch_mode(Mode::Normal, cx);
+                self.switch_mode(Mode::Normal, false, cx);
             }
             self.sync_vim_settings(cx);
         }
@@ -266,7 +256,7 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_buffer_search_switches_mode(cx: &mut gpui::TestAppContext) {
+    async fn test_buffer_search(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.set_state(
@@ -278,7 +268,8 @@ mod test {
         );
         cx.simulate_keystroke("/");
 
-        assert_eq!(cx.mode(), Mode::Visual { line: false });
+        // We now use a weird insert mode with selection when jumping to a single line editor
+        assert_eq!(cx.mode(), Mode::Insert);
 
         let search_bar = cx.workspace(|workspace, cx| {
             workspace

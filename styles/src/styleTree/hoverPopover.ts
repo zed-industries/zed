@@ -10,7 +10,7 @@ export default function HoverPopover(theme: Theme) {
         left: 8,
         right: 8,
         top: 4,
-        bottom: 4
+        bottom: 4,
       },
       shadow: popoverShadow(theme),
       border: border(theme, "primary"),
@@ -21,7 +21,7 @@ export default function HoverPopover(theme: Theme) {
     block_style: {
       padding: { top: 4 },
     },
-    prose: text(theme, "sans", "primary", { "size": "sm" }),
+    prose: text(theme, "sans", "primary", { size: "sm" }),
     highlight: theme.editor.highlight.occurrence,
-  }
+  };
 }

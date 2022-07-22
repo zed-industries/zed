@@ -238,6 +238,8 @@ impl Line {
         None
     }
 
+    // If round_to_closest, find the closest index to the given x position
+    // If !round_to_closest, find the largest index before the given x position
     pub fn index_for_x(&self, x: f32) -> Option<usize> {
         if x >= self.layout.width {
             None

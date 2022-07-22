@@ -7,8 +7,8 @@ use gpui::{
     geometry::vector::{vec2f, Vector2F},
     keymap,
     platform::CursorStyle,
-    AppContext, Axis, Element, ElementBox, Entity, MouseState, MutableAppContext, RenderContext,
-    Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, Axis, Element, ElementBox, Entity, MouseButton, MouseState, MutableAppContext,
+    RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectIndex, SelectLast, SelectNext, SelectPrev};
 use settings::Settings;
@@ -90,7 +90,9 @@ impl<D: PickerDelegate> View for Picker<D> {
                                         .read(cx)
                                         .render_match(ix, state, ix == selected_ix, cx)
                                 })
-                                .on_mouse_down(move |_, cx| cx.dispatch_action(SelectIndex(ix)))
+                                .on_down(MouseButton::Left, move |_, cx| {
+                                    cx.dispatch_action(SelectIndex(ix))
+                                })
                                 .with_cursor_style(CursorStyle::PointingHand)
                                 .boxed()
                             }));

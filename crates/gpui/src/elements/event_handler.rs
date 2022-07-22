@@ -1,11 +1,11 @@
 use crate::{
     geometry::vector::Vector2F, presenter::MeasurementContext, CursorRegion, DebugContext, Element,
-    ElementBox, Event, EventContext, LayoutContext, MouseButton, MouseEvent, MouseRegion,
+    ElementBox, Event, EventContext, LayoutContext, MouseButton, MouseButtonEvent, MouseRegion,
     NavigationDirection, PaintContext, SizeConstraint,
 };
 use pathfinder_geometry::rect::RectF;
 use serde_json::json;
-use std::{any::TypeId, ops::Range, rc::Rc};
+use std::{any::TypeId, ops::Range};
 
 pub struct EventHandler {
     child: ElementBox,
@@ -82,19 +82,11 @@ impl Element for EventHandler {
                 bounds: visible_bounds,
                 style: Default::default(),
             });
-            cx.scene.push_mouse_region(MouseRegion {
-                view_id: cx.current_view_id(),
-                discriminant: Some(discriminant),
-                bounds: visible_bounds,
-                hover: Some(Rc::new(|_, _, _| {})),
-                mouse_down: Some(Rc::new(|_, _| {})),
-                click: Some(Rc::new(|_, _, _| {})),
-                right_mouse_down: Some(Rc::new(|_, _| {})),
-                right_click: Some(Rc::new(|_, _, _| {})),
-                drag: Some(Rc::new(|_, _, _| {})),
-                mouse_down_out: Some(Rc::new(|_, _| {})),
-                right_mouse_down_out: Some(Rc::new(|_, _| {})),
-            });
+            cx.scene.push_mouse_region(MouseRegion::handle_all(
+                cx.current_view_id(),
+                Some(discriminant),
+                visible_bounds,
+            ));
             cx.scene.pop_stacking_context();
         }
         self.child.paint(bounds.origin(), visible_bounds, cx);
@@ -117,7 +109,7 @@ impl Element for EventHandler {
             true
         } else {
             match event {
-                Event::MouseDown(MouseEvent {
+                Event::MouseDown(MouseButtonEvent {
                     button: MouseButton::Left,
                     position,
                     ..
@@ -129,7 +121,7 @@ impl Element for EventHandler {
                     }
                     false
                 }
-                Event::MouseDown(MouseEvent {
+                Event::MouseDown(MouseButtonEvent {
                     button: MouseButton::Right,
                     position,
                     ..
@@ -141,7 +133,7 @@ impl Element for EventHandler {
                     }
                     false
                 }
-                Event::MouseDown(MouseEvent {
+                Event::MouseDown(MouseButtonEvent {
                     button: MouseButton::Navigate(direction),
                     position,
                     ..

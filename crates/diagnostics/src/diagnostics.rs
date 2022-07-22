@@ -626,10 +626,10 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
         let font_size = (style.text_scale_factor * settings.buffer_font_size).round();
         let icon_width = cx.em_width * style.icon_width_factor;
         let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
-            Svg::new("icons/diagnostic-error-10.svg")
+            Svg::new("icons/circle_x_mark_12.svg")
                 .with_color(theme.error_diagnostic.message.text.color)
         } else {
-            Svg::new("icons/diagnostic-warning-10.svg")
+            Svg::new("icons/triangle_exclamation_12.svg")
                 .with_color(theme.warning_diagnostic.message.text.color)
         };
 
@@ -682,7 +682,7 @@ pub(crate) fn render_summary(
         let summary_spacing = theme.tab_summary_spacing;
         Flex::row()
             .with_children([
-                Svg::new("icons/diagnostic-summary-error.svg")
+                Svg::new("icons/circle_x_mark_12.svg")
                     .with_color(text_style.color)
                     .constrained()
                     .with_width(icon_width)
@@ -699,7 +699,7 @@ pub(crate) fn render_summary(
                 )
                 .aligned()
                 .boxed(),
-                Svg::new("icons/diagnostic-summary-warning.svg")
+                Svg::new("icons/triangle_exclamation_12.svg")
                     .with_color(text_style.color)
                     .constrained()
                     .with_width(icon_width)

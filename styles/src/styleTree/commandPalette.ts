@@ -16,11 +16,11 @@ export default function commandPalette(theme: Theme) {
         right: 8,
       },
       margin: {
-        left: 2
+        left: 2,
       },
       active: {
         text: text(theme, "mono", "active", { size: "xs" }),
-      }
-    }
-  }
+      },
+    },
+  };
 }

@@ -45,12 +45,13 @@ fn editor_focused(EditorFocused(editor): &EditorFocused, cx: &mut MutableAppCont
         }
 
         let editor = editor.read(cx);
-        if editor.selections.newest::<usize>(cx).is_empty() {
-            if editor.mode() != EditorMode::Full {
-                vim.switch_mode(Mode::Insert, cx);
-            }
-        } else {
-            vim.switch_mode(Mode::Visual { line: false }, cx);
+        let editor_mode = editor.mode();
+        let newest_selection_empty = editor.selections.newest::<usize>(cx).is_empty();
+
+        if editor_mode != EditorMode::Full {
+            vim.switch_mode(Mode::Insert, true, cx);
+        } else if !newest_selection_empty {
+            vim.switch_mode(Mode::Visual { line: false }, true, cx);
         }
     });
 }
@@ -80,7 +81,7 @@ fn editor_released(EditorReleased(editor): &EditorReleased, cx: &mut MutableAppC
 fn editor_local_selections_changed(newest_empty: bool, cx: &mut MutableAppContext) {
     Vim::update(cx, |vim, cx| {
         if vim.enabled && vim.state.mode == Mode::Normal && !newest_empty {
-            vim.switch_mode(Mode::Visual { line: false }, cx)
+            vim.switch_mode(Mode::Visual { line: false }, false, cx)
         }
     })
 }

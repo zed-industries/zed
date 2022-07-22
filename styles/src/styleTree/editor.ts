@@ -7,7 +7,7 @@ import {
   player,
   popoverShadow,
   text,
-  TextColor
+  TextColor,
 } from "./components";
 import hoverPopover from "./hoverPopover";
 
@@ -158,7 +158,7 @@ export default function editor(theme: Theme) {
       hover: {
         color: iconColor(theme, "active"),
         background: backgroundColor(theme, "on500", "base"),
-      }
+      },
     },
     compositionMark: {
       underline: {

@@ -1,18 +1,18 @@
 import * as fs from "fs";
 import * as path from "path";
-import { tmpdir } from 'os';
+import { tmpdir } from "os";
 import app from "./styleTree/app";
 import themes from "./themes";
 import snakeCase from "./utils/snakeCase";
 
 const themeDirectory = `${__dirname}/../../assets/themes/`;
-const tempDirectory = fs.mkdtempSync(path.join(tmpdir(), 'build-themes'));
+const tempDirectory = fs.mkdtempSync(path.join(tmpdir(), "build-themes"));
 
 // Clear existing themes
 for (const file of fs.readdirSync(themeDirectory)) {
-  if (file.endsWith('.json')) {
-    const name = file.replace(/\.json$/, '');
-    if (!themes.find(theme => theme.name === name)) {
+  if (file.endsWith(".json")) {
+    const name = file.replace(/\.json$/, "");
+    if (!themes.find((theme) => theme.name === name)) {
       fs.unlinkSync(path.join(themeDirectory, file));
     }
   }

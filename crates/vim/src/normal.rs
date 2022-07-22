@@ -91,7 +91,7 @@ fn move_cursor(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
 
 fn insert_after(_: &mut Workspace, _: &InsertAfter, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
-        vim.switch_mode(Mode::Insert, cx);
+        vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_cursors_with(|map, cursor, goal| {
@@ -108,7 +108,7 @@ fn insert_first_non_whitespace(
     cx: &mut ViewContext<Workspace>,
 ) {
     Vim::update(cx, |vim, cx| {
-        vim.switch_mode(Mode::Insert, cx);
+        vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_cursors_with(|map, cursor, goal| {
@@ -121,7 +121,7 @@ fn insert_first_non_whitespace(
 
 fn insert_end_of_line(_: &mut Workspace, _: &InsertEndOfLine, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
-        vim.switch_mode(Mode::Insert, cx);
+        vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_cursors_with(|map, cursor, goal| {
@@ -134,7 +134,7 @@ fn insert_end_of_line(_: &mut Workspace, _: &InsertEndOfLine, cx: &mut ViewConte
 
 fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
-        vim.switch_mode(Mode::Insert, cx);
+        vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
                 let (map, old_selections) = editor.selections.all_display(cx);
@@ -166,7 +166,7 @@ fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContex
 
 fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
-        vim.switch_mode(Mode::Insert, cx);
+        vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
                 let (map, old_selections) = editor.selections.all_display(cx);

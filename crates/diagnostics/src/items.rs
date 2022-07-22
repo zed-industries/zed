@@ -1,8 +1,8 @@
 use collections::HashSet;
 use editor::{Editor, GoToNextDiagnostic};
 use gpui::{
-    elements::*, platform::CursorStyle, serde_json, Entity, ModelHandle, MutableAppContext,
-    RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
+    elements::*, platform::CursorStyle, serde_json, Entity, ModelHandle, MouseButton,
+    MutableAppContext, RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::Diagnostic;
 use project::Project;
@@ -101,7 +101,7 @@ impl View for DiagnosticIndicator {
                 let mut summary_row = Flex::row();
                 if self.summary.error_count > 0 {
                     summary_row.add_children([
-                        Svg::new("icons/error-solid-14.svg")
+                        Svg::new("icons/circle_x_mark_16.svg")
                             .with_color(style.icon_color_error)
                             .constrained()
                             .with_width(style.icon_width)
@@ -117,7 +117,7 @@ impl View for DiagnosticIndicator {
 
                 if self.summary.warning_count > 0 {
                     summary_row.add_children([
-                        Svg::new("icons/warning-solid-14.svg")
+                        Svg::new("icons/triangle_exclamation_16.svg")
                             .with_color(style.icon_color_warning)
                             .constrained()
                             .with_width(style.icon_width)
@@ -138,7 +138,7 @@ impl View for DiagnosticIndicator {
 
                 if self.summary.error_count == 0 && self.summary.warning_count == 0 {
                     summary_row.add_child(
-                        Svg::new("icons/no-error-solid-14.svg")
+                        Svg::new("icons/circle_check_16.svg")
                             .with_color(style.icon_color_ok)
                             .constrained()
                             .with_width(style.icon_width)
@@ -161,7 +161,7 @@ impl View for DiagnosticIndicator {
                     .boxed()
             })
             .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(|_, _, cx| cx.dispatch_action(crate::Deploy))
+            .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(crate::Deploy))
             .with_tooltip::<Summary, _>(
                 0,
                 "Project Diagnostics".to_string(),
@@ -201,7 +201,9 @@ impl View for DiagnosticIndicator {
                     .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(|_, _, cx| cx.dispatch_action(GoToNextDiagnostic))
+                .on_click(MouseButton::Left, |_, cx| {
+                    cx.dispatch_action(GoToNextDiagnostic)
+                })
                 .boxed(),
             );
         }

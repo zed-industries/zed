@@ -1,7 +1,7 @@
 use crate::StatusItemView;
 use gpui::{
     elements::*, impl_actions, platform::CursorStyle, AnyViewHandle, AppContext, Entity,
-    RenderContext, Subscription, View, ViewContext, ViewHandle,
+    MouseButton, MouseMovedEvent, RenderContext, Subscription, View, ViewContext, ViewHandle,
 };
 use serde::Deserialize;
 use settings::Settings;
@@ -187,19 +187,27 @@ impl Sidebar {
             ..Default::default()
         })
         .with_cursor_style(CursorStyle::ResizeLeftRight)
-        .on_mouse_down(|_, _| {}) // This prevents the mouse down event from being propagated elsewhere
-        .on_drag(move |old_position, new_position, cx| {
-            let delta = new_position.x() - old_position.x();
-            let prev_width = *actual_width.borrow();
-            *custom_width.borrow_mut() = 0f32
-                .max(match side {
-                    Side::Left => prev_width + delta,
-                    Side::Right => prev_width - delta,
-                })
-                .round();
+        .on_down(MouseButton::Left, |_, _| {}) // This prevents the mouse down event from being propagated elsewhere
+        .on_drag(
+            MouseButton::Left,
+            move |old_position,
+                  MouseMovedEvent {
+                      position: new_position,
+                      ..
+                  },
+                  cx| {
+                let delta = new_position.x() - old_position.x();
+                let prev_width = *actual_width.borrow();
+                *custom_width.borrow_mut() = 0f32
+                    .max(match side {
+                        Side::Left => prev_width + delta,
+                        Side::Right => prev_width - delta,
+                    })
+                    .round();
 
-            cx.notify();
-        })
+                cx.notify();
+            },
+        )
         .boxed()
     }
 }
@@ -314,9 +322,9 @@ impl View for SidebarButtons {
                             .boxed()
                     })
                     .with_cursor_style(CursorStyle::PointingHand)
-                    .on_click({
+                    .on_click(MouseButton::Left, {
                         let action = action.clone();
-                        move |_, _, cx| cx.dispatch_action(action.clone())
+                        move |_, cx| cx.dispatch_action(action.clone())
                     })
                     .with_tooltip::<Self, _>(
                         ix,

@@ -7,8 +7,8 @@ use collections::HashMap;
 use editor::{Anchor, Autoscroll, Editor};
 use gpui::{
     actions, elements::*, impl_actions, platform::CursorStyle, Action, AppContext, Entity,
-    MutableAppContext, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    MouseButton, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use language::OffsetRangeExt;
 use project::search::SearchQuery;
@@ -285,7 +285,9 @@ impl BufferSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(move |_, _, cx| cx.dispatch_any_action(option.to_toggle_action()))
+        .on_click(MouseButton::Left, move |_, cx| {
+            cx.dispatch_any_action(option.to_toggle_action())
+        })
         .with_cursor_style(CursorStyle::PointingHand)
         .with_tooltip::<Self, _>(
             option as usize,
@@ -330,9 +332,9 @@ impl BufferSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click({
+        .on_click(MouseButton::Left, {
             let action = action.boxed_clone();
-            move |_, _, cx| cx.dispatch_any_action(action.boxed_clone())
+            move |_, cx| cx.dispatch_any_action(action.boxed_clone())
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .with_tooltip::<NavButton, _>(

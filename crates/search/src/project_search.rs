@@ -7,8 +7,8 @@ use collections::HashMap;
 use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll, MAX_TAB_TITLE_LEN};
 use gpui::{
     actions, elements::*, platform::CursorStyle, Action, AppContext, ElementBox, Entity,
-    ModelContext, ModelHandle, MutableAppContext, RenderContext, Subscription, Task, View,
-    ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
+    ModelContext, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task,
+    View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, Project};
@@ -147,6 +147,7 @@ impl ProjectSearch {
 
 pub enum ViewEvent {
     UpdateTab,
+    Activate,
     EditorEvent(editor::Event),
 }
 
@@ -162,7 +163,9 @@ impl View for ProjectSearchView {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let model = &self.model.read(cx);
         if model.match_ranges.is_empty() {
-            let theme = &cx.global::<Settings>().theme;
+            enum Status {}
+
+            let theme = cx.global::<Settings>().theme.clone();
             let text = if self.query_editor.read(cx).text(cx).is_empty() {
                 ""
             } else if model.pending_search.is_some() {
@@ -170,12 +173,18 @@ impl View for ProjectSearchView {
             } else {
                 "No results"
             };
-            Label::new(text.to_string(), theme.search.results_status.clone())
-                .aligned()
-                .contained()
-                .with_background_color(theme.editor.background)
-                .flex(1., true)
-                .boxed()
+            MouseEventHandler::new::<Status, _, _>(0, cx, |_, _| {
+                Label::new(text.to_string(), theme.search.results_status.clone())
+                    .aligned()
+                    .contained()
+                    .with_background_color(theme.editor.background)
+                    .flex(1., true)
+                    .boxed()
+            })
+            .on_down(MouseButton::Left, |_, cx| {
+                cx.focus_parent_view();
+            })
+            .boxed()
         } else {
             ChildView::new(&self.results_editor).flex(1., true).boxed()
         }
@@ -228,7 +237,7 @@ impl Item for ProjectSearchView {
         let search_theme = &settings.theme.search;
         Flex::row()
             .with_child(
-                Svg::new("icons/magnifier.svg")
+                Svg::new("icons/magnifying_glass_12.svg")
                     .with_color(tab_theme.label.text.color)
                     .constrained()
                     .with_width(search_theme.tab_icon_width)
@@ -735,9 +744,9 @@ impl ProjectSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click({
+        .on_click(MouseButton::Left, {
             let action = action.boxed_clone();
-            move |_, _, cx| cx.dispatch_any_action(action.boxed_clone())
+            move |_, cx| cx.dispatch_any_action(action.boxed_clone())
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .with_tooltip::<NavButton, _>(
@@ -770,7 +779,9 @@ impl ProjectSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(move |_, _, cx| cx.dispatch_any_action(option.to_toggle_action()))
+        .on_click(MouseButton::Left, move |_, cx| {
+            cx.dispatch_any_action(option.to_toggle_action())
+        })
         .with_cursor_style(CursorStyle::PointingHand)
         .with_tooltip::<Self, _>(
             option as usize,

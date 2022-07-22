@@ -1,14 +1,20 @@
 import Theme from "../themes/common/theme";
 import { withOpacity } from "../utils/color";
-import { backgroundColor, border, iconColor, modalShadow, text } from "./components";
+import {
+  backgroundColor,
+  border,
+  iconColor,
+  modalShadow,
+  text,
+} from "./components";
 import statusBar from "./statusBar";
 
 export function workspaceBackground(theme: Theme) {
-  return backgroundColor(theme, 300)
+  return backgroundColor(theme, 300);
 }
 
 export default function workspace(theme: Theme) {
-  const tab = {
+  const activePaneInactiveTab = {
     height: 32,
     background: workspaceBackground(theme),
     iconClose: iconColor(theme, "muted"),
@@ -33,15 +39,26 @@ export default function workspace(theme: Theme) {
     }
   };
 
-  const activeTab = {
-    ...tab,
+  const activePaneActiveTab = {
+    ...activePaneInactiveTab,
     background: backgroundColor(theme, 500),
     text: text(theme, "sans", "active", { size: "sm" }),
     border: {
-      ...tab.border,
+      ...activePaneInactiveTab.border,
       bottom: false,
     },
   };
+
+  const inactivePaneInactiveTab = {
+    ...activePaneInactiveTab,
+    background: backgroundColor(theme, 100),
+    text: text(theme, "sans", "placeholder", { size: "sm" }),
+  };
+
+  const inactivePaneActiveTab = {
+    ...activePaneInactiveTab,
+    text: text(theme, "sans", "placeholder", { size: "sm" }),
+  }
 
   const titlebarPadding = 6;
 
@@ -53,30 +70,32 @@ export default function workspace(theme: Theme) {
     },
     joiningProjectMessage: {
       padding: 12,
-      ...text(theme, "sans", "primary", { size: "lg" })
+      ...text(theme, "sans", "primary", { size: "lg" }),
     },
     leaderBorderOpacity: 0.7,
     leaderBorderWidth: 2.0,
-    tab,
-    activeTab,
+    activePaneActiveTab,
+    activePaneInactiveTab,
+    inactivePaneActiveTab,
+    inactivePaneInactiveTab,
     paneButton: {
       color: iconColor(theme, "secondary"),
       border: {
-        ...tab.border
+        ...activePaneActiveTab.border,
       },
-      iconWidth: 14,
-      buttonWidth: tab.height,
+      iconWidth: 12,
+      buttonWidth: activePaneActiveTab.height,
       hover: {
         color: iconColor(theme, "active"),
         background: backgroundColor(theme, 300),
-      }
+      },
     },
     modal: {
       margin: {
         bottom: 52,
         top: 52,
       },
-      cursor: "Arrow"
+      cursor: "Arrow",
     },
     sidebarResizeHandle: {
       background: border(theme, "primary").color,
@@ -109,22 +128,29 @@ export default function workspace(theme: Theme) {
       avatarRibbon: {
         height: 3,
         width: 12,
-        // TODO: The background for this ideally should be 
+        // TODO: The background for this ideally should be
         // set with a token, not hardcoded in rust
       },
       border: border(theme, "primary", { bottom: true, overlay: true }),
       signInPrompt: {
-        border: border(theme, "primary"),
+        background: backgroundColor(theme, 100),
+        border: border(theme, "secondary"),
         cornerRadius: 6,
         margin: {
           top: 1,
         },
         padding: {
-          left: 6,
-          right: 6,
+          top: 1,
+          bottom: 1,
+          left: 7,
+          right: 7,
         },
         ...text(theme, "sans", "secondary", { size: "xs" }),
-        hover: text(theme, "sans", "active", { size: "xs" }),
+        hover: {
+          ...text(theme, "sans", "active", { size: "xs" }),
+          background: backgroundColor(theme, "on300", "hovered"),
+          border: border(theme, "primary"),
+        },
       },
       offlineIcon: {
         color: iconColor(theme, "secondary"),
@@ -156,9 +182,9 @@ export default function workspace(theme: Theme) {
       border: border(theme, "secondary", { bottom: true }),
       itemSpacing: 8,
       navButton: {
-        color: iconColor(theme, "secondary"),
-        iconWidth: 8,
-        buttonWidth: 18,
+        color: iconColor(theme, "primary"),
+        iconWidth: 12,
+        buttonWidth: 24,
         cornerRadius: 6,
         hover: {
           color: iconColor(theme, "active"),
@@ -168,7 +194,7 @@ export default function workspace(theme: Theme) {
           color: withOpacity(iconColor(theme, "muted"), 0.6),
         },
       },
-      padding: { left: 16, right: 8, top: 4, bottom: 4 },
+      padding: { left: 8, right: 8, top: 4, bottom: 4 },
     },
     breadcrumbs: {
       ...text(theme, "mono", "secondary"),
@@ -187,8 +213,8 @@ export default function workspace(theme: Theme) {
       shadow: modalShadow(theme),
     },
     notifications: {
-      width: 380,
+      width: 400,
       margin: { right: 10, bottom: 10 },
-    }
+    },
   };
 }

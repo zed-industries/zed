@@ -20,7 +20,7 @@ fn normal_before(_: &mut Workspace, _: &NormalBefore, cx: &mut ViewContext<Works
                 });
             });
         });
-        state.switch_mode(Mode::Normal, cx);
+        state.switch_mode(Mode::Normal, false, cx);
     })
 }
 

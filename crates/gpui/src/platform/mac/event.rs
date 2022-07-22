@@ -2,8 +2,8 @@ use crate::{
     geometry::vector::vec2f,
     keymap::Keystroke,
     platform::{Event, NavigationDirection},
-    KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, MouseButton, MouseEvent, MouseMovedEvent,
-    ScrollWheelEvent,
+    KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, MouseButton, MouseButtonEvent,
+    MouseMovedEvent, ScrollWheelEvent,
 };
 use cocoa::{
     appkit::{NSEvent, NSEventModifierFlags, NSEventType},
@@ -104,7 +104,7 @@ impl Event {
                 let modifiers = native_event.modifierFlags();
 
                 window_height.map(|window_height| {
-                    Self::MouseDown(MouseEvent {
+                    Self::MouseDown(MouseButtonEvent {
                         button,
                         position: vec2f(
                             native_event.locationInWindow().x as f32,
@@ -133,7 +133,7 @@ impl Event {
 
                 window_height.map(|window_height| {
                     let modifiers = native_event.modifierFlags();
-                    Self::MouseUp(MouseEvent {
+                    Self::MouseUp(MouseButtonEvent {
                         button,
                         position: vec2f(
                             native_event.locationInWindow().x as f32,

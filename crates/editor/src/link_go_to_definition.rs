@@ -7,7 +7,9 @@ use settings::Settings;
 use util::TryFutureExt;
 use workspace::Workspace;
 
-use crate::{Anchor, DisplayPoint, Editor, EditorSnapshot, GoToDefinition, Select, SelectPhase};
+use crate::{
+    Anchor, DisplayPoint, Editor, EditorSnapshot, Event, GoToDefinition, Select, SelectPhase,
+};
 
 #[derive(Clone, PartialEq)]
 pub struct UpdateGoToDefinitionLink {
@@ -276,6 +278,13 @@ pub fn go_to_fetched_definition(
     });
 
     if !definitions.is_empty() {
+        editor_handle.update(cx, |editor, cx| {
+            if !editor.focused {
+                cx.focus_self();
+                cx.emit(Event::Activate);
+            }
+        });
+
         Editor::navigate_to_definitions(workspace, editor_handle, definitions, cx);
     } else {
         editor_handle.update(cx, |editor, cx| {

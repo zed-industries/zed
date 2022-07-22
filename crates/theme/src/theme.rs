@@ -38,8 +38,10 @@ pub struct Theme {
 pub struct Workspace {
     pub background: Color,
     pub titlebar: Titlebar,
-    pub tab: Tab,
-    pub active_tab: Tab,
+    pub active_pane_active_tab: Tab,
+    pub active_pane_inactive_tab: Tab,
+    pub inactive_pane_active_tab: Tab,
+    pub inactive_pane_inactive_tab: Tab,
     pub pane_button: Interactive<IconButton>,
     pub pane_divider: Border,
     pub leader_border_opacity: f32,

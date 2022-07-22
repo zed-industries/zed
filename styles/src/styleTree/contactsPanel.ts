@@ -1,6 +1,13 @@
 import Theme from "../themes/common/theme";
 import { panel } from "./app";
-import { backgroundColor, border, borderColor, iconColor, player, text } from "./components";
+import {
+  backgroundColor,
+  border,
+  borderColor,
+  iconColor,
+  player,
+  text,
+} from "./components";
 
 export default function contactsPanel(theme: Theme) {
   const nameMargin = 8;
@@ -24,7 +31,7 @@ export default function contactsPanel(theme: Theme) {
       margin: {
         left: nameMargin,
         right: nameMargin,
-      }
+      },
     },
     padding: {
       left: sidePadding,
@@ -59,17 +66,17 @@ export default function contactsPanel(theme: Theme) {
       margin: {
         left: sidePadding,
         right: sidePadding,
-      }
+      },
     },
     userQueryEditorHeight: 32,
     addContactButton: {
       margin: { left: 6, right: 12 },
       color: iconColor(theme, "primary"),
-      buttonWidth: 8,
-      iconWidth: 8,
+      buttonWidth: 16,
+      iconWidth: 16,
     },
     privateButton: {
-      iconWidth: 8,
+      iconWidth: 12,
       color: iconColor(theme, "primary"),
       cornerRadius: 5,
       buttonWidth: 12,
@@ -86,16 +93,16 @@ export default function contactsPanel(theme: Theme) {
       active: {
         ...text(theme, "mono", "primary", { size: "sm" }),
         background: backgroundColor(theme, 100, "active"),
-      }
+      },
     },
     contactRow: {
       padding: {
         left: sidePadding,
-        right: sidePadding
+        right: sidePadding,
       },
       active: {
         background: backgroundColor(theme, 100, "active"),
-      }
+      },
     },
     treeBranch: {
       color: borderColor(theme, "active"),
@@ -105,7 +112,7 @@ export default function contactsPanel(theme: Theme) {
       },
       active: {
         color: borderColor(theme, "active"),
-      }
+      },
     },
     contactAvatar: {
       cornerRadius: 10,
@@ -121,7 +128,7 @@ export default function contactsPanel(theme: Theme) {
     contactButton: {
       ...contactButton,
       hover: {
-        background: backgroundColor(theme, 100, "hovered"),
+        background: backgroundColor(theme, "on300", "hovered"),
       },
     },
     disabledButton: {
@@ -141,18 +148,18 @@ export default function contactsPanel(theme: Theme) {
       },
       active: {
         background: backgroundColor(theme, 300, "active"),
-      }
+      },
     },
     inviteRow: {
       padding: {
         left: sidePadding,
-        right: sidePadding
+        right: sidePadding,
       },
       border: { top: true, width: 1, color: borderColor(theme, "primary") },
-      text: text(theme, "sans", "primary", { size: "sm" }),
+      text: text(theme, "sans", "secondary", { size: "sm" }),
       hover: {
-        text: text(theme, "sans", "primary", { size: "sm", underline: true })
-      }
-    }
-  }
+        text: text(theme, "sans", "active", { size: "sm" }),
+      },
+    },
+  };
 }

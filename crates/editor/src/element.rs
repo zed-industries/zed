@@ -25,7 +25,7 @@ use gpui::{
     platform::CursorStyle,
     text_layout::{self, Line, RunStyle, TextLayoutCache},
     AppContext, Axis, Border, CursorRegion, Element, ElementBox, Event, EventContext,
-    LayoutContext, ModifiersChangedEvent, MouseButton, MouseEvent, MouseMovedEvent,
+    LayoutContext, ModifiersChangedEvent, MouseButton, MouseButtonEvent, MouseMovedEvent,
     MutableAppContext, PaintContext, Quad, Scene, ScrollWheelEvent, SizeConstraint, ViewContext,
     WeakViewHandle,
 };
@@ -940,7 +940,7 @@ impl EditorElement {
                         cx.render(&editor, |_, cx| {
                             MouseEventHandler::new::<JumpIcon, _, _>(*key, cx, |state, _| {
                                 let style = style.jump_icon.style_for(state, false);
-                                Svg::new("icons/jump.svg")
+                                Svg::new("icons/arrow_up_right_8.svg")
                                     .with_color(style.color)
                                     .constrained()
                                     .with_width(style.icon_width)
@@ -953,7 +953,9 @@ impl EditorElement {
                                     .boxed()
                             })
                             .with_cursor_style(CursorStyle::PointingHand)
-                            .on_click(move |_, _, cx| cx.dispatch_action(jump_action.clone()))
+                            .on_click(MouseButton::Left, move |_, cx| {
+                                cx.dispatch_action(jump_action.clone())
+                            })
                             .with_tooltip::<JumpIcon, _>(
                                 *key,
                                 "Jump to Buffer".to_string(),
@@ -1468,7 +1470,7 @@ impl Element for EditorElement {
         }
 
         match event {
-            Event::MouseDown(MouseEvent {
+            Event::MouseDown(MouseButtonEvent {
                 button: MouseButton::Left,
                 position,
                 cmd,
@@ -1486,12 +1488,12 @@ impl Element for EditorElement {
                 paint,
                 cx,
             ),
-            Event::MouseDown(MouseEvent {
+            Event::MouseDown(MouseButtonEvent {
                 button: MouseButton::Right,
                 position,
                 ..
             }) => self.mouse_right_down(*position, layout, paint, cx),
-            Event::MouseUp(MouseEvent {
+            Event::MouseUp(MouseButtonEvent {
                 button: MouseButton::Left,
                 position,
                 ..
@@ -1662,12 +1664,12 @@ impl PaintState {
         } else {
             0
         };
-        let column_overshoot = (0f32.max(x - line.width()) / layout.em_advance) as u32;
 
-        (
-            DisplayPoint::new(row, column),
-            DisplayPoint::new(row_overshoot, column_overshoot),
-        )
+        let point = snapshot.clip_point(DisplayPoint::new(row, column), Bias::Left);
+        let mut column_overshoot = (0f32.max(x - line.width()) / layout.em_advance) as u32;
+        column_overshoot = column_overshoot + column - point.column();
+
+        (point, DisplayPoint::new(row_overshoot, column_overshoot))
     }
 }
 

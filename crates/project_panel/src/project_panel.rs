@@ -11,8 +11,9 @@ use gpui::{
     geometry::vector::Vector2F,
     impl_internal_actions, keymap,
     platform::CursorStyle,
-    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MutableAppContext,
-    PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
+    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MouseButton,
+    MouseButtonEvent, MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext,
+    ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
@@ -1027,11 +1028,11 @@ impl ProjectPanel {
                 .with_child(
                     ConstrainedBox::new(if kind == EntryKind::Dir {
                         if details.is_expanded {
-                            Svg::new("icons/disclosure-open.svg")
+                            Svg::new("icons/chevron_right_8.svg")
                                 .with_color(style.icon_color)
                                 .boxed()
                         } else {
-                            Svg::new("icons/disclosure-closed.svg")
+                            Svg::new("icons/chevron_down_8.svg")
                                 .with_color(style.icon_color)
                                 .boxed()
                         }
@@ -1068,19 +1069,25 @@ impl ProjectPanel {
                 .with_padding_left(padding)
                 .boxed()
         })
-        .on_click(move |_, click_count, cx| {
-            if kind == EntryKind::Dir {
-                cx.dispatch_action(ToggleExpanded(entry_id))
-            } else {
-                cx.dispatch_action(Open {
-                    entry_id,
-                    change_focus: click_count > 1,
-                })
-            }
-        })
-        .on_right_mouse_down(move |position, cx| {
-            cx.dispatch_action(DeployContextMenu { entry_id, position })
-        })
+        .on_click(
+            MouseButton::Left,
+            move |MouseButtonEvent { click_count, .. }, cx| {
+                if kind == EntryKind::Dir {
+                    cx.dispatch_action(ToggleExpanded(entry_id))
+                } else {
+                    cx.dispatch_action(Open {
+                        entry_id,
+                        change_focus: click_count > 1,
+                    })
+                }
+            },
+        )
+        .on_down(
+            MouseButton::Right,
+            move |MouseButtonEvent { position, .. }, cx| {
+                cx.dispatch_action(DeployContextMenu { entry_id, position })
+            },
+        )
         .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
     }
@@ -1127,13 +1134,16 @@ impl View for ProjectPanel {
                     .expanded()
                     .boxed()
                 })
-                .on_right_mouse_down(move |position, cx| {
-                    // When deploying the context menu anywhere below the last project entry,
-                    // act as if the user clicked the root of the last worktree.
-                    if let Some(entry_id) = last_worktree_root_id {
-                        cx.dispatch_action(DeployContextMenu { entry_id, position })
-                    }
-                })
+                .on_down(
+                    MouseButton::Right,
+                    move |MouseButtonEvent { position, .. }, cx| {
+                        // When deploying the context menu anywhere below the last project entry,
+                        // act as if the user clicked the root of the last worktree.
+                        if let Some(entry_id) = last_worktree_root_id {
+                            cx.dispatch_action(DeployContextMenu { entry_id, position })
+                        }
+                    },
+                )
                 .boxed(),
             )
             .with_child(ChildView::new(&self.context_menu).boxed())

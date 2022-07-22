@@ -3,7 +3,7 @@ use client::User;
 use gpui::{
     elements::{Flex, Image, Label, MouseEventHandler, Padding, ParentElement, Text},
     platform::CursorStyle,
-    Action, Element, ElementBox, RenderContext, View,
+    Action, Element, ElementBox, MouseButton, RenderContext, View,
 };
 use settings::Settings;
 use std::sync::Arc;
@@ -55,13 +55,15 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                     MouseEventHandler::new::<Dismiss, _, _>(user.id as usize, cx, |state, _| {
                         render_icon_button(
                             theme.dismiss_button.style_for(state, false),
-                            "icons/decline.svg",
+                            "icons/x_mark_thin_8.svg",
                         )
                         .boxed()
                     })
                     .with_cursor_style(CursorStyle::PointingHand)
                     .with_padding(Padding::uniform(5.))
-                    .on_click(move |_, _, cx| cx.dispatch_any_action(dismiss_action.boxed_clone()))
+                    .on_click(MouseButton::Left, move |_, cx| {
+                        cx.dispatch_any_action(dismiss_action.boxed_clone())
+                    })
                     .aligned()
                     .constrained()
                     .with_height(
@@ -96,7 +98,9 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                                     .boxed()
                             })
                             .with_cursor_style(CursorStyle::PointingHand)
-                            .on_click(move |_, _, cx| cx.dispatch_any_action(action.boxed_clone()))
+                            .on_click(MouseButton::Left, move |_, cx| {
+                                cx.dispatch_any_action(action.boxed_clone())
+                            })
                             .boxed()
                         },
                     ))

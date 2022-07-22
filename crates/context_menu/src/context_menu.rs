@@ -1,7 +1,7 @@
 use gpui::{
     elements::*, geometry::vector::Vector2F, impl_internal_actions, keymap, platform::CursorStyle,
-    Action, AppContext, Axis, Entity, MutableAppContext, RenderContext, SizeConstraint,
-    Subscription, View, ViewContext,
+    Action, AppContext, Axis, Entity, MouseButton, MutableAppContext, RenderContext,
+    SizeConstraint, Subscription, View, ViewContext,
 };
 use menu::*;
 use settings::Settings;
@@ -337,7 +337,7 @@ impl ContextMenu {
                                     .boxed()
                             })
                             .with_cursor_style(CursorStyle::PointingHand)
-                            .on_click(move |_, _, cx| {
+                            .on_click(MouseButton::Left, move |_, cx| {
                                 cx.dispatch_action(Clicked);
                                 cx.dispatch_any_action(action.boxed_clone());
                             })
@@ -355,7 +355,7 @@ impl ContextMenu {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_mouse_down_out(|_, cx| cx.dispatch_action(Cancel))
-        .on_right_mouse_down_out(|_, cx| cx.dispatch_action(Cancel))
+        .on_down_out(MouseButton::Left, |_, cx| cx.dispatch_action(Cancel))
+        .on_down_out(MouseButton::Right, |_, cx| cx.dispatch_action(Cancel))
     }
 }

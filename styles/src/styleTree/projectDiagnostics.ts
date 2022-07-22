@@ -1,8 +1,5 @@
 import Theme from "../themes/common/theme";
-import {
-  backgroundColor,
-  text,
-} from "./components";
+import { backgroundColor, text } from "./components";
 
 export default function projectDiagnostics(theme: Theme) {
   return {
@@ -11,5 +8,5 @@ export default function projectDiagnostics(theme: Theme) {
     tabIconWidth: 13,
     tabSummarySpacing: 10,
     emptyMessage: text(theme, "sans", "secondary", { size: "md" }),
-  }
+  };
 }

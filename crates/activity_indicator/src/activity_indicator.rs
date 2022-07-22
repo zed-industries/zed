@@ -3,7 +3,7 @@ use editor::Editor;
 use futures::StreamExt;
 use gpui::{
     actions, elements::*, platform::CursorStyle, Action, AppContext, Entity, ModelHandle,
-    MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
+    MouseButton, MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
 };
 use language::{LanguageRegistry, LanguageServerBinaryStatus};
 use project::{LanguageServerProgress, Project};
@@ -15,9 +15,9 @@ use workspace::{ItemHandle, StatusItemView, Workspace};
 
 actions!(lsp_status, [ShowErrorMessage]);
 
-const DOWNLOAD_ICON: &'static str = "icons/download-solid-14.svg";
-const WARNING_ICON: &'static str = "icons/warning-solid-14.svg";
-const DONE_ICON: &'static str = "icons/accept.svg";
+const DOWNLOAD_ICON: &'static str = "icons/download_12.svg";
+const WARNING_ICON: &'static str = "icons/triangle_exclamation_12.svg";
+const DONE_ICON: &'static str = "icons/circle_check_12.svg";
 
 pub enum Event {
     ShowError { lsp_name: Arc<str>, error: String },
@@ -317,7 +317,9 @@ impl View for ActivityIndicator {
         if let Some(action) = action {
             element = element
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(move |_, _, cx| cx.dispatch_any_action(action.boxed_clone()));
+                .on_click(MouseButton::Left, move |_, cx| {
+                    cx.dispatch_any_action(action.boxed_clone())
+                });
         }
 
         element.boxed()
