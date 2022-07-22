@@ -1,64 +1,40 @@
-mod color_translation;
-pub mod connection;
-mod modal;
-pub mod terminal_element;
+pub mod connected_el;
+pub mod connected_view;
+pub mod mappings;
+pub mod modal_view;
+pub mod model;
 
-use connection::{Event, Terminal, TerminalBuilder, TerminalError};
+use connected_view::ConnectedView;
 use dirs::home_dir;
 use gpui::{
-    actions, elements::*, geometry::vector::vec2f, keymap::Keystroke, AnyViewHandle, AppContext,
-    ClipboardItem, Entity, ModelHandle, MutableAppContext, View, ViewContext, ViewHandle,
+    actions, elements::*, geometry::vector::vec2f, AnyViewHandle, AppContext, Entity, ModelHandle,
+    MutableAppContext, View, ViewContext, ViewHandle,
 };
-use modal::deploy_modal;
+use modal_view::deploy_modal;
+use model::{Event, Terminal, TerminalBuilder, TerminalError};
 
+use connected_el::TermDimensions;
 use project::{LocalWorktree, Project, ProjectPath};
 use settings::{Settings, WorkingDirectory};
 use smallvec::SmallVec;
 use std::path::{Path, PathBuf};
-use terminal_element::{terminal_layout_context::TerminalLayoutData, TerminalDimensions};
 use workspace::{Item, Workspace};
 
-use crate::terminal_element::TerminalEl;
+use crate::connected_el::TerminalEl;
 
 const DEBUG_TERMINAL_WIDTH: f32 = 1000.; //This needs to be wide enough that the prompt can fill the whole space.
 const DEBUG_TERMINAL_HEIGHT: f32 = 200.;
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
 
-///Event to transmit the scroll from the element to the view
-#[derive(Clone, Debug, PartialEq)]
-pub struct ScrollTerminal(pub i32);
-
-actions!(
-    terminal,
-    [
-        Deploy,
-        Up,
-        Down,
-        CtrlC,
-        Escape,
-        Enter,
-        Clear,
-        Copy,
-        Paste,
-        DeployModal
-    ]
-);
+actions!(terminal, [Deploy, DeployModal]);
 
 ///Initialize and register all of our action handlers
 pub fn init(cx: &mut MutableAppContext) {
-    //Global binding overrrides
-    cx.add_action(ConnectedView::ctrl_c);
-    cx.add_action(ConnectedView::up);
-    cx.add_action(ConnectedView::down);
-    cx.add_action(ConnectedView::escape);
-    cx.add_action(ConnectedView::enter);
-    //Useful terminal actions
-    cx.add_action(ConnectedView::deploy);
-    cx.add_action(ConnectedView::copy);
-    cx.add_action(ConnectedView::paste);
-    cx.add_action(ConnectedView::clear);
+    cx.add_action(TerminalView::deploy);
     cx.add_action(deploy_modal);
+
+    connected_view::init(cx);
 }
 
 //Make terminal view an enum, that can give you views for the error and non-error states
@@ -88,16 +64,6 @@ pub struct ErrorView {
     error: TerminalError,
 }
 
-///A terminal view, maintains the PTY's file handles and communicates with the terminal
-pub struct ConnectedView {
-    terminal: ModelHandle<Terminal>,
-    has_new_content: bool,
-    //Currently using iTerm bell, show bell emoji in tab until input is received
-    has_bell: bool,
-    // Only for styling purposes. Doesn't effect behavior
-    modal: bool,
-}
-
 impl Entity for TerminalView {
     type Event = Event;
 }
@@ -111,11 +77,18 @@ impl Entity for ErrorView {
 }
 
 impl TerminalView {
+    ///Create a new Terminal in the current working directory or the user's home directory
+    fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
+        let working_directory = get_working_directory(workspace, cx);
+        let view = cx.add_view(|cx| TerminalView::new(working_directory, false, cx));
+        workspace.add_item(Box::new(view), cx);
+    }
+
     ///Create a new Terminal view. This spawns a task, a thread, and opens the TTY devices
     ///To get the right working directory from a workspace, use: `get_wd_for_workspace()`
     fn new(working_directory: Option<PathBuf>, modal: bool, cx: &mut ViewContext<Self>) -> Self {
         //The details here don't matter, the terminal will be resized on the first layout
-        let size_info = TerminalDimensions::new(
+        let size_info = TermDimensions::new(
             DEBUG_LINE_HEIGHT,
             DEBUG_CELL_WIDTH,
             vec2f(DEBUG_TERMINAL_WIDTH, DEBUG_TERMINAL_HEIGHT),
@@ -194,122 +167,6 @@ impl View for TerminalView {
     }
 }
 
-impl ConnectedView {
-    fn from_terminal(
-        terminal: ModelHandle<Terminal>,
-        modal: bool,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
-        cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&terminal, |this, _, event, cx| match event {
-            Event::Wakeup => {
-                if cx.is_self_focused() {
-                    cx.notify()
-                } else {
-                    this.has_new_content = true;
-                    cx.emit(Event::TitleChanged);
-                }
-            }
-            Event::Bell => {
-                this.has_bell = true;
-                cx.emit(Event::TitleChanged);
-            }
-            _ => cx.emit(*event),
-        })
-        .detach();
-
-        Self {
-            terminal,
-            has_new_content: true,
-            has_bell: false,
-            modal,
-        }
-    }
-
-    fn clear_bel(&mut self, cx: &mut ViewContext<ConnectedView>) {
-        self.has_bell = false;
-        cx.emit(Event::TitleChanged);
-    }
-
-    ///Create a new Terminal in the current working directory or the user's home directory
-    fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
-        let working_directory = get_working_directory(workspace, cx);
-        let view = cx.add_view(|cx| TerminalView::new(working_directory, false, cx));
-        workspace.add_item(Box::new(view), cx);
-    }
-
-    fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
-        self.terminal.read(cx).clear();
-    }
-
-    ///Attempt to paste the clipboard into the terminal
-    fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
-        self.terminal
-            .read(cx)
-            .copy()
-            .map(|text| cx.write_to_clipboard(ClipboardItem::new(text)));
-    }
-
-    ///Attempt to paste the clipboard into the terminal
-    fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
-        cx.read_from_clipboard().map(|item| {
-            self.terminal.read(cx).paste(item.text());
-        });
-    }
-
-    ///Synthesize the keyboard event corresponding to 'up'
-    fn up(&mut self, _: &Up, cx: &mut ViewContext<Self>) {
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("up").unwrap());
-    }
-
-    ///Synthesize the keyboard event corresponding to 'down'
-    fn down(&mut self, _: &Down, cx: &mut ViewContext<Self>) {
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("down").unwrap());
-    }
-
-    ///Synthesize the keyboard event corresponding to 'ctrl-c'
-    fn ctrl_c(&mut self, _: &CtrlC, cx: &mut ViewContext<Self>) {
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("ctrl-c").unwrap());
-    }
-
-    ///Synthesize the keyboard event corresponding to 'escape'
-    fn escape(&mut self, _: &Escape, cx: &mut ViewContext<Self>) {
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("escape").unwrap());
-    }
-
-    ///Synthesize the keyboard event corresponding to 'enter'
-    fn enter(&mut self, _: &Enter, cx: &mut ViewContext<Self>) {
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("enter").unwrap());
-    }
-}
-
-impl View for ConnectedView {
-    fn ui_name() -> &'static str {
-        "Connected Terminal View"
-    }
-
-    fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
-        let terminal_handle = self.terminal.clone().downgrade();
-        TerminalEl::new(cx.handle(), terminal_handle, self.modal)
-            .contained()
-            .boxed()
-    }
-
-    fn on_focus(&mut self, _cx: &mut ViewContext<Self>) {
-        self.has_new_content = false;
-    }
-}
-
 impl View for ErrorView {
     fn ui_name() -> &'static str {
         "Terminal Error"
@@ -317,7 +174,7 @@ impl View for ErrorView {
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
         let settings = cx.global::<Settings>();
-        let style = TerminalLayoutData::make_text_style(cx.font_cache(), settings);
+        let style = TerminalEl::make_text_style(cx.font_cache(), settings);
 
         Label::new(
             format!(
@@ -341,7 +198,7 @@ impl Item for TerminalView {
     ) -> ElementBox {
         let title = match &self.content {
             TerminalContent::Connected(connected) => {
-                connected.read(cx).terminal.read(cx).title.clone()
+                connected.read(cx).handle().read(cx).title.clone()
             }
             TerminalContent::Error(_) => "Terminal".to_string(),
         };
@@ -363,7 +220,7 @@ impl Item for TerminalView {
         if let TerminalContent::Connected(connected) = &self.content {
             let associated_directory = connected
                 .read(cx)
-                .terminal
+                .handle()
                 .read(cx)
                 .associated_directory
                 .clone();
@@ -418,7 +275,7 @@ impl Item for TerminalView {
 
     fn is_dirty(&self, cx: &gpui::AppContext) -> bool {
         if let TerminalContent::Connected(connected) = &self.content {
-            connected.read(cx).has_new_content
+            connected.read(cx).has_new_content()
         } else {
             false
         }
@@ -426,7 +283,7 @@ impl Item for TerminalView {
 
     fn has_conflict(&self, cx: &AppContext) -> bool {
         if let TerminalContent::Connected(connected) = &self.content {
-            connected.read(cx).has_bell
+            connected.read(cx).has_bell()
         } else {
             false
         }

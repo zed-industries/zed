@@ -1,15 +1,6 @@
 use alacritty_terminal::term::TermMode;
 use gpui::keymap::Keystroke;
 
-/*
-Connection events still to do:
-- Reporting mouse events correctly.
-- Reporting scrolls
-- Correctly bracketing a paste
-- Storing changed colors
-- Focus change sequence
-*/
-
 #[derive(Debug)]
 pub enum Modifiers {
     None,

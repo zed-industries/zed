@@ -1,5 +1,3 @@
-pub mod terminal_layout_context;
-
 use alacritty_terminal::{
     ansi::{Color::Named, NamedColor},
     event::WindowSize,
@@ -20,8 +18,7 @@ use gpui::{
     json::json,
     text_layout::{Line, RunStyle},
     Event, FontCache, KeyDownEvent, MouseButton, MouseButtonEvent, MouseMovedEvent, MouseRegion,
-    PaintContext, Quad, ScrollWheelEvent, SizeConstraint, TextLayoutCache, WeakModelHandle,
-    WeakViewHandle,
+    PaintContext, Quad, ScrollWheelEvent, TextLayoutCache, WeakModelHandle, WeakViewHandle,
 };
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
@@ -32,34 +29,58 @@ use util::ResultExt;
 use std::{cmp::min, ops::Range};
 use std::{fmt::Debug, ops::Sub};
 
-use crate::{color_translation::convert_color, connection::Terminal, ConnectedView};
-
-use self::terminal_layout_context::TerminalLayoutData;
+use crate::{mappings::colors::convert_color, model::Terminal, ConnectedView};
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
 ///Implement scroll bars.
 const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
 
-///The GPUI element that paints the terminal.
-///We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
-pub struct TerminalEl {
-    terminal: WeakModelHandle<Terminal>,
-    view: WeakViewHandle<ConnectedView>,
-    modal: bool,
+///The information generated during layout that is nescessary for painting
+pub struct LayoutState {
+    cells: Vec<LayoutCell>,
+    rects: Vec<LayoutRect>,
+    highlights: Vec<RelativeHighlightedRange>,
+    cursor: Option<Cursor>,
+    background_color: Color,
+    selection_color: Color,
+    size: TermDimensions,
+}
+
+///Helper struct for converting data between alacritty's cursor points, and displayed cursor points
+struct DisplayCursor {
+    line: i32,
+    col: usize,
+}
+
+impl DisplayCursor {
+    fn from(cursor_point: Point, display_offset: usize) -> Self {
+        Self {
+            line: cursor_point.line.0 + display_offset as i32,
+            col: cursor_point.column.0,
+        }
+    }
+
+    pub fn line(&self) -> i32 {
+        self.line
+    }
+
+    pub fn col(&self) -> usize {
+        self.col
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct TerminalDimensions {
-    pub cell_width: f32,
-    pub line_height: f32,
-    pub height: f32,
-    pub width: f32,
+pub struct TermDimensions {
+    cell_width: f32,
+    line_height: f32,
+    height: f32,
+    width: f32,
 }
 
-impl TerminalDimensions {
+impl TermDimensions {
     pub fn new(line_height: f32, cell_width: f32, size: Vector2F) -> Self {
-        TerminalDimensions {
+        TermDimensions {
             cell_width,
             line_height,
             width: size.x(),
@@ -92,8 +113,7 @@ impl TerminalDimensions {
     }
 }
 
-//TODO look at what TermSize is
-impl Into<WindowSize> for TerminalDimensions {
+impl Into<WindowSize> for TermDimensions {
     fn into(self) -> WindowSize {
         WindowSize {
             num_lines: self.num_lines() as u16,
@@ -104,9 +124,9 @@ impl Into<WindowSize> for TerminalDimensions {
     }
 }
 
-impl Dimensions for TerminalDimensions {
+impl Dimensions for TermDimensions {
     fn total_lines(&self) -> usize {
-        self.num_lines() //TODO: Check that this is fine. This is supposed to be for the back buffer...
+        self.screen_lines() //TODO: Check that this is fine. This is supposed to be for the back buffer...
     }
 
     fn screen_lines(&self) -> usize {
@@ -214,15 +234,12 @@ impl RelativeHighlightedRange {
     }
 }
 
-///The information generated during layout that is nescessary for painting
-pub struct LayoutState {
-    cells: Vec<LayoutCell>,
-    rects: Vec<LayoutRect>,
-    highlights: Vec<RelativeHighlightedRange>,
-    cursor: Option<Cursor>,
-    background_color: Color,
-    selection_color: Color,
-    size: TerminalDimensions,
+///The GPUI element that paints the terminal.
+///We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
+pub struct TerminalEl {
+    terminal: WeakModelHandle<Terminal>,
+    view: WeakViewHandle<ConnectedView>,
+    modal: bool,
 }
 
 impl TerminalEl {
@@ -238,12 +255,173 @@ impl TerminalEl {
         }
     }
 
+    fn layout_grid(
+        grid: GridIterator<Cell>,
+        text_style: &TextStyle,
+        terminal_theme: &TerminalStyle,
+        text_layout_cache: &TextLayoutCache,
+        modal: bool,
+        selection_range: Option<SelectionRange>,
+    ) -> (
+        Vec<LayoutCell>,
+        Vec<LayoutRect>,
+        Vec<RelativeHighlightedRange>,
+    ) {
+        let mut cells = vec![];
+        let mut rects = vec![];
+        let mut highlight_ranges = vec![];
+
+        let mut cur_rect: Option<LayoutRect> = None;
+        let mut cur_alac_color = None;
+        let mut highlighted_range = None;
+
+        let linegroups = grid.group_by(|i| i.point.line);
+        for (line_index, (_, line)) in linegroups.into_iter().enumerate() {
+            for (x_index, cell) in line.enumerate() {
+                //Increase selection range
+                {
+                    if selection_range
+                        .map(|range| range.contains(cell.point))
+                        .unwrap_or(false)
+                    {
+                        let mut range = highlighted_range.take().unwrap_or(x_index..x_index);
+                        range.end = range.end.max(x_index);
+                        highlighted_range = Some(range);
+                    }
+                }
+
+                //Expand background rect range
+                {
+                    if matches!(cell.bg, Named(NamedColor::Background)) {
+                        //Continue to next cell, resetting variables if nescessary
+                        cur_alac_color = None;
+                        if let Some(rect) = cur_rect {
+                            rects.push(rect);
+                            cur_rect = None
+                        }
+                    } else {
+                        match cur_alac_color {
+                            Some(cur_color) => {
+                                if cell.bg == cur_color {
+                                    cur_rect = cur_rect.take().map(|rect| rect.extend());
+                                } else {
+                                    cur_alac_color = Some(cell.bg);
+                                    if let Some(_) = cur_rect {
+                                        rects.push(cur_rect.take().unwrap());
+                                    }
+                                    cur_rect = Some(LayoutRect::new(
+                                        Point::new(line_index as i32, cell.point.column.0 as i32),
+                                        1,
+                                        convert_color(&cell.bg, &terminal_theme.colors, modal),
+                                    ));
+                                }
+                            }
+                            None => {
+                                cur_alac_color = Some(cell.bg);
+                                cur_rect = Some(LayoutRect::new(
+                                    Point::new(line_index as i32, cell.point.column.0 as i32),
+                                    1,
+                                    convert_color(&cell.bg, &terminal_theme.colors, modal),
+                                ));
+                            }
+                        }
+                    }
+                }
+
+                //Layout current cell text
+                {
+                    let cell_text = &cell.c.to_string();
+                    if cell_text != " " {
+                        let cell_style =
+                            TerminalEl::cell_style(&cell, terminal_theme, text_style, modal);
+
+                        let layout_cell = text_layout_cache.layout_str(
+                            cell_text,
+                            text_style.font_size,
+                            &[(cell_text.len(), cell_style)],
+                        );
+
+                        cells.push(LayoutCell::new(
+                            Point::new(line_index as i32, cell.point.column.0 as i32),
+                            layout_cell,
+                        ))
+                    }
+                };
+            }
+
+            if highlighted_range.is_some() {
+                highlight_ranges.push(RelativeHighlightedRange::new(
+                    line_index,
+                    highlighted_range.take().unwrap(),
+                ))
+            }
+
+            if cur_rect.is_some() {
+                rects.push(cur_rect.take().unwrap());
+            }
+        }
+
+        (cells, rects, highlight_ranges)
+    }
+
+    // Compute the cursor position and expected block width, may return a zero width if x_for_index returns
+    // the same position for sequential indexes. Use em_width instead
+    fn shape_cursor(
+        cursor_point: DisplayCursor,
+        size: TermDimensions,
+        text_fragment: &Line,
+    ) -> Option<(Vector2F, f32)> {
+        if cursor_point.line() < size.total_lines() as i32 {
+            let cursor_width = if text_fragment.width() == 0. {
+                size.cell_width()
+            } else {
+                text_fragment.width()
+            };
+
+            Some((
+                vec2f(
+                    cursor_point.col() as f32 * size.cell_width(),
+                    cursor_point.line() as f32 * size.line_height(),
+                ),
+                cursor_width,
+            ))
+        } else {
+            None
+        }
+    }
+
+    ///Convert the Alacritty cell styles to GPUI text styles and background color
+    fn cell_style(
+        indexed: &Indexed<&Cell>,
+        style: &TerminalStyle,
+        text_style: &TextStyle,
+        modal: bool,
+    ) -> RunStyle {
+        let flags = indexed.cell.flags;
+        let fg = convert_color(&indexed.cell.fg, &style.colors, modal);
+
+        let underline = flags
+            .contains(Flags::UNDERLINE)
+            .then(|| Underline {
+                color: Some(fg),
+                squiggly: false,
+                thickness: OrderedFloat(1.),
+            })
+            .unwrap_or_default();
+
+        RunStyle {
+            color: fg,
+            font_id: text_style.font_id,
+            underline,
+        }
+    }
+
     fn attach_mouse_handlers(
         &self,
         origin: Vector2F,
         view_id: usize,
         visible_bounds: RectF,
-        cur_size: TerminalDimensions,
+        cur_size: TermDimensions,
         cx: &mut PaintContext,
     ) {
         let mouse_down_connection = self.terminal.clone();
@@ -256,7 +434,7 @@ impl TerminalEl {
                     move |MouseButtonEvent { position, .. }, cx| {
                         if let Some(conn_handle) = mouse_down_connection.upgrade(cx.app) {
                             conn_handle.update(cx.app, |terminal, cx| {
-                                let (point, side) = mouse_to_cell_data(
+                                let (point, side) = TerminalEl::mouse_to_cell_data(
                                     position,
                                     origin,
                                     cur_size,
@@ -281,7 +459,7 @@ impl TerminalEl {
                         cx.focus_parent_view();
                         if let Some(conn_handle) = click_connection.upgrade(cx.app) {
                             conn_handle.update(cx.app, |terminal, cx| {
-                                let (point, side) = mouse_to_cell_data(
+                                let (point, side) = TerminalEl::mouse_to_cell_data(
                                     position,
                                     origin,
                                     cur_size,
@@ -300,7 +478,7 @@ impl TerminalEl {
                     move |_, MouseMovedEvent { position, .. }, cx| {
                         if let Some(conn_handle) = drag_connection.upgrade(cx.app) {
                             conn_handle.update(cx.app, |terminal, cx| {
-                                let (point, side) = mouse_to_cell_data(
+                                let (point, side) = TerminalEl::mouse_to_cell_data(
                                     position,
                                     origin,
                                     cur_size,
@@ -316,6 +494,79 @@ impl TerminalEl {
                 ),
         );
     }
+
+    ///Configures a text style from the current settings.
+    pub fn make_text_style(font_cache: &FontCache, settings: &Settings) -> TextStyle {
+        // Pull the font family from settings properly overriding
+        let family_id = settings
+            .terminal_overrides
+            .font_family
+            .as_ref()
+            .or_else(|| settings.terminal_defaults.font_family.as_ref())
+            .and_then(|family_name| font_cache.load_family(&[family_name]).log_err())
+            .unwrap_or(settings.buffer_font_family);
+
+        let font_size = settings
+            .terminal_overrides
+            .font_size
+            .or(settings.terminal_defaults.font_size)
+            .unwrap_or(settings.buffer_font_size);
+
+        let font_id = font_cache
+            .select_font(family_id, &Default::default())
+            .unwrap();
+
+        TextStyle {
+            color: settings.theme.editor.text_color,
+            font_family_id: family_id,
+            font_family_name: font_cache.family_name(family_id).unwrap(),
+            font_id,
+            font_size,
+            font_properties: Default::default(),
+            underline: Default::default(),
+        }
+    }
+
+    pub fn mouse_to_cell_data(
+        pos: Vector2F,
+        origin: Vector2F,
+        cur_size: TermDimensions,
+        display_offset: usize,
+    ) -> (Point, alacritty_terminal::index::Direction) {
+        let pos = pos.sub(origin);
+        let point = {
+            let col = pos.x() / cur_size.cell_width; //TODO: underflow...
+            let col = min(GridCol(col as usize), cur_size.last_column());
+
+            let line = pos.y() / cur_size.line_height;
+            let line = min(line as i32, cur_size.bottommost_line().0);
+
+            Point::new(GridLine(line - display_offset as i32), col)
+        };
+
+        //Copied (with modifications) from alacritty/src/input.rs > Processor::cell_side()
+        let side = {
+            let x = pos.0.x() as usize;
+            let cell_x =
+                x.saturating_sub(cur_size.cell_width as usize) % cur_size.cell_width as usize;
+            let half_cell_width = (cur_size.cell_width / 2.0) as usize;
+
+            let additional_padding =
+                (cur_size.width() - cur_size.cell_width * 2.) % cur_size.cell_width;
+            let end_of_grid = cur_size.width() - cur_size.cell_width - additional_padding;
+            //Width: Pixels or columns?
+            if cell_x > half_cell_width
+            // Edge case when mouse leaves the window.
+            || x as f32 >= end_of_grid
+            {
+                Side::Right
+            } else {
+                Side::Left
+            }
+        };
+
+        (point, side)
+    }
 }
 
 impl Element for TerminalEl {
@@ -327,40 +578,74 @@ impl Element for TerminalEl {
         constraint: gpui::SizeConstraint,
         cx: &mut gpui::LayoutContext,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
-        let layout =
-            TerminalLayoutData::new(cx.global::<Settings>(), &cx.font_cache(), constraint.max);
+        let settings = cx.global::<Settings>();
+        let font_cache = &cx.font_cache();
+
+        //Setup layout information
+        let terminal_theme = &settings.theme.terminal;
+        let text_style = TerminalEl::make_text_style(font_cache, &settings);
+        let selection_color = settings.theme.editor.selection.selection;
+        let dimensions = {
+            let line_height = font_cache.line_height(text_style.font_size);
+            let cell_width = font_cache.em_advance(text_style.font_id, text_style.font_size);
+            TermDimensions::new(line_height, cell_width, constraint.max)
+        };
 
         let terminal = self.terminal.upgrade(cx).unwrap().read(cx);
 
         let (cursor, cells, rects, highlights) =
-            terminal.render_lock(Some(layout.size.clone()), |content, cursor_text| {
-                let (cells, rects, highlights) = layout_grid(
+            terminal.render_lock(Some(dimensions.clone()), |content, cursor_text| {
+                let (cells, rects, highlights) = TerminalEl::layout_grid(
                     content.display_iter,
-                    &layout.text_style,
-                    layout.terminal_theme,
+                    &text_style,
+                    terminal_theme,
                     cx.text_layout_cache,
                     self.modal,
                     content.selection,
                 );
 
                 //Layout cursor
-                let cursor = layout_cursor(
-                    cursor_text,
-                    cx.text_layout_cache,
-                    &layout,
-                    content.cursor.point,
-                    content.display_offset,
-                    constraint,
-                );
+                let cursor = {
+                    let cursor_point =
+                        DisplayCursor::from(content.cursor.point, content.display_offset);
+                    let cursor_text = {
+                        let str_trxt = cursor_text.to_string();
+                        cx.text_layout_cache.layout_str(
+                            &str_trxt,
+                            text_style.font_size,
+                            &[(
+                                str_trxt.len(),
+                                RunStyle {
+                                    font_id: text_style.font_id,
+                                    color: terminal_theme.colors.background,
+                                    underline: Default::default(),
+                                },
+                            )],
+                        )
+                    };
+
+                    TerminalEl::shape_cursor(cursor_point, dimensions, &cursor_text).map(
+                        move |(cursor_position, block_width)| {
+                            Cursor::new(
+                                cursor_position,
+                                block_width,
+                                dimensions.line_height,
+                                terminal_theme.colors.cursor,
+                                CursorShape::Block,
+                                Some(cursor_text.clone()),
+                            )
+                        },
+                    )
+                };
 
                 (cursor, cells, rects, highlights)
             });
 
         //Select background color
         let background_color = if self.modal {
-            layout.terminal_theme.colors.modal_background
+            terminal_theme.colors.modal_background
         } else {
-            layout.terminal_theme.colors.background
+            terminal_theme.colors.background
         };
 
         //Done!
@@ -370,8 +655,8 @@ impl Element for TerminalEl {
                 cells,
                 cursor,
                 background_color,
-                selection_color: layout.selection_color,
-                size: layout.size,
+                selection_color,
+                size: dimensions,
                 rects,
                 highlights,
             },
@@ -385,13 +670,6 @@ impl Element for TerminalEl {
         layout: &mut Self::LayoutState,
         cx: &mut gpui::PaintContext,
     ) -> Self::PaintState {
-        /*
-         * For paint, I want to change how mouse events are handled:
-         * - Refactor the mouse handlers to push the grid cell actions into the connection
-         *   - But keep the conversion from GPUI coordinates to grid cells in the Terminal element
-         * - Switch from directly painting things, to calling 'paint' on items produced by layout
-         */
-
         //Setup element stuff
         let clip_bounds = Some(visible_bounds);
 
@@ -520,270 +798,6 @@ impl Element for TerminalEl {
     }
 }
 
-///TODO: Fix cursor rendering with alacritty fork
-fn layout_cursor(
-    cursor_text: char,
-    text_layout_cache: &TextLayoutCache,
-    tcx: &TerminalLayoutData,
-    cursor_point: Point,
-    display_offset: usize,
-    constraint: SizeConstraint,
-) -> Option<Cursor> {
-    let cursor_text = layout_cursor_text(cursor_text, cursor_point, text_layout_cache, tcx);
-    get_cursor_shape(
-        cursor_point.line.0 as usize,
-        cursor_point.column.0 as usize,
-        display_offset,
-        tcx.size.line_height,
-        tcx.size.cell_width,
-        (constraint.max.y() / tcx.size.line_height) as usize, //TODO
-        &cursor_text,
-    )
-    .map(move |(cursor_position, block_width)| {
-        let block_width = if block_width != 0.0 {
-            block_width
-        } else {
-            tcx.size.cell_width
-        };
-
-        Cursor::new(
-            cursor_position,
-            block_width,
-            tcx.size.line_height,
-            tcx.terminal_theme.colors.cursor,
-            CursorShape::Block,
-            Some(cursor_text.clone()),
-        )
-    })
-}
-
-fn layout_cursor_text(
-    cursor_text: char,
-    _cursor_point: Point,
-    text_layout_cache: &TextLayoutCache,
-    tcx: &TerminalLayoutData,
-) -> Line {
-    let cursor_text = cursor_text.to_string();
-    text_layout_cache.layout_str(
-        &cursor_text,
-        tcx.text_style.font_size,
-        &[(
-            cursor_text.len(),
-            RunStyle {
-                font_id: tcx.text_style.font_id,
-                color: tcx.terminal_theme.colors.background,
-                underline: Default::default(),
-            },
-        )],
-    )
-}
-
-pub fn mouse_to_cell_data(
-    pos: Vector2F,
-    origin: Vector2F,
-    cur_size: TerminalDimensions,
-    display_offset: usize,
-) -> (Point, alacritty_terminal::index::Direction) {
-    let pos = pos.sub(origin);
-    let point = {
-        let col = pos.x() / cur_size.cell_width; //TODO: underflow...
-        let col = min(GridCol(col as usize), cur_size.last_column());
-
-        let line = pos.y() / cur_size.line_height;
-        let line = min(line as i32, cur_size.bottommost_line().0);
-
-        Point::new(GridLine(line - display_offset as i32), col)
-    };
-
-    //Copied (with modifications) from alacritty/src/input.rs > Processor::cell_side()
-    let side = {
-        let x = pos.0.x() as usize;
-        let cell_x = x.saturating_sub(cur_size.cell_width as usize) % cur_size.cell_width as usize;
-        let half_cell_width = (cur_size.cell_width / 2.0) as usize;
-
-        let additional_padding =
-            (cur_size.width() - cur_size.cell_width * 2.) % cur_size.cell_width;
-        let end_of_grid = cur_size.width() - cur_size.cell_width - additional_padding;
-        //Width: Pixels or columns?
-        if cell_x > half_cell_width
-                // Edge case when mouse leaves the window.
-                || x as f32 >= end_of_grid
-        {
-            Side::Right
-        } else {
-            Side::Left
-        }
-    };
-
-    (point, side)
-}
-
-fn layout_grid(
-    grid: GridIterator<Cell>,
-    text_style: &TextStyle,
-    terminal_theme: &TerminalStyle,
-    text_layout_cache: &TextLayoutCache,
-    modal: bool,
-    selection_range: Option<SelectionRange>,
-) -> (
-    Vec<LayoutCell>,
-    Vec<LayoutRect>,
-    Vec<RelativeHighlightedRange>,
-) {
-    let mut cells = vec![];
-    let mut rects = vec![];
-    let mut highlight_ranges = vec![];
-
-    let mut cur_rect: Option<LayoutRect> = None;
-    let mut cur_alac_color = None;
-    let mut highlighted_range = None;
-
-    let linegroups = grid.group_by(|i| i.point.line);
-    for (line_index, (_, line)) in linegroups.into_iter().enumerate() {
-        for (x_index, cell) in line.enumerate() {
-            //Increase selection range
-            {
-                if selection_range
-                    .map(|range| range.contains(cell.point))
-                    .unwrap_or(false)
-                {
-                    let mut range = highlighted_range.take().unwrap_or(x_index..x_index);
-                    range.end = range.end.max(x_index);
-                    highlighted_range = Some(range);
-                }
-            }
-
-            //Expand background rect range
-            {
-                if matches!(cell.bg, Named(NamedColor::Background)) {
-                    //Continue to next cell, resetting variables if nescessary
-                    cur_alac_color = None;
-                    if let Some(rect) = cur_rect {
-                        rects.push(rect);
-                        cur_rect = None
-                    }
-                } else {
-                    match cur_alac_color {
-                        Some(cur_color) => {
-                            if cell.bg == cur_color {
-                                cur_rect = cur_rect.take().map(|rect| rect.extend());
-                            } else {
-                                cur_alac_color = Some(cell.bg);
-                                if let Some(_) = cur_rect {
-                                    rects.push(cur_rect.take().unwrap());
-                                }
-                                cur_rect = Some(LayoutRect::new(
-                                    Point::new(line_index as i32, cell.point.column.0 as i32),
-                                    1,
-                                    convert_color(&cell.bg, &terminal_theme.colors, modal),
-                                ));
-                            }
-                        }
-                        None => {
-                            cur_alac_color = Some(cell.bg);
-                            cur_rect = Some(LayoutRect::new(
-                                Point::new(line_index as i32, cell.point.column.0 as i32),
-                                1,
-                                convert_color(&cell.bg, &terminal_theme.colors, modal),
-                            ));
-                        }
-                    }
-                }
-            }
-
-            //Layout current cell text
-            {
-                let cell_text = &cell.c.to_string();
-                if cell_text != " " {
-                    let cell_style = cell_style(&cell, terminal_theme, text_style, modal);
-
-                    let layout_cell = text_layout_cache.layout_str(
-                        cell_text,
-                        text_style.font_size,
-                        &[(cell_text.len(), cell_style)],
-                    );
-
-                    cells.push(LayoutCell::new(
-                        Point::new(line_index as i32, cell.point.column.0 as i32),
-                        layout_cell,
-                    ))
-                }
-            };
-        }
-
-        if highlighted_range.is_some() {
-            highlight_ranges.push(RelativeHighlightedRange::new(
-                line_index,
-                highlighted_range.take().unwrap(),
-            ))
-        }
-
-        if cur_rect.is_some() {
-            rects.push(cur_rect.take().unwrap());
-        }
-    }
-
-    (cells, rects, highlight_ranges)
-}
-
-// Compute the cursor position and expected block width, may return a zero width if x_for_index returns
-// the same position for sequential indexes. Use em_width instead
-//TODO: This function is messy, too many arguments and too many ifs. Simplify.
-fn get_cursor_shape(
-    line: usize,
-    line_index: usize,
-    display_offset: usize,
-    line_height: f32,
-    cell_width: f32,
-    total_lines: usize,
-    text_fragment: &Line,
-) -> Option<(Vector2F, f32)> {
-    let cursor_line = line + display_offset;
-    if cursor_line <= total_lines {
-        let cursor_width = if text_fragment.width() == 0. {
-            cell_width
-        } else {
-            text_fragment.width()
-        };
-
-        Some((
-            vec2f(
-                line_index as f32 * cell_width,
-                cursor_line as f32 * line_height,
-            ),
-            cursor_width,
-        ))
-    } else {
-        None
-    }
-}
-
-///Convert the Alacritty cell styles to GPUI text styles and background color
-fn cell_style(
-    indexed: &Indexed<&Cell>,
-    style: &TerminalStyle,
-    text_style: &TextStyle,
-    modal: bool,
-) -> RunStyle {
-    let flags = indexed.cell.flags;
-    let fg = convert_color(&indexed.cell.fg, &style.colors, modal);
-
-    let underline = flags
-        .contains(Flags::UNDERLINE)
-        .then(|| Underline {
-            color: Some(fg),
-            squiggly: false,
-            thickness: OrderedFloat(1.),
-        })
-        .unwrap_or_default();
-
-    RunStyle {
-        color: fg,
-        font_id: text_style.font_id,
-        underline,
-    }
-}
-
 mod test {
 
     #[test]
@@ -797,7 +811,7 @@ mod test {
         let origin_x = 10.;
         let origin_y = 20.;
 
-        let cur_size = crate::terminal_element::TerminalDimensions::new(
+        let cur_size = crate::connected_el::TermDimensions::new(
             line_height,
             cell_width,
             gpui::geometry::vector::vec2f(term_width, term_height),
@@ -806,7 +820,7 @@ mod test {
         let mouse_pos = gpui::geometry::vector::vec2f(mouse_pos_x, mouse_pos_y);
         let origin = gpui::geometry::vector::vec2f(origin_x, origin_y); //Position of terminal window, 1 'cell' in
         let (point, _) =
-            crate::terminal_element::mouse_to_cell_data(mouse_pos, origin, cur_size, 0);
+            crate::connected_el::TerminalEl::mouse_to_cell_data(mouse_pos, origin, cur_size, 0);
         assert_eq!(
             point,
             alacritty_terminal::index::Point::new(

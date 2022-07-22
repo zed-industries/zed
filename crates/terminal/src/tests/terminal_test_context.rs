@@ -8,8 +8,8 @@ use project::{Entry, Project, ProjectPath, Worktree};
 use workspace::{AppState, Workspace};
 
 use crate::{
-    connection::{Terminal, TerminalBuilder},
-    terminal_element::TerminalDimensions,
+    connected_el::TermDimensions,
+    model::{Terminal, TerminalBuilder},
     DEBUG_CELL_WIDTH, DEBUG_LINE_HEIGHT, DEBUG_TERMINAL_HEIGHT, DEBUG_TERMINAL_WIDTH,
 };
 
@@ -22,7 +22,7 @@ impl<'a> TerminalTestContext<'a> {
     pub fn new(cx: &'a mut TestAppContext, term: bool) -> Self {
         cx.set_condition_duration(Some(Duration::from_secs(5)));
 
-        let size_info = TerminalDimensions::new(
+        let size_info = TermDimensions::new(
             DEBUG_CELL_WIDTH,
             DEBUG_LINE_HEIGHT,
             vec2f(DEBUG_TERMINAL_WIDTH, DEBUG_TERMINAL_HEIGHT),

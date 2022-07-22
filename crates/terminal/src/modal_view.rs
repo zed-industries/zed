@@ -2,7 +2,7 @@ use gpui::{ModelHandle, ViewContext};
 use workspace::Workspace;
 
 use crate::{
-    connection::Terminal, get_working_directory, DeployModal, Event, TerminalContent, TerminalView,
+    get_working_directory, model::Terminal, DeployModal, Event, TerminalContent, TerminalView,
 };
 
 #[derive(Debug)]
@@ -32,7 +32,7 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
             let this = cx.add_view(|cx| TerminalView::new(working_directory, true, cx));
 
             if let TerminalContent::Connected(connected) = &this.read(cx).content {
-                let terminal_handle = connected.read(cx).terminal.clone();
+                let terminal_handle = connected.read(cx).handle();
                 cx.subscribe(&terminal_handle, on_event).detach();
                 // Set the global immediately if terminal construction was successful,
                 // in case the user opens the command palette
@@ -46,7 +46,7 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
             // Terminal modal was dismissed. Store terminal if the terminal view is connected
             if let TerminalContent::Connected(connected) = &closed_terminal_handle.read(cx).content
             {
-                let terminal_handle = connected.read(cx).terminal.clone();
+                let terminal_handle = connected.read(cx).handle();
                 // Set the global immediately if terminal construction was successful,
                 // in case the user opens the command palette
                 cx.set_global::<Option<StoredTerminal>>(Some(StoredTerminal(

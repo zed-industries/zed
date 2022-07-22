@@ -1,5 +1,3 @@
-mod keymappings;
-
 use alacritty_terminal::{
     ansi::{ClearMode, Handler},
     config::{Config, Program, PtyConfig},
@@ -25,11 +23,12 @@ use thiserror::Error;
 use gpui::{keymap::Keystroke, ClipboardItem, CursorStyle, Entity, ModelContext};
 
 use crate::{
-    color_translation::{get_color_at_index, to_alac_rgb},
-    terminal_element::TerminalDimensions,
+    connected_el::TermDimensions,
+    mappings::{
+        colors::{get_color_at_index, to_alac_rgb},
+        keys::to_esc_str,
+    },
 };
-
-use self::keymappings::to_esc_str;
 
 const DEFAULT_TITLE: &str = "Terminal";
 
@@ -132,7 +131,7 @@ impl TerminalBuilder {
         working_directory: Option<PathBuf>,
         shell: Option<Shell>,
         env: Option<HashMap<String, String>>,
-        initial_size: TerminalDimensions,
+        initial_size: TermDimensions,
     ) -> Result<TerminalBuilder> {
         let pty_config = {
             let alac_shell = shell.clone().and_then(|shell| match shell {
@@ -364,7 +363,7 @@ impl Terminal {
         self.term.lock().selection = sel;
     }
 
-    pub fn render_lock<F, T>(&self, new_size: Option<TerminalDimensions>, f: F) -> T
+    pub fn render_lock<F, T>(&self, new_size: Option<TermDimensions>, f: F) -> T
     where
         F: FnOnce(RenderableContent, char) -> T,
     {
