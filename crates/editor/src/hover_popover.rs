@@ -608,34 +608,34 @@ mod tests {
 
         // Hover pops diagnostic immediately
         cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
-        cx.condition(|Editor { hover_state, .. }, _| {
-            hover_state.diagnostic_popover.is_some() && hover_state.info_popover.is_none()
-        })
-        .await;
+        cx.foreground().run_until_parked();
+
+        cx.editor(|Editor { hover_state, .. }, _| {
+            assert!(hover_state.diagnostic_popover.is_some() && hover_state.info_popover.is_none())
+        });
 
         // Info Popover shows after request responded to
         let range = cx.lsp_range(indoc! {"
             fn [test]()
                 println!();"});
-        let mut requests =
-            cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
-                Ok(Some(lsp::Hover {
-                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
-                        kind: lsp::MarkupKind::Markdown,
-                        value: indoc! {"
-                        # Some other basic docs
-                        Some other test documentation"}
-                        .to_string(),
-                    }),
-                    range: Some(range),
-                }))
-            });
+        cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::Hover {
+                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                    kind: lsp::MarkupKind::Markdown,
+                    value: indoc! {"
+                    # Some other basic docs
+                    Some other test documentation"}
+                    .to_string(),
+                }),
+                range: Some(range),
+            }))
+        });
         cx.foreground()
             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
-        requests.next().await;
-        cx.condition(|Editor { hover_state, .. }, _| {
+
+        cx.foreground().run_until_parked();
+        cx.editor(|Editor { hover_state, .. }, _| {
             hover_state.diagnostic_popover.is_some() && hover_state.info_task.is_some()
-        })
-        .await;
+        });
     }
 }
