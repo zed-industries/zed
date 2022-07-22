@@ -10,7 +10,11 @@ use cocoa::{
     base::{id, YES},
     foundation::NSString as _,
 };
-use objc::{msg_send, sel, sel_impl};
+use core_graphics::{
+    event::{CGEvent, CGEventFlags, CGKeyCode},
+    event_source::{CGEventSource, CGEventSourceStateID},
+};
+use objc::{class, msg_send, sel, sel_impl};
 use std::{borrow::Cow, ffi::CStr, os::raw::c_char};
 
 const BACKSPACE_KEY: u16 = 0x7f;
@@ -212,13 +216,13 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     let mut shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
     let cmd = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
 
-    let chars =
+    let chars_ignoring_modifiers =
         CStr::from_ptr(native_event.charactersIgnoringModifiers().UTF8String() as *mut c_char)
             .to_str()
             .unwrap();
 
     #[allow(non_upper_case_globals)]
-    let key = match chars.chars().next().map(|ch| ch as u16) {
+    let key = match chars_ignoring_modifiers.chars().next().map(|ch| ch as u16) {
         Some(SPACE_KEY) => "space",
         Some(BACKSPACE_KEY) => "backspace",
         Some(ENTER_KEY) | Some(NUMPAD_ENTER_KEY) => "enter",
@@ -245,37 +249,26 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         Some(NSF11FunctionKey) => "f11",
         Some(NSF12FunctionKey) => "f12",
         _ => {
-            let chars_without_modifiers: id = msg_send![
-                native_event,
-                charactersByApplyingModifiers: NSEventModifierFlags::empty()
-            ];
-            let chars_without_modifiers =
-                CStr::from_ptr(chars_without_modifiers.UTF8String() as *mut c_char)
-                    .to_str()
-                    .unwrap();
-
-            let chars_with_cmd: id = msg_send![
-                native_event,
-                charactersByApplyingModifiers: NSEventModifierFlags::NSCommandKeyMask
-            ];
-            let chars_with_cmd = CStr::from_ptr(chars_with_cmd.UTF8String() as *mut c_char)
-                .to_str()
-                .unwrap();
-
-            if cmd && chars_without_modifiers != chars_with_cmd {
+            let chars_ignoring_modifiers_and_shift =
+                chars_for_modified_key(native_event.keyCode(), CGEventFlags::empty());
+            let chars_with_cmd =
+                chars_for_modified_key(native_event.keyCode(), CGEventFlags::CGEventFlagCommand);
+            if cmd && chars_ignoring_modifiers_and_shift != chars_with_cmd {
                 // Honor ⌘ when Dvorak-QWERTY is used.
                 chars_with_cmd
             } else if shift {
-                if chars_without_modifiers == chars.to_ascii_lowercase() {
-                    chars_without_modifiers
-                } else if chars_without_modifiers != chars {
+                if chars_ignoring_modifiers_and_shift
+                    == chars_ignoring_modifiers.to_ascii_lowercase()
+                {
+                    chars_ignoring_modifiers_and_shift
+                } else if chars_ignoring_modifiers_and_shift != chars_ignoring_modifiers {
                     shift = false;
-                    chars
+                    chars_ignoring_modifiers
                 } else {
-                    chars
+                    chars_ignoring_modifiers
                 }
             } else {
-                chars
+                chars_ignoring_modifiers
             }
         }
     };
@@ -286,5 +279,25 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         shift,
         cmd,
         key: key.into(),
+    }
+}
+
+fn chars_for_modified_key<'a>(code: CGKeyCode, flags: CGEventFlags) -> &'a str {
+    // Ideally, we would use `[NSEvent charactersByApplyingModifiers]` but that
+    // always returns an empty string with certain keyboards, e.g. Japanese. Synthesizing
+    // an event with the given flags instead lets us access `characters`, which always
+    // returns a valid string.
+    let event = CGEvent::new_keyboard_event(
+        CGEventSource::new(CGEventSourceStateID::Private).unwrap(),
+        code,
+        true,
+    )
+    .unwrap();
+    event.set_flags(flags);
+    let event: id = unsafe { msg_send![class!(NSEvent), eventWithCGEvent: event] };
+    unsafe {
+        CStr::from_ptr(event.characters().UTF8String())
+            .to_str()
+            .unwrap()
     }
 }
