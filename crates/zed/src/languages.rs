@@ -7,6 +7,7 @@ use std::{borrow::Cow, str, sync::Arc};
 mod c;
 mod elixir;
 mod go;
+mod html;
 mod installation;
 mod json;
 mod language_plugin;
@@ -95,6 +96,11 @@ pub async fn init(languages: Arc<LanguageRegistry>, _executor: Arc<Background>) 
             "javascript",
             tree_sitter_typescript::language_tsx(),
             Some(CachedLspAdapter::new(typescript::TypeScriptLspAdapter).await),
+        ),
+        (
+            "html",
+            tree_sitter_html::language(),
+            Some(CachedLspAdapter::new(html::HtmlLspAdapter).await),
         ),
     ] {
         languages.add(Arc::new(language(name, grammar, lsp_adapter)));
