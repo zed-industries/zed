@@ -211,13 +211,14 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
     let mut shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
     let cmd = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
-    let unmodified_chars =
+
+    let chars =
         CStr::from_ptr(native_event.charactersIgnoringModifiers().UTF8String() as *mut c_char)
             .to_str()
             .unwrap();
 
     #[allow(non_upper_case_globals)]
-    let key = match unmodified_chars.chars().next().map(|ch| ch as u16) {
+    let key = match chars.chars().next().map(|ch| ch as u16) {
         Some(SPACE_KEY) => "space",
         Some(BACKSPACE_KEY) => "backspace",
         Some(ENTER_KEY) | Some(NUMPAD_ENTER_KEY) => "enter",
@@ -244,26 +245,37 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         Some(NSF11FunctionKey) => "f11",
         Some(NSF12FunctionKey) => "f12",
         _ => {
-            if shift {
-                let chars_without_shift: id = msg_send![
-                    native_event,
-                    charactersByApplyingModifiers: NSEventModifierFlags::empty()
-                ];
-                let chars_without_shift =
-                    CStr::from_ptr(chars_without_shift.UTF8String() as *mut c_char)
-                        .to_str()
-                        .unwrap();
+            let chars_without_modifiers: id = msg_send![
+                native_event,
+                charactersByApplyingModifiers: NSEventModifierFlags::empty()
+            ];
+            let chars_without_modifiers =
+                CStr::from_ptr(chars_without_modifiers.UTF8String() as *mut c_char)
+                    .to_str()
+                    .unwrap();
 
-                if chars_without_shift == unmodified_chars.to_ascii_lowercase() {
-                    chars_without_shift
-                } else if chars_without_shift != unmodified_chars {
+            let chars_with_cmd: id = msg_send![
+                native_event,
+                charactersByApplyingModifiers: NSEventModifierFlags::NSCommandKeyMask
+            ];
+            let chars_with_cmd = CStr::from_ptr(chars_with_cmd.UTF8String() as *mut c_char)
+                .to_str()
+                .unwrap();
+
+            if cmd && chars_without_modifiers != chars_with_cmd {
+                // Honor ⌘ when Dvorak-QWERTY is used.
+                chars_with_cmd
+            } else if shift {
+                if chars_without_modifiers == chars.to_ascii_lowercase() {
+                    chars_without_modifiers
+                } else if chars_without_modifiers != chars {
                     shift = false;
-                    unmodified_chars
+                    chars
                 } else {
-                    unmodified_chars
+                    chars
                 }
             } else {
-                unmodified_chars
+                chars
             }
         }
     };
