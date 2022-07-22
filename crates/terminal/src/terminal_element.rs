@@ -398,13 +398,22 @@ impl Element for TerminalEl {
     fn rect_for_text_range(
         &self,
         _: Range<usize>,
+        bounds: RectF,
         _: RectF,
-        _: RectF,
-        _: &Self::LayoutState,
+        layout: &Self::LayoutState,
         _: &Self::PaintState,
         _: &gpui::MeasurementContext,
     ) -> Option<RectF> {
-        todo!()
+        // Use the same origin that's passed to `Cursor::paint` in the paint
+        // method bove.
+        let mut origin = bounds.origin() + vec2f(layout.em_width.0, 0.);
+
+        // TODO - Why is it necessary to move downward one line to get correct
+        // positioning? I would think that we'd want the same rect that is
+        // painted for the cursor.
+        origin += vec2f(0., layout.line_height.0);
+
+        Some(layout.cursor.as_ref()?.bounding_rect(origin))
     }
 
     fn debug(

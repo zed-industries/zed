@@ -262,6 +262,10 @@ impl View for Terminal {
         context
     }
 
+    fn selected_text_range(&self, _: &AppContext) -> Option<std::ops::Range<usize>> {
+        Some(0..0)
+    }
+
     fn replace_text_in_range(
         &mut self,
         _: Option<std::ops::Range<usize>>,

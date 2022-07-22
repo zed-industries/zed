@@ -240,53 +240,7 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode) -> Option<String> {
         }
     }
 
-    //Fallback to sending the keystroke input directly
-    //Skin colors in utf8 are implemented as a seperate, invisible character
-    //that modifies the associated emoji. Some languages may have similarly
-    //implemented modifiers, e.g. certain diacritics that can be typed as a single character.
-    //This means that we need to assume some user input can result in multi-byte,
-    //multi-char strings. This is somewhat difficult, as GPUI normalizes all
-    //keys into a string representation. Hence, the check here to filter out GPUI
-    //keys that weren't captured above.
-    if !matches_gpui_key_str(&keystroke.key) {
-        return Some(keystroke.key.clone());
-    } else {
-        None
-    }
-}
-
-///Checks if the given string matches a GPUI key string.
-///Table made from reading the source at gpui/src/platform/mac/event.rs
-fn matches_gpui_key_str(str: &str) -> bool {
-    match str {
-        "backspace" => true,
-        "up" => true,
-        "down" => true,
-        "left" => true,
-        "right" => true,
-        "pageup" => true,
-        "pagedown" => true,
-        "home" => true,
-        "end" => true,
-        "delete" => true,
-        "enter" => true,
-        "escape" => true,
-        "tab" => true,
-        "f1" => true,
-        "f2" => true,
-        "f3" => true,
-        "f4" => true,
-        "f5" => true,
-        "f6" => true,
-        "f7" => true,
-        "f8" => true,
-        "f9" => true,
-        "f10" => true,
-        "f11" => true,
-        "f12" => true,
-        "space" => true,
-        _ => false,
-    }
+    None
 }
 
 ///   Code     Modifiers

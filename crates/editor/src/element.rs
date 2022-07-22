@@ -1713,6 +1713,13 @@ impl Cursor {
         }
     }
 
+    pub fn bounding_rect(&self, origin: Vector2F) -> RectF {
+        RectF::new(
+            self.origin + origin,
+            vec2f(self.block_width, self.line_height),
+        )
+    }
+
     pub fn paint(&self, origin: Vector2F, cx: &mut PaintContext) {
         let bounds = match self.shape {
             CursorShape::Bar => RectF::new(self.origin + origin, vec2f(2.0, self.line_height)),
