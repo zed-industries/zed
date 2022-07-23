@@ -12,12 +12,9 @@ use alacritty_terminal::{
     Term,
 };
 use anyhow::{bail, Result};
-use futures::{
-    channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
-    StreamExt,
-};
+use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use settings::{Settings, Shell};
-use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc, time::Duration};
 use thiserror::Error;
 
 use gpui::{keymap::Keystroke, ClipboardItem, CursorStyle, Entity, ModelContext};
@@ -234,18 +231,34 @@ impl TerminalBuilder {
 
     pub fn subscribe(mut self, cx: &mut ModelContext<Terminal>) -> Terminal {
         cx.spawn_weak(|this, mut cx| async move {
-            //Listen for terminal events
-            while let Some(event) = self.events_rx.next().await {
+            'outer: loop {
+                let delay = cx.background().timer(Duration::from_secs_f32(1.0 / 30.));
+
+                let mut events = vec![];
+
+                loop {
+                    match self.events_rx.try_next() {
+                        //Have a buffered event
+                        Ok(Some(e)) => events.push(e),
+                        //Ran out of buffered events
+                        Ok(None) => break,
+                        //Channel closed, exit
+                        Err(_) => break 'outer,
+                    }
+                }
+
                 match this.upgrade(&cx) {
                     Some(this) => {
                         this.update(&mut cx, |this, cx| {
-                            this.process_terminal_event(event, cx);
-
-                            cx.notify();
+                            for event in events {
+                                this.process_terminal_event(event, cx);
+                            }
                         });
                     }
-                    None => break,
+                    None => break 'outer,
                 }
+
+                delay.await;
             }
         })
         .detach();
