@@ -1310,22 +1310,46 @@ impl Buffer {
     where
         D: TextDimension,
     {
+        // get fragment ranges
         let mut cursor = self.fragments.cursor::<(Option<&Locator>, usize)>();
-        let mut rope_cursor = self.visible_text.cursor(0);
-        let mut position = D::default();
-        self.fragment_ids_for_edits(transaction.edit_ids.iter())
+        let offset_ranges = self
+            .fragment_ids_for_edits(transaction.edit_ids.iter())
             .into_iter()
             .filter_map(move |fragment_id| {
                 cursor.seek_forward(&Some(fragment_id), Bias::Left, &None);
                 let fragment = cursor.item()?;
                 let start_offset = cursor.start().1;
                 let end_offset = start_offset + if fragment.visible { fragment.len } else { 0 };
-                position.add_assign(&rope_cursor.summary(start_offset));
-                let start = position.clone();
-                position.add_assign(&rope_cursor.summary(end_offset));
-                let end = position.clone();
-                Some(start..end)
-            })
+                Some(start_offset..end_offset)
+            });
+
+        // combine adjacent ranges
+        let mut prev_range: Option<Range<usize>> = None;
+        let disjoint_ranges = offset_ranges
+            .map(Some)
+            .chain([None])
+            .filter_map(move |range| {
+                if let Some((range, prev_range)) = range.as_ref().zip(prev_range.as_mut()) {
+                    if prev_range.end == range.start {
+                        prev_range.end = range.end;
+                        return None;
+                    }
+                }
+                let result = prev_range.clone();
+                prev_range = range;
+                result
+            });
+
+        // convert to the desired text dimension.
+        let mut position = D::default();
+        let mut rope_cursor = self.visible_text.cursor(0);
+        disjoint_ranges.map(move |range| {
+            position.add_assign(&rope_cursor.summary(range.start));
+            let start = position.clone();
+            position.add_assign(&rope_cursor.summary(range.end));
+            let end = position.clone();
+            start..end
+        })
     }
 
     pub fn subscribe(&mut self) -> Subscription {
