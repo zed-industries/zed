@@ -1083,8 +1083,7 @@ impl Buffer {
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
 
-        let fragment_ids = self.fragment_ids_for_edits(undo.counts.keys());
-        for fragment_id in fragment_ids {
+        for fragment_id in self.fragment_ids_for_edits(undo.counts.keys()) {
             let preceding_fragments = old_fragments.slice(&Some(fragment_id), Bias::Left, &None);
             new_ropes.push_tree(preceding_fragments.summary().text);
             new_fragments.push_tree(preceding_fragments, &None);
