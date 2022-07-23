@@ -92,7 +92,6 @@ pub struct Transaction {
     pub id: TransactionId,
     pub edit_ids: Vec<clock::Local>,
     pub start: clock::Global,
-    pub end: clock::Global,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -104,15 +103,6 @@ pub enum LineEnding {
 impl HistoryEntry {
     pub fn transaction_id(&self) -> TransactionId {
         self.transaction.id
-    }
-
-    fn push_edit(&mut self, edit_operation: &EditOperation) {
-        self.transaction
-            .edit_ids
-            .push(edit_operation.timestamp.local());
-        self.transaction
-            .end
-            .observe(edit_operation.timestamp.local());
     }
 }
 
@@ -162,8 +152,7 @@ impl History {
             self.undo_stack.push(HistoryEntry {
                 transaction: Transaction {
                     id,
-                    start: start.clone(),
-                    end: start,
+                    start,
                     edit_ids: Default::default(),
                 },
                 first_edit_at: now,
@@ -209,7 +198,6 @@ impl History {
             while let Some(prev_entry) = entries.next_back() {
                 if !prev_entry.suppress_grouping
                     && entry.first_edit_at - prev_entry.last_edit_at <= self.group_interval
-                    && entry.transaction.start == prev_entry.transaction.end
                 {
                     entry = prev_entry;
                     new_len -= 1;
@@ -223,13 +211,12 @@ impl History {
         if let Some(last_entry) = entries_to_keep.last_mut() {
             for entry in &*entries_to_merge {
                 for edit_id in &entry.transaction.edit_ids {
-                    last_entry.push_edit(self.operations[edit_id].as_edit().unwrap());
+                    last_entry.transaction.edit_ids.push(*edit_id);
                 }
             }
 
             if let Some(entry) = entries_to_merge.last_mut() {
                 last_entry.last_edit_at = entry.last_edit_at;
-                last_entry.transaction.end = entry.transaction.end.clone();
             }
         }
 
@@ -257,9 +244,9 @@ impl History {
 
     fn push_undo(&mut self, op_id: clock::Local) {
         assert_ne!(self.transaction_depth, 0);
-        if let Some(Operation::Edit(edit)) = self.operations.get(&op_id) {
+        if let Some(Operation::Edit(_)) = self.operations.get(&op_id) {
             let last_transaction = self.undo_stack.last_mut().unwrap();
-            last_transaction.push_edit(&edit);
+            last_transaction.transaction.edit_ids.push(op_id);
         }
     }
 

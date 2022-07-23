@@ -534,7 +534,6 @@ message Transaction {
     LocalTimestamp id = 1;
     repeated LocalTimestamp edit_ids = 2;
     repeated VectorClockEntry start = 3;
-    repeated VectorClockEntry end = 4;
 }
 
 message LocalTimestamp {

@@ -564,7 +564,9 @@ fn test_history() {
     assert_eq!(buffer.text(), "12cde6");
 
     // Redo stack gets cleared after performing an edit.
+    buffer.start_transaction_at(now);
     buffer.edit([(0..0, "X")]);
+    buffer.end_transaction_at(now);
     assert_eq!(buffer.text(), "X12cde6");
     buffer.redo();
     assert_eq!(buffer.text(), "X12cde6");

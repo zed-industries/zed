@@ -450,7 +450,6 @@ pub fn serialize_transaction(transaction: &Transaction) -> proto::Transaction {
             .map(serialize_local_timestamp)
             .collect(),
         start: serialize_version(&transaction.start),
-        end: serialize_version(&transaction.end),
     }
 }
 
@@ -467,7 +466,6 @@ pub fn deserialize_transaction(transaction: proto::Transaction) -> Result<Transa
             .map(deserialize_local_timestamp)
             .collect(),
         start: deserialize_version(transaction.start.into()),
-        end: deserialize_version(transaction.end),
     })
 }
 
