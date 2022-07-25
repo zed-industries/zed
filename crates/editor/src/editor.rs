@@ -6714,39 +6714,84 @@ mod tests {
             editor.replace_and_mark_text_in_range(Some(0..1), "á", None, cx);
             editor.replace_and_mark_text_in_range(Some(0..1), "ä", None, cx);
             assert_eq!(editor.text(cx), "äbcde");
-            assert_eq!(editor.marked_text_range(cx), Some(0..1));
+            assert_eq!(
+                editor.marked_text_ranges(cx),
+                Some(vec![OffsetUtf16(0)..OffsetUtf16(1)])
+            );
 
             // Finalize IME composition.
             editor.replace_text_in_range(None, "ā", cx);
             assert_eq!(editor.text(cx), "ābcde");
-            assert_eq!(editor.marked_text_range(cx), None);
+            assert_eq!(editor.marked_text_ranges(cx), None);
 
             // IME composition edits are grouped and are undone/redone at once.
             editor.undo(&Default::default(), cx);
             assert_eq!(editor.text(cx), "abcde");
-            assert_eq!(editor.marked_text_range(cx), None);
+            assert_eq!(editor.marked_text_ranges(cx), None);
             editor.redo(&Default::default(), cx);
             assert_eq!(editor.text(cx), "ābcde");
-            assert_eq!(editor.marked_text_range(cx), None);
+            assert_eq!(editor.marked_text_ranges(cx), None);
 
             // Start a new IME composition.
             editor.replace_and_mark_text_in_range(Some(0..1), "à", None, cx);
-            assert_eq!(editor.marked_text_range(cx), Some(0..1));
+            assert_eq!(
+                editor.marked_text_ranges(cx),
+                Some(vec![OffsetUtf16(0)..OffsetUtf16(1)])
+            );
 
             // Undoing during an IME composition cancels it.
             editor.undo(&Default::default(), cx);
             assert_eq!(editor.text(cx), "ābcde");
-            assert_eq!(editor.marked_text_range(cx), None);
+            assert_eq!(editor.marked_text_ranges(cx), None);
 
             // Start a new IME composition with an invalid marked range, ensuring it gets clipped.
             editor.replace_and_mark_text_in_range(Some(4..999), "è", None, cx);
             assert_eq!(editor.text(cx), "ābcdè");
-            assert_eq!(editor.marked_text_range(cx), Some(4..5));
+            assert_eq!(
+                editor.marked_text_ranges(cx),
+                Some(vec![OffsetUtf16(4)..OffsetUtf16(5)])
+            );
 
             // Finalize IME composition with an invalid replacement range, ensuring it gets clipped.
             editor.replace_text_in_range(Some(4..999), "ę", cx);
             assert_eq!(editor.text(cx), "ābcdę");
-            assert_eq!(editor.marked_text_range(cx), None);
+            assert_eq!(editor.marked_text_ranges(cx), None);
+
+            // Start a new IME composition with multiple cursors.
+            editor.change_selections(None, cx, |s| {
+                s.select_ranges([
+                    OffsetUtf16(1)..OffsetUtf16(1),
+                    OffsetUtf16(3)..OffsetUtf16(3),
+                    OffsetUtf16(5)..OffsetUtf16(5),
+                ])
+            });
+            editor.replace_and_mark_text_in_range(Some(4..5), "XYZ", None, cx);
+            assert_eq!(editor.text(cx), "XYZbXYZdXYZ");
+            assert_eq!(
+                editor.marked_text_ranges(cx),
+                Some(vec![
+                    OffsetUtf16(0)..OffsetUtf16(3),
+                    OffsetUtf16(4)..OffsetUtf16(7),
+                    OffsetUtf16(8)..OffsetUtf16(11)
+                ])
+            );
+
+            // Ensure the newly-marked range gets treated as relative to the previously-marked ranges.
+            editor.replace_and_mark_text_in_range(Some(1..2), "1", None, cx);
+            assert_eq!(editor.text(cx), "X1ZbX1ZdX1Z");
+            assert_eq!(
+                editor.marked_text_ranges(cx),
+                Some(vec![
+                    OffsetUtf16(1)..OffsetUtf16(2),
+                    OffsetUtf16(5)..OffsetUtf16(6),
+                    OffsetUtf16(9)..OffsetUtf16(10)
+                ])
+            );
+
+            // Finalize IME composition with multiple cursors.
+            editor.replace_text_in_range(Some(9..10), "2", cx);
+            assert_eq!(editor.text(cx), "X2ZbX2ZdX2Z");
+            assert_eq!(editor.marked_text_ranges(cx), None);
 
             editor
         });
