@@ -146,7 +146,7 @@ impl ConnectedView {
 
 impl View for ConnectedView {
     fn ui_name() -> &'static str {
-        "Connected Terminal View"
+        "Terminal"
     }
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
