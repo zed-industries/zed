@@ -45,8 +45,8 @@ pub fn init(cx: &mut MutableAppContext) {
 }
 
 const DEFAULT_TITLE: &str = "Terminal";
-const DEBUG_TERMINAL_WIDTH: f32 = 1000.; //This needs to be wide enough that the prompt can fill the whole space.
-const DEBUG_TERMINAL_HEIGHT: f32 = 200.;
+const DEBUG_TERMINAL_WIDTH: f32 = 100.;
+const DEBUG_TERMINAL_HEIGHT: f32 = 30.; //This needs to be wide enough that the CI & a local dev's prompt can fill the whole space.
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
 
