@@ -1818,7 +1818,7 @@ impl MultiBufferSnapshot {
                 .offset_to_point_utf16(excerpt_start_offset + overshoot);
             *start_point + (buffer_point - excerpt_start_point)
         } else {
-            self.excerpts.summary().text.lines_utf16
+            self.excerpts.summary().text.lines_utf16()
         }
     }
 
@@ -1840,7 +1840,7 @@ impl MultiBufferSnapshot {
                 .point_to_point_utf16(excerpt_start_point + overshoot);
             *start_point + (buffer_point - excerpt_start_point_utf16)
         } else {
-            self.excerpts.summary().text.lines_utf16
+            self.excerpts.summary().text.lines_utf16()
         }
     }
 
@@ -2966,7 +2966,7 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Point {
 
 impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for PointUtf16 {
     fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
-        *self += summary.text.lines_utf16
+        *self += summary.text.lines_utf16()
     }
 }
 
@@ -3951,7 +3951,7 @@ mod tests {
                 let mut buffer_offset = buffer_range.start;
                 let mut point = excerpt_start.lines;
                 let mut buffer_point = buffer_start_point;
-                let mut point_utf16 = excerpt_start.lines_utf16;
+                let mut point_utf16 = excerpt_start.lines_utf16();
                 let mut buffer_point_utf16 = buffer_start_point_utf16;
                 for ch in buffer
                     .snapshot()
@@ -4034,7 +4034,7 @@ mod tests {
                             buffer.clip_point_utf16(buffer_point_utf16, Bias::Right);
                         assert_eq!(
                             left_point_utf16,
-                            excerpt_start.lines_utf16
+                            excerpt_start.lines_utf16()
                                 + (buffer_left_point_utf16 - buffer_start_point_utf16),
                             "clip_point_utf16({:?}, Left). buffer: {:?}, buffer point_utf16: {:?}",
                             point_utf16,
@@ -4043,7 +4043,7 @@ mod tests {
                         );
                         assert_eq!(
                             right_point_utf16,
-                            excerpt_start.lines_utf16
+                            excerpt_start.lines_utf16()
                                 + (buffer_right_point_utf16 - buffer_start_point_utf16),
                             "clip_point_utf16({:?}, Right). buffer: {:?}, buffer point_utf16: {:?}",
                             point_utf16,

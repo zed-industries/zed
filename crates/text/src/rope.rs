@@ -205,7 +205,7 @@ impl Rope {
 
     pub fn offset_to_point_utf16(&self, offset: usize) -> PointUtf16 {
         if offset >= self.summary().len {
-            return self.summary().lines_utf16;
+            return self.summary().lines_utf16();
         }
         let mut cursor = self.chunks.cursor::<(usize, PointUtf16)>();
         cursor.seek(&offset, Bias::Left, &());
@@ -218,7 +218,7 @@ impl Rope {
 
     pub fn point_to_point_utf16(&self, point: Point) -> PointUtf16 {
         if point >= self.summary().lines {
-            return self.summary().lines_utf16;
+            return self.summary().lines_utf16();
         }
         let mut cursor = self.chunks.cursor::<(Point, PointUtf16)>();
         cursor.seek(&point, Bias::Left, &());
@@ -243,7 +243,7 @@ impl Rope {
     }
 
     pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
-        if point >= self.summary().lines_utf16 {
+        if point >= self.summary().lines_utf16() {
             return self.summary().len;
         }
         let mut cursor = self.chunks.cursor::<(PointUtf16, usize)>();
@@ -256,7 +256,7 @@ impl Rope {
     }
 
     pub fn point_utf16_to_point(&self, point: PointUtf16) -> Point {
-        if point >= self.summary().lines_utf16 {
+        if point >= self.summary().lines_utf16() {
             return self.summary().lines;
         }
         let mut cursor = self.chunks.cursor::<(PointUtf16, Point)>();
@@ -320,7 +320,7 @@ impl Rope {
             let overshoot = point - cursor.start();
             *cursor.start() + chunk.clip_point_utf16(overshoot, bias)
         } else {
-            self.summary().lines_utf16
+            self.summary().lines_utf16()
         }
     }
 
@@ -827,20 +827,29 @@ pub struct TextSummary {
     pub len: usize,
     pub len_utf16: OffsetUtf16,
     pub lines: Point,
-    pub lines_utf16: PointUtf16,
     pub first_line_chars: u32,
     pub last_line_chars: u32,
+    pub last_line_len_utf16: u32,
     pub longest_row: u32,
     pub longest_row_chars: u32,
+}
+
+impl TextSummary {
+    pub fn lines_utf16(&self) -> PointUtf16 {
+        PointUtf16 {
+            row: self.lines.row,
+            column: self.last_line_len_utf16,
+        }
+    }
 }
 
 impl<'a> From<&'a str> for TextSummary {
     fn from(text: &'a str) -> Self {
         let mut len_utf16 = OffsetUtf16(0);
         let mut lines = Point::new(0, 0);
-        let mut lines_utf16 = PointUtf16::new(0, 0);
         let mut first_line_chars = 0;
         let mut last_line_chars = 0;
+        let mut last_line_len_utf16 = 0;
         let mut longest_row = 0;
         let mut longest_row_chars = 0;
         for c in text.chars() {
@@ -848,11 +857,11 @@ impl<'a> From<&'a str> for TextSummary {
 
             if c == '\n' {
                 lines += Point::new(1, 0);
-                lines_utf16 += PointUtf16::new(1, 0);
+                last_line_len_utf16 = 0;
                 last_line_chars = 0;
             } else {
                 lines.column += c.len_utf8() as u32;
-                lines_utf16.column += c.len_utf16() as u32;
+                last_line_len_utf16 += c.len_utf16() as u32;
                 last_line_chars += 1;
             }
 
@@ -870,9 +879,9 @@ impl<'a> From<&'a str> for TextSummary {
             len: text.len(),
             len_utf16,
             lines,
-            lines_utf16,
             first_line_chars,
             last_line_chars,
+            last_line_len_utf16,
             longest_row,
             longest_row_chars,
         }
@@ -914,14 +923,15 @@ impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
 
         if other.lines.row == 0 {
             self.last_line_chars += other.first_line_chars;
+            self.last_line_len_utf16 += other.last_line_len_utf16;
         } else {
             self.last_line_chars = other.last_line_chars;
+            self.last_line_len_utf16 = other.last_line_len_utf16;
         }
 
         self.len += other.len;
         self.len_utf16 += other.len_utf16;
         self.lines += other.lines;
-        self.lines_utf16 += other.lines_utf16;
     }
 }
 
@@ -1016,13 +1026,13 @@ impl TextDimension for Point {
 
 impl<'a> sum_tree::Dimension<'a, ChunkSummary> for PointUtf16 {
     fn add_summary(&mut self, summary: &'a ChunkSummary, _: &()) {
-        *self += summary.text.lines_utf16;
+        *self += summary.text.lines_utf16();
     }
 }
 
 impl TextDimension for PointUtf16 {
     fn from_text_summary(summary: &TextSummary) -> Self {
-        summary.lines_utf16
+        summary.lines_utf16()
     }
 
     fn add_assign(&mut self, other: &Self) {
