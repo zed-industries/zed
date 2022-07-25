@@ -1901,6 +1901,10 @@ impl BufferSnapshot {
         self.visible_text.clip_point(point, bias)
     }
 
+    pub fn clip_offset_utf16(&self, offset: OffsetUtf16, bias: Bias) -> OffsetUtf16 {
+        self.visible_text.clip_offset_utf16(offset, bias)
+    }
+
     pub fn clip_point_utf16(&self, point: PointUtf16, bias: Bias) -> PointUtf16 {
         self.visible_text.clip_point_utf16(point, bias)
     }

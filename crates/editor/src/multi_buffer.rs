@@ -1692,6 +1692,25 @@ impl MultiBufferSnapshot {
         *cursor.start() + overshoot
     }
 
+    pub fn clip_offset_utf16(&self, offset: OffsetUtf16, bias: Bias) -> OffsetUtf16 {
+        if let Some((_, _, buffer)) = self.as_singleton() {
+            return buffer.clip_offset_utf16(offset, bias);
+        }
+
+        let mut cursor = self.excerpts.cursor::<OffsetUtf16>();
+        cursor.seek(&offset, Bias::Right, &());
+        let overshoot = if let Some(excerpt) = cursor.item() {
+            let excerpt_start = excerpt.range.context.start.to_offset_utf16(&excerpt.buffer);
+            let buffer_offset = excerpt
+                .buffer
+                .clip_offset_utf16(excerpt_start + (offset - cursor.start()), bias);
+            OffsetUtf16(buffer_offset.0.saturating_sub(excerpt_start.0))
+        } else {
+            OffsetUtf16(0)
+        };
+        *cursor.start() + overshoot
+    }
+
     pub fn clip_point_utf16(&self, point: PointUtf16, bias: Bias) -> PointUtf16 {
         if let Some((_, _, buffer)) = self.as_singleton() {
             return buffer.clip_point_utf16(point, bias);
