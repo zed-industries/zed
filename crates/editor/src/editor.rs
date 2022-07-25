@@ -5740,15 +5740,42 @@ impl Editor {
         .detach()
     }
 
-    fn marked_text_ranges<'a>(
-        &'a self,
-        cx: &'a AppContext,
-    ) -> Option<impl 'a + Iterator<Item = Range<OffsetUtf16>>> {
+    fn marked_text_ranges(&self, cx: &AppContext) -> Option<Vec<Range<OffsetUtf16>>> {
         let snapshot = self.buffer.read(cx).read(cx);
         let (_, ranges) = self.text_highlights::<InputComposition>(cx)?;
-        Some(ranges.into_iter().map(move |range| {
-            range.start.to_offset_utf16(&snapshot)..range.end.to_offset_utf16(&snapshot)
-        }))
+        Some(
+            ranges
+                .into_iter()
+                .map(move |range| {
+                    range.start.to_offset_utf16(&snapshot)..range.end.to_offset_utf16(&snapshot)
+                })
+                .collect(),
+        )
+    }
+
+    fn selection_replacement_ranges(
+        &self,
+        range: Range<OffsetUtf16>,
+        cx: &AppContext,
+    ) -> Vec<Range<OffsetUtf16>> {
+        let selections = self.selections.all::<OffsetUtf16>(cx);
+        let newest_selection = selections
+            .iter()
+            .max_by_key(|selection| selection.id)
+            .unwrap();
+        let start_delta = range.start.0 as isize - newest_selection.start.0 as isize;
+        let end_delta = range.end.0 as isize - newest_selection.end.0 as isize;
+        let snapshot = self.buffer.read(cx).read(cx);
+        selections
+            .into_iter()
+            .map(|mut selection| {
+                selection.start.0 =
+                    (selection.start.0 as isize).saturating_add(start_delta) as usize;
+                selection.end.0 = (selection.end.0 as isize).saturating_add(end_delta) as usize;
+                snapshot.clip_offset_utf16(selection.start, Bias::Left)
+                    ..snapshot.clip_offset_utf16(selection.end, Bias::Right)
+            })
+            .collect()
     }
 }
 
@@ -5933,8 +5960,9 @@ impl View for Editor {
     }
 
     fn marked_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
-        let range = self.marked_text_ranges(cx)?.next()?;
-        Some(range.start.0..range.end.0)
+        let snapshot = self.buffer.read(cx).read(cx);
+        let range = self.text_highlights::<InputComposition>(cx)?.1.get(0)?;
+        Some(range.start.to_offset_utf16(&snapshot).0..range.end.to_offset_utf16(&snapshot).0)
     }
 
     fn unmark_text(&mut self, cx: &mut ViewContext<Self>) {
@@ -5955,24 +5983,10 @@ impl View for Editor {
 
         self.transact(cx, |this, cx| {
             let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
-                let selected_range = this.selected_text_range(cx).unwrap();
-                let start_delta = range_utf16.start as isize - selected_range.start as isize;
-                let end_delta = range_utf16.end as isize - selected_range.end as isize;
-                Some(
-                    this.selections
-                        .all::<OffsetUtf16>(cx)
-                        .into_iter()
-                        .map(|mut selection| {
-                            selection.start.0 =
-                                (selection.start.0 as isize).saturating_add(start_delta) as usize;
-                            selection.end.0 =
-                                (selection.end.0 as isize).saturating_add(end_delta) as usize;
-                            selection.start..selection.end
-                        })
-                        .collect::<Vec<_>>(),
-                )
+                let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
+                Some(this.selection_replacement_ranges(range_utf16, cx))
             } else if let Some(marked_ranges) = this.marked_text_ranges(cx) {
-                Some(marked_ranges.collect())
+                Some(marked_ranges)
             } else {
                 None
             };
@@ -6007,32 +6021,22 @@ impl View for Editor {
         }
 
         let transaction = self.transact(cx, |this, cx| {
-            let ranges_to_replace = if let Some(marked_ranges) = this.marked_text_ranges(cx) {
-                let mut marked_ranges = marked_ranges.collect::<Vec<_>>();
+            let ranges_to_replace = if let Some(mut marked_ranges) = this.marked_text_ranges(cx) {
+                let snapshot = this.buffer.read(cx).read(cx);
                 if let Some(relative_range_utf16) = range_utf16.as_ref() {
                     for marked_range in &mut marked_ranges {
                         marked_range.end.0 = marked_range.start.0 + relative_range_utf16.end;
                         marked_range.start.0 += relative_range_utf16.start;
+                        marked_range.start =
+                            snapshot.clip_offset_utf16(marked_range.start, Bias::Left);
+                        marked_range.end =
+                            snapshot.clip_offset_utf16(marked_range.end, Bias::Right);
                     }
                 }
                 Some(marked_ranges)
             } else if let Some(range_utf16) = range_utf16 {
-                let selected_range = this.selected_text_range(cx).unwrap();
-                let start_delta = range_utf16.start as isize - selected_range.start as isize;
-                let end_delta = range_utf16.end as isize - selected_range.end as isize;
-                Some(
-                    this.selections
-                        .all::<OffsetUtf16>(cx)
-                        .into_iter()
-                        .map(|mut selection| {
-                            selection.start.0 =
-                                (selection.start.0 as isize).saturating_add(start_delta) as usize;
-                            selection.end.0 =
-                                (selection.end.0 as isize).saturating_add(end_delta) as usize;
-                            selection.start..selection.end
-                        })
-                        .collect::<Vec<_>>(),
-                )
+                let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
+                Some(this.selection_replacement_ranges(range_utf16, cx))
             } else {
                 None
             };
@@ -6070,8 +6074,10 @@ impl View for Editor {
                     .into_iter()
                     .map(|marked_range| {
                         let insertion_start = marked_range.start.to_offset_utf16(&snapshot).0;
-                        OffsetUtf16(new_selected_range.start + insertion_start)
-                            ..OffsetUtf16(new_selected_range.end + insertion_start)
+                        let new_start = OffsetUtf16(new_selected_range.start + insertion_start);
+                        let new_end = OffsetUtf16(new_selected_range.end + insertion_start);
+                        snapshot.clip_offset_utf16(new_start, Bias::Left)
+                            ..snapshot.clip_offset_utf16(new_end, Bias::Right)
                     })
                     .collect::<Vec<_>>();
 
@@ -6711,7 +6717,7 @@ mod tests {
             assert_eq!(editor.marked_text_range(cx), Some(0..1));
 
             // Finalize IME composition.
-            editor.replace_text_in_range(Some(0..1), "ā", cx);
+            editor.replace_text_in_range(None, "ā", cx);
             assert_eq!(editor.text(cx), "ābcde");
             assert_eq!(editor.marked_text_range(cx), None);
 
@@ -6730,6 +6736,16 @@ mod tests {
             // Undoing during an IME composition cancels it.
             editor.undo(&Default::default(), cx);
             assert_eq!(editor.text(cx), "ābcde");
+            assert_eq!(editor.marked_text_range(cx), None);
+
+            // Start a new IME composition with an invalid marked range, ensuring it gets clipped.
+            editor.replace_and_mark_text_in_range(Some(4..999), "è", None, cx);
+            assert_eq!(editor.text(cx), "ābcdè");
+            assert_eq!(editor.marked_text_range(cx), Some(4..5));
+
+            // Finalize IME composition with an invalid replacement range, ensuring it gets clipped.
+            editor.replace_text_in_range(Some(4..999), "ę", cx);
+            assert_eq!(editor.text(cx), "ābcdę");
             assert_eq!(editor.marked_text_range(cx), None);
 
             editor
