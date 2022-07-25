@@ -305,17 +305,15 @@ mod test {
     }
 
     #[test]
-    fn test_multi_char_fallthrough() {
+    fn test_plain_inputs() {
         let ks = Keystroke {
             ctrl: false,
             alt: false,
             shift: false,
             cmd: false,
-
             key: "🖖🏻".to_string(), //2 char string
         };
-
-        assert_eq!(to_esc_str(&ks, &TermMode::NONE), Some("🖖🏻".to_string()));
+        assert_eq!(to_esc_str(&ks, &TermMode::NONE), None);
     }
 
     #[test]
