@@ -165,12 +165,6 @@ impl<'a> EditorTestContext<'a> {
         })
     }
 
-    pub fn simulate_input(&mut self, input: &str) {
-        self.editor.update(self.cx, |editor, cx| {
-            editor.handle_input(input, cx);
-        });
-    }
-
     pub fn update_buffer<F, T>(&mut self, update: F) -> T
     where
         F: FnOnce(&mut Buffer, &mut ModelContext<Buffer>) -> T,

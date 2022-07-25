@@ -9917,7 +9917,7 @@ mod tests {
             one|
             two
             three"});
-        cx.simulate_input(".");
+        cx.simulate_keystroke(".");
         handle_completion_request(
             &mut cx,
             indoc! {"
@@ -9963,9 +9963,9 @@ mod tests {
             two|
             three|
             additional edit"});
-        cx.simulate_input(" ");
+        cx.simulate_keystroke(" ");
         assert!(cx.editor(|e, _| e.context_menu.is_none()));
-        cx.simulate_input("s");
+        cx.simulate_keystroke("s");
         assert!(cx.editor(|e, _| e.context_menu.is_none()));
 
         cx.assert_editor_state(indoc! {"
@@ -9986,7 +9986,7 @@ mod tests {
         cx.condition(|editor, _| editor.context_menu_visible())
             .await;
 
-        cx.simulate_input("i");
+        cx.simulate_keystroke("i");
 
         handle_completion_request(
             &mut cx,
@@ -10021,11 +10021,11 @@ mod tests {
             })
         });
         cx.set_state("editor|");
-        cx.simulate_input(".");
+        cx.simulate_keystroke(".");
         assert!(cx.editor(|e, _| e.context_menu.is_none()));
-        cx.simulate_input("c");
-        cx.simulate_input("l");
-        cx.simulate_input("o");
+        cx.simulate_keystroke("c");
+        cx.simulate_keystroke("l");
+        cx.simulate_keystroke("o");
         cx.assert_editor_state("editor.clo|");
         assert!(cx.editor(|e, _| e.context_menu.is_none()));
         cx.update_editor(|editor, cx| {

@@ -475,7 +475,7 @@ impl TestAppContext {
     }
 
     pub fn dispatch_keystroke(&mut self, window_id: usize, keystroke: Keystroke, is_held: bool) {
-        self.cx.borrow_mut().update(|cx| {
+        let handled = self.cx.borrow_mut().update(|cx| {
             let presenter = cx
                 .presenters_and_platform_windows
                 .get(&window_id)
@@ -484,12 +484,29 @@ impl TestAppContext {
                 .clone();
             let dispatch_path = presenter.borrow().dispatch_path(cx.as_ref());
 
-            if !cx.dispatch_keystroke(window_id, dispatch_path, &keystroke) {
-                presenter
-                    .borrow_mut()
-                    .dispatch_event(Event::KeyDown(KeyDownEvent { keystroke, is_held }), cx);
+            if cx.dispatch_keystroke(window_id, dispatch_path, &keystroke) {
+                return true;
             }
+            if presenter.borrow_mut().dispatch_event(
+                Event::KeyDown(KeyDownEvent {
+                    keystroke: keystroke.clone(),
+                    is_held,
+                }),
+                cx,
+            ) {
+                return true;
+            }
+
+            false
         });
+
+        if !handled && !keystroke.cmd && !keystroke.ctrl {
+            WindowInputHandler {
+                app: self.cx.clone(),
+                window_id,
+            }
+            .replace_text_in_range(None, &keystroke.key)
+        }
     }
 
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>
