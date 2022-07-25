@@ -2,7 +2,7 @@ use gpui::{ModelHandle, ViewContext};
 use workspace::Workspace;
 
 use crate::{
-    terminal_tab::{get_working_directory, DeployModal, TerminalContent, TerminalView},
+    terminal_view::{get_working_directory, DeployModal, TerminalContent, TerminalView},
     Event, Terminal,
 };
 

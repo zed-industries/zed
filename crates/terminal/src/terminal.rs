@@ -2,7 +2,7 @@ pub mod connected_el;
 pub mod connected_view;
 pub mod mappings;
 pub mod modal;
-pub mod terminal_tab;
+pub mod terminal_view;
 
 use alacritty_terminal::{
     ansi::{ClearMode, Handler},
@@ -22,7 +22,7 @@ use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use modal::deploy_modal;
 use settings::{Settings, Shell};
 use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc, time::Duration};
-use terminal_tab::TerminalView;
+use terminal_view::TerminalView;
 use thiserror::Error;
 
 use gpui::{
@@ -319,6 +319,7 @@ impl TerminalBuilder {
             pty_tx: Notifier(pty_tx),
             term,
             title: shell_txt.to_string(),
+            event_stack: vec![],
         };
 
         Ok(TerminalBuilder {
@@ -330,8 +331,8 @@ impl TerminalBuilder {
     pub fn subscribe(mut self, cx: &mut ModelContext<Terminal>) -> Terminal {
         cx.spawn_weak(|this, mut cx| async move {
             'outer: loop {
-                //Even as low as 45 locks zed up
-                let delay = cx.background().timer(Duration::from_secs_f32(1.0 / 30.));
+                //TODO: Pending GPUI updates, sync this to some higher, smarter system.
+                let delay = cx.background().timer(Duration::from_secs_f32(1.0 / 60.));
 
                 let mut events = vec![];
 
@@ -349,9 +350,8 @@ impl TerminalBuilder {
                 match this.upgrade(&cx) {
                     Some(this) => {
                         this.update(&mut cx, |this, cx| {
-                            for event in events {
-                                this.process_terminal_event(event, cx);
-                            }
+                            this.push_events(events);
+                            cx.notify();
                         });
                     }
                     None => break 'outer,
@@ -370,13 +370,19 @@ pub struct Terminal {
     pty_tx: Notifier,
     term: Arc<FairMutex<Term<ZedListener>>>,
     pub title: String,
+    event_stack: Vec<AlacTermEvent>,
 }
 
 impl Terminal {
+    fn push_events(&mut self, events: Vec<AlacTermEvent>) {
+        self.event_stack.extend(events)
+    }
+
     ///Takes events from Alacritty and translates them to behavior on this view
     fn process_terminal_event(
         &mut self,
         event: alacritty_terminal::event::Event,
+        term: &mut Term<ZedListener>,
         cx: &mut ModelContext<Terminal>,
     ) {
         match event {
@@ -384,7 +390,10 @@ impl Terminal {
             AlacTermEvent::Wakeup => {
                 cx.emit(Event::Wakeup);
             }
-            AlacTermEvent::PtyWrite(out) => self.write_to_pty(out),
+            AlacTermEvent::PtyWrite(out) => {
+                term.scroll_display(Scroll::Bottom);
+                self.pty_tx.notify(out.into_bytes())
+            }
             AlacTermEvent::MouseCursorDirty => {
                 //Calculate new cursor style.
                 //TODO: alacritty/src/input.rs:L922-L939
@@ -408,7 +417,7 @@ impl Terminal {
                     .unwrap_or("".to_string()),
             )),
             AlacTermEvent::ColorRequest(index, format) => {
-                let color = self.term.lock().colors()[index].unwrap_or_else(|| {
+                let color = term.colors()[index].unwrap_or_else(|| {
                     let term_style = &cx.global::<Settings>().theme.terminal;
                     to_alac_rgb(get_color_at_index(&index, &term_style.colors))
                 });
@@ -427,13 +436,7 @@ impl Terminal {
 
     ///Write the Input payload to the tty. This locks the terminal so we can scroll it.
     pub fn write_to_pty(&self, input: String) {
-        self.write_bytes_to_pty(input.into_bytes());
-    }
-
-    ///Write the Input payload to the tty. This locks the terminal so we can scroll it.
-    fn write_bytes_to_pty(&self, input: Vec<u8>) {
-        self.term.lock().scroll_display(Scroll::Bottom);
-        self.pty_tx.notify(input);
+        self.event_stack.push(AlacTermEvent::PtyWrite(input))
     }
 
     ///Resize the terminal and the PTY. This locks the terminal.
@@ -487,19 +490,23 @@ impl Terminal {
         self.term.lock().selection = sel;
     }
 
-    pub fn render_lock<F, T>(&self, new_size: Option<TermDimensions>, f: F) -> T
+    pub fn render_lock<F, T>(&self, cx: &mut ModelContext<Self>, f: F) -> T
     where
         F: FnOnce(RenderableContent, char) -> T,
     {
-        if let Some(new_size) = new_size {
-            self.pty_tx.0.send(Msg::Resize(new_size.into())).ok(); //Give the PTY a chance to react to the new size
-                                                                   //TODO: Is this bad for performance?
-        }
-
         let mut term = self.term.lock(); //Lock
 
-        if let Some(new_size) = new_size {
-            term.resize(new_size); //Reflow
+        //TODO, handle resizes
+        // if let Some(new_size) = new_size {
+        //     self.pty_tx.0.send(Msg::Resize(new_size.into())).ok();
+        // }
+
+        // if let Some(new_size) = new_size {
+        //     term.resize(new_size); //Reflow
+        // }
+
+        for event in self.event_stack.drain(..) {
+            self.process_terminal_event(event, &mut term, cx)
         }
 
         let content = term.renderable_content();
