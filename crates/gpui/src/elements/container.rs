@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use crate::{
     color::Color,
     geometry::{
@@ -7,6 +9,7 @@ use crate::{
     },
     json::ToJson,
     platform::CursorStyle,
+    presenter::MeasurementContext,
     scene::{self, Border, CursorRegion, Quad},
     Element, ElementBox, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
@@ -269,6 +272,18 @@ impl Element for Container {
         cx: &mut EventContext,
     ) -> bool {
         self.child.dispatch_event(event, cx)
+    }
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        cx: &MeasurementContext,
+    ) -> Option<RectF> {
+        self.child.rect_for_text_range(range_utf16, cx)
     }
 
     fn debug(

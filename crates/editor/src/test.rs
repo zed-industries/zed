@@ -181,13 +181,7 @@ impl<'a> EditorTestContext<'a> {
 
     pub fn simulate_keystroke(&mut self, keystroke_text: &str) {
         let keystroke = Keystroke::parse(keystroke_text).unwrap();
-        let input = if keystroke.modified() {
-            None
-        } else {
-            Some(keystroke.key.clone())
-        };
-        self.cx
-            .dispatch_keystroke(self.window_id, keystroke, input, false);
+        self.cx.dispatch_keystroke(self.window_id, keystroke, false);
     }
 
     pub fn simulate_keystrokes<const COUNT: usize>(&mut self, keystroke_texts: [&str; COUNT]) {

@@ -1,9 +1,12 @@
+use std::ops::Range;
+
 use crate::{
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
+    presenter::MeasurementContext,
     DebugContext,
 };
 use crate::{Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint};
@@ -65,6 +68,18 @@ impl Element for Empty {
         _: &mut EventContext,
     ) -> bool {
         false
+    }
+
+    fn rect_for_text_range(
+        &self,
+        _: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &MeasurementContext,
+    ) -> Option<RectF> {
+        None
     }
 
     fn debug(

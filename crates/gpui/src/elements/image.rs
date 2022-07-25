@@ -5,11 +5,12 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
+    presenter::MeasurementContext,
     scene, Border, DebugContext, Element, Event, EventContext, ImageData, LayoutContext,
     PaintContext, SizeConstraint,
 };
 use serde::Deserialize;
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
 pub struct Image {
     data: Arc<ImageData>,
@@ -87,6 +88,18 @@ impl Element for Image {
         _: &mut EventContext,
     ) -> bool {
         false
+    }
+
+    fn rect_for_text_range(
+        &self,
+        _: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &MeasurementContext,
+    ) -> Option<RectF> {
+        None
     }
 
     fn debug(

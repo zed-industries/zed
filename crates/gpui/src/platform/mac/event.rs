@@ -10,12 +10,26 @@ use cocoa::{
     base::{id, YES},
     foundation::NSString as _,
 };
+use core_graphics::{
+    event::{CGEvent, CGEventFlags, CGKeyCode},
+    event_source::{CGEventSource, CGEventSourceStateID},
+};
+use objc::{class, msg_send, sel, sel_impl};
 use std::{borrow::Cow, ffi::CStr, os::raw::c_char};
+
+const BACKSPACE_KEY: u16 = 0x7f;
+const SPACE_KEY: u16 = b' ' as u16;
+const ENTER_KEY: u16 = 0x0d;
+const NUMPAD_ENTER_KEY: u16 = 0x03;
+const ESCAPE_KEY: u16 = 0x1b;
+const TAB_KEY: u16 = 0x09;
+const SHIFT_TAB_KEY: u16 = 0x19;
 
 pub fn key_to_native(key: &str) -> Cow<str> {
     use cocoa::appkit::*;
     let code = match key {
-        "backspace" => 0x7F,
+        "space" => SPACE_KEY,
+        "backspace" => BACKSPACE_KEY,
         "up" => NSUpArrowFunctionKey,
         "down" => NSDownArrowFunctionKey,
         "left" => NSLeftArrowFunctionKey,
@@ -68,49 +82,13 @@ impl Event {
                     cmd,
                 }))
             }
-            NSEventType::NSKeyDown => {
-                let modifiers = native_event.modifierFlags();
-                let ctrl = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
-                let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
-                let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
-                let cmd = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
-                let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask);
-
-                let (unmodified_chars, input) = get_key_text(native_event, cmd, ctrl, function)?;
-
-                Some(Self::KeyDown(KeyDownEvent {
-                    keystroke: Keystroke {
-                        ctrl,
-                        alt,
-                        shift,
-                        cmd,
-                        key: unmodified_chars.into(),
-                    },
-                    input,
-                    is_held: native_event.isARepeat() == YES,
-                }))
-            }
-            NSEventType::NSKeyUp => {
-                let modifiers = native_event.modifierFlags();
-                let ctrl = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
-                let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
-                let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
-                let cmd = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
-                let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask);
-
-                let (unmodified_chars, input) = get_key_text(native_event, cmd, ctrl, function)?;
-
-                Some(Self::KeyUp(KeyUpEvent {
-                    keystroke: Keystroke {
-                        ctrl,
-                        alt,
-                        shift,
-                        cmd,
-                        key: unmodified_chars.into(),
-                    },
-                    input,
-                }))
-            }
+            NSEventType::NSKeyDown => Some(Self::KeyDown(KeyDownEvent {
+                keystroke: parse_keystroke(native_event),
+                is_held: native_event.isARepeat() == YES,
+            })),
+            NSEventType::NSKeyUp => Some(Self::KeyUp(KeyUpEvent {
+                keystroke: parse_keystroke(native_event),
+            })),
             NSEventType::NSLeftMouseDown
             | NSEventType::NSRightMouseDown
             | NSEventType::NSOtherMouseDown => {
@@ -229,72 +207,109 @@ impl Event {
     }
 }
 
-unsafe fn get_key_text(
-    native_event: id,
-    cmd: bool,
-    ctrl: bool,
-    function: bool,
-) -> Option<(&'static str, Option<String>)> {
-    let unmodified_chars =
+unsafe fn parse_keystroke(native_event: id) -> Keystroke {
+    use cocoa::appkit::*;
+
+    let modifiers = native_event.modifierFlags();
+    let ctrl = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
+    let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
+    let mut shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
+    let cmd = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
+
+    let mut chars_ignoring_modifiers =
         CStr::from_ptr(native_event.charactersIgnoringModifiers().UTF8String() as *mut c_char)
             .to_str()
             .unwrap();
 
-    let mut input = None;
-    let first_char = unmodified_chars.chars().next()?;
-    use cocoa::appkit::*;
-    const BACKSPACE_KEY: u16 = 0x7f;
-    const ENTER_KEY: u16 = 0x0d;
-    const NUMPAD_ENTER_KEY: u16 = 0x03;
-    const ESCAPE_KEY: u16 = 0x1b;
-    const TAB_KEY: u16 = 0x09;
-    const SHIFT_TAB_KEY: u16 = 0x19;
-    const SPACE_KEY: u16 = b' ' as u16;
-
     #[allow(non_upper_case_globals)]
-    let unmodified_chars = match first_char as u16 {
-        SPACE_KEY => {
-            input = Some(" ".to_string());
-            "space"
-        }
-        BACKSPACE_KEY => "backspace",
-        ENTER_KEY | NUMPAD_ENTER_KEY => "enter",
-        ESCAPE_KEY => "escape",
-        TAB_KEY => "tab",
-        SHIFT_TAB_KEY => "tab",
-
-        NSUpArrowFunctionKey => "up",
-        NSDownArrowFunctionKey => "down",
-        NSLeftArrowFunctionKey => "left",
-        NSRightArrowFunctionKey => "right",
-        NSPageUpFunctionKey => "pageup",
-        NSPageDownFunctionKey => "pagedown",
-        NSDeleteFunctionKey => "delete",
-        NSF1FunctionKey => "f1",
-        NSF2FunctionKey => "f2",
-        NSF3FunctionKey => "f3",
-        NSF4FunctionKey => "f4",
-        NSF5FunctionKey => "f5",
-        NSF6FunctionKey => "f6",
-        NSF7FunctionKey => "f7",
-        NSF8FunctionKey => "f8",
-        NSF9FunctionKey => "f9",
-        NSF10FunctionKey => "f10",
-        NSF11FunctionKey => "f11",
-        NSF12FunctionKey => "f12",
-
+    let key = match chars_ignoring_modifiers.chars().next().map(|ch| ch as u16) {
+        Some(SPACE_KEY) => "space",
+        Some(BACKSPACE_KEY) => "backspace",
+        Some(ENTER_KEY) | Some(NUMPAD_ENTER_KEY) => "enter",
+        Some(ESCAPE_KEY) => "escape",
+        Some(TAB_KEY) => "tab",
+        Some(SHIFT_TAB_KEY) => "tab",
+        Some(NSUpArrowFunctionKey) => "up",
+        Some(NSDownArrowFunctionKey) => "down",
+        Some(NSLeftArrowFunctionKey) => "left",
+        Some(NSRightArrowFunctionKey) => "right",
+        Some(NSPageUpFunctionKey) => "pageup",
+        Some(NSPageDownFunctionKey) => "pagedown",
+        Some(NSDeleteFunctionKey) => "delete",
+        Some(NSF1FunctionKey) => "f1",
+        Some(NSF2FunctionKey) => "f2",
+        Some(NSF3FunctionKey) => "f3",
+        Some(NSF4FunctionKey) => "f4",
+        Some(NSF5FunctionKey) => "f5",
+        Some(NSF6FunctionKey) => "f6",
+        Some(NSF7FunctionKey) => "f7",
+        Some(NSF8FunctionKey) => "f8",
+        Some(NSF9FunctionKey) => "f9",
+        Some(NSF10FunctionKey) => "f10",
+        Some(NSF11FunctionKey) => "f11",
+        Some(NSF12FunctionKey) => "f12",
         _ => {
-            if !cmd && !ctrl && !function {
-                input = Some(
-                    CStr::from_ptr(native_event.characters().UTF8String() as *mut c_char)
-                        .to_str()
-                        .unwrap()
-                        .into(),
-                );
+            let mut chars_ignoring_modifiers_and_shift =
+                chars_for_modified_key(native_event.keyCode(), false, false);
+
+            // Honor ⌘ when Dvorak-QWERTY is used.
+            let chars_with_cmd = chars_for_modified_key(native_event.keyCode(), true, false);
+            if cmd && chars_ignoring_modifiers_and_shift != chars_with_cmd {
+                chars_ignoring_modifiers =
+                    chars_for_modified_key(native_event.keyCode(), true, shift);
+                chars_ignoring_modifiers_and_shift = chars_with_cmd;
             }
-            unmodified_chars
+
+            if shift {
+                if chars_ignoring_modifiers_and_shift
+                    == chars_ignoring_modifiers.to_ascii_lowercase()
+                {
+                    chars_ignoring_modifiers_and_shift
+                } else if chars_ignoring_modifiers_and_shift != chars_ignoring_modifiers {
+                    shift = false;
+                    chars_ignoring_modifiers
+                } else {
+                    chars_ignoring_modifiers
+                }
+            } else {
+                chars_ignoring_modifiers
+            }
         }
     };
 
-    Some((unmodified_chars, input))
+    Keystroke {
+        ctrl,
+        alt,
+        shift,
+        cmd,
+        key: key.into(),
+    }
+}
+
+fn chars_for_modified_key<'a>(code: CGKeyCode, cmd: bool, shift: bool) -> &'a str {
+    // Ideally, we would use `[NSEvent charactersByApplyingModifiers]` but that
+    // always returns an empty string with certain keyboards, e.g. Japanese. Synthesizing
+    // an event with the given flags instead lets us access `characters`, which always
+    // returns a valid string.
+    let event = CGEvent::new_keyboard_event(
+        CGEventSource::new(CGEventSourceStateID::Private).unwrap(),
+        code,
+        true,
+    )
+    .unwrap();
+    let mut flags = CGEventFlags::empty();
+    if cmd {
+        flags |= CGEventFlags::CGEventFlagCommand;
+    }
+    if shift {
+        flags |= CGEventFlags::CGEventFlagShift;
+    }
+    event.set_flags(flags);
+
+    let event: id = unsafe { msg_send![class!(NSEvent), eventWithCGEvent: event] };
+    unsafe {
+        CStr::from_ptr(event.characters().UTF8String())
+            .to_str()
+            .unwrap()
+    }
 }

@@ -11,7 +11,7 @@ use gpui::{
     fonts::{FontId, HighlightStyle},
     Entity, ModelContext, ModelHandle,
 };
-use language::{Point, Subscription as BufferSubscription};
+use language::{OffsetUtf16, Point, Subscription as BufferSubscription};
 use settings::Settings;
 use std::{any::TypeId, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
@@ -193,6 +193,11 @@ impl DisplayMap {
     ) {
         self.text_highlights
             .insert(Some(type_id), Arc::new((style, ranges)));
+    }
+
+    pub fn text_highlights(&self, type_id: TypeId) -> Option<(HighlightStyle, &[Range<Anchor>])> {
+        let highlights = self.text_highlights.get(&Some(type_id))?;
+        Some((highlights.0, &highlights.1))
     }
 
     pub fn clear_text_highlights(
@@ -541,6 +546,12 @@ impl DisplayPoint {
 impl ToDisplayPoint for usize {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
         map.point_to_display_point(self.to_point(&map.buffer_snapshot), Bias::Left)
+    }
+}
+
+impl ToDisplayPoint for OffsetUtf16 {
+    fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
+        self.to_offset(&map.buffer_snapshot).to_display_point(map)
     }
 }
 

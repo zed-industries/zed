@@ -1,6 +1,6 @@
 use gpui::{
-    actions, keymap::Keystroke, ClipboardItem, Element, ElementBox, ModelHandle, MutableAppContext,
-    View, ViewContext,
+    actions, keymap::Keystroke, AppContext, ClipboardItem, Element, ElementBox, ModelHandle,
+    MutableAppContext, View, ViewContext,
 };
 
 use crate::{
@@ -158,5 +158,19 @@ impl View for ConnectedView {
 
     fn on_focus(&mut self, _cx: &mut ViewContext<Self>) {
         self.has_new_content = false;
+    }
+
+    fn selected_text_range(&self, _: &AppContext) -> Option<std::ops::Range<usize>> {
+        Some(0..0)
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        _: Option<std::ops::Range<usize>>,
+        text: &str,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.terminal
+            .update(cx, |terminal, _| terminal.write_to_pty(text.into()));
     }
 }

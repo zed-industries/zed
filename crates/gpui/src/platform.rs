@@ -26,6 +26,7 @@ use serde::Deserialize;
 use std::{
     any::Any,
     fmt::{self, Display},
+    ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
     str::FromStr,
@@ -88,6 +89,21 @@ pub trait Dispatcher: Send + Sync {
     fn run_on_main_thread(&self, task: Runnable);
 }
 
+pub trait InputHandler {
+    fn selected_text_range(&self) -> Option<Range<usize>>;
+    fn marked_text_range(&self) -> Option<Range<usize>>;
+    fn text_for_range(&self, range_utf16: Range<usize>) -> Option<String>;
+    fn replace_text_in_range(&mut self, replacement_range: Option<Range<usize>>, text: &str);
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        new_text: &str,
+        new_selected_range: Option<Range<usize>>,
+    );
+    fn unmark_text(&mut self);
+    fn rect_for_range(&self, range_utf16: Range<usize>) -> Option<RectF>;
+}
+
 pub trait Window: WindowContext {
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn on_event(&mut self, callback: Box<dyn FnMut(Event) -> bool>);
@@ -95,10 +111,12 @@ pub trait Window: WindowContext {
     fn on_resize(&mut self, callback: Box<dyn FnMut()>);
     fn on_should_close(&mut self, callback: Box<dyn FnMut() -> bool>);
     fn on_close(&mut self, callback: Box<dyn FnOnce()>);
+    fn set_input_handler(&mut self, input_handler: Box<dyn InputHandler>);
     fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize>;
     fn activate(&self);
     fn set_title(&mut self, title: &str);
     fn set_edited(&mut self, edited: bool);
+    fn show_character_palette(&self);
 }
 
 pub trait WindowContext {

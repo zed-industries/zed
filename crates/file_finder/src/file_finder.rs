@@ -279,7 +279,7 @@ impl PickerDelegate for FileFinder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::{Editor, Input};
+    use editor::Editor;
     use menu::{Confirm, SelectNext};
     use serde_json::json;
     use workspace::{AppState, Workspace};
@@ -318,12 +318,14 @@ mod tests {
         cx.dispatch_action(window_id, Toggle);
 
         let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
-        cx.dispatch_action(window_id, Input("b".into()));
-        cx.dispatch_action(window_id, Input("n".into()));
-        cx.dispatch_action(window_id, Input("a".into()));
         finder
-            .condition(&cx, |finder, _| finder.matches.len() == 2)
+            .update(cx, |finder, cx| {
+                finder.update_matches("bna".to_string(), cx)
+            })
             .await;
+        finder.read_with(cx, |finder, _| {
+            assert_eq!(finder.matches.len(), 2);
+        });
 
         let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
         cx.dispatch_action(window_id, SelectNext);

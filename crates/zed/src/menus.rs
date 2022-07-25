@@ -131,6 +131,10 @@ pub fn menus() -> Vec<Menu<'static>> {
                     name: "Toggle Line Comment",
                     action: Box::new(editor::ToggleComments),
                 },
+                MenuItem::Action {
+                    name: "Emoji & Symbols",
+                    action: Box::new(editor::ShowCharacterPalette),
+                },
             ],
         },
         Menu {

@@ -534,8 +534,6 @@ message Transaction {
     LocalTimestamp id = 1;
     repeated LocalTimestamp edit_ids = 2;
     repeated VectorClockEntry start = 3;
-    repeated VectorClockEntry end = 4;
-    repeated Range ranges = 5;
 }
 
 message LocalTimestamp {
@@ -890,7 +888,6 @@ message Operation {
         uint32 local_timestamp = 2;
         uint32 lamport_timestamp = 3;
         repeated VectorClockEntry version = 4;
-        repeated Range transaction_ranges = 5;
         repeated VectorClockEntry transaction_version = 6;
         repeated UndoCount counts = 7;
     }

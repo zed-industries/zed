@@ -419,7 +419,6 @@ mod tests {
         requests.next().await;
         cx.foreground().run_until_parked();
 
-        println!("tag");
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
             fn test()
                 [do_work]();

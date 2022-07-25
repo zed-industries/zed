@@ -1,3 +1,4 @@
+use super::{geometry::RectFExt, renderer::Renderer};
 use crate::{
     executor,
     geometry::{
@@ -6,7 +7,8 @@ use crate::{
     },
     keymap::Keystroke,
     platform::{self, Event, WindowBounds, WindowContext},
-    KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseButtonEvent, MouseMovedEvent, Scene,
+    InputHandler, KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseButtonEvent,
+    MouseMovedEvent, Scene,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -15,7 +17,9 @@ use cocoa::{
         NSViewHeightSizable, NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowStyleMask,
     },
     base::{id, nil},
-    foundation::{NSAutoreleasePool, NSInteger, NSSize, NSString},
+    foundation::{
+        NSAutoreleasePool, NSInteger, NSNotFound, NSPoint, NSRect, NSSize, NSString, NSUInteger,
+    },
     quartzcore::AutoresizingMask,
 };
 use core_graphics::display::CGRect;
@@ -34,19 +38,70 @@ use std::{
     any::Any,
     cell::{Cell, RefCell},
     convert::TryInto,
-    ffi::c_void,
-    mem, ptr,
+    ffi::{c_void, CStr},
+    mem,
+    ops::Range,
+    os::raw::c_char,
+    ptr,
     rc::{Rc, Weak},
     sync::Arc,
     time::Duration,
 };
 
-use super::{geometry::RectFExt, renderer::Renderer};
-
 const WINDOW_STATE_IVAR: &'static str = "windowState";
 
 static mut WINDOW_CLASS: *const Class = ptr::null();
 static mut VIEW_CLASS: *const Class = ptr::null();
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+struct NSRange {
+    pub location: NSUInteger,
+    pub length: NSUInteger,
+}
+
+impl NSRange {
+    fn invalid() -> Self {
+        Self {
+            location: NSNotFound as NSUInteger,
+            length: 0,
+        }
+    }
+
+    fn is_valid(&self) -> bool {
+        self.location != NSNotFound as NSUInteger
+    }
+
+    fn to_range(&self) -> Option<Range<usize>> {
+        if self.is_valid() {
+            let start = self.location as usize;
+            let end = start + self.length as usize;
+            Some(start..end)
+        } else {
+            None
+        }
+    }
+}
+
+impl From<Range<usize>> for NSRange {
+    fn from(range: Range<usize>) -> Self {
+        NSRange {
+            location: range.start as NSUInteger,
+            length: range.len() as NSUInteger,
+        }
+    }
+}
+
+unsafe impl objc::Encode for NSRange {
+    fn encode() -> objc::Encoding {
+        let encoding = format!(
+            "{{NSRange={}{}}}",
+            NSUInteger::encode().as_str(),
+            NSUInteger::encode().as_str()
+        );
+        unsafe { objc::Encoding::from_str(&encoding) }
+    }
+}
 
 #[allow(non_upper_case_globals)]
 const NSViewLayerContentsRedrawDuringViewResize: NSInteger = 2;
@@ -163,6 +218,48 @@ unsafe fn build_classes() {
             display_layer as extern "C" fn(&Object, Sel, id),
         );
 
+        decl.add_protocol(Protocol::get("NSTextInputClient").unwrap());
+        decl.add_method(
+            sel!(validAttributesForMarkedText),
+            valid_attributes_for_marked_text as extern "C" fn(&Object, Sel) -> id,
+        );
+        decl.add_method(
+            sel!(hasMarkedText),
+            has_marked_text as extern "C" fn(&Object, Sel) -> BOOL,
+        );
+        decl.add_method(
+            sel!(markedRange),
+            marked_range as extern "C" fn(&Object, Sel) -> NSRange,
+        );
+        decl.add_method(
+            sel!(selectedRange),
+            selected_range as extern "C" fn(&Object, Sel) -> NSRange,
+        );
+        decl.add_method(
+            sel!(firstRectForCharacterRange:actualRange:),
+            first_rect_for_character_range as extern "C" fn(&Object, Sel, NSRange, id) -> NSRect,
+        );
+        decl.add_method(
+            sel!(insertText:replacementRange:),
+            insert_text as extern "C" fn(&Object, Sel, id, NSRange),
+        );
+        decl.add_method(
+            sel!(setMarkedText:selectedRange:replacementRange:),
+            set_marked_text as extern "C" fn(&Object, Sel, id, NSRange, NSRange),
+        );
+        decl.add_method(sel!(unmarkText), unmark_text as extern "C" fn(&Object, Sel));
+        decl.add_method(
+            sel!(attributedSubstringForProposedRange:actualRange:),
+            attributed_substring_for_proposed_range
+                as extern "C" fn(&Object, Sel, NSRange, *mut c_void) -> id,
+        );
+
+        // Suppress beep on keystrokes with modifier keys.
+        decl.add_method(
+            sel!(doCommandBySelector:),
+            do_command_by_selector as extern "C" fn(&Object, Sel, Sel),
+        );
+
         decl.register()
     };
 }
@@ -177,12 +274,14 @@ struct WindowState {
     resize_callback: Option<Box<dyn FnMut()>>,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
+    input_handler: Option<Box<dyn InputHandler>>,
+    pending_key_down_event: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
     executor: Rc<executor::Foreground>,
     scene_to_render: Option<Scene>,
     renderer: Renderer,
     command_queue: metal::CommandQueue,
-    last_fresh_keydown: Option<(Keystroke, Option<String>)>,
+    last_fresh_keydown: Option<Keystroke>,
     layer: id,
     traffic_light_position: Option<Vector2F>,
     previous_modifiers_changed_event: Option<Event>,
@@ -263,6 +362,8 @@ impl Window {
                 should_close_callback: None,
                 close_callback: None,
                 activate_callback: None,
+                input_handler: None,
+                pending_key_down_event: None,
                 synthetic_drag_counter: 0,
                 executor,
                 scene_to_render: Default::default(),
@@ -371,6 +472,10 @@ impl platform::Window for Window {
         self.0.as_ref().borrow_mut().activate_callback = Some(callback);
     }
 
+    fn set_input_handler(&mut self, input_handler: Box<dyn InputHandler>) {
+        self.0.as_ref().borrow_mut().input_handler = Some(input_handler);
+    }
+
     fn prompt(
         &self,
         level: platform::PromptLevel,
@@ -447,6 +552,14 @@ impl platform::Window for Window {
         // Changing the document edited state resets the traffic light position,
         // so we have to move it again.
         self.0.borrow().move_traffic_light();
+    }
+
+    fn show_character_palette(&self) {
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            let window = self.0.borrow().native_window;
+            let _: () = msg_send![app, orderFrontCharacterPalette: window];
+        }
     }
 }
 
@@ -581,38 +694,53 @@ extern "C" fn dealloc_view(this: &Object, _: Sel) {
 
 extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
+
     let mut window_state_borrow = window_state.as_ref().borrow_mut();
 
     let event = unsafe { Event::from_native(native_event, Some(window_state_borrow.size().y())) };
     if let Some(event) = event {
-        match &event {
-            Event::KeyDown(KeyDownEvent {
-                keystroke,
-                input,
-                is_held,
-            }) => {
-                let keydown = (keystroke.clone(), input.clone());
+        window_state_borrow.pending_key_down_event = match event {
+            Event::KeyDown(event) => {
+                let keydown = event.keystroke.clone();
                 // Ignore events from held-down keys after some of the initially-pressed keys
                 // were released.
-                if *is_held {
+                if event.is_held {
                     if window_state_borrow.last_fresh_keydown.as_ref() != Some(&keydown) {
                         return YES;
                     }
                 } else {
                     window_state_borrow.last_fresh_keydown = Some(keydown);
                 }
+
+                Some(event)
             }
             _ => return NO,
+        };
+        drop(window_state_borrow);
+
+        unsafe {
+            let input_context: id = msg_send![this, inputContext];
+            let _: BOOL = msg_send![input_context, handleEvent: native_event];
         }
 
-        if let Some(mut callback) = window_state_borrow.event_callback.take() {
-            drop(window_state_borrow);
-            let handled = callback(event);
-            window_state.borrow_mut().event_callback = Some(callback);
-            handled as BOOL
-        } else {
-            NO
+        let mut window_state_borrow = window_state.borrow_mut();
+        if let Some(event) = window_state_borrow.pending_key_down_event.take() {
+            if let Some(mut callback) = window_state_borrow.event_callback.take() {
+                drop(window_state_borrow);
+
+                let is_composing =
+                    with_input_handler(this, |input_handler| input_handler.marked_text_range())
+                        .flatten()
+                        .is_some();
+                if !is_composing {
+                    callback(Event::KeyDown(event));
+                }
+
+                window_state.borrow_mut().event_callback = Some(callback);
+            }
         }
+
+        YES
     } else {
         NO
     }
@@ -624,7 +752,6 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let mut window_state_borrow = window_state.as_ref().borrow_mut();
 
     let event = unsafe { Event::from_native(native_event, Some(window_state_borrow.size().y())) };
-
     if let Some(event) = event {
         match &event {
             Event::MouseMoved(
@@ -691,21 +818,19 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut window_state_borrow = window_state.as_ref().borrow_mut();
 
-    let chars = ".".to_string();
     let keystroke = Keystroke {
         cmd: true,
         ctrl: false,
         alt: false,
         shift: false,
-        key: chars.clone(),
+        key: ".".into(),
     };
     let event = Event::KeyDown(KeyDownEvent {
         keystroke: keystroke.clone(),
-        input: Some(chars.clone()),
         is_held: false,
     });
 
-    window_state_borrow.last_fresh_keydown = Some((keystroke, Some(chars)));
+    window_state_borrow.last_fresh_keydown = Some(keystroke);
     if let Some(mut callback) = window_state_borrow.event_callback.take() {
         drop(window_state_borrow);
         callback(event);
@@ -866,6 +991,164 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     }
 }
 
+extern "C" fn valid_attributes_for_marked_text(_: &Object, _: Sel) -> id {
+    unsafe { msg_send![class!(NSArray), array] }
+}
+
+extern "C" fn has_marked_text(this: &Object, _: Sel) -> BOOL {
+    with_input_handler(this, |input_handler| input_handler.marked_text_range())
+        .flatten()
+        .is_some() as BOOL
+}
+
+extern "C" fn marked_range(this: &Object, _: Sel) -> NSRange {
+    with_input_handler(this, |input_handler| input_handler.marked_text_range())
+        .flatten()
+        .map_or(NSRange::invalid(), |range| range.into())
+}
+
+extern "C" fn selected_range(this: &Object, _: Sel) -> NSRange {
+    with_input_handler(this, |input_handler| input_handler.selected_text_range())
+        .flatten()
+        .map_or(NSRange::invalid(), |range| range.into())
+}
+
+extern "C" fn first_rect_for_character_range(
+    this: &Object,
+    _: Sel,
+    range: NSRange,
+    _: id,
+) -> NSRect {
+    let frame = unsafe {
+        let window = get_window_state(this).borrow().native_window;
+        NSView::frame(window)
+    };
+
+    with_input_handler(this, |input_handler| {
+        input_handler.rect_for_range(range.to_range()?)
+    })
+    .flatten()
+    .map_or(
+        NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.)),
+        |rect| {
+            NSRect::new(
+                NSPoint::new(
+                    frame.origin.x + rect.origin_x() as f64,
+                    frame.origin.y + frame.size.height - rect.origin_y() as f64,
+                ),
+                NSSize::new(rect.width() as f64, rect.height() as f64),
+            )
+        },
+    )
+}
+
+extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NSRange) {
+    unsafe {
+        let window_state = get_window_state(this);
+        let mut window_state_borrow = window_state.borrow_mut();
+        let pending_key_down_event = window_state_borrow.pending_key_down_event.take();
+        drop(window_state_borrow);
+
+        let is_attributed_string: BOOL =
+            msg_send![text, isKindOfClass: [class!(NSAttributedString)]];
+        let text: id = if is_attributed_string == YES {
+            msg_send![text, string]
+        } else {
+            text
+        };
+        let text = CStr::from_ptr(text.UTF8String() as *mut c_char)
+            .to_str()
+            .unwrap();
+        let replacement_range = replacement_range.to_range();
+
+        let is_composing =
+            with_input_handler(this, |input_handler| input_handler.marked_text_range())
+                .flatten()
+                .is_some();
+
+        if is_composing || text.chars().count() > 1 || pending_key_down_event.is_none() {
+            with_input_handler(this, |input_handler| {
+                input_handler.replace_text_in_range(replacement_range, text)
+            });
+        } else {
+            let mut handled = false;
+
+            let event_callback = window_state.borrow_mut().event_callback.take();
+            if let Some(mut event_callback) = event_callback {
+                handled = event_callback(Event::KeyDown(pending_key_down_event.unwrap()));
+                window_state.borrow_mut().event_callback = Some(event_callback);
+            }
+
+            if !handled {
+                with_input_handler(this, |input_handler| {
+                    input_handler.replace_text_in_range(replacement_range, text)
+                });
+            }
+        }
+    }
+}
+
+extern "C" fn set_marked_text(
+    this: &Object,
+    _: Sel,
+    text: id,
+    selected_range: NSRange,
+    replacement_range: NSRange,
+) {
+    unsafe {
+        get_window_state(this)
+            .borrow_mut()
+            .pending_key_down_event
+            .take();
+
+        let is_attributed_string: BOOL =
+            msg_send![text, isKindOfClass: [class!(NSAttributedString)]];
+        let text: id = if is_attributed_string == YES {
+            msg_send![text, string]
+        } else {
+            text
+        };
+        let selected_range = selected_range.to_range();
+        let replacement_range = replacement_range.to_range();
+        let text = CStr::from_ptr(text.UTF8String() as *mut c_char)
+            .to_str()
+            .unwrap();
+
+        with_input_handler(this, |input_handler| {
+            input_handler.replace_and_mark_text_in_range(replacement_range, text, selected_range);
+        });
+    }
+}
+
+extern "C" fn unmark_text(this: &Object, _: Sel) {
+    with_input_handler(this, |input_handler| input_handler.unmark_text());
+}
+
+extern "C" fn attributed_substring_for_proposed_range(
+    this: &Object,
+    _: Sel,
+    range: NSRange,
+    _actual_range: *mut c_void,
+) -> id {
+    with_input_handler(this, |input_handler| {
+        let range = range.to_range()?;
+        if range.is_empty() {
+            return None;
+        }
+
+        let selected_text = input_handler.text_for_range(range)?;
+        unsafe {
+            let string: id = msg_send![class!(NSAttributedString), alloc];
+            let string: id = msg_send![string, initWithString: ns_string(&selected_text)];
+            Some(string)
+        }
+    })
+    .flatten()
+    .unwrap_or(nil)
+}
+
+extern "C" fn do_command_by_selector(_: &Object, _: Sel, _: Sel) {}
+
 async fn synthetic_drag(
     window_state: Weak<RefCell<WindowState>>,
     drag_id: usize,
@@ -890,4 +1173,20 @@ async fn synthetic_drag(
 
 unsafe fn ns_string(string: &str) -> id {
     NSString::alloc(nil).init_str(string).autorelease()
+}
+
+fn with_input_handler<F, R>(window: &Object, f: F) -> Option<R>
+where
+    F: FnOnce(&mut dyn InputHandler) -> R,
+{
+    let window_state = unsafe { get_window_state(window) };
+    let mut window_state_borrow = window_state.as_ref().borrow_mut();
+    if let Some(mut input_handler) = window_state_borrow.input_handler.take() {
+        drop(window_state_borrow);
+        let result = f(input_handler.as_mut());
+        window_state.borrow_mut().input_handler = Some(input_handler);
+        Some(result)
+    } else {
+        None
+    }
 }

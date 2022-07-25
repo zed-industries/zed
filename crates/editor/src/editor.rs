@@ -39,15 +39,15 @@ pub use items::MAX_TAB_TITLE_LEN;
 pub use language::{char_kind, CharKind};
 use language::{
     BracketPair, Buffer, CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticSeverity,
-    IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal,
+    IndentKind, IndentSize, Language, OffsetRangeExt, OffsetUtf16, Point, Selection, SelectionGoal,
     TransactionId,
 };
 use link_go_to_definition::LinkGoToDefinitionState;
-use multi_buffer::MultiBufferChunks;
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
     ToPoint,
 };
+use multi_buffer::{MultiBufferChunks, ToOffsetUtf16};
 use ordered_float::OrderedFloat;
 use project::{LocationLink, Project, ProjectPath, ProjectTransaction};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
@@ -94,9 +94,6 @@ pub struct Jump {
     position: Point,
     anchor: language::Anchor,
 }
-
-#[derive(Clone, Deserialize, PartialEq)]
-pub struct Input(pub String);
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct SelectToBeginningOfLine {
@@ -186,6 +183,7 @@ actions!(
         Tab,
         TabPrev,
         ToggleComments,
+        ShowCharacterPalette,
         SelectLargerSyntaxNode,
         SelectSmallerSyntaxNode,
         GoToDefinition,
@@ -210,7 +208,6 @@ actions!(
 impl_actions!(
     editor,
     [
-        Input,
         SelectNext,
         SelectToBeginningOfLine,
         SelectToEndOfLine,
@@ -224,6 +221,7 @@ impl_internal_actions!(editor, [Scroll, Select, Jump]);
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
+enum InputComposition {}
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Direction {
@@ -236,7 +234,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|this: &mut Editor, action: &Scroll, cx| this.set_scroll_position(action.0, cx));
     cx.add_action(Editor::select);
     cx.add_action(Editor::cancel);
-    cx.add_action(Editor::handle_input);
     cx.add_action(Editor::newline);
     cx.add_action(Editor::backspace);
     cx.add_action(Editor::delete);
@@ -310,6 +307,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::open_excerpts);
     cx.add_action(Editor::jump);
     cx.add_action(Editor::restart_language_server);
+    cx.add_action(Editor::show_character_palette);
     cx.add_async_action(Editor::confirm_completion);
     cx.add_async_action(Editor::confirm_code_action);
     cx.add_async_action(Editor::rename);
@@ -405,6 +403,7 @@ pub struct Editor {
     autoclose_stack: InvalidationStack<BracketPairState>,
     snippet_stack: InvalidationStack<SnippetState>,
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
+    ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
@@ -992,6 +991,7 @@ impl Editor {
             autoclose_stack: Default::default(),
             snippet_stack: Default::default(),
             select_larger_syntax_node_stack: Vec::new(),
+            ime_transaction: Default::default(),
             active_diagnostics: None,
             soft_wrap_mode_override: None,
             get_field_editor_theme,
@@ -1808,13 +1808,11 @@ impl Editor {
         cx.propagate_action();
     }
 
-    pub fn handle_input(&mut self, action: &Input, cx: &mut ViewContext<Self>) {
+    pub fn handle_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
         if !self.input_enabled {
-            cx.propagate_action();
             return;
         }
 
-        let text = action.0.as_ref();
         if !self.skip_autoclose_end(text, cx) {
             self.transact(cx, |this, cx| {
                 if !this.surround_with_bracket_pair(text, cx) {
@@ -2481,14 +2479,17 @@ impl Editor {
                 });
                 if let Some((_, excerpted_buffer, excerpt_range)) = excerpt {
                     if excerpted_buffer == *buffer {
-                        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-                        let excerpt_range = excerpt_range.to_offset(&snapshot);
-                        if snapshot
-                            .edited_ranges_for_transaction(transaction)
-                            .all(|range| {
-                                excerpt_range.start <= range.start && excerpt_range.end >= range.end
-                            })
-                        {
+                        let all_edits_within_excerpt = buffer.read_with(&cx, |buffer, _| {
+                            let excerpt_range = excerpt_range.to_offset(buffer);
+                            buffer
+                                .edited_ranges_for_transaction(transaction)
+                                .all(|range| {
+                                    excerpt_range.start <= range.start
+                                        && excerpt_range.end >= range.end
+                                })
+                        });
+
+                        if all_edits_within_excerpt {
                             return Ok(());
                         }
                     }
@@ -2501,12 +2502,12 @@ impl Editor {
         let mut ranges_to_highlight = Vec::new();
         let excerpt_buffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(replica_id).with_title(title);
-            for (buffer, transaction) in &entries {
-                let snapshot = buffer.read(cx).snapshot();
+            for (buffer_handle, transaction) in &entries {
+                let buffer = buffer_handle.read(cx);
                 ranges_to_highlight.extend(
                     multibuffer.push_excerpts_with_context_lines(
-                        buffer.clone(),
-                        snapshot
+                        buffer_handle.clone(),
+                        buffer
                             .edited_ranges_for_transaction::<usize>(transaction)
                             .collect(),
                         1,
@@ -3614,6 +3615,7 @@ impl Editor {
                 });
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
+            self.unmark_text(cx);
             cx.emit(Event::Edited);
         }
     }
@@ -3627,6 +3629,7 @@ impl Editor {
                 });
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
+            self.unmark_text(cx);
             cx.emit(Event::Edited);
         }
     }
@@ -5026,6 +5029,10 @@ impl Editor {
         }
     }
 
+    fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
+        cx.show_character_palette();
+    }
+
     fn refresh_active_diagnostics(&mut self, cx: &mut ViewContext<Editor>) {
         if let Some(active_diagnostics) = self.active_diagnostics.as_mut() {
             let buffer = self.buffer.read(cx).snapshot(cx);
@@ -5151,10 +5158,10 @@ impl Editor {
         &mut self,
         cx: &mut ViewContext<Self>,
         update: impl FnOnce(&mut Self, &mut ViewContext<Self>),
-    ) {
+    ) -> Option<TransactionId> {
         self.start_transaction_at(Instant::now(), cx);
         update(self, cx);
-        self.end_transaction_at(Instant::now(), cx);
+        self.end_transaction_at(Instant::now(), cx)
     }
 
     fn start_transaction_at(&mut self, now: Instant, cx: &mut ViewContext<Self>) {
@@ -5168,7 +5175,11 @@ impl Editor {
         }
     }
 
-    fn end_transaction_at(&mut self, now: Instant, cx: &mut ViewContext<Self>) {
+    fn end_transaction_at(
+        &mut self,
+        now: Instant,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<TransactionId> {
         if let Some(tx_id) = self
             .buffer
             .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
@@ -5180,6 +5191,9 @@ impl Editor {
             }
 
             cx.emit(Event::Edited);
+            Some(tx_id)
+        } else {
+            None
         }
     }
 
@@ -5528,6 +5542,13 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn text_highlights<'a, T: 'static>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> Option<(HighlightStyle, &'a [Range<Anchor>])> {
+        self.display_map.read(cx).text_highlights(TypeId::of::<T>())
+    }
+
     pub fn clear_text_highlights<T: 'static>(
         &mut self,
         cx: &mut ViewContext<Self>,
@@ -5718,6 +5739,44 @@ impl Editor {
         })
         .detach()
     }
+
+    fn marked_text_ranges(&self, cx: &AppContext) -> Option<Vec<Range<OffsetUtf16>>> {
+        let snapshot = self.buffer.read(cx).read(cx);
+        let (_, ranges) = self.text_highlights::<InputComposition>(cx)?;
+        Some(
+            ranges
+                .into_iter()
+                .map(move |range| {
+                    range.start.to_offset_utf16(&snapshot)..range.end.to_offset_utf16(&snapshot)
+                })
+                .collect(),
+        )
+    }
+
+    fn selection_replacement_ranges(
+        &self,
+        range: Range<OffsetUtf16>,
+        cx: &AppContext,
+    ) -> Vec<Range<OffsetUtf16>> {
+        let selections = self.selections.all::<OffsetUtf16>(cx);
+        let newest_selection = selections
+            .iter()
+            .max_by_key(|selection| selection.id)
+            .unwrap();
+        let start_delta = range.start.0 as isize - newest_selection.start.0 as isize;
+        let end_delta = range.end.0 as isize - newest_selection.end.0 as isize;
+        let snapshot = self.buffer.read(cx).read(cx);
+        selections
+            .into_iter()
+            .map(|mut selection| {
+                selection.start.0 =
+                    (selection.start.0 as isize).saturating_add(start_delta) as usize;
+                selection.end.0 = (selection.end.0 as isize).saturating_add(end_delta) as usize;
+                snapshot.clip_offset_utf16(selection.start, Bias::Left)
+                    ..snapshot.clip_offset_utf16(selection.end, Bias::Right)
+            })
+            .collect()
+    }
 }
 
 impl EditorSnapshot {
@@ -5773,6 +5832,7 @@ pub enum Event {
     SelectionsChanged { local: bool },
     ScrollPositionChanged { local: bool },
     Closed,
+    IgnoredInput,
 }
 
 pub struct EditorFocused(pub ViewHandle<Editor>);
@@ -5876,6 +5936,168 @@ impl View for Editor {
         }
 
         context
+    }
+
+    fn text_for_range(&self, range_utf16: Range<usize>, cx: &AppContext) -> Option<String> {
+        Some(
+            self.buffer
+                .read(cx)
+                .read(cx)
+                .text_for_range(OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end))
+                .collect(),
+        )
+    }
+
+    fn selected_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
+        // Prevent the IME menu from appearing when holding down an alphabetic key
+        // while input is disabled.
+        if !self.input_enabled {
+            return None;
+        }
+
+        let range = self.selections.newest::<OffsetUtf16>(cx).range();
+        Some(range.start.0..range.end.0)
+    }
+
+    fn marked_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
+        let snapshot = self.buffer.read(cx).read(cx);
+        let range = self.text_highlights::<InputComposition>(cx)?.1.get(0)?;
+        Some(range.start.to_offset_utf16(&snapshot).0..range.end.to_offset_utf16(&snapshot).0)
+    }
+
+    fn unmark_text(&mut self, cx: &mut ViewContext<Self>) {
+        self.clear_text_highlights::<InputComposition>(cx);
+        self.ime_transaction.take();
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        text: &str,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if !self.input_enabled {
+            cx.emit(Event::IgnoredInput);
+            return;
+        }
+
+        self.transact(cx, |this, cx| {
+            let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
+                let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
+                Some(this.selection_replacement_ranges(range_utf16, cx))
+            } else if let Some(marked_ranges) = this.marked_text_ranges(cx) {
+                Some(marked_ranges)
+            } else {
+                None
+            };
+
+            if let Some(new_selected_ranges) = new_selected_ranges {
+                this.change_selections(None, cx, |selections| {
+                    selections.select_ranges(new_selected_ranges)
+                });
+            }
+            this.handle_input(text, cx);
+        });
+
+        if let Some(transaction) = self.ime_transaction {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.group_until_transaction(transaction, cx);
+            });
+        }
+
+        self.unmark_text(cx);
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        text: &str,
+        new_selected_range_utf16: Option<Range<usize>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if !self.input_enabled {
+            cx.emit(Event::IgnoredInput);
+            return;
+        }
+
+        let transaction = self.transact(cx, |this, cx| {
+            let ranges_to_replace = if let Some(mut marked_ranges) = this.marked_text_ranges(cx) {
+                let snapshot = this.buffer.read(cx).read(cx);
+                if let Some(relative_range_utf16) = range_utf16.as_ref() {
+                    for marked_range in &mut marked_ranges {
+                        marked_range.end.0 = marked_range.start.0 + relative_range_utf16.end;
+                        marked_range.start.0 += relative_range_utf16.start;
+                        marked_range.start =
+                            snapshot.clip_offset_utf16(marked_range.start, Bias::Left);
+                        marked_range.end =
+                            snapshot.clip_offset_utf16(marked_range.end, Bias::Right);
+                    }
+                }
+                Some(marked_ranges)
+            } else if let Some(range_utf16) = range_utf16 {
+                let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
+                Some(this.selection_replacement_ranges(range_utf16, cx))
+            } else {
+                None
+            };
+
+            if let Some(ranges) = ranges_to_replace {
+                this.change_selections(None, cx, |s| s.select_ranges(ranges));
+            }
+
+            let marked_ranges = {
+                let snapshot = this.buffer.read(cx).read(cx);
+                this.selections
+                    .disjoint_anchors()
+                    .into_iter()
+                    .map(|selection| {
+                        selection.start.bias_left(&*snapshot)..selection.end.bias_right(&*snapshot)
+                    })
+                    .collect::<Vec<_>>()
+            };
+
+            if text.is_empty() {
+                this.unmark_text(cx);
+            } else {
+                this.highlight_text::<InputComposition>(
+                    marked_ranges.clone(),
+                    this.style(cx).composition_mark,
+                    cx,
+                );
+            }
+
+            this.handle_input(text, cx);
+
+            if let Some(new_selected_range) = new_selected_range_utf16 {
+                let snapshot = this.buffer.read(cx).read(cx);
+                let new_selected_ranges = marked_ranges
+                    .into_iter()
+                    .map(|marked_range| {
+                        let insertion_start = marked_range.start.to_offset_utf16(&snapshot).0;
+                        let new_start = OffsetUtf16(new_selected_range.start + insertion_start);
+                        let new_end = OffsetUtf16(new_selected_range.end + insertion_start);
+                        snapshot.clip_offset_utf16(new_start, Bias::Left)
+                            ..snapshot.clip_offset_utf16(new_end, Bias::Right)
+                    })
+                    .collect::<Vec<_>>();
+
+                drop(snapshot);
+                this.change_selections(None, cx, |selections| {
+                    selections.select_ranges(new_selected_ranges)
+                });
+            }
+        });
+
+        self.ime_transaction = self.ime_transaction.or(transaction);
+        if let Some(transaction) = self.ime_transaction {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.group_until_transaction(transaction, cx);
+            });
+        }
+
+        if self.text_highlights::<InputComposition>(cx).is_none() {
+            self.ime_transaction.take();
+        }
     }
 }
 
@@ -6470,6 +6692,108 @@ mod tests {
             editor.end_transaction_at(now, cx);
             editor.undo(&Undo, cx);
             assert_eq!(editor.text(cx), "12cde6");
+        });
+    }
+
+    #[gpui::test]
+    fn test_ime_composition(cx: &mut MutableAppContext) {
+        cx.set_global(Settings::test(cx));
+        let buffer = cx.add_model(|cx| {
+            let mut buffer = language::Buffer::new(0, "abcde", cx);
+            // Ensure automatic grouping doesn't occur.
+            buffer.set_group_interval(Duration::ZERO);
+            buffer
+        });
+
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        cx.add_window(Default::default(), |cx| {
+            let mut editor = build_editor(buffer.clone(), cx);
+
+            // Start a new IME composition.
+            editor.replace_and_mark_text_in_range(Some(0..1), "à", None, cx);
+            editor.replace_and_mark_text_in_range(Some(0..1), "á", None, cx);
+            editor.replace_and_mark_text_in_range(Some(0..1), "ä", None, cx);
+            assert_eq!(editor.text(cx), "äbcde");
+            assert_eq!(
+                editor.marked_text_ranges(cx),
+                Some(vec![OffsetUtf16(0)..OffsetUtf16(1)])
+            );
+
+            // Finalize IME composition.
+            editor.replace_text_in_range(None, "ā", cx);
+            assert_eq!(editor.text(cx), "ābcde");
+            assert_eq!(editor.marked_text_ranges(cx), None);
+
+            // IME composition edits are grouped and are undone/redone at once.
+            editor.undo(&Default::default(), cx);
+            assert_eq!(editor.text(cx), "abcde");
+            assert_eq!(editor.marked_text_ranges(cx), None);
+            editor.redo(&Default::default(), cx);
+            assert_eq!(editor.text(cx), "ābcde");
+            assert_eq!(editor.marked_text_ranges(cx), None);
+
+            // Start a new IME composition.
+            editor.replace_and_mark_text_in_range(Some(0..1), "à", None, cx);
+            assert_eq!(
+                editor.marked_text_ranges(cx),
+                Some(vec![OffsetUtf16(0)..OffsetUtf16(1)])
+            );
+
+            // Undoing during an IME composition cancels it.
+            editor.undo(&Default::default(), cx);
+            assert_eq!(editor.text(cx), "ābcde");
+            assert_eq!(editor.marked_text_ranges(cx), None);
+
+            // Start a new IME composition with an invalid marked range, ensuring it gets clipped.
+            editor.replace_and_mark_text_in_range(Some(4..999), "è", None, cx);
+            assert_eq!(editor.text(cx), "ābcdè");
+            assert_eq!(
+                editor.marked_text_ranges(cx),
+                Some(vec![OffsetUtf16(4)..OffsetUtf16(5)])
+            );
+
+            // Finalize IME composition with an invalid replacement range, ensuring it gets clipped.
+            editor.replace_text_in_range(Some(4..999), "ę", cx);
+            assert_eq!(editor.text(cx), "ābcdę");
+            assert_eq!(editor.marked_text_ranges(cx), None);
+
+            // Start a new IME composition with multiple cursors.
+            editor.change_selections(None, cx, |s| {
+                s.select_ranges([
+                    OffsetUtf16(1)..OffsetUtf16(1),
+                    OffsetUtf16(3)..OffsetUtf16(3),
+                    OffsetUtf16(5)..OffsetUtf16(5),
+                ])
+            });
+            editor.replace_and_mark_text_in_range(Some(4..5), "XYZ", None, cx);
+            assert_eq!(editor.text(cx), "XYZbXYZdXYZ");
+            assert_eq!(
+                editor.marked_text_ranges(cx),
+                Some(vec![
+                    OffsetUtf16(0)..OffsetUtf16(3),
+                    OffsetUtf16(4)..OffsetUtf16(7),
+                    OffsetUtf16(8)..OffsetUtf16(11)
+                ])
+            );
+
+            // Ensure the newly-marked range gets treated as relative to the previously-marked ranges.
+            editor.replace_and_mark_text_in_range(Some(1..2), "1", None, cx);
+            assert_eq!(editor.text(cx), "X1ZbX1ZdX1Z");
+            assert_eq!(
+                editor.marked_text_ranges(cx),
+                Some(vec![
+                    OffsetUtf16(1)..OffsetUtf16(2),
+                    OffsetUtf16(5)..OffsetUtf16(6),
+                    OffsetUtf16(9)..OffsetUtf16(10)
+                ])
+            );
+
+            // Finalize IME composition with multiple cursors.
+            editor.replace_text_in_range(Some(9..10), "2", cx);
+            assert_eq!(editor.text(cx), "X2ZbX2ZdX2Z");
+            assert_eq!(editor.marked_text_ranges(cx), None);
+
+            editor
         });
     }
 
@@ -8247,9 +8571,9 @@ mod tests {
         // is pasted at each cursor.
         cx.set_state("|two one✅ four three six five |");
         cx.update_editor(|e, cx| {
-            e.handle_input(&Input("( ".into()), cx);
+            e.handle_input("( ", cx);
             e.paste(&Paste, cx);
-            e.handle_input(&Input(") ".into()), cx);
+            e.handle_input(") ", cx);
         });
         cx.assert_editor_state(indoc! {"
             ( one✅ 
@@ -8924,9 +9248,9 @@ mod tests {
                 ])
             });
 
-            view.handle_input(&Input("{".to_string()), cx);
-            view.handle_input(&Input("{".to_string()), cx);
-            view.handle_input(&Input("{".to_string()), cx);
+            view.handle_input("{", cx);
+            view.handle_input("{", cx);
+            view.handle_input("{", cx);
             assert_eq!(
                 view.text(cx),
                 "
@@ -8939,9 +9263,9 @@ mod tests {
             );
 
             view.move_right(&MoveRight, cx);
-            view.handle_input(&Input("}".to_string()), cx);
-            view.handle_input(&Input("}".to_string()), cx);
-            view.handle_input(&Input("}".to_string()), cx);
+            view.handle_input("}", cx);
+            view.handle_input("}", cx);
+            view.handle_input("}", cx);
             assert_eq!(
                 view.text(cx),
                 "
@@ -8954,8 +9278,8 @@ mod tests {
             );
 
             view.undo(&Undo, cx);
-            view.handle_input(&Input("/".to_string()), cx);
-            view.handle_input(&Input("*".to_string()), cx);
+            view.handle_input("/", cx);
+            view.handle_input("*", cx);
             assert_eq!(
                 view.text(cx),
                 "
@@ -8974,7 +9298,7 @@ mod tests {
                     DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
                 ])
             });
-            view.handle_input(&Input("*".to_string()), cx);
+            view.handle_input("*", cx);
             assert_eq!(
                 view.text(cx),
                 "
@@ -8992,7 +9316,7 @@ mod tests {
             view.change_selections(None, cx, |s| {
                 s.select_display_ranges([DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)])
             });
-            view.handle_input(&Input("{".to_string()), cx);
+            view.handle_input("{", cx);
             assert_eq!(
                 view.text(cx),
                 "
@@ -9008,7 +9332,7 @@ mod tests {
             view.change_selections(None, cx, |s| {
                 s.select_display_ranges([DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1)])
             });
-            view.handle_input(&Input("{".to_string()), cx);
+            view.handle_input("{", cx);
             assert_eq!(
                 view.text(cx),
                 "
@@ -9025,7 +9349,7 @@ mod tests {
             );
 
             view.undo(&Undo, cx);
-            view.handle_input(&Input("[".to_string()), cx);
+            view.handle_input("[", cx);
             assert_eq!(
                 view.text(cx),
                 "
@@ -9045,7 +9369,7 @@ mod tests {
             view.change_selections(None, cx, |s| {
                 s.select_display_ranges([DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)])
             });
-            view.handle_input(&Input("[".to_string()), cx);
+            view.handle_input("[", cx);
             assert_eq!(
                 view.text(cx),
                 "
@@ -9101,9 +9425,9 @@ mod tests {
                 ])
             });
 
-            view.handle_input(&Input("{".to_string()), cx);
-            view.handle_input(&Input("{".to_string()), cx);
-            view.handle_input(&Input("{".to_string()), cx);
+            view.handle_input("{", cx);
+            view.handle_input("{", cx);
+            view.handle_input("{", cx);
             assert_eq!(
                 view.text(cx),
                 "
@@ -9183,9 +9507,9 @@ mod tests {
                 ])
             });
 
-            editor.handle_input(&Input("{".to_string()), cx);
-            editor.handle_input(&Input("{".to_string()), cx);
-            editor.handle_input(&Input("_".to_string()), cx);
+            editor.handle_input("{", cx);
+            editor.handle_input("{", cx);
+            editor.handle_input("_", cx);
             assert_eq!(
                 editor.text(cx),
                 "
@@ -9699,7 +10023,9 @@ mod tests {
         cx.set_state("editor|");
         cx.simulate_keystroke(".");
         assert!(cx.editor(|e, _| e.context_menu.is_none()));
-        cx.simulate_keystrokes(["c", "l", "o"]);
+        cx.simulate_keystroke("c");
+        cx.simulate_keystroke("l");
+        cx.simulate_keystroke("o");
         cx.assert_editor_state("editor.clo|");
         assert!(cx.editor(|e, _| e.context_menu.is_none()));
         cx.update_editor(|editor, cx| {
@@ -9911,7 +10237,7 @@ mod tests {
                 ])
             });
 
-            view.handle_input(&Input("X".to_string()), cx);
+            view.handle_input("X", cx);
             assert_eq!(view.text(cx), "Xaaaa\nXbbbb");
             assert_eq!(
                 view.selections.ranges(cx),
@@ -9951,7 +10277,7 @@ mod tests {
             assert_eq!(view.text(cx), expected_text);
             view.change_selections(None, cx, |s| s.select_ranges(selection_ranges));
 
-            view.handle_input(&Input("X".to_string()), cx);
+            view.handle_input("X", cx);
 
             let (expected_text, expected_selections) = marked_text_ranges(indoc! {"
                 aaaa

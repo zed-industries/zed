@@ -1,6 +1,6 @@
 use super::{
     display_map::{BlockContext, ToDisplayPoint},
-    Anchor, DisplayPoint, Editor, EditorMode, EditorSnapshot, Input, Scroll, Select, SelectPhase,
+    Anchor, DisplayPoint, Editor, EditorMode, EditorSnapshot, Scroll, Select, SelectPhase,
     SoftWrap, ToPoint, MAX_LINE_LEN,
 };
 use crate::{
@@ -24,13 +24,13 @@ use gpui::{
     json::{self, ToJson},
     platform::CursorStyle,
     text_layout::{self, Line, RunStyle, TextLayoutCache},
-    AppContext, Axis, Border, CursorRegion, Element, ElementBox, Event, EventContext, KeyDownEvent,
+    AppContext, Axis, Border, CursorRegion, Element, ElementBox, Event, EventContext,
     LayoutContext, ModifiersChangedEvent, MouseButton, MouseButtonEvent, MouseMovedEvent,
     MutableAppContext, PaintContext, Quad, Scene, ScrollWheelEvent, SizeConstraint, ViewContext,
     WeakViewHandle,
 };
 use json::json;
-use language::{Bias, DiagnosticSeverity, Selection};
+use language::{Bias, DiagnosticSeverity, OffsetUtf16, Selection};
 use project::ProjectPath;
 use settings::Settings;
 use smallvec::SmallVec;
@@ -281,21 +281,6 @@ impl EditorElement {
 
         cx.dispatch_action(HoverAt { point });
         true
-    }
-
-    fn key_down(&self, input: Option<&str>, cx: &mut EventContext) -> bool {
-        let view = self.view.upgrade(cx.app).unwrap();
-
-        if view.is_focused(cx.app) {
-            if let Some(input) = input {
-                cx.dispatch_action(Input(input.to_string()));
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        }
     }
 
     fn modifiers_changed(&self, cmd: bool, cx: &mut EventContext) -> bool {
@@ -1569,7 +1554,6 @@ impl Element for EditorElement {
                 delta,
                 precise,
             }) => self.scroll(*position, *delta, *precise, layout, paint, cx),
-            Event::KeyDown(KeyDownEvent { input, .. }) => self.key_down(input.as_deref(), cx),
             Event::ModifiersChanged(ModifiersChangedEvent { cmd, .. }) => {
                 self.modifiers_changed(*cmd, cx)
             }
@@ -1579,6 +1563,43 @@ impl Element for EditorElement {
 
             _ => false,
         }
+    }
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        bounds: RectF,
+        _: RectF,
+        layout: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &gpui::MeasurementContext,
+    ) -> Option<RectF> {
+        let text_bounds = RectF::new(
+            bounds.origin() + vec2f(layout.gutter_size.x(), 0.0),
+            layout.text_size,
+        );
+        let content_origin = text_bounds.origin() + vec2f(layout.gutter_margin, 0.);
+        let scroll_position = layout.snapshot.scroll_position();
+        let start_row = scroll_position.y() as u32;
+        let scroll_top = scroll_position.y() * layout.line_height;
+        let scroll_left = scroll_position.x() * layout.em_width;
+
+        let range_start =
+            OffsetUtf16(range_utf16.start).to_display_point(&layout.snapshot.display_snapshot);
+        if range_start.row() < start_row {
+            return None;
+        }
+
+        let line = layout
+            .line_layouts
+            .get((range_start.row() - start_row) as usize)?;
+        let range_start_x = line.x_for_index(range_start.column() as usize);
+        let range_start_y = range_start.row() as f32 * layout.line_height;
+        Some(RectF::new(
+            content_origin + vec2f(range_start_x, range_start_y + layout.line_height)
+                - vec2f(scroll_left, scroll_top),
+            vec2f(layout.em_width, layout.line_height),
+        ))
     }
 
     fn debug(
@@ -1738,6 +1759,13 @@ impl Cursor {
             shape,
             block_text,
         }
+    }
+
+    pub fn bounding_rect(&self, origin: Vector2F) -> RectF {
+        RectF::new(
+            self.origin + origin,
+            vec2f(self.block_width, self.line_height),
+        )
     }
 
     pub fn paint(&self, origin: Vector2F, cx: &mut PaintContext) {

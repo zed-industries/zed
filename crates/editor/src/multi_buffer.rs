@@ -9,7 +9,7 @@ pub use language::Completion;
 use language::{
     char_kind, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk, DiagnosticEntry, Event, File,
     IndentSize, Language, OffsetRangeExt, Outline, OutlineItem, Selection, ToOffset as _,
-    ToPoint as _, ToPointUtf16 as _, TransactionId,
+    ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId,
 };
 use settings::Settings;
 use smallvec::SmallVec;
@@ -29,7 +29,7 @@ use text::{
     locator::Locator,
     rope::TextDimension,
     subscription::{Subscription, Topic},
-    Edit, Point, PointUtf16, TextSummary,
+    Edit, OffsetUtf16, Point, PointUtf16, TextSummary,
 };
 use theme::SyntaxTheme;
 use util::post_inc;
@@ -70,6 +70,10 @@ struct Transaction {
 
 pub trait ToOffset: 'static + fmt::Debug {
     fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> usize;
+}
+
+pub trait ToOffsetUtf16: 'static + fmt::Debug {
+    fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> OffsetUtf16;
 }
 
 pub trait ToPoint: 'static + fmt::Debug {
@@ -554,6 +558,20 @@ impl MultiBuffer {
         self.history.finalize_last_transaction();
     }
 
+    pub fn group_until_transaction(
+        &mut self,
+        transaction_id: TransactionId,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let Some(buffer) = self.as_singleton() {
+            buffer.update(cx, |buffer, _| {
+                buffer.group_until_transaction(transaction_id)
+            });
+        } else {
+            self.history.group_until(transaction_id);
+        }
+    }
+
     pub fn set_active_selections(
         &mut self,
         selections: &[Selection<Anchor>],
@@ -809,7 +827,7 @@ impl MultiBuffer {
         let mut cursor = snapshot.excerpts.cursor::<Option<&ExcerptId>>();
         let mut new_excerpts = cursor.slice(&Some(prev_excerpt_id), Bias::Right, &());
 
-        let edit_start = new_excerpts.summary().text.bytes;
+        let edit_start = new_excerpts.summary().text.len;
         new_excerpts.update_last(
             |excerpt| {
                 excerpt.has_trailing_newline = true;
@@ -862,7 +880,7 @@ impl MultiBuffer {
             &(),
         );
 
-        let edit_end = new_excerpts.summary().text.bytes;
+        let edit_end = new_excerpts.summary().text.len;
 
         let suffix = cursor.suffix(&());
         let changed_trailing_excerpt = suffix.is_empty();
@@ -1068,7 +1086,7 @@ impl MultiBuffer {
 
                 // Push an edit for the removal of this run of excerpts.
                 let old_end = cursor.start().1;
-                let new_start = new_excerpts.summary().text.bytes;
+                let new_start = new_excerpts.summary().text.len;
                 edits.push(Edit {
                     old: old_start..old_end,
                     new: new_start..new_start,
@@ -1297,7 +1315,7 @@ impl MultiBuffer {
                         )
                         .map(|mut edit| {
                             let excerpt_old_start = cursor.start().1;
-                            let excerpt_new_start = new_excerpts.summary().text.bytes;
+                            let excerpt_new_start = new_excerpts.summary().text.len;
                             edit.old.start += excerpt_old_start;
                             edit.old.end += excerpt_old_start;
                             edit.new.start += excerpt_new_start;
@@ -1527,7 +1545,7 @@ impl MultiBufferSnapshot {
         let mut cursor = self.excerpts.cursor::<usize>();
         cursor.seek(&offset, Bias::Left, &());
         let mut excerpt_chunks = cursor.item().map(|excerpt| {
-            let end_before_footer = cursor.start() + excerpt.text_summary.bytes;
+            let end_before_footer = cursor.start() + excerpt.text_summary.len;
             let start = excerpt.range.context.start.to_offset(&excerpt.buffer);
             let end = start + (cmp::min(offset, end_before_footer) - cursor.start());
             excerpt.buffer.reversed_chunks_in_range(start..end)
@@ -1629,7 +1647,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn len(&self) -> usize {
-        self.excerpts.summary().text.bytes
+        self.excerpts.summary().text.len
     }
 
     pub fn max_buffer_row(&self) -> u32 {
@@ -1670,6 +1688,25 @@ impl MultiBufferSnapshot {
             buffer_point.saturating_sub(excerpt_start)
         } else {
             Point::zero()
+        };
+        *cursor.start() + overshoot
+    }
+
+    pub fn clip_offset_utf16(&self, offset: OffsetUtf16, bias: Bias) -> OffsetUtf16 {
+        if let Some((_, _, buffer)) = self.as_singleton() {
+            return buffer.clip_offset_utf16(offset, bias);
+        }
+
+        let mut cursor = self.excerpts.cursor::<OffsetUtf16>();
+        cursor.seek(&offset, Bias::Right, &());
+        let overshoot = if let Some(excerpt) = cursor.item() {
+            let excerpt_start = excerpt.range.context.start.to_offset_utf16(&excerpt.buffer);
+            let buffer_offset = excerpt
+                .buffer
+                .clip_offset_utf16(excerpt_start + (offset - cursor.start()), bias);
+            OffsetUtf16(buffer_offset.0.saturating_sub(excerpt_start.0))
+        } else {
+            OffsetUtf16(0)
         };
         *cursor.start() + overshoot
     }
@@ -1781,7 +1818,7 @@ impl MultiBufferSnapshot {
                 .offset_to_point_utf16(excerpt_start_offset + overshoot);
             *start_point + (buffer_point - excerpt_start_point)
         } else {
-            self.excerpts.summary().text.lines_utf16
+            self.excerpts.summary().text.lines_utf16()
         }
     }
 
@@ -1803,7 +1840,7 @@ impl MultiBufferSnapshot {
                 .point_to_point_utf16(excerpt_start_point + overshoot);
             *start_point + (buffer_point - excerpt_start_point_utf16)
         } else {
-            self.excerpts.summary().text.lines_utf16
+            self.excerpts.summary().text.lines_utf16()
         }
     }
 
@@ -1824,7 +1861,53 @@ impl MultiBufferSnapshot {
                 .point_to_offset(excerpt_start_point + overshoot);
             *start_offset + buffer_offset - excerpt_start_offset
         } else {
-            self.excerpts.summary().text.bytes
+            self.excerpts.summary().text.len
+        }
+    }
+
+    pub fn offset_utf16_to_offset(&self, offset_utf16: OffsetUtf16) -> usize {
+        if let Some((_, _, buffer)) = self.as_singleton() {
+            return buffer.offset_utf16_to_offset(offset_utf16);
+        }
+
+        let mut cursor = self.excerpts.cursor::<(OffsetUtf16, usize)>();
+        cursor.seek(&offset_utf16, Bias::Right, &());
+        if let Some(excerpt) = cursor.item() {
+            let (start_offset_utf16, start_offset) = cursor.start();
+            let overshoot = offset_utf16 - start_offset_utf16;
+            let excerpt_start_offset = excerpt.range.context.start.to_offset(&excerpt.buffer);
+            let excerpt_start_offset_utf16 =
+                excerpt.buffer.offset_to_offset_utf16(excerpt_start_offset);
+            let buffer_offset = excerpt
+                .buffer
+                .offset_utf16_to_offset(excerpt_start_offset_utf16 + overshoot);
+            *start_offset + (buffer_offset - excerpt_start_offset)
+        } else {
+            self.excerpts.summary().text.len
+        }
+    }
+
+    pub fn offset_to_offset_utf16(&self, offset: usize) -> OffsetUtf16 {
+        if let Some((_, _, buffer)) = self.as_singleton() {
+            return buffer.offset_to_offset_utf16(offset);
+        }
+
+        let mut cursor = self.excerpts.cursor::<(usize, OffsetUtf16)>();
+        cursor.seek(&offset, Bias::Right, &());
+        if let Some(excerpt) = cursor.item() {
+            let (start_offset, start_offset_utf16) = cursor.start();
+            let overshoot = offset - start_offset;
+            let excerpt_start_offset_utf16 =
+                excerpt.range.context.start.to_offset_utf16(&excerpt.buffer);
+            let excerpt_start_offset = excerpt
+                .buffer
+                .offset_utf16_to_offset(excerpt_start_offset_utf16);
+            let buffer_offset_utf16 = excerpt
+                .buffer
+                .offset_to_offset_utf16(excerpt_start_offset + overshoot);
+            *start_offset_utf16 + (buffer_offset_utf16 - excerpt_start_offset_utf16)
+        } else {
+            self.excerpts.summary().text.len_utf16
         }
     }
 
@@ -1847,7 +1930,7 @@ impl MultiBufferSnapshot {
                 .point_utf16_to_offset(excerpt_start_point + overshoot);
             *start_offset + (buffer_offset - excerpt_start_offset)
         } else {
-            self.excerpts.summary().text.bytes
+            self.excerpts.summary().text.len
         }
     }
 
@@ -2311,7 +2394,7 @@ impl MultiBufferSnapshot {
                     .context
                     .start
                     .to_offset(&start_excerpt.buffer);
-                let excerpt_buffer_end = excerpt_buffer_start + start_excerpt.text_summary.bytes;
+                let excerpt_buffer_end = excerpt_buffer_start + start_excerpt.text_summary.len;
 
                 let start_in_buffer =
                     excerpt_buffer_start + range.start.saturating_sub(*cursor.start());
@@ -2415,7 +2498,7 @@ impl MultiBufferSnapshot {
                     .context
                     .start
                     .to_offset(&start_excerpt.buffer);
-                let excerpt_buffer_end = excerpt_buffer_start + start_excerpt.text_summary.bytes;
+                let excerpt_buffer_end = excerpt_buffer_start + start_excerpt.text_summary.len;
 
                 let start_in_buffer =
                     excerpt_buffer_start + range.start.saturating_sub(*cursor.start());
@@ -2651,9 +2734,8 @@ impl History {
     }
 
     fn group(&mut self) -> Option<TransactionId> {
-        let mut new_len = self.undo_stack.len();
-        let mut transactions = self.undo_stack.iter_mut();
-
+        let mut count = 0;
+        let mut transactions = self.undo_stack.iter();
         if let Some(mut transaction) = transactions.next_back() {
             while let Some(prev_transaction) = transactions.next_back() {
                 if !prev_transaction.suppress_grouping
@@ -2661,13 +2743,31 @@ impl History {
                         <= self.group_interval
                 {
                     transaction = prev_transaction;
-                    new_len -= 1;
+                    count += 1;
                 } else {
                     break;
                 }
             }
         }
+        self.group_trailing(count)
+    }
 
+    fn group_until(&mut self, transaction_id: TransactionId) {
+        let mut count = 0;
+        for transaction in self.undo_stack.iter().rev() {
+            if transaction.id == transaction_id {
+                self.group_trailing(count);
+                break;
+            } else if transaction.suppress_grouping {
+                break;
+            } else {
+                count += 1;
+            }
+        }
+    }
+
+    fn group_trailing(&mut self, n: usize) -> Option<TransactionId> {
+        let new_len = self.undo_stack.len() - n;
         let (transactions_to_keep, transactions_to_merge) = self.undo_stack.split_at_mut(new_len);
         if let Some(last_transaction) = transactions_to_keep.last_mut() {
             if let Some(transaction) = transactions_to_merge.last() {
@@ -2717,11 +2817,11 @@ impl Excerpt {
     ) -> ExcerptChunks<'a> {
         let content_start = self.range.context.start.to_offset(&self.buffer);
         let chunks_start = content_start + range.start;
-        let chunks_end = content_start + cmp::min(range.end, self.text_summary.bytes);
+        let chunks_end = content_start + cmp::min(range.end, self.text_summary.len);
 
         let footer_height = if self.has_trailing_newline
-            && range.start <= self.text_summary.bytes
-            && range.end > self.text_summary.bytes
+            && range.start <= self.text_summary.len
+            && range.end > self.text_summary.len
         {
             1
         } else {
@@ -2739,10 +2839,10 @@ impl Excerpt {
     fn bytes_in_range(&self, range: Range<usize>) -> ExcerptBytes {
         let content_start = self.range.context.start.to_offset(&self.buffer);
         let bytes_start = content_start + range.start;
-        let bytes_end = content_start + cmp::min(range.end, self.text_summary.bytes);
+        let bytes_end = content_start + cmp::min(range.end, self.text_summary.len);
         let footer_height = if self.has_trailing_newline
-            && range.start <= self.text_summary.bytes
-            && range.end > self.text_summary.bytes
+            && range.start <= self.text_summary.len
+            && range.end > self.text_summary.len
         {
             1
         } else {
@@ -2836,19 +2936,25 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for TextSummary {
 
 impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for usize {
     fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
-        *self += summary.text.bytes;
+        *self += summary.text.len;
     }
 }
 
 impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for usize {
     fn cmp(&self, cursor_location: &ExcerptSummary, _: &()) -> cmp::Ordering {
-        Ord::cmp(self, &cursor_location.text.bytes)
+        Ord::cmp(self, &cursor_location.text.len)
     }
 }
 
 impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for Option<&'a ExcerptId> {
     fn cmp(&self, cursor_location: &ExcerptSummary, _: &()) -> cmp::Ordering {
         Ord::cmp(self, &Some(&cursor_location.excerpt_id))
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for OffsetUtf16 {
+    fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
+        *self += summary.text.len_utf16;
     }
 }
 
@@ -2860,7 +2966,7 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Point {
 
 impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for PointUtf16 {
     fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
-        *self += summary.text.lines_utf16
+        *self += summary.text.lines_utf16()
     }
 }
 
@@ -3057,6 +3163,24 @@ impl ToOffset for usize {
     fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
         assert!(*self <= snapshot.len(), "offset is out of range");
         *self
+    }
+}
+
+impl ToOffset for OffsetUtf16 {
+    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
+        snapshot.offset_utf16_to_offset(*self)
+    }
+}
+
+impl ToOffsetUtf16 for OffsetUtf16 {
+    fn to_offset_utf16(&self, _snapshot: &MultiBufferSnapshot) -> OffsetUtf16 {
+        *self
+    }
+}
+
+impl ToOffsetUtf16 for usize {
+    fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> OffsetUtf16 {
+        snapshot.offset_to_offset_utf16(*self)
     }
 }
 
@@ -3823,11 +3947,11 @@ mod tests {
                     buffer.text_summary_for_range::<PointUtf16, _>(0..buffer_range.start);
 
                 let excerpt_start = excerpt_starts.next().unwrap();
-                let mut offset = excerpt_start.bytes;
+                let mut offset = excerpt_start.len;
                 let mut buffer_offset = buffer_range.start;
                 let mut point = excerpt_start.lines;
                 let mut buffer_point = buffer_start_point;
-                let mut point_utf16 = excerpt_start.lines_utf16;
+                let mut point_utf16 = excerpt_start.lines_utf16();
                 let mut buffer_point_utf16 = buffer_start_point_utf16;
                 for ch in buffer
                     .snapshot()
@@ -3841,7 +3965,7 @@ mod tests {
                         let buffer_right_offset = buffer.clip_offset(buffer_offset, Bias::Right);
                         assert_eq!(
                             left_offset,
-                            excerpt_start.bytes + (buffer_left_offset - buffer_range.start),
+                            excerpt_start.len + (buffer_left_offset - buffer_range.start),
                             "clip_offset({:?}, Left). buffer: {:?}, buffer offset: {:?}",
                             offset,
                             buffer_id,
@@ -3849,7 +3973,7 @@ mod tests {
                         );
                         assert_eq!(
                             right_offset,
-                            excerpt_start.bytes + (buffer_right_offset - buffer_range.start),
+                            excerpt_start.len + (buffer_right_offset - buffer_range.start),
                             "clip_offset({:?}, Right). buffer: {:?}, buffer offset: {:?}",
                             offset,
                             buffer_id,
@@ -3910,7 +4034,7 @@ mod tests {
                             buffer.clip_point_utf16(buffer_point_utf16, Bias::Right);
                         assert_eq!(
                             left_point_utf16,
-                            excerpt_start.lines_utf16
+                            excerpt_start.lines_utf16()
                                 + (buffer_left_point_utf16 - buffer_start_point_utf16),
                             "clip_point_utf16({:?}, Left). buffer: {:?}, buffer point_utf16: {:?}",
                             point_utf16,
@@ -3919,7 +4043,7 @@ mod tests {
                         );
                         assert_eq!(
                             right_point_utf16,
-                            excerpt_start.lines_utf16
+                            excerpt_start.lines_utf16()
                                 + (buffer_right_point_utf16 - buffer_start_point_utf16),
                             "clip_point_utf16({:?}, Right). buffer: {:?}, buffer point_utf16: {:?}",
                             point_utf16,
@@ -4069,7 +4193,7 @@ mod tests {
         let mut now = Instant::now();
 
         multibuffer.update(cx, |multibuffer, cx| {
-            multibuffer.start_transaction_at(now, cx);
+            let transaction_1 = multibuffer.start_transaction_at(now, cx).unwrap();
             multibuffer.edit(
                 [
                     (Point::new(0, 0)..Point::new(0, 0), "A"),
@@ -4152,6 +4276,16 @@ mod tests {
             assert_eq!(multibuffer.read(cx).text(), "ABCD1234\nAB5678");
             multibuffer.undo(cx);
             assert_eq!(multibuffer.read(cx).text(), "1234\n5678");
+
+            // Transactions can be grouped manually.
+            multibuffer.redo(cx);
+            multibuffer.redo(cx);
+            assert_eq!(multibuffer.read(cx).text(), "XABCD1234\nAB5678");
+            multibuffer.group_until_transaction(transaction_1, cx);
+            multibuffer.undo(cx);
+            assert_eq!(multibuffer.read(cx).text(), "1234\n5678");
+            multibuffer.redo(cx);
+            assert_eq!(multibuffer.read(cx).text(), "XABCD1234\nAB5678");
         });
     }
 }

@@ -3,12 +3,13 @@ pub mod action;
 use crate::{
     elements::ElementBox,
     executor::{self, Task},
+    geometry::rect::RectF,
     keymap::{self, Binding, Keystroke},
     platform::{self, KeyDownEvent, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::post_inc,
-    AssetCache, AssetSource, ClipboardItem, FontCache, MouseRegionId, PathPromptOptions,
-    TextLayoutCache,
+    AssetCache, AssetSource, ClipboardItem, FontCache, InputHandler, MouseRegionId,
+    PathPromptOptions, TextLayoutCache,
 };
 pub use action::*;
 use anyhow::{anyhow, Context, Result};
@@ -28,7 +29,7 @@ use std::{
     hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
-    ops::{Deref, DerefMut},
+    ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     pin::Pin,
     rc::{self, Rc},
@@ -63,6 +64,32 @@ pub trait View: Entity + Sized {
     }
     fn debug_json(&self, _: &AppContext) -> serde_json::Value {
         serde_json::Value::Null
+    }
+
+    fn text_for_range(&self, _: Range<usize>, _: &AppContext) -> Option<String> {
+        None
+    }
+    fn selected_text_range(&self, _: &AppContext) -> Option<Range<usize>> {
+        None
+    }
+    fn marked_text_range(&self, _: &AppContext) -> Option<Range<usize>> {
+        None
+    }
+    fn unmark_text(&mut self, _: &mut ViewContext<Self>) {}
+    fn replace_text_in_range(
+        &mut self,
+        _: Option<Range<usize>>,
+        _: &str,
+        _: &mut ViewContext<Self>,
+    ) {
+    }
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        _: Option<Range<usize>>,
+        _: &str,
+        _: Option<Range<usize>>,
+        _: &mut ViewContext<Self>,
+    ) {
     }
 }
 
@@ -152,6 +179,11 @@ pub struct TestAppContext {
     cx: Rc<RefCell<MutableAppContext>>,
     foreground_platform: Rc<platform::test::ForegroundPlatform>,
     condition_duration: Option<Duration>,
+}
+
+pub struct WindowInputHandler {
+    app: Rc<RefCell<MutableAppContext>>,
+    window_id: usize,
 }
 
 impl App {
@@ -310,6 +342,87 @@ impl App {
     }
 }
 
+impl WindowInputHandler {
+    fn read_focused_view<T, F>(&self, f: F) -> Option<T>
+    where
+        F: FnOnce(&dyn AnyView, &AppContext) -> T,
+    {
+        let app = self.app.borrow();
+        let view_id = app.focused_view_id(self.window_id)?;
+        let view = app.cx.views.get(&(self.window_id, view_id))?;
+        let result = f(view.as_ref(), &app);
+        Some(result)
+    }
+
+    fn update_focused_view<T, F>(&mut self, f: F) -> Option<T>
+    where
+        F: FnOnce(usize, usize, &mut dyn AnyView, &mut MutableAppContext) -> T,
+    {
+        let mut app = self.app.borrow_mut();
+        app.update(|app| {
+            let view_id = app.focused_view_id(self.window_id)?;
+            let mut view = app.cx.views.remove(&(self.window_id, view_id))?;
+            let result = f(self.window_id, view_id, view.as_mut(), &mut *app);
+            app.cx.views.insert((self.window_id, view_id), view);
+            Some(result)
+        })
+    }
+}
+
+impl InputHandler for WindowInputHandler {
+    fn text_for_range(&self, range: Range<usize>) -> Option<String> {
+        self.read_focused_view(|view, cx| view.text_for_range(range.clone(), cx))
+            .flatten()
+    }
+
+    fn selected_text_range(&self) -> Option<Range<usize>> {
+        self.read_focused_view(|view, cx| view.selected_text_range(cx))
+            .flatten()
+    }
+
+    fn replace_text_in_range(&mut self, range: Option<Range<usize>>, text: &str) {
+        self.update_focused_view(|window_id, view_id, view, cx| {
+            view.replace_text_in_range(range, text, cx, window_id, view_id);
+        });
+    }
+
+    fn marked_text_range(&self) -> Option<Range<usize>> {
+        self.read_focused_view(|view, cx| view.marked_text_range(cx))
+            .flatten()
+    }
+
+    fn unmark_text(&mut self) {
+        self.update_focused_view(|window_id, view_id, view, cx| {
+            view.unmark_text(cx, window_id, view_id);
+        });
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range: Option<Range<usize>>,
+        new_text: &str,
+        new_selected_range: Option<Range<usize>>,
+    ) {
+        self.update_focused_view(|window_id, view_id, view, cx| {
+            view.replace_and_mark_text_in_range(
+                range,
+                new_text,
+                new_selected_range,
+                cx,
+                window_id,
+                view_id,
+            );
+        });
+    }
+
+    fn rect_for_range(&self, range_utf16: Range<usize>) -> Option<RectF> {
+        let app = self.app.borrow();
+        let (presenter, _) = app.presenters_and_platform_windows.get(&self.window_id)?;
+        let presenter = presenter.borrow();
+        presenter.rect_for_text_range(range_utf16, &app)
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 impl TestAppContext {
     pub fn new(
@@ -361,14 +474,8 @@ impl TestAppContext {
         self.cx.borrow_mut().dispatch_global_action(action);
     }
 
-    pub fn dispatch_keystroke(
-        &mut self,
-        window_id: usize,
-        keystroke: Keystroke,
-        input: Option<String>,
-        is_held: bool,
-    ) {
-        self.cx.borrow_mut().update(|cx| {
+    pub fn dispatch_keystroke(&mut self, window_id: usize, keystroke: Keystroke, is_held: bool) {
+        let handled = self.cx.borrow_mut().update(|cx| {
             let presenter = cx
                 .presenters_and_platform_windows
                 .get(&window_id)
@@ -377,17 +484,29 @@ impl TestAppContext {
                 .clone();
             let dispatch_path = presenter.borrow().dispatch_path(cx.as_ref());
 
-            if !cx.dispatch_keystroke(window_id, dispatch_path, &keystroke) {
-                presenter.borrow_mut().dispatch_event(
-                    Event::KeyDown(KeyDownEvent {
-                        keystroke,
-                        input,
-                        is_held,
-                    }),
-                    cx,
-                );
+            if cx.dispatch_keystroke(window_id, dispatch_path, &keystroke) {
+                return true;
             }
+            if presenter.borrow_mut().dispatch_event(
+                Event::KeyDown(KeyDownEvent {
+                    keystroke: keystroke.clone(),
+                    is_held,
+                }),
+                cx,
+            ) {
+                return true;
+            }
+
+            false
         });
+
+        if !handled && !keystroke.cmd && !keystroke.ctrl {
+            WindowInputHandler {
+                app: self.cx.clone(),
+                window_id,
+            }
+            .replace_text_in_range(None, &keystroke.key)
+        }
     }
 
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>
@@ -1195,6 +1314,11 @@ impl MutableAppContext {
             .set_menus(menus, &self.keystroke_matcher);
     }
 
+    fn show_character_palette(&self, window_id: usize) {
+        let (_, window) = &self.presenters_and_platform_windows[&window_id];
+        window.show_character_palette();
+    }
+
     fn prompt(
         &self,
         window_id: usize,
@@ -1882,6 +2006,11 @@ impl MutableAppContext {
                 app.update(|cx| cx.remove_window(window_id));
             }));
         }
+
+        window.set_input_handler(Box::new(WindowInputHandler {
+            app: self.upgrade().0,
+            window_id,
+        }));
 
         let scene =
             presenter
@@ -3174,6 +3303,28 @@ pub trait AnyView {
     fn on_blur(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
     fn keymap_context(&self, cx: &AppContext) -> keymap::Context;
     fn debug_json(&self, cx: &AppContext) -> serde_json::Value;
+
+    fn text_for_range(&self, range: Range<usize>, cx: &AppContext) -> Option<String>;
+    fn selected_text_range(&self, cx: &AppContext) -> Option<Range<usize>>;
+    fn marked_text_range(&self, cx: &AppContext) -> Option<Range<usize>>;
+    fn unmark_text(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
+    fn replace_text_in_range(
+        &mut self,
+        range: Option<Range<usize>>,
+        text: &str,
+        cx: &mut MutableAppContext,
+        window_id: usize,
+        view_id: usize,
+    );
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range: Option<Range<usize>>,
+        new_text: &str,
+        new_selected_range: Option<Range<usize>>,
+        cx: &mut MutableAppContext,
+        window_id: usize,
+        view_id: usize,
+    );
 }
 
 impl<T> AnyView for T
@@ -3223,6 +3374,48 @@ where
 
     fn debug_json(&self, cx: &AppContext) -> serde_json::Value {
         View::debug_json(self, cx)
+    }
+
+    fn text_for_range(&self, range: Range<usize>, cx: &AppContext) -> Option<String> {
+        View::text_for_range(self, range, cx)
+    }
+
+    fn selected_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
+        View::selected_text_range(self, cx)
+    }
+
+    fn marked_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
+        View::marked_text_range(self, cx)
+    }
+
+    fn unmark_text(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize) {
+        let mut cx = ViewContext::new(cx, window_id, view_id);
+        View::unmark_text(self, &mut cx)
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        range: Option<Range<usize>>,
+        text: &str,
+        cx: &mut MutableAppContext,
+        window_id: usize,
+        view_id: usize,
+    ) {
+        let mut cx = ViewContext::new(cx, window_id, view_id);
+        View::replace_text_in_range(self, range, text, &mut cx)
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range: Option<Range<usize>>,
+        new_text: &str,
+        new_selected_range: Option<Range<usize>>,
+        cx: &mut MutableAppContext,
+        window_id: usize,
+        view_id: usize,
+    ) {
+        let mut cx = ViewContext::new(cx, window_id, view_id);
+        View::replace_and_mark_text_in_range(self, range, new_text, new_selected_range, &mut cx)
     }
 }
 
@@ -3487,6 +3680,10 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn platform(&self) -> Arc<dyn Platform> {
         self.app.platform()
+    }
+
+    pub fn show_character_palette(&self) {
+        self.app.show_character_palette(self.window_id);
     }
 
     pub fn prompt(

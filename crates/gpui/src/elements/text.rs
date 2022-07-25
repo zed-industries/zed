@@ -6,6 +6,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{ToJson, Value},
+    presenter::MeasurementContext,
     text_layout::{Line, RunStyle, ShapedBoundary},
     DebugContext, Element, Event, EventContext, FontCache, LayoutContext, PaintContext,
     SizeConstraint, TextLayoutCache,
@@ -63,7 +64,7 @@ impl Element for Text {
         cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
         // Convert the string and highlight ranges into an iterator of highlighted chunks.
-        
+
         let mut offset = 0;
         let mut highlight_ranges = self.highlights.iter().peekable();
         let chunks = std::iter::from_fn(|| {
@@ -81,7 +82,8 @@ impl Element for Text {
                         "Highlight out of text range. Text len: {}, Highlight range: {}..{}",
                         self.text.len(),
                         range.start,
-                        range.end);
+                        range.end
+                    );
                     result = None;
                 }
             } else if offset < self.text.len() {
@@ -186,6 +188,18 @@ impl Element for Text {
         _: &mut EventContext,
     ) -> bool {
         false
+    }
+
+    fn rect_for_text_range(
+        &self,
+        _: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &MeasurementContext,
+    ) -> Option<RectF> {
+        None
     }
 
     fn debug(

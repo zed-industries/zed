@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use crate::{
     fonts::TextStyle,
     geometry::{
@@ -5,6 +7,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{ToJson, Value},
+    presenter::MeasurementContext,
     text_layout::{Line, RunStyle},
     DebugContext, Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
@@ -172,6 +175,18 @@ impl Element for Label {
         _: &mut EventContext,
     ) -> bool {
         false
+    }
+
+    fn rect_for_text_range(
+        &self,
+        _: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &MeasurementContext,
+    ) -> Option<RectF> {
+        None
     }
 
     fn debug(

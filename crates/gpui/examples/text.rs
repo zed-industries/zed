@@ -2,11 +2,12 @@ use gpui::{
     color::Color,
     fonts::{Properties, Weight},
     text_layout::RunStyle,
-    DebugContext, Element as _, Quad,
+    DebugContext, Element as _, MeasurementContext, Quad,
 };
 use log::LevelFilter;
 use pathfinder_geometry::rect::RectF;
 use simplelog::SimpleLogger;
+use std::ops::Range;
 
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
@@ -110,6 +111,18 @@ impl gpui::Element for TextElement {
         _: &mut gpui::EventContext,
     ) -> bool {
         false
+    }
+
+    fn rect_for_text_range(
+        &self,
+        _: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &MeasurementContext,
+    ) -> Option<RectF> {
+        None
     }
 
     fn debug(

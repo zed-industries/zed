@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, ops::Range};
 
 use serde_json::json;
 
@@ -8,6 +8,7 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
+    presenter::MeasurementContext,
     scene, DebugContext, Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
 
@@ -82,6 +83,18 @@ impl Element for Svg {
         _: &mut EventContext,
     ) -> bool {
         false
+    }
+
+    fn rect_for_text_range(
+        &self,
+        _: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &MeasurementContext,
+    ) -> Option<RectF> {
+        None
     }
 
     fn debug(

@@ -247,11 +247,12 @@ fn test_text_summary_for_range() {
     assert_eq!(
         buffer.text_summary_for_range::<TextSummary, _>(1..3),
         TextSummary {
-            bytes: 2,
+            len: 2,
+            len_utf16: OffsetUtf16(2),
             lines: Point::new(1, 0),
-            lines_utf16: PointUtf16::new(1, 0),
             first_line_chars: 1,
             last_line_chars: 0,
+            last_line_len_utf16: 0,
             longest_row: 0,
             longest_row_chars: 1,
         }
@@ -259,11 +260,12 @@ fn test_text_summary_for_range() {
     assert_eq!(
         buffer.text_summary_for_range::<TextSummary, _>(1..12),
         TextSummary {
-            bytes: 11,
+            len: 11,
+            len_utf16: OffsetUtf16(11),
             lines: Point::new(3, 0),
-            lines_utf16: PointUtf16::new(3, 0),
             first_line_chars: 1,
             last_line_chars: 0,
+            last_line_len_utf16: 0,
             longest_row: 2,
             longest_row_chars: 4,
         }
@@ -271,11 +273,12 @@ fn test_text_summary_for_range() {
     assert_eq!(
         buffer.text_summary_for_range::<TextSummary, _>(0..20),
         TextSummary {
-            bytes: 20,
+            len: 20,
+            len_utf16: OffsetUtf16(20),
             lines: Point::new(4, 1),
-            lines_utf16: PointUtf16::new(4, 1),
             first_line_chars: 2,
             last_line_chars: 1,
+            last_line_len_utf16: 1,
             longest_row: 3,
             longest_row_chars: 6,
         }
@@ -283,11 +286,12 @@ fn test_text_summary_for_range() {
     assert_eq!(
         buffer.text_summary_for_range::<TextSummary, _>(0..22),
         TextSummary {
-            bytes: 22,
+            len: 22,
+            len_utf16: OffsetUtf16(22),
             lines: Point::new(4, 3),
-            lines_utf16: PointUtf16::new(4, 3),
             first_line_chars: 2,
             last_line_chars: 3,
+            last_line_len_utf16: 3,
             longest_row: 3,
             longest_row_chars: 6,
         }
@@ -295,11 +299,12 @@ fn test_text_summary_for_range() {
     assert_eq!(
         buffer.text_summary_for_range::<TextSummary, _>(7..22),
         TextSummary {
-            bytes: 15,
+            len: 15,
+            len_utf16: OffsetUtf16(15),
             lines: Point::new(2, 3),
-            lines_utf16: PointUtf16::new(2, 3),
             first_line_chars: 4,
             last_line_chars: 3,
+            last_line_len_utf16: 3,
             longest_row: 1,
             longest_row_chars: 6,
         }
@@ -520,7 +525,7 @@ fn test_history() {
     let mut now = Instant::now();
     let mut buffer = Buffer::new(0, 0, "123456".into());
 
-    buffer.start_transaction_at(now);
+    let transaction_1 = buffer.start_transaction_at(now).unwrap();
     buffer.edit([(2..4, "cd")]);
     buffer.end_transaction_at(now);
     assert_eq!(buffer.text(), "12cd56");
@@ -559,7 +564,9 @@ fn test_history() {
     assert_eq!(buffer.text(), "12cde6");
 
     // Redo stack gets cleared after performing an edit.
+    buffer.start_transaction_at(now);
     buffer.edit([(0..0, "X")]);
+    buffer.end_transaction_at(now);
     assert_eq!(buffer.text(), "X12cde6");
     buffer.redo();
     assert_eq!(buffer.text(), "X12cde6");
@@ -567,6 +574,16 @@ fn test_history() {
     assert_eq!(buffer.text(), "12cde6");
     buffer.undo();
     assert_eq!(buffer.text(), "123456");
+
+    // Transactions can be grouped manually.
+    buffer.redo();
+    buffer.redo();
+    assert_eq!(buffer.text(), "X12cde6");
+    buffer.group_until_transaction(transaction_1);
+    buffer.undo();
+    assert_eq!(buffer.text(), "123456");
+    buffer.redo();
+    assert_eq!(buffer.text(), "X12cde6");
 }
 
 #[test]

@@ -1,10 +1,10 @@
-use super::{ExcerptId, MultiBufferSnapshot, ToOffset, ToPoint};
+use super::{ExcerptId, MultiBufferSnapshot, ToOffset, ToOffsetUtf16, ToPoint};
 use std::{
     cmp::Ordering,
     ops::{Range, Sub},
 };
 use sum_tree::Bias;
-use text::{rope::TextDimension, Point};
+use text::{rope::TextDimension, OffsetUtf16, Point};
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
 pub struct Anchor {
@@ -85,6 +85,12 @@ impl Anchor {
 
 impl ToOffset for Anchor {
     fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> usize {
+        self.summary(snapshot)
+    }
+}
+
+impl ToOffsetUtf16 for Anchor {
+    fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> OffsetUtf16 {
         self.summary(snapshot)
     }
 }
