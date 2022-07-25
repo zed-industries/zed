@@ -1224,8 +1224,10 @@ impl Workspace {
         }
     }
 
-    pub fn modal(&self) -> Option<&AnyViewHandle> {
-        self.modal.as_ref()
+    pub fn modal<V: 'static + View>(&self) -> Option<ViewHandle<V>> {
+        self.modal
+            .as_ref()
+            .and_then(|modal| modal.clone().downcast::<V>())
     }
 
     pub fn dismiss_modal(&mut self, cx: &mut ViewContext<Self>) {

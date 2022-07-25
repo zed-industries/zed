@@ -317,15 +317,7 @@ mod tests {
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
         cx.dispatch_action(window_id, Toggle);
 
-        let finder = cx.read(|cx| {
-            workspace
-                .read(cx)
-                .modal()
-                .cloned()
-                .unwrap()
-                .downcast::<FileFinder>()
-                .unwrap()
-        });
+        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
         finder
             .update(cx, |finder, cx| {
                 finder.update_matches("bna".to_string(), cx)

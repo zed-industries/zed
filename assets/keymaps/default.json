@@ -188,7 +188,7 @@
             "alt-down": "editor::SelectSmallerSyntaxNode",
             "cmd-u": "editor::UndoSelection",
             "cmd-shift-u": "editor::RedoSelection",
-            "f8": "editor::GoToNextDiagnostic",
+            "f8": "editor::GoToDiagnostic",
             "shift-f8": "editor::GoToPrevDiagnostic",
             "f2": "editor::Rename",
             "f12": "editor::GoToDefinition",

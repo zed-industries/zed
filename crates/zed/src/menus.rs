@@ -285,7 +285,7 @@ pub fn menus() -> Vec<Menu<'static>> {
                 MenuItem::Separator,
                 MenuItem::Action {
                     name: "Next Problem",
-                    action: Box::new(editor::GoToNextDiagnostic),
+                    action: Box::new(editor::GoToDiagnostic),
                 },
                 MenuItem::Action {
                     name: "Previous Problem",

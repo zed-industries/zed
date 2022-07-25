@@ -81,7 +81,7 @@ pub struct TerminalSettings {
     pub working_directory: Option<WorkingDirectory>,
     pub font_size: Option<f32>,
     pub font_family: Option<String>,
-    pub env: Option<Vec<(String, String)>>,
+    pub env: Option<HashMap<String, String>>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]

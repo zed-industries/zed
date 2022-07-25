@@ -88,15 +88,30 @@ export function createTheme(
       hovered: withOpacity(sample(ramps.red, 0.5), 0.2),
       active: withOpacity(sample(ramps.red, 0.5), 0.25),
     },
+    on500Error: {
+      base: sample(ramps.red, 0.05),
+      hovered: sample(ramps.red, 0.1),
+      active: sample(ramps.red, 0.15),
+    },
     warning: {
       base: withOpacity(sample(ramps.yellow, 0.5), 0.15),
       hovered: withOpacity(sample(ramps.yellow, 0.5), 0.2),
       active: withOpacity(sample(ramps.yellow, 0.5), 0.25),
     },
+    on500Warning: {
+      base: sample(ramps.yellow, 0.05),
+      hovered: sample(ramps.yellow, 0.1),
+      active: sample(ramps.yellow, 0.15),
+    },
     info: {
       base: withOpacity(sample(ramps.blue, 0.5), 0.15),
       hovered: withOpacity(sample(ramps.blue, 0.5), 0.2),
       active: withOpacity(sample(ramps.blue, 0.5), 0.25),
+    },
+    on500Info: {
+      base: sample(ramps.blue, 0.05),
+      hovered: sample(ramps.blue, 0.1),
+      active: sample(ramps.blue, 0.15),
     },
   };
 
@@ -106,10 +121,10 @@ export function createTheme(
     muted: sample(ramps.neutral, isLight ? 1 : 3),
     active: sample(ramps.neutral, isLight ? 4 : 3),
     onMedia: withOpacity(darkest, 0.1),
-    ok: withOpacity(sample(ramps.green, 0.5), 0.15),
-    error: withOpacity(sample(ramps.red, 0.5), 0.15),
-    warning: withOpacity(sample(ramps.yellow, 0.5), 0.15),
-    info: withOpacity(sample(ramps.blue, 0.5), 0.15),
+    ok: sample(ramps.green, 0.3),
+    error: sample(ramps.red, 0.3),
+    warning: sample(ramps.yellow, 0.3),
+    info: sample(ramps.blue, 0.3),
   };
 
   const textColor = {

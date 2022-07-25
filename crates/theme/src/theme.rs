@@ -630,6 +630,9 @@ impl<'de> Deserialize<'de> for SyntaxTheme {
 #[derive(Clone, Deserialize, Default)]
 pub struct HoverPopover {
     pub container: ContainerStyle,
+    pub info_container: ContainerStyle,
+    pub warning_container: ContainerStyle,
+    pub error_container: ContainerStyle,
     pub block_style: ContainerStyle,
     pub prose: TextStyle,
     pub highlight: Color,

@@ -1,15 +1,6 @@
 use alacritty_terminal::term::TermMode;
 use gpui::keymap::Keystroke;
 
-/*
-Connection events still to do:
-- Reporting mouse events correctly.
-- Reporting scrolls
-- Correctly bracketing a paste
-- Storing changed colors
-- Focus change sequence
-*/
-
 #[derive(Debug)]
 pub enum Modifiers {
     None,
@@ -311,6 +302,20 @@ mod test {
 
         assert_eq!(to_esc_str(&pageup, &any), Some("\x1b[5~".to_string()));
         assert_eq!(to_esc_str(&pagedown, &any), Some("\x1b[6~".to_string()));
+    }
+
+    #[test]
+    fn test_multi_char_fallthrough() {
+        let ks = Keystroke {
+            ctrl: false,
+            alt: false,
+            shift: false,
+            cmd: false,
+
+            key: "🖖🏻".to_string(), //2 char string
+        };
+
+        assert_eq!(to_esc_str(&ks, &TermMode::NONE), Some("🖖🏻".to_string()));
     }
 
     #[test]

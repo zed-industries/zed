@@ -83,9 +83,6 @@ pub struct SelectNext {
 }
 
 #[derive(Clone, PartialEq)]
-pub struct GoToDiagnostic(pub Direction);
-
-#[derive(Clone, PartialEq)]
 pub struct Scroll(pub Vector2F);
 
 #[derive(Clone, PartialEq)]
@@ -135,7 +132,7 @@ actions!(
         Backspace,
         Delete,
         Newline,
-        GoToNextDiagnostic,
+        GoToDiagnostic,
         GoToPrevDiagnostic,
         Indent,
         Outdent,
@@ -297,7 +294,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::move_to_enclosing_bracket);
     cx.add_action(Editor::undo_selection);
     cx.add_action(Editor::redo_selection);
-    cx.add_action(Editor::go_to_next_diagnostic);
+    cx.add_action(Editor::go_to_diagnostic);
     cx.add_action(Editor::go_to_prev_diagnostic);
     cx.add_action(Editor::go_to_definition);
     cx.add_action(Editor::page_up);
@@ -4567,17 +4564,32 @@ impl Editor {
         self.selection_history.mode = SelectionHistoryMode::Normal;
     }
 
-    fn go_to_next_diagnostic(&mut self, _: &GoToNextDiagnostic, cx: &mut ViewContext<Self>) {
-        self.go_to_diagnostic(Direction::Next, cx)
+    fn go_to_diagnostic(&mut self, _: &GoToDiagnostic, cx: &mut ViewContext<Self>) {
+        self.go_to_diagnostic_impl(Direction::Next, cx)
     }
 
     fn go_to_prev_diagnostic(&mut self, _: &GoToPrevDiagnostic, cx: &mut ViewContext<Self>) {
-        self.go_to_diagnostic(Direction::Prev, cx)
+        self.go_to_diagnostic_impl(Direction::Prev, cx)
     }
 
-    pub fn go_to_diagnostic(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
+    pub fn go_to_diagnostic_impl(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selection = self.selections.newest::<usize>(cx);
+
+        // If there is an active Diagnostic Popover. Jump to it's diagnostic instead.
+        if direction == Direction::Next {
+            if let Some(popover) = self.hover_state.diagnostic_popover.as_ref() {
+                let (group_id, jump_to) = popover.activation_info();
+                self.activate_diagnostics(group_id, cx);
+                self.change_selections(Some(Autoscroll::Center), cx, |s| {
+                    let mut new_selection = s.newest_anchor().clone();
+                    new_selection.collapse_to(jump_to, SelectionGoal::None);
+                    s.select_anchors(vec![new_selection.clone()]);
+                });
+                return;
+            }
+        }
+
         let mut active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
             active_diagnostics
                 .primary_range
