@@ -253,6 +253,8 @@ unsafe fn build_classes() {
             attributed_substring_for_proposed_range
                 as extern "C" fn(&Object, Sel, NSRange, *mut c_void) -> id,
         );
+
+        // Suppress beep on keystrokes with modifier keys.
         decl.add_method(
             sel!(doCommandBySelector:),
             do_command_by_selector as extern "C" fn(&Object, Sel, Sel),
@@ -1145,9 +1147,7 @@ extern "C" fn attributed_substring_for_proposed_range(
     .unwrap_or(nil)
 }
 
-extern "C" fn do_command_by_selector(_: &Object, _: Sel, _: Sel) {
-    //
-}
+extern "C" fn do_command_by_selector(_: &Object, _: Sel, _: Sel) {}
 
 async fn synthetic_drag(
     window_state: Weak<RefCell<WindowState>>,
