@@ -5739,6 +5739,17 @@ impl Editor {
         })
         .detach()
     }
+
+    fn marked_text_ranges<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> Option<impl 'a + Iterator<Item = Range<OffsetUtf16>>> {
+        let snapshot = self.buffer.read(cx).read(cx);
+        let (_, ranges) = self.text_highlights::<InputComposition>(cx)?;
+        Some(ranges.into_iter().map(move |range| {
+            range.start.to_offset_utf16(&snapshot)..range.end.to_offset_utf16(&snapshot)
+        }))
+    }
 }
 
 impl EditorSnapshot {
@@ -5922,11 +5933,8 @@ impl View for Editor {
     }
 
     fn marked_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
-        let range = self.text_highlights::<InputComposition>(cx)?.1.get(0)?;
-        let snapshot = self.buffer.read(cx).read(cx);
-        let range_utf16 =
-            range.start.to_offset_utf16(&snapshot)..range.end.to_offset_utf16(&snapshot);
-        Some(range_utf16.start.0..range_utf16.end.0)
+        let range = self.marked_text_ranges(cx)?.next()?;
+        Some(range.start.0..range.end.0)
     }
 
     fn unmark_text(&mut self, cx: &mut ViewContext<Self>) {
@@ -5946,9 +5954,32 @@ impl View for Editor {
         }
 
         self.transact(cx, |this, cx| {
-            if let Some(range) = range_utf16.or_else(|| this.marked_text_range(cx)) {
+            let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
+                let selected_range = this.selected_text_range(cx).unwrap();
+                let start_delta = range_utf16.start as isize - selected_range.start as isize;
+                let end_delta = range_utf16.end as isize - selected_range.end as isize;
+                Some(
+                    this.selections
+                        .all::<OffsetUtf16>(cx)
+                        .into_iter()
+                        .map(|mut selection| {
+                            selection.start.0 =
+                                (selection.start.0 as isize).saturating_add(start_delta) as usize;
+                            selection.end.0 =
+                                (selection.end.0 as isize).saturating_add(end_delta) as usize;
+                            selection.start..selection.end
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            } else if let Some(marked_ranges) = this.marked_text_ranges(cx) {
+                Some(marked_ranges.collect())
+            } else {
+                None
+            };
+
+            if let Some(new_selected_ranges) = new_selected_ranges {
                 this.change_selections(None, cx, |selections| {
-                    selections.select_ranges([OffsetUtf16(range.start)..OffsetUtf16(range.end)])
+                    selections.select_ranges(new_selected_ranges)
                 });
             }
             this.handle_input(text, cx);
@@ -5976,35 +6007,56 @@ impl View for Editor {
         }
 
         let transaction = self.transact(cx, |this, cx| {
-            let range_to_replace = if let Some(mut marked_range) = this.marked_text_range(cx) {
+            let ranges_to_replace = if let Some(marked_ranges) = this.marked_text_ranges(cx) {
+                let mut marked_ranges = marked_ranges.collect::<Vec<_>>();
                 if let Some(relative_range_utf16) = range_utf16.as_ref() {
-                    marked_range.end = marked_range.start + relative_range_utf16.end;
-                    marked_range.start += relative_range_utf16.start;
+                    for marked_range in &mut marked_ranges {
+                        marked_range.end.0 = marked_range.start.0 + relative_range_utf16.end;
+                        marked_range.start.0 += relative_range_utf16.start;
+                    }
                 }
-                Some(marked_range)
+                Some(marked_ranges)
             } else if let Some(range_utf16) = range_utf16 {
-                Some(range_utf16)
+                let selected_range = this.selected_text_range(cx).unwrap();
+                let start_delta = range_utf16.start as isize - selected_range.start as isize;
+                let end_delta = range_utf16.end as isize - selected_range.end as isize;
+                Some(
+                    this.selections
+                        .all::<OffsetUtf16>(cx)
+                        .into_iter()
+                        .map(|mut selection| {
+                            selection.start.0 =
+                                (selection.start.0 as isize).saturating_add(start_delta) as usize;
+                            selection.end.0 =
+                                (selection.end.0 as isize).saturating_add(end_delta) as usize;
+                            selection.start..selection.end
+                        })
+                        .collect::<Vec<_>>(),
+                )
             } else {
                 None
             };
 
-            if let Some(range) = range_to_replace {
-                this.change_selections(None, cx, |s| {
-                    s.select_ranges([OffsetUtf16(range.start)..OffsetUtf16(range.end)])
-                });
+            if let Some(ranges) = ranges_to_replace {
+                this.change_selections(None, cx, |s| s.select_ranges(ranges));
             }
 
-            let selection = this.selections.newest_anchor();
-            let marked_range = {
+            let marked_ranges = {
                 let snapshot = this.buffer.read(cx).read(cx);
-                selection.start.bias_left(&*snapshot)..selection.end.bias_right(&*snapshot)
+                this.selections
+                    .disjoint_anchors()
+                    .into_iter()
+                    .map(|selection| {
+                        selection.start.bias_left(&*snapshot)..selection.end.bias_right(&*snapshot)
+                    })
+                    .collect::<Vec<_>>()
             };
 
             if text.is_empty() {
                 this.unmark_text(cx);
             } else {
                 this.highlight_text::<InputComposition>(
-                    vec![marked_range.clone()],
+                    marked_ranges.clone(),
                     this.style(cx).composition_mark,
                     cx,
                 );
@@ -6012,16 +6064,20 @@ impl View for Editor {
 
             this.handle_input(text, cx);
 
-            if let Some(mut new_selected_range) = new_selected_range_utf16 {
+            if let Some(new_selected_range) = new_selected_range_utf16 {
                 let snapshot = this.buffer.read(cx).read(cx);
-                let insertion_start = marked_range.start.to_offset_utf16(&snapshot).0;
-                new_selected_range.start += insertion_start;
-                new_selected_range.end += insertion_start;
+                let new_selected_ranges = marked_ranges
+                    .into_iter()
+                    .map(|marked_range| {
+                        let insertion_start = marked_range.start.to_offset_utf16(&snapshot).0;
+                        OffsetUtf16(new_selected_range.start + insertion_start)
+                            ..OffsetUtf16(new_selected_range.end + insertion_start)
+                    })
+                    .collect::<Vec<_>>();
+
                 drop(snapshot);
                 this.change_selections(None, cx, |selections| {
-                    selections
-                        .select_ranges([OffsetUtf16(new_selected_range.start)
-                            ..OffsetUtf16(new_selected_range.end)])
+                    selections.select_ranges(new_selected_ranges)
                 });
             }
         });
