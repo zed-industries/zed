@@ -1888,7 +1888,7 @@ impl MultiBufferSnapshot {
                 .offset_to_offset_utf16(excerpt_start_offset + overshoot);
             *start_offset_utf16 + (buffer_offset_utf16 - excerpt_start_offset_utf16)
         } else {
-            OffsetUtf16(self.excerpts.summary().text.len_utf16)
+            self.excerpts.summary().text.len_utf16
         }
     }
 
@@ -2935,7 +2935,7 @@ impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for Option<&'a
 
 impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for OffsetUtf16 {
     fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
-        self.0 += summary.text.len_utf16;
+        *self += summary.text.len_utf16;
     }
 }
 

@@ -166,7 +166,7 @@ impl Rope {
 
     pub fn offset_to_offset_utf16(&self, offset: usize) -> OffsetUtf16 {
         if offset >= self.summary().len {
-            return OffsetUtf16(self.summary().len_utf16);
+            return self.summary().len_utf16;
         }
         let mut cursor = self.chunks.cursor::<(usize, OffsetUtf16)>();
         cursor.seek(&offset, Bias::Left, &());
@@ -178,7 +178,7 @@ impl Rope {
     }
 
     pub fn offset_utf16_to_offset(&self, offset: OffsetUtf16) -> usize {
-        if offset.0 >= self.summary().len_utf16 {
+        if offset >= self.summary().len_utf16 {
             return self.summary().len;
         }
         let mut cursor = self.chunks.cursor::<(OffsetUtf16, usize)>();
@@ -288,6 +288,17 @@ impl Rope {
             offset
         } else {
             self.summary().len
+        }
+    }
+
+    pub fn clip_offset_utf16(&self, offset: OffsetUtf16, bias: Bias) -> OffsetUtf16 {
+        let mut cursor = self.chunks.cursor::<OffsetUtf16>();
+        cursor.seek(&offset, Bias::Right, &());
+        if let Some(chunk) = cursor.item() {
+            let overshoot = offset - cursor.start();
+            *cursor.start() + chunk.clip_offset_utf16(overshoot, bias)
+        } else {
+            self.summary().len_utf16
         }
     }
 
@@ -765,6 +776,18 @@ impl Chunk {
         }
         unreachable!()
     }
+
+    fn clip_offset_utf16(&self, target: OffsetUtf16, bias: Bias) -> OffsetUtf16 {
+        let mut code_units = self.0.encode_utf16();
+        let mut offset = code_units.by_ref().take(target.0 as usize).count();
+        if char::decode_utf16(code_units).next().transpose().is_err() {
+            match bias {
+                Bias::Left => offset -= 1,
+                Bias::Right => offset += 1,
+            }
+        }
+        OffsetUtf16(offset)
+    }
 }
 
 impl sum_tree::Item for Chunk {
@@ -802,7 +825,7 @@ impl sum_tree::Summary for ChunkSummary {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TextSummary {
     pub len: usize,
-    pub len_utf16: usize,
+    pub len_utf16: OffsetUtf16,
     pub lines: Point,
     pub lines_utf16: PointUtf16,
     pub first_line_chars: u32,
@@ -813,7 +836,7 @@ pub struct TextSummary {
 
 impl<'a> From<&'a str> for TextSummary {
     fn from(text: &'a str) -> Self {
-        let mut len_utf16 = 0;
+        let mut len_utf16 = OffsetUtf16(0);
         let mut lines = Point::new(0, 0);
         let mut lines_utf16 = PointUtf16::new(0, 0);
         let mut first_line_chars = 0;
@@ -821,7 +844,7 @@ impl<'a> From<&'a str> for TextSummary {
         let mut longest_row = 0;
         let mut longest_row_chars = 0;
         for c in text.chars() {
-            len_utf16 += c.len_utf16();
+            len_utf16.0 += c.len_utf16();
 
             if c == '\n' {
                 lines += Point::new(1, 0);
@@ -961,13 +984,13 @@ impl TextDimension for usize {
 
 impl<'a> sum_tree::Dimension<'a, ChunkSummary> for OffsetUtf16 {
     fn add_summary(&mut self, summary: &'a ChunkSummary, _: &()) {
-        self.0 += summary.text.len_utf16;
+        *self += summary.text.len_utf16;
     }
 }
 
 impl TextDimension for OffsetUtf16 {
     fn from_text_summary(summary: &TextSummary) -> Self {
-        Self(summary.len_utf16)
+        summary.len_utf16
     }
 
     fn add_assign(&mut self, other: &Self) {
@@ -1075,6 +1098,19 @@ mod tests {
             rope.clip_point_utf16(PointUtf16::new(0, 3), Bias::Right),
             PointUtf16::new(0, 2)
         );
+
+        assert_eq!(
+            rope.clip_offset_utf16(OffsetUtf16(1), Bias::Left),
+            OffsetUtf16(0)
+        );
+        assert_eq!(
+            rope.clip_offset_utf16(OffsetUtf16(1), Bias::Right),
+            OffsetUtf16(2)
+        );
+        assert_eq!(
+            rope.clip_offset_utf16(OffsetUtf16(3), Bias::Right),
+            OffsetUtf16(2)
+        );
     }
 
     #[gpui::test(iterations = 100)]
@@ -1174,8 +1210,16 @@ mod tests {
                 offset_utf16.0 += ch.len_utf16();
             }
 
+            let mut offset_utf16 = OffsetUtf16(0);
             let mut point_utf16 = PointUtf16::zero();
             for unit in expected.encode_utf16() {
+                let left_offset = actual.clip_offset_utf16(offset_utf16, Bias::Left);
+                let right_offset = actual.clip_offset_utf16(offset_utf16, Bias::Right);
+                assert!(right_offset >= left_offset);
+                // Ensure translating UTF-16 offsets to UTF-8 offsets doesn't panic.
+                actual.offset_utf16_to_offset(left_offset);
+                actual.offset_utf16_to_offset(right_offset);
+
                 let left_point = actual.clip_point_utf16(point_utf16, Bias::Left);
                 let right_point = actual.clip_point_utf16(point_utf16, Bias::Right);
                 assert!(right_point >= left_point);
@@ -1183,6 +1227,7 @@ mod tests {
                 actual.point_utf16_to_offset(left_point);
                 actual.point_utf16_to_offset(right_point);
 
+                offset_utf16.0 += 1;
                 if unit == b'\n' as u16 {
                     point_utf16 += PointUtf16::new(1, 0);
                 } else {
