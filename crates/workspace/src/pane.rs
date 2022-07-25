@@ -13,7 +13,7 @@ use gpui::{
     },
     impl_actions, impl_internal_actions,
     platform::{CursorStyle, NavigationDirection},
-    AppContext, AsyncAppContext, Entity, ModelHandle, MouseButton, MouseButtonEvent,
+    AppContext, AsyncAppContext, Entity, EventContext, ModelHandle, MouseButton, MouseButtonEvent,
     MutableAppContext, PromptLevel, Quad, RenderContext, Task, View, ViewContext, ViewHandle,
     WeakViewHandle,
 };
@@ -875,8 +875,19 @@ impl Pane {
             let is_pane_active = self.is_active;
             let mut row = Flex::row().scrollable::<Tabs, _>(1, autoscroll, cx);
             for (ix, (item, detail)) in self.items.iter().zip(self.tab_details(cx)).enumerate() {
+                let item_id = item.id();
                 let detail = if detail == 0 { None } else { Some(detail) };
                 let is_tab_active = ix == self.active_item_index;
+
+                let close_tab_callback = {
+                    let pane = pane.clone();
+                    move |_, cx: &mut EventContext| {
+                        cx.dispatch_action(CloseItem {
+                            item_id,
+                            pane: pane.clone(),
+                        })
+                    }
+                };
 
                 row.add_child({
                     let mut tab_style = match (is_pane_active, is_tab_active) {
@@ -943,7 +954,6 @@ impl Pane {
                                 .with_child(
                                     Align::new(
                                         ConstrainedBox::new(if mouse_state.hovered {
-                                            let item_id = item.id();
                                             enum TabCloseButton {}
                                             let icon = Svg::new("icons/x_mark_thin_8.svg");
                                             MouseEventHandler::new::<TabCloseButton, _, _>(
@@ -961,15 +971,11 @@ impl Pane {
                                             )
                                             .with_padding(Padding::uniform(4.))
                                             .with_cursor_style(CursorStyle::PointingHand)
-                                            .on_click(MouseButton::Left, {
-                                                let pane = pane.clone();
-                                                move |_, cx| {
-                                                    cx.dispatch_action(CloseItem {
-                                                        item_id,
-                                                        pane: pane.clone(),
-                                                    })
-                                                }
-                                            })
+                                            .on_click(MouseButton::Left, close_tab_callback.clone())
+                                            .on_click(
+                                                MouseButton::Middle,
+                                                close_tab_callback.clone(),
+                                            )
                                             .named("close-tab-icon")
                                         } else {
                                             Empty::new().boxed()
@@ -992,6 +998,7 @@ impl Pane {
                     .on_down(MouseButton::Left, move |_, cx| {
                         cx.dispatch_action(ActivateItem(ix));
                     })
+                    .on_click(MouseButton::Middle, close_tab_callback)
                     .boxed()
                 })
             }
