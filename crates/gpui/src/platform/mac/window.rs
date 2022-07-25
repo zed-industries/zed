@@ -13,8 +13,8 @@ use crate::{
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        CGPoint, NSApplication, NSBackingStoreBuffered, NSModalResponse, NSScreen, NSView,
-        NSViewHeightSizable, NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowStyleMask,
+        CGPoint, NSApplication, NSBackingStoreBuffered, NSScreen, NSView, NSViewHeightSizable,
+        NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowStyleMask,
     },
     base::{id, nil},
     foundation::{
@@ -327,14 +327,10 @@ impl Window {
                 native_window.setFrame_display_(screen.visibleFrame(), YES);
             }
 
-            let device = if let Some(device) = metal::Device::system_default() {
+            let device: metal::Device = if let Some(device) = metal::Device::system_default() {
                 device
             } else {
-                let alert: id = msg_send![class!(NSAlert), alloc];
-                let _: () = msg_send![alert, init];
-                let _: () = msg_send![alert, setAlertStyle: 2];
-                let _: () = msg_send![alert, setMessageText: ns_string("Unable to access a compatible graphics device")];
-                let _: NSModalResponse = msg_send![alert, runModal];
+                log::error!("unable to access a compatible graphics device");
                 std::process::exit(1);
             };
 
