@@ -216,7 +216,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     let mut shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
     let cmd = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
 
-    let chars_ignoring_modifiers =
+    let mut chars_ignoring_modifiers =
         CStr::from_ptr(native_event.charactersIgnoringModifiers().UTF8String() as *mut c_char)
             .to_str()
             .unwrap();
@@ -249,14 +249,18 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         Some(NSF11FunctionKey) => "f11",
         Some(NSF12FunctionKey) => "f12",
         _ => {
-            let chars_ignoring_modifiers_and_shift =
-                chars_for_modified_key(native_event.keyCode(), CGEventFlags::empty());
-            let chars_with_cmd =
-                chars_for_modified_key(native_event.keyCode(), CGEventFlags::CGEventFlagCommand);
+            let mut chars_ignoring_modifiers_and_shift =
+                chars_for_modified_key(native_event.keyCode(), false, false);
+
+            // Honor ⌘ when Dvorak-QWERTY is used.
+            let chars_with_cmd = chars_for_modified_key(native_event.keyCode(), true, false);
             if cmd && chars_ignoring_modifiers_and_shift != chars_with_cmd {
-                // Honor ⌘ when Dvorak-QWERTY is used.
-                chars_with_cmd
-            } else if shift {
+                chars_ignoring_modifiers =
+                    chars_for_modified_key(native_event.keyCode(), true, shift);
+                chars_ignoring_modifiers_and_shift = chars_with_cmd;
+            }
+
+            if shift {
                 if chars_ignoring_modifiers_and_shift
                     == chars_ignoring_modifiers.to_ascii_lowercase()
                 {
@@ -282,7 +286,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     }
 }
 
-fn chars_for_modified_key<'a>(code: CGKeyCode, flags: CGEventFlags) -> &'a str {
+fn chars_for_modified_key<'a>(code: CGKeyCode, cmd: bool, shift: bool) -> &'a str {
     // Ideally, we would use `[NSEvent charactersByApplyingModifiers]` but that
     // always returns an empty string with certain keyboards, e.g. Japanese. Synthesizing
     // an event with the given flags instead lets us access `characters`, which always
@@ -293,7 +297,15 @@ fn chars_for_modified_key<'a>(code: CGKeyCode, flags: CGEventFlags) -> &'a str {
         true,
     )
     .unwrap();
+    let mut flags = CGEventFlags::empty();
+    if cmd {
+        flags |= CGEventFlags::CGEventFlagCommand;
+    }
+    if shift {
+        flags |= CGEventFlags::CGEventFlagShift;
+    }
     event.set_flags(flags);
+
     let event: id = unsafe { msg_send![class!(NSEvent), eventWithCGEvent: event] };
     unsafe {
         CStr::from_ptr(event.characters().UTF8String())
