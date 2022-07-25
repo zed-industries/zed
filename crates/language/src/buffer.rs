@@ -1076,6 +1076,10 @@ impl Buffer {
         self.text.finalize_last_transaction()
     }
 
+    pub fn group_until_transaction(&mut self, transaction_id: TransactionId) {
+        self.text.group_until_transaction(transaction_id);
+    }
+
     pub fn forget_transaction(&mut self, transaction_id: TransactionId) {
         self.text.forget_transaction(transaction_id);
     }

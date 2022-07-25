@@ -406,6 +406,7 @@ pub struct Editor {
     autoclose_stack: InvalidationStack<BracketPairState>,
     snippet_stack: InvalidationStack<SnippetState>,
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
+    ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
@@ -993,6 +994,7 @@ impl Editor {
             autoclose_stack: Default::default(),
             snippet_stack: Default::default(),
             select_larger_syntax_node_stack: Vec::new(),
+            ime_transaction: Default::default(),
             active_diagnostics: None,
             soft_wrap_mode_override: None,
             get_field_editor_theme,
@@ -3616,6 +3618,7 @@ impl Editor {
                 });
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
+            self.unmark_text(cx);
             cx.emit(Event::Edited);
         }
     }
@@ -3629,6 +3632,7 @@ impl Editor {
                 });
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
+            self.unmark_text(cx);
             cx.emit(Event::Edited);
         }
     }
@@ -5142,10 +5146,10 @@ impl Editor {
         &mut self,
         cx: &mut ViewContext<Self>,
         update: impl FnOnce(&mut Self, &mut ViewContext<Self>),
-    ) {
+    ) -> Option<TransactionId> {
         self.start_transaction_at(Instant::now(), cx);
         update(self, cx);
-        self.end_transaction_at(Instant::now(), cx);
+        self.end_transaction_at(Instant::now(), cx)
     }
 
     fn start_transaction_at(&mut self, now: Instant, cx: &mut ViewContext<Self>) {
@@ -5159,7 +5163,11 @@ impl Editor {
         }
     }
 
-    fn end_transaction_at(&mut self, now: Instant, cx: &mut ViewContext<Self>) {
+    fn end_transaction_at(
+        &mut self,
+        now: Instant,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<TransactionId> {
         if let Some(tx_id) = self
             .buffer
             .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
@@ -5171,6 +5179,9 @@ impl Editor {
             }
 
             cx.emit(Event::Edited);
+            Some(tx_id)
+        } else {
+            None
         }
     }
 
@@ -5908,6 +5919,7 @@ impl View for Editor {
 
     fn unmark_text(&mut self, cx: &mut ViewContext<Self>) {
         self.clear_text_highlights::<InputComposition>(cx);
+        self.ime_transaction.take();
     }
 
     fn replace_text_in_range(
@@ -5928,8 +5940,15 @@ impl View for Editor {
                 });
             }
             this.handle_input(text, cx);
-            this.unmark_text(cx);
         });
+
+        if let Some(transaction) = self.ime_transaction {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.group_until_transaction(transaction, cx);
+            });
+        }
+
+        self.unmark_text(cx);
     }
 
     fn replace_and_mark_text_in_range(
@@ -5944,7 +5963,7 @@ impl View for Editor {
             return;
         }
 
-        self.transact(cx, |this, cx| {
+        let transaction = self.transact(cx, |this, cx| {
             let range_to_replace = if let Some(mut marked_range) = this.marked_text_range(cx) {
                 if let Some(relative_range_utf16) = range_utf16.as_ref() {
                     marked_range.end = marked_range.start + relative_range_utf16.end;
@@ -5994,6 +6013,17 @@ impl View for Editor {
                 });
             }
         });
+
+        self.ime_transaction = self.ime_transaction.or(transaction);
+        if let Some(transaction) = self.ime_transaction {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.group_until_transaction(transaction, cx);
+            });
+        }
+
+        if self.text_highlights::<InputComposition>(cx).is_none() {
+            self.ime_transaction.take();
+        }
     }
 }
 
@@ -6588,6 +6618,53 @@ mod tests {
             editor.end_transaction_at(now, cx);
             editor.undo(&Undo, cx);
             assert_eq!(editor.text(cx), "12cde6");
+        });
+    }
+
+    #[gpui::test]
+    fn test_ime_composition(cx: &mut MutableAppContext) {
+        cx.set_global(Settings::test(cx));
+        let buffer = cx.add_model(|cx| {
+            let mut buffer = language::Buffer::new(0, "abcde", cx);
+            // Ensure automatic grouping doesn't occur.
+            buffer.set_group_interval(Duration::ZERO);
+            buffer
+        });
+
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        cx.add_window(Default::default(), |cx| {
+            let mut editor = build_editor(buffer.clone(), cx);
+
+            // Start a new IME composition.
+            editor.replace_and_mark_text_in_range(Some(0..1), "à", None, cx);
+            editor.replace_and_mark_text_in_range(Some(0..1), "á", None, cx);
+            editor.replace_and_mark_text_in_range(Some(0..1), "ä", None, cx);
+            assert_eq!(editor.text(cx), "äbcde");
+            assert_eq!(editor.marked_text_range(cx), Some(0..1));
+
+            // Finalize IME composition.
+            editor.replace_text_in_range(Some(0..1), "ā", cx);
+            assert_eq!(editor.text(cx), "ābcde");
+            assert_eq!(editor.marked_text_range(cx), None);
+
+            // IME composition edits are grouped and are undone/redone at once.
+            editor.undo(&Default::default(), cx);
+            assert_eq!(editor.text(cx), "abcde");
+            assert_eq!(editor.marked_text_range(cx), None);
+            editor.redo(&Default::default(), cx);
+            assert_eq!(editor.text(cx), "ābcde");
+            assert_eq!(editor.marked_text_range(cx), None);
+
+            // Start a new IME composition.
+            editor.replace_and_mark_text_in_range(Some(0..1), "à", None, cx);
+            assert_eq!(editor.marked_text_range(cx), Some(0..1));
+
+            // Undoing during an IME composition cancels it.
+            editor.undo(&Default::default(), cx);
+            assert_eq!(editor.text(cx), "ābcde");
+            assert_eq!(editor.marked_text_range(cx), None);
+
+            editor
         });
     }
 

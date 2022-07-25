@@ -191,22 +191,39 @@ impl History {
     }
 
     fn group(&mut self) -> Option<TransactionId> {
-        let mut new_len = self.undo_stack.len();
-        let mut entries = self.undo_stack.iter_mut();
-
+        let mut count = 0;
+        let mut entries = self.undo_stack.iter();
         if let Some(mut entry) = entries.next_back() {
             while let Some(prev_entry) = entries.next_back() {
                 if !prev_entry.suppress_grouping
                     && entry.first_edit_at - prev_entry.last_edit_at <= self.group_interval
                 {
                     entry = prev_entry;
-                    new_len -= 1;
+                    count += 1;
                 } else {
                     break;
                 }
             }
         }
+        self.group_trailing(count)
+    }
 
+    fn group_until(&mut self, transaction_id: TransactionId) {
+        let mut count = 0;
+        for entry in self.undo_stack.iter().rev() {
+            if entry.transaction_id() == transaction_id {
+                self.group_trailing(count);
+                break;
+            } else if entry.suppress_grouping {
+                break;
+            } else {
+                count += 1;
+            }
+        }
+    }
+
+    fn group_trailing(&mut self, n: usize) -> Option<TransactionId> {
+        let new_len = self.undo_stack.len() - n;
         let (entries_to_keep, entries_to_merge) = self.undo_stack.split_at_mut(new_len);
         if let Some(last_entry) = entries_to_keep.last_mut() {
             for entry in &*entries_to_merge {
@@ -1193,6 +1210,10 @@ impl Buffer {
 
     pub fn finalize_last_transaction(&mut self) -> Option<&Transaction> {
         self.history.finalize_last_transaction()
+    }
+
+    pub fn group_until_transaction(&mut self, transaction_id: TransactionId) {
+        self.history.group_until(transaction_id);
     }
 
     pub fn base_text(&self) -> &Arc<str> {

@@ -558,6 +558,20 @@ impl MultiBuffer {
         self.history.finalize_last_transaction();
     }
 
+    pub fn group_until_transaction(
+        &mut self,
+        transaction_id: TransactionId,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let Some(buffer) = self.as_singleton() {
+            buffer.update(cx, |buffer, _| {
+                buffer.group_until_transaction(transaction_id)
+            });
+        } else {
+            self.history.group_until(transaction_id);
+        }
+    }
+
     pub fn set_active_selections(
         &mut self,
         selections: &[Selection<Anchor>],
@@ -2701,9 +2715,8 @@ impl History {
     }
 
     fn group(&mut self) -> Option<TransactionId> {
-        let mut new_len = self.undo_stack.len();
-        let mut transactions = self.undo_stack.iter_mut();
-
+        let mut count = 0;
+        let mut transactions = self.undo_stack.iter();
         if let Some(mut transaction) = transactions.next_back() {
             while let Some(prev_transaction) = transactions.next_back() {
                 if !prev_transaction.suppress_grouping
@@ -2711,13 +2724,31 @@ impl History {
                         <= self.group_interval
                 {
                     transaction = prev_transaction;
-                    new_len -= 1;
+                    count += 1;
                 } else {
                     break;
                 }
             }
         }
+        self.group_trailing(count)
+    }
 
+    fn group_until(&mut self, transaction_id: TransactionId) {
+        let mut count = 0;
+        for transaction in self.undo_stack.iter().rev() {
+            if transaction.id == transaction_id {
+                self.group_trailing(count);
+                break;
+            } else if transaction.suppress_grouping {
+                break;
+            } else {
+                count += 1;
+            }
+        }
+    }
+
+    fn group_trailing(&mut self, n: usize) -> Option<TransactionId> {
+        let new_len = self.undo_stack.len() - n;
         let (transactions_to_keep, transactions_to_merge) = self.undo_stack.split_at_mut(new_len);
         if let Some(last_transaction) = transactions_to_keep.last_mut() {
             if let Some(transaction) = transactions_to_merge.last() {
@@ -4143,7 +4174,7 @@ mod tests {
         let mut now = Instant::now();
 
         multibuffer.update(cx, |multibuffer, cx| {
-            multibuffer.start_transaction_at(now, cx);
+            let transaction_1 = multibuffer.start_transaction_at(now, cx).unwrap();
             multibuffer.edit(
                 [
                     (Point::new(0, 0)..Point::new(0, 0), "A"),
@@ -4226,6 +4257,16 @@ mod tests {
             assert_eq!(multibuffer.read(cx).text(), "ABCD1234\nAB5678");
             multibuffer.undo(cx);
             assert_eq!(multibuffer.read(cx).text(), "1234\n5678");
+
+            // Transactions can be grouped manually.
+            multibuffer.redo(cx);
+            multibuffer.redo(cx);
+            assert_eq!(multibuffer.read(cx).text(), "XABCD1234\nAB5678");
+            multibuffer.group_until_transaction(transaction_1, cx);
+            multibuffer.undo(cx);
+            assert_eq!(multibuffer.read(cx).text(), "1234\n5678");
+            multibuffer.redo(cx);
+            assert_eq!(multibuffer.read(cx).text(), "XABCD1234\nAB5678");
         });
     }
 }

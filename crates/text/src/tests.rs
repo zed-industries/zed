@@ -525,7 +525,7 @@ fn test_history() {
     let mut now = Instant::now();
     let mut buffer = Buffer::new(0, 0, "123456".into());
 
-    buffer.start_transaction_at(now);
+    let transaction_1 = buffer.start_transaction_at(now).unwrap();
     buffer.edit([(2..4, "cd")]);
     buffer.end_transaction_at(now);
     assert_eq!(buffer.text(), "12cd56");
@@ -574,6 +574,16 @@ fn test_history() {
     assert_eq!(buffer.text(), "12cde6");
     buffer.undo();
     assert_eq!(buffer.text(), "123456");
+
+    // Transactions can be grouped manually.
+    buffer.redo();
+    buffer.redo();
+    assert_eq!(buffer.text(), "X12cde6");
+    buffer.group_until_transaction(transaction_1);
+    buffer.undo();
+    assert_eq!(buffer.text(), "123456");
+    buffer.redo();
+    assert_eq!(buffer.text(), "X12cde6");
 }
 
 #[test]
