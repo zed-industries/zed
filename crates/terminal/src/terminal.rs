@@ -140,7 +140,7 @@ impl TerminalView {
 
 impl View for TerminalView {
     fn ui_name() -> &'static str {
-        "Terminal"
+        "Terminal View"
     }
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
@@ -176,7 +176,7 @@ impl View for TerminalView {
 
 impl View for ErrorView {
     fn ui_name() -> &'static str {
-        "Terminal Error"
+        "DisconnectedTerminal"
     }
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
