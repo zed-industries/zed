@@ -50,6 +50,7 @@ pub fn init(cx: &mut MutableAppContext) {
 }
 
 const DEFAULT_TITLE: &str = "Terminal";
+
 const DEBUG_TERMINAL_WIDTH: f32 = 100.;
 const DEBUG_TERMINAL_HEIGHT: f32 = 30.; //This needs to be wide enough that the CI & a local dev's prompt can fill the whole space.
 const DEBUG_CELL_WIDTH: f32 = 5.;
@@ -224,7 +225,6 @@ impl TerminalError {
 impl Display for TerminalError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let dir_string: String = self.fmt_directory();
-
         let shell = self.fmt_shell();
 
         write!(
@@ -276,7 +276,6 @@ impl TerminalBuilder {
 
         //Spawn a task so the Alacritty EventLoop can communicate with us in a view context
         let (events_tx, events_rx) = unbounded();
-
         //Set up the terminal...
         let term = Term::new(&config, &initial_size, ZedListener(events_tx.clone()));
         let term = Arc::new(FairMutex::new(term));
@@ -392,11 +391,11 @@ impl Terminal {
     ) {
         match event {
             // TODO: Handle is_self_focused in subscription on terminal view
-            AlacTermEvent::Wakeup => { /* Irrelevant, as we always notify on any event */ }
-            AlacTermEvent::PtyWrite(out) => {
-                term.scroll_display(Scroll::Bottom);
-                self.pty_tx.notify(out.into_bytes())
+            AlacTermEvent::Wakeup => {
+                cx.emit(Event::Wakeup);
             }
+            AlacTermEvent::PtyWrite(out) => self.write_to_pty(out),
+
             AlacTermEvent::MouseCursorDirty => {
                 //Calculate new cursor style.
                 //TODO: alacritty/src/input.rs:L922-L939
@@ -414,6 +413,7 @@ impl Terminal {
             AlacTermEvent::ClipboardStore(_, data) => {
                 cx.write_to_clipboard(ClipboardItem::new(data))
             }
+
             AlacTermEvent::ClipboardLoad(_, format) => self.pty_tx.notify(
                 format(
                     &cx.read_from_clipboard()
