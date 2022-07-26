@@ -181,7 +181,7 @@ pub async fn match_strings(
     cancel_flag: &AtomicBool,
     background: Arc<executor::Background>,
 ) -> Vec<StringMatch> {
-    if candidates.is_empty() {
+    if candidates.is_empty() || max_results == 0 {
         return Default::default();
     }
 

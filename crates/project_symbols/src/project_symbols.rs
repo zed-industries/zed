@@ -26,7 +26,8 @@ pub struct ProjectSymbolsView {
     project: ModelHandle<Project>,
     selected_match_index: usize,
     symbols: Vec<Symbol>,
-    match_candidates: Vec<StringMatchCandidate>,
+    visible_match_candidates: Vec<StringMatchCandidate>,
+    external_match_candidates: Vec<StringMatchCandidate>,
     show_worktree_root_name: bool,
     pending_update: Task<()>,
     matches: Vec<StringMatch>,
@@ -63,7 +64,8 @@ impl ProjectSymbolsView {
             picker: cx.add_view(|cx| Picker::new(handle, cx)),
             selected_match_index: 0,
             symbols: Default::default(),
-            match_candidates: Default::default(),
+            visible_match_candidates: Default::default(),
+            external_match_candidates: Default::default(),
             matches: Default::default(),
             show_worktree_root_name: false,
             pending_update: Task::ready(()),
@@ -80,38 +82,39 @@ impl ProjectSymbolsView {
     }
 
     fn filter(&mut self, query: &str, cx: &mut ViewContext<Self>) {
-        let mut matches = if query.is_empty() {
-            self.match_candidates
-                .iter()
-                .enumerate()
-                .map(|(candidate_id, candidate)| StringMatch {
-                    candidate_id,
-                    score: Default::default(),
-                    positions: Default::default(),
-                    string: candidate.string.clone(),
-                })
-                .collect()
-        } else {
-            cx.background_executor().block(fuzzy::match_strings(
-                &self.match_candidates,
-                query,
-                false,
-                100,
-                &Default::default(),
-                cx.background().clone(),
-            ))
-        };
-
-        matches.sort_unstable_by_key(|mat| {
-            let label = &self.symbols[mat.candidate_id].label;
+        const MAX_MATCHES: usize = 100;
+        let mut visible_matches = cx.background_executor().block(fuzzy::match_strings(
+            &self.visible_match_candidates,
+            query,
+            false,
+            MAX_MATCHES,
+            &Default::default(),
+            cx.background().clone(),
+        ));
+        let mut external_matches = cx.background_executor().block(fuzzy::match_strings(
+            &self.external_match_candidates,
+            query,
+            false,
+            MAX_MATCHES - visible_matches.len(),
+            &Default::default(),
+            cx.background().clone(),
+        ));
+        let sort_key_for_match = |mat: &StringMatch| {
+            let symbol = &self.symbols[mat.candidate_id];
             (
                 Reverse(OrderedFloat(mat.score)),
-                &label.text[label.filter_range.clone()],
+                &symbol.label.text[symbol.label.filter_range.clone()],
             )
-        });
+        };
+
+        visible_matches.sort_unstable_by_key(sort_key_for_match);
+        external_matches.sort_unstable_by_key(sort_key_for_match);
+        let mut matches = visible_matches;
+        matches.append(&mut external_matches);
 
         for mat in &mut matches {
-            let filter_start = self.symbols[mat.candidate_id].label.filter_range.start;
+            let symbol = &self.symbols[mat.candidate_id];
+            let filter_start = symbol.label.filter_range.start;
             for position in &mut mat.positions {
                 *position += filter_start;
             }
@@ -198,7 +201,8 @@ impl PickerDelegate for ProjectSymbolsView {
             if let Some(this) = this.upgrade(&cx) {
                 if let Some(symbols) = symbols {
                     this.update(&mut cx, |this, cx| {
-                        this.match_candidates = symbols
+                        let project = this.project.read(cx);
+                        let (visible_match_candidates, external_match_candidates) = symbols
                             .iter()
                             .enumerate()
                             .map(|(id, symbol)| {
@@ -208,7 +212,14 @@ impl PickerDelegate for ProjectSymbolsView {
                                         .to_string(),
                                 )
                             })
-                            .collect();
+                            .partition(|candidate| {
+                                project
+                                    .entry_for_path(&symbols[candidate.id].path, cx)
+                                    .map_or(false, |e| !e.is_ignored)
+                            });
+
+                        this.visible_match_candidates = visible_match_candidates;
+                        this.external_match_candidates = external_match_candidates;
                         this.symbols = symbols;
                         this.filter(&query, cx);
                     });
@@ -232,10 +243,10 @@ impl PickerDelegate for ProjectSymbolsView {
         let symbol = &self.symbols[string_match.candidate_id];
         let syntax_runs = styled_runs_for_code_label(&symbol.label, &settings.theme.editor.syntax);
 
-        let mut path = symbol.path.to_string_lossy();
+        let mut path = symbol.path.path.to_string_lossy();
         if self.show_worktree_root_name {
             let project = self.project.read(cx);
-            if let Some(worktree) = project.worktree_for_id(symbol.worktree_id, cx) {
+            if let Some(worktree) = project.worktree_for_id(symbol.path.worktree_id, cx) {
                 path = Cow::Owned(format!(
                     "{}{}{}",
                     worktree.read(cx).root_name(),
@@ -275,7 +286,7 @@ mod tests {
     use gpui::{serde_json::json, TestAppContext};
     use language::{FakeLspAdapter, Language, LanguageConfig};
     use project::FakeFs;
-    use std::sync::Arc;
+    use std::{path::Path, sync::Arc};
 
     #[gpui::test]
     async fn test_project_symbols(cx: &mut TestAppContext) {
@@ -309,15 +320,21 @@ mod tests {
 
         // Set up fake langauge server to return fuzzy matches against
         // a fixed set of symbol names.
-        let fake_symbol_names = ["one", "ton", "uno"];
+        let fake_symbols = [
+            symbol("one", "/external"),
+            symbol("ton", "/dir/test.rs"),
+            symbol("uno", "/dir/test.rs"),
+        ];
         let fake_server = fake_servers.next().await.unwrap();
         fake_server.handle_request::<lsp::request::WorkspaceSymbol, _, _>(
             move |params: lsp::WorkspaceSymbolParams, cx| {
                 let executor = cx.background();
+                let fake_symbols = fake_symbols.clone();
                 async move {
-                    let candidates = fake_symbol_names
-                        .into_iter()
-                        .map(|name| StringMatchCandidate::new(0, name.into()))
+                    let candidates = fake_symbols
+                        .iter()
+                        .enumerate()
+                        .map(|(id, symbol)| StringMatchCandidate::new(id, symbol.name.clone()))
                         .collect::<Vec<_>>();
                     let matches = if params.query.is_empty() {
                         Vec::new()
@@ -334,7 +351,10 @@ mod tests {
                     };
 
                     Ok(Some(
-                        matches.into_iter().map(|mat| symbol(&mat.string)).collect(),
+                        matches
+                            .into_iter()
+                            .map(|mat| fake_symbols[mat.candidate_id].clone())
+                            .collect(),
                     ))
                 }
             },
@@ -367,8 +387,8 @@ mod tests {
         cx.foreground().run_until_parked();
         symbols_view.read_with(cx, |symbols_view, _| {
             assert_eq!(symbols_view.matches.len(), 2);
-            assert_eq!(symbols_view.matches[0].string, "one");
-            assert_eq!(symbols_view.matches[1].string, "ton");
+            assert_eq!(symbols_view.matches[0].string, "ton");
+            assert_eq!(symbols_view.matches[1].string, "one");
         });
 
         // Spawn more updates such that in the end, there are again no matches.
@@ -383,7 +403,7 @@ mod tests {
         });
     }
 
-    fn symbol(name: &str) -> lsp::SymbolInformation {
+    fn symbol(name: &str, path: impl AsRef<Path>) -> lsp::SymbolInformation {
         #[allow(deprecated)]
         lsp::SymbolInformation {
             name: name.to_string(),
@@ -392,7 +412,7 @@ mod tests {
             deprecated: None,
             container_name: None,
             location: lsp::Location::new(
-                lsp::Url::from_file_path("/a/b").unwrap(),
+                lsp::Url::from_file_path(path.as_ref()).unwrap(),
                 lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
             ),
         }
