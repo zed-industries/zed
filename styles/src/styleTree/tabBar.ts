@@ -35,6 +35,7 @@ export default function tabBar(theme: Theme) {
     text: text(theme, "sans", "active", { size: "sm" }),
     border: {
       ...tab.border,
+      bottom: false
     },
   };
 
@@ -50,6 +51,7 @@ export default function tabBar(theme: Theme) {
     text: text(theme, "sans", "secondary", { size: "sm" }),
     border: {
       ...tab.border,
+      bottom: false
     },
   }
 
@@ -72,7 +74,7 @@ export default function tabBar(theme: Theme) {
     paneButton: {
       color: iconColor(theme, "secondary"),
       border: {
-        ...activePaneActiveTab.border,
+        ...tab.border,
       },
       iconWidth: 12,
       buttonWidth: activePaneActiveTab.height,
