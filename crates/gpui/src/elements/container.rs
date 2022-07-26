@@ -104,6 +104,11 @@ impl Container {
         self
     }
 
+    pub fn with_padding_top(mut self, padding: f32) -> Self {
+        self.style.padding.top = padding;
+        self
+    }
+
     pub fn with_padding_bottom(mut self, padding: f32) -> Self {
         self.style.padding.bottom = padding;
         self

@@ -16,6 +16,7 @@ use client::{
 };
 use clock::ReplicaId;
 use collections::{hash_map, HashMap, HashSet};
+use drag_and_drop::DragAndDrop;
 use futures::{channel::oneshot, FutureExt};
 use gpui::{
     actions,
@@ -894,6 +895,9 @@ impl Workspace {
             status_bar.add_right_item(right_sidebar_buttons, cx);
             status_bar
         });
+
+        let drag_and_drop = DragAndDrop::new(cx.weak_handle(), cx);
+        cx.set_global(drag_and_drop);
 
         let mut this = Workspace {
             modal: None,
@@ -2471,6 +2475,7 @@ impl View for Workspace {
                     .with_background_color(theme.workspace.background)
                     .boxed(),
             )
+            .with_children(DragAndDrop::render(cx))
             .with_children(self.render_disconnected_overlay(cx))
             .named("workspace")
     }

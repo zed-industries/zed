@@ -566,7 +566,7 @@ impl ContactsPanel {
                         button
                             .with_cursor_style(CursorStyle::PointingHand)
                             .on_click(MouseButton::Left, move |_, cx| {
-                                let project = project_handle.upgrade(cx.deref_mut());
+                                let project = project_handle.upgrade(cx.app);
                                 cx.dispatch_action(ToggleProjectOnline { project })
                             })
                             .with_tooltip::<ToggleOnline, _>(

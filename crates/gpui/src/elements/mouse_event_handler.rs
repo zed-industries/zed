@@ -5,10 +5,13 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     platform::CursorStyle,
-    scene::{CursorRegion, HandlerSet},
+    scene::{
+        ClickRegionEvent, CursorRegion, DownOutRegionEvent, DownRegionEvent, DragOverRegionEvent,
+        DragRegionEvent, HandlerSet, HoverRegionEvent, MoveRegionEvent, UpOutRegionEvent,
+        UpRegionEvent,
+    },
     DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, MeasurementContext,
-    MouseButton, MouseButtonEvent, MouseMovedEvent, MouseRegion, MouseState, PaintContext,
-    RenderContext, SizeConstraint, View,
+    MouseButton, MouseRegion, MouseState, PaintContext, RenderContext, SizeConstraint, View,
 };
 use serde_json::json;
 use std::{any::TypeId, ops::Range};
@@ -42,10 +45,18 @@ impl MouseEventHandler {
         self
     }
 
+    pub fn on_move(
+        mut self,
+        handler: impl Fn(MoveRegionEvent, &mut EventContext) + 'static,
+    ) -> Self {
+        self.handlers = self.handlers.on_move(handler);
+        self
+    }
+
     pub fn on_down(
         mut self,
         button: MouseButton,
-        handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
+        handler: impl Fn(DownRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_down(button, handler);
         self
@@ -54,7 +65,7 @@ impl MouseEventHandler {
     pub fn on_up(
         mut self,
         button: MouseButton,
-        handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
+        handler: impl Fn(UpRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_up(button, handler);
         self
@@ -63,7 +74,7 @@ impl MouseEventHandler {
     pub fn on_click(
         mut self,
         button: MouseButton,
-        handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
+        handler: impl Fn(ClickRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_click(button, handler);
         self
@@ -72,7 +83,7 @@ impl MouseEventHandler {
     pub fn on_down_out(
         mut self,
         button: MouseButton,
-        handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
+        handler: impl Fn(DownOutRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_down_out(button, handler);
         self
@@ -81,16 +92,16 @@ impl MouseEventHandler {
     pub fn on_up_out(
         mut self,
         button: MouseButton,
-        handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
+        handler: impl Fn(UpOutRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
-        self.handlers = self.handlers.on_up(button, handler);
+        self.handlers = self.handlers.on_up_out(button, handler);
         self
     }
 
     pub fn on_drag(
         mut self,
         button: MouseButton,
-        handler: impl Fn(Vector2F, MouseMovedEvent, &mut EventContext) + 'static,
+        handler: impl Fn(DragRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_drag(button, handler);
         self
@@ -99,7 +110,7 @@ impl MouseEventHandler {
     pub fn on_drag_over(
         mut self,
         button: MouseButton,
-        handler: impl Fn(bool, MouseMovedEvent, &mut EventContext) + 'static,
+        handler: impl Fn(DragOverRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_drag_over(button, handler);
         self
@@ -107,7 +118,7 @@ impl MouseEventHandler {
 
     pub fn on_hover(
         mut self,
-        handler: impl Fn(bool, MouseMovedEvent, &mut EventContext) + 'static,
+        handler: impl Fn(HoverRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_hover(handler);
         self

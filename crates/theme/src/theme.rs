@@ -78,6 +78,22 @@ pub struct TabBar {
     pub height: f32,
 }
 
+impl TabBar {
+    pub fn tab_style(&self, pane_active: bool, tab_active: bool) -> &Tab {
+        let tabs = if pane_active {
+            &self.active_pane
+        } else {
+            &self.inactive_pane
+        };
+
+        if tab_active {
+            &tabs.active_tab
+        } else {
+            &tabs.inactive_tab
+        }
+    }
+}
+
 #[derive(Clone, Deserialize, Default)]
 pub struct TabStyles {
     pub active_tab: Tab,

@@ -6,7 +6,11 @@ use crate::{
     json::{self, ToJson},
     keymap::Keystroke,
     platform::{CursorStyle, Event},
-    scene::{CursorRegion, MouseRegionEvent},
+    scene::{
+        ClickRegionEvent, CursorRegion, DownOutRegionEvent, DownRegionEvent, DragOverRegionEvent,
+        DragRegionEvent, HoverRegionEvent, MouseRegionEvent, MoveRegionEvent, UpOutRegionEvent,
+        UpRegionEvent,
+    },
     text_layout::TextLayoutCache,
     Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox, Entity,
     FontSystem, ModelHandle, MouseButtonEvent, MouseMovedEvent, MouseRegion, MouseRegionId,
@@ -140,8 +144,7 @@ impl Presenter {
 
             if cx.window_is_active(self.window_id) {
                 if let Some(event) = self.last_mouse_moved_event.clone() {
-                    let mut invalidated_views = Vec::new();
-                    self.handle_hover_events(&event, &mut invalidated_views, cx);
+                    let invalidated_views = self.handle_hover_events(&event, cx).invalidated_views;
 
                     for view_id in invalidated_views {
                         cx.notify_view(self.window_id, view_id);
@@ -216,48 +219,60 @@ impl Presenter {
 
     pub fn dispatch_event(&mut self, event: Event, cx: &mut MutableAppContext) -> bool {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
-            let mut invalidated_views = Vec::new();
             let mut events_to_send = Vec::new();
-
             match &event {
                 Event::MouseDown(e @ MouseButtonEvent { position, .. }) => {
-                    let mut hit = false;
                     for (region, _) in self.mouse_regions.iter().rev() {
                         if region.bounds.contains_point(*position) {
-                            if !hit {
-                                hit = true;
-                                invalidated_views.push(region.view_id);
-                                events_to_send
-                                    .push((region.clone(), MouseRegionEvent::Down(e.clone())));
-                                self.clicked_region = Some(region.clone());
-                                self.prev_drag_position = Some(*position);
-                            }
+                            events_to_send.push((
+                                region.clone(),
+                                MouseRegionEvent::Down(DownRegionEvent {
+                                    region: region.bounds,
+                                    platform_event: e.clone(),
+                                }),
+                            ));
                         } else {
-                            events_to_send
-                                .push((region.clone(), MouseRegionEvent::DownOut(e.clone())));
+                            events_to_send.push((
+                                region.clone(),
+                                MouseRegionEvent::DownOut(DownOutRegionEvent {
+                                    region: region.bounds,
+                                    platform_event: e.clone(),
+                                }),
+                            ));
                         }
                     }
                 }
                 Event::MouseUp(e @ MouseButtonEvent { position, .. }) => {
-                    let mut hit = false;
                     for (region, _) in self.mouse_regions.iter().rev() {
                         if region.bounds.contains_point(*position) {
-                            if !hit {
-                                hit = true;
-                                invalidated_views.push(region.view_id);
-                                events_to_send
-                                    .push((region.clone(), MouseRegionEvent::Up(e.clone())));
-                            }
+                            events_to_send.push((
+                                region.clone(),
+                                MouseRegionEvent::Up(UpRegionEvent {
+                                    region: region.bounds,
+                                    platform_event: e.clone(),
+                                }),
+                            ));
                         } else {
-                            events_to_send
-                                .push((region.clone(), MouseRegionEvent::UpOut(e.clone())));
+                            events_to_send.push((
+                                region.clone(),
+                                MouseRegionEvent::UpOut(UpOutRegionEvent {
+                                    region: region.bounds,
+                                    platform_event: e.clone(),
+                                }),
+                            ));
                         }
                     }
                     self.prev_drag_position.take();
                     if let Some(region) = self.clicked_region.take() {
-                        invalidated_views.push(region.view_id);
                         if region.bounds.contains_point(*position) {
-                            events_to_send.push((region, MouseRegionEvent::Click(e.clone())));
+                            let bounds = region.bounds.clone();
+                            events_to_send.push((
+                                region,
+                                MouseRegionEvent::Click(ClickRegionEvent {
+                                    region: bounds,
+                                    platform_event: e.clone(),
+                                }),
+                            ));
                         }
                     }
                 }
@@ -269,9 +284,28 @@ impl Presenter {
                     {
                         events_to_send.push((
                             clicked_region.clone(),
+<<<<<<< HEAD
                             MouseRegionEvent::Drag(*prev_drag_position, *e),
+=======
+                            MouseRegionEvent::Drag(DragRegionEvent {
+                                region: clicked_region.bounds,
+                                prev_drag_position: *prev_drag_position,
+                                platform_event: e.clone(),
+                            }),
+>>>>>>> 4bd8a4b0 (wip tab drag and drop)
                         ));
-                        *prev_drag_position = *position;
+                    }
+
+                    for (region, _) in self.mouse_regions.iter().rev() {
+                        if region.bounds.contains_point(*position) {
+                            events_to_send.push((
+                                region.clone(),
+                                MouseRegionEvent::Move(MoveRegionEvent {
+                                    region: region.bounds,
+                                    platform_event: e.clone(),
+                                }),
+                            ));
+                        }
                     }
 
                     self.last_mouse_moved_event = Some(event.clone());
@@ -279,12 +313,12 @@ impl Presenter {
                 _ => {}
             }
 
-            let (mut handled, mut event_cx) =
-                self.handle_hover_events(&event, &mut invalidated_views, cx);
+            let (invalidated_views, dispatch_directives, handled) = {
+                let mut event_cx = self.handle_hover_events(&event, cx);
+                event_cx.process_region_events(events_to_send);
 
-            for (region, event) in events_to_send {
-                if event.is_local() {
-                    handled = true;
+                if !event_cx.handled {
+                    event_cx.handled = event_cx.dispatch_event(root_view_id, &event);
                 }
 
                 if let Some(callback) = region.handlers.get(&event.handler_key()) {
@@ -292,7 +326,13 @@ impl Presenter {
                         callback(event, event_cx);
                     })
                 }
-            }
+                
+                (
+                    event_cx.invalidated_views,
+                    event_cx.dispatched_actions,
+                    event_cx.handled,
+                )
+            };
 
             if !handled {
                 handled = event_cx.dispatch_event(root_view_id, &event);
@@ -313,9 +353,8 @@ impl Presenter {
     fn handle_hover_events<'a>(
         &'a mut self,
         event: &Event,
-        invalidated_views: &mut Vec<usize>,
         cx: &'a mut MutableAppContext,
-    ) -> (bool, EventContext<'a>) {
+    ) -> EventContext<'a> {
         let mut events_to_send = Vec::new();
 
         if let Event::MouseMoved(
@@ -343,46 +382,48 @@ impl Presenter {
                     hover_depth = Some(*depth);
                     if let Some(region_id) = region.id() {
                         if !self.hovered_region_ids.contains(&region_id) {
-                            invalidated_views.push(region.view_id);
                             let region_event = if pressed_button.is_some() {
-                                MouseRegionEvent::DragOver(true, e.clone())
+                                MouseRegionEvent::DragOver(DragOverRegionEvent {
+                                    region: region.bounds,
+                                    started: true,
+                                    platform_event: e.clone(),
+                                })
                             } else {
-                                MouseRegionEvent::Hover(true, e.clone())
+                                MouseRegionEvent::Hover(HoverRegionEvent {
+                                    region: region.bounds,
+                                    started: true,
+                                    platform_event: e.clone(),
+                                })
                             };
                             events_to_send.push((region.clone(), region_event));
                             self.hovered_region_ids.insert(region_id);
                         }
                     }
                 } else if let Some(region_id) = region.id() {
-                    if self.hovered_region_ids.contains(&region_id) {
-                        invalidated_views.push(region.view_id);
-                        let region_event = if pressed_button.is_some() {
-                            MouseRegionEvent::DragOver(false, e.clone())
-                        } else {
-                            MouseRegionEvent::Hover(false, e.clone())
-                        };
-                        events_to_send.push((region.clone(), region_event));
-                        self.hovered_region_ids.remove(&region_id);
-                    }
+                        if self.hovered_region_ids.contains(&region_id) {
+                            let region_event = if pressed_button.is_some() {
+                                MouseRegionEvent::DragOver(DragOverRegionEvent {
+                                    region: region.bounds,
+                                    started: false,
+                                    platform_event: e.clone(),
+                                })
+                            } else {
+                                MouseRegionEvent::Hover(HoverRegionEvent {
+                                    region: region.bounds,
+                                    started: false,
+                                    platform_event: e.clone(),
+                                })
+                            };
+                            events_to_send.push((region.clone(), region_event));
+                            self.hovered_region_ids.remove(&region_id);
+                        }
                 }
             }
         }
 
         let mut event_cx = self.build_event_context(cx);
-        let mut handled = false;
-
-        for (region, event) in events_to_send {
-            if event.is_local() {
-                handled = true;
-            }
-            if let Some(callback) = region.handlers.get(&event.handler_key()) {
-                event_cx.with_current_view(region.view_id, |event_cx| {
-                    callback(event, event_cx);
-                })
-            }
-        }
-
-        (handled, event_cx)
+        event_cx.process_region_events(events_to_send);
+        event_cx
     }
 
     pub fn build_event_context<'a>(
@@ -396,6 +437,9 @@ impl Presenter {
             view_stack: Default::default(),
             invalidated_views: Default::default(),
             notify_count: 0,
+            clicked_region: &mut self.clicked_region,
+            prev_drag_position: &mut self.prev_drag_position,
+            handled: false,
             window_id: self.window_id,
             app: cx,
         }
@@ -615,6 +659,9 @@ pub struct EventContext<'a> {
     pub window_id: usize,
     pub notify_count: usize,
     view_stack: Vec<usize>,
+    clicked_region: &'a mut Option<MouseRegion>,
+    prev_drag_position: &'a mut Option<Vector2F>,
+    handled: bool,
     invalidated_views: HashSet<usize>,
 }
 
@@ -627,6 +674,36 @@ impl<'a> EventContext<'a> {
             result
         } else {
             false
+        }
+    }
+
+    fn process_region_events(&mut self, events: Vec<(MouseRegion, MouseRegionEvent)>) {
+        for (region, event) in events {
+            if event.is_local() {
+                if self.handled {
+                    continue;
+                }
+
+                match &event {
+                    MouseRegionEvent::Down(e) => {
+                        *self.clicked_region = Some(region.clone());
+                        *self.prev_drag_position = Some(e.position);
+                    }
+                    MouseRegionEvent::Drag(e) => {
+                        *self.prev_drag_position = Some(e.position);
+                    }
+                    _ => {}
+                }
+
+                self.invalidated_views.insert(region.view_id);
+            }
+
+            if let Some(callback) = region.handlers.get(&event.handler_key()) {
+                self.handled = true;
+                self.with_current_view(region.view_id, |event_cx| {
+                    callback(event, event_cx);
+                })
+            }
         }
     }
 
@@ -680,6 +757,10 @@ impl<'a> EventContext<'a> {
 
     pub fn notify_count(&self) -> usize {
         self.notify_count
+    }
+
+    pub fn propogate_event(&mut self) {
+        self.handled = false;
     }
 }
 

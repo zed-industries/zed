@@ -16,8 +16,8 @@ use gpui::{
     },
     json::json,
     text_layout::{Line, RunStyle},
-    Event, FontCache, KeyDownEvent, MouseButton, MouseButtonEvent, MouseMovedEvent, MouseRegion,
-    PaintContext, Quad, ScrollWheelEvent, TextLayoutCache, WeakModelHandle, WeakViewHandle,
+    Event, FontCache, KeyDownEvent, MouseButton, MouseRegion, PaintContext, Quad, ScrollWheelEvent,
+    TextLayoutCache, WeakModelHandle, WeakViewHandle,
 };
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
