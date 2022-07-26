@@ -5764,6 +5764,10 @@ impl Project {
             let mut lsp_edits = lsp_edits.into_iter().peekable();
             let mut edits = Vec::new();
             while let Some((mut range, mut new_text)) = lsp_edits.next() {
+                // Clip invalid ranges provided by the language server.
+                range.start = snapshot.clip_point_utf16(range.start, Bias::Left);
+                range.end = snapshot.clip_point_utf16(range.end, Bias::Left);
+
                 // Combine any LSP edits that are adjacent.
                 //
                 // Also, combine LSP edits that are separated from each other by only
@@ -5789,12 +5793,6 @@ impl Project {
                     range.end = next_range.end;
                     new_text.push_str(&next_text);
                     lsp_edits.next();
-                }
-
-                if snapshot.clip_point_utf16(range.start, Bias::Left) != range.start
-                    || snapshot.clip_point_utf16(range.end, Bias::Left) != range.end
-                {
-                    return Err(anyhow!("invalid edits received from language server"));
                 }
 
                 // For multiline edits, perform a diff of the old and new text so that
