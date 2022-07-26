@@ -75,40 +75,10 @@ enum InternalEvent {
     Clear,
     Keystroke(Keystroke),
     Paste(String),
+    Scroll(Scroll),
     SetSelection(Option<Selection>),
+    UpdateSelection(Point),
     Copy,
-}
-
-impl PartialEq for InternalEvent {
-    fn eq(&self, other: &Self) -> bool {
-        if matches!(self, other) {
-            true
-        } else {
-            false
-        }
-    }
-}
-
-impl Eq for InternalEvent {}
-
-impl PartialOrd for InternalEvent {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        if self.eq(other) {
-            Some(Ordering::Equal)
-        } else if matches!(other, InternalEvent::Copy) {
-            Some(Ordering::Less)
-        } else if matches!(self, InternalEvent::Copy) {
-            Some(Ordering::Greater)
-        } else {
-            Some(Ordering::Equal)
-        }
-    }
-}
-
-impl Ord for InternalEvent {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap()
-    }
 }
 
 ///A translation struct for Alacritty to communicate with us from their event loop
@@ -511,12 +481,20 @@ impl Terminal {
                     self.notify_pty(text.replace("\r\n", "\r").replace('\n', "\r"));
                 }
             }
+            InternalEvent::Scroll(scroll) => term.scroll_display(*scroll),
+            InternalEvent::SetSelection(sel) => term.selection = sel,
+            InternalEvent::UpdateSelection(point) => {
+                if let Some(mut selection) = term.selection.take() {
+                    selection.update(*point, side);
+                    term.selection = Some(selection);
+                }
+            }
+
             InternalEvent::Copy => {
                 if let Some(txt) = term.selection_to_string() {
                     cx.write_to_clipboard(ClipboardItem::new(txt))
                 }
             }
-            InternalEvent::SetSelection(sel) => {}
         }
     }
 
@@ -529,13 +507,13 @@ impl Terminal {
     // - Fix PTYWrite call to not be circular and messy
     // - Change title to be emitted and maintained externally
 
-    ///Write the Input payload to the tty. This locks the terminal so we can scroll it.
+    ///Write the Input payload to the tty.
     pub fn write_to_pty(&mut self, input: String) {
         self.event_stack
             .push(InternalEvent::TermEvent(AlacTermEvent::PtyWrite(input)))
     }
 
-    ///Resize the terminal and the PTY. This locks the terminal.
+    ///Resize the terminal and the PTY.
     pub fn set_size(&mut self, new_size: TermDimensions) {
         self.event_stack
             .push(InternalEvent::Resize(new_size.into()))
@@ -584,14 +562,9 @@ impl Terminal {
         f(content, cursor_text)
     }
 
-    pub fn get_display_offset(&self) -> usize {
-        10
-        // self.term.lock().renderable_content().display_offset
-    }
-
     ///Scroll the terminal
     pub fn scroll(&self, _scroll: Scroll) {
-        // self.term.lock().scroll_display(scroll)
+        self.event_stack.push(InternalEvent::Scroll(scroll));
     }
 
     pub fn click(&self, point: Point, side: Direction, clicks: usize) {
@@ -606,18 +579,22 @@ impl Terminal {
         let selection =
             selection_type.map(|selection_type| Selection::new(selection_type, point, side));
 
-        self.set_selection(selection);
+        self.event_stack
+            .push(InternalEvent::SetSelection(selection));
     }
 
     pub fn drag(&self, point: Point, side: Direction) {
-        if let Some(mut selection) = self.take_selection() {
-            selection.update(point, side);
-            self.set_selection(Some(selection));
-        }
+        self.event_stack.push(InternalEvent::UpdateSelection(point));
     }
 
+    ///TODO: Check if the mouse_down-then-click assumption holds, so this code works as expected
     pub fn mouse_down(&self, point: Point, side: Direction) {
-        self.set_selection(Some(Selection::new(SelectionType::Simple, point, side)));
+        self.event_stack
+            .push(InternalEvent::SetSelection(Some(Selection::new(
+                SelectionType::Simple,
+                point,
+                side,
+            ))));
     }
 
     #[cfg(test)]
