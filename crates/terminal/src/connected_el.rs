@@ -1,6 +1,5 @@
 use alacritty_terminal::{
     ansi::{Color::Named, NamedColor},
-    event::WindowSize,
     grid::{Dimensions, GridIterator, Indexed, Scroll},
     index::{Column as GridCol, Line as GridLine, Point, Side},
     selection::SelectionRange,
@@ -29,7 +28,9 @@ use util::ResultExt;
 use std::{cmp::min, ops::Range};
 use std::{fmt::Debug, ops::Sub};
 
-use crate::{mappings::colors::convert_color, model::Terminal, ConnectedView};
+use crate::{
+    connected_view::ConnectedView, mappings::colors::convert_color, TermDimensions, Terminal,
+};
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
@@ -67,74 +68,6 @@ impl DisplayCursor {
 
     pub fn col(&self) -> usize {
         self.col
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct TermDimensions {
-    cell_width: f32,
-    line_height: f32,
-    height: f32,
-    width: f32,
-}
-
-impl TermDimensions {
-    pub fn new(line_height: f32, cell_width: f32, size: Vector2F) -> Self {
-        TermDimensions {
-            cell_width,
-            line_height,
-            width: size.x(),
-            height: size.y(),
-        }
-    }
-
-    pub fn num_lines(&self) -> usize {
-        (self.height / self.line_height).floor() as usize
-    }
-
-    pub fn num_columns(&self) -> usize {
-        (self.width / self.cell_width).floor() as usize
-    }
-
-    pub fn height(&self) -> f32 {
-        self.height
-    }
-
-    pub fn width(&self) -> f32 {
-        self.width
-    }
-
-    pub fn cell_width(&self) -> f32 {
-        self.cell_width
-    }
-
-    pub fn line_height(&self) -> f32 {
-        self.line_height
-    }
-}
-
-impl Into<WindowSize> for TermDimensions {
-    fn into(self) -> WindowSize {
-        WindowSize {
-            num_lines: self.num_lines() as u16,
-            num_cols: self.num_columns() as u16,
-            cell_width: self.cell_width() as u16,
-            cell_height: self.line_height() as u16,
-        }
-    }
-}
-
-impl Dimensions for TermDimensions {
-    fn total_lines(&self) -> usize {
-        self.screen_lines() //TODO: Check that this is fine. This is supposed to be for the back buffer...
-    }
-
-    fn screen_lines(&self) -> usize {
-        self.num_lines()
-    }
-
-    fn columns(&self) -> usize {
-        self.num_columns()
     }
 }
 

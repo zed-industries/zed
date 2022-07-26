@@ -1,17 +1,12 @@
 use std::{path::Path, time::Duration};
 
-use gpui::{
-    geometry::vector::vec2f, AppContext, ModelHandle, ReadModelWith, TestAppContext, ViewHandle,
-};
+use gpui::{AppContext, ModelHandle, ReadModelWith, TestAppContext, ViewHandle};
+
 use itertools::Itertools;
 use project::{Entry, Project, ProjectPath, Worktree};
 use workspace::{AppState, Workspace};
 
-use crate::{
-    connected_el::TermDimensions,
-    model::{Terminal, TerminalBuilder},
-    DEBUG_CELL_WIDTH, DEBUG_LINE_HEIGHT, DEBUG_TERMINAL_HEIGHT, DEBUG_TERMINAL_WIDTH,
-};
+use crate::{TermDimensions, Terminal, TerminalBuilder};
 
 pub struct TerminalTestContext<'a> {
     pub cx: &'a mut TestAppContext,
@@ -22,11 +17,7 @@ impl<'a> TerminalTestContext<'a> {
     pub fn new(cx: &'a mut TestAppContext, term: bool) -> Self {
         cx.set_condition_duration(Some(Duration::from_secs(5)));
 
-        let size_info = TermDimensions::new(
-            DEBUG_CELL_WIDTH,
-            DEBUG_LINE_HEIGHT,
-            vec2f(DEBUG_TERMINAL_WIDTH, DEBUG_TERMINAL_HEIGHT),
-        );
+        let size_info = TermDimensions::default();
 
         let connection = term.then(|| {
             cx.add_model(|cx| {

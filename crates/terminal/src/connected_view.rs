@@ -3,10 +3,7 @@ use gpui::{
     MutableAppContext, View, ViewContext,
 };
 
-use crate::{
-    connected_el::TerminalEl,
-    model::{Event, Terminal},
-};
+use crate::{connected_el::TerminalEl, Event, Terminal};
 
 ///Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
