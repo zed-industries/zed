@@ -1565,7 +1565,7 @@ async fn test_invalid_edits_from_lsp(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     // Simulate the language server sending us edits in a non-ordered fashion,
-    // with ranges sometimes being inverted.
+    // with ranges sometimes being inverted or pointing to invalid locations.
     let edits = project
         .update(cx, |project, cx| {
             project.edits_from_lsp(
@@ -1580,7 +1580,7 @@ async fn test_invalid_edits_from_lsp(cx: &mut gpui::TestAppContext) {
                         new_text: "a::{b, c}".into(),
                     },
                     lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(7, 0)),
+                        range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(99, 0)),
                         new_text: "".into(),
                     },
                     lsp::TextEdit {
