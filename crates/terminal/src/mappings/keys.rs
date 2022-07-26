@@ -35,6 +35,18 @@ impl Modifiers {
     }
 }
 
+///This function checks if to_esc_str would work, assuming all terminal settings are off.
+///Note that this function is conservative. It can fail in cases where the actual to_esc_str succeeds.
+///This is unavoidable for our use case. GPUI cannot wait until we acquire the terminal
+///lock to determine whether we could actually send the keystroke with the current settings. Therefore,
+///This conservative guess is used instead. Note that in practice the case where this method
+///Returns false when the actual terminal would consume the keystroke never actually happens. All
+///keystrokes that depend on terminal modes also have a mapping that doesn't depend on the terminal mode.
+///This is fragile, but as these mappings are locked up in legacy compatibility, it's probably good enough
+pub fn might_convert(keystroke: &Keystroke) -> bool {
+    to_esc_str(keystroke, &TermMode::NONE).is_some()
+}
+
 pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode) -> Option<String> {
     let modifiers = Modifiers::new(&keystroke);
 

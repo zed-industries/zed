@@ -208,7 +208,7 @@ impl Item for TerminalView {
     ) -> ElementBox {
         let title = match &self.content {
             TerminalContent::Connected(connected) => {
-                connected.read(cx).handle().read(cx).title.clone()
+                connected.read(cx).handle().read(cx).title.to_string()
             }
             TerminalContent::Error(_) => "Terminal".to_string(),
         };
@@ -294,7 +294,7 @@ impl Item for TerminalView {
     }
 
     fn should_update_tab_on_event(event: &Self::Event) -> bool {
-        matches!(event, &Event::TitleChanged)
+        matches!(event, &Event::TitleChanged | &Event::Wakeup)
     }
 
     fn should_close_item_on_event(event: &Self::Event) -> bool {

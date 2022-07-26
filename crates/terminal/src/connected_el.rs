@@ -514,8 +514,12 @@ impl Element for TerminalEl {
         let settings = cx.global::<Settings>();
         let font_cache = cx.font_cache();
 
+        //First step, make all methods take mut and update internal event queue to take new actions
+        //Update process terminal event to handle all actions correctly
+        //And it's done.
+
         //Setup layout information
-        let terminal_theme = settings.theme.terminal.clone(); //-_-
+        let terminal_theme = settings.theme.terminal.clone(); //TODO: Try to minimize this clone.
         let text_style = TerminalEl::make_text_style(font_cache, &settings);
         let selection_color = settings.theme.editor.selection.selection;
         let dimensions = {

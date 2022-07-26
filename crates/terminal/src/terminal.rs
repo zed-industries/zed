@@ -18,15 +18,19 @@ use alacritty_terminal::{
     index::{Direction, Point},
     selection::{Selection, SelectionType},
     sync::FairMutex,
-    term::{test::TermSize, RenderableContent, TermMode},
+    term::{RenderableContent, TermMode},
     tty::{self, setup_env},
     Term,
 };
 use anyhow::{bail, Result};
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
+use itertools::Itertools;
+use mappings::keys::might_convert;
 use modal::deploy_modal;
 use settings::{Settings, Shell};
-use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    cmp::Ordering, collections::HashMap, fmt::Display, path::PathBuf, sync::Arc, time::Duration,
+};
 use terminal_view::TerminalView;
 use thiserror::Error;
 
@@ -49,22 +53,62 @@ pub fn init(cx: &mut MutableAppContext) {
     connected_view::init(cx);
 }
 
-const DEFAULT_TITLE: &str = "Terminal";
-
 const DEBUG_TERMINAL_WIDTH: f32 = 100.;
 const DEBUG_TERMINAL_HEIGHT: f32 = 30.; //This needs to be wide enough that the CI & a local dev's prompt can fill the whole space.
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
 
 ///Upward flowing events, for changing the title and such
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Event {
     TitleChanged,
     CloseTerminal,
     Activate,
-    Wakeup,
     Bell,
-    KeyInput,
+    Wakeup,
+}
+
+#[derive(Clone, Debug)]
+enum InternalEvent {
+    TermEvent(AlacTermEvent),
+    Resize(TermDimensions),
+    Clear,
+    Keystroke(Keystroke),
+    Paste(String),
+    SetSelection(Option<Selection>),
+    Copy,
+}
+
+impl PartialEq for InternalEvent {
+    fn eq(&self, other: &Self) -> bool {
+        if matches!(self, other) {
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl Eq for InternalEvent {}
+
+impl PartialOrd for InternalEvent {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        if self.eq(other) {
+            Some(Ordering::Equal)
+        } else if matches!(other, InternalEvent::Copy) {
+            Some(Ordering::Less)
+        } else if matches!(self, InternalEvent::Copy) {
+            Some(Ordering::Greater)
+        } else {
+            Some(Ordering::Equal)
+        }
+    }
+}
+
+impl Ord for InternalEvent {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(other).unwrap()
+    }
 }
 
 ///A translation struct for Alacritty to communicate with us from their event loop
@@ -322,8 +366,10 @@ impl TerminalBuilder {
         let terminal = Terminal {
             pty_tx: Notifier(pty_tx),
             term,
-            title: shell_txt.to_string(),
+
             event_stack: vec![],
+            title: shell_txt.clone(),
+            default_title: shell_txt,
         };
 
         Ok(TerminalBuilder {
@@ -373,98 +419,136 @@ impl TerminalBuilder {
 pub struct Terminal {
     pty_tx: Notifier,
     term: Arc<FairMutex<Term<ZedListener>>>,
-    pub title: String,
-    event_stack: Vec<AlacTermEvent>,
+    event_stack: Vec<InternalEvent>,
+    default_title: String,
+    title: String,
 }
 
 impl Terminal {
     fn push_events(&mut self, events: Vec<AlacTermEvent>) {
-        self.event_stack.extend(events)
+        self.event_stack
+            .extend(events.into_iter().map(|e| InternalEvent::TermEvent(e)))
     }
 
     ///Takes events from Alacritty and translates them to behavior on this view
     fn process_terminal_event(
         &mut self,
-        event: alacritty_terminal::event::Event,
+        event: &InternalEvent,
         term: &mut Term<ZedListener>,
         cx: &mut ModelContext<Self>,
     ) {
+        // TODO: Handle is_self_focused in subscription on terminal view
         match event {
-            // TODO: Handle is_self_focused in subscription on terminal view
-            AlacTermEvent::Wakeup => {
-                cx.emit(Event::Wakeup);
-            }
-            AlacTermEvent::PtyWrite(out) => self.write_to_pty(out),
-
-            AlacTermEvent::MouseCursorDirty => {
-                //Calculate new cursor style.
-                //TODO: alacritty/src/input.rs:L922-L939
-                //Check on correctly handling mouse events for terminals
-                cx.platform().set_cursor_style(CursorStyle::Arrow); //???
-            }
-            AlacTermEvent::Title(title) => {
-                self.title = title;
-                cx.emit(Event::TitleChanged);
-            }
-            AlacTermEvent::ResetTitle => {
-                self.title = DEFAULT_TITLE.to_string();
-                cx.emit(Event::TitleChanged);
-            }
-            AlacTermEvent::ClipboardStore(_, data) => {
-                cx.write_to_clipboard(ClipboardItem::new(data))
-            }
-
-            AlacTermEvent::ClipboardLoad(_, format) => self.pty_tx.notify(
-                format(
+            InternalEvent::TermEvent(term_event) => match term_event {
+                AlacTermEvent::Wakeup => {
+                    cx.emit(Event::Wakeup);
+                }
+                AlacTermEvent::PtyWrite(out) => self.notify_pty(out.clone()),
+                AlacTermEvent::MouseCursorDirty => {
+                    //Calculate new cursor style.
+                    //TODO: alacritty/src/input.rs:L922-L939
+                    //Check on correctly handling mouse events for terminals
+                    cx.platform().set_cursor_style(CursorStyle::Arrow); //???
+                }
+                AlacTermEvent::Title(title) => {
+                    self.title = title.to_string();
+                    cx.emit(Event::TitleChanged);
+                }
+                AlacTermEvent::ResetTitle => {
+                    self.title = self.default_title.clone();
+                    cx.emit(Event::TitleChanged);
+                }
+                AlacTermEvent::ClipboardStore(_, data) => {
+                    cx.write_to_clipboard(ClipboardItem::new(data.to_string()))
+                }
+                AlacTermEvent::ClipboardLoad(_, format) => self.notify_pty(format(
                     &cx.read_from_clipboard()
                         .map(|ci| ci.text().to_string())
                         .unwrap_or("".to_string()),
-                )
-                .into_bytes(),
-            ),
-            AlacTermEvent::ColorRequest(index, format) => {
-                let color = term.colors()[index].unwrap_or_else(|| {
-                    let term_style = &cx.global::<Settings>().theme.terminal;
-                    to_alac_rgb(get_color_at_index(&index, &term_style.colors))
-                });
-                self.pty_tx.notify(format(color).into_bytes())
+                )),
+                AlacTermEvent::ColorRequest(index, format) => {
+                    let color = term.colors()[*index].unwrap_or_else(|| {
+                        let term_style = &cx.global::<Settings>().theme.terminal;
+                        to_alac_rgb(get_color_at_index(index, &term_style.colors))
+                    });
+                    self.notify_pty(format(color))
+                }
+                AlacTermEvent::CursorBlinkingChange => {
+                    //TODO: Set a timer to blink the cursor on and off
+                }
+                AlacTermEvent::Bell => {
+                    cx.emit(Event::Bell);
+                }
+                AlacTermEvent::Exit => cx.emit(Event::CloseTerminal),
+                AlacTermEvent::TextAreaSizeRequest(_) => {
+                    println!("Received text area resize request")
+                }
+            },
+            InternalEvent::Resize(new_size) => {
+                self.pty_tx
+                    .0
+                    .send(Msg::Resize(new_size.clone().into()))
+                    .ok();
+
+                term.resize(*new_size);
             }
-            AlacTermEvent::CursorBlinkingChange => {
-                //TODO: Set a timer to blink the cursor on and off
+            InternalEvent::Clear => {
+                self.notify_pty("\x0c".to_string());
+                term.clear_screen(ClearMode::Saved);
             }
-            AlacTermEvent::Bell => {
-                cx.emit(Event::Bell);
+            InternalEvent::Keystroke(keystroke) => {
+                let esc = to_esc_str(keystroke, term.mode());
+                if let Some(esc) = esc {
+                    self.notify_pty(esc);
+                }
             }
-            AlacTermEvent::Exit => cx.emit(Event::CloseTerminal),
-            AlacTermEvent::TextAreaSizeRequest(_) => println!("Received text area resize request"),
+            InternalEvent::Paste(text) => {
+                if term.mode().contains(TermMode::BRACKETED_PASTE) {
+                    self.notify_pty("\x1b[200~".to_string());
+                    self.notify_pty(text.replace('\x1b', "").to_string());
+                    self.notify_pty("\x1b[201~".to_string());
+                } else {
+                    self.notify_pty(text.replace("\r\n", "\r").replace('\n', "\r"));
+                }
+            }
+            InternalEvent::Copy => {
+                if let Some(txt) = term.selection_to_string() {
+                    cx.write_to_clipboard(ClipboardItem::new(txt))
+                }
+            }
+            InternalEvent::SetSelection(sel) => {}
         }
     }
 
+    fn notify_pty(&self, txt: String) {
+        self.pty_tx.notify(txt.into_bytes());
+    }
+
+    //TODO:
+    // - Continue refactor into event system
+    // - Fix PTYWrite call to not be circular and messy
+    // - Change title to be emitted and maintained externally
+
     ///Write the Input payload to the tty. This locks the terminal so we can scroll it.
     pub fn write_to_pty(&mut self, input: String) {
-        self.event_stack.push(AlacTermEvent::PtyWrite(input))
+        self.event_stack
+            .push(InternalEvent::TermEvent(AlacTermEvent::PtyWrite(input)))
     }
 
     ///Resize the terminal and the PTY. This locks the terminal.
-    pub fn set_size(&self, new_size: WindowSize) {
-        self.pty_tx.0.send(Msg::Resize(new_size)).ok();
-
-        let term_size = TermSize::new(new_size.num_cols as usize, new_size.num_lines as usize);
-        self.term.lock().resize(term_size);
+    pub fn set_size(&mut self, new_size: TermDimensions) {
+        self.event_stack
+            .push(InternalEvent::Resize(new_size.into()))
     }
 
     pub fn clear(&mut self) {
-        self.write_to_pty("\x0c".into());
-        self.term.lock().clear_screen(ClearMode::Saved);
+        self.event_stack.push(InternalEvent::Clear)
     }
 
     pub fn try_keystroke(&mut self, keystroke: &Keystroke) -> bool {
-        let guard = self.term.lock();
-        let mode = guard.mode();
-        let esc = to_esc_str(keystroke, mode);
-        drop(guard);
-        if esc.is_some() {
-            self.write_to_pty(esc.unwrap());
+        if might_convert(keystroke) {
+            self.event_stack
+                .push(InternalEvent::Keystroke(keystroke.clone()));
             true
         } else {
             false
@@ -473,54 +557,26 @@ impl Terminal {
 
     ///Paste text into the terminal
     pub fn paste(&mut self, text: &str) {
-        if self.term.lock().mode().contains(TermMode::BRACKETED_PASTE) {
-            self.write_to_pty("\x1b[200~".to_string());
-            self.write_to_pty(text.replace('\x1b', "").to_string());
-            self.write_to_pty("\x1b[201~".to_string());
-        } else {
-            self.write_to_pty(text.replace("\r\n", "\r").replace('\n', "\r"));
-        }
+        self.event_stack
+            .push(InternalEvent::Paste(text.to_string()));
     }
 
-    pub fn copy(&self) -> Option<String> {
-        let term = self.term.lock();
-        term.selection_to_string()
-    }
-
-    ///Takes the selection out of the terminal
-    pub fn take_selection(&self) -> Option<Selection> {
-        self.term.lock().selection.take()
-    }
-    ///Sets the selection object on the terminal
-    pub fn set_selection(&self, sel: Option<Selection>) {
-        self.term.lock().selection = sel;
+    pub fn copy(&self) {
+        self.event_stack.push(InternalEvent::Copy);
     }
 
     pub fn render_lock<F, T>(&mut self, cx: &mut ModelContext<Self>, f: F) -> T
     where
         F: FnOnce(RenderableContent, char) -> T,
     {
-        let m = self.term.clone(); //TODO avoid clone?
-        let mut term = m.lock(); //Lock
+        let m = self.term.clone(); //Arc clone
+        let mut term = m.lock();
 
-        //TODO, handle resizes
-        // if let Some(new_size) = new_size {
-        //     self.pty_tx.0.send(Msg::Resize(new_size.into())).ok();
-        // }
-
-        // if let Some(new_size) = new_size {
-        //     term.resize(new_size); //Reflow
-        // }
-
-        for event in self
-            .event_stack
-            .iter()
-            .map(|event| event.clone())
-            .collect::<Vec<AlacTermEvent>>() //TODO avoid copy
-            .drain(..)
-        {
-            self.process_terminal_event(event, &mut term, cx)
+        for event in self.event_stack.clone().into_iter().sorted() {
+            self.process_terminal_event(&event, &mut term, cx)
         }
+
+        self.event_stack.clear();
 
         let content = term.renderable_content();
         let cursor_text = term.grid()[content.cursor.point].c;
