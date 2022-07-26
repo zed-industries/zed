@@ -9,13 +9,13 @@ export default function tooltip(theme: Theme) {
     margin: { top: 6, left: 6 },
     shadow: popoverShadow(theme),
     cornerRadius: 6,
-    text: text(theme, "sans", "secondary", { size: "xs", weight: "bold" }),
+    text: text(theme, "sans", "primary", { size: "xs" }),
     keystroke: {
       background: backgroundColor(theme, "on500"),
       cornerRadius: 4,
       margin: { left: 6 },
       padding: { left: 4, right: 4 },
-      ...text(theme, "mono", "muted", { size: "xs", weight: "bold" }),
+      ...text(theme, "mono", "secondary", { size: "xs", weight: "bold" }),
     },
     maxTextWidth: 200,
   };
