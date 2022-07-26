@@ -128,7 +128,7 @@ export default function workspace(theme: Theme) {
         cornerRadius: 6,
         hover: {
           color: iconColor(theme, "active"),
-          background: backgroundColor(theme, 300),
+          background: backgroundColor(theme, "on500", "hovered"),
         },
         disabled: {
           color: withOpacity(iconColor(theme, "muted"), 0.6),

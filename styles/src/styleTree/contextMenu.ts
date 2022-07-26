@@ -18,7 +18,7 @@ export default function contextMenu(theme: Theme) {
     item: {
       padding: { left: 4, right: 4, top: 2, bottom: 2 },
       cornerRadius: 6,
-      label: text(theme, "sans", "secondary", { size: "sm" }),
+      label: text(theme, "sans", "primary", { size: "sm" }),
       keystroke: {
         ...text(theme, "sans", "muted", { size: "sm", weight: "bold" }),
         padding: { left: 3, right: 3 },
@@ -29,7 +29,7 @@ export default function contextMenu(theme: Theme) {
       },
       active: {
         background: backgroundColor(theme, 300, "active"),
-        text: text(theme, "sans", "primary", { size: "sm" }),
+        text: text(theme, "sans", "active", { size: "sm" }),
       },
       activeHover: {
         background: backgroundColor(theme, 300, "hovered"),
