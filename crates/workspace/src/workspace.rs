@@ -2821,7 +2821,9 @@ mod tests {
         project.read_with(cx, |project, cx| {
             assert_eq!(
                 project.active_entry(),
-                project.entry_for_path(&(worktree_id, "one.txt").into(), cx)
+                project
+                    .entry_for_path(&(worktree_id, "one.txt").into(), cx)
+                    .map(|e| e.id)
             );
         });
         assert_eq!(
@@ -2838,7 +2840,9 @@ mod tests {
         project.read_with(cx, |project, cx| {
             assert_eq!(
                 project.active_entry(),
-                project.entry_for_path(&(worktree_id, "two.txt").into(), cx)
+                project
+                    .entry_for_path(&(worktree_id, "two.txt").into(), cx)
+                    .map(|e| e.id)
             );
         });
 
@@ -2856,7 +2860,9 @@ mod tests {
         project.read_with(cx, |project, cx| {
             assert_eq!(
                 project.active_entry(),
-                project.entry_for_path(&(worktree_id, "one.txt").into(), cx)
+                project
+                    .entry_for_path(&(worktree_id, "one.txt").into(), cx)
+                    .map(|e| e.id)
             );
         });
 

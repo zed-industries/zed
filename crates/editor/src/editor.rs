@@ -755,9 +755,11 @@ impl CompletionsMenu {
                 .collect()
         };
         matches.sort_unstable_by_key(|mat| {
+            let completion = &self.completions[mat.candidate_id];
             (
+                completion.lsp_completion.sort_text.as_ref(),
                 Reverse(OrderedFloat(mat.score)),
-                self.completions[mat.candidate_id].sort_key(),
+                completion.sort_key(),
             )
         });
 

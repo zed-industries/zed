@@ -2589,7 +2589,7 @@ async fn test_project_symbols(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
 
     // Attempt to craft a symbol and violate host's privacy by opening an arbitrary file.
     let mut fake_symbol = symbols[0].clone();
-    fake_symbol.path = Path::new("/code/secrets").into();
+    fake_symbol.path.path = Path::new("/code/secrets").into();
     let error = project_b
         .update(cx_b, |project, cx| {
             project.open_buffer_for_symbol(&fake_symbol, cx)
