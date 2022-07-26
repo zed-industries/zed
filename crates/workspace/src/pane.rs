@@ -873,6 +873,13 @@ impl Pane {
             };
 
             let is_pane_active = self.is_active;
+
+            let tab_styles = match is_pane_active {
+                true => theme.workspace.tab_bar.active_pane.clone(),
+                false => theme.workspace.tab_bar.inactive_pane.clone(),
+            };
+            let filler_style = tab_styles.inactive_tab.clone();
+
             let mut row = Flex::row().scrollable::<Tabs, _>(1, autoscroll, cx);
             for (ix, (item, detail)) in self.items.iter().zip(self.tab_details(cx)).enumerate() {
                 let item_id = item.id();
@@ -890,12 +897,11 @@ impl Pane {
                 };
 
                 row.add_child({
-                    let mut tab_style = match (is_pane_active, is_tab_active) {
-                        (true, true) => theme.workspace.active_pane_active_tab.clone(),
-                        (true, false) => theme.workspace.active_pane_inactive_tab.clone(),
-                        (false, true) => theme.workspace.inactive_pane_active_tab.clone(),
-                        (false, false) => theme.workspace.inactive_pane_inactive_tab.clone(),
+                    let mut tab_style = match is_tab_active {
+                        true => tab_styles.active_tab.clone(),
+                        false => tab_styles.inactive_tab.clone(),
                     };
+
                     let title = item.tab_content(detail, &tab_style, cx);
 
                     if ix == 0 {
@@ -1003,17 +1009,11 @@ impl Pane {
                 })
             }
 
-            let filler_style = if is_pane_active {
-                &theme.workspace.active_pane_inactive_tab
-            } else {
-                &theme.workspace.inactive_pane_inactive_tab
-            };
-
             row.add_child(
                 Empty::new()
                     .contained()
                     .with_style(filler_style.container)
-                    .with_border(theme.workspace.active_pane_active_tab.container.border)
+                    .with_border(filler_style.container.border)
                     .flex(0., true)
                     .named("filler"),
             );
@@ -1088,7 +1088,8 @@ impl View for Pane {
                                         0,
                                         cx,
                                         |mouse_state, cx| {
-                                            let theme = &cx.global::<Settings>().theme.workspace;
+                                            let theme =
+                                                &cx.global::<Settings>().theme.workspace.tab_bar;
                                             let style =
                                                 theme.pane_button.style_for(mouse_state, false);
                                             Svg::new("icons/split_12.svg")
@@ -1118,13 +1119,7 @@ impl View for Pane {
 
                             tab_row
                                 .constrained()
-                                .with_height(
-                                    cx.global::<Settings>()
-                                        .theme
-                                        .workspace
-                                        .active_pane_active_tab
-                                        .height,
-                                )
+                                .with_height(cx.global::<Settings>().theme.workspace.tab_bar.height)
                                 .boxed()
                         })
                         .with_child(ChildView::new(&self.toolbar).boxed())

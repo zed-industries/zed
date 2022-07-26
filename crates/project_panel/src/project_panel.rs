@@ -1028,11 +1028,11 @@ impl ProjectPanel {
                 .with_child(
                     ConstrainedBox::new(if kind == EntryKind::Dir {
                         if details.is_expanded {
-                            Svg::new("icons/chevron_right_8.svg")
+                            Svg::new("icons/chevron_down_8.svg")
                                 .with_color(style.icon_color)
                                 .boxed()
                         } else {
-                            Svg::new("icons/chevron_down_8.svg")
+                            Svg::new("icons/chevron_right_8.svg")
                                 .with_color(style.icon_color)
                                 .boxed()
                         }
