@@ -4,6 +4,11 @@ pub mod mappings;
 pub mod modal;
 pub mod terminal_view;
 
+#[cfg(test)]
+use alacritty_terminal::term::cell::Cell;
+#[cfg(test)]
+use alacritty_terminal::Grid;
+
 use alacritty_terminal::{
     ansi::{ClearMode, Handler},
     config::{Config, Program, PtyConfig},
@@ -383,13 +388,11 @@ impl Terminal {
         &mut self,
         event: alacritty_terminal::event::Event,
         term: &mut Term<ZedListener>,
-        cx: &mut ModelContext<Terminal>,
+        cx: &mut ModelContext<Self>,
     ) {
         match event {
             // TODO: Handle is_self_focused in subscription on terminal view
-            AlacTermEvent::Wakeup => {
-                cx.emit(Event::Wakeup);
-            }
+            AlacTermEvent::Wakeup => { /* Irrelevant, as we always notify on any event */ }
             AlacTermEvent::PtyWrite(out) => {
                 term.scroll_display(Scroll::Bottom);
                 self.pty_tx.notify(out.into_bytes())
@@ -411,17 +414,20 @@ impl Terminal {
             AlacTermEvent::ClipboardStore(_, data) => {
                 cx.write_to_clipboard(ClipboardItem::new(data))
             }
-            AlacTermEvent::ClipboardLoad(_, format) => self.write_to_pty(format(
-                &cx.read_from_clipboard()
-                    .map(|ci| ci.text().to_string())
-                    .unwrap_or("".to_string()),
-            )),
+            AlacTermEvent::ClipboardLoad(_, format) => self.pty_tx.notify(
+                format(
+                    &cx.read_from_clipboard()
+                        .map(|ci| ci.text().to_string())
+                        .unwrap_or("".to_string()),
+                )
+                .into_bytes(),
+            ),
             AlacTermEvent::ColorRequest(index, format) => {
                 let color = term.colors()[index].unwrap_or_else(|| {
                     let term_style = &cx.global::<Settings>().theme.terminal;
                     to_alac_rgb(get_color_at_index(&index, &term_style.colors))
                 });
-                self.write_to_pty(format(color))
+                self.pty_tx.notify(format(color).into_bytes())
             }
             AlacTermEvent::CursorBlinkingChange => {
                 //TODO: Set a timer to blink the cursor on and off
@@ -435,7 +441,7 @@ impl Terminal {
     }
 
     ///Write the Input payload to the tty. This locks the terminal so we can scroll it.
-    pub fn write_to_pty(&self, input: String) {
+    pub fn write_to_pty(&mut self, input: String) {
         self.event_stack.push(AlacTermEvent::PtyWrite(input))
     }
 
@@ -447,12 +453,12 @@ impl Terminal {
         self.term.lock().resize(term_size);
     }
 
-    pub fn clear(&self) {
+    pub fn clear(&mut self) {
         self.write_to_pty("\x0c".into());
         self.term.lock().clear_screen(ClearMode::Saved);
     }
 
-    pub fn try_keystroke(&self, keystroke: &Keystroke) -> bool {
+    pub fn try_keystroke(&mut self, keystroke: &Keystroke) -> bool {
         let guard = self.term.lock();
         let mode = guard.mode();
         let esc = to_esc_str(keystroke, mode);
@@ -466,7 +472,7 @@ impl Terminal {
     }
 
     ///Paste text into the terminal
-    pub fn paste(&self, text: &str) {
+    pub fn paste(&mut self, text: &str) {
         if self.term.lock().mode().contains(TermMode::BRACKETED_PASTE) {
             self.write_to_pty("\x1b[200~".to_string());
             self.write_to_pty(text.replace('\x1b', "").to_string());
@@ -490,11 +496,12 @@ impl Terminal {
         self.term.lock().selection = sel;
     }
 
-    pub fn render_lock<F, T>(&self, cx: &mut ModelContext<Self>, f: F) -> T
+    pub fn render_lock<F, T>(&mut self, cx: &mut ModelContext<Self>, f: F) -> T
     where
         F: FnOnce(RenderableContent, char) -> T,
     {
-        let mut term = self.term.lock(); //Lock
+        let m = self.term.clone(); //TODO avoid clone?
+        let mut term = m.lock(); //Lock
 
         //TODO, handle resizes
         // if let Some(new_size) = new_size {
@@ -505,7 +512,13 @@ impl Terminal {
         //     term.resize(new_size); //Reflow
         // }
 
-        for event in self.event_stack.drain(..) {
+        for event in self
+            .event_stack
+            .iter()
+            .map(|event| event.clone())
+            .collect::<Vec<AlacTermEvent>>() //TODO avoid copy
+            .drain(..)
+        {
             self.process_terminal_event(event, &mut term, cx)
         }
 
@@ -516,12 +529,13 @@ impl Terminal {
     }
 
     pub fn get_display_offset(&self) -> usize {
-        self.term.lock().renderable_content().display_offset
+        10
+        // self.term.lock().renderable_content().display_offset
     }
 
     ///Scroll the terminal
-    pub fn scroll(&self, scroll: Scroll) {
-        self.term.lock().scroll_display(scroll)
+    pub fn scroll(&self, _scroll: Scroll) {
+        // self.term.lock().scroll_display(scroll)
     }
 
     pub fn click(&self, point: Point, side: Direction, clicks: usize) {
@@ -548,6 +562,11 @@ impl Terminal {
 
     pub fn mouse_down(&self, point: Point, side: Direction) {
         self.set_selection(Some(Selection::new(SelectionType::Simple, point, side)));
+    }
+
+    #[cfg(test)]
+    fn grid(&self) -> Grid<Cell> {
+        self.term.lock().grid().clone()
     }
 }
 

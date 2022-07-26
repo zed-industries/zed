@@ -87,7 +87,7 @@ impl ConnectedView {
     }
 
     fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
-        self.terminal.read(cx).clear();
+        self.terminal.update(cx, |term, _| term.clear());
     }
 
     ///Attempt to paste the clipboard into the terminal
@@ -101,43 +101,43 @@ impl ConnectedView {
     ///Attempt to paste the clipboard into the terminal
     fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
         cx.read_from_clipboard().map(|item| {
-            self.terminal.read(cx).paste(item.text());
+            self.terminal.update(cx, |term, _| term.paste(item.text()));
         });
     }
 
     ///Synthesize the keyboard event corresponding to 'up'
     fn up(&mut self, _: &Up, cx: &mut ViewContext<Self>) {
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("up").unwrap());
+        self.terminal.update(cx, |term, _| {
+            term.try_keystroke(&Keystroke::parse("up").unwrap());
+        });
     }
 
     ///Synthesize the keyboard event corresponding to 'down'
     fn down(&mut self, _: &Down, cx: &mut ViewContext<Self>) {
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("down").unwrap());
+        self.terminal.update(cx, |term, _| {
+            term.try_keystroke(&Keystroke::parse("down").unwrap());
+        });
     }
 
     ///Synthesize the keyboard event corresponding to 'ctrl-c'
     fn ctrl_c(&mut self, _: &CtrlC, cx: &mut ViewContext<Self>) {
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("ctrl-c").unwrap());
+        self.terminal.update(cx, |term, _| {
+            term.try_keystroke(&Keystroke::parse("ctrl-c").unwrap());
+        });
     }
 
     ///Synthesize the keyboard event corresponding to 'escape'
     fn escape(&mut self, _: &Escape, cx: &mut ViewContext<Self>) {
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("escape").unwrap());
+        self.terminal.update(cx, |term, _| {
+            term.try_keystroke(&Keystroke::parse("escape").unwrap());
+        });
     }
 
     ///Synthesize the keyboard event corresponding to 'enter'
     fn enter(&mut self, _: &Enter, cx: &mut ViewContext<Self>) {
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("enter").unwrap());
+        self.terminal.update(cx, |term, _| {
+            term.try_keystroke(&Keystroke::parse("enter").unwrap());
+        });
     }
 }
 

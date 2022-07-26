@@ -512,10 +512,10 @@ impl Element for TerminalEl {
         cx: &mut gpui::LayoutContext,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         let settings = cx.global::<Settings>();
-        let font_cache = &cx.font_cache();
+        let font_cache = cx.font_cache();
 
         //Setup layout information
-        let terminal_theme = &settings.theme.terminal;
+        let terminal_theme = settings.theme.terminal.clone(); //-_-
         let text_style = TerminalEl::make_text_style(font_cache, &settings);
         let selection_color = settings.theme.editor.selection.selection;
         let dimensions = {
@@ -524,62 +524,64 @@ impl Element for TerminalEl {
             TermDimensions::new(line_height, cell_width, constraint.max)
         };
 
-        let terminal = self.terminal.upgrade(cx).unwrap().read(cx);
+        let background_color = if self.modal {
+            terminal_theme.colors.modal_background.clone()
+        } else {
+            terminal_theme.colors.background.clone()
+        };
 
         let (cursor, cells, rects, highlights) =
-            terminal.render_lock(Some(dimensions.clone()), |content, cursor_text| {
-                let (cells, rects, highlights) = TerminalEl::layout_grid(
-                    content.display_iter,
-                    &text_style,
-                    terminal_theme,
-                    cx.text_layout_cache,
-                    self.modal,
-                    content.selection,
-                );
+            self.terminal
+                .upgrade(cx)
+                .unwrap()
+                .update(cx.app, |terminal, mcx| {
+                    terminal.render_lock(mcx, |content, cursor_text| {
+                        let (cells, rects, highlights) = TerminalEl::layout_grid(
+                            content.display_iter,
+                            &text_style,
+                            &terminal_theme,
+                            cx.text_layout_cache,
+                            self.modal,
+                            content.selection,
+                        );
 
-                //Layout cursor
-                let cursor = {
-                    let cursor_point =
-                        DisplayCursor::from(content.cursor.point, content.display_offset);
-                    let cursor_text = {
-                        let str_trxt = cursor_text.to_string();
-                        cx.text_layout_cache.layout_str(
-                            &str_trxt,
-                            text_style.font_size,
-                            &[(
-                                str_trxt.len(),
-                                RunStyle {
-                                    font_id: text_style.font_id,
-                                    color: terminal_theme.colors.background,
-                                    underline: Default::default(),
+                        //Layout cursor
+                        let cursor = {
+                            let cursor_point =
+                                DisplayCursor::from(content.cursor.point, content.display_offset);
+                            let cursor_text = {
+                                let str_trxt = cursor_text.to_string();
+                                cx.text_layout_cache.layout_str(
+                                    &str_trxt,
+                                    text_style.font_size,
+                                    &[(
+                                        str_trxt.len(),
+                                        RunStyle {
+                                            font_id: text_style.font_id,
+                                            color: terminal_theme.colors.background,
+                                            underline: Default::default(),
+                                        },
+                                    )],
+                                )
+                            };
+
+                            TerminalEl::shape_cursor(cursor_point, dimensions, &cursor_text).map(
+                                move |(cursor_position, block_width)| {
+                                    Cursor::new(
+                                        cursor_position,
+                                        block_width,
+                                        dimensions.line_height,
+                                        terminal_theme.colors.cursor,
+                                        CursorShape::Block,
+                                        Some(cursor_text.clone()),
+                                    )
                                 },
-                            )],
-                        )
-                    };
-
-                    TerminalEl::shape_cursor(cursor_point, dimensions, &cursor_text).map(
-                        move |(cursor_position, block_width)| {
-                            Cursor::new(
-                                cursor_position,
-                                block_width,
-                                dimensions.line_height,
-                                terminal_theme.colors.cursor,
-                                CursorShape::Block,
-                                Some(cursor_text.clone()),
                             )
-                        },
-                    )
-                };
+                        };
 
-                (cursor, cells, rects, highlights)
-            });
-
-        //Select background color
-        let background_color = if self.modal {
-            terminal_theme.colors.modal_background
-        } else {
-            terminal_theme.colors.background
-        };
+                        (cursor, cells, rects, highlights)
+                    })
+                });
 
         //Done!
         (
@@ -706,8 +708,9 @@ impl Element for TerminalEl {
 
                 self.terminal
                     .upgrade(cx.app)
-                    .map(|model_handle| model_handle.read(cx.app))
-                    .map(|term| term.try_keystroke(keystroke))
+                    .map(|model_handle| {
+                        model_handle.update(cx.app, |term, _| term.try_keystroke(keystroke))
+                    })
                     .unwrap_or(false)
             }
             _ => false,
