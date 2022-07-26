@@ -335,7 +335,8 @@ fn get_working_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathB
         .clone()
         .unwrap_or(WorkingDirectory::CurrentProjectDirectory);
     let res = match wd_setting {
-        WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx),
+        WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx)
+            .or_else(|| first_project_directory(workspace, cx)),
         WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
         WorkingDirectory::AlwaysHome => None,
         WorkingDirectory::Always { directory } => {
