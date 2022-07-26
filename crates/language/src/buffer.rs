@@ -19,7 +19,7 @@ use smol::future::yield_now;
 use std::{
     any::Any,
     cmp::{self, Ordering},
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     ffi::OsStr,
     future::Future,
     iter::{self, Iterator, Peekable},
@@ -808,7 +808,7 @@ impl Buffer {
                     )
                     .collect::<BTreeMap<u32, u32>>();
 
-                let mut old_suggestions = HashMap::<u32, IndentSize>::default();
+                let mut old_suggestions = BTreeMap::<u32, IndentSize>::default();
                 let old_edited_ranges =
                     contiguous_ranges(old_to_new_rows.keys().copied(), max_rows_between_yields);
                 for old_edited_range in old_edited_ranges {
@@ -819,19 +819,15 @@ impl Buffer {
                         .flatten();
                     for (old_row, suggestion) in old_edited_range.zip(suggestions) {
                         if let Some(suggestion) = suggestion {
-                            let mut suggested_indent = old_to_new_rows
+                            let suggested_indent = old_to_new_rows
                                 .get(&suggestion.basis_row)
                                 .and_then(|from_row| old_suggestions.get(from_row).copied())
                                 .unwrap_or_else(|| {
                                     request
                                         .before_edit
                                         .indent_size_for_line(suggestion.basis_row)
-                                });
-                            if suggestion.delta.is_gt() {
-                                suggested_indent += request.indent_size;
-                            } else if suggestion.delta.is_lt() {
-                                suggested_indent -= request.indent_size;
-                            }
+                                })
+                                .with_delta(suggestion.delta, request.indent_size);
                             old_suggestions
                                 .insert(*old_to_new_rows.get(&old_row).unwrap(), suggested_indent);
                         }
@@ -850,17 +846,13 @@ impl Buffer {
                         .flatten();
                     for (new_row, suggestion) in new_edited_row_range.zip(suggestions) {
                         if let Some(suggestion) = suggestion {
-                            let mut suggested_indent = indent_sizes
+                            let suggested_indent = indent_sizes
                                 .get(&suggestion.basis_row)
                                 .copied()
                                 .unwrap_or_else(|| {
                                     snapshot.indent_size_for_line(suggestion.basis_row)
-                                });
-                            if suggestion.delta.is_gt() {
-                                suggested_indent += request.indent_size;
-                            } else if suggestion.delta.is_lt() {
-                                suggested_indent -= request.indent_size;
-                            }
+                                })
+                                .with_delta(suggestion.delta, request.indent_size);
                             if old_suggestions
                                 .get(&new_row)
                                 .map_or(true, |old_indentation| {
@@ -874,38 +866,32 @@ impl Buffer {
                     yield_now().await;
                 }
 
-                if !request.inserted.is_empty() {
-                    let inserted_row_ranges = contiguous_ranges(
-                        request
-                            .inserted
-                            .iter()
-                            .map(|range| range.to_point(&snapshot))
-                            .flat_map(|range| range.start.row..range.end.row + 1),
-                        max_rows_between_yields,
-                    );
-                    for inserted_row_range in inserted_row_ranges {
-                        let suggestions = snapshot
-                            .suggest_autoindents(inserted_row_range.clone())
-                            .into_iter()
-                            .flatten();
-                        for (row, suggestion) in inserted_row_range.zip(suggestions) {
-                            if let Some(suggestion) = suggestion {
-                                let mut suggested_indent = indent_sizes
-                                    .get(&suggestion.basis_row)
-                                    .copied()
-                                    .unwrap_or_else(|| {
-                                        snapshot.indent_size_for_line(suggestion.basis_row)
-                                    });
-                                if suggestion.delta.is_gt() {
-                                    suggested_indent += request.indent_size;
-                                } else if suggestion.delta.is_lt() {
-                                    suggested_indent -= request.indent_size;
-                                }
-                                indent_sizes.insert(row, suggested_indent);
-                            }
+                let inserted_row_ranges = contiguous_ranges(
+                    request
+                        .inserted
+                        .iter()
+                        .map(|range| range.to_point(&snapshot))
+                        .flat_map(|range| range.start.row..range.end.row + 1),
+                    max_rows_between_yields,
+                );
+                for inserted_row_range in inserted_row_ranges {
+                    let suggestions = snapshot
+                        .suggest_autoindents(inserted_row_range.clone())
+                        .into_iter()
+                        .flatten();
+                    for (row, suggestion) in inserted_row_range.zip(suggestions) {
+                        if let Some(suggestion) = suggestion {
+                            let suggested_indent = indent_sizes
+                                .get(&suggestion.basis_row)
+                                .copied()
+                                .unwrap_or_else(|| {
+                                    snapshot.indent_size_for_line(suggestion.basis_row)
+                                })
+                                .with_delta(suggestion.delta, request.indent_size);
+                            indent_sizes.insert(row, suggested_indent);
                         }
-                        yield_now().await;
                     }
+                    yield_now().await;
                 }
             }
 
@@ -2513,23 +2499,24 @@ impl IndentSize {
             IndentKind::Tab => '\t',
         }
     }
-}
 
-impl std::ops::AddAssign for IndentSize {
-    fn add_assign(&mut self, other: IndentSize) {
-        if self.len == 0 {
-            *self = other;
-        } else if self.kind == other.kind {
-            self.len += other.len;
+    pub fn with_delta(mut self, direction: Ordering, size: IndentSize) -> Self {
+        match direction {
+            Ordering::Less => {
+                if self.kind == size.kind && self.len >= size.len {
+                    self.len -= size.len;
+                }
+            }
+            Ordering::Equal => {}
+            Ordering::Greater => {
+                if self.len == 0 {
+                    self = size;
+                } else if self.kind == size.kind {
+                    self.len += size.len;
+                }
+            }
         }
-    }
-}
-
-impl std::ops::SubAssign for IndentSize {
-    fn sub_assign(&mut self, other: IndentSize) {
-        if self.kind == other.kind && self.len >= other.len {
-            self.len -= other.len;
-        }
+        self
     }
 }
 
