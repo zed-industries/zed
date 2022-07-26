@@ -84,7 +84,8 @@
         "shell": "system",
         // What working directory to use when launching the terminal.
         // May take 4 values:
-        // 1. Use the current file's project directory.
+        // 1. Use the current file's project directory.  Will Fallback to the 
+        //    first project directory strategy if unsuccessful
         //      "working_directory": "current_project_directory"
         // 2. Use the first project in this workspace's directory
         //      "working_directory": "first_project_directory"

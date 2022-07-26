@@ -1,4 +1,5 @@
 use gpui::{ModelHandle, ViewContext};
+use settings::{Settings, WorkingDirectory};
 use workspace::Workspace;
 
 use crate::{
@@ -27,7 +28,14 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
         // No connection was stored, create a new terminal
         if let Some(closed_terminal_handle) = workspace.toggle_modal(cx, |workspace, cx| {
             // No terminal modal visible, construct a new one.
-            let working_directory = get_working_directory(workspace, cx);
+            let wd_strategy = cx
+                .global::<Settings>()
+                .terminal_overrides
+                .working_directory
+                .clone()
+                .unwrap_or(WorkingDirectory::CurrentProjectDirectory);
+
+            let working_directory = get_working_directory(workspace, cx, wd_strategy);
 
             let this = cx.add_view(|cx| TerminalView::new(working_directory, true, cx));
 

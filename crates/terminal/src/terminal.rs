@@ -80,7 +80,14 @@ impl Entity for ErrorView {
 impl TerminalView {
     ///Create a new Terminal in the current working directory or the user's home directory
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
-        let working_directory = get_working_directory(workspace, cx);
+        let wd_strategy = cx
+            .global::<Settings>()
+            .terminal_overrides
+            .working_directory
+            .clone()
+            .unwrap_or(WorkingDirectory::CurrentProjectDirectory);
+
+        let working_directory = get_working_directory(workspace, cx, wd_strategy);
         let view = cx.add_view(|cx| TerminalView::new(working_directory, false, cx));
         workspace.add_item(Box::new(view), cx);
     }
@@ -327,14 +334,12 @@ impl Item for TerminalView {
 }
 
 ///Get's the working directory for the given workspace, respecting the user's settings.
-fn get_working_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
-    let wd_setting = cx
-        .global::<Settings>()
-        .terminal_overrides
-        .working_directory
-        .clone()
-        .unwrap_or(WorkingDirectory::CurrentProjectDirectory);
-    let res = match wd_setting {
+fn get_working_directory(
+    workspace: &Workspace,
+    cx: &AppContext,
+    strategy: WorkingDirectory,
+) -> Option<PathBuf> {
+    let res = match strategy {
         WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx)
             .or_else(|| first_project_directory(workspace, cx)),
         WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
@@ -518,6 +523,30 @@ mod tests {
             assert_eq!(res, Some((Path::new("/root2/")).to_path_buf()));
             let res = first_project_directory(workspace, cx);
             assert_eq!(res, Some((Path::new("/root1/")).to_path_buf()));
+        });
+    }
+
+    //Active entry with a work tree, worktree is a file, integration test with the strategy interface
+    #[gpui::test]
+    async fn active_entry_worktree_is_file_int(cx: &mut TestAppContext) {
+        //Setup variables
+        let mut cx = TerminalTestContext::new(cx, true);
+        let (project, workspace) = cx.blank_workspace().await;
+        let (_wt, _entry) = cx.create_folder_wt(project.clone(), "/root1/").await;
+        let (wt2, entry2) = cx.create_file_wt(project.clone(), "/root2.txt").await;
+        cx.insert_active_entry_for(wt2, entry2, project.clone());
+
+        //Test
+        cx.cx.update(|cx| {
+            let workspace = workspace.read(cx);
+            let active_entry = project.read(cx).active_entry();
+
+            assert!(active_entry.is_some());
+
+            let res =
+                get_working_directory(workspace, cx, WorkingDirectory::CurrentProjectDirectory);
+            let first = first_project_directory(workspace, cx);
+            assert_eq!(res, first);
         });
     }
 }
