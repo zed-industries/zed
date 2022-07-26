@@ -75,12 +75,13 @@ pub struct TabBar {
     pub pane_button: Interactive<IconButton>,
     pub active_pane: TabStyles,
     pub inactive_pane: TabStyles,
+    pub height: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]
 pub struct TabStyles {
-    active_tab: Tab,
-    inactive_tab: Tab,
+    pub active_tab: Tab,
+    pub inactive_tab: Tab,
 }
 
 #[derive(Clone, Deserialize, Default)]
