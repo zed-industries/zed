@@ -54,7 +54,7 @@ const DEBUG_TERMINAL_WIDTH: f32 = 500.;
 const DEBUG_TERMINAL_HEIGHT: f32 = 30.; //This needs to be wide enough that the CI & a local dev's prompt can fill the whole space.
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
-const TERM_FRAME_RATE: f32 = 120.;
+const MAX_FRAME_RATE: f32 = 120.;
 
 ///Upward flowing events, for changing the title and such
 #[derive(Clone, Copy, Debug)]
@@ -361,7 +361,7 @@ impl TerminalBuilder {
                 //https://news.ycombinator.com/item?id=17634547#17635856
                 let delay = cx
                     .background()
-                    .timer(Duration::from_secs_f32(1.0 / TERM_FRAME_RATE));
+                    .timer(Duration::from_secs_f32(1.0 / Terminal::default_fps()));
                 if frames_to_skip == 0 {
                     let mut events = vec![];
 
@@ -404,12 +404,17 @@ pub struct Terminal {
     events: Vec<InternalEvent>,
     default_title: String,
     title: String,
+    frames_to_skip: usize,
 }
 
 impl Terminal {
+    fn default_fps() -> f32 {
+        MAX_FRAME_RATE
+    }
+
     ///Tells the render loop how many frames to skip before reading from the terminal.
     fn frames_to_skip(&self) -> usize {
-        4
+        self.frames_to_skip
     }
 
     fn push_events(&mut self, events: Vec<AlacTermEvent>) {
@@ -430,6 +435,7 @@ impl Terminal {
                 AlacTermEvent::Wakeup => {
                     cx.emit(Event::Wakeup);
                 }
+                //TODO: Does not need to be in lock context
                 AlacTermEvent::PtyWrite(out) => self.notify_pty(out.clone()),
                 AlacTermEvent::MouseCursorDirty => {
                     //Calculate new cursor style.
@@ -445,9 +451,11 @@ impl Terminal {
                     self.title = self.default_title.clone();
                     cx.emit(Event::TitleChanged);
                 }
+                //TODO: Does not need to be in lock context
                 AlacTermEvent::ClipboardStore(_, data) => {
                     cx.write_to_clipboard(ClipboardItem::new(data.to_string()))
                 }
+                //TODO: Does not need to be in lock context
                 AlacTermEvent::ClipboardLoad(_, format) => self.notify_pty(format(
                     &cx.read_from_clipboard()
                         .map(|ci| ci.text().to_string())
@@ -557,6 +565,8 @@ impl Terminal {
     where
         F: FnOnce(RenderableContent, char) -> T,
     {
+        let back_buffer_size = 5000;
+
         let m = self.term.clone(); //Arc clone
         let mut term = m.lock();
 
@@ -564,9 +574,34 @@ impl Terminal {
             self.process_terminal_event(&e, &mut term, cx)
         }
 
+        // let overflow_size = term.grid().total_lines()
+
+        //We need something that starts at 0, and grows upward.
+
+        //Concept: Set storage twice as long as is actually available.
+        //Alacritty Default is 10,000, so for now hardcode 5,000 lines for history
+        //and 5,000 for measurement (Later, put this in configuration 😤)
+        //Measure the number of lines over 5,000 and the time since last frame
+        //divide for velocity
+        //This is the velocity of lines. map linearly to [0..10] (with .round())
+        //(Later, perhaps make this an exponential backoff)
+        //Report that number as the skip frames.
+
+        let velocity = term.grid().history_size().saturating_sub(back_buffer_size);
+
+        let fractional_velocity = velocity as f32 / back_buffer_size as f32;
+
+        //3rd power
+        let scaled_fraction = fractional_velocity * fractional_velocity * fractional_velocity;
+
+        self.frames_to_skip = (scaled_fraction * Self::default_fps() / 10.).round() as usize;
+
+        term.grid_mut().update_history(back_buffer_size); //Clear out the measurement space
+        term.grid_mut().update_history(back_buffer_size * 2); //Extra space for measuring
+
         let content = term.renderable_content();
 
-        println!("Offset: {}", term.grid().history_size());
+        println!("Offset: {}", term.grid().total_lines());
 
         let cursor_text = term.grid()[content.cursor.point].c;
 
