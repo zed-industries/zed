@@ -14,30 +14,30 @@
             "k": "vim::Up",
             "l": "vim::Right",
             "0": "vim::StartOfLine",
-            "shift-$": "vim::EndOfLine",
-            "shift-G": "vim::EndOfDocument",
+            "$": "vim::EndOfLine",
+            "shift-g": "vim::EndOfDocument",
             "w": "vim::NextWordStart",
-            "shift-W": [
+            "shift-w": [
                 "vim::NextWordStart",
                 {
                     "ignorePunctuation": true
                 }
             ],
             "e": "vim::NextWordEnd",
-            "shift-E": [
+            "shift-e": [
                 "vim::NextWordEnd",
                 {
                     "ignorePunctuation": true
                 }
             ],
             "b": "vim::PreviousWordStart",
-            "shift-B": [
+            "shift-b": [
                 "vim::PreviousWordStart",
                 {
                     "ignorePunctuation": true
                 }
             ],
-            "shift-%": "vim::Matching",
+            "%": "vim::Matching",
             "escape": "editor::Cancel"
         }
     },
@@ -48,12 +48,12 @@
                 "vim::PushOperator",
                 "Change"
             ],
-            "shift-C": "vim::ChangeToEndOfLine",
+            "shift-c": "vim::ChangeToEndOfLine",
             "d": [
                 "vim::PushOperator",
                 "Delete"
             ],
-            "shift-D": "vim::DeleteToEndOfLine",
+            "shift-d": "vim::DeleteToEndOfLine",
             "y": [
                 "vim::PushOperator",
                 "Yank"
@@ -62,14 +62,14 @@
                 "vim::SwitchMode",
                 "Insert"
             ],
-            "shift-I": "vim::InsertFirstNonWhitespace",
+            "shift-i": "vim::InsertFirstNonWhitespace",
             "a": "vim::InsertAfter",
-            "shift-A": "vim::InsertEndOfLine",
+            "shift-a": "vim::InsertEndOfLine",
             "x": "vim::DeleteRight",
-            "shift-X": "vim::DeleteLeft",
-            "shift-^": "vim::FirstNonWhitespace",
+            "shift-x": "vim::DeleteLeft",
+            "^": "vim::FirstNonWhitespace",
             "o": "vim::InsertLineBelow",
-            "shift-O": "vim::InsertLineAbove",
+            "shift-o": "vim::InsertLineAbove",
             "v": [
                 "vim::SwitchMode",
                 {
@@ -78,7 +78,7 @@
                     }
                 }
             ],
-            "shift-V": [
+            "shift-v": [
                 "vim::SwitchMode",
                 {
                     "Visual": {
@@ -113,7 +113,7 @@
         "context": "Editor && vim_operator == c",
         "bindings": {
             "w": "vim::ChangeWord",
-            "shift-W": [
+            "shift-w": [
                 "vim::ChangeWord",
                 {
                     "ignorePunctuation": true
