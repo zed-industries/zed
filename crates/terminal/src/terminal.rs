@@ -171,14 +171,6 @@ impl View for TerminalView {
             cx.focus(view.content.handle());
         });
     }
-
-    fn keymap_context(&self, _: &gpui::AppContext) -> gpui::keymap::Context {
-        let mut context = Self::default_keymap_context();
-        if self.modal {
-            context.set.insert("ModalTerminal".into());
-        }
-        context
-    }
 }
 
 impl View for ErrorView {
