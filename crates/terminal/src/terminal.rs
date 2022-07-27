@@ -54,6 +54,7 @@ const DEBUG_TERMINAL_WIDTH: f32 = 500.;
 const DEBUG_TERMINAL_HEIGHT: f32 = 30.; //This needs to be wide enough that the CI & a local dev's prompt can fill the whole space.
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
+const TERM_FRAME_RATE: f32 = 120.;
 
 ///Upward flowing events, for changing the title and such
 #[derive(Clone, Copy, Debug)]
@@ -349,31 +350,43 @@ impl TerminalBuilder {
     //Probably nescessary...
 
     pub fn subscribe(mut self, cx: &mut ModelContext<Terminal>) -> Terminal {
+        let mut frames_to_skip = 0;
         cx.spawn_weak(|this, mut cx| async move {
             'outer: loop {
                 //TODO: Pending GPUI updates, sync this to some higher, smarter system.
-                let delay = cx.background().timer(Duration::from_secs_f32(1.0 / 30.));
+                //Note: This sampling interval is too high on really hammering programs like
+                //`yes`. Zed is just usable enough to cancel the command at this interval.
+                //To properly fix this, I'll need to do some dynamic reworking of this number
+                //Based on the current throughput. See what iterm2 does:
+                //https://news.ycombinator.com/item?id=17634547#17635856
+                let delay = cx
+                    .background()
+                    .timer(Duration::from_secs_f32(1.0 / TERM_FRAME_RATE));
+                if frames_to_skip == 0 {
+                    let mut events = vec![];
 
-                let mut events = vec![];
-
-                loop {
-                    match self.events_rx.try_next() {
-                        //Have a buffered event
-                        Ok(Some(e)) => events.push(e),
-                        //Channel closed, exit
-                        Ok(None) => break 'outer,
-                        //Ran out of buffered events
-                        Err(_) => break,
+                    loop {
+                        match self.events_rx.try_next() {
+                            //Have a buffered event
+                            Ok(Some(e)) => events.push(e),
+                            //Channel closed, exit
+                            Ok(None) => break 'outer,
+                            //Ran out of buffered events
+                            Err(_) => break,
+                        }
                     }
-                }
-                match this.upgrade(&cx) {
-                    Some(this) => {
-                        this.update(&mut cx, |this, cx| {
-                            this.push_events(events);
-                            cx.notify();
-                        });
+                    match this.upgrade(&cx) {
+                        Some(this) => {
+                            this.update(&mut cx, |this, cx| {
+                                this.push_events(events);
+                                frames_to_skip = this.frames_to_skip();
+                                cx.notify();
+                            });
+                        }
+                        None => break 'outer,
                     }
-                    None => break 'outer,
+                } else {
+                    frames_to_skip = frames_to_skip - 1;
                 }
 
                 delay.await;
@@ -394,6 +407,11 @@ pub struct Terminal {
 }
 
 impl Terminal {
+    ///Tells the render loop how many frames to skip before reading from the terminal.
+    fn frames_to_skip(&self) -> usize {
+        4
+    }
+
     fn push_events(&mut self, events: Vec<AlacTermEvent>) {
         self.events
             .extend(events.into_iter().map(|e| InternalEvent::TermEvent(e)))
@@ -547,6 +565,9 @@ impl Terminal {
         }
 
         let content = term.renderable_content();
+
+        println!("Offset: {}", term.grid().history_size());
+
         let cursor_text = term.grid()[content.cursor.point].c;
 
         f(content, cursor_text)
