@@ -11,7 +11,7 @@ use alacritty_terminal::Grid;
 
 use alacritty_terminal::{
     ansi::{ClearMode, Handler},
-    config::{Config, Program, PtyConfig},
+    config::{Config, Program, PtyConfig, Scrolling},
     event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
     event_loop::{EventLoop, Msg, Notifier},
     grid::{Dimensions, Scroll},
@@ -23,6 +23,7 @@ use alacritty_terminal::{
     Term,
 };
 use anyhow::{bail, Result};
+
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use mappings::keys::might_convert;
 use modal::deploy_modal;
@@ -55,6 +56,7 @@ const DEBUG_TERMINAL_HEIGHT: f32 = 30.; //This needs to be wide enough that the 
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
 const MAX_FRAME_RATE: f32 = 120.;
+const BACK_BUFFER_SIZE: usize = 5000;
 
 ///Upward flowing events, for changing the title and such
 #[derive(Clone, Copy, Debug)]
@@ -278,9 +280,13 @@ impl TerminalBuilder {
         //TODO: Properly set the current locale,
         env.insert("LC_ALL".to_string(), "en_US.UTF-8".to_string());
 
+        let mut alac_scrolling = Scrolling::default();
+        alac_scrolling.set_history((BACK_BUFFER_SIZE * 2) as u32);
+
         let config = Config {
             pty_config: pty_config.clone(),
             env,
+            scrolling: alac_scrolling,
             ..Default::default()
         };
 
@@ -338,6 +344,7 @@ impl TerminalBuilder {
             events: vec![],
             title: shell_txt.clone(),
             default_title: shell_txt,
+            frames_to_skip: 0,
         };
 
         Ok(TerminalBuilder {
@@ -346,19 +353,10 @@ impl TerminalBuilder {
         })
     }
 
-    //TODO: Adaptive framerate mechanism for high throughput times?
-    //Probably nescessary...
-
     pub fn subscribe(mut self, cx: &mut ModelContext<Terminal>) -> Terminal {
         let mut frames_to_skip = 0;
         cx.spawn_weak(|this, mut cx| async move {
             'outer: loop {
-                //TODO: Pending GPUI updates, sync this to some higher, smarter system.
-                //Note: This sampling interval is too high on really hammering programs like
-                //`yes`. Zed is just usable enough to cancel the command at this interval.
-                //To properly fix this, I'll need to do some dynamic reworking of this number
-                //Based on the current throughput. See what iterm2 does:
-                //https://news.ycombinator.com/item?id=17634547#17635856
                 let delay = cx
                     .background()
                     .timer(Duration::from_secs_f32(1.0 / Terminal::default_fps()));
@@ -565,8 +563,6 @@ impl Terminal {
     where
         F: FnOnce(RenderableContent, char) -> T,
     {
-        let back_buffer_size = 5000;
-
         let m = self.term.clone(); //Arc clone
         let mut term = m.lock();
 
@@ -574,34 +570,19 @@ impl Terminal {
             self.process_terminal_event(&e, &mut term, cx)
         }
 
-        // let overflow_size = term.grid().total_lines()
+        let buffer_velocity = term.grid().history_size().saturating_sub(BACK_BUFFER_SIZE);
 
-        //We need something that starts at 0, and grows upward.
+        let fractional_velocity = buffer_velocity as f32 / BACK_BUFFER_SIZE as f32;
 
-        //Concept: Set storage twice as long as is actually available.
-        //Alacritty Default is 10,000, so for now hardcode 5,000 lines for history
-        //and 5,000 for measurement (Later, put this in configuration 😤)
-        //Measure the number of lines over 5,000 and the time since last frame
-        //divide for velocity
-        //This is the velocity of lines. map linearly to [0..10] (with .round())
-        //(Later, perhaps make this an exponential backoff)
-        //Report that number as the skip frames.
+        //2nd power
+        let scaled_fraction = fractional_velocity * fractional_velocity;
 
-        let velocity = term.grid().history_size().saturating_sub(back_buffer_size);
+        self.frames_to_skip = (scaled_fraction * (Self::default_fps() / 10.)).round() as usize;
 
-        let fractional_velocity = velocity as f32 / back_buffer_size as f32;
-
-        //3rd power
-        let scaled_fraction = fractional_velocity * fractional_velocity * fractional_velocity;
-
-        self.frames_to_skip = (scaled_fraction * Self::default_fps() / 10.).round() as usize;
-
-        term.grid_mut().update_history(back_buffer_size); //Clear out the measurement space
-        term.grid_mut().update_history(back_buffer_size * 2); //Extra space for measuring
+        term.grid_mut().update_history(BACK_BUFFER_SIZE); //Clear out the measurement space
+        term.grid_mut().update_history(BACK_BUFFER_SIZE * 2); //Extra space for measuring
 
         let content = term.renderable_content();
-
-        println!("Offset: {}", term.grid().total_lines());
 
         let cursor_text = term.grid()[content.cursor.point].c;
 

@@ -35,7 +35,7 @@ use crate::{
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
 ///Implement scroll bars.
-const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
+pub const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
 
 ///The information generated during layout that is nescessary for painting
 pub struct LayoutState {
