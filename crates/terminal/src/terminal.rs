@@ -345,11 +345,14 @@ impl TerminalBuilder {
         })
     }
 
+    //TODO: Adaptive framerate mechanism for high throughput times?
+    //Probably nescessary...
+
     pub fn subscribe(mut self, cx: &mut ModelContext<Terminal>) -> Terminal {
         cx.spawn_weak(|this, mut cx| async move {
             'outer: loop {
                 //TODO: Pending GPUI updates, sync this to some higher, smarter system.
-                let delay = cx.background().timer(Duration::from_secs_f32(1.0 / 60.));
+                let delay = cx.background().timer(Duration::from_secs_f32(1.0 / 30.));
 
                 let mut events = vec![];
 
@@ -365,8 +368,9 @@ impl TerminalBuilder {
                 }
                 match this.upgrade(&cx) {
                     Some(this) => {
-                        this.update(&mut cx, |this, _cx| {
+                        this.update(&mut cx, |this, cx| {
                             this.push_events(events);
+                            cx.notify();
                         });
                     }
                     None => break 'outer,
@@ -402,7 +406,6 @@ impl Terminal {
         term: &mut Term<ZedListener>,
         cx: &mut ModelContext<Self>,
     ) {
-        dbg!(event);
         // TODO: Handle is_self_focused in subscription on terminal view
         match event {
             InternalEvent::TermEvent(term_event) => match term_event {
@@ -463,7 +466,6 @@ impl Terminal {
                 term.clear_screen(ClearMode::Saved);
             }
             InternalEvent::Keystroke(keystroke) => {
-                println!("Trying keystroke: {}", keystroke);
                 let esc = to_esc_str(keystroke, term.mode());
                 if let Some(esc) = esc {
                     self.notify_pty(esc);
@@ -537,7 +539,6 @@ impl Terminal {
     where
         F: FnOnce(RenderableContent, char) -> T,
     {
-        println!("RENDER LOCK!");
         let m = self.term.clone(); //Arc clone
         let mut term = m.lock();
 
