@@ -711,14 +711,16 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     let window_state = unsafe { get_window_state(this) };
 
     let mut window_state_borrow = window_state.as_ref().borrow_mut();
-    if key_equivalent {
-        window_state_borrow.performed_key_equivalent = true;
-    } else if window_state_borrow.performed_key_equivalent {
-        return NO;
-    }
 
     let event = unsafe { Event::from_native(native_event, Some(window_state_borrow.size().y())) };
     if let Some(event) = event {
+        if key_equivalent {
+            window_state_borrow.performed_key_equivalent = true;
+        } else if window_state_borrow.performed_key_equivalent {
+            return NO;
+        }
+
+        let function_is_held;
         window_state_borrow.pending_key_down = match event {
             Event::KeyDown(event) => {
                 let keydown = event.keystroke.clone();
@@ -732,15 +734,18 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                     window_state_borrow.last_fresh_keydown = Some(keydown);
                 }
 
+                function_is_held = event.keystroke.function;
                 Some((event, None))
             }
             _ => return NO,
         };
         drop(window_state_borrow);
 
-        unsafe {
-            let input_context: id = msg_send![this, inputContext];
-            let _: BOOL = msg_send![input_context, handleEvent: native_event];
+        if !function_is_held {
+            unsafe {
+                let input_context: id = msg_send![this, inputContext];
+                let _: BOOL = msg_send![input_context, handleEvent: native_event];
+            }
         }
 
         let mut handled = false;
@@ -856,6 +861,7 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
         ctrl: false,
         alt: false,
         shift: false,
+        function: false,
         key: ".".into(),
     };
     let event = Event::KeyDown(KeyDownEvent {
