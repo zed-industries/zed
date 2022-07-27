@@ -900,6 +900,53 @@ fn test_autoindent_multi_line_insertion(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
+fn test_autoindent_preserves_relative_indentation_in_multi_line_insertion(
+    cx: &mut MutableAppContext,
+) {
+    cx.add_model(|cx| {
+        let text = "
+            fn a() {
+                b();
+            }
+        "
+        .unindent();
+        let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
+
+        let pasted_text = r#"
+            "
+              c
+                d
+                  e
+            "
+        "#
+        .unindent();
+
+        // insert at the beginning of a line
+        buffer.edit_with_autoindent(
+            [(Point::new(2, 0)..Point::new(2, 0), pasted_text.clone())],
+            IndentSize::spaces(4),
+            cx,
+        );
+        assert_eq!(
+            buffer.text(),
+            r#"
+            fn a() {
+                b();
+                "
+                  c
+                    d
+                      e
+                "
+            }
+            "#
+            .unindent()
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_autoindent_disabled(cx: &mut MutableAppContext) {
     cx.add_model(|cx| {
         let text = "

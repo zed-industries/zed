@@ -231,9 +231,14 @@ struct SyntaxTree {
 #[derive(Clone)]
 struct AutoindentRequest {
     before_edit: BufferSnapshot,
-    edited: Vec<Anchor>,
-    inserted: Vec<Range<Anchor>>,
+    entries: Vec<AutoindentRequestEntry>,
     indent_size: IndentSize,
+}
+
+#[derive(Clone)]
+struct AutoindentRequestEntry {
+    range: Range<Anchor>,
+    first_line_is_new: bool,
 }
 
 #[derive(Debug)]
@@ -796,17 +801,20 @@ impl Buffer {
         Some(async move {
             let mut indent_sizes = BTreeMap::new();
             for request in autoindent_requests {
-                let old_to_new_rows = request
-                    .edited
-                    .iter()
-                    .map(|anchor| anchor.summary::<Point>(&request.before_edit).row)
-                    .zip(
-                        request
-                            .edited
-                            .iter()
-                            .map(|anchor| anchor.summary::<Point>(&snapshot).row),
-                    )
-                    .collect::<BTreeMap<u32, u32>>();
+                let mut row_ranges = Vec::new();
+                let mut old_to_new_rows = BTreeMap::new();
+                for entry in &request.entries {
+                    let position = entry.range.start;
+                    let new_row = position.to_point(&snapshot).row;
+                    let new_end_row = entry.range.end.to_point(&snapshot).row + 1;
+                    if !entry.first_line_is_new {
+                        let old_row = position.to_point(&request.before_edit).row;
+                        old_to_new_rows.insert(old_row, new_row);
+                    }
+                    if new_end_row > new_row {
+                        row_ranges.push(new_row..new_end_row);
+                    }
+                }
 
                 let mut old_suggestions = BTreeMap::<u32, IndentSize>::default();
                 let old_edited_ranges =
@@ -835,10 +843,13 @@ impl Buffer {
                     yield_now().await;
                 }
 
-                // At this point, old_suggestions contains the suggested indentation for all edited lines with respect to the state of the
-                // buffer before the edit, but keyed by the row for these lines after the edits were applied.
-                let new_edited_row_ranges =
-                    contiguous_ranges(old_to_new_rows.values().copied(), max_rows_between_yields);
+                // At this point, old_suggestions contains the suggested indentation for all edited lines
+                // with respect to the state of the buffer before the edit, but keyed by the row for these
+                // lines after the edits were applied.
+                let new_edited_row_ranges = contiguous_ranges(
+                    row_ranges.iter().map(|range| range.start),
+                    max_rows_between_yields,
+                );
                 for new_edited_row_range in new_edited_row_ranges {
                     let suggestions = snapshot
                         .suggest_autoindents(new_edited_row_range.clone())
@@ -866,32 +877,31 @@ impl Buffer {
                     yield_now().await;
                 }
 
-                let inserted_row_ranges = contiguous_ranges(
-                    request
-                        .inserted
-                        .iter()
-                        .map(|range| range.to_point(&snapshot))
-                        .flat_map(|range| range.start.row..range.end.row + 1),
-                    max_rows_between_yields,
-                );
-                for inserted_row_range in inserted_row_ranges {
-                    let suggestions = snapshot
-                        .suggest_autoindents(inserted_row_range.clone())
-                        .into_iter()
-                        .flatten();
-                    for (row, suggestion) in inserted_row_range.zip(suggestions) {
-                        if let Some(suggestion) = suggestion {
-                            let suggested_indent = indent_sizes
-                                .get(&suggestion.basis_row)
-                                .copied()
-                                .unwrap_or_else(|| {
-                                    snapshot.indent_size_for_line(suggestion.basis_row)
-                                })
-                                .with_delta(suggestion.delta, request.indent_size);
-                            indent_sizes.insert(row, suggested_indent);
+                for row_range in row_ranges {
+                    if row_range.len() > 1 {
+                        if let Some(new_indent_size) = indent_sizes.get(&row_range.start).copied() {
+                            let old_indent_size = snapshot.indent_size_for_line(row_range.start);
+                            if new_indent_size.kind == old_indent_size.kind {
+                                let delta = new_indent_size.len as i64 - old_indent_size.len as i64;
+                                if delta != 0 {
+                                    for row in row_range.skip(1) {
+                                        indent_sizes.entry(row).or_insert_with(|| {
+                                            let mut size = snapshot.indent_size_for_line(row);
+                                            if size.kind == new_indent_size.kind {
+                                                if delta > 0 {
+                                                    size.len += delta as u32;
+                                                } else if delta < 0 {
+                                                    size.len =
+                                                        size.len.saturating_sub(-delta as u32);
+                                                }
+                                            }
+                                            size
+                                        });
+                                    }
+                                }
+                            }
                         }
                     }
-                    yield_now().await;
                 }
             }
 
@@ -1200,56 +1210,54 @@ impl Buffer {
         let edit_id = edit_operation.local_timestamp();
 
         if let Some((before_edit, size)) = autoindent_request {
-            let mut inserted = Vec::new();
-            let mut edited = Vec::new();
-
             let mut delta = 0isize;
-            for ((range, _), new_text) in edits
+            let entries = edits
                 .into_iter()
                 .zip(&edit_operation.as_edit().unwrap().new_text)
-            {
-                let new_text_len = new_text.len();
-                let first_newline_ix = new_text.find('\n');
-                let old_start = range.start.to_point(&before_edit);
+                .map(|((range, _), new_text)| {
+                    let new_text_len = new_text.len();
+                    let first_newline_ix = new_text.find('\n');
+                    let old_start = range.start.to_point(&before_edit);
+                    let new_start = (delta + range.start as isize) as usize;
+                    delta += new_text_len as isize - (range.end as isize - range.start as isize);
 
-                let start = (delta + range.start as isize) as usize;
-                delta += new_text_len as isize - (range.end as isize - range.start as isize);
+                    let mut relative_range = 0..new_text_len;
+                    let mut first_line_is_new = false;
 
-                // When inserting multiple lines of text at the beginning of a line,
-                // treat all of the affected lines as newly-inserted.
-                if first_newline_ix.is_some()
-                    && old_start.column < before_edit.indent_size_for_line(old_start.row).len
-                {
-                    inserted
-                        .push(self.anchor_before(start)..self.anchor_after(start + new_text_len));
-                    continue;
-                }
+                    // When inserting multiple lines of text at the beginning of a line,
+                    // treat the insertion as new.
+                    if first_newline_ix.is_some()
+                        && old_start.column < before_edit.indent_size_for_line(old_start.row).len
+                    {
+                        first_line_is_new = true;
+                    }
+                    // When inserting a newline at the end of an existing line, avoid
+                    // auto-indenting that existing line, but treat the subsequent text as new.
+                    else if first_newline_ix == Some(0)
+                        && old_start.column == before_edit.line_len(old_start.row)
+                    {
+                        relative_range.start += 1;
+                        first_line_is_new = true;
+                    }
+                    // Avoid auto-indenting subsequent lines when inserting text with trailing
+                    // newlines
+                    while !relative_range.is_empty()
+                        && new_text[relative_range.clone()].ends_with('\n')
+                    {
+                        relative_range.end -= 1;
+                    }
 
-                // When inserting a newline at the end of an existing line, treat the following
-                // line as newly-inserted.
-                if first_newline_ix == Some(0)
-                    && old_start.column == before_edit.line_len(old_start.row)
-                {
-                    inserted.push(
-                        self.anchor_before(start + 1)..self.anchor_after(start + new_text_len),
-                    );
-                    continue;
-                }
-
-                // Otherwise, mark the start of the edit as edited, and any subsequent
-                // lines as newly inserted.
-                edited.push(before_edit.anchor_before(range.start));
-                if let Some(ix) = first_newline_ix {
-                    inserted.push(
-                        self.anchor_before(start + ix + 1)..self.anchor_after(start + new_text_len),
-                    );
-                }
-            }
+                    AutoindentRequestEntry {
+                        first_line_is_new,
+                        range: before_edit.anchor_before(new_start + relative_range.start)
+                            ..self.anchor_after(new_start + relative_range.end),
+                    }
+                })
+                .collect();
 
             self.autoindent_requests.push(Arc::new(AutoindentRequest {
                 before_edit,
-                edited,
-                inserted,
+                entries,
                 indent_size: size,
             }));
         }
