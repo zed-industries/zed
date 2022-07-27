@@ -210,19 +210,24 @@ impl Event {
 unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     use cocoa::appkit::*;
 
-    let modifiers = native_event.modifierFlags();
-    let ctrl = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
-    let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
-    let mut shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
-    let cmd = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
-
     let mut chars_ignoring_modifiers =
         CStr::from_ptr(native_event.charactersIgnoringModifiers().UTF8String() as *mut c_char)
             .to_str()
             .unwrap();
+    let first_char = chars_ignoring_modifiers.chars().next().map(|ch| ch as u16);
+    let modifiers = native_event.modifierFlags();
+
+    let ctrl = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
+    let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
+    let mut shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
+    let cmd = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
+    let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask)
+        && first_char.map_or(true, |ch| {
+            ch < NSUpArrowFunctionKey || ch > NSModeSwitchFunctionKey
+        });
 
     #[allow(non_upper_case_globals)]
-    let key = match chars_ignoring_modifiers.chars().next().map(|ch| ch as u16) {
+    let key = match first_char {
         Some(SPACE_KEY) => "space",
         Some(BACKSPACE_KEY) => "backspace",
         Some(ENTER_KEY) | Some(NUMPAD_ENTER_KEY) => "enter",
@@ -282,6 +287,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         alt,
         shift,
         cmd,
+        function,
         key: key.into(),
     }
 }

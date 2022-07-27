@@ -311,6 +311,7 @@ mod test {
             alt: false,
             shift: false,
             cmd: false,
+            function: false,
             key: "🖖🏻".to_string(), //2 char string
         };
         assert_eq!(to_esc_str(&ks, &TermMode::NONE), None);

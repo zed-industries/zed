@@ -41,6 +41,7 @@ pub struct Keystroke {
     pub alt: bool,
     pub shift: bool,
     pub cmd: bool,
+    pub function: bool,
     pub key: String,
 }
 
@@ -277,6 +278,7 @@ impl Keystroke {
         let mut alt = false;
         let mut shift = false;
         let mut cmd = false;
+        let mut function = false;
         let mut key = None;
 
         let mut components = source.split("-").peekable();
@@ -286,6 +288,7 @@ impl Keystroke {
                 "alt" => alt = true,
                 "shift" => shift = true,
                 "cmd" => cmd = true,
+                "fn" => function = true,
                 _ => {
                     if let Some(component) = components.peek() {
                         if component.is_empty() && source.ends_with('-') {
@@ -306,6 +309,7 @@ impl Keystroke {
             alt,
             shift,
             cmd,
+            function,
             key: key.unwrap(),
         })
     }
@@ -464,6 +468,7 @@ mod tests {
                 alt: false,
                 shift: false,
                 cmd: false,
+                function: false,
             }
         );
 
@@ -475,6 +480,7 @@ mod tests {
                 alt: true,
                 shift: true,
                 cmd: false,
+                function: false,
             }
         );
 
@@ -486,6 +492,7 @@ mod tests {
                 alt: false,
                 shift: true,
                 cmd: true,
+                function: false,
             }
         );
 

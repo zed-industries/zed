@@ -184,6 +184,7 @@ impl MacForegroundPlatform {
                             (keystroke.cmd, NSEventModifierFlags::NSCommandKeyMask),
                             (keystroke.ctrl, NSEventModifierFlags::NSControlKeyMask),
                             (keystroke.alt, NSEventModifierFlags::NSAlternateKeyMask),
+                            (keystroke.shift, NSEventModifierFlags::NSShiftKeyMask),
                         ] {
                             if *modifier {
                                 mask |= *flag;

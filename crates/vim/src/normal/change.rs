@@ -139,7 +139,7 @@ mod test {
                 test"},
         );
 
-        let mut cx = cx.binding(["c", "shift-W"]);
+        let mut cx = cx.binding(["c", "shift-w"]);
         cx.assert("Test te|st-test test", "Test te| test");
     }
 
@@ -174,7 +174,7 @@ mod test {
                 test"},
         );
 
-        let mut cx = cx.binding(["c", "shift-E"]);
+        let mut cx = cx.binding(["c", "shift-e"]);
         cx.assert("Test te|st-test test", "Test te| test");
     }
 
@@ -204,14 +204,14 @@ mod test {
                 test"},
         );
 
-        let mut cx = cx.binding(["c", "shift-B"]);
+        let mut cx = cx.binding(["c", "shift-b"]);
         cx.assert("Test test-test |test", "Test |test");
     }
 
     #[gpui::test]
     async fn test_change_end_of_line(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["c", "shift-$"]).mode_after(Mode::Insert);
+        let mut cx = cx.binding(["c", "$"]).mode_after(Mode::Insert);
         cx.assert(
             indoc! {"
                 The q|uick
@@ -347,7 +347,7 @@ mod test {
     #[gpui::test]
     async fn test_change_end_of_document(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["c", "shift-G"]).mode_after(Mode::Insert);
+        let mut cx = cx.binding(["c", "shift-g"]).mode_after(Mode::Insert);
         cx.assert(
             indoc! {"
                 The quick
