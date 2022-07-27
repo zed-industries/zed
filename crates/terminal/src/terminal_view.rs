@@ -65,14 +65,13 @@ impl TerminalView {
         workspace.add_item(Box::new(view), cx);
     }
 
-    ///Create a new Terminal view. This spawns a task, a thread, and opens the TTY devices
-    ///To get the right working directory from a workspace, use: `get_wd_for_workspace()`
+    ///Create a new Terminal view. This spawns a task, a thread, and opens the TTY devices    
     pub fn new(
         working_directory: Option<PathBuf>,
         modal: bool,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        //The details here don't matter, the terminal will be resized on the first layout
+        //The exact size here doesn't matter, the terminal will be resized on the first layout
         let size_info = TermDimensions::default();
 
         let settings = cx.global::<Settings>();

@@ -46,6 +46,7 @@ pub struct LayoutState {
     background_color: Color,
     selection_color: Color,
     size: TermDimensions,
+    display_offset: usize,
 }
 
 ///Helper struct for converting data between alacritty's cursor points, and displayed cursor points
@@ -355,6 +356,7 @@ impl TerminalEl {
         view_id: usize,
         visible_bounds: RectF,
         cur_size: TermDimensions,
+        display_offset: usize,
         cx: &mut PaintContext,
     ) {
         let mouse_down_connection = self.terminal.clone();
@@ -371,7 +373,7 @@ impl TerminalEl {
                                     position,
                                     origin,
                                     cur_size,
-                                    terminal.get_display_offset(),
+                                    display_offset,
                                 );
 
                                 terminal.mouse_down(point, side);
@@ -396,7 +398,7 @@ impl TerminalEl {
                                     position,
                                     origin,
                                     cur_size,
-                                    terminal.get_display_offset(),
+                                    display_offset,
                                 );
 
                                 terminal.click(point, side, click_count);
@@ -415,7 +417,7 @@ impl TerminalEl {
                                     position,
                                     origin,
                                     cur_size,
-                                    terminal.get_display_offset(),
+                                    display_offset,
                                 );
 
                                 terminal.drag(point, side);
@@ -514,10 +516,6 @@ impl Element for TerminalEl {
         let settings = cx.global::<Settings>();
         let font_cache = cx.font_cache();
 
-        //First step, make all methods take mut and update internal event queue to take new actions
-        //Update process terminal event to handle all actions correctly
-        //And it's done.
-
         //Setup layout information
         let terminal_theme = settings.theme.terminal.clone(); //TODO: Try to minimize this clone.
         let text_style = TerminalEl::make_text_style(font_cache, &settings);
@@ -534,58 +532,59 @@ impl Element for TerminalEl {
             terminal_theme.colors.background.clone()
         };
 
-        let (cursor, cells, rects, highlights) =
-            self.terminal
-                .upgrade(cx)
-                .unwrap()
-                .update(cx.app, |terminal, mcx| {
-                    terminal.render_lock(mcx, |content, cursor_text| {
-                        let (cells, rects, highlights) = TerminalEl::layout_grid(
-                            content.display_iter,
-                            &text_style,
-                            &terminal_theme,
-                            cx.text_layout_cache,
-                            self.modal,
-                            content.selection,
-                        );
+        let (cursor, cells, rects, highlights, display_offset) = self
+            .terminal
+            .upgrade(cx)
+            .unwrap()
+            .update(cx.app, |terminal, mcx| {
+                terminal.set_size(dimensions);
+                terminal.render_lock(mcx, |content, cursor_text| {
+                    let (cells, rects, highlights) = TerminalEl::layout_grid(
+                        content.display_iter,
+                        &text_style,
+                        &terminal_theme,
+                        cx.text_layout_cache,
+                        self.modal,
+                        content.selection,
+                    );
 
-                        //Layout cursor
-                        let cursor = {
-                            let cursor_point =
-                                DisplayCursor::from(content.cursor.point, content.display_offset);
-                            let cursor_text = {
-                                let str_trxt = cursor_text.to_string();
-                                cx.text_layout_cache.layout_str(
-                                    &str_trxt,
-                                    text_style.font_size,
-                                    &[(
-                                        str_trxt.len(),
-                                        RunStyle {
-                                            font_id: text_style.font_id,
-                                            color: terminal_theme.colors.background,
-                                            underline: Default::default(),
-                                        },
-                                    )],
-                                )
-                            };
-
-                            TerminalEl::shape_cursor(cursor_point, dimensions, &cursor_text).map(
-                                move |(cursor_position, block_width)| {
-                                    Cursor::new(
-                                        cursor_position,
-                                        block_width,
-                                        dimensions.line_height,
-                                        terminal_theme.colors.cursor,
-                                        CursorShape::Block,
-                                        Some(cursor_text.clone()),
-                                    )
-                                },
+                    //Layout cursor
+                    let cursor = {
+                        let cursor_point =
+                            DisplayCursor::from(content.cursor.point, content.display_offset);
+                        let cursor_text = {
+                            let str_trxt = cursor_text.to_string();
+                            cx.text_layout_cache.layout_str(
+                                &str_trxt,
+                                text_style.font_size,
+                                &[(
+                                    str_trxt.len(),
+                                    RunStyle {
+                                        font_id: text_style.font_id,
+                                        color: terminal_theme.colors.background,
+                                        underline: Default::default(),
+                                    },
+                                )],
                             )
                         };
 
-                        (cursor, cells, rects, highlights)
-                    })
-                });
+                        TerminalEl::shape_cursor(cursor_point, dimensions, &cursor_text).map(
+                            move |(cursor_position, block_width)| {
+                                Cursor::new(
+                                    cursor_position,
+                                    block_width,
+                                    dimensions.line_height,
+                                    terminal_theme.colors.cursor,
+                                    CursorShape::Block,
+                                    Some(cursor_text.clone()),
+                                )
+                            },
+                        )
+                    };
+
+                    (cursor, cells, rects, highlights, content.display_offset)
+                })
+            });
 
         //Done!
         (
@@ -598,6 +597,7 @@ impl Element for TerminalEl {
                 size: dimensions,
                 rects,
                 highlights,
+                display_offset,
             },
         )
     }
@@ -616,7 +616,14 @@ impl Element for TerminalEl {
             let origin = bounds.origin() + vec2f(layout.size.cell_width, 0.);
 
             //Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
-            self.attach_mouse_handlers(origin, self.view.id(), visible_bounds, layout.size, cx);
+            self.attach_mouse_handlers(
+                origin,
+                self.view.id(),
+                visible_bounds,
+                layout.size,
+                layout.display_offset,
+                cx,
+            );
 
             cx.paint_layer(clip_bounds, |cx| {
                 //Start with a background color
@@ -694,9 +701,9 @@ impl Element for TerminalEl {
                         (delta.y() / layout.size.line_height) * ALACRITTY_SCROLL_MULTIPLIER;
 
                     self.terminal.upgrade(cx.app).map(|terminal| {
-                        terminal
-                            .read(cx.app)
-                            .scroll(Scroll::Delta(vertical_scroll.round() as i32));
+                        terminal.update(cx.app, |term, _| {
+                            term.scroll(Scroll::Delta(vertical_scroll.round() as i32))
+                        });
                     });
                 })
                 .is_some(),

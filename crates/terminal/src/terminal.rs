@@ -24,13 +24,10 @@ use alacritty_terminal::{
 };
 use anyhow::{bail, Result};
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
-use itertools::Itertools;
 use mappings::keys::might_convert;
 use modal::deploy_modal;
 use settings::{Settings, Shell};
-use std::{
-    cmp::Ordering, collections::HashMap, fmt::Display, path::PathBuf, sync::Arc, time::Duration,
-};
+use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc, time::Duration};
 use terminal_view::TerminalView;
 use thiserror::Error;
 
@@ -53,7 +50,7 @@ pub fn init(cx: &mut MutableAppContext) {
     connected_view::init(cx);
 }
 
-const DEBUG_TERMINAL_WIDTH: f32 = 100.;
+const DEBUG_TERMINAL_WIDTH: f32 = 500.;
 const DEBUG_TERMINAL_HEIGHT: f32 = 30.; //This needs to be wide enough that the CI & a local dev's prompt can fill the whole space.
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
@@ -77,7 +74,7 @@ enum InternalEvent {
     Paste(String),
     Scroll(Scroll),
     SetSelection(Option<Selection>),
-    UpdateSelection(Point),
+    UpdateSelection((Point, Direction)),
     Copy,
 }
 
@@ -337,7 +334,7 @@ impl TerminalBuilder {
             pty_tx: Notifier(pty_tx),
             term,
 
-            event_stack: vec![],
+            events: vec![],
             title: shell_txt.clone(),
             default_title: shell_txt,
         };
@@ -366,12 +363,10 @@ impl TerminalBuilder {
                         Err(_) => break,
                     }
                 }
-
                 match this.upgrade(&cx) {
                     Some(this) => {
-                        this.update(&mut cx, |this, cx| {
+                        this.update(&mut cx, |this, _cx| {
                             this.push_events(events);
-                            cx.notify();
                         });
                     }
                     None => break 'outer,
@@ -389,14 +384,14 @@ impl TerminalBuilder {
 pub struct Terminal {
     pty_tx: Notifier,
     term: Arc<FairMutex<Term<ZedListener>>>,
-    event_stack: Vec<InternalEvent>,
+    events: Vec<InternalEvent>,
     default_title: String,
     title: String,
 }
 
 impl Terminal {
     fn push_events(&mut self, events: Vec<AlacTermEvent>) {
-        self.event_stack
+        self.events
             .extend(events.into_iter().map(|e| InternalEvent::TermEvent(e)))
     }
 
@@ -407,6 +402,7 @@ impl Terminal {
         term: &mut Term<ZedListener>,
         cx: &mut ModelContext<Self>,
     ) {
+        dbg!(event);
         // TODO: Handle is_self_focused in subscription on terminal view
         match event {
             InternalEvent::TermEvent(term_event) => match term_event {
@@ -467,6 +463,7 @@ impl Terminal {
                 term.clear_screen(ClearMode::Saved);
             }
             InternalEvent::Keystroke(keystroke) => {
+                println!("Trying keystroke: {}", keystroke);
                 let esc = to_esc_str(keystroke, term.mode());
                 if let Some(esc) = esc {
                     self.notify_pty(esc);
@@ -482,10 +479,10 @@ impl Terminal {
                 }
             }
             InternalEvent::Scroll(scroll) => term.scroll_display(*scroll),
-            InternalEvent::SetSelection(sel) => term.selection = sel,
-            InternalEvent::UpdateSelection(point) => {
+            InternalEvent::SetSelection(sel) => term.selection = sel.clone(),
+            InternalEvent::UpdateSelection((point, side)) => {
                 if let Some(mut selection) = term.selection.take() {
-                    selection.update(*point, side);
+                    selection.update(*point, *side);
                     term.selection = Some(selection);
                 }
             }
@@ -502,30 +499,24 @@ impl Terminal {
         self.pty_tx.notify(txt.into_bytes());
     }
 
-    //TODO:
-    // - Continue refactor into event system
-    // - Fix PTYWrite call to not be circular and messy
-    // - Change title to be emitted and maintained externally
-
     ///Write the Input payload to the tty.
     pub fn write_to_pty(&mut self, input: String) {
-        self.event_stack
+        self.events
             .push(InternalEvent::TermEvent(AlacTermEvent::PtyWrite(input)))
     }
 
     ///Resize the terminal and the PTY.
     pub fn set_size(&mut self, new_size: TermDimensions) {
-        self.event_stack
-            .push(InternalEvent::Resize(new_size.into()))
+        self.events.push(InternalEvent::Resize(new_size.into()))
     }
 
     pub fn clear(&mut self) {
-        self.event_stack.push(InternalEvent::Clear)
+        self.events.push(InternalEvent::Clear)
     }
 
     pub fn try_keystroke(&mut self, keystroke: &Keystroke) -> bool {
         if might_convert(keystroke) {
-            self.event_stack
+            self.events
                 .push(InternalEvent::Keystroke(keystroke.clone()));
             true
         } else {
@@ -535,26 +526,24 @@ impl Terminal {
 
     ///Paste text into the terminal
     pub fn paste(&mut self, text: &str) {
-        self.event_stack
-            .push(InternalEvent::Paste(text.to_string()));
+        self.events.push(InternalEvent::Paste(text.to_string()));
     }
 
-    pub fn copy(&self) {
-        self.event_stack.push(InternalEvent::Copy);
+    pub fn copy(&mut self) {
+        self.events.push(InternalEvent::Copy);
     }
 
     pub fn render_lock<F, T>(&mut self, cx: &mut ModelContext<Self>, f: F) -> T
     where
         F: FnOnce(RenderableContent, char) -> T,
     {
+        println!("RENDER LOCK!");
         let m = self.term.clone(); //Arc clone
         let mut term = m.lock();
 
-        for event in self.event_stack.clone().into_iter().sorted() {
-            self.process_terminal_event(&event, &mut term, cx)
+        while let Some(e) = self.events.pop() {
+            self.process_terminal_event(&e, &mut term, cx)
         }
-
-        self.event_stack.clear();
 
         let content = term.renderable_content();
         let cursor_text = term.grid()[content.cursor.point].c;
@@ -563,11 +552,11 @@ impl Terminal {
     }
 
     ///Scroll the terminal
-    pub fn scroll(&self, _scroll: Scroll) {
-        self.event_stack.push(InternalEvent::Scroll(scroll));
+    pub fn scroll(&mut self, scroll: Scroll) {
+        self.events.push(InternalEvent::Scroll(scroll));
     }
 
-    pub fn click(&self, point: Point, side: Direction, clicks: usize) {
+    pub fn click(&mut self, point: Point, side: Direction, clicks: usize) {
         let selection_type = match clicks {
             0 => return, //This is a release
             1 => Some(SelectionType::Simple),
@@ -579,17 +568,17 @@ impl Terminal {
         let selection =
             selection_type.map(|selection_type| Selection::new(selection_type, point, side));
 
-        self.event_stack
-            .push(InternalEvent::SetSelection(selection));
+        self.events.push(InternalEvent::SetSelection(selection));
     }
 
-    pub fn drag(&self, point: Point, side: Direction) {
-        self.event_stack.push(InternalEvent::UpdateSelection(point));
+    pub fn drag(&mut self, point: Point, side: Direction) {
+        self.events
+            .push(InternalEvent::UpdateSelection((point, side)));
     }
 
     ///TODO: Check if the mouse_down-then-click assumption holds, so this code works as expected
-    pub fn mouse_down(&self, point: Point, side: Direction) {
-        self.event_stack
+    pub fn mouse_down(&mut self, point: Point, side: Direction) {
+        self.events
             .push(InternalEvent::SetSelection(Some(Selection::new(
                 SelectionType::Simple,
                 point,

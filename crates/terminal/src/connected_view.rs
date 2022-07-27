@@ -43,11 +43,12 @@ impl ConnectedView {
         modal: bool,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        // cx.observe(&terminal, |_, _, cx| cx.notify()).detach(); //Terminal notifies for us
+        cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
         cx.subscribe(&terminal, |this, _, event, cx| match event {
             Event::Wakeup => {
                 if !cx.is_self_focused() {
                     this.has_new_content = true;
+                    cx.notify();
                     cx.emit(Event::Wakeup);
                 }
             }
@@ -91,7 +92,7 @@ impl ConnectedView {
 
     ///Attempt to paste the clipboard into the terminal
     fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
-        self.terminal.read(cx).copy()
+        self.terminal.update(cx, |term, _| term.copy())
     }
 
     ///Attempt to paste the clipboard into the terminal

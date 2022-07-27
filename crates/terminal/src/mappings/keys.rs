@@ -40,8 +40,8 @@ impl Modifiers {
 ///This is unavoidable for our use case. GPUI cannot wait until we acquire the terminal
 ///lock to determine whether we could actually send the keystroke with the current settings. Therefore,
 ///This conservative guess is used instead. Note that in practice the case where this method
-///Returns false when the actual terminal would consume the keystroke never actually happens. All
-///keystrokes that depend on terminal modes also have a mapping that doesn't depend on the terminal mode.
+///Returns false when the actual terminal would consume the keystroke never happens. All keystrokes
+///that depend on terminal modes also have a mapping that doesn't depend on the terminal mode.
 ///This is fragile, but as these mappings are locked up in legacy compatibility, it's probably good enough
 pub fn might_convert(keystroke: &Keystroke) -> bool {
     to_esc_str(keystroke, &TermMode::NONE).is_some()
