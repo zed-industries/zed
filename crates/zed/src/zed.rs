@@ -9,6 +9,7 @@ use anyhow::{anyhow, Context, Result};
 use assets::Assets;
 use breadcrumbs::Breadcrumbs;
 pub use client;
+use collections::VecDeque;
 pub use contacts_panel;
 use contacts_panel::ContactsPanel;
 pub use editor;
@@ -52,6 +53,7 @@ actions!(
         Quit,
         DebugElements,
         OpenSettings,
+        OpenLog,
         OpenKeymap,
         OpenDefaultSettings,
         OpenDefaultKeymap,
@@ -65,9 +67,11 @@ actions!(
 const MIN_FONT_SIZE: f32 = 6.0;
 
 lazy_static! {
-    pub static ref ROOT_PATH: PathBuf = dirs::home_dir()
-        .expect("failed to determine home directory")
-        .join(".zed");
+    pub static ref HOME_PATH: PathBuf =
+        dirs::home_dir().expect("failed to determine home directory");
+    pub static ref LOG_PATH: PathBuf = HOME_PATH.join("Library/Logs/Zed/Zed.log");
+    pub static ref OLD_LOG_PATH: PathBuf = HOME_PATH.join("Library/Logs/Zed/Zed.log.old");
+    pub static ref ROOT_PATH: PathBuf = HOME_PATH.join(".zed");
     pub static ref SETTINGS_PATH: PathBuf = ROOT_PATH.join("settings.json");
     pub static ref KEYMAP_PATH: PathBuf = ROOT_PATH.join("keymap.json");
 }
@@ -118,6 +122,12 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
                 .unwrap()
                 .into()
             });
+        }
+    });
+    cx.add_action({
+        let app_state = app_state.clone();
+        move |workspace: &mut Workspace, _: &OpenLog, cx: &mut ViewContext<Workspace>| {
+            open_log_file(workspace, app_state.clone(), cx);
         }
     });
     cx.add_action({
@@ -405,6 +415,60 @@ fn open_config_file(
         Ok::<_, anyhow::Error>(())
     })
     .detach_and_log_err(cx)
+}
+
+fn open_log_file(
+    workspace: &mut Workspace,
+    app_state: Arc<AppState>,
+    cx: &mut ViewContext<Workspace>,
+) {
+    const MAX_LINES: usize = 1000;
+
+    workspace.with_local_workspace(cx, app_state.clone(), |_, cx| {
+        cx.spawn_weak(|workspace, mut cx| async move {
+            let (old_log, new_log) = futures::join!(
+                app_state.fs.load(&OLD_LOG_PATH),
+                app_state.fs.load(&LOG_PATH)
+            );
+
+            if let Some(workspace) = workspace.upgrade(&cx) {
+                let mut lines = VecDeque::with_capacity(MAX_LINES);
+                for line in old_log
+                    .iter()
+                    .flat_map(|log| log.lines())
+                    .chain(new_log.iter().flat_map(|log| log.lines()))
+                {
+                    if lines.len() == MAX_LINES {
+                        lines.pop_front();
+                    }
+                    lines.push_back(line);
+                }
+                let log = lines
+                    .into_iter()
+                    .flat_map(|line| [line, "\n"])
+                    .collect::<String>();
+
+                workspace.update(&mut cx, |workspace, cx| {
+                    let project = workspace.project().clone();
+                    let buffer = project
+                        .update(cx, |project, cx| project.create_buffer("", None, cx))
+                        .expect("creating buffers on a local workspace always succeeds");
+                    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, log)], cx));
+
+                    let buffer = cx.add_model(|cx| {
+                        MultiBuffer::singleton(buffer, cx).with_title("Log".into())
+                    });
+                    workspace.add_item(
+                        Box::new(
+                            cx.add_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx)),
+                        ),
+                        cx,
+                    );
+                });
+            }
+        })
+        .detach();
+    });
 }
 
 fn open_bundled_config_file(

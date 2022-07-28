@@ -57,6 +57,7 @@ fn main() {
     fs::create_dir_all(&logs_dir_path).expect("could not create logs path");
     init_logger(&logs_dir_path);
 
+    log::info!("========== starting zed ==========");
     let mut app = gpui::App::new(Assets).unwrap();
     let app_version = ZED_APP_VERSION
         .or_else(|| app.platform().app_version().ok())
@@ -210,6 +211,13 @@ fn init_logger(logs_dir_path: &Path) {
     } else {
         let level = LevelFilter::Info;
         let log_file_path = logs_dir_path.join("Zed.log");
+
+        // Prevent log file from becoming too large.
+        const MAX_LOG_BYTES: u64 = 1 * 1024 * 1024;
+        if fs::metadata(&log_file_path).map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES) {
+            let _ = fs::rename(&log_file_path, logs_dir_path.join("Zed.log.old"));
+        }
+
         let log_file = OpenOptions::new()
             .create(true)
             .append(true)

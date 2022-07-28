@@ -949,11 +949,11 @@ impl Workspace {
         &mut self,
         cx: &mut ViewContext<Self>,
         app_state: Arc<AppState>,
-        mut callback: F,
+        callback: F,
     ) -> T
     where
         T: 'static,
-        F: FnMut(&mut Workspace, &mut ViewContext<Workspace>) -> T,
+        F: FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
     {
         if self.project.read(cx).is_local() {
             callback(self, cx)
