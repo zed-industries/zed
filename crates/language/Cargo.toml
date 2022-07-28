@@ -16,6 +16,7 @@ test-support = [
     "text/test-support",
     "tree-sitter-rust",
     "tree-sitter-typescript",
+    "settings/test-support",
     "util/test-support",
 ]
 
@@ -57,6 +58,7 @@ collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 text = { path = "../text", features = ["test-support"] }
+settings = { path = "../settings", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 ctor = "0.1"
 env_logger = "0.9"

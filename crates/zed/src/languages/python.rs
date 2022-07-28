@@ -147,7 +147,7 @@ impl LspAdapter for PythonLspAdapter {
 #[cfg(test)]
 mod tests {
     use gpui::{ModelContext, MutableAppContext};
-    use language::Buffer;
+    use language::{AutoindentMode, Buffer};
     use settings::Settings;
     use std::sync::Arc;
 
@@ -163,7 +163,7 @@ mod tests {
             let mut buffer = Buffer::new(0, "", cx).with_language(Arc::new(language), cx);
             let append = |buffer: &mut Buffer, text: &str, cx: &mut ModelContext<Buffer>| {
                 let ix = buffer.len();
-                buffer.edit_with_autoindent([(ix..ix, text)], cx);
+                buffer.edit([(ix..ix, text)], Some(AutoindentMode::Independent), cx);
             };
 
             // indent after "def():"
@@ -207,7 +207,11 @@ mod tests {
 
             // dedent the closing paren if it is shifted to the beginning of the line
             let argument_ix = buffer.text().find("1").unwrap();
-            buffer.edit_with_autoindent([(argument_ix..argument_ix + 1, "")], cx);
+            buffer.edit(
+                [(argument_ix..argument_ix + 1, "")],
+                Some(AutoindentMode::Independent),
+                cx,
+            );
             assert_eq!(
                 buffer.text(),
                 "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n    )"
@@ -222,7 +226,11 @@ mod tests {
 
             // manually outdent the last line
             let end_whitespace_ix = buffer.len() - 4;
-            buffer.edit_with_autoindent([(end_whitespace_ix..buffer.len(), "")], cx);
+            buffer.edit(
+                [(end_whitespace_ix..buffer.len(), "")],
+                Some(AutoindentMode::Independent),
+                cx,
+            );
             assert_eq!(
                 buffer.text(),
                 "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n    )\n"
@@ -236,7 +244,7 @@ mod tests {
             );
 
             // reset to a simple if statement
-            buffer.edit([(0..buffer.len(), "if a:\n  b(\n  )")], cx);
+            buffer.edit([(0..buffer.len(), "if a:\n  b(\n  )")], None, cx);
 
             // dedent "else" on the line after a closing paren
             append(&mut buffer, "\n  else:\n", cx);

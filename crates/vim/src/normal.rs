@@ -13,7 +13,7 @@ use change::init as change_init;
 use collections::HashSet;
 use editor::{Autoscroll, Bias, ClipboardSelection, DisplayPoint};
 use gpui::{actions, MutableAppContext, ViewContext};
-use language::{Point, SelectionGoal};
+use language::{AutoindentMode, Point, SelectionGoal};
 use workspace::Workspace;
 
 use self::{change::change_over, delete::delete_over, yank::yank_over};
@@ -278,7 +278,7 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
                                 }
                             }
                             drop(snapshot);
-                            buffer.edit_with_autoindent(edits, cx);
+                            buffer.edit(edits, Some(AutoindentMode::Independent), cx);
                         });
 
                         editor.change_selections(Some(Autoscroll::Fit), cx, |s| {

@@ -229,11 +229,18 @@ struct SyntaxTree {
     version: clock::Global,
 }
 
+#[derive(Clone, Copy)]
+pub enum AutoindentMode {
+    Block,
+    Independent,
+}
+
 #[derive(Clone)]
 struct AutoindentRequest {
     before_edit: BufferSnapshot,
     entries: Vec<AutoindentRequestEntry>,
     indent_size: IndentSize,
+    mode: AutoindentMode,
 }
 
 #[derive(Clone)]
@@ -852,8 +859,12 @@ impl Buffer {
                 // At this point, old_suggestions contains the suggested indentation for all edited lines
                 // with respect to the state of the buffer before the edit, but keyed by the row for these
                 // lines after the edits were applied.
+
                 let new_edited_row_ranges = contiguous_ranges(
-                    row_ranges.iter().map(|range| range.start),
+                    row_ranges.iter().flat_map(|range| match request.mode {
+                        AutoindentMode::Block => range.start..range.start + 1,
+                        AutoindentMode::Independent => range.clone(),
+                    }),
                     max_rows_between_yields,
                 );
                 for new_edited_row_range in new_edited_row_ranges {
@@ -883,26 +894,32 @@ impl Buffer {
                     yield_now().await;
                 }
 
-                for row_range in row_ranges {
-                    if row_range.len() > 1 {
-                        if let Some(new_indent_size) = indent_sizes.get(&row_range.start).copied() {
-                            let old_indent_size = snapshot.indent_size_for_line(row_range.start);
-                            if new_indent_size.kind == old_indent_size.kind {
-                                let delta = new_indent_size.len as i64 - old_indent_size.len as i64;
-                                if delta != 0 {
-                                    for row in row_range.skip(1) {
-                                        indent_sizes.entry(row).or_insert_with(|| {
-                                            let mut size = snapshot.indent_size_for_line(row);
-                                            if size.kind == new_indent_size.kind {
-                                                if delta > 0 {
-                                                    size.len += delta as u32;
-                                                } else if delta < 0 {
-                                                    size.len =
-                                                        size.len.saturating_sub(-delta as u32);
+                if matches!(request.mode, AutoindentMode::Block) {
+                    for row_range in row_ranges {
+                        if row_range.len() > 1 {
+                            if let Some(new_indent_size) =
+                                indent_sizes.get(&row_range.start).copied()
+                            {
+                                let old_indent_size =
+                                    snapshot.indent_size_for_line(row_range.start);
+                                if new_indent_size.kind == old_indent_size.kind {
+                                    let delta =
+                                        new_indent_size.len as i64 - old_indent_size.len as i64;
+                                    if delta != 0 {
+                                        for row in row_range.skip(1) {
+                                            indent_sizes.entry(row).or_insert_with(|| {
+                                                let mut size = snapshot.indent_size_for_line(row);
+                                                if size.kind == new_indent_size.kind {
+                                                    if delta > 0 {
+                                                        size.len += delta as u32;
+                                                    } else if delta < 0 {
+                                                        size.len =
+                                                            size.len.saturating_sub(-delta as u32);
+                                                    }
                                                 }
-                                            }
-                                            size
-                                        });
+                                                size
+                                            });
+                                        }
                                     }
                                 }
                             }
@@ -948,6 +965,7 @@ impl Buffer {
                         .take((size.len - current_size.len) as usize)
                         .collect::<String>(),
                 )],
+                None,
                 cx,
             );
         } else if size.len < current_size.len {
@@ -956,6 +974,7 @@ impl Buffer {
                     Point::new(row, 0)..Point::new(row, current_size.len - size.len),
                     "",
                 )],
+                None,
                 cx,
             );
         }
@@ -993,7 +1012,7 @@ impl Buffer {
                 match tag {
                     ChangeTag::Equal => offset += len,
                     ChangeTag::Delete => {
-                        self.edit([(range, "")], cx);
+                        self.edit([(range, "")], None, cx);
                     }
                     ChangeTag::Insert => {
                         self.edit(
@@ -1002,6 +1021,7 @@ impl Buffer {
                                 &diff.new_text[range.start - diff.start_offset
                                     ..range.end - diff.start_offset],
                             )],
+                            None,
                             cx,
                         );
                         offset += len;
@@ -1138,46 +1158,13 @@ impl Buffer {
     where
         T: Into<Arc<str>>,
     {
-        self.edit_internal([(0..self.len(), text)], None, cx)
+        self.edit([(0..self.len(), text)], None, cx)
     }
 
     pub fn edit<I, S, T>(
         &mut self,
         edits_iter: I,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<clock::Local>
-    where
-        I: IntoIterator<Item = (Range<S>, T)>,
-        S: ToOffset,
-        T: Into<Arc<str>>,
-    {
-        self.edit_internal(edits_iter, None, cx)
-    }
-
-    pub fn edit_with_autoindent<I, S, T>(
-        &mut self,
-        edits_iter: I,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<clock::Local>
-    where
-        I: IntoIterator<Item = (Range<S>, T)>,
-        S: ToOffset,
-        T: Into<Arc<str>>,
-    {
-        let language_name = self.language().map(|language| language.name());
-        let settings = cx.global::<Settings>();
-        let indent_size = if settings.hard_tabs(language_name.as_deref()) {
-            IndentSize::tab()
-        } else {
-            IndentSize::spaces(settings.tab_size(language_name.as_deref()).get())
-        };
-        self.edit_internal(edits_iter, Some(indent_size), cx)
-    }
-
-    pub fn edit_internal<I, S, T>(
-        &mut self,
-        edits_iter: I,
-        autoindent_size: Option<IndentSize>,
+        autoindent_mode: Option<AutoindentMode>,
         cx: &mut ModelContext<Self>,
     ) -> Option<clock::Local>
     where
@@ -1212,16 +1199,21 @@ impl Buffer {
 
         self.start_transaction();
         self.pending_autoindent.take();
-        let autoindent_request = self
-            .language
-            .as_ref()
-            .and_then(|_| autoindent_size)
-            .map(|autoindent_size| (self.snapshot(), autoindent_size));
+        let autoindent_request = autoindent_mode
+            .and_then(|mode| self.language.as_ref().map(|_| (self.snapshot(), mode)));
 
         let edit_operation = self.text.edit(edits.iter().cloned());
         let edit_id = edit_operation.local_timestamp();
 
-        if let Some((before_edit, size)) = autoindent_request {
+        if let Some((before_edit, mode)) = autoindent_request {
+            let language_name = self.language().map(|language| language.name());
+            let settings = cx.global::<Settings>();
+            let indent_size = if settings.hard_tabs(language_name.as_deref()) {
+                IndentSize::tab()
+            } else {
+                IndentSize::spaces(settings.tab_size(language_name.as_deref()).get())
+            };
+
             let mut delta = 0isize;
             let entries = edits
                 .into_iter()
@@ -1248,8 +1240,11 @@ impl Buffer {
                         range_of_insertion_to_indent.start += 1;
                         first_line_is_new = true;
                     }
-                    if new_text[range_of_insertion_to_indent.clone()].ends_with('\n') {
-                        range_of_insertion_to_indent.end -= 1;
+
+                    if matches!(mode, AutoindentMode::Block) {
+                        if new_text[range_of_insertion_to_indent.clone()].ends_with('\n') {
+                            range_of_insertion_to_indent.end -= 1;
+                        }
                     }
 
                     AutoindentRequestEntry {
@@ -1263,7 +1258,8 @@ impl Buffer {
             self.autoindent_requests.push(Arc::new(AutoindentRequest {
                 before_edit,
                 entries,
-                indent_size: size,
+                indent_size,
+                mode,
             }));
         }
 
@@ -1550,7 +1546,7 @@ impl Buffer {
             edits.push((range, new_text));
         }
         log::info!("mutating buffer {} with {:?}", self.replica_id(), edits);
-        self.edit(edits, cx);
+        self.edit(edits, None, cx);
     }
 
     pub fn randomly_undo_redo(&mut self, rng: &mut impl rand::Rng, cx: &mut ModelContext<Self>) {
