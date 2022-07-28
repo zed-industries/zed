@@ -1,6 +1,6 @@
 use alacritty_terminal::{
     ansi::{Color::Named, NamedColor},
-    grid::{Dimensions, GridIterator, Indexed, Scroll},
+    grid::{Dimensions, Scroll},
     index::{Column as GridCol, Line as GridLine, Point, Side},
     selection::SelectionRange,
     term::cell::{Cell, Flags},
@@ -25,7 +25,10 @@ use settings::Settings;
 use theme::TerminalStyle;
 use util::ResultExt;
 
-use std::{cmp::min, ops::Range};
+use std::{
+    cmp::min,
+    ops::{Deref, Range},
+};
 use std::{fmt::Debug, ops::Sub};
 
 use crate::{
@@ -47,6 +50,20 @@ pub struct LayoutState {
     selection_color: Color,
     size: TermDimensions,
     display_offset: usize,
+}
+
+struct IndexedCell {
+    point: Point,
+    cell: Cell,
+}
+
+impl Deref for IndexedCell {
+    type Target = Cell;
+
+    #[inline]
+    fn deref(&self) -> &Cell {
+        &self.cell
+    }
 }
 
 ///Helper struct for converting data between alacritty's cursor points, and displayed cursor points
@@ -190,7 +207,7 @@ impl TerminalEl {
     }
 
     fn layout_grid(
-        grid: GridIterator<Cell>,
+        grid: Vec<IndexedCell>,
         text_style: &TextStyle,
         terminal_theme: &TerminalStyle,
         text_layout_cache: &TextLayoutCache,
@@ -209,7 +226,7 @@ impl TerminalEl {
         let mut cur_alac_color = None;
         let mut highlighted_range = None;
 
-        let linegroups = grid.group_by(|i| i.point.line);
+        let linegroups = grid.into_iter().group_by(|i| i.point.line);
         for (line_index, (_, line)) in linegroups.into_iter().enumerate() {
             for (x_index, cell) in line.enumerate() {
                 //Increase selection range
@@ -236,7 +253,7 @@ impl TerminalEl {
                     } else {
                         match cur_alac_color {
                             Some(cur_color) => {
-                                if cell.bg == cur_color {
+                                if cell.cell.bg == cur_color {
                                     cur_rect = cur_rect.take().map(|rect| rect.extend());
                                 } else {
                                     cur_alac_color = Some(cell.bg);
@@ -326,7 +343,7 @@ impl TerminalEl {
 
     ///Convert the Alacritty cell styles to GPUI text styles and background color
     fn cell_style(
-        indexed: &Indexed<&Cell>,
+        indexed: &IndexedCell,
         style: &TerminalStyle,
         text_style: &TextStyle,
         modal: bool,
@@ -532,59 +549,70 @@ impl Element for TerminalEl {
             terminal_theme.colors.background.clone()
         };
 
-        let (cursor, cells, rects, highlights, display_offset) = self
+        let (cells, selection, cursor, display_offset, cursor_text) = self
             .terminal
             .upgrade(cx)
             .unwrap()
             .update(cx.app, |terminal, mcx| {
                 terminal.set_size(dimensions);
                 terminal.render_lock(mcx, |content, cursor_text| {
-                    let (cells, rects, highlights) = TerminalEl::layout_grid(
-                        content.display_iter,
-                        &text_style,
-                        &terminal_theme,
-                        cx.text_layout_cache,
-                        self.modal,
-                        content.selection,
-                    );
+                    let mut cells = vec![];
+                    cells.extend(content.display_iter.map(|ic| IndexedCell {
+                        point: ic.point.clone(),
+                        cell: ic.cell.clone(),
+                    }));
 
-                    //Layout cursor
-                    let cursor = {
-                        let cursor_point =
-                            DisplayCursor::from(content.cursor.point, content.display_offset);
-                        let cursor_text = {
-                            let str_trxt = cursor_text.to_string();
-                            cx.text_layout_cache.layout_str(
-                                &str_trxt,
-                                text_style.font_size,
-                                &[(
-                                    str_trxt.len(),
-                                    RunStyle {
-                                        font_id: text_style.font_id,
-                                        color: terminal_theme.colors.background,
-                                        underline: Default::default(),
-                                    },
-                                )],
-                            )
-                        };
-
-                        TerminalEl::shape_cursor(cursor_point, dimensions, &cursor_text).map(
-                            move |(cursor_position, block_width)| {
-                                Cursor::new(
-                                    cursor_position,
-                                    block_width,
-                                    dimensions.line_height,
-                                    terminal_theme.colors.cursor,
-                                    CursorShape::Block,
-                                    Some(cursor_text.clone()),
-                                )
-                            },
-                        )
-                    };
-
-                    (cursor, cells, rects, highlights, content.display_offset)
+                    (
+                        cells,
+                        content.selection.clone(),
+                        content.cursor.clone(),
+                        content.display_offset.clone(),
+                        cursor_text.clone(),
+                    )
                 })
             });
+
+        let (cells, rects, highlights) = TerminalEl::layout_grid(
+            cells,
+            &text_style,
+            &terminal_theme,
+            cx.text_layout_cache,
+            self.modal,
+            selection,
+        );
+
+        //Layout cursor
+        let cursor = {
+            let cursor_point = DisplayCursor::from(cursor.point, display_offset);
+            let cursor_text = {
+                let str_trxt = cursor_text.to_string();
+                cx.text_layout_cache.layout_str(
+                    &str_trxt,
+                    text_style.font_size,
+                    &[(
+                        str_trxt.len(),
+                        RunStyle {
+                            font_id: text_style.font_id,
+                            color: terminal_theme.colors.background,
+                            underline: Default::default(),
+                        },
+                    )],
+                )
+            };
+
+            TerminalEl::shape_cursor(cursor_point, dimensions, &cursor_text).map(
+                move |(cursor_position, block_width)| {
+                    Cursor::new(
+                        cursor_position,
+                        block_width,
+                        dimensions.line_height,
+                        terminal_theme.colors.cursor,
+                        CursorShape::Block,
+                        Some(cursor_text.clone()),
+                    )
+                },
+            )
+        };
 
         //Done!
         (
