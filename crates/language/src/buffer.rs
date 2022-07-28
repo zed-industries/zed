@@ -14,6 +14,7 @@ use futures::FutureExt as _;
 use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
+use settings::Settings;
 use similar::{ChangeTag, TextDiff};
 use smol::future::yield_now;
 use std::{
@@ -1156,7 +1157,6 @@ impl Buffer {
     pub fn edit_with_autoindent<I, S, T>(
         &mut self,
         edits_iter: I,
-        indent_size: IndentSize,
         cx: &mut ModelContext<Self>,
     ) -> Option<clock::Local>
     where
@@ -1164,6 +1164,13 @@ impl Buffer {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
+        let language_name = self.language().map(|language| language.name());
+        let settings = cx.global::<Settings>();
+        let indent_size = if settings.hard_tabs(language_name.as_deref()) {
+            IndentSize::tab()
+        } else {
+            IndentSize::spaces(settings.tab_size(language_name.as_deref()).get())
+        };
         self.edit_internal(edits_iter, Some(indent_size), cx)
     }
 

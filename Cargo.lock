@@ -2761,6 +2761,7 @@ dependencies = [
  "rpc",
  "serde",
  "serde_json",
+ "settings",
  "similar",
  "smallvec",
  "smol",

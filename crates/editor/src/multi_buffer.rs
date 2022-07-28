@@ -11,7 +11,6 @@ use language::{
     IndentSize, Language, OffsetRangeExt, Outline, OutlineItem, Selection, ToOffset as _,
     ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId,
 };
-use settings::Settings;
 use smallvec::SmallVec;
 use std::{
     borrow::Cow,
@@ -347,14 +346,7 @@ impl MultiBuffer {
         if let Some(buffer) = self.as_singleton() {
             return buffer.update(cx, |buffer, cx| {
                 if autoindent {
-                    let language_name = buffer.language().map(|language| language.name());
-                    let settings = cx.global::<Settings>();
-                    let indent_size = if settings.hard_tabs(language_name.as_deref()) {
-                        IndentSize::tab()
-                    } else {
-                        IndentSize::spaces(settings.tab_size(language_name.as_deref()).get())
-                    };
-                    buffer.edit_with_autoindent(edits, indent_size, cx);
+                    buffer.edit_with_autoindent(edits, cx);
                 } else {
                     buffer.edit(edits, cx);
                 }
@@ -471,18 +463,10 @@ impl MultiBuffer {
                             ));
                         }
                     }
-                    let language_name = buffer.language().map(|l| l.name());
 
                     if autoindent {
-                        let settings = cx.global::<Settings>();
-                        let indent_size = if settings.hard_tabs(language_name.as_deref()) {
-                            IndentSize::tab()
-                        } else {
-                            IndentSize::spaces(settings.tab_size(language_name.as_deref()).get())
-                        };
-
-                        buffer.edit_with_autoindent(deletions, indent_size, cx);
-                        buffer.edit_with_autoindent(insertions, indent_size, cx);
+                        buffer.edit_with_autoindent(deletions, cx);
+                        buffer.edit_with_autoindent(insertions, cx);
                     } else {
                         buffer.edit(deletions, cx);
                         buffer.edit(insertions, cx);
@@ -3220,6 +3204,7 @@ mod tests {
     use gpui::MutableAppContext;
     use language::{Buffer, Rope};
     use rand::prelude::*;
+    use settings::Settings;
     use std::{env, rc::Rc};
     use text::{Point, RandomCharIter};
     use util::test::sample_text;

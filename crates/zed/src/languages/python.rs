@@ -147,20 +147,23 @@ impl LspAdapter for PythonLspAdapter {
 #[cfg(test)]
 mod tests {
     use gpui::{ModelContext, MutableAppContext};
-    use language::{Buffer, IndentSize};
+    use language::Buffer;
+    use settings::Settings;
     use std::sync::Arc;
 
     #[gpui::test]
     fn test_python_autoindent(cx: &mut MutableAppContext) {
         cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
         let language = crate::languages::language("python", tree_sitter_python::language(), None);
+        let mut settings = Settings::test(cx);
+        settings.editor_overrides.tab_size = Some(2.try_into().unwrap());
+        cx.set_global(settings);
 
         cx.add_model(|cx| {
             let mut buffer = Buffer::new(0, "", cx).with_language(Arc::new(language), cx);
-            let size = IndentSize::spaces(2);
             let append = |buffer: &mut Buffer, text: &str, cx: &mut ModelContext<Buffer>| {
                 let ix = buffer.len();
-                buffer.edit_with_autoindent([(ix..ix, text)], size, cx);
+                buffer.edit_with_autoindent([(ix..ix, text)], cx);
             };
 
             // indent after "def():"
@@ -204,7 +207,7 @@ mod tests {
 
             // dedent the closing paren if it is shifted to the beginning of the line
             let argument_ix = buffer.text().find("1").unwrap();
-            buffer.edit_with_autoindent([(argument_ix..argument_ix + 1, "")], size, cx);
+            buffer.edit_with_autoindent([(argument_ix..argument_ix + 1, "")], cx);
             assert_eq!(
                 buffer.text(),
                 "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n    )"
@@ -219,7 +222,7 @@ mod tests {
 
             // manually outdent the last line
             let end_whitespace_ix = buffer.len() - 4;
-            buffer.edit_with_autoindent([(end_whitespace_ix..buffer.len(), "")], size, cx);
+            buffer.edit_with_autoindent([(end_whitespace_ix..buffer.len(), "")], cx);
             assert_eq!(
                 buffer.text(),
                 "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n    )\n"

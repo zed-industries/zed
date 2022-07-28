@@ -27,6 +27,7 @@ fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 lsp = { path = "../lsp" }
 rpc = { path = "../rpc" }
+settings = { path = "../settings" }
 sum_tree = { path = "../sum_tree" }
 text = { path = "../text" }
 theme = { path = "../theme" }
