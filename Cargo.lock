@@ -62,7 +62,7 @@ dependencies = [
 [[package]]
 name = "alacritty_config_derive"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/alacritty?rev=382e1892c4eaae7d45ec6ea580db47242ec66e31#382e1892c4eaae7d45ec6ea580db47242ec66e31"
+source = "git+https://github.com/zed-industries/alacritty?rev=ba56f545e3e3606af0112c6bdfe998baf7faab50#ba56f545e3e3606af0112c6bdfe998baf7faab50"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -72,7 +72,7 @@ dependencies = [
 [[package]]
 name = "alacritty_terminal"
 version = "0.17.0-dev"
-source = "git+https://github.com/zed-industries/alacritty?rev=382e1892c4eaae7d45ec6ea580db47242ec66e31#382e1892c4eaae7d45ec6ea580db47242ec66e31"
+source = "git+https://github.com/zed-industries/alacritty?rev=ba56f545e3e3606af0112c6bdfe998baf7faab50#ba56f545e3e3606af0112c6bdfe998baf7faab50"
 dependencies = [
  "alacritty_config_derive",
  "base64 0.13.0",

@@ -13,7 +13,7 @@ use alacritty_terminal::{
     ansi::{ClearMode, Handler},
     config::{Config, Program, PtyConfig, Scrolling},
     event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
-    event_loop::{EventLoop, Msg, Notifier},
+    event_loop::{EventLoop, Msg, Notifier, READ_BUFFER_SIZE},
     grid::{Dimensions, Scroll},
     index::{Direction, Point},
     selection::{Selection, SelectionType},
@@ -55,7 +55,7 @@ const DEBUG_TERMINAL_WIDTH: f32 = 500.;
 const DEBUG_TERMINAL_HEIGHT: f32 = 30.; //This needs to be wide enough that the CI & a local dev's prompt can fill the whole space.
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
-const MAX_FRAME_RATE: f32 = 120.;
+const MAX_FRAME_RATE: f32 = 60.;
 const BACK_BUFFER_SIZE: usize = 5000;
 
 ///Upward flowing events, for changing the title and such
@@ -412,7 +412,7 @@ impl Terminal {
 
     ///Tells the render loop how many frames to skip before reading from the terminal.
     fn frames_to_skip(&self) -> usize {
-        self.frames_to_skip
+        0 //self.frames_to_skip
     }
 
     fn push_events(&mut self, events: Vec<AlacTermEvent>) {
@@ -570,17 +570,16 @@ impl Terminal {
             self.process_terminal_event(&e, &mut term, cx)
         }
 
-        let buffer_velocity = term.grid().history_size().saturating_sub(BACK_BUFFER_SIZE);
-
-        let fractional_velocity = buffer_velocity as f32 / BACK_BUFFER_SIZE as f32;
+        //TODO: determine a better metric for this
+        let buffer_velocity =
+            (term.last_processed_bytes() as f32 / (READ_BUFFER_SIZE as f32 / 4.)).clamp(0., 1.);
 
         //2nd power
-        let scaled_fraction = fractional_velocity * fractional_velocity;
+        let scaled_velocity = buffer_velocity * buffer_velocity;
 
-        self.frames_to_skip = (scaled_fraction * (Self::default_fps() / 10.)).round() as usize;
+        self.frames_to_skip = (scaled_velocity * (Self::default_fps() / 10.)).round() as usize;
 
-        term.grid_mut().update_history(BACK_BUFFER_SIZE); //Clear out the measurement space
-        term.grid_mut().update_history(BACK_BUFFER_SIZE * 2); //Extra space for measuring
+        term.set_last_processed_bytes(0); //Clear it in case no reads between this lock and the next.
 
         let content = term.renderable_content();
 
