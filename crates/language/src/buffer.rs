@@ -237,7 +237,12 @@ struct AutoindentRequest {
 
 #[derive(Clone)]
 struct AutoindentRequestEntry {
+    /// A range of the buffer whose indentation should be adjusted.
     range: Range<Anchor>,
+    /// Whether or not these lines should be considered brand new, for the
+    /// purpose of auto-indent. When text is not new, its indentation will
+    /// only be adjusted if the suggested indentation level has *changed*
+    /// since the edit was made.
     first_line_is_new: bool,
 }
 
@@ -1216,41 +1221,34 @@ impl Buffer {
                 .zip(&edit_operation.as_edit().unwrap().new_text)
                 .map(|((range, _), new_text)| {
                     let new_text_len = new_text.len();
-                    let first_newline_ix = new_text.find('\n');
                     let old_start = range.start.to_point(&before_edit);
                     let new_start = (delta + range.start as isize) as usize;
                     delta += new_text_len as isize - (range.end as isize - range.start as isize);
 
-                    let mut relative_range = 0..new_text_len;
+                    let mut range_of_insertion_to_indent = 0..new_text_len;
                     let mut first_line_is_new = false;
 
-                    // When inserting multiple lines of text at the beginning of a line,
+                    // When inserting an entire line at the beginning of an existing line,
                     // treat the insertion as new.
-                    if first_newline_ix.is_some()
-                        && old_start.column < before_edit.indent_size_for_line(old_start.row).len
+                    if new_text.contains('\n')
+                        && old_start.column <= before_edit.indent_size_for_line(old_start.row).len
                     {
                         first_line_is_new = true;
                     }
-                    // When inserting a newline at the end of an existing line, avoid
-                    // auto-indenting that existing line, but treat the subsequent text as new.
-                    else if first_newline_ix == Some(0)
-                        && old_start.column == before_edit.line_len(old_start.row)
-                    {
-                        relative_range.start += 1;
+
+                    // Avoid auto-indenting lines before and after the insertion.
+                    if new_text[range_of_insertion_to_indent.clone()].starts_with('\n') {
+                        range_of_insertion_to_indent.start += 1;
                         first_line_is_new = true;
                     }
-                    // Avoid auto-indenting subsequent lines when inserting text with trailing
-                    // newlines
-                    while !relative_range.is_empty()
-                        && new_text[relative_range.clone()].ends_with('\n')
-                    {
-                        relative_range.end -= 1;
+                    if new_text[range_of_insertion_to_indent.clone()].ends_with('\n') {
+                        range_of_insertion_to_indent.end -= 1;
                     }
 
                     AutoindentRequestEntry {
                         first_line_is_new,
-                        range: before_edit.anchor_before(new_start + relative_range.start)
-                            ..self.anchor_after(new_start + relative_range.end),
+                        range: self.anchor_before(new_start + range_of_insertion_to_indent.start)
+                            ..self.anchor_after(new_start + range_of_insertion_to_indent.end),
                     }
                 })
                 .collect();
