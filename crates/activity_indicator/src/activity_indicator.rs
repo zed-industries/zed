@@ -82,6 +82,7 @@ impl ActivityIndicator {
                     buffer.update(cx, |buffer, cx| {
                         buffer.edit(
                             [(0..0, format!("Language server error: {}\n\n", lsp_name))],
+                            None,
                             cx,
                         );
                     });

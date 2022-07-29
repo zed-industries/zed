@@ -147,20 +147,23 @@ impl LspAdapter for PythonLspAdapter {
 #[cfg(test)]
 mod tests {
     use gpui::{ModelContext, MutableAppContext};
-    use language::{Buffer, IndentSize};
+    use language::{AutoindentMode, Buffer};
+    use settings::Settings;
     use std::sync::Arc;
 
     #[gpui::test]
     fn test_python_autoindent(cx: &mut MutableAppContext) {
         cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
         let language = crate::languages::language("python", tree_sitter_python::language(), None);
+        let mut settings = Settings::test(cx);
+        settings.editor_overrides.tab_size = Some(2.try_into().unwrap());
+        cx.set_global(settings);
 
         cx.add_model(|cx| {
             let mut buffer = Buffer::new(0, "", cx).with_language(Arc::new(language), cx);
-            let size = IndentSize::spaces(2);
             let append = |buffer: &mut Buffer, text: &str, cx: &mut ModelContext<Buffer>| {
                 let ix = buffer.len();
-                buffer.edit_with_autoindent([(ix..ix, text)], size, cx);
+                buffer.edit([(ix..ix, text)], Some(AutoindentMode::EachLine), cx);
             };
 
             // indent after "def():"
@@ -204,7 +207,11 @@ mod tests {
 
             // dedent the closing paren if it is shifted to the beginning of the line
             let argument_ix = buffer.text().find("1").unwrap();
-            buffer.edit_with_autoindent([(argument_ix..argument_ix + 1, "")], size, cx);
+            buffer.edit(
+                [(argument_ix..argument_ix + 1, "")],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
             assert_eq!(
                 buffer.text(),
                 "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n    )"
@@ -219,7 +226,11 @@ mod tests {
 
             // manually outdent the last line
             let end_whitespace_ix = buffer.len() - 4;
-            buffer.edit_with_autoindent([(end_whitespace_ix..buffer.len(), "")], size, cx);
+            buffer.edit(
+                [(end_whitespace_ix..buffer.len(), "")],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
             assert_eq!(
                 buffer.text(),
                 "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n    )\n"
@@ -233,7 +244,7 @@ mod tests {
             );
 
             // reset to a simple if statement
-            buffer.edit([(0..buffer.len(), "if a:\n  b(\n  )")], cx);
+            buffer.edit([(0..buffer.len(), "if a:\n  b(\n  )")], None, cx);
 
             // dedent "else" on the line after a closing paren
             append(&mut buffer, "\n  else:\n", cx);

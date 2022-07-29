@@ -17,6 +17,7 @@ pub fn copy_selections_content(editor: &mut Editor, linewise: bool, cx: &mut Mut
             clipboard_selections.push(ClipboardSelection {
                 len: text.len() - initial_len,
                 is_entire_line: linewise,
+                first_line_indent: buffer.indent_size_for_line(start.row).len,
             });
         }
     }

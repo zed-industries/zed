@@ -453,7 +453,7 @@ fn open_log_file(
                     let buffer = project
                         .update(cx, |project, cx| project.create_buffer("", None, cx))
                         .expect("creating buffers on a local workspace always succeeds");
-                    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, log)], cx));
+                    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, log)], None, cx));
 
                     let buffer = cx.add_model(|cx| {
                         MultiBuffer::singleton(buffer, cx).with_title("Log".into())

@@ -842,8 +842,8 @@ async fn test_propagate_saves_and_fs_changes(
         .update(cx_c, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
         .await
         .unwrap();
-    buffer_b.update(cx_b, |buf, cx| buf.edit([(0..0, "i-am-b, ")], cx));
-    buffer_c.update(cx_c, |buf, cx| buf.edit([(0..0, "i-am-c, ")], cx));
+    buffer_b.update(cx_b, |buf, cx| buf.edit([(0..0, "i-am-b, ")], None, cx));
+    buffer_c.update(cx_c, |buf, cx| buf.edit([(0..0, "i-am-c, ")], None, cx));
 
     // Open and edit that buffer as the host.
     let buffer_a = project_a
@@ -855,7 +855,7 @@ async fn test_propagate_saves_and_fs_changes(
         .condition(cx_a, |buf, _| buf.text() == "i-am-c, i-am-b, ")
         .await;
     buffer_a.update(cx_a, |buf, cx| {
-        buf.edit([(buf.len()..buf.len(), "i-am-a")], cx)
+        buf.edit([(buf.len()..buf.len(), "i-am-a")], None, cx)
     });
 
     // Wait for edits to propagate
@@ -871,7 +871,7 @@ async fn test_propagate_saves_and_fs_changes(
 
     // Edit the buffer as the host and concurrently save as guest B.
     let save_b = buffer_b.update(cx_b, |buf, cx| buf.save(cx));
-    buffer_a.update(cx_a, |buf, cx| buf.edit([(0..0, "hi-a, ")], cx));
+    buffer_a.update(cx_a, |buf, cx| buf.edit([(0..0, "hi-a, ")], None, cx));
     save_b.await.unwrap();
     assert_eq!(
         client_a.fs.load("/a/file1".as_ref()).await.unwrap(),
@@ -1237,7 +1237,7 @@ async fn test_buffer_conflict_after_save(cx_a: &mut TestAppContext, cx_b: &mut T
         .await
         .unwrap();
 
-    buffer_b.update(cx_b, |buf, cx| buf.edit([(0..0, "world ")], cx));
+    buffer_b.update(cx_b, |buf, cx| buf.edit([(0..0, "world ")], None, cx));
     buffer_b.read_with(cx_b, |buf, _| {
         assert!(buf.is_dirty());
         assert!(!buf.has_conflict());
@@ -1251,7 +1251,7 @@ async fn test_buffer_conflict_after_save(cx_a: &mut TestAppContext, cx_b: &mut T
         assert!(!buf.has_conflict());
     });
 
-    buffer_b.update(cx_b, |buf, cx| buf.edit([(0..0, "hello ")], cx));
+    buffer_b.update(cx_b, |buf, cx| buf.edit([(0..0, "hello ")], None, cx));
     buffer_b.read_with(cx_b, |buf, _| {
         assert!(buf.is_dirty());
         assert!(!buf.has_conflict());
@@ -1342,9 +1342,9 @@ async fn test_editing_while_guest_opens_buffer(
 
     // Edit the buffer as client A while client B is still opening it.
     cx_b.background().simulate_random_delay().await;
-    buffer_a.update(cx_a, |buf, cx| buf.edit([(0..0, "X")], cx));
+    buffer_a.update(cx_a, |buf, cx| buf.edit([(0..0, "X")], None, cx));
     cx_b.background().simulate_random_delay().await;
-    buffer_a.update(cx_a, |buf, cx| buf.edit([(1..1, "Y")], cx));
+    buffer_a.update(cx_a, |buf, cx| buf.edit([(1..1, "Y")], None, cx));
 
     let text = buffer_a.read_with(cx_a, |buf, _| buf.text());
     let buffer_b = buffer_b.await.unwrap();
@@ -1882,8 +1882,8 @@ async fn test_reloading_buffer_manually(cx_a: &mut TestAppContext, cx_b: &mut Te
         .await
         .unwrap();
     buffer_b.update(cx_b, |buffer, cx| {
-        buffer.edit([(4..7, "six")], cx);
-        buffer.edit([(10..11, "6")], cx);
+        buffer.edit([(4..7, "six")], None, cx);
+        buffer.edit([(10..11, "6")], None, cx);
         assert_eq!(buffer.text(), "let six = 6;");
         assert!(buffer.is_dirty());
         assert!(!buffer.has_conflict());
@@ -2964,7 +2964,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         );
         rename.editor.update(cx, |rename_editor, cx| {
             rename_editor.buffer().update(cx, |rename_buffer, cx| {
-                rename_buffer.edit([(0..3, "THREE")], cx);
+                rename_buffer.edit([(0..3, "THREE")], None, cx);
             });
         });
     });

@@ -3168,7 +3168,7 @@ impl Project {
                 buffer.finalize_last_transaction();
                 buffer.start_transaction();
                 for (range, text) in edits {
-                    buffer.edit([(range, text)], cx);
+                    buffer.edit([(range, text)], None, cx);
                 }
                 if buffer.end_transaction(cx).is_some() {
                     let transaction = buffer.finalize_last_transaction().unwrap().clone();
@@ -3663,7 +3663,7 @@ impl Project {
                         buffer.finalize_last_transaction();
                         buffer.start_transaction();
                         for (range, text) in edits {
-                            buffer.edit([(range, text)], cx);
+                            buffer.edit([(range, text)], None, cx);
                         }
                         let transaction = if buffer.end_transaction(cx).is_some() {
                             let transaction = buffer.finalize_last_transaction().unwrap().clone();
@@ -4023,7 +4023,7 @@ impl Project {
                         buffer.finalize_last_transaction();
                         buffer.start_transaction();
                         for (range, text) in edits {
-                            buffer.edit([(range, text)], cx);
+                            buffer.edit([(range, text)], None, cx);
                         }
                         let transaction = if buffer.end_transaction(cx).is_some() {
                             let transaction = buffer.finalize_last_transaction().unwrap().clone();
