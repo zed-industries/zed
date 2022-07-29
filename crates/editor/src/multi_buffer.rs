@@ -305,7 +305,7 @@ impl MultiBuffer {
     pub fn edit<I, S, T>(
         &mut self,
         edits: I,
-        autoindent_mode: Option<AutoindentMode>,
+        mut autoindent_mode: Option<AutoindentMode>,
         cx: &mut ModelContext<Self>,
     ) where
         I: IntoIterator<Item = (Range<S>, T)>,
@@ -331,11 +331,17 @@ impl MultiBuffer {
             });
         }
 
-        let mut buffer_edits: HashMap<usize, Vec<(Range<usize>, Arc<str>, bool)>> =
+        let indent_start_columns = match &mut autoindent_mode {
+            Some(AutoindentMode::Block { start_columns }) => mem::take(start_columns),
+            _ => Default::default(),
+        };
+
+        let mut buffer_edits: HashMap<usize, Vec<(Range<usize>, Arc<str>, bool, u32)>> =
             Default::default();
         let mut cursor = snapshot.excerpts.cursor::<usize>();
-        for (range, new_text) in edits {
+        for (ix, (range, new_text)) in edits.enumerate() {
             let new_text: Arc<str> = new_text.into();
+            let start_column = indent_start_columns.get(ix).copied().unwrap_or(0);
             cursor.seek(&range.start, Bias::Right, &());
             if cursor.item().is_none() && range.start == *cursor.start() {
                 cursor.prev(&());
@@ -366,7 +372,7 @@ impl MultiBuffer {
                 buffer_edits
                     .entry(start_excerpt.buffer_id)
                     .or_insert(Vec::new())
-                    .push((buffer_start..buffer_end, new_text, true));
+                    .push((buffer_start..buffer_end, new_text, true, start_column));
             } else {
                 let start_excerpt_range = buffer_start
                     ..start_excerpt
@@ -383,11 +389,11 @@ impl MultiBuffer {
                 buffer_edits
                     .entry(start_excerpt.buffer_id)
                     .or_insert(Vec::new())
-                    .push((start_excerpt_range, new_text.clone(), true));
+                    .push((start_excerpt_range, new_text.clone(), true, start_column));
                 buffer_edits
                     .entry(end_excerpt.buffer_id)
                     .or_insert(Vec::new())
-                    .push((end_excerpt_range, new_text.clone(), false));
+                    .push((end_excerpt_range, new_text.clone(), false, start_column));
 
                 cursor.seek(&range.start, Bias::Right, &());
                 cursor.next(&());
@@ -402,6 +408,7 @@ impl MultiBuffer {
                             excerpt.range.context.to_offset(&excerpt.buffer),
                             new_text.clone(),
                             false,
+                            start_column,
                         ));
                     cursor.next(&());
                 }
@@ -409,19 +416,21 @@ impl MultiBuffer {
         }
 
         for (buffer_id, mut edits) in buffer_edits {
-            edits.sort_unstable_by_key(|(range, _, _)| range.start);
+            edits.sort_unstable_by_key(|(range, _, _, _)| range.start);
             self.buffers.borrow()[&buffer_id]
                 .buffer
                 .update(cx, |buffer, cx| {
                     let mut edits = edits.into_iter().peekable();
                     let mut insertions = Vec::new();
+                    let mut insertion_start_columns = Vec::new();
                     let mut deletions = Vec::new();
                     let empty_str: Arc<str> = "".into();
-                    while let Some((mut range, new_text, mut is_insertion)) = edits.next() {
-                        while let Some((next_range, _, next_is_insertion)) = edits.peek() {
+                    while let Some((mut range, new_text, mut is_insertion, start_column)) =
+                        edits.next()
+                    {
+                        while let Some((next_range, _, next_is_insertion, _)) = edits.peek() {
                             if range.end >= next_range.start {
                                 range.end = cmp::max(next_range.end, range.end);
-
                                 is_insertion |= *next_is_insertion;
                                 edits.next();
                             } else {
@@ -430,6 +439,7 @@ impl MultiBuffer {
                         }
 
                         if is_insertion {
+                            insertion_start_columns.push(start_column);
                             insertions.push((
                                 buffer.anchor_before(range.start)..buffer.anchor_before(range.end),
                                 new_text.clone(),
@@ -442,8 +452,25 @@ impl MultiBuffer {
                         }
                     }
 
-                    buffer.edit(deletions, autoindent_mode, cx);
-                    buffer.edit(insertions, autoindent_mode, cx);
+                    let deletion_autoindent_mode =
+                        if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
+                            Some(AutoindentMode::Block {
+                                start_columns: Default::default(),
+                            })
+                        } else {
+                            None
+                        };
+                    let insertion_autoindent_mode =
+                        if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
+                            Some(AutoindentMode::Block {
+                                start_columns: insertion_start_columns,
+                            })
+                        } else {
+                            None
+                        };
+
+                    buffer.edit(deletions, deletion_autoindent_mode, cx);
+                    buffer.edit(insertions, insertion_autoindent_mode, cx);
                 })
         }
     }

@@ -879,6 +879,7 @@ struct ActiveDiagnosticGroup {
 pub struct ClipboardSelection {
     pub len: usize,
     pub is_entire_line: bool,
+    pub first_line_indent: u32,
 }
 
 #[derive(Debug)]
@@ -1926,7 +1927,7 @@ impl Editor {
                     old_selections
                         .iter()
                         .map(|s| (s.start..s.end, text.clone())),
-                    Some(AutoindentMode::Block),
+                    Some(AutoindentMode::Independent),
                     cx,
                 );
                 anchors
@@ -2368,7 +2369,7 @@ impl Editor {
                 this.buffer.update(cx, |buffer, cx| {
                     buffer.edit(
                         ranges.iter().map(|range| (range.clone(), text)),
-                        Some(AutoindentMode::Block),
+                        Some(AutoindentMode::Independent),
                         cx,
                     );
                 });
@@ -3512,6 +3513,10 @@ impl Editor {
                 clipboard_selections.push(ClipboardSelection {
                     len,
                     is_entire_line,
+                    first_line_indent: cmp::min(
+                        selection.start.column,
+                        buffer.indent_size_for_line(selection.start.row).len,
+                    ),
                 });
             }
         }
@@ -3549,6 +3554,10 @@ impl Editor {
                 clipboard_selections.push(ClipboardSelection {
                     len,
                     is_entire_line,
+                    first_line_indent: cmp::min(
+                        start.column,
+                        buffer.indent_size_for_line(start.row).len,
+                    ),
                 });
             }
         }
@@ -3583,18 +3592,22 @@ impl Editor {
                         let snapshot = buffer.read(cx);
                         let mut start_offset = 0;
                         let mut edits = Vec::new();
+                        let mut start_columns = Vec::new();
                         let line_mode = this.selections.line_mode;
                         for (ix, selection) in old_selections.iter().enumerate() {
                             let to_insert;
                             let entire_line;
+                            let start_column;
                             if let Some(clipboard_selection) = clipboard_selections.get(ix) {
                                 let end_offset = start_offset + clipboard_selection.len;
                                 to_insert = &clipboard_text[start_offset..end_offset];
                                 entire_line = clipboard_selection.is_entire_line;
                                 start_offset = end_offset;
+                                start_column = clipboard_selection.first_line_indent;
                             } else {
                                 to_insert = clipboard_text.as_str();
                                 entire_line = all_selections_were_entire_line;
+                                start_column = 0;
                             }
 
                             // If the corresponding selection was empty when this slice of the
@@ -3610,9 +3623,10 @@ impl Editor {
                             };
 
                             edits.push((range, to_insert));
+                            start_columns.push(start_column);
                         }
                         drop(snapshot);
-                        buffer.edit(edits, Some(AutoindentMode::Block), cx);
+                        buffer.edit(edits, Some(AutoindentMode::Block { start_columns }), cx);
                     });
 
                     let selections = this.selections.all::<usize>(cx);
@@ -8647,6 +8661,118 @@ mod tests {
             |x jumps over
             fox jumps over
             t|he lazy dog"});
+    }
+
+    #[gpui::test]
+    async fn test_paste_multiline(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx).await;
+        let language = Arc::new(Language::new(
+            LanguageConfig::default(),
+            Some(tree_sitter_rust::language()),
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        // Cut an indented block, without the leading whitespace.
+        cx.set_state(indoc! {"
+            const a = (
+                b(),
+                [c(
+                    d,
+                    e
+                )}
+            );
+        "});
+        cx.update_editor(|e, cx| e.cut(&Cut, cx));
+        cx.assert_editor_state(indoc! {"
+            const a = (
+                b(),
+                |
+            );
+        "});
+
+        // Paste it at the same position.
+        cx.update_editor(|e, cx| e.paste(&Paste, cx));
+        cx.assert_editor_state(indoc! {"
+            const a = (
+                b(),
+                c(
+                    d,
+                    e
+                )|
+            );
+        "});
+
+        // Paste it at a line with a lower indent level.
+        cx.update_editor(|e, cx| e.paste(&Paste, cx));
+        cx.set_state(indoc! {"
+            |
+            const a = (
+                b(),
+            );
+        "});
+        cx.update_editor(|e, cx| e.paste(&Paste, cx));
+        cx.assert_editor_state(indoc! {"
+            c(
+                d,
+                e
+            )|
+            const a = (
+                b(),
+            );
+        "});
+
+        // Cut an indented block, with the leading whitespace.
+        cx.set_state(indoc! {"
+            const a = (
+                b(),
+            [    c(
+                    d,
+                    e
+                )
+            });
+        "});
+        cx.update_editor(|e, cx| e.cut(&Cut, cx));
+        cx.assert_editor_state(indoc! {"
+            const a = (
+                b(),
+            |);
+        "});
+
+        // Paste it at the same position.
+        cx.update_editor(|e, cx| e.paste(&Paste, cx));
+        cx.assert_editor_state(indoc! {"
+            const a = (
+                b(),
+                c(
+                    d,
+                    e
+                )
+            |);
+        "});
+
+        // Paste it at a line with a higher indent level.
+        cx.set_state(indoc! {"
+            const a = (
+                b(),
+                c(
+                    d,
+                    e|
+                )
+            );
+        "});
+        cx.update_editor(|e, cx| e.paste(&Paste, cx));
+        cx.set_state(indoc! {"
+            const a = (
+                b(),
+                c(
+                    d,
+                    ec(
+                        d,
+                        e
+                    )|
+                )
+            );
+        "});
     }
 
     #[gpui::test]

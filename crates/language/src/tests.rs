@@ -944,7 +944,9 @@ fn test_autoindent_block_mode(cx: &mut MutableAppContext) {
         // so that the first line matches the previous line's indentation.
         buffer.edit(
             [(Point::new(2, 0)..Point::new(2, 0), inserted_text.clone())],
-            Some(AutoindentMode::Block),
+            Some(AutoindentMode::Block {
+                start_columns: vec![0],
+            }),
             cx,
         );
         assert_eq!(
@@ -967,7 +969,9 @@ fn test_autoindent_block_mode(cx: &mut MutableAppContext) {
         buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "        ")], None, cx);
         buffer.edit(
             [(Point::new(2, 8)..Point::new(2, 8), inserted_text.clone())],
-            Some(AutoindentMode::Block),
+            Some(AutoindentMode::Block {
+                start_columns: vec![0],
+            }),
             cx,
         );
         assert_eq!(
