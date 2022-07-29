@@ -194,8 +194,6 @@ pub fn show_link_definition(
             .is_ge();
 
         let point_within_range = point_after_start && point_before_end;
-        let same_kind = editor.link_go_to_definition_state.kind == Some(definition_kind);
-
         if point_within_range && same_kind {
             return;
         }
@@ -388,10 +386,127 @@ fn go_to_fetched_definition_of_kind(
 mod tests {
     use futures::StreamExt;
     use indoc::indoc;
+    use lsp::request::{GotoDefinition, GotoTypeDefinition};
 
     use crate::test::EditorLspTestContext;
 
     use super::*;
+
+    #[gpui::test]
+    async fn test_link_go_to_type_definition(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            struct A;
+            let v|ariable = A;
+        "});
+
+        // Basic hold cmd+shift, expect highlight in region if response contains type definition
+        let hover_point = cx.display_point(indoc! {"
+            struct A;
+            let v|ariable = A;
+        "});
+        let symbol_range = cx.lsp_range(indoc! {"
+            struct A;
+            let [variable] = A;
+        "});
+        let target_range = cx.lsp_range(indoc! {"
+            struct [A];
+            let variable = A;
+        "});
+
+        let mut requests =
+            cx.handle_request::<GotoTypeDefinition, _, _>(move |url, _, _| async move {
+                Ok(Some(lsp::GotoTypeDefinitionResponse::Link(vec![
+                    lsp::LocationLink {
+                        origin_selection_range: Some(symbol_range),
+                        target_uri: url.clone(),
+                        target_range,
+                        target_selection_range: target_range,
+                    },
+                ])))
+            });
+
+        // Press cmd+shift to trigger highlight
+        cx.update_editor(|editor, cx| {
+            update_go_to_definition_link(
+                editor,
+                &UpdateGoToDefinitionLink {
+                    point: Some(hover_point),
+                    cmd_held: true,
+                    shift_held: true,
+                },
+                cx,
+            );
+        });
+        requests.next().await;
+        cx.foreground().run_until_parked();
+        cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
+            struct A;
+            let [variable] = A;
+        "});
+
+        // Unpress shift causes highlight to go away (normal goto-definition is not valid here)
+        cx.update_editor(|editor, cx| {
+            cmd_shift_changed(
+                editor,
+                &CmdShiftChanged {
+                    cmd_down: true,
+                    shift_down: false,
+                },
+                cx,
+            );
+        });
+        // Assert no link highlights
+        cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
+            struct A;
+            let variable = A;
+        "});
+
+        // Cmd+shift click without existing definition requests and jumps
+        let hover_point = cx.display_point(indoc! {"
+            struct A;
+            let v|ariable = A;
+        "});
+        let target_range = cx.lsp_range(indoc! {"
+            struct [A];
+            let variable = A;
+        "});
+
+        let mut requests =
+            cx.handle_request::<GotoTypeDefinition, _, _>(move |url, _, _| async move {
+                Ok(Some(lsp::GotoTypeDefinitionResponse::Link(vec![
+                    lsp::LocationLink {
+                        origin_selection_range: None,
+                        target_uri: url,
+                        target_range,
+                        target_selection_range: target_range,
+                    },
+                ])))
+            });
+
+        cx.update_workspace(|workspace, cx| {
+            go_to_fetched_type_definition(
+                workspace,
+                &GoToFetchedTypeDefinition { point: hover_point },
+                cx,
+            );
+        });
+        requests.next().await;
+        cx.foreground().run_until_parked();
+
+        cx.assert_editor_state(indoc! {"
+            struct [A};
+            let variable = A;
+        "});
+    }
 
     #[gpui::test]
     async fn test_link_go_to_definition(cx: &mut gpui::TestAppContext) {
@@ -409,7 +524,8 @@ mod tests {
                 do_work();
             
             fn do_work()
-                test();"});
+                test();
+        "});
 
         // Basic hold cmd, expect highlight in region if response contains definition
         let hover_point = cx.display_point(indoc! {"
@@ -417,32 +533,34 @@ mod tests {
                 do_w|ork();
             
             fn do_work()
-                test();"});
-
+                test();
+        "});
         let symbol_range = cx.lsp_range(indoc! {"
             fn test()
                 [do_work]();
             
             fn do_work()
-                test();"});
+                test();
+        "});
         let target_range = cx.lsp_range(indoc! {"
             fn test()
                 do_work();
             
             fn [do_work]()
-                test();"});
+                test();
+        "});
 
-        let mut requests =
-            cx.handle_request::<lsp::request::GotoDefinition, _, _>(move |url, _, _| async move {
-                Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
-                    lsp::LocationLink {
-                        origin_selection_range: Some(symbol_range),
-                        target_uri: url.clone(),
-                        target_range,
-                        target_selection_range: target_range,
-                    },
-                ])))
-            });
+        let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
+            Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
+                lsp::LocationLink {
+                    origin_selection_range: Some(symbol_range),
+                    target_uri: url.clone(),
+                    target_range,
+                    target_selection_range: target_range,
+                },
+            ])))
+        });
+
         cx.update_editor(|editor, cx| {
             update_go_to_definition_link(
                 editor,
@@ -461,7 +579,8 @@ mod tests {
                 [do_work]();
             
             fn do_work()
-                test();"});
+                test();
+        "});
 
         // Unpress cmd causes highlight to go away
         cx.update_editor(|editor, cx| {
@@ -480,22 +599,22 @@ mod tests {
                 do_work();
             
             fn do_work()
-                test();"});
+                test();
+        "});
 
         // Response without source range still highlights word
         cx.update_editor(|editor, _| editor.link_go_to_definition_state.last_mouse_location = None);
-        let mut requests =
-            cx.handle_request::<lsp::request::GotoDefinition, _, _>(move |url, _, _| async move {
-                Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
-                    lsp::LocationLink {
-                        // No origin range
-                        origin_selection_range: None,
-                        target_uri: url.clone(),
-                        target_range,
-                        target_selection_range: target_range,
-                    },
-                ])))
-            });
+        let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
+            Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
+                lsp::LocationLink {
+                    // No origin range
+                    origin_selection_range: None,
+                    target_uri: url.clone(),
+                    target_range,
+                    target_selection_range: target_range,
+                },
+            ])))
+        });
         cx.update_editor(|editor, cx| {
             update_go_to_definition_link(
                 editor,
@@ -515,7 +634,8 @@ mod tests {
                 [do_work]();
             
             fn do_work()
-                test();"});
+                test();
+        "});
 
         // Moving mouse to location with no response dismisses highlight
         let hover_point = cx.display_point(indoc! {"
@@ -523,13 +643,14 @@ mod tests {
                 do_work();
             
             fn do_work()
-                test();"});
-        let mut requests =
-            cx.lsp
-                .handle_request::<lsp::request::GotoDefinition, _, _>(move |_, _| async move {
-                    // No definitions returned
-                    Ok(Some(lsp::GotoDefinitionResponse::Link(vec![])))
-                });
+                test();
+        "});
+        let mut requests = cx
+            .lsp
+            .handle_request::<GotoDefinition, _, _>(move |_, _| async move {
+                // No definitions returned
+                Ok(Some(lsp::GotoDefinitionResponse::Link(vec![])))
+            });
         cx.update_editor(|editor, cx| {
             update_go_to_definition_link(
                 editor,
@@ -550,7 +671,8 @@ mod tests {
                 do_work();
             
             fn do_work()
-                test();"});
+                test();
+        "});
 
         // Move mouse without cmd and then pressing cmd triggers highlight
         let hover_point = cx.display_point(indoc! {"
@@ -558,7 +680,8 @@ mod tests {
                 do_work();
             
             fn do_work()
-                te|st();"});
+                te|st();
+        "});
         cx.update_editor(|editor, cx| {
             update_go_to_definition_link(
                 editor,
@@ -578,32 +701,34 @@ mod tests {
                 do_work();
             
             fn do_work()
-                test();"});
+                test();
+        "});
 
         let symbol_range = cx.lsp_range(indoc! {"
             fn test()
                 do_work();
             
             fn do_work()
-                [test]();"});
+                [test]();
+        "});
         let target_range = cx.lsp_range(indoc! {"
             fn [test]()
                 do_work();
             
             fn do_work()
-                test();"});
+                test();
+        "});
 
-        let mut requests =
-            cx.handle_request::<lsp::request::GotoDefinition, _, _>(move |url, _, _| async move {
-                Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
-                    lsp::LocationLink {
-                        origin_selection_range: Some(symbol_range),
-                        target_uri: url,
-                        target_range,
-                        target_selection_range: target_range,
-                    },
-                ])))
-            });
+        let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
+            Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
+                lsp::LocationLink {
+                    origin_selection_range: Some(symbol_range),
+                    target_uri: url,
+                    target_range,
+                    target_selection_range: target_range,
+                },
+            ])))
+        });
         cx.update_editor(|editor, cx| {
             cmd_shift_changed(
                 editor,
@@ -622,7 +747,8 @@ mod tests {
                 do_work();
             
             fn do_work()
-                [test]();"});
+                [test]();
+        "});
 
         // Moving within symbol range doesn't re-request
         let hover_point = cx.display_point(indoc! {"
@@ -630,7 +756,8 @@ mod tests {
                 do_work();
             
             fn do_work()
-                tes|t();"});
+                tes|t();
+        "});
         cx.update_editor(|editor, cx| {
             update_go_to_definition_link(
                 editor,
@@ -648,7 +775,8 @@ mod tests {
                 do_work();
             
             fn do_work()
-                [test]();"});
+                [test]();
+        "});
 
         // Cmd click with existing definition doesn't re-request and dismisses highlight
         cx.update_workspace(|workspace, cx| {
@@ -656,7 +784,7 @@ mod tests {
         });
         // Assert selection moved to to definition
         cx.lsp
-            .handle_request::<lsp::request::GotoDefinition, _, _>(move |_, _| async move {
+            .handle_request::<GotoDefinition, _, _>(move |_, _| async move {
                 // Empty definition response to make sure we aren't hitting the lsp and using
                 // the cached location instead
                 Ok(Some(lsp::GotoDefinitionResponse::Link(vec![])))
@@ -666,14 +794,16 @@ mod tests {
                 do_work();
             
             fn do_work()
-                test();"});
+                test();
+        "});
         // Assert no link highlights after jump
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
             fn test()
                 do_work();
             
             fn do_work()
-                test();"});
+                test();
+        "});
 
         // Cmd click without existing definition requests and jumps
         let hover_point = cx.display_point(indoc! {"
@@ -681,25 +811,26 @@ mod tests {
                 do_w|ork();
             
             fn do_work()
-                test();"});
+                test();
+        "});
         let target_range = cx.lsp_range(indoc! {"
             fn test()
                 do_work();
             
             fn [do_work]()
-                test();"});
+                test();
+        "});
 
-        let mut requests =
-            cx.handle_request::<lsp::request::GotoDefinition, _, _>(move |url, _, _| async move {
-                Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
-                    lsp::LocationLink {
-                        origin_selection_range: None,
-                        target_uri: url,
-                        target_range,
-                        target_selection_range: target_range,
-                    },
-                ])))
-            });
+        let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
+            Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
+                lsp::LocationLink {
+                    origin_selection_range: None,
+                    target_uri: url,
+                    target_range,
+                    target_selection_range: target_range,
+                },
+            ])))
+        });
         cx.update_workspace(|workspace, cx| {
             go_to_fetched_definition(workspace, &GoToFetchedDefinition { point: hover_point }, cx);
         });
@@ -711,6 +842,7 @@ mod tests {
                 do_work();
             
             fn [do_work}()
-                test();"});
+                test();
+        "});
     }
 }
