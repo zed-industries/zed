@@ -1,6 +1,7 @@
 mod feedback;
 pub mod languages;
 pub mod menus;
+pub mod paths;
 pub mod settings_file;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
@@ -22,7 +23,6 @@ use gpui::{
     AssetSource, AsyncAppContext, ViewContext,
 };
 use language::Rope;
-use lazy_static::lazy_static;
 pub use lsp;
 pub use project::{self, fs};
 use project_panel::ProjectPanel;
@@ -30,12 +30,7 @@ use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
 use serde_json::to_string_pretty;
 use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
-use std::{
-    env,
-    path::{Path, PathBuf},
-    str,
-    sync::Arc,
-};
+use std::{env, path::Path, str, sync::Arc};
 use util::ResultExt;
 pub use workspace;
 use workspace::{sidebar::Side, AppState, Workspace};
@@ -66,25 +61,6 @@ actions!(
 );
 
 const MIN_FONT_SIZE: f32 = 6.0;
-
-lazy_static! {
-    static ref HOME_PATH: PathBuf = dirs::home_dir().expect("failed to determine home directory");
-    static ref CACHE_DIR_PATH: PathBuf = dirs::cache_dir()
-        .expect("failed to determine cache directory")
-        .join("Zed");
-    static ref CONFIG_DIR_PATH: PathBuf = env::var_os("XDG_CONFIG_HOME")
-        .map(|home| home.into())
-        .unwrap_or_else(|| HOME_PATH.join(".config"))
-        .join("zed");
-    pub static ref LOGS_DIR_PATH: PathBuf = HOME_PATH.join("Library/Logs/Zed");
-    pub static ref LANGUAGES_DIR_PATH: PathBuf = CACHE_DIR_PATH.join("languages");
-    pub static ref DB_DIR_PATH: PathBuf = CACHE_DIR_PATH.join("db");
-    pub static ref DB_PATH: PathBuf = DB_DIR_PATH.join("zed.db");
-    pub static ref SETTINGS_PATH: PathBuf = CONFIG_DIR_PATH.join("settings.json");
-    pub static ref KEYMAP_PATH: PathBuf = CONFIG_DIR_PATH.join("keymap.json");
-    pub static ref LOG_PATH: PathBuf = LOGS_DIR_PATH.join("Zed.log");
-    pub static ref OLD_LOG_PATH: PathBuf = LOGS_DIR_PATH.join("Zed.log.old");
-}
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_action(about);
@@ -122,7 +98,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_action({
         let app_state = app_state.clone();
         move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
-            open_config_file(&SETTINGS_PATH, app_state.clone(), cx, || {
+            open_config_file(&paths::SETTINGS, app_state.clone(), cx, || {
                 str::from_utf8(
                     Assets
                         .load("settings/initial_user_settings.json")
@@ -143,7 +119,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_action({
         let app_state = app_state.clone();
         move |_: &mut Workspace, _: &OpenKeymap, cx: &mut ViewContext<Workspace>| {
-            open_config_file(&KEYMAP_PATH, app_state.clone(), cx, || Default::default());
+            open_config_file(&paths::KEYMAP, app_state.clone(), cx, || Default::default());
         }
     });
     cx.add_action({
@@ -409,7 +385,7 @@ fn open_config_file(
     cx.spawn(|workspace, mut cx| async move {
         let fs = &app_state.fs;
         if !fs.is_file(path).await {
-            fs.create_dir(&CONFIG_DIR_PATH).await?;
+            fs.create_dir(&paths::CONFIG_DIR).await?;
             fs.create_file(path, Default::default()).await?;
             fs.save(path, &default_content(), Default::default())
                 .await?;
@@ -437,8 +413,8 @@ fn open_log_file(
     workspace.with_local_workspace(cx, app_state.clone(), |_, cx| {
         cx.spawn_weak(|workspace, mut cx| async move {
             let (old_log, new_log) = futures::join!(
-                app_state.fs.load(&OLD_LOG_PATH),
-                app_state.fs.load(&LOG_PATH)
+                app_state.fs.load(&paths::OLD_LOG),
+                app_state.fs.load(&paths::LOG)
             );
 
             if let Some(workspace) = workspace.upgrade(&cx) {
