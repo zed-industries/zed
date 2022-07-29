@@ -6,7 +6,9 @@ use super::{
 use crate::{
     display_map::{BlockStyle, DisplaySnapshot, TransformBlock},
     hover_popover::HoverAt,
-    link_go_to_definition::{CmdChanged, GoToFetchedDefinition, UpdateGoToDefinitionLink},
+    link_go_to_definition::{
+        CmdShiftChanged, GoToFetchedDefinition, GoToFetchedTypeDefinition, UpdateGoToDefinitionLink,
+    },
     mouse_context_menu::DeployMouseContextMenu,
     EditorStyle,
 };
@@ -122,7 +124,12 @@ impl EditorElement {
         if cmd && paint.text_bounds.contains_point(position) {
             let (point, overshoot) = paint.point_for_position(&self.snapshot(cx), layout, position);
             if overshoot.is_zero() {
-                cx.dispatch_action(GoToFetchedDefinition { point });
+                if shift {
+                    cx.dispatch_action(GoToFetchedTypeDefinition { point });
+                } else {
+                    cx.dispatch_action(GoToFetchedDefinition { point });
+                }
+
                 return true;
             }
         }
@@ -238,8 +245,12 @@ impl EditorElement {
 
     fn mouse_moved(
         &self,
-        position: Vector2F,
-        cmd: bool,
+        MouseMovedEvent {
+            cmd,
+            shift,
+            position,
+            ..
+        }: MouseMovedEvent,
         layout: &LayoutState,
         paint: &PaintState,
         cx: &mut EventContext,
@@ -260,6 +271,7 @@ impl EditorElement {
         cx.dispatch_action(UpdateGoToDefinitionLink {
             point,
             cmd_held: cmd,
+            shift_held: shift,
         });
 
         if paint
@@ -283,8 +295,11 @@ impl EditorElement {
         true
     }
 
-    fn modifiers_changed(&self, cmd: bool, cx: &mut EventContext) -> bool {
-        cx.dispatch_action(CmdChanged { cmd_down: cmd });
+    fn modifiers_changed(&self, event: ModifiersChangedEvent, cx: &mut EventContext) -> bool {
+        cx.dispatch_action(CmdShiftChanged {
+            cmd_down: event.cmd,
+            shift_down: event.shift,
+        });
         false
     }
 
@@ -1534,32 +1549,34 @@ impl Element for EditorElement {
                 paint,
                 cx,
             ),
+
             Event::MouseDown(MouseButtonEvent {
                 button: MouseButton::Right,
                 position,
                 ..
             }) => self.mouse_right_down(*position, layout, paint, cx),
+
             Event::MouseUp(MouseButtonEvent {
                 button: MouseButton::Left,
                 position,
                 ..
             }) => self.mouse_up(*position, cx),
+
             Event::MouseMoved(MouseMovedEvent {
                 pressed_button: Some(MouseButton::Left),
                 position,
                 ..
             }) => self.mouse_dragged(*position, layout, paint, cx),
+
             Event::ScrollWheel(ScrollWheelEvent {
                 position,
                 delta,
                 precise,
             }) => self.scroll(*position, *delta, *precise, layout, paint, cx),
-            Event::ModifiersChanged(ModifiersChangedEvent { cmd, .. }) => {
-                self.modifiers_changed(*cmd, cx)
-            }
-            Event::MouseMoved(MouseMovedEvent { position, cmd, .. }) => {
-                self.mouse_moved(*position, *cmd, layout, paint, cx)
-            }
+
+            &Event::ModifiersChanged(event) => self.modifiers_changed(event, cx),
+
+            &Event::MouseMoved(event) => self.mouse_moved(event, layout, paint, cx),
 
             _ => false,
         }

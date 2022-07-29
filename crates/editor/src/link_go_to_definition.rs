@@ -8,18 +8,21 @@ use util::TryFutureExt;
 use workspace::Workspace;
 
 use crate::{
-    Anchor, DisplayPoint, Editor, EditorSnapshot, Event, GoToDefinition, Select, SelectPhase,
+    Anchor, DisplayPoint, Editor, EditorSnapshot, Event, GoToDefinition, GoToTypeDefinition,
+    Select, SelectPhase,
 };
 
 #[derive(Clone, PartialEq)]
 pub struct UpdateGoToDefinitionLink {
     pub point: Option<DisplayPoint>,
     pub cmd_held: bool,
+    pub shift_held: bool,
 }
 
 #[derive(Clone, PartialEq)]
-pub struct CmdChanged {
+pub struct CmdShiftChanged {
     pub cmd_down: bool,
+    pub shift_down: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -27,28 +30,44 @@ pub struct GoToFetchedDefinition {
     pub point: DisplayPoint,
 }
 
+#[derive(Clone, PartialEq)]
+pub struct GoToFetchedTypeDefinition {
+    pub point: DisplayPoint,
+}
+
 impl_internal_actions!(
     editor,
-    [UpdateGoToDefinitionLink, CmdChanged, GoToFetchedDefinition]
+    [
+        UpdateGoToDefinitionLink,
+        CmdShiftChanged,
+        GoToFetchedDefinition,
+        GoToFetchedTypeDefinition
+    ]
 );
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(update_go_to_definition_link);
-    cx.add_action(cmd_changed);
+    cx.add_action(cmd_shift_changed);
     cx.add_action(go_to_fetched_definition);
+    cx.add_action(go_to_fetched_type_definition);
 }
 
 #[derive(Default)]
 pub struct LinkGoToDefinitionState {
     pub last_mouse_location: Option<Anchor>,
     pub symbol_range: Option<Range<Anchor>>,
+    pub kind: Option<LinkDefinitionKind>,
     pub definitions: Vec<LocationLink>,
     pub task: Option<Task<Option<()>>>,
 }
 
 pub fn update_go_to_definition_link(
     editor: &mut Editor,
-    &UpdateGoToDefinitionLink { point, cmd_held }: &UpdateGoToDefinitionLink,
+    &UpdateGoToDefinitionLink {
+        point,
+        cmd_held,
+        shift_held,
+    }: &UpdateGoToDefinitionLink,
     cx: &mut ViewContext<Editor>,
 ) {
     // Store new mouse point as an anchor
@@ -72,7 +91,13 @@ pub fn update_go_to_definition_link(
     editor.link_go_to_definition_state.last_mouse_location = point.clone();
     if cmd_held {
         if let Some(point) = point {
-            show_link_definition(editor, point, snapshot, cx);
+            let kind = if shift_held {
+                LinkDefinitionKind::Type
+            } else {
+                LinkDefinitionKind::Symbol
+            };
+
+            show_link_definition(kind, editor, point, snapshot, cx);
             return;
         }
     }
@@ -80,9 +105,12 @@ pub fn update_go_to_definition_link(
     hide_link_definition(editor, cx);
 }
 
-pub fn cmd_changed(
+pub fn cmd_shift_changed(
     editor: &mut Editor,
-    &CmdChanged { cmd_down }: &CmdChanged,
+    &CmdShiftChanged {
+        cmd_down,
+        shift_down,
+    }: &CmdShiftChanged,
     cx: &mut ViewContext<Editor>,
 ) {
     if let Some(point) = editor
@@ -92,19 +120,37 @@ pub fn cmd_changed(
     {
         if cmd_down {
             let snapshot = editor.snapshot(cx);
-            show_link_definition(editor, point.clone(), snapshot, cx);
+            let kind = if shift_down {
+                LinkDefinitionKind::Type
+            } else {
+                LinkDefinitionKind::Symbol
+            };
+
+            show_link_definition(kind, editor, point.clone(), snapshot, cx);
         } else {
             hide_link_definition(editor, cx)
         }
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LinkDefinitionKind {
+    Symbol,
+    Type,
+}
+
 pub fn show_link_definition(
+    definition_kind: LinkDefinitionKind,
     editor: &mut Editor,
     trigger_point: Anchor,
     snapshot: EditorSnapshot,
     cx: &mut ViewContext<Editor>,
 ) {
+    let same_kind = editor.link_go_to_definition_state.kind == Some(definition_kind);
+    if !same_kind {
+        hide_link_definition(editor, cx);
+    }
+
     if editor.pending_rename.is_some() {
         return;
     }
@@ -135,17 +181,22 @@ pub fn show_link_definition(
         return;
     };
 
-    // Don't request again if the location is within the symbol region of a previous request
+    // Don't request again if the location is within the symbol region of a previous request with the same kind
     if let Some(symbol_range) = &editor.link_go_to_definition_state.symbol_range {
-        if symbol_range
+        let point_after_start = symbol_range
             .start
             .cmp(&trigger_point, &snapshot.buffer_snapshot)
-            .is_le()
-            && symbol_range
-                .end
-                .cmp(&trigger_point, &snapshot.buffer_snapshot)
-                .is_ge()
-        {
+            .is_le();
+
+        let point_before_end = symbol_range
+            .end
+            .cmp(&trigger_point, &snapshot.buffer_snapshot)
+            .is_ge();
+
+        let point_within_range = point_after_start && point_before_end;
+        let same_kind = editor.link_go_to_definition_state.kind == Some(definition_kind);
+
+        if point_within_range && same_kind {
             return;
         }
     }
@@ -154,8 +205,14 @@ pub fn show_link_definition(
         async move {
             // query the LSP for definition info
             let definition_request = cx.update(|cx| {
-                project.update(cx, |project, cx| {
-                    project.definition(&buffer, buffer_position.clone(), cx)
+                project.update(cx, |project, cx| match definition_kind {
+                    LinkDefinitionKind::Symbol => {
+                        project.definition(&buffer, buffer_position.clone(), cx)
+                    }
+
+                    LinkDefinitionKind::Type => {
+                        project.type_definition(&buffer, buffer_position.clone(), cx)
+                    }
                 })
             });
 
@@ -181,6 +238,7 @@ pub fn show_link_definition(
                 this.update(&mut cx, |this, cx| {
                     // Clear any existing highlights
                     this.clear_text_highlights::<LinkGoToDefinitionState>(cx);
+                    this.link_go_to_definition_state.kind = Some(definition_kind);
                     this.link_go_to_definition_state.symbol_range = result
                         .as_ref()
                         .and_then(|(symbol_range, _)| symbol_range.clone());
@@ -258,7 +316,24 @@ pub fn hide_link_definition(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
 
 pub fn go_to_fetched_definition(
     workspace: &mut Workspace,
-    GoToFetchedDefinition { point }: &GoToFetchedDefinition,
+    &GoToFetchedDefinition { point }: &GoToFetchedDefinition,
+    cx: &mut ViewContext<Workspace>,
+) {
+    go_to_fetched_definition_of_kind(LinkDefinitionKind::Symbol, workspace, point, cx);
+}
+
+pub fn go_to_fetched_type_definition(
+    workspace: &mut Workspace,
+    &GoToFetchedTypeDefinition { point }: &GoToFetchedTypeDefinition,
+    cx: &mut ViewContext<Workspace>,
+) {
+    go_to_fetched_definition_of_kind(LinkDefinitionKind::Type, workspace, point, cx);
+}
+
+fn go_to_fetched_definition_of_kind(
+    kind: LinkDefinitionKind,
+    workspace: &mut Workspace,
+    point: DisplayPoint,
     cx: &mut ViewContext<Workspace>,
 ) {
     let active_item = workspace.active_item(cx);
@@ -271,13 +346,14 @@ pub fn go_to_fetched_definition(
         return;
     };
 
-    let definitions = editor_handle.update(cx, |editor, cx| {
+    let (cached_definitions, cached_definitions_kind) = editor_handle.update(cx, |editor, cx| {
         let definitions = editor.link_go_to_definition_state.definitions.clone();
         hide_link_definition(editor, cx);
-        definitions
+        (definitions, editor.link_go_to_definition_state.kind)
     });
 
-    if !definitions.is_empty() {
+    let is_correct_kind = cached_definitions_kind == Some(kind);
+    if !cached_definitions.is_empty() && is_correct_kind {
         editor_handle.update(cx, |editor, cx| {
             if !editor.focused {
                 cx.focus_self();
@@ -285,7 +361,7 @@ pub fn go_to_fetched_definition(
             }
         });
 
-        Editor::navigate_to_definitions(workspace, editor_handle, definitions, cx);
+        Editor::navigate_to_definitions(workspace, editor_handle, cached_definitions, cx);
     } else {
         editor_handle.update(cx, |editor, cx| {
             editor.select(
@@ -298,7 +374,13 @@ pub fn go_to_fetched_definition(
             );
         });
 
-        Editor::go_to_definition(workspace, &GoToDefinition, cx);
+        match kind {
+            LinkDefinitionKind::Symbol => Editor::go_to_definition(workspace, &GoToDefinition, cx),
+
+            LinkDefinitionKind::Type => {
+                Editor::go_to_type_definition(workspace, &GoToTypeDefinition, cx)
+            }
+        }
     }
 }
 
@@ -367,6 +449,7 @@ mod tests {
                 &UpdateGoToDefinitionLink {
                     point: Some(hover_point),
                     cmd_held: true,
+                    shift_held: false,
                 },
                 cx,
             );
@@ -382,7 +465,14 @@ mod tests {
 
         // Unpress cmd causes highlight to go away
         cx.update_editor(|editor, cx| {
-            cmd_changed(editor, &CmdChanged { cmd_down: false }, cx);
+            cmd_shift_changed(
+                editor,
+                &CmdShiftChanged {
+                    cmd_down: false,
+                    shift_down: false,
+                },
+                cx,
+            );
         });
         // Assert no link highlights
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
@@ -412,6 +502,7 @@ mod tests {
                 &UpdateGoToDefinitionLink {
                     point: Some(hover_point),
                     cmd_held: true,
+                    shift_held: false,
                 },
                 cx,
             );
@@ -445,6 +536,7 @@ mod tests {
                 &UpdateGoToDefinitionLink {
                     point: Some(hover_point),
                     cmd_held: true,
+                    shift_held: false,
                 },
                 cx,
             );
@@ -473,6 +565,7 @@ mod tests {
                 &UpdateGoToDefinitionLink {
                     point: Some(hover_point),
                     cmd_held: false,
+                    shift_held: false,
                 },
                 cx,
             );
@@ -512,7 +605,14 @@ mod tests {
                 ])))
             });
         cx.update_editor(|editor, cx| {
-            cmd_changed(editor, &CmdChanged { cmd_down: true }, cx);
+            cmd_shift_changed(
+                editor,
+                &CmdShiftChanged {
+                    cmd_down: true,
+                    shift_down: false,
+                },
+                cx,
+            );
         });
         requests.next().await;
         cx.foreground().run_until_parked();
@@ -537,6 +637,7 @@ mod tests {
                 &UpdateGoToDefinitionLink {
                     point: Some(hover_point),
                     cmd_held: true,
+                    shift_held: false,
                 },
                 cx,
             );
