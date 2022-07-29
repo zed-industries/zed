@@ -8,11 +8,11 @@ use gpui::{AppContext, AsyncAppContext, ModelHandle};
 use language::{
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
-    range_from_lsp, Anchor, Bias, Buffer, PointUtf16, ToPointUtf16,
+    range_from_lsp, Anchor, Bias, Buffer, CachedLspAdapter, PointUtf16, ToPointUtf16,
 };
-use lsp::{DocumentHighlightKind, ServerCapabilities};
+use lsp::{DocumentHighlightKind, LanguageServer, ServerCapabilities};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
-use std::{cmp::Reverse, ops::Range, path::Path};
+use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 
 #[async_trait(?Send)]
 pub(crate) trait LspCommand: 'static + Sized {
@@ -242,13 +242,7 @@ impl LspCommand for PerformRename {
         mut cx: AsyncAppContext,
     ) -> Result<ProjectTransaction> {
         if let Some(edit) = message {
-            let (lsp_adapter, lsp_server) = project
-                .read_with(&cx, |project, cx| {
-                    project
-                        .language_server_for_buffer(buffer.read(cx), cx)
-                        .map(|(adapter, server)| (adapter.clone(), server.clone()))
-                })
-                .ok_or_else(|| anyhow!("no language server found for buffer"))?;
+            let (lsp_adapter, lsp_server) = language_server_for_buffer(&project, &buffer, &mut cx)?;
             Project::deserialize_workspace_edit(
                 project,
                 edit,
@@ -356,83 +350,9 @@ impl LspCommand for GetDefinition {
         message: Option<lsp::GotoDefinitionResponse>,
         project: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
-        mut cx: AsyncAppContext,
+        cx: AsyncAppContext,
     ) -> Result<Vec<LocationLink>> {
-        let mut definitions = Vec::new();
-        let (lsp_adapter, language_server) = project
-            .read_with(&cx, |project, cx| {
-                project
-                    .language_server_for_buffer(buffer.read(cx), cx)
-                    .map(|(adapter, server)| (adapter.clone(), server.clone()))
-            })
-            .ok_or_else(|| anyhow!("no language server found for buffer"))?;
-
-        if let Some(message) = message {
-            let mut unresolved_links = Vec::new();
-            match message {
-                lsp::GotoDefinitionResponse::Scalar(loc) => {
-                    unresolved_links.push((None, loc.uri, loc.range));
-                }
-                lsp::GotoDefinitionResponse::Array(locs) => {
-                    unresolved_links.extend(locs.into_iter().map(|l| (None, l.uri, l.range)));
-                }
-                lsp::GotoDefinitionResponse::Link(links) => {
-                    unresolved_links.extend(links.into_iter().map(|l| {
-                        (
-                            l.origin_selection_range,
-                            l.target_uri,
-                            l.target_selection_range,
-                        )
-                    }));
-                }
-            }
-
-            for (origin_range, target_uri, target_range) in unresolved_links {
-                let target_buffer_handle = project
-                    .update(&mut cx, |this, cx| {
-                        this.open_local_buffer_via_lsp(
-                            target_uri,
-                            language_server.server_id(),
-                            lsp_adapter.name.clone(),
-                            cx,
-                        )
-                    })
-                    .await?;
-
-                cx.read(|cx| {
-                    let origin_location = origin_range.map(|origin_range| {
-                        let origin_buffer = buffer.read(cx);
-                        let origin_start = origin_buffer
-                            .clip_point_utf16(point_from_lsp(origin_range.start), Bias::Left);
-                        let origin_end = origin_buffer
-                            .clip_point_utf16(point_from_lsp(origin_range.end), Bias::Left);
-                        Location {
-                            buffer: buffer.clone(),
-                            range: origin_buffer.anchor_after(origin_start)
-                                ..origin_buffer.anchor_before(origin_end),
-                        }
-                    });
-
-                    let target_buffer = target_buffer_handle.read(cx);
-                    let target_start = target_buffer
-                        .clip_point_utf16(point_from_lsp(target_range.start), Bias::Left);
-                    let target_end = target_buffer
-                        .clip_point_utf16(point_from_lsp(target_range.end), Bias::Left);
-                    let target_location = Location {
-                        buffer: target_buffer_handle,
-                        range: target_buffer.anchor_after(target_start)
-                            ..target_buffer.anchor_before(target_end),
-                    };
-
-                    definitions.push(LocationLink {
-                        origin: origin_location,
-                        target: target_location,
-                    })
-                });
-            }
-        }
-
-        Ok(definitions)
+        location_links_from_lsp(message, project, buffer, cx).await
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetDefinition {
@@ -473,32 +393,7 @@ impl LspCommand for GetDefinition {
         _: &clock::Global,
         cx: &AppContext,
     ) -> proto::GetDefinitionResponse {
-        let links = response
-            .into_iter()
-            .map(|definition| {
-                let origin = definition.origin.map(|origin| {
-                    let buffer = project.serialize_buffer_for_peer(&origin.buffer, peer_id, cx);
-                    proto::Location {
-                        start: Some(serialize_anchor(&origin.range.start)),
-                        end: Some(serialize_anchor(&origin.range.end)),
-                        buffer: Some(buffer),
-                    }
-                });
-
-                let buffer =
-                    project.serialize_buffer_for_peer(&definition.target.buffer, peer_id, cx);
-                let target = proto::Location {
-                    start: Some(serialize_anchor(&definition.target.range.start)),
-                    end: Some(serialize_anchor(&definition.target.range.end)),
-                    buffer: Some(buffer),
-                };
-
-                proto::LocationLink {
-                    origin,
-                    target: Some(target),
-                }
-            })
-            .collect();
+        let links = location_links_to_proto(response, project, peer_id, cx);
         proto::GetDefinitionResponse { links }
     }
 
@@ -507,61 +402,9 @@ impl LspCommand for GetDefinition {
         message: proto::GetDefinitionResponse,
         project: ModelHandle<Project>,
         _: ModelHandle<Buffer>,
-        mut cx: AsyncAppContext,
+        cx: AsyncAppContext,
     ) -> Result<Vec<LocationLink>> {
-        let mut links = Vec::new();
-        for link in message.links {
-            let origin = match link.origin {
-                Some(origin) => {
-                    let buffer = origin
-                        .buffer
-                        .ok_or_else(|| anyhow!("missing origin buffer"))?;
-                    let buffer = project
-                        .update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
-                        .await?;
-                    let start = origin
-                        .start
-                        .and_then(deserialize_anchor)
-                        .ok_or_else(|| anyhow!("missing origin start"))?;
-                    let end = origin
-                        .end
-                        .and_then(deserialize_anchor)
-                        .ok_or_else(|| anyhow!("missing origin end"))?;
-                    buffer
-                        .update(&mut cx, |buffer, _| buffer.wait_for_anchors([&start, &end]))
-                        .await;
-                    Some(Location {
-                        buffer,
-                        range: start..end,
-                    })
-                }
-                None => None,
-            };
-
-            let target = link.target.ok_or_else(|| anyhow!("missing target"))?;
-            let buffer = target.buffer.ok_or_else(|| anyhow!("missing buffer"))?;
-            let buffer = project
-                .update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
-                .await?;
-            let start = target
-                .start
-                .and_then(deserialize_anchor)
-                .ok_or_else(|| anyhow!("missing target start"))?;
-            let end = target
-                .end
-                .and_then(deserialize_anchor)
-                .ok_or_else(|| anyhow!("missing target end"))?;
-            buffer
-                .update(&mut cx, |buffer, _| buffer.wait_for_anchors([&start, &end]))
-                .await;
-            let target = Location {
-                buffer,
-                range: start..end,
-            };
-
-            links.push(LocationLink { origin, target })
-        }
-        Ok(links)
+        location_links_from_proto(message.links, project, cx).await
     }
 
     fn buffer_id_from_proto(message: &proto::GetDefinition) -> u64 {
@@ -593,83 +436,9 @@ impl LspCommand for GetTypeDefinition {
         message: Option<lsp::GotoTypeDefinitionResponse>,
         project: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
-        mut cx: AsyncAppContext,
+        cx: AsyncAppContext,
     ) -> Result<Vec<LocationLink>> {
-        let mut definitions = Vec::new();
-        let (lsp_adapter, language_server) = project
-            .read_with(&cx, |project, cx| {
-                project
-                    .language_server_for_buffer(buffer.read(cx), cx)
-                    .map(|(adapter, server)| (adapter.clone(), server.clone()))
-            })
-            .ok_or_else(|| anyhow!("no language server found for buffer"))?;
-
-        if let Some(message) = message {
-            let mut unresolved_links = Vec::new();
-            match message {
-                lsp::GotoTypeDefinitionResponse::Scalar(loc) => {
-                    unresolved_links.push((None, loc.uri, loc.range));
-                }
-                lsp::GotoTypeDefinitionResponse::Array(locs) => {
-                    unresolved_links.extend(locs.into_iter().map(|l| (None, l.uri, l.range)));
-                }
-                lsp::GotoTypeDefinitionResponse::Link(links) => {
-                    unresolved_links.extend(links.into_iter().map(|l| {
-                        (
-                            l.origin_selection_range,
-                            l.target_uri,
-                            l.target_selection_range,
-                        )
-                    }));
-                }
-            }
-
-            for (origin_range, target_uri, target_range) in unresolved_links {
-                let target_buffer_handle = project
-                    .update(&mut cx, |this, cx| {
-                        this.open_local_buffer_via_lsp(
-                            target_uri,
-                            language_server.server_id(),
-                            lsp_adapter.name.clone(),
-                            cx,
-                        )
-                    })
-                    .await?;
-
-                cx.read(|cx| {
-                    let origin_location = origin_range.map(|origin_range| {
-                        let origin_buffer = buffer.read(cx);
-                        let origin_start = origin_buffer
-                            .clip_point_utf16(point_from_lsp(origin_range.start), Bias::Left);
-                        let origin_end = origin_buffer
-                            .clip_point_utf16(point_from_lsp(origin_range.end), Bias::Left);
-                        Location {
-                            buffer: buffer.clone(),
-                            range: origin_buffer.anchor_after(origin_start)
-                                ..origin_buffer.anchor_before(origin_end),
-                        }
-                    });
-
-                    let target_buffer = target_buffer_handle.read(cx);
-                    let target_start = target_buffer
-                        .clip_point_utf16(point_from_lsp(target_range.start), Bias::Left);
-                    let target_end = target_buffer
-                        .clip_point_utf16(point_from_lsp(target_range.end), Bias::Left);
-                    let target_location = Location {
-                        buffer: target_buffer_handle,
-                        range: target_buffer.anchor_after(target_start)
-                            ..target_buffer.anchor_before(target_end),
-                    };
-
-                    definitions.push(LocationLink {
-                        origin: origin_location,
-                        target: target_location,
-                    })
-                });
-            }
-        }
-
-        Ok(definitions)
+        location_links_from_lsp(message, project, buffer, cx).await
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetTypeDefinition {
@@ -710,32 +479,7 @@ impl LspCommand for GetTypeDefinition {
         _: &clock::Global,
         cx: &AppContext,
     ) -> proto::GetTypeDefinitionResponse {
-        let links = response
-            .into_iter()
-            .map(|definition| {
-                let origin = definition.origin.map(|origin| {
-                    let buffer = project.serialize_buffer_for_peer(&origin.buffer, peer_id, cx);
-                    proto::Location {
-                        start: Some(serialize_anchor(&origin.range.start)),
-                        end: Some(serialize_anchor(&origin.range.end)),
-                        buffer: Some(buffer),
-                    }
-                });
-
-                let buffer =
-                    project.serialize_buffer_for_peer(&definition.target.buffer, peer_id, cx);
-                let target = proto::Location {
-                    start: Some(serialize_anchor(&definition.target.range.start)),
-                    end: Some(serialize_anchor(&definition.target.range.end)),
-                    buffer: Some(buffer),
-                };
-
-                proto::LocationLink {
-                    origin,
-                    target: Some(target),
-                }
-            })
-            .collect();
+        let links = location_links_to_proto(response, project, peer_id, cx);
         proto::GetTypeDefinitionResponse { links }
     }
 
@@ -744,66 +488,203 @@ impl LspCommand for GetTypeDefinition {
         message: proto::GetTypeDefinitionResponse,
         project: ModelHandle<Project>,
         _: ModelHandle<Buffer>,
-        mut cx: AsyncAppContext,
+        cx: AsyncAppContext,
     ) -> Result<Vec<LocationLink>> {
-        let mut links = Vec::new();
-        for link in message.links {
-            let origin = match link.origin {
-                Some(origin) => {
-                    let buffer = origin
-                        .buffer
-                        .ok_or_else(|| anyhow!("missing origin buffer"))?;
-                    let buffer = project
-                        .update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
-                        .await?;
-                    let start = origin
-                        .start
-                        .and_then(deserialize_anchor)
-                        .ok_or_else(|| anyhow!("missing origin start"))?;
-                    let end = origin
-                        .end
-                        .and_then(deserialize_anchor)
-                        .ok_or_else(|| anyhow!("missing origin end"))?;
-                    buffer
-                        .update(&mut cx, |buffer, _| buffer.wait_for_anchors([&start, &end]))
-                        .await;
-                    Some(Location {
-                        buffer,
-                        range: start..end,
-                    })
-                }
-                None => None,
-            };
-
-            let target = link.target.ok_or_else(|| anyhow!("missing target"))?;
-            let buffer = target.buffer.ok_or_else(|| anyhow!("missing buffer"))?;
-            let buffer = project
-                .update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
-                .await?;
-            let start = target
-                .start
-                .and_then(deserialize_anchor)
-                .ok_or_else(|| anyhow!("missing target start"))?;
-            let end = target
-                .end
-                .and_then(deserialize_anchor)
-                .ok_or_else(|| anyhow!("missing target end"))?;
-            buffer
-                .update(&mut cx, |buffer, _| buffer.wait_for_anchors([&start, &end]))
-                .await;
-            let target = Location {
-                buffer,
-                range: start..end,
-            };
-
-            links.push(LocationLink { origin, target })
-        }
-        Ok(links)
+        location_links_from_proto(message.links, project, cx).await
     }
 
     fn buffer_id_from_proto(message: &proto::GetTypeDefinition) -> u64 {
         message.buffer_id
     }
+}
+
+fn language_server_for_buffer(
+    project: &ModelHandle<Project>,
+    buffer: &ModelHandle<Buffer>,
+    cx: &mut AsyncAppContext,
+) -> Result<(Arc<CachedLspAdapter>, Arc<LanguageServer>)> {
+    project
+        .read_with(cx, |project, cx| {
+            project
+                .language_server_for_buffer(buffer.read(cx), cx)
+                .map(|(adapter, server)| (adapter.clone(), server.clone()))
+        })
+        .ok_or_else(|| anyhow!("no language server found for buffer"))
+}
+
+async fn location_links_from_proto(
+    proto_links: Vec<proto::LocationLink>,
+    project: ModelHandle<Project>,
+    mut cx: AsyncAppContext,
+) -> Result<Vec<LocationLink>> {
+    let mut links = Vec::new();
+
+    for link in proto_links {
+        let origin = match link.origin {
+            Some(origin) => {
+                let buffer = origin
+                    .buffer
+                    .ok_or_else(|| anyhow!("missing origin buffer"))?;
+                let buffer = project
+                    .update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
+                    .await?;
+                let start = origin
+                    .start
+                    .and_then(deserialize_anchor)
+                    .ok_or_else(|| anyhow!("missing origin start"))?;
+                let end = origin
+                    .end
+                    .and_then(deserialize_anchor)
+                    .ok_or_else(|| anyhow!("missing origin end"))?;
+                buffer
+                    .update(&mut cx, |buffer, _| buffer.wait_for_anchors([&start, &end]))
+                    .await;
+                Some(Location {
+                    buffer,
+                    range: start..end,
+                })
+            }
+            None => None,
+        };
+
+        let target = link.target.ok_or_else(|| anyhow!("missing target"))?;
+        let buffer = target.buffer.ok_or_else(|| anyhow!("missing buffer"))?;
+        let buffer = project
+            .update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
+            .await?;
+        let start = target
+            .start
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("missing target start"))?;
+        let end = target
+            .end
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("missing target end"))?;
+        buffer
+            .update(&mut cx, |buffer, _| buffer.wait_for_anchors([&start, &end]))
+            .await;
+        let target = Location {
+            buffer,
+            range: start..end,
+        };
+
+        links.push(LocationLink { origin, target })
+    }
+
+    Ok(links)
+}
+
+async fn location_links_from_lsp(
+    message: Option<lsp::GotoDefinitionResponse>,
+    project: ModelHandle<Project>,
+    buffer: ModelHandle<Buffer>,
+    mut cx: AsyncAppContext,
+) -> Result<Vec<LocationLink>> {
+    let message = match message {
+        Some(message) => message,
+        None => return Ok(Vec::new()),
+    };
+
+    let mut unresolved_links = Vec::new();
+    match message {
+        lsp::GotoDefinitionResponse::Scalar(loc) => {
+            unresolved_links.push((None, loc.uri, loc.range));
+        }
+
+        lsp::GotoDefinitionResponse::Array(locs) => {
+            unresolved_links.extend(locs.into_iter().map(|l| (None, l.uri, l.range)));
+        }
+
+        lsp::GotoDefinitionResponse::Link(links) => {
+            unresolved_links.extend(links.into_iter().map(|l| {
+                (
+                    l.origin_selection_range,
+                    l.target_uri,
+                    l.target_selection_range,
+                )
+            }));
+        }
+    }
+
+    let (lsp_adapter, language_server) = language_server_for_buffer(&project, &buffer, &mut cx)?;
+    let mut definitions = Vec::new();
+    for (origin_range, target_uri, target_range) in unresolved_links {
+        let target_buffer_handle = project
+            .update(&mut cx, |this, cx| {
+                this.open_local_buffer_via_lsp(
+                    target_uri,
+                    language_server.server_id(),
+                    lsp_adapter.name.clone(),
+                    cx,
+                )
+            })
+            .await?;
+
+        cx.read(|cx| {
+            let origin_location = origin_range.map(|origin_range| {
+                let origin_buffer = buffer.read(cx);
+                let origin_start =
+                    origin_buffer.clip_point_utf16(point_from_lsp(origin_range.start), Bias::Left);
+                let origin_end =
+                    origin_buffer.clip_point_utf16(point_from_lsp(origin_range.end), Bias::Left);
+                Location {
+                    buffer: buffer.clone(),
+                    range: origin_buffer.anchor_after(origin_start)
+                        ..origin_buffer.anchor_before(origin_end),
+                }
+            });
+
+            let target_buffer = target_buffer_handle.read(cx);
+            let target_start =
+                target_buffer.clip_point_utf16(point_from_lsp(target_range.start), Bias::Left);
+            let target_end =
+                target_buffer.clip_point_utf16(point_from_lsp(target_range.end), Bias::Left);
+            let target_location = Location {
+                buffer: target_buffer_handle,
+                range: target_buffer.anchor_after(target_start)
+                    ..target_buffer.anchor_before(target_end),
+            };
+
+            definitions.push(LocationLink {
+                origin: origin_location,
+                target: target_location,
+            })
+        });
+    }
+    Ok(definitions)
+}
+
+fn location_links_to_proto(
+    links: Vec<LocationLink>,
+    project: &mut Project,
+    peer_id: PeerId,
+    cx: &AppContext,
+) -> Vec<proto::LocationLink> {
+    links
+        .into_iter()
+        .map(|definition| {
+            let origin = definition.origin.map(|origin| {
+                let buffer = project.serialize_buffer_for_peer(&origin.buffer, peer_id, cx);
+                proto::Location {
+                    start: Some(serialize_anchor(&origin.range.start)),
+                    end: Some(serialize_anchor(&origin.range.end)),
+                    buffer: Some(buffer),
+                }
+            });
+
+            let buffer = project.serialize_buffer_for_peer(&definition.target.buffer, peer_id, cx);
+            let target = proto::Location {
+                start: Some(serialize_anchor(&definition.target.range.start)),
+                end: Some(serialize_anchor(&definition.target.range.end)),
+                buffer: Some(buffer),
+            };
+
+            proto::LocationLink {
+                origin,
+                target: Some(target),
+            }
+        })
+        .collect()
 }
 
 #[async_trait(?Send)]
@@ -836,13 +717,8 @@ impl LspCommand for GetReferences {
         mut cx: AsyncAppContext,
     ) -> Result<Vec<Location>> {
         let mut references = Vec::new();
-        let (lsp_adapter, language_server) = project
-            .read_with(&cx, |project, cx| {
-                project
-                    .language_server_for_buffer(buffer.read(cx), cx)
-                    .map(|(adapter, server)| (adapter.clone(), server.clone()))
-            })
-            .ok_or_else(|| anyhow!("no language server found for buffer"))?;
+        let (lsp_adapter, language_server) =
+            language_server_for_buffer(&project, &buffer, &mut cx)?;
 
         if let Some(locations) = locations {
             for lsp_location in locations {
