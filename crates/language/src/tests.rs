@@ -920,20 +920,18 @@ fn test_autoindent_multi_line_insertion(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_autoindent_preserves_relative_indentation_in_multi_line_insertion(
-    cx: &mut MutableAppContext,
-) {
+fn test_autoindent_block_mode(cx: &mut MutableAppContext) {
     cx.set_global(Settings::test(cx));
     cx.add_model(|cx| {
-        let text = "
+        let text = r#"
             fn a() {
                 b();
             }
-        "
+        "#
         .unindent();
         let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
 
-        let pasted_text = r#"
+        let inserted_text = r#"
             "
               c
                 d
@@ -942,9 +940,33 @@ fn test_autoindent_preserves_relative_indentation_in_multi_line_insertion(
         "#
         .unindent();
 
-        // insert at the beginning of a line
+        // Insert the block at column zero. The entire block is indented
+        // so that the first line matches the previous line's indentation.
         buffer.edit(
-            [(Point::new(2, 0)..Point::new(2, 0), pasted_text.clone())],
+            [(Point::new(2, 0)..Point::new(2, 0), inserted_text.clone())],
+            Some(AutoindentMode::Block),
+            cx,
+        );
+        assert_eq!(
+            buffer.text(),
+            r#"
+            fn a() {
+                b();
+                "
+                  c
+                    d
+                      e
+                "
+            }
+            "#
+            .unindent()
+        );
+
+        // Insert the block at a deeper indent level. The entire block is outdented.
+        buffer.undo(cx);
+        buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "        ")], None, cx);
+        buffer.edit(
+            [(Point::new(2, 8)..Point::new(2, 8), inserted_text.clone())],
             Some(AutoindentMode::Block),
             cx,
         );

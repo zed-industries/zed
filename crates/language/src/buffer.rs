@@ -252,6 +252,8 @@ struct AutoindentRequestEntry {
     /// only be adjusted if the suggested indentation level has *changed*
     /// since the edit was made.
     first_line_is_new: bool,
+    /// The original indentation of the text that was inserted into this range.
+    original_indent: Option<IndentSize>,
 }
 
 #[derive(Debug)]
@@ -814,6 +816,8 @@ impl Buffer {
         Some(async move {
             let mut indent_sizes = BTreeMap::new();
             for request in autoindent_requests {
+                // Resolve each edited range to its row in the current buffer and in the
+                // buffer before this batch of edits.
                 let mut row_ranges = Vec::new();
                 let mut old_to_new_rows = BTreeMap::new();
                 for entry in &request.entries {
@@ -824,11 +828,12 @@ impl Buffer {
                         let old_row = position.to_point(&request.before_edit).row;
                         old_to_new_rows.insert(old_row, new_row);
                     }
-                    if new_end_row > new_row {
-                        row_ranges.push(new_row..new_end_row);
-                    }
+                    row_ranges.push((new_row..new_end_row, entry.original_indent));
                 }
 
+                // Build a map containing the suggested indentation for each of the edited lines
+                // with respect to the state of the buffer before these edits. This map is keyed
+                // by the rows for these lines in the current state of the buffer.
                 let mut old_suggestions = BTreeMap::<u32, IndentSize>::default();
                 let old_edited_ranges =
                     contiguous_ranges(old_to_new_rows.keys().copied(), max_rows_between_yields);
@@ -856,17 +861,18 @@ impl Buffer {
                     yield_now().await;
                 }
 
-                // At this point, old_suggestions contains the suggested indentation for all edited lines
-                // with respect to the state of the buffer before the edit, but keyed by the row for these
-                // lines after the edits were applied.
-
+                // In block mode, only compute indentation suggestions for the first line
+                // of each insertion. Otherwise, compute suggestions for every inserted line.
                 let new_edited_row_ranges = contiguous_ranges(
-                    row_ranges.iter().flat_map(|range| match request.mode {
+                    row_ranges.iter().flat_map(|(range, _)| match request.mode {
                         AutoindentMode::Block => range.start..range.start + 1,
                         AutoindentMode::Independent => range.clone(),
                     }),
                     max_rows_between_yields,
                 );
+
+                // Compute new suggestions for each line, but only include them in the result
+                // if they differ from the old suggestion for that line.
                 for new_edited_row_range in new_edited_row_ranges {
                     let suggestions = snapshot
                         .suggest_autoindents(new_edited_row_range.clone())
@@ -894,34 +900,38 @@ impl Buffer {
                     yield_now().await;
                 }
 
+                // For each block of inserted text, adjust the indentation of the remaining
+                // lines of the block by the same amount as the first line was adjusted.
                 if matches!(request.mode, AutoindentMode::Block) {
-                    for row_range in row_ranges {
-                        if row_range.len() > 1 {
-                            if let Some(new_indent_size) =
-                                indent_sizes.get(&row_range.start).copied()
-                            {
-                                let old_indent_size =
-                                    snapshot.indent_size_for_line(row_range.start);
-                                if new_indent_size.kind == old_indent_size.kind {
-                                    let delta =
-                                        new_indent_size.len as i64 - old_indent_size.len as i64;
-                                    if delta != 0 {
-                                        for row in row_range.skip(1) {
-                                            indent_sizes.entry(row).or_insert_with(|| {
-                                                let mut size = snapshot.indent_size_for_line(row);
-                                                if size.kind == new_indent_size.kind {
-                                                    if delta > 0 {
-                                                        size.len += delta as u32;
-                                                    } else if delta < 0 {
-                                                        size.len =
-                                                            size.len.saturating_sub(-delta as u32);
-                                                    }
-                                                }
-                                                size
-                                            });
+                    for (row_range, original_indent) in
+                        row_ranges
+                            .into_iter()
+                            .filter_map(|(range, original_indent)| {
+                                if range.len() > 1 {
+                                    Some((range, original_indent?))
+                                } else {
+                                    None
+                                }
+                            })
+                    {
+                        let new_indent = indent_sizes
+                            .get(&row_range.start)
+                            .copied()
+                            .unwrap_or_else(|| snapshot.indent_size_for_line(row_range.start));
+                        let delta = new_indent.len as i64 - original_indent.len as i64;
+                        if new_indent.kind == original_indent.kind && delta != 0 {
+                            for row in row_range.skip(1) {
+                                indent_sizes.entry(row).or_insert_with(|| {
+                                    let mut size = snapshot.indent_size_for_line(row);
+                                    if size.kind == new_indent.kind {
+                                        if delta > 0 {
+                                            size.len = size.len + delta as u32;
+                                        } else if delta < 0 {
+                                            size.len = size.len.saturating_sub(-delta as u32);
                                         }
                                     }
-                                }
+                                    size
+                                });
                             }
                         }
                     }
@@ -1226,6 +1236,7 @@ impl Buffer {
 
                     let mut range_of_insertion_to_indent = 0..new_text_len;
                     let mut first_line_is_new = false;
+                    let mut original_indent = None;
 
                     // When inserting an entire line at the beginning of an existing line,
                     // treat the insertion as new.
@@ -1235,13 +1246,16 @@ impl Buffer {
                         first_line_is_new = true;
                     }
 
-                    // Avoid auto-indenting lines before and after the insertion.
+                    // When inserting text starting with a newline, avoid auto-indenting the
+                    // previous line.
                     if new_text[range_of_insertion_to_indent.clone()].starts_with('\n') {
                         range_of_insertion_to_indent.start += 1;
                         first_line_is_new = true;
                     }
 
+                    // Avoid auto-indenting before the insertion.
                     if matches!(mode, AutoindentMode::Block) {
+                        original_indent = Some(indent_size_for_text(new_text.chars()));
                         if new_text[range_of_insertion_to_indent.clone()].ends_with('\n') {
                             range_of_insertion_to_indent.end -= 1;
                         }
@@ -1249,6 +1263,7 @@ impl Buffer {
 
                     AutoindentRequestEntry {
                         first_line_is_new,
+                        original_indent,
                         range: self.anchor_before(new_start + range_of_insertion_to_indent.start)
                             ..self.anchor_after(new_start + range_of_insertion_to_indent.end),
                     }
@@ -2144,8 +2159,12 @@ impl BufferSnapshot {
 }
 
 pub fn indent_size_for_line(text: &text::BufferSnapshot, row: u32) -> IndentSize {
+    indent_size_for_text(text.chars_at(Point::new(row, 0)))
+}
+
+pub fn indent_size_for_text(text: impl Iterator<Item = char>) -> IndentSize {
     let mut result = IndentSize::spaces(0);
-    for c in text.chars_at(Point::new(row, 0)) {
+    for c in text {
         let kind = match c {
             ' ' => IndentKind::Space,
             '\t' => IndentKind::Tab,
