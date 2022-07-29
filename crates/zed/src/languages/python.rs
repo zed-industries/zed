@@ -163,7 +163,7 @@ mod tests {
             let mut buffer = Buffer::new(0, "", cx).with_language(Arc::new(language), cx);
             let append = |buffer: &mut Buffer, text: &str, cx: &mut ModelContext<Buffer>| {
                 let ix = buffer.len();
-                buffer.edit([(ix..ix, text)], Some(AutoindentMode::Independent), cx);
+                buffer.edit([(ix..ix, text)], Some(AutoindentMode::EachLine), cx);
             };
 
             // indent after "def():"
@@ -209,7 +209,7 @@ mod tests {
             let argument_ix = buffer.text().find("1").unwrap();
             buffer.edit(
                 [(argument_ix..argument_ix + 1, "")],
-                Some(AutoindentMode::Independent),
+                Some(AutoindentMode::EachLine),
                 cx,
             );
             assert_eq!(
@@ -228,7 +228,7 @@ mod tests {
             let end_whitespace_ix = buffer.len() - 4;
             buffer.edit(
                 [(end_whitespace_ix..buffer.len(), "")],
-                Some(AutoindentMode::Independent),
+                Some(AutoindentMode::EachLine),
                 cx,
             );
             assert_eq!(

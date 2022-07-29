@@ -35,7 +35,7 @@ fn test_line_endings(cx: &mut gpui::MutableAppContext) {
         buffer.check_invariants();
         buffer.edit(
             [(buffer.len()..buffer.len(), "\r\nfour")],
-            Some(AutoindentMode::Independent),
+            Some(AutoindentMode::EachLine),
             cx,
         );
         buffer.edit([(0..0, "zero\r\n")], None, cx);
@@ -630,12 +630,12 @@ fn test_autoindent_with_soft_tabs(cx: &mut MutableAppContext) {
         let text = "fn a() {}";
         let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
 
-        buffer.edit([(8..8, "\n\n")], Some(AutoindentMode::Independent), cx);
+        buffer.edit([(8..8, "\n\n")], Some(AutoindentMode::EachLine), cx);
         assert_eq!(buffer.text(), "fn a() {\n    \n}");
 
         buffer.edit(
             [(Point::new(1, 4)..Point::new(1, 4), "b()\n")],
-            Some(AutoindentMode::Independent),
+            Some(AutoindentMode::EachLine),
             cx,
         );
         assert_eq!(buffer.text(), "fn a() {\n    b()\n    \n}");
@@ -644,7 +644,7 @@ fn test_autoindent_with_soft_tabs(cx: &mut MutableAppContext) {
         // to be indented.
         buffer.edit(
             [(Point::new(2, 4)..Point::new(2, 4), ".c")],
-            Some(AutoindentMode::Independent),
+            Some(AutoindentMode::EachLine),
             cx,
         );
         assert_eq!(buffer.text(), "fn a() {\n    b()\n        .c\n}");
@@ -653,7 +653,7 @@ fn test_autoindent_with_soft_tabs(cx: &mut MutableAppContext) {
         // causing the line to be outdented.
         buffer.edit(
             [(Point::new(2, 8)..Point::new(2, 9), "")],
-            Some(AutoindentMode::Independent),
+            Some(AutoindentMode::EachLine),
             cx,
         );
         assert_eq!(buffer.text(), "fn a() {\n    b()\n    c\n}");
@@ -672,12 +672,12 @@ fn test_autoindent_with_hard_tabs(cx: &mut MutableAppContext) {
         let text = "fn a() {}";
         let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
 
-        buffer.edit([(8..8, "\n\n")], Some(AutoindentMode::Independent), cx);
+        buffer.edit([(8..8, "\n\n")], Some(AutoindentMode::EachLine), cx);
         assert_eq!(buffer.text(), "fn a() {\n\t\n}");
 
         buffer.edit(
             [(Point::new(1, 1)..Point::new(1, 1), "b()\n")],
-            Some(AutoindentMode::Independent),
+            Some(AutoindentMode::EachLine),
             cx,
         );
         assert_eq!(buffer.text(), "fn a() {\n\tb()\n\t\n}");
@@ -686,7 +686,7 @@ fn test_autoindent_with_hard_tabs(cx: &mut MutableAppContext) {
         // to be indented.
         buffer.edit(
             [(Point::new(2, 1)..Point::new(2, 1), ".c")],
-            Some(AutoindentMode::Independent),
+            Some(AutoindentMode::EachLine),
             cx,
         );
         assert_eq!(buffer.text(), "fn a() {\n\tb()\n\t\t.c\n}");
@@ -695,7 +695,7 @@ fn test_autoindent_with_hard_tabs(cx: &mut MutableAppContext) {
         // causing the line to be outdented.
         buffer.edit(
             [(Point::new(2, 2)..Point::new(2, 3), "")],
-            Some(AutoindentMode::Independent),
+            Some(AutoindentMode::EachLine),
             cx,
         );
         assert_eq!(buffer.text(), "fn a() {\n\tb()\n\tc\n}");
@@ -727,7 +727,7 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
                 (empty(Point::new(1, 1)), "()"),
                 (empty(Point::new(2, 1)), "()"),
             ],
-            Some(AutoindentMode::Independent),
+            Some(AutoindentMode::EachLine),
             cx,
         );
         assert_eq!(
@@ -748,7 +748,7 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
                 (empty(Point::new(1, 1)), "\n.f\n.g"),
                 (empty(Point::new(2, 1)), "\n.f\n.g"),
             ],
-            Some(AutoindentMode::Independent),
+            Some(AutoindentMode::EachLine),
             cx,
         );
         assert_eq!(
@@ -783,7 +783,7 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
         // Delete a closing curly brace changes the suggested indent for the line.
         buffer.edit(
             [(Point::new(3, 4)..Point::new(3, 5), "")],
-            Some(AutoindentMode::Independent),
+            Some(AutoindentMode::EachLine),
             cx,
         );
         assert_eq!(
@@ -803,7 +803,7 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
         // Manually editing the leading whitespace
         buffer.edit(
             [(Point::new(3, 0)..Point::new(3, 12), "")],
-            Some(AutoindentMode::Independent),
+            Some(AutoindentMode::EachLine),
             cx,
         );
         assert_eq!(
@@ -833,7 +833,7 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
 
         let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
 
-        buffer.edit([(5..5, "\nb")], Some(AutoindentMode::Independent), cx);
+        buffer.edit([(5..5, "\nb")], Some(AutoindentMode::EachLine), cx);
         assert_eq!(
             buffer.text(),
             "
@@ -847,7 +847,7 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
         // is now at the beginning of the line.
         buffer.edit(
             [(Point::new(1, 4)..Point::new(1, 5), "")],
-            Some(AutoindentMode::Independent),
+            Some(AutoindentMode::EachLine),
             cx,
         );
         assert_eq!(
@@ -871,7 +871,7 @@ fn test_autoindent_with_edit_at_end_of_buffer(cx: &mut MutableAppContext) {
         let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
         buffer.edit(
             [(0..1, "\n"), (2..3, "\n")],
-            Some(AutoindentMode::Independent),
+            Some(AutoindentMode::EachLine),
             cx,
         );
         assert_eq!(buffer.text(), "\n\n\n");
@@ -896,7 +896,7 @@ fn test_autoindent_multi_line_insertion(cx: &mut MutableAppContext) {
         let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
         buffer.edit(
             [(Point::new(3, 0)..Point::new(3, 0), "e(\n    f()\n);\n")],
-            Some(AutoindentMode::Independent),
+            Some(AutoindentMode::EachLine),
             cx,
         );
         assert_eq!(
@@ -945,7 +945,7 @@ fn test_autoindent_block_mode(cx: &mut MutableAppContext) {
         buffer.edit(
             [(Point::new(2, 0)..Point::new(2, 0), inserted_text.clone())],
             Some(AutoindentMode::Block {
-                start_columns: vec![0],
+                original_indent_columns: vec![0],
             }),
             cx,
         );
@@ -970,7 +970,7 @@ fn test_autoindent_block_mode(cx: &mut MutableAppContext) {
         buffer.edit(
             [(Point::new(2, 8)..Point::new(2, 8), inserted_text.clone())],
             Some(AutoindentMode::Block {
-                start_columns: vec![0],
+                original_indent_columns: vec![0],
             }),
             cx,
         );
@@ -1017,7 +1017,7 @@ fn test_autoindent_language_without_indents_query(cx: &mut MutableAppContext) {
         );
         buffer.edit(
             [(Point::new(3, 0)..Point::new(3, 0), "\n")],
-            Some(AutoindentMode::Independent),
+            Some(AutoindentMode::EachLine),
             cx,
         );
         assert_eq!(

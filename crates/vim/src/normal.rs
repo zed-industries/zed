@@ -278,7 +278,7 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
                                 }
                             }
                             drop(snapshot);
-                            buffer.edit(edits, Some(AutoindentMode::Independent), cx);
+                            buffer.edit(edits, Some(AutoindentMode::EachLine), cx);
                         });
 
                         editor.change_selections(Some(Autoscroll::Fit), cx, |s| {

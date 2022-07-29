@@ -1476,7 +1476,7 @@ impl Editor {
         T: Into<Arc<str>>,
     {
         self.buffer.update(cx, |buffer, cx| {
-            buffer.edit(edits, Some(AutoindentMode::Independent), cx)
+            buffer.edit(edits, Some(AutoindentMode::EachLine), cx)
         });
     }
 
@@ -1927,7 +1927,7 @@ impl Editor {
                     old_selections
                         .iter()
                         .map(|s| (s.start..s.end, text.clone())),
-                    Some(AutoindentMode::Independent),
+                    Some(AutoindentMode::EachLine),
                     cx,
                 );
                 anchors
@@ -2369,7 +2369,7 @@ impl Editor {
                 this.buffer.update(cx, |buffer, cx| {
                     buffer.edit(
                         ranges.iter().map(|range| (range.clone(), text)),
-                        Some(AutoindentMode::Independent),
+                        Some(AutoindentMode::EachLine),
                         cx,
                     );
                 });
@@ -2737,7 +2737,7 @@ impl Editor {
                     .iter()
                     .cloned()
                     .map(|range| (range, snippet_text.clone())),
-                Some(AutoindentMode::Independent),
+                Some(AutoindentMode::EachLine),
                 cx,
             );
 
@@ -3513,10 +3513,7 @@ impl Editor {
                 clipboard_selections.push(ClipboardSelection {
                     len,
                     is_entire_line,
-                    first_line_indent: cmp::min(
-                        selection.start.column,
-                        buffer.indent_size_for_line(selection.start.row).len,
-                    ),
+                    first_line_indent: buffer.indent_size_for_line(selection.start.row).len,
                 });
             }
         }
@@ -3554,10 +3551,7 @@ impl Editor {
                 clipboard_selections.push(ClipboardSelection {
                     len,
                     is_entire_line,
-                    first_line_indent: cmp::min(
-                        start.column,
-                        buffer.indent_size_for_line(start.row).len,
-                    ),
+                    first_line_indent: buffer.indent_size_for_line(start.row).len,
                 });
             }
         }
@@ -3626,7 +3620,13 @@ impl Editor {
                             start_columns.push(start_column);
                         }
                         drop(snapshot);
-                        buffer.edit(edits, Some(AutoindentMode::Block { start_columns }), cx);
+                        buffer.edit(
+                            edits,
+                            Some(AutoindentMode::Block {
+                                original_indent_columns: start_columns,
+                            }),
+                            cx,
+                        );
                     });
 
                     let selections = this.selections.all::<usize>(cx);

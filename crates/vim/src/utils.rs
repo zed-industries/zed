@@ -1,6 +1,5 @@
 use editor::{ClipboardSelection, Editor};
 use gpui::{ClipboardItem, MutableAppContext};
-use std::cmp;
 
 pub fn copy_selections_content(editor: &mut Editor, linewise: bool, cx: &mut MutableAppContext) {
     let selections = editor.selections.all_adjusted(cx);
@@ -18,10 +17,7 @@ pub fn copy_selections_content(editor: &mut Editor, linewise: bool, cx: &mut Mut
             clipboard_selections.push(ClipboardSelection {
                 len: text.len() - initial_len,
                 is_entire_line: linewise,
-                first_line_indent: cmp::min(
-                    start.column,
-                    buffer.indent_size_for_line(start.row).len,
-                ),
+                first_line_indent: buffer.indent_size_for_line(start.row).len,
             });
         }
     }

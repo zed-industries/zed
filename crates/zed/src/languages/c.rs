@@ -269,21 +269,17 @@ mod tests {
 
             // indent inside braces
             let ix = buffer.len() - 1;
-            buffer.edit([(ix..ix, "\n\n")], Some(AutoindentMode::Independent), cx);
+            buffer.edit([(ix..ix, "\n\n")], Some(AutoindentMode::EachLine), cx);
             assert_eq!(buffer.text(), "int main() {\n  \n}");
 
             // indent body of single-statement if statement
             let ix = buffer.len() - 2;
-            buffer.edit(
-                [(ix..ix, "if (a)\nb;")],
-                Some(AutoindentMode::Independent),
-                cx,
-            );
+            buffer.edit([(ix..ix, "if (a)\nb;")], Some(AutoindentMode::EachLine), cx);
             assert_eq!(buffer.text(), "int main() {\n  if (a)\n    b;\n}");
 
             // indent inside field expression
             let ix = buffer.len() - 3;
-            buffer.edit([(ix..ix, "\n.c")], Some(AutoindentMode::Independent), cx);
+            buffer.edit([(ix..ix, "\n.c")], Some(AutoindentMode::EachLine), cx);
             assert_eq!(buffer.text(), "int main() {\n  if (a)\n    b\n      .c;\n}");
 
             buffer

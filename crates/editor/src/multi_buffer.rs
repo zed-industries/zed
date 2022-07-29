@@ -331,8 +331,10 @@ impl MultiBuffer {
             });
         }
 
-        let indent_start_columns = match &mut autoindent_mode {
-            Some(AutoindentMode::Block { start_columns }) => mem::take(start_columns),
+        let original_indent_columns = match &mut autoindent_mode {
+            Some(AutoindentMode::Block {
+                original_indent_columns,
+            }) => mem::take(original_indent_columns),
             _ => Default::default(),
         };
 
@@ -341,7 +343,7 @@ impl MultiBuffer {
         let mut cursor = snapshot.excerpts.cursor::<usize>();
         for (ix, (range, new_text)) in edits.enumerate() {
             let new_text: Arc<str> = new_text.into();
-            let start_column = indent_start_columns.get(ix).copied().unwrap_or(0);
+            let original_indent_column = original_indent_columns.get(ix).copied().unwrap_or(0);
             cursor.seek(&range.start, Bias::Right, &());
             if cursor.item().is_none() && range.start == *cursor.start() {
                 cursor.prev(&());
@@ -372,7 +374,12 @@ impl MultiBuffer {
                 buffer_edits
                     .entry(start_excerpt.buffer_id)
                     .or_insert(Vec::new())
-                    .push((buffer_start..buffer_end, new_text, true, start_column));
+                    .push((
+                        buffer_start..buffer_end,
+                        new_text,
+                        true,
+                        original_indent_column,
+                    ));
             } else {
                 let start_excerpt_range = buffer_start
                     ..start_excerpt
@@ -389,11 +396,21 @@ impl MultiBuffer {
                 buffer_edits
                     .entry(start_excerpt.buffer_id)
                     .or_insert(Vec::new())
-                    .push((start_excerpt_range, new_text.clone(), true, start_column));
+                    .push((
+                        start_excerpt_range,
+                        new_text.clone(),
+                        true,
+                        original_indent_column,
+                    ));
                 buffer_edits
                     .entry(end_excerpt.buffer_id)
                     .or_insert(Vec::new())
-                    .push((end_excerpt_range, new_text.clone(), false, start_column));
+                    .push((
+                        end_excerpt_range,
+                        new_text.clone(),
+                        false,
+                        original_indent_column,
+                    ));
 
                 cursor.seek(&range.start, Bias::Right, &());
                 cursor.next(&());
@@ -408,7 +425,7 @@ impl MultiBuffer {
                             excerpt.range.context.to_offset(&excerpt.buffer),
                             new_text.clone(),
                             false,
-                            start_column,
+                            original_indent_column,
                         ));
                     cursor.next(&());
                 }
@@ -422,11 +439,15 @@ impl MultiBuffer {
                 .update(cx, |buffer, cx| {
                     let mut edits = edits.into_iter().peekable();
                     let mut insertions = Vec::new();
-                    let mut insertion_start_columns = Vec::new();
+                    let mut original_indent_columns = Vec::new();
                     let mut deletions = Vec::new();
                     let empty_str: Arc<str> = "".into();
-                    while let Some((mut range, new_text, mut is_insertion, start_column)) =
-                        edits.next()
+                    while let Some((
+                        mut range,
+                        new_text,
+                        mut is_insertion,
+                        original_indent_column,
+                    )) = edits.next()
                     {
                         while let Some((next_range, _, next_is_insertion, _)) = edits.peek() {
                             if range.end >= next_range.start {
@@ -439,7 +460,7 @@ impl MultiBuffer {
                         }
 
                         if is_insertion {
-                            insertion_start_columns.push(start_column);
+                            original_indent_columns.push(original_indent_column);
                             insertions.push((
                                 buffer.anchor_before(range.start)..buffer.anchor_before(range.end),
                                 new_text.clone(),
@@ -455,7 +476,7 @@ impl MultiBuffer {
                     let deletion_autoindent_mode =
                         if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
                             Some(AutoindentMode::Block {
-                                start_columns: Default::default(),
+                                original_indent_columns: Default::default(),
                             })
                         } else {
                             None
@@ -463,7 +484,7 @@ impl MultiBuffer {
                     let insertion_autoindent_mode =
                         if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
                             Some(AutoindentMode::Block {
-                                start_columns: insertion_start_columns,
+                                original_indent_columns,
                             })
                         } else {
                             None
