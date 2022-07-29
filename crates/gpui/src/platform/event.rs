@@ -11,7 +11,7 @@ pub struct KeyUpEvent {
     pub keystroke: Keystroke,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct ModifiersChangedEvent {
     pub ctrl: bool,
     pub alt: bool,
@@ -19,7 +19,7 @@ pub struct ModifiersChangedEvent {
     pub cmd: bool,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct ScrollWheelEvent {
     pub position: Vector2F,
     pub delta: Vector2F,

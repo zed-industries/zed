@@ -187,6 +187,7 @@ actions!(
         SelectLargerSyntaxNode,
         SelectSmallerSyntaxNode,
         GoToDefinition,
+        GoToTypeDefinition,
         MoveToEnclosingBracket,
         UndoSelection,
         RedoSelection,
@@ -297,6 +298,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::go_to_diagnostic);
     cx.add_action(Editor::go_to_prev_diagnostic);
     cx.add_action(Editor::go_to_definition);
+    cx.add_action(Editor::go_to_type_definition);
     cx.add_action(Editor::page_up);
     cx.add_action(Editor::page_down);
     cx.add_action(Editor::fold);
@@ -894,6 +896,11 @@ pub struct NavigationData {
 }
 
 pub struct EditorCreated(pub ViewHandle<Editor>);
+
+enum GotoDefinitionKind {
+    Symbol,
+    Type,
+}
 
 impl Editor {
     pub fn single_line(
@@ -4694,6 +4701,22 @@ impl Editor {
         _: &GoToDefinition,
         cx: &mut ViewContext<Workspace>,
     ) {
+        Self::go_to_definition_of_kind(GotoDefinitionKind::Symbol, workspace, cx);
+    }
+
+    pub fn go_to_type_definition(
+        workspace: &mut Workspace,
+        _: &GoToTypeDefinition,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        Self::go_to_definition_of_kind(GotoDefinitionKind::Type, workspace, cx);
+    }
+
+    fn go_to_definition_of_kind(
+        kind: GotoDefinitionKind,
+        workspace: &mut Workspace,
+        cx: &mut ViewContext<Workspace>,
+    ) {
         let active_item = workspace.active_item(cx);
         let editor_handle = if let Some(editor) = active_item
             .as_ref()
@@ -4714,7 +4737,11 @@ impl Editor {
         };
 
         let project = workspace.project().clone();
-        let definitions = project.update(cx, |project, cx| project.definition(&buffer, head, cx));
+        let definitions = project.update(cx, |project, cx| match kind {
+            GotoDefinitionKind::Symbol => project.definition(&buffer, head, cx),
+            GotoDefinitionKind::Type => project.type_definition(&buffer, head, cx),
+        });
+
         cx.spawn(|workspace, mut cx| async move {
             let definitions = definitions.await?;
             workspace.update(&mut cx, |workspace, cx| {
