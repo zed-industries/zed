@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 
 pub struct Db(DbStore);
@@ -16,8 +16,8 @@ enum DbStore {
 
 impl Db {
     /// Open or create a database at the given file path.
-    pub fn open(path: PathBuf) -> Result<Arc<Self>> {
-        let db = rocksdb::DB::open_default(&path)?;
+    pub fn open(path: &Path) -> Result<Arc<Self>> {
+        let db = rocksdb::DB::open_default(path)?;
         Ok(Arc::new(Self(DbStore::Real(db))))
     }
 
@@ -125,7 +125,7 @@ mod tests {
     fn test_db() {
         let dir = TempDir::new("db-test").unwrap();
         let fake_db = Db::open_fake();
-        let real_db = Db::open(dir.path().join("test.db")).unwrap();
+        let real_db = Db::open(&dir.path().join("test.db")).unwrap();
 
         for db in [&real_db, &fake_db] {
             assert_eq!(
@@ -152,7 +152,7 @@ mod tests {
 
         drop(real_db);
 
-        let real_db = Db::open(dir.path().join("test.db")).unwrap();
+        let real_db = Db::open(&dir.path().join("test.db")).unwrap();
         assert_eq!(
             real_db.read(["key-1", "key-2", "key-3"]).unwrap(),
             &[Some("one".as_bytes().to_vec()), None, None,]

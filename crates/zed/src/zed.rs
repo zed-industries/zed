@@ -31,6 +31,7 @@ use serde::Deserialize;
 use serde_json::to_string_pretty;
 use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
 use std::{
+    env,
     path::{Path, PathBuf},
     str,
     sync::Arc,
@@ -67,13 +68,22 @@ actions!(
 const MIN_FONT_SIZE: f32 = 6.0;
 
 lazy_static! {
-    pub static ref HOME_PATH: PathBuf =
-        dirs::home_dir().expect("failed to determine home directory");
-    pub static ref LOG_PATH: PathBuf = HOME_PATH.join("Library/Logs/Zed/Zed.log");
-    pub static ref OLD_LOG_PATH: PathBuf = HOME_PATH.join("Library/Logs/Zed/Zed.log.old");
-    pub static ref ROOT_PATH: PathBuf = HOME_PATH.join(".zed");
-    pub static ref SETTINGS_PATH: PathBuf = ROOT_PATH.join("settings.json");
-    pub static ref KEYMAP_PATH: PathBuf = ROOT_PATH.join("keymap.json");
+    static ref HOME_PATH: PathBuf = dirs::home_dir().expect("failed to determine home directory");
+    static ref CACHE_DIR_PATH: PathBuf = dirs::cache_dir()
+        .expect("failed to determine cache directory")
+        .join("Zed");
+    static ref CONFIG_DIR_PATH: PathBuf = env::var_os("XDG_CONFIG_HOME")
+        .map(|home| home.into())
+        .unwrap_or_else(|| HOME_PATH.join(".config"))
+        .join("zed");
+    pub static ref LOGS_DIR_PATH: PathBuf = HOME_PATH.join("Library/Logs/Zed");
+    pub static ref LANGUAGES_DIR_PATH: PathBuf = CACHE_DIR_PATH.join("languages");
+    pub static ref DB_DIR_PATH: PathBuf = CACHE_DIR_PATH.join("db");
+    pub static ref DB_PATH: PathBuf = DB_DIR_PATH.join("zed.db");
+    pub static ref SETTINGS_PATH: PathBuf = CONFIG_DIR_PATH.join("settings.json");
+    pub static ref KEYMAP_PATH: PathBuf = CONFIG_DIR_PATH.join("keymap.json");
+    pub static ref LOG_PATH: PathBuf = LOGS_DIR_PATH.join("Zed.log");
+    pub static ref OLD_LOG_PATH: PathBuf = LOGS_DIR_PATH.join("Zed.log.old");
 }
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
@@ -399,7 +409,7 @@ fn open_config_file(
     cx.spawn(|workspace, mut cx| async move {
         let fs = &app_state.fs;
         if !fs.is_file(path).await {
-            fs.create_dir(&ROOT_PATH).await?;
+            fs.create_dir(&CONFIG_DIR_PATH).await?;
             fs.create_file(path, Default::default()).await?;
             fs.save(path, &default_content(), Default::default())
                 .await?;
