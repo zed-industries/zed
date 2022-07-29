@@ -1,3 +1,4 @@
+pub use lsp_types::request::*;
 pub use lsp_types::*;
 
 use anyhow::{anyhow, Context, Result};

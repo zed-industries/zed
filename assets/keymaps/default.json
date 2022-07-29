@@ -192,6 +192,7 @@
             "shift-f8": "editor::GoToPrevDiagnostic",
             "f2": "editor::Rename",
             "f12": "editor::GoToDefinition",
+            "cmd-f12": "editor::GoToTypeDefinition",
             "alt-shift-f12": "editor::FindAllReferences",
             "ctrl-m": "editor::MoveToEnclosingBracket",
             "alt-cmd-[": "editor::Fold",

@@ -3250,6 +3250,16 @@ impl Project {
         self.request_lsp(buffer.clone(), GetDefinition { position }, cx)
     }
 
+    pub fn type_definition<T: ToPointUtf16>(
+        &self,
+        buffer: &ModelHandle<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<LocationLink>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.request_lsp(buffer.clone(), GetTypeDefinition { position }, cx)
+    }
+
     pub fn references<T: ToPointUtf16>(
         &self,
         buffer: &ModelHandle<Buffer>,
