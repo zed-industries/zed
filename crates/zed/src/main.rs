@@ -42,9 +42,7 @@ use zed::{
 
 fn main() {
     let http = http::client();
-    fs::create_dir_all(&*zed::paths::LANGUAGES_DIR).expect("could not create languages path");
-    fs::create_dir_all(&*zed::paths::DB_DIR).expect("could not create database path");
-    fs::create_dir_all(&*zed::paths::LOGS_DIR).expect("could not create logs path");
+    init_paths();
     init_logger();
 
     log::info!("========== starting zed ==========");
@@ -192,6 +190,28 @@ fn main() {
             Ok::<_, anyhow::Error>(())
         })
         .detach_and_log_err(cx);
+    });
+}
+
+fn init_paths() {
+    fs::create_dir_all(&*zed::paths::CONFIG_DIR).expect("could not create config path");
+    fs::create_dir_all(&*zed::paths::LANGUAGES_DIR).expect("could not create languages path");
+    fs::create_dir_all(&*zed::paths::DB_DIR).expect("could not create database path");
+    fs::create_dir_all(&*zed::paths::LOGS_DIR).expect("could not create logs path");
+
+    // Copy setting files from legacy locations. TODO: remove this after a few releases.
+    thread::spawn(|| {
+        if fs::metadata(&*zed::paths::legacy::SETTINGS).is_ok()
+            && fs::metadata(&*zed::paths::SETTINGS).is_err()
+        {
+            fs::copy(&*zed::paths::legacy::SETTINGS, &*zed::paths::SETTINGS).log_err();
+        }
+
+        if fs::metadata(&*zed::paths::legacy::KEYMAP).is_ok()
+            && fs::metadata(&*zed::paths::KEYMAP).is_err()
+        {
+            fs::copy(&*zed::paths::legacy::KEYMAP, &*zed::paths::KEYMAP).log_err();
+        }
     });
 }
 

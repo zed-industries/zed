@@ -223,11 +223,11 @@ pub fn initialize_workspace(
                 },
                 "schemas": [
                     {
-                        "fileMatch": [".zed/settings.json"],
+                        "fileMatch": [schema_file_match(&*paths::SETTINGS)],
                         "schema": settings_file_json_schema(theme_names, language_names),
                     },
                     {
-                        "fileMatch": [".zed/keymap.json"],
+                        "fileMatch": [schema_file_match(&*paths::KEYMAP)],
                         "schema": keymap_file_json_schema(&action_names),
                     }
                 ]
@@ -385,7 +385,6 @@ fn open_config_file(
     cx.spawn(|workspace, mut cx| async move {
         let fs = &app_state.fs;
         if !fs.is_file(path).await {
-            fs.create_dir(&paths::CONFIG_DIR).await?;
             fs.create_file(path, Default::default()).await?;
             fs.save(path, &default_content(), Default::default())
                 .await?;
@@ -479,6 +478,11 @@ fn open_bundled_config_file(
             cx,
         );
     });
+}
+
+fn schema_file_match(path: &Path) -> &Path {
+    path.strip_prefix(path.parent().unwrap().parent().unwrap())
+        .unwrap()
 }
 
 #[cfg(test)]
