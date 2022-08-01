@@ -3567,6 +3567,8 @@ impl Editor {
                     let old_selections = this.selections.all::<usize>(cx);
                     let all_selections_were_entire_line =
                         clipboard_selections.iter().all(|s| s.is_entire_line);
+                    let first_selection_indent_column =
+                        clipboard_selections.first().map(|s| s.first_line_indent);
                     if clipboard_selections.len() != old_selections.len() {
                         let mut newline_separated_text = String::new();
                         let mut clipboard_selections = clipboard_selections.drain(..).peekable();
@@ -3586,22 +3588,23 @@ impl Editor {
                         let snapshot = buffer.read(cx);
                         let mut start_offset = 0;
                         let mut edits = Vec::new();
-                        let mut start_columns = Vec::new();
+                        let mut original_indent_columns = Vec::new();
                         let line_mode = this.selections.line_mode;
                         for (ix, selection) in old_selections.iter().enumerate() {
                             let to_insert;
                             let entire_line;
-                            let start_column;
+                            let original_indent_column;
                             if let Some(clipboard_selection) = clipboard_selections.get(ix) {
                                 let end_offset = start_offset + clipboard_selection.len;
                                 to_insert = &clipboard_text[start_offset..end_offset];
                                 entire_line = clipboard_selection.is_entire_line;
                                 start_offset = end_offset;
-                                start_column = clipboard_selection.first_line_indent;
+                                original_indent_column =
+                                    Some(clipboard_selection.first_line_indent);
                             } else {
                                 to_insert = clipboard_text.as_str();
                                 entire_line = all_selections_were_entire_line;
-                                start_column = 0;
+                                original_indent_column = first_selection_indent_column
                             }
 
                             // If the corresponding selection was empty when this slice of the
@@ -3617,13 +3620,14 @@ impl Editor {
                             };
 
                             edits.push((range, to_insert));
-                            start_columns.push(start_column);
+                            original_indent_columns.extend(original_indent_column);
                         }
                         drop(snapshot);
+
                         buffer.edit(
                             edits,
                             Some(AutoindentMode::Block {
-                                original_indent_columns: start_columns,
+                                original_indent_columns,
                             }),
                             cx,
                         );
