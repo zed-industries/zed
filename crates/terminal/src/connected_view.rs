@@ -1,3 +1,4 @@
+use alacritty_terminal::term::TermMode;
 use gpui::{
     actions, keymap::Keystroke, AppContext, Element, ElementBox, ModelHandle, MutableAppContext,
     View, ViewContext,
@@ -98,43 +99,43 @@ impl ConnectedView {
     ///Attempt to paste the clipboard into the terminal
     fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
         cx.read_from_clipboard().map(|item| {
-            self.terminal.update(cx, |term, _| term.paste(item.text()));
+            self.terminal.read(cx).paste(item.text());
         });
     }
 
     ///Synthesize the keyboard event corresponding to 'up'
     fn up(&mut self, _: &Up, cx: &mut ViewContext<Self>) {
-        self.terminal.update(cx, |term, _| {
-            term.try_keystroke(&Keystroke::parse("up").unwrap());
-        });
+        self.terminal
+            .read(cx)
+            .try_keystroke(&Keystroke::parse("up").unwrap());
     }
 
     ///Synthesize the keyboard event corresponding to 'down'
     fn down(&mut self, _: &Down, cx: &mut ViewContext<Self>) {
-        self.terminal.update(cx, |term, _| {
-            term.try_keystroke(&Keystroke::parse("down").unwrap());
-        });
+        self.terminal
+            .read(cx)
+            .try_keystroke(&Keystroke::parse("down").unwrap());
     }
 
     ///Synthesize the keyboard event corresponding to 'ctrl-c'
     fn ctrl_c(&mut self, _: &CtrlC, cx: &mut ViewContext<Self>) {
-        self.terminal.update(cx, |term, _| {
-            term.try_keystroke(&Keystroke::parse("ctrl-c").unwrap());
-        });
+        self.terminal
+            .read(cx)
+            .try_keystroke(&Keystroke::parse("ctrl-c").unwrap());
     }
 
     ///Synthesize the keyboard event corresponding to 'escape'
     fn escape(&mut self, _: &Escape, cx: &mut ViewContext<Self>) {
-        self.terminal.update(cx, |term, _| {
-            term.try_keystroke(&Keystroke::parse("escape").unwrap());
-        });
+        self.terminal
+            .read(cx)
+            .try_keystroke(&Keystroke::parse("escape").unwrap());
     }
 
     ///Synthesize the keyboard event corresponding to 'enter'
     fn enter(&mut self, _: &Enter, cx: &mut ViewContext<Self>) {
-        self.terminal.update(cx, |term, _| {
-            term.try_keystroke(&Keystroke::parse("enter").unwrap());
-        });
+        self.terminal
+            .read(cx)
+            .try_keystroke(&Keystroke::parse("enter").unwrap());
     }
 }
 
@@ -154,8 +155,17 @@ impl View for ConnectedView {
         self.has_new_content = false;
     }
 
-    fn selected_text_range(&self, _: &AppContext) -> Option<std::ops::Range<usize>> {
-        Some(0..0)
+    fn selected_text_range(&self, cx: &AppContext) -> Option<std::ops::Range<usize>> {
+        if self
+            .terminal
+            .read(cx)
+            .last_mode
+            .contains(TermMode::ALT_SCREEN)
+        {
+            None
+        } else {
+            Some(0..0)
+        }
     }
 
     fn replace_text_in_range(

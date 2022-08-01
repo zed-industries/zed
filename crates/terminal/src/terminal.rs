@@ -24,18 +24,27 @@ use alacritty_terminal::{
 };
 use anyhow::{bail, Result};
 
-use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
-use mappings::keys::might_convert;
+use futures::{
+    channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
+    future,
+};
+
 use modal::deploy_modal;
 use settings::{Settings, Shell};
-use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use terminal_view::TerminalView;
 use thiserror::Error;
 
 use gpui::{
     geometry::vector::{vec2f, Vector2F},
     keymap::Keystroke,
-    ClipboardItem, CursorStyle, Entity, ModelContext, MutableAppContext,
+    AsyncAppContext, ClipboardItem, Entity, ModelContext, MutableAppContext, WeakModelHandle,
 };
 
 use crate::mappings::{
@@ -71,10 +80,8 @@ pub enum Event {
 #[derive(Clone, Debug)]
 enum InternalEvent {
     TermEvent(AlacTermEvent),
-    Resize(TermDimensions),
+    Resize(TerminalSize),
     Clear,
-    Keystroke(Keystroke),
-    Paste(String),
     Scroll(Scroll),
     SetSelection(Option<Selection>),
     UpdateSelection((Point, Direction)),
@@ -92,16 +99,16 @@ impl EventListener for ZedListener {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct TermDimensions {
+pub struct TerminalSize {
     cell_width: f32,
     line_height: f32,
     height: f32,
     width: f32,
 }
 
-impl TermDimensions {
+impl TerminalSize {
     pub fn new(line_height: f32, cell_width: f32, size: Vector2F) -> Self {
-        TermDimensions {
+        TerminalSize {
             cell_width,
             line_height,
             width: size.x(),
@@ -133,9 +140,9 @@ impl TermDimensions {
         self.line_height
     }
 }
-impl Default for TermDimensions {
+impl Default for TerminalSize {
     fn default() -> Self {
-        TermDimensions::new(
+        TerminalSize::new(
             DEBUG_LINE_HEIGHT,
             DEBUG_CELL_WIDTH,
             vec2f(DEBUG_TERMINAL_WIDTH, DEBUG_TERMINAL_HEIGHT),
@@ -143,7 +150,7 @@ impl Default for TermDimensions {
     }
 }
 
-impl Into<WindowSize> for TermDimensions {
+impl Into<WindowSize> for TerminalSize {
     fn into(self) -> WindowSize {
         WindowSize {
             num_lines: self.num_lines() as u16,
@@ -154,7 +161,7 @@ impl Into<WindowSize> for TermDimensions {
     }
 }
 
-impl Dimensions for TermDimensions {
+impl Dimensions for TerminalSize {
     fn total_lines(&self) -> usize {
         self.screen_lines() //TODO: Check that this is fine. This is supposed to be for the back buffer...
     }
@@ -249,6 +256,46 @@ impl Display for TerminalError {
     }
 }
 
+///This is a helper struct that represents a block on a
+struct ThrottleGuard {
+    should_complete: bool,
+    length: Duration,
+    start: Instant,
+}
+
+impl ThrottleGuard {
+    fn new<T, F>(duration: Duration, cx: &mut ModelContext<T>, on_completion: F) -> Arc<Self>
+    where
+        T: Entity,
+        F: FnOnce(WeakModelHandle<T>, AsyncAppContext) -> () + 'static,
+    {
+        let selff = Arc::new(Self {
+            should_complete: false,
+            start: Instant::now(),
+            length: duration,
+        });
+
+        let moved_self = selff.clone();
+        cx.spawn_weak(|w, cx| async move {
+            cx.background().timer(duration).await;
+
+            if moved_self.should_complete {
+                on_completion(w, cx);
+            }
+        });
+
+        selff
+    }
+
+    fn activate(&mut self) {
+        self.should_complete = true;
+    }
+
+    fn is_done(&self) -> bool {
+        self.start.elapsed() > self.length
+    }
+}
+
 pub struct TerminalBuilder {
     terminal: Terminal,
     events_rx: UnboundedReceiver<AlacTermEvent>,
@@ -259,7 +306,7 @@ impl TerminalBuilder {
         working_directory: Option<PathBuf>,
         shell: Option<Shell>,
         env: Option<HashMap<String, String>>,
-        initial_size: TermDimensions,
+        initial_size: TerminalSize,
     ) -> Result<TerminalBuilder> {
         let pty_config = {
             let alac_shell = shell.clone().and_then(|shell| match shell {
@@ -299,7 +346,7 @@ impl TerminalBuilder {
         let term = Arc::new(FairMutex::new(term));
 
         //Setup the pty...
-        let pty = match tty::new(&pty_config, initial_size.into(), None) {
+        let pty = match tty::new(&pty_config, initial_size.clone().into(), None) {
             Ok(pty) => pty,
             Err(error) => {
                 bail!(TerminalError {
@@ -340,11 +387,12 @@ impl TerminalBuilder {
         let terminal = Terminal {
             pty_tx: Notifier(pty_tx),
             term,
-
             events: vec![],
             title: shell_txt.clone(),
             default_title: shell_txt,
-            frames_to_skip: 0,
+            last_mode: TermMode::NONE,
+            cur_size: initial_size,
+            utilization: 0.,
         };
 
         Ok(TerminalBuilder {
@@ -353,44 +401,92 @@ impl TerminalBuilder {
         })
     }
 
-    pub fn subscribe(mut self, cx: &mut ModelContext<Terminal>) -> Terminal {
-        let mut frames_to_skip = 0;
+    pub fn subscribe(self, cx: &mut ModelContext<Terminal>) -> Terminal {
+        //Event loop
         cx.spawn_weak(|this, mut cx| async move {
-            'outer: loop {
-                let delay = cx
-                    .background()
-                    .timer(Duration::from_secs_f32(1.0 / Terminal::default_fps()));
-                if frames_to_skip == 0 {
-                    let mut events = vec![];
+            use futures::StreamExt;
 
-                    loop {
-                        match self.events_rx.try_next() {
-                            //Have a buffered event
-                            Ok(Some(e)) => events.push(e),
-                            //Channel closed, exit
-                            Ok(None) => break 'outer,
-                            //Ran out of buffered events
-                            Err(_) => break,
-                        }
-                    }
+            //Throttle guard
+            let mut guard: Option<Arc<ThrottleGuard>> = None;
+
+            self.events_rx
+                .for_each(|event| {
                     match this.upgrade(&cx) {
                         Some(this) => {
                             this.update(&mut cx, |this, cx| {
-                                this.push_events(events);
-                                frames_to_skip = this.frames_to_skip();
-                                cx.notify();
+                                //Process the event
+                                this.process_event(&event, cx);
+
+                                //Clean up the guard if it's expired
+                                guard = match guard.take() {
+                                    Some(guard) => {
+                                        if guard.is_done() {
+                                            None
+                                        } else {
+                                            Some(guard)
+                                        }
+                                    }
+                                    None => None,
+                                };
+
+                                //Figure out whether to render or not.
+                                if matches!(event, AlacTermEvent::Wakeup) {
+                                    if guard.is_none() {
+                                        cx.emit(Event::Wakeup);
+                                        cx.notify();
+
+                                        let dur = Duration::from_secs_f32(
+                                            1.0 / (Terminal::default_fps()
+                                                * (1. - this.utilization()).clamp(0.1, 1.)),
+                                        );
+
+                                        guard = Some(ThrottleGuard::new(dur, cx, |this, mut cx| {
+                                            match this.upgrade(&cx) {
+                                                Some(handle) => handle.update(&mut cx, |_, cx| {
+                                                    cx.emit(Event::Wakeup);
+                                                    cx.notify();
+                                                }),
+                                                None => {}
+                                            }
+                                        }))
+                                    } else {
+                                        let taken = guard.take().unwrap();
+                                        taken.activate();
+                                        guard = Some(taken);
+                                    }
+                                }
                             });
                         }
-                        None => break 'outer,
+                        None => {}
                     }
-                } else {
-                    frames_to_skip = frames_to_skip - 1;
-                }
-
-                delay.await;
-            }
+                    future::ready(())
+                })
+                .await;
         })
         .detach();
+
+        // //Render loop
+        // cx.spawn_weak(|this, mut cx| async move {
+        //     loop {
+        //         let utilization = match this.upgrade(&cx) {
+        //             Some(this) => this.update(&mut cx, |this, cx| {
+        //                 cx.emit(Event::Wakeup);
+        //                 cx.notify();
+        //                 this.utilization()
+        //             }),
+        //             None => break,
+        //         };
+
+        //         let utilization = (1. - this.utilization()).clamp(0.1, 1.);
+
+        //         let delay = cx.background().timer(Duration::from_secs_f32(
+        //             1.0 / (Terminal::default_fps() * utilization),
+        //         ));
+
+        //         delay.await;
+        //     }
+        // })
+        // .detach();
 
         self.terminal
     }
@@ -402,7 +498,10 @@ pub struct Terminal {
     events: Vec<InternalEvent>,
     default_title: String,
     title: String,
-    frames_to_skip: usize,
+    cur_size: TerminalSize,
+    last_mode: TermMode,
+    //Percentage, between 0 and 1
+    utilization: f32,
 }
 
 impl Terminal {
@@ -410,15 +509,56 @@ impl Terminal {
         MAX_FRAME_RATE
     }
 
-    ///Tells the render loop how many frames to skip before reading from the terminal.
-    fn frames_to_skip(&self) -> usize {
-        0 //self.frames_to_skip
+    fn utilization(&self) -> f32 {
+        self.utilization
     }
 
-    fn push_events(&mut self, events: Vec<AlacTermEvent>) {
-        self.events
-            .extend(events.into_iter().map(|e| InternalEvent::TermEvent(e)))
+    fn process_event(&mut self, event: &AlacTermEvent, cx: &mut ModelContext<Self>) {
+        match event {
+            AlacTermEvent::Title(title) => {
+                self.title = title.to_string();
+                cx.emit(Event::TitleChanged);
+            }
+            AlacTermEvent::ResetTitle => {
+                self.title = self.default_title.clone();
+                cx.emit(Event::TitleChanged);
+            }
+            AlacTermEvent::ClipboardStore(_, data) => {
+                cx.write_to_clipboard(ClipboardItem::new(data.to_string()))
+            }
+            AlacTermEvent::ClipboardLoad(_, format) => self.notify_pty(format(
+                &cx.read_from_clipboard()
+                    .map(|ci| ci.text().to_string())
+                    .unwrap_or("".to_string()),
+            )),
+            AlacTermEvent::PtyWrite(out) => self.notify_pty(out.clone()),
+            AlacTermEvent::TextAreaSizeRequest(format) => {
+                self.notify_pty(format(self.cur_size.clone().into()))
+            }
+            AlacTermEvent::CursorBlinkingChange => {
+                //TODO whatever state we need to set to get the cursor blinking
+            }
+            AlacTermEvent::Bell => {
+                cx.emit(Event::Bell);
+            }
+            AlacTermEvent::Exit => cx.emit(Event::CloseTerminal),
+            AlacTermEvent::MouseCursorDirty => {
+                //NOOP, Handled in render
+            }
+            AlacTermEvent::Wakeup => {
+                //NOOP, Handled elsewhere
+            }
+            AlacTermEvent::ColorRequest(_, _) => {
+                self.events.push(InternalEvent::TermEvent(event.clone()))
+            }
+        }
     }
+
+    // fn process_events(&mut self, events: Vec<AlacTermEvent>, cx: &mut ModelContext<Self>) {
+    //     for event in events.into_iter() {
+    //         self.process_event(&event, cx);
+    //     }
+    // }
 
     ///Takes events from Alacritty and translates them to behavior on this view
     fn process_terminal_event(
@@ -430,35 +570,7 @@ impl Terminal {
         // TODO: Handle is_self_focused in subscription on terminal view
         match event {
             InternalEvent::TermEvent(term_event) => match term_event {
-                AlacTermEvent::Wakeup => {
-                    cx.emit(Event::Wakeup);
-                }
-                //TODO: Does not need to be in lock context
-                AlacTermEvent::PtyWrite(out) => self.notify_pty(out.clone()),
-                AlacTermEvent::MouseCursorDirty => {
-                    //Calculate new cursor style.
-                    //TODO: alacritty/src/input.rs:L922-L939
-                    //Check on correctly handling mouse events for terminals
-                    cx.platform().set_cursor_style(CursorStyle::Arrow); //???
-                }
-                AlacTermEvent::Title(title) => {
-                    self.title = title.to_string();
-                    cx.emit(Event::TitleChanged);
-                }
-                AlacTermEvent::ResetTitle => {
-                    self.title = self.default_title.clone();
-                    cx.emit(Event::TitleChanged);
-                }
-                //TODO: Does not need to be in lock context
-                AlacTermEvent::ClipboardStore(_, data) => {
-                    cx.write_to_clipboard(ClipboardItem::new(data.to_string()))
-                }
-                //TODO: Does not need to be in lock context
-                AlacTermEvent::ClipboardLoad(_, format) => self.notify_pty(format(
-                    &cx.read_from_clipboard()
-                        .map(|ci| ci.text().to_string())
-                        .unwrap_or("".to_string()),
-                )),
+                //Needs to lock
                 AlacTermEvent::ColorRequest(index, format) => {
                     let color = term.colors()[*index].unwrap_or_else(|| {
                         let term_style = &cx.global::<Settings>().theme.terminal;
@@ -466,18 +578,11 @@ impl Terminal {
                     });
                     self.notify_pty(format(color))
                 }
-                AlacTermEvent::CursorBlinkingChange => {
-                    //TODO: Set a timer to blink the cursor on and off
-                }
-                AlacTermEvent::Bell => {
-                    cx.emit(Event::Bell);
-                }
-                AlacTermEvent::Exit => cx.emit(Event::CloseTerminal),
-                AlacTermEvent::TextAreaSizeRequest(_) => {
-                    println!("Received text area resize request")
-                }
+                _ => {} //Other events are handled in the event loop
             },
             InternalEvent::Resize(new_size) => {
+                self.cur_size = new_size.clone();
+
                 self.pty_tx
                     .0
                     .send(Msg::Resize(new_size.clone().into()))
@@ -488,21 +593,6 @@ impl Terminal {
             InternalEvent::Clear => {
                 self.notify_pty("\x0c".to_string());
                 term.clear_screen(ClearMode::Saved);
-            }
-            InternalEvent::Keystroke(keystroke) => {
-                let esc = to_esc_str(keystroke, term.mode());
-                if let Some(esc) = esc {
-                    self.notify_pty(esc);
-                }
-            }
-            InternalEvent::Paste(text) => {
-                if term.mode().contains(TermMode::BRACKETED_PASTE) {
-                    self.notify_pty("\x1b[200~".to_string());
-                    self.notify_pty(text.replace('\x1b', "").to_string());
-                    self.notify_pty("\x1b[201~".to_string());
-                } else {
-                    self.notify_pty(text.replace("\r\n", "\r").replace('\n', "\r"));
-                }
             }
             InternalEvent::Scroll(scroll) => term.scroll_display(*scroll),
             InternalEvent::SetSelection(sel) => term.selection = sel.clone(),
@@ -521,18 +611,17 @@ impl Terminal {
         }
     }
 
-    fn notify_pty(&self, txt: String) {
+    pub fn notify_pty(&self, txt: String) {
         self.pty_tx.notify(txt.into_bytes());
     }
 
     ///Write the Input payload to the tty.
     pub fn write_to_pty(&mut self, input: String) {
-        self.events
-            .push(InternalEvent::TermEvent(AlacTermEvent::PtyWrite(input)))
+        self.pty_tx.notify(input.into_bytes());
     }
 
     ///Resize the terminal and the PTY.
-    pub fn set_size(&mut self, new_size: TermDimensions) {
+    pub fn set_size(&mut self, new_size: TerminalSize) {
         self.events.push(InternalEvent::Resize(new_size.into()))
     }
 
@@ -540,10 +629,10 @@ impl Terminal {
         self.events.push(InternalEvent::Clear)
     }
 
-    pub fn try_keystroke(&mut self, keystroke: &Keystroke) -> bool {
-        if might_convert(keystroke) {
-            self.events
-                .push(InternalEvent::Keystroke(keystroke.clone()));
+    pub fn try_keystroke(&self, keystroke: &Keystroke) -> bool {
+        let esc = to_esc_str(keystroke, &self.last_mode);
+        if let Some(esc) = esc {
+            self.notify_pty(esc);
             true
         } else {
             false
@@ -551,8 +640,14 @@ impl Terminal {
     }
 
     ///Paste text into the terminal
-    pub fn paste(&mut self, text: &str) {
-        self.events.push(InternalEvent::Paste(text.to_string()));
+    pub fn paste(&self, text: &str) {
+        if self.last_mode.contains(TermMode::BRACKETED_PASTE) {
+            self.notify_pty("\x1b[200~".to_string());
+            self.notify_pty(text.replace('\x1b', "").to_string());
+            self.notify_pty("\x1b[201~".to_string());
+        } else {
+            self.notify_pty(text.replace("\r\n", "\r").replace('\n', "\r"));
+        }
     }
 
     pub fn copy(&mut self) {
@@ -570,22 +665,22 @@ impl Terminal {
             self.process_terminal_event(&e, &mut term, cx)
         }
 
-        //TODO: determine a better metric for this
-        let buffer_velocity =
-            (term.last_processed_bytes() as f32 / (READ_BUFFER_SIZE as f32 / 4.)).clamp(0., 1.);
+        self.utilization = Self::estimate_utilization(term.take_last_processed_bytes());
 
-        //2nd power
-        let scaled_velocity = buffer_velocity * buffer_velocity;
-
-        self.frames_to_skip = (scaled_velocity * (Self::default_fps() / 10.)).round() as usize;
-
-        term.set_last_processed_bytes(0); //Clear it in case no reads between this lock and the next.
+        self.last_mode = term.mode().clone();
 
         let content = term.renderable_content();
 
         let cursor_text = term.grid()[content.cursor.point].c;
 
         f(content, cursor_text)
+    }
+
+    fn estimate_utilization(last_processed: usize) -> f32 {
+        let buffer_utilization = (last_processed as f32 / (READ_BUFFER_SIZE as f32)).clamp(0., 1.);
+
+        //Scale result to bias low, then high
+        buffer_utilization * buffer_utilization
     }
 
     ///Scroll the terminal

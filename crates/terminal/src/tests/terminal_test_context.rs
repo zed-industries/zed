@@ -6,7 +6,7 @@ use itertools::Itertools;
 use project::{Entry, Project, ProjectPath, Worktree};
 use workspace::{AppState, Workspace};
 
-use crate::{TermDimensions, Terminal, TerminalBuilder};
+use crate::{Terminal, TerminalBuilder, TerminalSize};
 
 pub struct TerminalTestContext<'a> {
     pub cx: &'a mut TestAppContext,
@@ -17,7 +17,7 @@ impl<'a> TerminalTestContext<'a> {
     pub fn new(cx: &'a mut TestAppContext, term: bool) -> Self {
         cx.set_condition_duration(Some(Duration::from_secs(5)));
 
-        let size_info = TermDimensions::default();
+        let size_info = TerminalSize::default();
 
         let connection = term.then(|| {
             cx.add_model(|cx| {

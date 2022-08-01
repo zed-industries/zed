@@ -32,7 +32,7 @@ use std::{
 use std::{fmt::Debug, ops::Sub};
 
 use crate::{
-    connected_view::ConnectedView, mappings::colors::convert_color, TermDimensions, Terminal,
+    connected_view::ConnectedView, mappings::colors::convert_color, Terminal, TerminalSize,
 };
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
@@ -48,7 +48,7 @@ pub struct LayoutState {
     cursor: Option<Cursor>,
     background_color: Color,
     selection_color: Color,
-    size: TermDimensions,
+    size: TerminalSize,
     display_offset: usize,
 }
 
@@ -319,7 +319,7 @@ impl TerminalEl {
     // the same position for sequential indexes. Use em_width instead
     fn shape_cursor(
         cursor_point: DisplayCursor,
-        size: TermDimensions,
+        size: TerminalSize,
         text_fragment: &Line,
     ) -> Option<(Vector2F, f32)> {
         if cursor_point.line() < size.total_lines() as i32 {
@@ -372,7 +372,7 @@ impl TerminalEl {
         origin: Vector2F,
         view_id: usize,
         visible_bounds: RectF,
-        cur_size: TermDimensions,
+        cur_size: TerminalSize,
         display_offset: usize,
         cx: &mut PaintContext,
     ) {
@@ -482,7 +482,7 @@ impl TerminalEl {
     pub fn mouse_to_cell_data(
         pos: Vector2F,
         origin: Vector2F,
-        cur_size: TermDimensions,
+        cur_size: TerminalSize,
         display_offset: usize,
     ) -> (Point, alacritty_terminal::index::Direction) {
         let pos = pos.sub(origin);
@@ -540,7 +540,7 @@ impl Element for TerminalEl {
         let dimensions = {
             let line_height = font_cache.line_height(text_style.font_size);
             let cell_width = font_cache.em_advance(text_style.font_id, text_style.font_size);
-            TermDimensions::new(line_height, cell_width, constraint.max)
+            TerminalSize::new(line_height, cell_width, constraint.max)
         };
 
         let background_color = if self.modal {
@@ -807,7 +807,7 @@ mod test {
         let origin_x = 10.;
         let origin_y = 20.;
 
-        let cur_size = crate::connected_el::TermDimensions::new(
+        let cur_size = crate::connected_el::TerminalSize::new(
             line_height,
             cell_width,
             gpui::geometry::vector::vec2f(term_width, term_height),

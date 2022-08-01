@@ -6,7 +6,7 @@ use gpui::{
     ViewHandle,
 };
 
-use crate::TermDimensions;
+use crate::TerminalSize;
 use project::{LocalWorktree, Project, ProjectPath};
 use settings::{Settings, WorkingDirectory};
 use smallvec::SmallVec;
@@ -72,7 +72,7 @@ impl TerminalView {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         //The exact size here doesn't matter, the terminal will be resized on the first layout
-        let size_info = TermDimensions::default();
+        let size_info = TerminalSize::default();
 
         let settings = cx.global::<Settings>();
         let shell = settings.terminal_overrides.shell.clone();
