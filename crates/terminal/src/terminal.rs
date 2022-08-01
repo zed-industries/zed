@@ -31,20 +31,14 @@ use futures::{
 
 use modal::deploy_modal;
 use settings::{Settings, Shell};
-use std::{
-    collections::HashMap,
-    fmt::Display,
-    path::PathBuf,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc, time::Duration};
 use terminal_view::TerminalView;
 use thiserror::Error;
 
 use gpui::{
     geometry::vector::{vec2f, Vector2F},
     keymap::Keystroke,
-    AsyncAppContext, ClipboardItem, Entity, ModelContext, MutableAppContext, WeakModelHandle,
+    ClipboardItem, Entity, ModelContext, MutableAppContext,
 };
 
 use crate::mappings::{
@@ -256,46 +250,6 @@ impl Display for TerminalError {
     }
 }
 
-///This is a helper struct that represents a block on a
-struct ThrottleGuard {
-    should_complete: bool,
-    length: Duration,
-    start: Instant,
-}
-
-impl ThrottleGuard {
-    fn new<T, F>(duration: Duration, cx: &mut ModelContext<T>, on_completion: F) -> Arc<Self>
-    where
-        T: Entity,
-        F: FnOnce(WeakModelHandle<T>, AsyncAppContext) -> () + 'static,
-    {
-        let selff = Arc::new(Self {
-            should_complete: false,
-            start: Instant::now(),
-            length: duration,
-        });
-
-        let moved_self = selff.clone();
-        cx.spawn_weak(|w, cx| async move {
-            cx.background().timer(duration).await;
-
-            if moved_self.should_complete {
-                on_completion(w, cx);
-            }
-        });
-
-        selff
-    }
-
-    fn activate(&mut self) {
-        self.should_complete = true;
-    }
-
-    fn is_done(&self) -> bool {
-        self.start.elapsed() > self.length
-    }
-}
-
 pub struct TerminalBuilder {
     terminal: Terminal,
     events_rx: UnboundedReceiver<AlacTermEvent>,
@@ -406,9 +360,6 @@ impl TerminalBuilder {
         cx.spawn_weak(|this, mut cx| async move {
             use futures::StreamExt;
 
-            //Throttle guard
-            let mut guard: Option<Arc<ThrottleGuard>> = None;
-
             self.events_rx
                 .for_each(|event| {
                     match this.upgrade(&cx) {
@@ -416,45 +367,6 @@ impl TerminalBuilder {
                             this.update(&mut cx, |this, cx| {
                                 //Process the event
                                 this.process_event(&event, cx);
-
-                                //Clean up the guard if it's expired
-                                guard = match guard.take() {
-                                    Some(guard) => {
-                                        if guard.is_done() {
-                                            None
-                                        } else {
-                                            Some(guard)
-                                        }
-                                    }
-                                    None => None,
-                                };
-
-                                //Figure out whether to render or not.
-                                if matches!(event, AlacTermEvent::Wakeup) {
-                                    if guard.is_none() {
-                                        cx.emit(Event::Wakeup);
-                                        cx.notify();
-
-                                        let dur = Duration::from_secs_f32(
-                                            1.0 / (Terminal::default_fps()
-                                                * (1. - this.utilization()).clamp(0.1, 1.)),
-                                        );
-
-                                        guard = Some(ThrottleGuard::new(dur, cx, |this, mut cx| {
-                                            match this.upgrade(&cx) {
-                                                Some(handle) => handle.update(&mut cx, |_, cx| {
-                                                    cx.emit(Event::Wakeup);
-                                                    cx.notify();
-                                                }),
-                                                None => {}
-                                            }
-                                        }))
-                                    } else {
-                                        let taken = guard.take().unwrap();
-                                        taken.activate();
-                                        guard = Some(taken);
-                                    }
-                                }
                             });
                         }
                         None => {}
@@ -465,28 +377,28 @@ impl TerminalBuilder {
         })
         .detach();
 
-        // //Render loop
-        // cx.spawn_weak(|this, mut cx| async move {
-        //     loop {
-        //         let utilization = match this.upgrade(&cx) {
-        //             Some(this) => this.update(&mut cx, |this, cx| {
-        //                 cx.emit(Event::Wakeup);
-        //                 cx.notify();
-        //                 this.utilization()
-        //             }),
-        //             None => break,
-        //         };
+        //Render loop
+        cx.spawn_weak(|this, mut cx| async move {
+            loop {
+                let utilization = match this.upgrade(&cx) {
+                    Some(this) => this.update(&mut cx, |this, cx| {
+                        cx.emit(Event::Wakeup);
+                        cx.notify();
+                        this.utilization()
+                    }),
+                    None => break,
+                };
 
-        //         let utilization = (1. - this.utilization()).clamp(0.1, 1.);
+                let utilization = (1. - utilization).clamp(0.1, 1.);
 
-        //         let delay = cx.background().timer(Duration::from_secs_f32(
-        //             1.0 / (Terminal::default_fps() * utilization),
-        //         ));
+                let delay = cx.background().timer(Duration::from_secs_f32(
+                    1.0 / (Terminal::default_fps() * utilization),
+                ));
 
-        //         delay.await;
-        //     }
-        // })
-        // .detach();
+                delay.await;
+            }
+        })
+        .detach();
 
         self.terminal
     }
