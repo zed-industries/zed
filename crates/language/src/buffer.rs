@@ -957,45 +957,42 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         self.autoindent_requests.clear();
-        self.start_transaction();
-        for (row, indent_size) in &indent_sizes {
-            self.set_indent_size_for_line(*row, *indent_size, cx);
-        }
-        self.end_transaction(cx);
+
+        let edits: Vec<_> = indent_sizes
+            .into_iter()
+            .filter_map(|(row, indent_size)| {
+                let current_size = indent_size_for_line(&self, row);
+                Self::edit_for_indent_size_adjustment(row, current_size, indent_size)
+            })
+            .collect();
+
+        self.edit(edits, None, cx);
     }
 
-    fn set_indent_size_for_line(
-        &mut self,
+    pub fn edit_for_indent_size_adjustment(
         row: u32,
-        size: IndentSize,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let current_size = indent_size_for_line(&self, row);
-        if size.kind != current_size.kind && current_size.len > 0 {
-            return;
+        current_size: IndentSize,
+        new_size: IndentSize,
+    ) -> Option<(Range<Point>, String)> {
+        if new_size.kind != current_size.kind && current_size.len > 0 {
+            return None;
         }
 
-        if size.len > current_size.len {
-            let offset = Point::new(row, 0).to_offset(&*self);
-            self.edit(
-                [(
-                    offset..offset,
-                    iter::repeat(size.char())
-                        .take((size.len - current_size.len) as usize)
-                        .collect::<String>(),
-                )],
-                None,
-                cx,
-            );
-        } else if size.len < current_size.len {
-            self.edit(
-                [(
-                    Point::new(row, 0)..Point::new(row, current_size.len - size.len),
-                    "",
-                )],
-                None,
-                cx,
-            );
+        if new_size.len > current_size.len {
+            let point = Point::new(row, 0);
+            Some((
+                point..point,
+                iter::repeat(new_size.char())
+                    .take((new_size.len - current_size.len) as usize)
+                    .collect::<String>(),
+            ))
+        } else if new_size.len < current_size.len {
+            Some((
+                Point::new(row, 0)..Point::new(row, current_size.len - new_size.len),
+                String::new(),
+            ))
+        } else {
+            None
         }
     }
 
@@ -1225,13 +1222,7 @@ impl Buffer {
         let edit_id = edit_operation.local_timestamp();
 
         if let Some((before_edit, mode)) = autoindent_request {
-            let language_name = self.language().map(|language| language.name());
-            let settings = cx.global::<Settings>();
-            let indent_size = if settings.hard_tabs(language_name.as_deref()) {
-                IndentSize::tab()
-            } else {
-                IndentSize::spaces(settings.tab_size(language_name.as_deref()).get())
-            };
+            let indent_size = before_edit.single_indent_size(cx);
             let (start_columns, is_block_mode) = match mode {
                 AutoindentMode::Block {
                     original_indent_columns: start_columns,
@@ -1609,6 +1600,47 @@ impl Deref for Buffer {
 impl BufferSnapshot {
     pub fn indent_size_for_line(&self, row: u32) -> IndentSize {
         indent_size_for_line(&self, row)
+    }
+
+    pub fn single_indent_size(&self, cx: &AppContext) -> IndentSize {
+        let language_name = self.language().map(|language| language.name());
+        let settings = cx.global::<Settings>();
+        if settings.hard_tabs(language_name.as_deref()) {
+            IndentSize::tab()
+        } else {
+            IndentSize::spaces(settings.tab_size(language_name.as_deref()).get())
+        }
+    }
+
+    pub fn suggested_indents(
+        &self,
+        rows: impl Iterator<Item = u32>,
+        single_indent_size: IndentSize,
+    ) -> BTreeMap<u32, IndentSize> {
+        let mut result = BTreeMap::new();
+
+        for row_range in contiguous_ranges(rows, 10) {
+            let suggestions = match self.suggest_autoindents(row_range.clone()) {
+                Some(suggestions) => suggestions,
+                _ => break,
+            };
+
+            for (row, suggestion) in row_range.zip(suggestions) {
+                let indent_size = if let Some(suggestion) = suggestion {
+                    result
+                        .get(&suggestion.basis_row)
+                        .copied()
+                        .unwrap_or_else(|| self.indent_size_for_line(suggestion.basis_row))
+                        .with_delta(suggestion.delta, single_indent_size)
+                } else {
+                    self.indent_size_for_line(row)
+                };
+
+                result.insert(row, indent_size);
+            }
+        }
+
+        result
     }
 
     fn suggest_autoindents<'a>(
