@@ -6,7 +6,6 @@ use async_trait::async_trait;
 use axum::http::StatusCode;
 use collections::HashMap;
 use futures::StreamExt;
-use nanoid::nanoid;
 use serde::{Deserialize, Serialize};
 pub use sqlx::postgres::PgPoolOptions as DbOptions;
 use sqlx::{types::Uuid, FromRow, QueryBuilder, Row};
@@ -218,7 +217,7 @@ impl Db for PostgresDb {
                     .push_bind(github_login)
                     .push_bind(email_address)
                     .push_bind(false)
-                    .push_bind(nanoid!(16))
+                    .push_bind(random_invite_code())
                     .push_bind(invite_count as i32);
             },
         );
@@ -346,7 +345,7 @@ impl Db for PostgresDb {
                 WHERE id = $2 AND invite_code IS NULL
             ",
             )
-            .bind(nanoid!(16))
+            .bind(random_invite_code())
             .bind(id)
             .execute(&mut tx)
             .await?;
@@ -451,15 +450,17 @@ impl Db for PostgresDb {
         let invitee_id = sqlx::query_scalar(
             "
                 INSERT INTO users
-                    (github_login, email_address, admin, inviter_id)
+                    (github_login, email_address, admin, inviter_id, invite_code, invite_count)
                 VALUES
-                    ($1, $2, 'f', $3)
+                    ($1, $2, 'f', $3, $4, $5)
                 RETURNING id
             ",
         )
         .bind(login)
         .bind(email_address)
         .bind(inviter_id)
+        .bind(random_invite_code())
+        .bind(5)
         .fetch_one(&mut tx)
         .await
         .map(UserId)?;
@@ -1458,6 +1459,10 @@ fn fuzzy_like_string(string: &str) -> String {
     result
 }
 
+fn random_invite_code() -> String {
+    nanoid::nanoid!(16)
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -2381,6 +2386,20 @@ pub mod tests {
             .unwrap_err();
         let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
         assert_eq!(invite_count, 1);
+
+        // Ensure invited users get invite codes too.
+        assert_eq!(
+            db.get_invite_code_for_user(user2).await.unwrap().unwrap().1,
+            5
+        );
+        assert_eq!(
+            db.get_invite_code_for_user(user3).await.unwrap().unwrap().1,
+            5
+        );
+        assert_eq!(
+            db.get_invite_code_for_user(user4).await.unwrap().unwrap().1,
+            5
+        );
     }
 
     pub struct TestDb {
