@@ -1269,7 +1269,7 @@ impl Buffer {
                         first_line_is_new = true;
                     }
 
-                    // Avoid auto-indenting before the insertion.
+                    // Avoid auto-indenting after the insertion.
                     if is_block_mode {
                         start_column = start_columns.get(ix).copied();
                         if new_text[range_of_insertion_to_indent.clone()].ends_with('\n') {

@@ -8674,18 +8674,18 @@ mod tests {
 
         // Cut an indented block, without the leading whitespace.
         cx.set_state(indoc! {"
-            const a = (
-                b(),
-                [c(
-                    d,
-                    e
+            const a: B = (
+                c(),
+                [d(
+                    e,
+                    f
                 )}
             );
         "});
         cx.update_editor(|e, cx| e.cut(&Cut, cx));
         cx.assert_editor_state(indoc! {"
-            const a = (
-                b(),
+            const a: B = (
+                c(),
                 |
             );
         "});
@@ -8693,83 +8693,83 @@ mod tests {
         // Paste it at the same position.
         cx.update_editor(|e, cx| e.paste(&Paste, cx));
         cx.assert_editor_state(indoc! {"
-            const a = (
-                b(),
-                c(
-                    d,
-                    e
+            const a: B = (
+                c(),
+                d(
+                    e,
+                    f
                 )|
             );
         "});
 
         // Paste it at a line with a lower indent level.
-        cx.update_editor(|e, cx| e.paste(&Paste, cx));
         cx.set_state(indoc! {"
             |
-            const a = (
-                b(),
+            const a: B = (
+                c(),
             );
         "});
         cx.update_editor(|e, cx| e.paste(&Paste, cx));
         cx.assert_editor_state(indoc! {"
-            c(
-                d,
-                e
+            d(
+                e,
+                f
             )|
-            const a = (
-                b(),
+            const a: B = (
+                c(),
             );
         "});
 
         // Cut an indented block, with the leading whitespace.
         cx.set_state(indoc! {"
-            const a = (
-                b(),
-            [    c(
-                    d,
-                    e
+            const a: B = (
+                c(),
+            [    d(
+                    e,
+                    f
                 )
             });
         "});
         cx.update_editor(|e, cx| e.cut(&Cut, cx));
         cx.assert_editor_state(indoc! {"
-            const a = (
-                b(),
+            const a: B = (
+                c(),
             |);
         "});
 
         // Paste it at the same position.
         cx.update_editor(|e, cx| e.paste(&Paste, cx));
         cx.assert_editor_state(indoc! {"
-            const a = (
-                b(),
-                c(
-                    d,
-                    e
+            const a: B = (
+                c(),
+                d(
+                    e,
+                    f
                 )
             |);
         "});
 
         // Paste it at a line with a higher indent level.
         cx.set_state(indoc! {"
-            const a = (
-                b(),
-                c(
-                    d,
-                    e|
+            const a: B = (
+                c(),
+                d(
+                    e,
+                    f|
                 )
             );
         "});
         cx.update_editor(|e, cx| e.paste(&Paste, cx));
-        cx.set_state(indoc! {"
-            const a = (
-                b(),
-                c(
-                    d,
-                    ec(
-                        d,
-                        e
-                    )|
+        cx.assert_editor_state(indoc! {"
+            const a: B = (
+                c(),
+                d(
+                    e,
+                    f    d(
+                        e,
+                        f
+                    )
+            |
                 )
             );
         "});
