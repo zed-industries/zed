@@ -183,20 +183,23 @@ fn test_edit_events(cx: &mut gpui::MutableAppContext) {
 async fn test_apply_diff(cx: &mut gpui::TestAppContext) {
     let text = "a\nbb\nccc\ndddd\neeeee\nffffff\n";
     let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+    let anchor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(3, 3)));
 
     let text = "a\nccc\ndddd\nffffff\n";
     let diff = buffer.read_with(cx, |b, cx| b.diff(text.into(), cx)).await;
     buffer.update(cx, |buffer, cx| {
         buffer.apply_diff(diff, cx).unwrap();
+        assert_eq!(buffer.text(), text);
+        assert_eq!(anchor.to_point(&buffer), Point::new(2, 3));
     });
-    cx.read(|cx| assert_eq!(buffer.read(cx).text(), text));
 
     let text = "a\n1\n\nccc\ndd2dd\nffffff\n";
     let diff = buffer.read_with(cx, |b, cx| b.diff(text.into(), cx)).await;
     buffer.update(cx, |buffer, cx| {
         buffer.apply_diff(diff, cx).unwrap();
+        assert_eq!(buffer.text(), text);
+        assert_eq!(anchor.to_point(&buffer), Point::new(4, 4));
     });
-    cx.read(|cx| assert_eq!(buffer.read(cx).text(), text));
 }
 
 #[gpui::test]
