@@ -1072,7 +1072,9 @@ pub fn decode_worktree_url(url: &str) -> Option<(u64, String)> {
 mod tests {
     use super::*;
     use crate::test::{FakeHttpClient, FakeServer};
-    use gpui::TestAppContext;
+    use gpui::{executor::Deterministic, TestAppContext};
+    use parking_lot::Mutex;
+    use std::future;
 
     #[gpui::test(iterations = 10)]
     async fn test_reconnection(cx: &mut TestAppContext) {
@@ -1107,6 +1109,48 @@ mod tests {
         cx.foreground().advance_clock(Duration::from_secs(10));
         while !matches!(status.next().await, Some(Status::Connected { .. })) {}
         assert_eq!(server.auth_count(), 2); // Client re-authenticated due to an invalid token
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_authenticating_more_than_once(
+        cx: &mut TestAppContext,
+        deterministic: Arc<Deterministic>,
+    ) {
+        cx.foreground().forbid_parking();
+
+        let auth_count = Arc::new(Mutex::new(0));
+        let dropped_auth_count = Arc::new(Mutex::new(0));
+        let client = Client::new(FakeHttpClient::with_404_response());
+        client.override_authenticate({
+            let auth_count = auth_count.clone();
+            let dropped_auth_count = dropped_auth_count.clone();
+            move |cx| {
+                let auth_count = auth_count.clone();
+                let dropped_auth_count = dropped_auth_count.clone();
+                cx.foreground().spawn(async move {
+                    *auth_count.lock() += 1;
+                    let _drop = util::defer(move || *dropped_auth_count.lock() += 1);
+                    future::pending::<()>().await;
+                    unreachable!()
+                })
+            }
+        });
+
+        let _authenticate = cx.spawn(|cx| {
+            let client = client.clone();
+            async move { client.authenticate_and_connect(false, &cx).await }
+        });
+        deterministic.run_until_parked();
+        assert_eq!(*auth_count.lock(), 1);
+        assert_eq!(*dropped_auth_count.lock(), 0);
+
+        let _authenticate = cx.spawn(|cx| {
+            let client = client.clone();
+            async move { client.authenticate_and_connect(false, &cx).await }
+        });
+        deterministic.run_until_parked();
+        assert_eq!(*auth_count.lock(), 2);
+        assert_eq!(*dropped_auth_count.lock(), 1);
     }
 
     #[test]
