@@ -2913,202 +2913,169 @@ impl Editor {
             return;
         }
 
-        let selections = self.selections.all_adjusted(cx);
-        let buffer = self.buffer.read(cx).read(cx);
+        let mut selections = self.selections.all_adjusted(cx);
+        let buffer = self.buffer.read(cx);
+        let snapshot = buffer.snapshot(cx);
         let suggested_indents =
-            buffer.suggested_indents(selections.iter().map(|s| s.head().row), cx);
-        let mut all_selections_empty = true;
-        let mut all_cursors_before_suggested_indent = true;
-        let mut all_cursors_in_leading_whitespace = true;
+            snapshot.suggested_indents(selections.iter().map(|s| s.head().row), cx);
 
-        for selection in &selections {
-            let cursor = selection.head();
-            if !selection.is_empty() {
-                all_selections_empty = false;
+        let mut edits = Vec::new();
+        let mut prev_edited_row = 0;
+        let mut row_delta = 0;
+        for selection in &mut selections {
+            if selection.start.row != prev_edited_row {
+                row_delta = 0;
+                prev_edited_row = selection.end.row;
             }
-            if cursor.column > buffer.indent_size_for_line(cursor.row).len {
-                all_cursors_in_leading_whitespace = false;
-            }
-            if let Some(indent) = suggested_indents.get(&cursor.row) {
-                if cursor.column >= indent.len {
-                    all_cursors_before_suggested_indent = false;
-                }
-            } else {
-                all_cursors_before_suggested_indent = false;
-            }
-        }
-        drop(buffer);
 
-        if all_selections_empty {
-            if all_cursors_in_leading_whitespace && all_cursors_before_suggested_indent {
-                self.auto_indent(suggested_indents, selections, cx);
-            } else {
-                self.insert_tab(selections, cx);
-            }
-        } else {
-            self.indent(&Indent, cx);
-        }
-    }
-
-    fn auto_indent(
-        &mut self,
-        suggested_indents: BTreeMap<u32, IndentSize>,
-        mut selections: Vec<Selection<Point>>,
-        cx: &mut ViewContext<Editor>,
-    ) {
-        self.transact(cx, |this, cx| {
-            let mut rows = Vec::new();
-            let buffer = this.buffer.read(cx).read(cx);
-            for selection in &mut selections {
-                selection.end.column = buffer.indent_size_for_line(selection.end.row).len;
-                selection.start = selection.end;
-                rows.push(selection.end.row);
-            }
-            drop(buffer);
-
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                s.select(selections);
-            });
-
-            this.buffer.update(cx, |buffer, cx| {
-                let snapshot = buffer.read(cx);
-                let edits: Vec<_> = suggested_indents
-                    .into_iter()
-                    .filter_map(|(row, new_indent)| {
-                        let current_indent = snapshot.indent_size_for_line(row);
-                        Buffer::edit_for_indent_size_adjustment(row, current_indent, new_indent)
-                    })
-                    .collect();
-                drop(snapshot);
-
-                buffer.edit(edits, None, cx);
-            });
-        });
-    }
-
-    fn insert_tab(&mut self, mut selections: Vec<Selection<Point>>, cx: &mut ViewContext<Editor>) {
-        self.transact(cx, |this, cx| {
-            this.buffer.update(cx, |buffer, cx| {
-                let mut prev_cursor_row = 0;
-                let mut row_delta = 0;
-                for selection in &mut selections {
-                    let mut cursor = selection.start;
-                    if cursor.row != prev_cursor_row {
-                        row_delta = 0;
-                        prev_cursor_row = cursor.row;
+            if selection.is_empty() {
+                let cursor = selection.head();
+                let mut did_auto_indent = false;
+                if let Some(suggested_indent) = suggested_indents.get(&cursor.row).copied() {
+                    let current_indent = snapshot.indent_size_for_line(cursor.row);
+                    // Don't account for `row_delta` as we only care if the cursor *started* in the leading whitespace
+                    if cursor.column < suggested_indent.len
+                        && cursor.column <= current_indent.len
+                        && current_indent.len <= suggested_indent.len
+                    {
+                        selection.start = Point::new(cursor.row, suggested_indent.len);
+                        selection.end = selection.start;
+                        if row_delta == 0 {
+                            edits.extend(Buffer::edit_for_indent_size_adjustment(
+                                cursor.row,
+                                current_indent,
+                                suggested_indent,
+                            ));
+                            row_delta = suggested_indent.len - current_indent.len;
+                        }
+                        did_auto_indent = true;
                     }
-                    cursor.column += row_delta;
+                }
 
+                if !did_auto_indent {
                     let language_name = buffer.language_at(cursor, cx).map(|l| l.name());
                     let settings = cx.global::<Settings>();
                     let tab_size = if settings.hard_tabs(language_name.as_deref()) {
                         IndentSize::tab()
                     } else {
                         let tab_size = settings.tab_size(language_name.as_deref()).get();
-                        let char_column = buffer
-                            .read(cx)
+                        let char_column = snapshot
                             .text_for_range(Point::new(cursor.row, 0)..cursor)
                             .flat_map(str::chars)
-                            .count();
+                            .count()
+                            + row_delta as usize;
                         let chars_to_next_tab_stop = tab_size - (char_column as u32 % tab_size);
                         IndentSize::spaces(chars_to_next_tab_stop)
                     };
 
-                    buffer.edit(
-                        [(cursor..cursor, tab_size.chars().collect::<String>())],
-                        None,
-                        cx,
-                    );
-                    cursor.column += tab_size.len;
-                    selection.start = cursor;
-                    selection.end = cursor;
-
+                    selection.start =
+                        Point::new(cursor.row, cursor.column + row_delta + tab_size.len);
+                    selection.end = selection.start;
+                    edits.push((cursor..cursor, tab_size.chars().collect::<String>()));
                     row_delta += tab_size.len;
                 }
-            });
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                s.select(selections);
-            });
+            } else {
+                row_delta =
+                    Self::indent_selection(buffer, &snapshot, selection, &mut edits, row_delta, cx);
+            }
+        }
+
+        self.transact(cx, |this, cx| {
+            this.buffer
+                .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections))
         });
     }
 
     pub fn indent(&mut self, _: &Indent, cx: &mut ViewContext<Self>) {
         let mut selections = self.selections.all::<Point>(cx);
+        let mut prev_edited_row = 0;
+        let mut row_delta = 0;
+        let mut edits = Vec::new();
+        let buffer = self.buffer.read(cx);
+        let snapshot = buffer.snapshot(cx);
+        for selection in &mut selections {
+            if selection.start.row != prev_edited_row {
+                row_delta = 0;
+            }
+
+            row_delta =
+                Self::indent_selection(buffer, &snapshot, selection, &mut edits, row_delta, cx);
+            prev_edited_row = selection.end.row;
+        }
+
         self.transact(cx, |this, cx| {
-            let mut last_indent = None;
-            this.buffer.update(cx, |buffer, cx| {
-                let snapshot = buffer.snapshot(cx);
-                for selection in &mut selections {
-                    let language_name = buffer.language_at(selection.start, cx).map(|l| l.name());
-                    let settings = &cx.global::<Settings>();
-                    let tab_size = settings.tab_size(language_name.as_deref()).get();
-                    let indent_kind = if settings.hard_tabs(language_name.as_deref()) {
-                        IndentKind::Tab
-                    } else {
-                        IndentKind::Space
-                    };
-
-                    let mut start_row = selection.start.row;
-                    let mut end_row = selection.end.row + 1;
-
-                    // If a selection ends at the beginning of a line, don't indent
-                    // that last line.
-                    if selection.end.column == 0 {
-                        end_row -= 1;
-                    }
-
-                    // Avoid re-indenting a row that has already been indented by a
-                    // previous selection, but still update this selection's column
-                    // to reflect that indentation.
-                    if let Some((last_indent_row, last_indent_len)) = last_indent {
-                        if last_indent_row == selection.start.row {
-                            selection.start.column += last_indent_len;
-                            start_row += 1;
-                        }
-                        if last_indent_row == selection.end.row {
-                            selection.end.column += last_indent_len;
-                        }
-                    }
-
-                    for row in start_row..end_row {
-                        let current_indent = snapshot.indent_size_for_line(row);
-                        let indent_delta = match (current_indent.kind, indent_kind) {
-                            (IndentKind::Space, IndentKind::Space) => {
-                                let columns_to_next_tab_stop =
-                                    tab_size - (current_indent.len % tab_size);
-                                IndentSize::spaces(columns_to_next_tab_stop)
-                            }
-                            (IndentKind::Tab, IndentKind::Space) => IndentSize::spaces(tab_size),
-                            (_, IndentKind::Tab) => IndentSize::tab(),
-                        };
-
-                        let row_start = Point::new(row, 0);
-                        buffer.edit(
-                            [(
-                                row_start..row_start,
-                                indent_delta.chars().collect::<String>(),
-                            )],
-                            None,
-                            cx,
-                        );
-
-                        // Update this selection's endpoints to reflect the indentation.
-                        if row == selection.start.row {
-                            selection.start.column += indent_delta.len;
-                        }
-                        if row == selection.end.row {
-                            selection.end.column += indent_delta.len as u32;
-                        }
-
-                        last_indent = Some((row, indent_delta.len));
-                    }
-                }
-            });
-
-            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                s.select(selections);
-            });
+            this.buffer
+                .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections));
         });
+    }
+
+    fn indent_selection(
+        buffer: &MultiBuffer,
+        snapshot: &MultiBufferSnapshot,
+        selection: &mut Selection<Point>,
+        edits: &mut Vec<(Range<Point>, String)>,
+        delta_for_start_row: u32,
+        cx: &AppContext,
+    ) -> u32 {
+        let language_name = buffer.language_at(selection.start, cx).map(|l| l.name());
+        let settings = cx.global::<Settings>();
+        let tab_size = settings.tab_size(language_name.as_deref()).get();
+        let indent_kind = if settings.hard_tabs(language_name.as_deref()) {
+            IndentKind::Tab
+        } else {
+            IndentKind::Space
+        };
+        let mut start_row = selection.start.row;
+        let mut end_row = selection.end.row + 1;
+
+        // If a selection ends at the beginning of a line, don't indent
+        // that last line.
+        if selection.end.column == 0 {
+            end_row -= 1;
+        }
+
+        // Avoid re-indenting a row that has already been indented by a
+        // previous selection, but still update this selection's column
+        // to reflect that indentation.
+        if delta_for_start_row > 0 {
+            start_row += 1;
+            selection.start.column += delta_for_start_row;
+            if selection.end.row == selection.start.row {
+                selection.end.column += delta_for_start_row;
+            }
+        }
+
+        let mut delta_for_end_row = 0;
+        for row in start_row..end_row {
+            let current_indent = snapshot.indent_size_for_line(row);
+            let indent_delta = match (current_indent.kind, indent_kind) {
+                (IndentKind::Space, IndentKind::Space) => {
+                    let columns_to_next_tab_stop = tab_size - (current_indent.len % tab_size);
+                    IndentSize::spaces(columns_to_next_tab_stop)
+                }
+                (IndentKind::Tab, IndentKind::Space) => IndentSize::spaces(tab_size),
+                (_, IndentKind::Tab) => IndentSize::tab(),
+            };
+
+            let row_start = Point::new(row, 0);
+            edits.push((
+                row_start..row_start,
+                indent_delta.chars().collect::<String>(),
+            ));
+
+            // Update this selection's endpoints to reflect the indentation.
+            if row == selection.start.row {
+                selection.start.column += indent_delta.len;
+            }
+            if row == selection.end.row {
+                selection.end.column += indent_delta.len;
+                delta_for_end_row = indent_delta.len;
+            }
+        }
+
+        delta_for_end_row
     }
 
     pub fn outdent(&mut self, _: &Outdent, cx: &mut ViewContext<Self>) {
@@ -8048,40 +8015,48 @@ mod tests {
             .unwrap(),
         );
         cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        // cursors that are already at the suggested indent level insert
+        // a soft tab. cursors that are to the left of the suggested indent
+        // auto-indent their line.
         cx.set_state(indoc! {"
+            |
             const a: B = (
                 c(
                     d(
             |
                     )
             |
-                )
+            |    )
             );
         "});
-
-        // autoindent when one or more cursor is to the left of the correct level.
         cx.update_editor(|e, cx| e.tab(&Tab, cx));
         cx.assert_editor_state(indoc! {"
+                |
             const a: B = (
                 c(
                     d(
                         |
                     )
                     |
-                )
+                |)
             );
         "});
 
-        // when already at the correct indentation level, insert a tab.
+        // handle auto-indent when there are multiple cursors on the same line
+        cx.set_state(indoc! {"
+            const a: B = (
+                c(
+            |   |    
+            |    )
+            );
+        "});
         cx.update_editor(|e, cx| e.tab(&Tab, cx));
         cx.assert_editor_state(indoc! {"
             const a: B = (
                 c(
-                    d(
-                            |
-                    )
-                        |
-                )
+                    |
+                |)
             );
         "});
     }
