@@ -1811,7 +1811,7 @@ impl Workspace {
         match &*self.client.status().borrow() {
             client::Status::ConnectionError
             | client::Status::ConnectionLost
-            | client::Status::Reauthenticating
+            | client::Status::Reauthenticating { .. }
             | client::Status::Reconnecting { .. }
             | client::Status::ReconnectionError { .. } => Some(
                 Container::new(
