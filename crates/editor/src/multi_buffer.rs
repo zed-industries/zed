@@ -3,7 +3,7 @@ mod anchor;
 pub use anchor::{Anchor, AnchorRangeExt};
 use anyhow::Result;
 use clock::ReplicaId;
-use collections::{Bound, HashMap, HashSet};
+use collections::{BTreeMap, Bound, HashMap, HashSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 pub use language::Completion;
 use language::{
@@ -1937,6 +1937,53 @@ impl MultiBufferSnapshot {
         } else {
             self.excerpts.summary().text.len
         }
+    }
+
+    pub fn suggested_indents(
+        &self,
+        rows: impl IntoIterator<Item = u32>,
+        cx: &AppContext,
+    ) -> BTreeMap<u32, IndentSize> {
+        let mut result = BTreeMap::new();
+
+        let mut rows_for_excerpt = Vec::new();
+        let mut cursor = self.excerpts.cursor::<Point>();
+
+        let mut rows = rows.into_iter().peekable();
+        while let Some(row) = rows.next() {
+            cursor.seek(&Point::new(row, 0), Bias::Right, &());
+            let excerpt = match cursor.item() {
+                Some(excerpt) => excerpt,
+                _ => continue,
+            };
+
+            let single_indent_size = excerpt.buffer.single_indent_size(cx);
+            let start_buffer_row = excerpt.range.context.start.to_point(&excerpt.buffer).row;
+            let start_multibuffer_row = cursor.start().row;
+
+            rows_for_excerpt.push(row);
+            while let Some(next_row) = rows.peek().copied() {
+                if cursor.end(&()).row > next_row {
+                    rows_for_excerpt.push(next_row);
+                    rows.next();
+                } else {
+                    break;
+                }
+            }
+
+            let buffer_rows = rows_for_excerpt
+                .drain(..)
+                .map(|row| start_buffer_row + row - start_multibuffer_row);
+            let buffer_indents = excerpt
+                .buffer
+                .suggested_indents(buffer_rows, single_indent_size);
+            let multibuffer_indents = buffer_indents
+                .into_iter()
+                .map(|(row, indent)| (start_multibuffer_row + row - start_buffer_row, indent));
+            result.extend(multibuffer_indents);
+        }
+
+        result
     }
 
     pub fn indent_size_for_line(&self, row: u32) -> IndentSize {
