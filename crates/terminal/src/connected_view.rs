@@ -105,6 +105,7 @@ impl ConnectedView {
 
     ///Synthesize the keyboard event corresponding to 'up'
     fn up(&mut self, _: &Up, cx: &mut ViewContext<Self>) {
+        self.clear_bel(cx);
         self.terminal
             .read(cx)
             .try_keystroke(&Keystroke::parse("up").unwrap());
@@ -112,6 +113,7 @@ impl ConnectedView {
 
     ///Synthesize the keyboard event corresponding to 'down'
     fn down(&mut self, _: &Down, cx: &mut ViewContext<Self>) {
+        self.clear_bel(cx);
         self.terminal
             .read(cx)
             .try_keystroke(&Keystroke::parse("down").unwrap());
@@ -119,6 +121,7 @@ impl ConnectedView {
 
     ///Synthesize the keyboard event corresponding to 'ctrl-c'
     fn ctrl_c(&mut self, _: &CtrlC, cx: &mut ViewContext<Self>) {
+        self.clear_bel(cx);
         self.terminal
             .read(cx)
             .try_keystroke(&Keystroke::parse("ctrl-c").unwrap());
@@ -126,6 +129,7 @@ impl ConnectedView {
 
     ///Synthesize the keyboard event corresponding to 'escape'
     fn escape(&mut self, _: &Escape, cx: &mut ViewContext<Self>) {
+        self.clear_bel(cx);
         self.terminal
             .read(cx)
             .try_keystroke(&Keystroke::parse("escape").unwrap());
@@ -133,6 +137,7 @@ impl ConnectedView {
 
     ///Synthesize the keyboard event corresponding to 'enter'
     fn enter(&mut self, _: &Enter, cx: &mut ViewContext<Self>) {
+        self.clear_bel(cx);
         self.terminal
             .read(cx)
             .try_keystroke(&Keystroke::parse("enter").unwrap());

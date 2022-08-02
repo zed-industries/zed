@@ -377,7 +377,6 @@ impl TerminalBuilder {
             loop {
                 let utilization = match this.upgrade(&cx) {
                     Some(this) => this.update(&mut cx, |this, cx| {
-                        cx.emit(Event::Wakeup);
                         cx.notify();
                         this.utilization()
                     }),
@@ -453,7 +452,7 @@ impl Terminal {
                 //NOOP, Handled in render
             }
             AlacTermEvent::Wakeup => {
-                //NOOP, Handled elsewhere
+                cx.emit(Event::Wakeup);
             }
             AlacTermEvent::ColorRequest(_, _) => {
                 self.events.push(InternalEvent::TermEvent(event.clone()))
