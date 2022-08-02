@@ -384,7 +384,6 @@ impl TerminalBuilder {
                 };
 
                 let utilization = (1. - utilization).clamp(0.1, 1.);
-
                 let delay = cx.background().timer(Duration::from_secs_f32(
                     1.0 / (Terminal::default_fps() * utilization),
                 ));
