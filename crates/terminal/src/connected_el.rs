@@ -1,7 +1,6 @@
 use alacritty_terminal::{
     ansi::{Color::Named, NamedColor},
-    event::WindowSize,
-    grid::{Dimensions, GridIterator, Indexed, Scroll},
+    grid::{Dimensions, Scroll},
     index::{Column as GridCol, Line as GridLine, Point, Side},
     selection::SelectionRange,
     term::cell::{Cell, Flags},
@@ -26,15 +25,20 @@ use settings::Settings;
 use theme::TerminalStyle;
 use util::ResultExt;
 
-use std::{cmp::min, ops::Range};
+use std::{
+    cmp::min,
+    ops::{Deref, Range},
+};
 use std::{fmt::Debug, ops::Sub};
 
-use crate::{mappings::colors::convert_color, model::Terminal, ConnectedView};
+use crate::{
+    connected_view::ConnectedView, mappings::colors::convert_color, Terminal, TerminalSize,
+};
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
 ///Implement scroll bars.
-const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
+pub const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
 
 ///The information generated during layout that is nescessary for painting
 pub struct LayoutState {
@@ -44,7 +48,22 @@ pub struct LayoutState {
     cursor: Option<Cursor>,
     background_color: Color,
     selection_color: Color,
-    size: TermDimensions,
+    size: TerminalSize,
+    display_offset: usize,
+}
+
+struct IndexedCell {
+    point: Point,
+    cell: Cell,
+}
+
+impl Deref for IndexedCell {
+    type Target = Cell;
+
+    #[inline]
+    fn deref(&self) -> &Cell {
+        &self.cell
+    }
 }
 
 ///Helper struct for converting data between alacritty's cursor points, and displayed cursor points
@@ -67,74 +86,6 @@ impl DisplayCursor {
 
     pub fn col(&self) -> usize {
         self.col
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct TermDimensions {
-    cell_width: f32,
-    line_height: f32,
-    height: f32,
-    width: f32,
-}
-
-impl TermDimensions {
-    pub fn new(line_height: f32, cell_width: f32, size: Vector2F) -> Self {
-        TermDimensions {
-            cell_width,
-            line_height,
-            width: size.x(),
-            height: size.y(),
-        }
-    }
-
-    pub fn num_lines(&self) -> usize {
-        (self.height / self.line_height).floor() as usize
-    }
-
-    pub fn num_columns(&self) -> usize {
-        (self.width / self.cell_width).floor() as usize
-    }
-
-    pub fn height(&self) -> f32 {
-        self.height
-    }
-
-    pub fn width(&self) -> f32 {
-        self.width
-    }
-
-    pub fn cell_width(&self) -> f32 {
-        self.cell_width
-    }
-
-    pub fn line_height(&self) -> f32 {
-        self.line_height
-    }
-}
-
-impl Into<WindowSize> for TermDimensions {
-    fn into(self) -> WindowSize {
-        WindowSize {
-            num_lines: self.num_lines() as u16,
-            num_cols: self.num_columns() as u16,
-            cell_width: self.cell_width() as u16,
-            cell_height: self.line_height() as u16,
-        }
-    }
-}
-
-impl Dimensions for TermDimensions {
-    fn total_lines(&self) -> usize {
-        self.screen_lines() //TODO: Check that this is fine. This is supposed to be for the back buffer...
-    }
-
-    fn screen_lines(&self) -> usize {
-        self.num_lines()
-    }
-
-    fn columns(&self) -> usize {
-        self.num_columns()
     }
 }
 
@@ -256,7 +207,7 @@ impl TerminalEl {
     }
 
     fn layout_grid(
-        grid: GridIterator<Cell>,
+        grid: Vec<IndexedCell>,
         text_style: &TextStyle,
         terminal_theme: &TerminalStyle,
         text_layout_cache: &TextLayoutCache,
@@ -275,7 +226,7 @@ impl TerminalEl {
         let mut cur_alac_color = None;
         let mut highlighted_range = None;
 
-        let linegroups = grid.group_by(|i| i.point.line);
+        let linegroups = grid.into_iter().group_by(|i| i.point.line);
         for (line_index, (_, line)) in linegroups.into_iter().enumerate() {
             for (x_index, cell) in line.enumerate() {
                 //Increase selection range
@@ -302,7 +253,7 @@ impl TerminalEl {
                     } else {
                         match cur_alac_color {
                             Some(cur_color) => {
-                                if cell.bg == cur_color {
+                                if cell.cell.bg == cur_color {
                                     cur_rect = cur_rect.take().map(|rect| rect.extend());
                                 } else {
                                     cur_alac_color = Some(cell.bg);
@@ -368,7 +319,7 @@ impl TerminalEl {
     // the same position for sequential indexes. Use em_width instead
     fn shape_cursor(
         cursor_point: DisplayCursor,
-        size: TermDimensions,
+        size: TerminalSize,
         text_fragment: &Line,
     ) -> Option<(Vector2F, f32)> {
         if cursor_point.line() < size.total_lines() as i32 {
@@ -392,7 +343,7 @@ impl TerminalEl {
 
     ///Convert the Alacritty cell styles to GPUI text styles and background color
     fn cell_style(
-        indexed: &Indexed<&Cell>,
+        indexed: &IndexedCell,
         style: &TerminalStyle,
         text_style: &TextStyle,
         modal: bool,
@@ -421,7 +372,8 @@ impl TerminalEl {
         origin: Vector2F,
         view_id: usize,
         visible_bounds: RectF,
-        cur_size: TermDimensions,
+        cur_size: TerminalSize,
+        display_offset: usize,
         cx: &mut PaintContext,
     ) {
         let mouse_down_connection = self.terminal.clone();
@@ -438,7 +390,7 @@ impl TerminalEl {
                                     position,
                                     origin,
                                     cur_size,
-                                    terminal.get_display_offset(),
+                                    display_offset,
                                 );
 
                                 terminal.mouse_down(point, side);
@@ -463,7 +415,7 @@ impl TerminalEl {
                                     position,
                                     origin,
                                     cur_size,
-                                    terminal.get_display_offset(),
+                                    display_offset,
                                 );
 
                                 terminal.click(point, side, click_count);
@@ -482,7 +434,7 @@ impl TerminalEl {
                                     position,
                                     origin,
                                     cur_size,
-                                    terminal.get_display_offset(),
+                                    display_offset,
                                 );
 
                                 terminal.drag(point, side);
@@ -530,7 +482,7 @@ impl TerminalEl {
     pub fn mouse_to_cell_data(
         pos: Vector2F,
         origin: Vector2F,
-        cur_size: TermDimensions,
+        cur_size: TerminalSize,
         display_offset: usize,
     ) -> (Point, alacritty_terminal::index::Direction) {
         let pos = pos.sub(origin);
@@ -579,73 +531,87 @@ impl Element for TerminalEl {
         cx: &mut gpui::LayoutContext,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         let settings = cx.global::<Settings>();
-        let font_cache = &cx.font_cache();
+        let font_cache = cx.font_cache();
 
         //Setup layout information
-        let terminal_theme = &settings.theme.terminal;
+        let terminal_theme = settings.theme.terminal.clone(); //TODO: Try to minimize this clone.
         let text_style = TerminalEl::make_text_style(font_cache, &settings);
         let selection_color = settings.theme.editor.selection.selection;
         let dimensions = {
             let line_height = font_cache.line_height(text_style.font_size);
             let cell_width = font_cache.em_advance(text_style.font_id, text_style.font_size);
-            TermDimensions::new(line_height, cell_width, constraint.max)
+            TerminalSize::new(line_height, cell_width, constraint.max)
         };
 
-        let terminal = self.terminal.upgrade(cx).unwrap().read(cx);
+        let background_color = if self.modal {
+            terminal_theme.colors.modal_background.clone()
+        } else {
+            terminal_theme.colors.background.clone()
+        };
 
-        let (cursor, cells, rects, highlights) =
-            terminal.render_lock(Some(dimensions.clone()), |content, cursor_text| {
-                let (cells, rects, highlights) = TerminalEl::layout_grid(
-                    content.display_iter,
-                    &text_style,
-                    terminal_theme,
-                    cx.text_layout_cache,
-                    self.modal,
-                    content.selection,
-                );
+        let (cells, selection, cursor, display_offset, cursor_text) = self
+            .terminal
+            .upgrade(cx)
+            .unwrap()
+            .update(cx.app, |terminal, mcx| {
+                terminal.set_size(dimensions);
+                terminal.render_lock(mcx, |content, cursor_text| {
+                    let mut cells = vec![];
+                    cells.extend(content.display_iter.map(|ic| IndexedCell {
+                        point: ic.point.clone(),
+                        cell: ic.cell.clone(),
+                    }));
 
-                //Layout cursor
-                let cursor = {
-                    let cursor_point =
-                        DisplayCursor::from(content.cursor.point, content.display_offset);
-                    let cursor_text = {
-                        let str_trxt = cursor_text.to_string();
-                        cx.text_layout_cache.layout_str(
-                            &str_trxt,
-                            text_style.font_size,
-                            &[(
-                                str_trxt.len(),
-                                RunStyle {
-                                    font_id: text_style.font_id,
-                                    color: terminal_theme.colors.background,
-                                    underline: Default::default(),
-                                },
-                            )],
-                        )
-                    };
-
-                    TerminalEl::shape_cursor(cursor_point, dimensions, &cursor_text).map(
-                        move |(cursor_position, block_width)| {
-                            Cursor::new(
-                                cursor_position,
-                                block_width,
-                                dimensions.line_height,
-                                terminal_theme.colors.cursor,
-                                CursorShape::Block,
-                                Some(cursor_text.clone()),
-                            )
-                        },
+                    (
+                        cells,
+                        content.selection.clone(),
+                        content.cursor.clone(),
+                        content.display_offset.clone(),
+                        cursor_text.clone(),
                     )
-                };
-
-                (cursor, cells, rects, highlights)
+                })
             });
 
-        //Select background color
-        let background_color = if self.modal {
-            terminal_theme.colors.modal_background
-        } else {
-            terminal_theme.colors.background
+        let (cells, rects, highlights) = TerminalEl::layout_grid(
+            cells,
+            &text_style,
+            &terminal_theme,
+            cx.text_layout_cache,
+            self.modal,
+            selection,
+        );
+
+        //Layout cursor
+        let cursor = {
+            let cursor_point = DisplayCursor::from(cursor.point, display_offset);
+            let cursor_text = {
+                let str_trxt = cursor_text.to_string();
+                cx.text_layout_cache.layout_str(
+                    &str_trxt,
+                    text_style.font_size,
+                    &[(
+                        str_trxt.len(),
+                        RunStyle {
+                            font_id: text_style.font_id,
+                            color: terminal_theme.colors.background,
+                            underline: Default::default(),
+                        },
+                    )],
+                )
+            };
+
+            TerminalEl::shape_cursor(cursor_point, dimensions, &cursor_text).map(
+                move |(cursor_position, block_width)| {
+                    Cursor::new(
+                        cursor_position,
+                        block_width,
+                        dimensions.line_height,
+                        terminal_theme.colors.cursor,
+                        CursorShape::Block,
+                        Some(cursor_text.clone()),
+                    )
+                },
+            )
         };
 
         //Done!
@@ -659,6 +625,7 @@ impl Element for TerminalEl {
                 size: dimensions,
                 rects,
                 highlights,
+                display_offset,
             },
         )
     }
@@ -677,7 +644,14 @@ impl Element for TerminalEl {
             let origin = bounds.origin() + vec2f(layout.size.cell_width, 0.);
 
             //Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
-            self.attach_mouse_handlers(origin, self.view.id(), visible_bounds, layout.size, cx);
+            self.attach_mouse_handlers(
+                origin,
+                self.view.id(),
+                visible_bounds,
+                layout.size,
+                layout.display_offset,
+                cx,
+            );
 
             cx.paint_layer(clip_bounds, |cx| {
                 //Start with a background color
@@ -755,9 +729,9 @@ impl Element for TerminalEl {
                         (delta.y() / layout.size.line_height) * ALACRITTY_SCROLL_MULTIPLIER;
 
                     self.terminal.upgrade(cx.app).map(|terminal| {
-                        terminal
-                            .read(cx.app)
-                            .scroll(Scroll::Delta(vertical_scroll.round() as i32));
+                        terminal.update(cx.app, |term, _| {
+                            term.scroll(Scroll::Delta(vertical_scroll.round() as i32))
+                        });
                     });
                 })
                 .is_some(),
@@ -773,8 +747,9 @@ impl Element for TerminalEl {
 
                 self.terminal
                     .upgrade(cx.app)
-                    .map(|model_handle| model_handle.read(cx.app))
-                    .map(|term| term.try_keystroke(keystroke))
+                    .map(|model_handle| {
+                        model_handle.update(cx.app, |term, _| term.try_keystroke(keystroke))
+                    })
                     .unwrap_or(false)
             }
             _ => false,
@@ -832,7 +807,7 @@ mod test {
         let origin_x = 10.;
         let origin_y = 20.;
 
-        let cur_size = crate::connected_el::TermDimensions::new(
+        let cur_size = crate::connected_el::TerminalSize::new(
             line_height,
             cell_width,
             gpui::geometry::vector::vec2f(term_width, term_height),

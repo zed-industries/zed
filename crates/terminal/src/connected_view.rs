@@ -1,12 +1,10 @@
+use alacritty_terminal::term::TermMode;
 use gpui::{
-    actions, keymap::Keystroke, AppContext, ClipboardItem, Element, ElementBox, ModelHandle,
-    MutableAppContext, View, ViewContext,
+    actions, keymap::Keystroke, AppContext, Element, ElementBox, ModelHandle, MutableAppContext,
+    View, ViewContext,
 };
 
-use crate::{
-    connected_el::TerminalEl,
-    model::{Event, Terminal},
-};
+use crate::{connected_el::TerminalEl, Event, Terminal};
 
 ///Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
@@ -49,17 +47,17 @@ impl ConnectedView {
         cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
         cx.subscribe(&terminal, |this, _, event, cx| match event {
             Event::Wakeup => {
-                if cx.is_self_focused() {
-                    cx.notify()
-                } else {
+                if !cx.is_self_focused() {
                     this.has_new_content = true;
-                    cx.emit(Event::TitleChanged);
+                    cx.notify();
+                    cx.emit(Event::Wakeup);
                 }
             }
             Event::Bell => {
                 this.has_bell = true;
-                cx.emit(Event::TitleChanged);
+                cx.emit(Event::Wakeup);
             }
+
             _ => cx.emit(*event),
         })
         .detach();
@@ -86,19 +84,16 @@ impl ConnectedView {
 
     pub fn clear_bel(&mut self, cx: &mut ViewContext<ConnectedView>) {
         self.has_bell = false;
-        cx.emit(Event::TitleChanged);
+        cx.emit(Event::Wakeup);
     }
 
     fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
-        self.terminal.read(cx).clear();
+        self.terminal.update(cx, |term, _| term.clear());
     }
 
     ///Attempt to paste the clipboard into the terminal
     fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
-        self.terminal
-            .read(cx)
-            .copy()
-            .map(|text| cx.write_to_clipboard(ClipboardItem::new(text)));
+        self.terminal.update(cx, |term, _| term.copy())
     }
 
     ///Attempt to paste the clipboard into the terminal
@@ -110,6 +105,7 @@ impl ConnectedView {
 
     ///Synthesize the keyboard event corresponding to 'up'
     fn up(&mut self, _: &Up, cx: &mut ViewContext<Self>) {
+        self.clear_bel(cx);
         self.terminal
             .read(cx)
             .try_keystroke(&Keystroke::parse("up").unwrap());
@@ -117,6 +113,7 @@ impl ConnectedView {
 
     ///Synthesize the keyboard event corresponding to 'down'
     fn down(&mut self, _: &Down, cx: &mut ViewContext<Self>) {
+        self.clear_bel(cx);
         self.terminal
             .read(cx)
             .try_keystroke(&Keystroke::parse("down").unwrap());
@@ -124,6 +121,7 @@ impl ConnectedView {
 
     ///Synthesize the keyboard event corresponding to 'ctrl-c'
     fn ctrl_c(&mut self, _: &CtrlC, cx: &mut ViewContext<Self>) {
+        self.clear_bel(cx);
         self.terminal
             .read(cx)
             .try_keystroke(&Keystroke::parse("ctrl-c").unwrap());
@@ -131,6 +129,7 @@ impl ConnectedView {
 
     ///Synthesize the keyboard event corresponding to 'escape'
     fn escape(&mut self, _: &Escape, cx: &mut ViewContext<Self>) {
+        self.clear_bel(cx);
         self.terminal
             .read(cx)
             .try_keystroke(&Keystroke::parse("escape").unwrap());
@@ -138,6 +137,7 @@ impl ConnectedView {
 
     ///Synthesize the keyboard event corresponding to 'enter'
     fn enter(&mut self, _: &Enter, cx: &mut ViewContext<Self>) {
+        self.clear_bel(cx);
         self.terminal
             .read(cx)
             .try_keystroke(&Keystroke::parse("enter").unwrap());
@@ -160,8 +160,17 @@ impl View for ConnectedView {
         self.has_new_content = false;
     }
 
-    fn selected_text_range(&self, _: &AppContext) -> Option<std::ops::Range<usize>> {
-        Some(0..0)
+    fn selected_text_range(&self, cx: &AppContext) -> Option<std::ops::Range<usize>> {
+        if self
+            .terminal
+            .read(cx)
+            .last_mode
+            .contains(TermMode::ALT_SCREEN)
+        {
+            None
+        } else {
+            Some(0..0)
+        }
     }
 
     fn replace_text_in_range(

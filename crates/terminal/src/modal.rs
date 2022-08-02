@@ -3,7 +3,8 @@ use settings::{Settings, WorkingDirectory};
 use workspace::Workspace;
 
 use crate::{
-    get_working_directory, model::Terminal, DeployModal, Event, TerminalContent, TerminalView,
+    terminal_view::{get_working_directory, DeployModal, TerminalContent, TerminalView},
+    Event, Terminal,
 };
 
 #[derive(Debug)]

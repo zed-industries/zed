@@ -1,6 +1,8 @@
-use gpui::{ModelHandle, TestAppContext, ViewHandle};
-use project::{Entry, Project, ProjectPath, Worktree};
 use std::{path::Path, time::Duration};
+
+use gpui::{ModelHandle, TestAppContext, ViewHandle};
+
+use project::{Entry, Project, ProjectPath, Worktree};
 use workspace::{AppState, Workspace};
 
 pub struct TerminalTestContext<'a> {
@@ -10,6 +12,7 @@ pub struct TerminalTestContext<'a> {
 impl<'a> TerminalTestContext<'a> {
     pub fn new(cx: &'a mut TestAppContext) -> Self {
         cx.set_condition_duration(Some(Duration::from_secs(5)));
+
         TerminalTestContext { cx }
     }
 

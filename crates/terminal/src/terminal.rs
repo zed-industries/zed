@@ -1,33 +1,45 @@
 pub mod connected_el;
 pub mod connected_view;
 pub mod mappings;
-pub mod modal_view;
-pub mod model;
+pub mod modal;
+pub mod terminal_view;
 
-use connected_view::ConnectedView;
-use dirs::home_dir;
-use gpui::{
-    actions, elements::*, geometry::vector::vec2f, AnyViewHandle, AppContext, Entity, ModelHandle,
-    MutableAppContext, View, ViewContext, ViewHandle,
+use alacritty_terminal::{
+    ansi::{ClearMode, Handler},
+    config::{Config, Program, PtyConfig, Scrolling},
+    event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
+    event_loop::{EventLoop, Msg, Notifier, READ_BUFFER_SIZE},
+    grid::{Dimensions, Scroll},
+    index::{Direction, Point},
+    selection::{Selection, SelectionType},
+    sync::FairMutex,
+    term::{RenderableContent, TermMode},
+    tty::{self, setup_env},
+    Term,
 };
-use modal_view::deploy_modal;
-use model::{Event, Terminal, TerminalBuilder, TerminalError};
+use anyhow::{bail, Result};
 
-use connected_el::TermDimensions;
-use project::{LocalWorktree, Project, ProjectPath};
-use settings::{Settings, WorkingDirectory};
-use smallvec::SmallVec;
-use std::path::{Path, PathBuf};
-use workspace::{Item, Workspace};
+use futures::{
+    channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
+    future,
+};
 
-use crate::connected_el::TerminalEl;
+use modal::deploy_modal;
+use settings::{Settings, Shell};
+use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc, time::Duration};
+use terminal_view::TerminalView;
+use thiserror::Error;
 
-const DEBUG_TERMINAL_WIDTH: f32 = 1000.; //This needs to be wide enough that the prompt can fill the whole space.
-const DEBUG_TERMINAL_HEIGHT: f32 = 200.;
-const DEBUG_CELL_WIDTH: f32 = 5.;
-const DEBUG_LINE_HEIGHT: f32 = 5.;
+use gpui::{
+    geometry::vector::{vec2f, Vector2F},
+    keymap::Keystroke,
+    ClipboardItem, Entity, ModelContext, MutableAppContext,
+};
 
-actions!(terminal, [Deploy, DeployModal]);
+use crate::mappings::{
+    colors::{get_color_at_index, to_alac_rgb},
+    keys::to_esc_str,
+};
 
 ///Initialize and register all of our action handlers
 pub fn init(cx: &mut MutableAppContext) {
@@ -37,498 +49,671 @@ pub fn init(cx: &mut MutableAppContext) {
     connected_view::init(cx);
 }
 
-//Make terminal view an enum, that can give you views for the error and non-error states
-//Take away all the result unwrapping in the current TerminalView by making it 'infallible'
-//Bubble up to deploy(_modal)() calls
+const DEBUG_TERMINAL_WIDTH: f32 = 500.;
+const DEBUG_TERMINAL_HEIGHT: f32 = 30.; //This needs to be wide enough that the CI & a local dev's prompt can fill the whole space.
+const DEBUG_CELL_WIDTH: f32 = 5.;
+const DEBUG_LINE_HEIGHT: f32 = 5.;
+const MAX_FRAME_RATE: f32 = 60.;
+const BACK_BUFFER_SIZE: usize = 5000;
 
-enum TerminalContent {
-    Connected(ViewHandle<ConnectedView>),
-    Error(ViewHandle<ErrorView>),
+///Upward flowing events, for changing the title and such
+#[derive(Clone, Copy, Debug)]
+pub enum Event {
+    TitleChanged,
+    CloseTerminal,
+    Activate,
+    Bell,
+    Wakeup,
 }
 
-impl TerminalContent {
-    fn handle(&self) -> AnyViewHandle {
-        match self {
-            Self::Connected(handle) => handle.into(),
-            Self::Error(handle) => handle.into(),
+#[derive(Clone, Debug)]
+enum InternalEvent {
+    TermEvent(AlacTermEvent),
+    Resize(TerminalSize),
+    Clear,
+    Scroll(Scroll),
+    SetSelection(Option<Selection>),
+    UpdateSelection((Point, Direction)),
+    Copy,
+}
+
+///A translation struct for Alacritty to communicate with us from their event loop
+#[derive(Clone)]
+pub struct ZedListener(UnboundedSender<AlacTermEvent>);
+
+impl EventListener for ZedListener {
+    fn send_event(&self, event: AlacTermEvent) {
+        self.0.unbounded_send(event).ok();
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct TerminalSize {
+    cell_width: f32,
+    line_height: f32,
+    height: f32,
+    width: f32,
+}
+
+impl TerminalSize {
+    pub fn new(line_height: f32, cell_width: f32, size: Vector2F) -> Self {
+        TerminalSize {
+            cell_width,
+            line_height,
+            width: size.x(),
+            height: size.y(),
         }
     }
-}
 
-pub struct TerminalView {
-    modal: bool,
-    content: TerminalContent,
-    associated_directory: Option<PathBuf>,
-}
-
-pub struct ErrorView {
-    error: TerminalError,
-}
-
-impl Entity for TerminalView {
-    type Event = Event;
-}
-
-impl Entity for ConnectedView {
-    type Event = Event;
-}
-
-impl Entity for ErrorView {
-    type Event = Event;
-}
-
-impl TerminalView {
-    ///Create a new Terminal in the current working directory or the user's home directory
-    fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
-        let wd_strategy = cx
-            .global::<Settings>()
-            .terminal_overrides
-            .working_directory
-            .clone()
-            .unwrap_or(WorkingDirectory::CurrentProjectDirectory);
-
-        let working_directory = get_working_directory(workspace, cx, wd_strategy);
-        let view = cx.add_view(|cx| TerminalView::new(working_directory, false, cx));
-        workspace.add_item(Box::new(view), cx);
+    pub fn num_lines(&self) -> usize {
+        (self.height / self.line_height).floor() as usize
     }
 
-    ///Create a new Terminal view. This spawns a task, a thread, and opens the TTY devices
-    ///To get the right working directory from a workspace, use: `get_wd_for_workspace()`
-    fn new(working_directory: Option<PathBuf>, modal: bool, cx: &mut ViewContext<Self>) -> Self {
-        //The details here don't matter, the terminal will be resized on the first layout
-        let size_info = TermDimensions::new(
+    pub fn num_columns(&self) -> usize {
+        (self.width / self.cell_width).floor() as usize
+    }
+
+    pub fn height(&self) -> f32 {
+        self.height
+    }
+
+    pub fn width(&self) -> f32 {
+        self.width
+    }
+
+    pub fn cell_width(&self) -> f32 {
+        self.cell_width
+    }
+
+    pub fn line_height(&self) -> f32 {
+        self.line_height
+    }
+}
+impl Default for TerminalSize {
+    fn default() -> Self {
+        TerminalSize::new(
             DEBUG_LINE_HEIGHT,
             DEBUG_CELL_WIDTH,
             vec2f(DEBUG_TERMINAL_WIDTH, DEBUG_TERMINAL_HEIGHT),
+        )
+    }
+}
+
+impl Into<WindowSize> for TerminalSize {
+    fn into(self) -> WindowSize {
+        WindowSize {
+            num_lines: self.num_lines() as u16,
+            num_cols: self.num_columns() as u16,
+            cell_width: self.cell_width() as u16,
+            cell_height: self.line_height() as u16,
+        }
+    }
+}
+
+impl Dimensions for TerminalSize {
+    fn total_lines(&self) -> usize {
+        self.screen_lines() //TODO: Check that this is fine. This is supposed to be for the back buffer...
+    }
+
+    fn screen_lines(&self) -> usize {
+        self.num_lines()
+    }
+
+    fn columns(&self) -> usize {
+        self.num_columns()
+    }
+}
+
+#[derive(Error, Debug)]
+pub struct TerminalError {
+    pub directory: Option<PathBuf>,
+    pub shell: Option<Shell>,
+    pub source: std::io::Error,
+}
+
+impl TerminalError {
+    pub fn fmt_directory(&self) -> String {
+        self.directory
+            .clone()
+            .map(|path| {
+                match path
+                    .into_os_string()
+                    .into_string()
+                    .map_err(|os_str| format!("<non-utf8 path> {}", os_str.to_string_lossy()))
+                {
+                    Ok(s) => s,
+                    Err(s) => s,
+                }
+            })
+            .unwrap_or_else(|| {
+                let default_dir =
+                    dirs::home_dir().map(|buf| buf.into_os_string().to_string_lossy().to_string());
+                match default_dir {
+                    Some(dir) => format!("<none specified, using home directory> {}", dir),
+                    None => "<none specified, could not find home directory>".to_string(),
+                }
+            })
+    }
+
+    pub fn shell_to_string(&self) -> Option<String> {
+        self.shell.as_ref().map(|shell| match shell {
+            Shell::System => "<system shell>".to_string(),
+            Shell::Program(p) => p.to_string(),
+            Shell::WithArguments { program, args } => format!("{} {}", program, args.join(" ")),
+        })
+    }
+
+    pub fn fmt_shell(&self) -> String {
+        self.shell
+            .clone()
+            .map(|shell| match shell {
+                Shell::System => {
+                    let mut buf = [0; 1024];
+                    let pw = alacritty_unix::get_pw_entry(&mut buf).ok();
+
+                    match pw {
+                        Some(pw) => format!("<system defined shell> {}", pw.shell),
+                        None => "<could not access the password file>".to_string(),
+                    }
+                }
+                Shell::Program(s) => s,
+                Shell::WithArguments { program, args } => format!("{} {}", program, args.join(" ")),
+            })
+            .unwrap_or_else(|| {
+                let mut buf = [0; 1024];
+                let pw = alacritty_unix::get_pw_entry(&mut buf).ok();
+                match pw {
+                    Some(pw) => {
+                        format!("<none specified, using system defined shell> {}", pw.shell)
+                    }
+                    None => "<none specified, could not access the password file> {}".to_string(),
+                }
+            })
+    }
+}
+
+impl Display for TerminalError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let dir_string: String = self.fmt_directory();
+        let shell = self.fmt_shell();
+
+        write!(
+            f,
+            "Working directory: {} Shell command: `{}`, IOError: {}",
+            dir_string, shell, self.source
+        )
+    }
+}
+
+pub struct TerminalBuilder {
+    terminal: Terminal,
+    events_rx: UnboundedReceiver<AlacTermEvent>,
+}
+
+impl TerminalBuilder {
+    pub fn new(
+        working_directory: Option<PathBuf>,
+        shell: Option<Shell>,
+        env: Option<HashMap<String, String>>,
+        initial_size: TerminalSize,
+    ) -> Result<TerminalBuilder> {
+        let pty_config = {
+            let alac_shell = shell.clone().and_then(|shell| match shell {
+                Shell::System => None,
+                Shell::Program(program) => Some(Program::Just(program)),
+                Shell::WithArguments { program, args } => Some(Program::WithArgs { program, args }),
+            });
+
+            PtyConfig {
+                shell: alac_shell,
+                working_directory: working_directory.clone(),
+                hold: false,
+            }
+        };
+
+        let mut env = env.unwrap_or_else(|| HashMap::new());
+
+        //TODO: Properly set the current locale,
+        env.insert("LC_ALL".to_string(), "en_US.UTF-8".to_string());
+
+        let mut alac_scrolling = Scrolling::default();
+        alac_scrolling.set_history((BACK_BUFFER_SIZE * 2) as u32);
+
+        let config = Config {
+            pty_config: pty_config.clone(),
+            env,
+            scrolling: alac_scrolling,
+            ..Default::default()
+        };
+
+        setup_env(&config);
+
+        //Spawn a task so the Alacritty EventLoop can communicate with us in a view context
+        let (events_tx, events_rx) = unbounded();
+        //Set up the terminal...
+        let term = Term::new(&config, &initial_size, ZedListener(events_tx.clone()));
+        let term = Arc::new(FairMutex::new(term));
+
+        //Setup the pty...
+        let pty = match tty::new(&pty_config, initial_size.clone().into(), None) {
+            Ok(pty) => pty,
+            Err(error) => {
+                bail!(TerminalError {
+                    directory: working_directory,
+                    shell,
+                    source: error,
+                });
+            }
+        };
+
+        let shell_txt = {
+            match shell {
+                Some(Shell::System) | None => {
+                    let mut buf = [0; 1024];
+                    let pw = alacritty_unix::get_pw_entry(&mut buf).unwrap();
+                    pw.shell.to_string()
+                }
+                Some(Shell::Program(program)) => program,
+                Some(Shell::WithArguments { program, args }) => {
+                    format!("{} {}", program, args.join(" "))
+                }
+            }
+        };
+
+        //And connect them together
+        let event_loop = EventLoop::new(
+            term.clone(),
+            ZedListener(events_tx.clone()),
+            pty,
+            pty_config.hold,
+            false,
         );
 
-        let settings = cx.global::<Settings>();
-        let shell = settings.terminal_overrides.shell.clone();
-        let envs = settings.terminal_overrides.env.clone(); //Should be short and cheap.
+        //Kick things off
+        let pty_tx = event_loop.channel();
+        let _io_thread = event_loop.spawn();
 
-        let content = match TerminalBuilder::new(working_directory.clone(), shell, envs, size_info)
-        {
-            Ok(terminal) => {
-                let terminal = cx.add_model(|cx| terminal.subscribe(cx));
-                let view = cx.add_view(|cx| ConnectedView::from_terminal(terminal, modal, cx));
-                cx.subscribe(&view, |_this, _content, event, cx| cx.emit(event.clone()))
-                    .detach();
-                TerminalContent::Connected(view)
-            }
-            Err(error) => {
-                let view = cx.add_view(|_| ErrorView {
-                    error: error.downcast::<TerminalError>().unwrap(),
-                });
-                TerminalContent::Error(view)
-            }
+        let terminal = Terminal {
+            pty_tx: Notifier(pty_tx),
+            term,
+            events: vec![],
+            title: shell_txt.clone(),
+            default_title: shell_txt,
+            last_mode: TermMode::NONE,
+            cur_size: initial_size,
+            utilization: 0.,
         };
-        cx.focus(content.handle());
 
-        TerminalView {
-            modal,
-            content,
-            associated_directory: working_directory,
-        }
+        Ok(TerminalBuilder {
+            terminal,
+            events_rx,
+        })
     }
 
-    fn from_terminal(
-        terminal: ModelHandle<Terminal>,
-        modal: bool,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
-        let connected_view = cx.add_view(|cx| ConnectedView::from_terminal(terminal, modal, cx));
-        TerminalView {
-            modal,
-            content: TerminalContent::Connected(connected_view),
-            associated_directory: None,
-        }
+    pub fn subscribe(self, cx: &mut ModelContext<Terminal>) -> Terminal {
+        //Event loop
+        cx.spawn_weak(|this, mut cx| async move {
+            use futures::StreamExt;
+
+            self.events_rx
+                .for_each(|event| {
+                    match this.upgrade(&cx) {
+                        Some(this) => {
+                            this.update(&mut cx, |this, cx| {
+                                this.process_event(&event, cx);
+                            });
+                        }
+                        None => {}
+                    }
+
+                    future::ready(())
+                })
+                .await;
+        })
+        .detach();
+
+        //Render loop
+        cx.spawn_weak(|this, mut cx| async move {
+            loop {
+                let utilization = match this.upgrade(&cx) {
+                    Some(this) => this.update(&mut cx, |this, cx| {
+                        cx.notify();
+                        this.utilization()
+                    }),
+                    None => break,
+                };
+
+                let utilization = (1. - utilization).clamp(0.1, 1.);
+                let delay = cx.background().timer(Duration::from_secs_f32(
+                    1.0 / (Terminal::default_fps() * utilization),
+                ));
+
+                delay.await;
+            }
+        })
+        .detach();
+
+        self.terminal
     }
 }
 
-impl View for TerminalView {
-    fn ui_name() -> &'static str {
-        "Terminal View"
+pub struct Terminal {
+    pty_tx: Notifier,
+    term: Arc<FairMutex<Term<ZedListener>>>,
+    events: Vec<InternalEvent>,
+    default_title: String,
+    title: String,
+    cur_size: TerminalSize,
+    last_mode: TermMode,
+    //Percentage, between 0 and 1
+    utilization: f32,
+}
+
+impl Terminal {
+    fn default_fps() -> f32 {
+        MAX_FRAME_RATE
     }
 
-    fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
-        let child_view = match &self.content {
-            TerminalContent::Connected(connected) => ChildView::new(connected),
-            TerminalContent::Error(error) => ChildView::new(error),
-        };
+    fn utilization(&self) -> f32 {
+        self.utilization
+    }
 
-        if self.modal {
-            let settings = cx.global::<Settings>();
-            let container_style = settings.theme.terminal.modal_container;
-            child_view.contained().with_style(container_style).boxed()
-        } else {
-            child_view.boxed()
+    fn process_event(&mut self, event: &AlacTermEvent, cx: &mut ModelContext<Self>) {
+        match event {
+            AlacTermEvent::Title(title) => {
+                self.title = title.to_string();
+                cx.emit(Event::TitleChanged);
+            }
+            AlacTermEvent::ResetTitle => {
+                self.title = self.default_title.clone();
+                cx.emit(Event::TitleChanged);
+            }
+            AlacTermEvent::ClipboardStore(_, data) => {
+                cx.write_to_clipboard(ClipboardItem::new(data.to_string()))
+            }
+            AlacTermEvent::ClipboardLoad(_, format) => self.notify_pty(format(
+                &cx.read_from_clipboard()
+                    .map(|ci| ci.text().to_string())
+                    .unwrap_or("".to_string()),
+            )),
+            AlacTermEvent::PtyWrite(out) => self.notify_pty(out.clone()),
+            AlacTermEvent::TextAreaSizeRequest(format) => {
+                self.notify_pty(format(self.cur_size.clone().into()))
+            }
+            AlacTermEvent::CursorBlinkingChange => {
+                //TODO whatever state we need to set to get the cursor blinking
+            }
+            AlacTermEvent::Bell => {
+                cx.emit(Event::Bell);
+            }
+            AlacTermEvent::Exit => cx.emit(Event::CloseTerminal),
+            AlacTermEvent::MouseCursorDirty => {
+                //NOOP, Handled in render
+            }
+            AlacTermEvent::Wakeup => {
+                cx.emit(Event::Wakeup);
+            }
+            AlacTermEvent::ColorRequest(_, _) => {
+                self.events.push(InternalEvent::TermEvent(event.clone()))
+            }
         }
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::Activate);
-        cx.defer(|view, cx| {
-            cx.focus(view.content.handle());
-        });
-    }
-}
+    // fn process_events(&mut self, events: Vec<AlacTermEvent>, cx: &mut ModelContext<Self>) {
+    //     for event in events.into_iter() {
+    //         self.process_event(&event, cx);
+    //     }
+    // }
 
-impl View for ErrorView {
-    fn ui_name() -> &'static str {
-        "DisconnectedTerminal"
-    }
-
-    fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
-        let settings = cx.global::<Settings>();
-        let style = TerminalEl::make_text_style(cx.font_cache(), settings);
-
-        //TODO:
-        //We want markdown style highlighting so we can format the program and working directory with ``
-        //We want a max-width of 75% with word-wrap
-        //We want to be able to select the text
-        //Want to be able to scroll if the error message is massive somehow (resiliency)
-
-        let program_text = {
-            match self.error.shell_to_string() {
-                Some(shell_txt) => format!("Shell Program: `{}`", shell_txt),
-                None => "No program specified".to_string(),
-            }
-        };
-
-        let directory_text = {
-            match self.error.directory.as_ref() {
-                Some(path) => format!("Working directory: `{}`", path.to_string_lossy()),
-                None => "No working directory specified".to_string(),
-            }
-        };
-
-        let error_text = self.error.source.to_string();
-
-        Flex::column()
-            .with_child(
-                Text::new("Failed to open the terminal.".to_string(), style.clone())
-                    .contained()
-                    .boxed(),
-            )
-            .with_child(Text::new(program_text, style.clone()).contained().boxed())
-            .with_child(Text::new(directory_text, style.clone()).contained().boxed())
-            .with_child(Text::new(error_text, style.clone()).contained().boxed())
-            .aligned()
-            .boxed()
-    }
-}
-
-impl Item for TerminalView {
-    fn tab_content(
-        &self,
-        _detail: Option<usize>,
-        tab_theme: &theme::Tab,
-        cx: &gpui::AppContext,
-    ) -> ElementBox {
-        let title = match &self.content {
-            TerminalContent::Connected(connected) => {
-                connected.read(cx).handle().read(cx).title.clone()
-            }
-            TerminalContent::Error(_) => "Terminal".to_string(),
-        };
-
-        Flex::row()
-            .with_child(
-                Label::new(title, tab_theme.label.clone())
-                    .aligned()
-                    .contained()
-                    .boxed(),
-            )
-            .boxed()
-    }
-
-    fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self> {
-        //From what I can tell, there's no  way to tell the current working
-        //Directory of the terminal from outside the shell. There might be
-        //solutions to this, but they are non-trivial and require more IPC
-        Some(TerminalView::new(
-            self.associated_directory.clone(),
-            false,
-            cx,
-        ))
-    }
-
-    fn project_path(&self, _cx: &gpui::AppContext) -> Option<ProjectPath> {
-        None
-    }
-
-    fn project_entry_ids(&self, _cx: &gpui::AppContext) -> SmallVec<[project::ProjectEntryId; 3]> {
-        SmallVec::new()
-    }
-
-    fn is_singleton(&self, _cx: &gpui::AppContext) -> bool {
-        false
-    }
-
-    fn set_nav_history(&mut self, _: workspace::ItemNavHistory, _: &mut ViewContext<Self>) {}
-
-    fn can_save(&self, _cx: &gpui::AppContext) -> bool {
-        false
-    }
-
-    fn save(
+    ///Takes events from Alacritty and translates them to behavior on this view
+    fn process_terminal_event(
         &mut self,
-        _project: gpui::ModelHandle<Project>,
-        _cx: &mut ViewContext<Self>,
-    ) -> gpui::Task<gpui::anyhow::Result<()>> {
-        unreachable!("save should not have been called");
+        event: &InternalEvent,
+        term: &mut Term<ZedListener>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        // TODO: Handle is_self_focused in subscription on terminal view
+        match event {
+            InternalEvent::TermEvent(term_event) => match term_event {
+                //Needs to lock
+                AlacTermEvent::ColorRequest(index, format) => {
+                    let color = term.colors()[*index].unwrap_or_else(|| {
+                        let term_style = &cx.global::<Settings>().theme.terminal;
+                        to_alac_rgb(get_color_at_index(index, &term_style.colors))
+                    });
+                    self.notify_pty(format(color))
+                }
+                _ => {} //Other events are handled in the event loop
+            },
+            InternalEvent::Resize(new_size) => {
+                self.cur_size = new_size.clone();
+
+                self.pty_tx
+                    .0
+                    .send(Msg::Resize(new_size.clone().into()))
+                    .ok();
+
+                term.resize(*new_size);
+            }
+            InternalEvent::Clear => {
+                self.notify_pty("\x0c".to_string());
+                term.clear_screen(ClearMode::Saved);
+            }
+            InternalEvent::Scroll(scroll) => term.scroll_display(*scroll),
+            InternalEvent::SetSelection(sel) => term.selection = sel.clone(),
+            InternalEvent::UpdateSelection((point, side)) => {
+                if let Some(mut selection) = term.selection.take() {
+                    selection.update(*point, *side);
+                    term.selection = Some(selection);
+                }
+            }
+
+            InternalEvent::Copy => {
+                if let Some(txt) = term.selection_to_string() {
+                    cx.write_to_clipboard(ClipboardItem::new(txt))
+                }
+            }
+        }
     }
 
-    fn save_as(
-        &mut self,
-        _project: gpui::ModelHandle<Project>,
-        _abs_path: std::path::PathBuf,
-        _cx: &mut ViewContext<Self>,
-    ) -> gpui::Task<gpui::anyhow::Result<()>> {
-        unreachable!("save_as should not have been called");
+    pub fn notify_pty(&self, txt: String) {
+        self.pty_tx.notify(txt.into_bytes());
     }
 
-    fn reload(
-        &mut self,
-        _project: gpui::ModelHandle<Project>,
-        _cx: &mut ViewContext<Self>,
-    ) -> gpui::Task<gpui::anyhow::Result<()>> {
-        gpui::Task::ready(Ok(()))
+    ///Write the Input payload to the tty.
+    pub fn write_to_pty(&mut self, input: String) {
+        self.pty_tx.notify(input.into_bytes());
     }
 
-    fn is_dirty(&self, cx: &gpui::AppContext) -> bool {
-        if let TerminalContent::Connected(connected) = &self.content {
-            connected.read(cx).has_new_content()
+    ///Resize the terminal and the PTY.
+    pub fn set_size(&mut self, new_size: TerminalSize) {
+        self.events.push(InternalEvent::Resize(new_size.into()))
+    }
+
+    pub fn clear(&mut self) {
+        self.events.push(InternalEvent::Clear)
+    }
+
+    pub fn try_keystroke(&self, keystroke: &Keystroke) -> bool {
+        let esc = to_esc_str(keystroke, &self.last_mode);
+        if let Some(esc) = esc {
+            self.notify_pty(esc);
+            true
         } else {
             false
         }
     }
 
-    fn has_conflict(&self, cx: &AppContext) -> bool {
-        if let TerminalContent::Connected(connected) = &self.content {
-            connected.read(cx).has_bell()
+    ///Paste text into the terminal
+    pub fn paste(&self, text: &str) {
+        if self.last_mode.contains(TermMode::BRACKETED_PASTE) {
+            self.notify_pty("\x1b[200~".to_string());
+            self.notify_pty(text.replace('\x1b', "").to_string());
+            self.notify_pty("\x1b[201~".to_string());
         } else {
-            false
+            self.notify_pty(text.replace("\r\n", "\r").replace('\n', "\r"));
         }
     }
 
-    fn should_update_tab_on_event(event: &Self::Event) -> bool {
-        matches!(event, &Event::TitleChanged)
+    pub fn copy(&mut self) {
+        self.events.push(InternalEvent::Copy);
     }
 
-    fn should_close_item_on_event(event: &Self::Event) -> bool {
-        matches!(event, &Event::CloseTerminal)
-    }
+    pub fn render_lock<F, T>(&mut self, cx: &mut ModelContext<Self>, f: F) -> T
+    where
+        F: FnOnce(RenderableContent, char) -> T,
+    {
+        let m = self.term.clone(); //Arc clone
+        let mut term = m.lock();
 
-    fn should_activate_item_on_event(event: &Self::Event) -> bool {
-        matches!(event, &Event::Activate)
-    }
-}
-
-///Get's the working directory for the given workspace, respecting the user's settings.
-fn get_working_directory(
-    workspace: &Workspace,
-    cx: &AppContext,
-    strategy: WorkingDirectory,
-) -> Option<PathBuf> {
-    let res = match strategy {
-        WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx)
-            .or_else(|| first_project_directory(workspace, cx)),
-        WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
-        WorkingDirectory::AlwaysHome => None,
-        WorkingDirectory::Always { directory } => {
-            shellexpand::full(&directory) //TODO handle this better
-                .ok()
-                .map(|dir| Path::new(&dir.to_string()).to_path_buf())
-                .filter(|dir| dir.is_dir())
+        while let Some(e) = self.events.pop() {
+            self.process_terminal_event(&e, &mut term, cx)
         }
-    };
-    res.or_else(|| home_dir())
+
+        self.utilization = Self::estimate_utilization(term.take_last_processed_bytes());
+
+        self.last_mode = term.mode().clone();
+
+        let content = term.renderable_content();
+
+        let cursor_text = term.grid()[content.cursor.point].c;
+
+        f(content, cursor_text)
+    }
+
+    fn estimate_utilization(last_processed: usize) -> f32 {
+        let buffer_utilization = (last_processed as f32 / (READ_BUFFER_SIZE as f32)).clamp(0., 1.);
+
+        //Scale result to bias low, then high
+        buffer_utilization * buffer_utilization
+    }
+
+    ///Scroll the terminal
+    pub fn scroll(&mut self, scroll: Scroll) {
+        self.events.push(InternalEvent::Scroll(scroll));
+    }
+
+    pub fn click(&mut self, point: Point, side: Direction, clicks: usize) {
+        let selection_type = match clicks {
+            0 => return, //This is a release
+            1 => Some(SelectionType::Simple),
+            2 => Some(SelectionType::Semantic),
+            3 => Some(SelectionType::Lines),
+            _ => None,
+        };
+
+        let selection =
+            selection_type.map(|selection_type| Selection::new(selection_type, point, side));
+
+        self.events.push(InternalEvent::SetSelection(selection));
+    }
+
+    pub fn drag(&mut self, point: Point, side: Direction) {
+        self.events
+            .push(InternalEvent::UpdateSelection((point, side)));
+    }
+
+    ///TODO: Check if the mouse_down-then-click assumption holds, so this code works as expected
+    pub fn mouse_down(&mut self, point: Point, side: Direction) {
+        self.events
+            .push(InternalEvent::SetSelection(Some(Selection::new(
+                SelectionType::Simple,
+                point,
+                side,
+            ))));
+    }
 }
 
-///Get's the first project's home directory, or the home directory
-fn first_project_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
-    workspace
-        .worktrees(cx)
-        .next()
-        .and_then(|worktree_handle| worktree_handle.read(cx).as_local())
-        .and_then(get_path_from_wt)
+impl Drop for Terminal {
+    fn drop(&mut self) {
+        self.pty_tx.0.send(Msg::Shutdown).ok();
+    }
 }
 
-///Gets the intuitively correct working directory from the given workspace
-///If there is an active entry for this project, returns that entry's worktree root.
-///If there's no active entry but there is a worktree, returns that worktrees root.
-///If either of these roots are files, or if there are any other query failures,
-///  returns the user's home directory
-fn current_project_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
-    let project = workspace.project().read(cx);
-
-    project
-        .active_entry()
-        .and_then(|entry_id| project.worktree_for_entry(entry_id, cx))
-        .or_else(|| workspace.worktrees(cx).next())
-        .and_then(|worktree_handle| worktree_handle.read(cx).as_local())
-        .and_then(get_path_from_wt)
-}
-
-fn get_path_from_wt(wt: &LocalWorktree) -> Option<PathBuf> {
-    wt.root_entry()
-        .filter(|re| re.is_dir())
-        .map(|_| wt.abs_path().to_path_buf())
+impl Entity for Terminal {
+    type Event = Event;
 }
 
 #[cfg(test)]
 mod tests {
+    pub mod terminal_test_context;
+}
 
-    use crate::tests::terminal_test_context::TerminalTestContext;
+//TODO Move this around and clean up the code
+mod alacritty_unix {
+    use alacritty_terminal::config::Program;
+    use gpui::anyhow::{bail, Result};
+    use libc;
+    use std::ffi::CStr;
+    use std::mem::MaybeUninit;
+    use std::ptr;
 
-    use super::*;
-    use gpui::TestAppContext;
-
-    use std::path::Path;
-
-    mod terminal_test_context;
-
-    ///Working directory calculation tests
-
-    ///No Worktrees in project -> home_dir()
-    #[gpui::test]
-    async fn no_worktree(cx: &mut TestAppContext) {
-        //Setup variables
-        let mut cx = TerminalTestContext::new(cx);
-        let (project, workspace) = cx.blank_workspace().await;
-        //Test
-        cx.cx.read(|cx| {
-            let workspace = workspace.read(cx);
-            let active_entry = project.read(cx).active_entry();
-
-            //Make sure enviroment is as expeted
-            assert!(active_entry.is_none());
-            assert!(workspace.worktrees(cx).next().is_none());
-
-            let res = current_project_directory(workspace, cx);
-            assert_eq!(res, None);
-            let res = first_project_directory(workspace, cx);
-            assert_eq!(res, None);
-        });
+    #[derive(Debug)]
+    pub struct Passwd<'a> {
+        _name: &'a str,
+        _dir: &'a str,
+        pub shell: &'a str,
     }
 
-    ///No active entry, but a worktree, worktree is a file -> home_dir()
-    #[gpui::test]
-    async fn no_active_entry_worktree_is_file(cx: &mut TestAppContext) {
-        //Setup variables
+    /// Return a Passwd struct with pointers into the provided buf.
+    ///
+    /// # Unsafety
+    ///
+    /// If `buf` is changed while `Passwd` is alive, bad thing will almost certainly happen.
+    pub fn get_pw_entry(buf: &mut [i8; 1024]) -> Result<Passwd<'_>> {
+        // Create zeroed passwd struct.
+        let mut entry: MaybeUninit<libc::passwd> = MaybeUninit::uninit();
 
-        let mut cx = TerminalTestContext::new(cx);
-        let (project, workspace) = cx.blank_workspace().await;
-        cx.create_file_wt(project.clone(), "/root.txt").await;
+        let mut res: *mut libc::passwd = ptr::null_mut();
 
-        cx.cx.read(|cx| {
-            let workspace = workspace.read(cx);
-            let active_entry = project.read(cx).active_entry();
+        // Try and read the pw file.
+        let uid = unsafe { libc::getuid() };
+        let status = unsafe {
+            libc::getpwuid_r(
+                uid,
+                entry.as_mut_ptr(),
+                buf.as_mut_ptr() as *mut _,
+                buf.len(),
+                &mut res,
+            )
+        };
+        let entry = unsafe { entry.assume_init() };
 
-            //Make sure enviroment is as expeted
-            assert!(active_entry.is_none());
-            assert!(workspace.worktrees(cx).next().is_some());
+        if status < 0 {
+            bail!("getpwuid_r failed");
+        }
 
-            let res = current_project_directory(workspace, cx);
-            assert_eq!(res, None);
-            let res = first_project_directory(workspace, cx);
-            assert_eq!(res, None);
-        });
+        if res.is_null() {
+            bail!("pw not found");
+        }
+
+        // Sanity check.
+        assert_eq!(entry.pw_uid, uid);
+
+        // Build a borrowed Passwd struct.
+        Ok(Passwd {
+            _name: unsafe { CStr::from_ptr(entry.pw_name).to_str().unwrap() },
+            _dir: unsafe { CStr::from_ptr(entry.pw_dir).to_str().unwrap() },
+            shell: unsafe { CStr::from_ptr(entry.pw_shell).to_str().unwrap() },
+        })
     }
 
-    //No active entry, but a worktree, worktree is a folder -> worktree_folder
-    #[gpui::test]
-    async fn no_active_entry_worktree_is_dir(cx: &mut TestAppContext) {
-        //Setup variables
-        let mut cx = TerminalTestContext::new(cx);
-        let (project, workspace) = cx.blank_workspace().await;
-        let (_wt, _entry) = cx.create_folder_wt(project.clone(), "/root/").await;
+    #[cfg(target_os = "macos")]
+    pub fn _default_shell(pw: &Passwd<'_>) -> Program {
+        let shell_name = pw.shell.rsplit('/').next().unwrap();
+        let argv = vec![
+            String::from("-c"),
+            format!("exec -a -{} {}", shell_name, pw.shell),
+        ];
 
-        //Test
-        cx.cx.update(|cx| {
-            let workspace = workspace.read(cx);
-            let active_entry = project.read(cx).active_entry();
-
-            assert!(active_entry.is_none());
-            assert!(workspace.worktrees(cx).next().is_some());
-
-            let res = current_project_directory(workspace, cx);
-            assert_eq!(res, Some((Path::new("/root/")).to_path_buf()));
-            let res = first_project_directory(workspace, cx);
-            assert_eq!(res, Some((Path::new("/root/")).to_path_buf()));
-        });
+        Program::WithArgs {
+            program: "/bin/bash".to_owned(),
+            args: argv,
+        }
     }
 
-    //Active entry with a work tree, worktree is a file -> home_dir()
-    #[gpui::test]
-    async fn active_entry_worktree_is_file(cx: &mut TestAppContext) {
-        //Setup variables
-        let mut cx = TerminalTestContext::new(cx);
-        let (project, workspace) = cx.blank_workspace().await;
-        let (_wt, _entry) = cx.create_folder_wt(project.clone(), "/root1/").await;
-        let (wt2, entry2) = cx.create_file_wt(project.clone(), "/root2.txt").await;
-        cx.insert_active_entry_for(wt2, entry2, project.clone());
-
-        //Test
-        cx.cx.update(|cx| {
-            let workspace = workspace.read(cx);
-            let active_entry = project.read(cx).active_entry();
-
-            assert!(active_entry.is_some());
-
-            let res = current_project_directory(workspace, cx);
-            assert_eq!(res, None);
-            let res = first_project_directory(workspace, cx);
-            assert_eq!(res, Some((Path::new("/root1/")).to_path_buf()));
-        });
-    }
-
-    //Active entry, with a worktree, worktree is a folder -> worktree_folder
-    #[gpui::test]
-    async fn active_entry_worktree_is_dir(cx: &mut TestAppContext) {
-        //Setup variables
-        let mut cx = TerminalTestContext::new(cx);
-        let (project, workspace) = cx.blank_workspace().await;
-        let (_wt, _entry) = cx.create_folder_wt(project.clone(), "/root1/").await;
-        let (wt2, entry2) = cx.create_folder_wt(project.clone(), "/root2/").await;
-        cx.insert_active_entry_for(wt2, entry2, project.clone());
-
-        //Test
-        cx.cx.update(|cx| {
-            let workspace = workspace.read(cx);
-            let active_entry = project.read(cx).active_entry();
-
-            assert!(active_entry.is_some());
-
-            let res = current_project_directory(workspace, cx);
-            assert_eq!(res, Some((Path::new("/root2/")).to_path_buf()));
-            let res = first_project_directory(workspace, cx);
-            assert_eq!(res, Some((Path::new("/root1/")).to_path_buf()));
-        });
-    }
-
-    //Active entry with a work tree, worktree is a file, integration test with the strategy interface
-    #[gpui::test]
-    async fn active_entry_worktree_is_file_int(cx: &mut TestAppContext) {
-        //Setup variables
-        let mut cx = TerminalTestContext::new(cx);
-        let (project, workspace) = cx.blank_workspace().await;
-        let (_wt, _entry) = cx.create_folder_wt(project.clone(), "/root1/").await;
-        let (wt2, entry2) = cx.create_file_wt(project.clone(), "/root2.txt").await;
-        cx.insert_active_entry_for(wt2, entry2, project.clone());
-
-        //Test
-        cx.cx.update(|cx| {
-            let workspace = workspace.read(cx);
-            let active_entry = project.read(cx).active_entry();
-
-            assert!(active_entry.is_some());
-
-            let res =
-                get_working_directory(workspace, cx, WorkingDirectory::CurrentProjectDirectory);
-            let first = first_project_directory(workspace, cx);
-            assert_eq!(res, first);
-        });
+    #[cfg(not(target_os = "macos"))]
+    pub fn default_shell(pw: &Passwd<'_>) -> Program {
+        Program::Just(env::var("SHELL").unwrap_or_else(|_| pw.shell.to_owned()))
     }
 }
