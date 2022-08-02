@@ -12,25 +12,24 @@ export default function projectPanel(theme: Theme) {
       iconColor: iconColor(theme, "muted"),
       iconSize: 8,
       iconSpacing: 8,
-      text: text(theme, "mono", "muted", { size: "sm" }),
+      text: text(theme, "mono", "secondary", { size: "sm" }),
       hover: {
         background: backgroundColor(theme, 300, "hovered"),
-        text: text(theme, "mono", "primary", { size: "sm" }),
       },
       active: {
         background: backgroundColor(theme, 300, "active"),
-        text: text(theme, "mono", "primary", { size: "sm" }),
+        text: text(theme, "mono", "active", { size: "sm" }),
       },
       activeHover: {
-        background: backgroundColor(theme, 300, "hovered"),
+        background: backgroundColor(theme, 300, "active"),
         text: text(theme, "mono", "active", { size: "sm" }),
       },
     },
     cutEntryFade: 0.4,
     ignoredEntryFade: 0.6,
     filenameEditor: {
-      background: backgroundColor(theme, 500, "active"),
-      text: text(theme, "mono", "primary", { size: "sm" }),
+      background: backgroundColor(theme, "on300"),
+      text: text(theme, "mono", "active", { size: "sm" }),
       selection: player(theme, 1).selection,
     },
   };

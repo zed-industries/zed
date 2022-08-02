@@ -257,6 +257,7 @@ mod tests {
     use super::*;
     use crate::languages::{language, CachedLspAdapter};
     use gpui::{color::Color, MutableAppContext};
+    use settings::Settings;
     use theme::SyntaxTheme;
 
     #[gpui::test]
@@ -433,37 +434,39 @@ mod tests {
     fn test_rust_autoindent(cx: &mut MutableAppContext) {
         cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
         let language = crate::languages::language("rust", tree_sitter_rust::language(), None);
+        let mut settings = Settings::test(cx);
+        settings.editor_overrides.tab_size = Some(2.try_into().unwrap());
+        cx.set_global(settings);
 
         cx.add_model(|cx| {
             let mut buffer = Buffer::new(0, "", cx).with_language(Arc::new(language), cx);
-            let size = IndentSize::spaces(2);
 
             // indent between braces
             buffer.set_text("fn a() {}", cx);
             let ix = buffer.len() - 1;
-            buffer.edit_with_autoindent([(ix..ix, "\n\n")], size, cx);
+            buffer.edit([(ix..ix, "\n\n")], Some(AutoindentMode::EachLine), cx);
             assert_eq!(buffer.text(), "fn a() {\n  \n}");
 
             // indent between braces, even after empty lines
             buffer.set_text("fn a() {\n\n\n}", cx);
             let ix = buffer.len() - 2;
-            buffer.edit_with_autoindent([(ix..ix, "\n")], size, cx);
+            buffer.edit([(ix..ix, "\n")], Some(AutoindentMode::EachLine), cx);
             assert_eq!(buffer.text(), "fn a() {\n\n\n  \n}");
 
             // indent a line that continues a field expression
             buffer.set_text("fn a() {\n  \n}", cx);
             let ix = buffer.len() - 2;
-            buffer.edit_with_autoindent([(ix..ix, "b\n.c")], size, cx);
+            buffer.edit([(ix..ix, "b\n.c")], Some(AutoindentMode::EachLine), cx);
             assert_eq!(buffer.text(), "fn a() {\n  b\n    .c\n}");
 
             // indent further lines that continue the field expression, even after empty lines
             let ix = buffer.len() - 2;
-            buffer.edit_with_autoindent([(ix..ix, "\n\n.d")], size, cx);
+            buffer.edit([(ix..ix, "\n\n.d")], Some(AutoindentMode::EachLine), cx);
             assert_eq!(buffer.text(), "fn a() {\n  b\n    .c\n    \n    .d\n}");
 
             // dedent the line after the field expression
             let ix = buffer.len() - 2;
-            buffer.edit_with_autoindent([(ix..ix, ";\ne")], size, cx);
+            buffer.edit([(ix..ix, ";\ne")], Some(AutoindentMode::EachLine), cx);
             assert_eq!(
                 buffer.text(),
                 "fn a() {\n  b\n    .c\n    \n    .d;\n  e\n}"
@@ -472,17 +475,17 @@ mod tests {
             // indent inside a struct within a call
             buffer.set_text("const a: B = c(D {});", cx);
             let ix = buffer.len() - 3;
-            buffer.edit_with_autoindent([(ix..ix, "\n\n")], size, cx);
+            buffer.edit([(ix..ix, "\n\n")], Some(AutoindentMode::EachLine), cx);
             assert_eq!(buffer.text(), "const a: B = c(D {\n  \n});");
 
             // indent further inside a nested call
             let ix = buffer.len() - 4;
-            buffer.edit_with_autoindent([(ix..ix, "e: f(\n\n)")], size, cx);
+            buffer.edit([(ix..ix, "e: f(\n\n)")], Some(AutoindentMode::EachLine), cx);
             assert_eq!(buffer.text(), "const a: B = c(D {\n  e: f(\n    \n  )\n});");
 
             // keep that indent after an empty line
             let ix = buffer.len() - 8;
-            buffer.edit_with_autoindent([(ix..ix, "\n")], size, cx);
+            buffer.edit([(ix..ix, "\n")], Some(AutoindentMode::EachLine), cx);
             assert_eq!(
                 buffer.text(),
                 "const a: B = c(D {\n  e: f(\n    \n    \n  )\n});"

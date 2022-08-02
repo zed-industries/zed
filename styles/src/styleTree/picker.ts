@@ -24,7 +24,7 @@ export default function picker(theme: Theme) {
       highlightText: text(theme, "sans", "feature", { weight: "bold" }),
       active: {
         background: backgroundColor(theme, 300, "active"),
-        text: text(theme, "sans", "primary"),
+        text: text(theme, "sans", "active"),
       },
       hover: {
         background: backgroundColor(theme, 300, "hovered"),
@@ -32,7 +32,7 @@ export default function picker(theme: Theme) {
     },
     border: border(theme, "primary"),
     empty: {
-      text: text(theme, "sans", "placeholder"),
+      text: text(theme, "sans", "muted"),
       padding: {
         bottom: 4,
         left: 12,

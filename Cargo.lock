@@ -2761,6 +2761,7 @@ dependencies = [
  "rpc",
  "serde",
  "serde_json",
+ "settings",
  "similar",
  "smallvec",
  "smol",
@@ -6993,7 +6994,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.48.1"
+version = "0.49.1"
 dependencies = [
  "activity_indicator",
  "anyhow",

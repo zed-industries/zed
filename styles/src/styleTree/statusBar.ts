@@ -23,28 +23,28 @@ export default function statusBar(theme: Theme) {
       right: 6,
     },
     border: border(theme, "primary", { top: true, overlay: true }),
-    cursorPosition: text(theme, "sans", "muted"),
-    autoUpdateProgressMessage: text(theme, "sans", "muted"),
-    autoUpdateDoneMessage: text(theme, "sans", "muted"),
+    cursorPosition: text(theme, "sans", "secondary"),
+    autoUpdateProgressMessage: text(theme, "sans", "secondary"),
+    autoUpdateDoneMessage: text(theme, "sans", "secondary"),
     lspStatus: {
       ...diagnosticStatusContainer,
       iconSpacing: 4,
       iconWidth: 14,
       height: 18,
-      message: text(theme, "sans", "muted"),
+      message: text(theme, "sans", "secondary"),
       iconColor: iconColor(theme, "muted"),
       hover: {
         message: text(theme, "sans", "primary"),
-        iconColor: iconColor(theme, "active"),
+        iconColor: iconColor(theme, "primary"),
         background: backgroundColor(theme, 300, "hovered"),
       },
     },
     diagnosticMessage: {
-      ...text(theme, "sans", "muted"),
-      hover: text(theme, "sans", "secondary"),
+      ...text(theme, "sans", "secondary"),
+      hover: text(theme, "sans", "active"),
     },
     feedback: {
-      ...text(theme, "sans", "muted"),
+      ...text(theme, "sans", "secondary"),
       hover: text(theme, "sans", "active"),
     },
     diagnosticSummary: {
@@ -53,7 +53,7 @@ export default function statusBar(theme: Theme) {
       iconSpacing: 2,
       summarySpacing: 6,
       text: text(theme, "sans", "primary", { size: "sm" }),
-      iconColorOk: iconColor(theme, "secondary"),
+      iconColorOk: iconColor(theme, "muted"),
       iconColorWarning: iconColor(theme, "warning"),
       iconColorError: iconColor(theme, "error"),
       containerOk: {
@@ -95,7 +95,7 @@ export default function statusBar(theme: Theme) {
       item: {
         ...statusContainer,
         iconSize: 16,
-        iconColor: iconColor(theme, "secondary"),
+        iconColor: iconColor(theme, "muted"),
         hover: {
           iconColor: iconColor(theme, "active"),
           background: backgroundColor(theme, 300, "hovered"),

@@ -260,7 +260,7 @@ impl BufferSearchBar {
         self.query_editor.update(cx, |query_editor, cx| {
             query_editor.buffer().update(cx, |query_buffer, cx| {
                 let len = query_buffer.len(cx);
-                query_buffer.edit([(0..len, query)], cx);
+                query_buffer.edit([(0..len, query)], None, cx);
             });
         });
     }

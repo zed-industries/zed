@@ -8,58 +8,13 @@ import {
   text,
 } from "./components";
 import statusBar from "./statusBar";
+import tabBar from "./tabBar";
 
 export function workspaceBackground(theme: Theme) {
   return backgroundColor(theme, 300);
 }
 
 export default function workspace(theme: Theme) {
-  const activePaneInactiveTab = {
-    height: 32,
-    background: workspaceBackground(theme),
-    iconClose: iconColor(theme, "muted"),
-    iconCloseActive: iconColor(theme, "active"),
-    iconConflict: iconColor(theme, "warning"),
-    iconDirty: iconColor(theme, "info"),
-    iconWidth: 8,
-    spacing: 8,
-    text: text(theme, "sans", "secondary", { size: "sm" }),
-    border: border(theme, "primary", {
-      left: true,
-      bottom: true,
-      overlay: true,
-    }),
-    padding: {
-      left: 8,
-      right: 8,
-    },
-    description: {
-      margin: { left: 6, top: 1 },
-      ...text(theme, "sans", "muted", { size: "2xs" })
-    }
-  };
-
-  const activePaneActiveTab = {
-    ...activePaneInactiveTab,
-    background: backgroundColor(theme, 500),
-    text: text(theme, "sans", "active", { size: "sm" }),
-    border: {
-      ...activePaneInactiveTab.border,
-      bottom: false,
-    },
-  };
-
-  const inactivePaneInactiveTab = {
-    ...activePaneInactiveTab,
-    background: backgroundColor(theme, 100),
-    text: text(theme, "sans", "placeholder", { size: "sm" }),
-  };
-
-  const inactivePaneActiveTab = {
-    ...activePaneInactiveTab,
-    text: text(theme, "sans", "placeholder", { size: "sm" }),
-  }
-
   const titlebarPadding = 6;
 
   return {
@@ -74,22 +29,7 @@ export default function workspace(theme: Theme) {
     },
     leaderBorderOpacity: 0.7,
     leaderBorderWidth: 2.0,
-    activePaneActiveTab,
-    activePaneInactiveTab,
-    inactivePaneActiveTab,
-    inactivePaneInactiveTab,
-    paneButton: {
-      color: iconColor(theme, "secondary"),
-      border: {
-        ...activePaneActiveTab.border,
-      },
-      iconWidth: 12,
-      buttonWidth: activePaneActiveTab.height,
-      hover: {
-        color: iconColor(theme, "active"),
-        background: backgroundColor(theme, 300),
-      },
-    },
+    tabBar: tabBar(theme),
     modal: {
       margin: {
         bottom: 52,
@@ -188,7 +128,7 @@ export default function workspace(theme: Theme) {
         cornerRadius: 6,
         hover: {
           color: iconColor(theme, "active"),
-          background: backgroundColor(theme, 300),
+          background: backgroundColor(theme, "on500", "hovered"),
         },
         disabled: {
           color: withOpacity(iconColor(theme, "muted"), 0.6),

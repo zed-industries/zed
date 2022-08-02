@@ -949,11 +949,11 @@ impl Workspace {
         &mut self,
         cx: &mut ViewContext<Self>,
         app_state: Arc<AppState>,
-        mut callback: F,
+        callback: F,
     ) -> T
     where
         T: 'static,
-        F: FnMut(&mut Workspace, &mut ViewContext<Workspace>) -> T,
+        F: FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
     {
         if self.project.read(cx).is_local() {
             callback(self, cx)
@@ -1811,7 +1811,7 @@ impl Workspace {
         match &*self.client.status().borrow() {
             client::Status::ConnectionError
             | client::Status::ConnectionLost
-            | client::Status::Reauthenticating
+            | client::Status::Reauthenticating { .. }
             | client::Status::Reconnecting { .. }
             | client::Status::ReconnectionError { .. } => Some(
                 Container::new(
@@ -2821,7 +2821,9 @@ mod tests {
         project.read_with(cx, |project, cx| {
             assert_eq!(
                 project.active_entry(),
-                project.entry_for_path(&(worktree_id, "one.txt").into(), cx)
+                project
+                    .entry_for_path(&(worktree_id, "one.txt").into(), cx)
+                    .map(|e| e.id)
             );
         });
         assert_eq!(
@@ -2838,7 +2840,9 @@ mod tests {
         project.read_with(cx, |project, cx| {
             assert_eq!(
                 project.active_entry(),
-                project.entry_for_path(&(worktree_id, "two.txt").into(), cx)
+                project
+                    .entry_for_path(&(worktree_id, "two.txt").into(), cx)
+                    .map(|e| e.id)
             );
         });
 
@@ -2856,7 +2860,9 @@ mod tests {
         project.read_with(cx, |project, cx| {
             assert_eq!(
                 project.active_entry(),
-                project.entry_for_path(&(worktree_id, "one.txt").into(), cx)
+                project
+                    .entry_for_path(&(worktree_id, "one.txt").into(), cx)
+                    .map(|e| e.id)
             );
         });
 

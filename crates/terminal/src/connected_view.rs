@@ -177,4 +177,12 @@ impl View for ConnectedView {
         self.terminal
             .update(cx, |terminal, _| terminal.write_to_pty(text.into()));
     }
+
+    fn keymap_context(&self, _: &gpui::AppContext) -> gpui::keymap::Context {
+        let mut context = Self::default_keymap_context();
+        if self.modal {
+            context.set.insert("ModalTerminal".into());
+        }
+        context
+    }
 }

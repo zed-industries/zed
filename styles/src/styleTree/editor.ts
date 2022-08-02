@@ -55,7 +55,7 @@ export default function editor(theme: Theme) {
     textColor: theme.syntax.primary.color,
     background: backgroundColor(theme, 500),
     activeLineBackground: theme.editor.line.active,
-    codeActionsIndicator: iconColor(theme, "muted"),
+    codeActionsIndicator: iconColor(theme, "secondary"),
     diffBackgroundDeleted: backgroundColor(theme, "error"),
     diffBackgroundInserted: backgroundColor(theme, "ok"),
     documentHighlightReadBackground: theme.editor.highlight.occurrence,
@@ -107,7 +107,7 @@ export default function editor(theme: Theme) {
         top: true,
       }),
       code: {
-        ...text(theme, "mono", "muted", { size: "sm" }),
+        ...text(theme, "mono", "secondary", { size: "sm" }),
         margin: {
           left: 10,
         },
@@ -135,17 +135,17 @@ export default function editor(theme: Theme) {
     warningDiagnostic: diagnostic(theme, "warning"),
     informationDiagnostic: diagnostic(theme, "info"),
     hintDiagnostic: diagnostic(theme, "info"),
-    invalidErrorDiagnostic: diagnostic(theme, "muted"),
-    invalidHintDiagnostic: diagnostic(theme, "muted"),
-    invalidInformationDiagnostic: diagnostic(theme, "muted"),
-    invalidWarningDiagnostic: diagnostic(theme, "muted"),
+    invalidErrorDiagnostic: diagnostic(theme, "secondary"),
+    invalidHintDiagnostic: diagnostic(theme, "secondary"),
+    invalidInformationDiagnostic: diagnostic(theme, "secondary"),
+    invalidWarningDiagnostic: diagnostic(theme, "secondary"),
     hoverPopover: hoverPopover(theme),
     linkDefinition: {
       color: theme.syntax.linkUri.color,
       underline: theme.syntax.linkUri.underline,
     },
     jumpIcon: {
-      color: iconColor(theme, "muted"),
+      color: iconColor(theme, "secondary"),
       iconWidth: 20,
       buttonWidth: 20,
       cornerRadius: 6,
@@ -157,7 +157,7 @@ export default function editor(theme: Theme) {
       },
       hover: {
         color: iconColor(theme, "active"),
-        background: backgroundColor(theme, "on500", "base"),
+        background: backgroundColor(theme, "on500"),
       },
     },
     compositionMark: {

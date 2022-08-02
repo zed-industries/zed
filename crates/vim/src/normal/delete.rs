@@ -109,7 +109,7 @@ mod test {
                 test"},
         );
 
-        let mut cx = cx.binding(["d", "shift-W"]);
+        let mut cx = cx.binding(["d", "shift-w"]);
         cx.assert("Test te|st-test test", "Test te|test");
     }
 
@@ -144,7 +144,7 @@ mod test {
                 test"},
         );
 
-        let mut cx = cx.binding(["d", "shift-E"]);
+        let mut cx = cx.binding(["d", "shift-e"]);
         cx.assert("Test te|st-test test", "Test te| test");
     }
 
@@ -176,14 +176,14 @@ mod test {
                 test"},
         );
 
-        let mut cx = cx.binding(["d", "shift-B"]);
+        let mut cx = cx.binding(["d", "shift-b"]);
         cx.assert("Test test-test |test", "Test |test");
     }
 
     #[gpui::test]
     async fn test_delete_end_of_line(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["d", "shift-$"]);
+        let mut cx = cx.binding(["d", "$"]);
         cx.assert(
             indoc! {"
                 The q|uick
@@ -304,7 +304,7 @@ mod test {
     #[gpui::test]
     async fn test_delete_end_of_document(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["d", "shift-G"]);
+        let mut cx = cx.binding(["d", "shift-g"]);
         cx.assert(
             indoc! {"
                 The quick

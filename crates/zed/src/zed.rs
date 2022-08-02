@@ -1,6 +1,7 @@
 mod feedback;
 pub mod languages;
 pub mod menus;
+pub mod paths;
 pub mod settings_file;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
@@ -9,6 +10,7 @@ use anyhow::{anyhow, Context, Result};
 use assets::Assets;
 use breadcrumbs::Breadcrumbs;
 pub use client;
+use collections::VecDeque;
 pub use contacts_panel;
 use contacts_panel::ContactsPanel;
 pub use editor;
@@ -21,7 +23,6 @@ use gpui::{
     AssetSource, AsyncAppContext, ViewContext,
 };
 use language::Rope;
-use lazy_static::lazy_static;
 pub use lsp;
 pub use project::{self, fs};
 use project_panel::ProjectPanel;
@@ -29,11 +30,7 @@ use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
 use serde_json::to_string_pretty;
 use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
-use std::{
-    path::{Path, PathBuf},
-    str,
-    sync::Arc,
-};
+use std::{env, path::Path, str, sync::Arc};
 use util::ResultExt;
 pub use workspace;
 use workspace::{sidebar::Side, AppState, Workspace};
@@ -52,6 +49,7 @@ actions!(
         Quit,
         DebugElements,
         OpenSettings,
+        OpenLog,
         OpenKeymap,
         OpenDefaultSettings,
         OpenDefaultKeymap,
@@ -63,14 +61,6 @@ actions!(
 );
 
 const MIN_FONT_SIZE: f32 = 6.0;
-
-lazy_static! {
-    pub static ref ROOT_PATH: PathBuf = dirs::home_dir()
-        .expect("failed to determine home directory")
-        .join(".zed");
-    pub static ref SETTINGS_PATH: PathBuf = ROOT_PATH.join("settings.json");
-    pub static ref KEYMAP_PATH: PathBuf = ROOT_PATH.join("keymap.json");
-}
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_action(about);
@@ -108,7 +98,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_action({
         let app_state = app_state.clone();
         move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
-            open_config_file(&SETTINGS_PATH, app_state.clone(), cx, || {
+            open_config_file(&paths::SETTINGS, app_state.clone(), cx, || {
                 str::from_utf8(
                     Assets
                         .load("settings/initial_user_settings.json")
@@ -122,8 +112,14 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     });
     cx.add_action({
         let app_state = app_state.clone();
+        move |workspace: &mut Workspace, _: &OpenLog, cx: &mut ViewContext<Workspace>| {
+            open_log_file(workspace, app_state.clone(), cx);
+        }
+    });
+    cx.add_action({
+        let app_state = app_state.clone();
         move |_: &mut Workspace, _: &OpenKeymap, cx: &mut ViewContext<Workspace>| {
-            open_config_file(&KEYMAP_PATH, app_state.clone(), cx, || Default::default());
+            open_config_file(&paths::KEYMAP, app_state.clone(), cx, || Default::default());
         }
     });
     cx.add_action({
@@ -227,11 +223,11 @@ pub fn initialize_workspace(
                 },
                 "schemas": [
                     {
-                        "fileMatch": [".zed/settings.json"],
+                        "fileMatch": [schema_file_match(&*paths::SETTINGS)],
                         "schema": settings_file_json_schema(theme_names, language_names),
                     },
                     {
-                        "fileMatch": [".zed/keymap.json"],
+                        "fileMatch": [schema_file_match(&*paths::KEYMAP)],
                         "schema": keymap_file_json_schema(&action_names),
                     }
                 ]
@@ -389,7 +385,6 @@ fn open_config_file(
     cx.spawn(|workspace, mut cx| async move {
         let fs = &app_state.fs;
         if !fs.is_file(path).await {
-            fs.create_dir(&ROOT_PATH).await?;
             fs.create_file(path, Default::default()).await?;
             fs.save(path, &default_content(), Default::default())
                 .await?;
@@ -405,6 +400,60 @@ fn open_config_file(
         Ok::<_, anyhow::Error>(())
     })
     .detach_and_log_err(cx)
+}
+
+fn open_log_file(
+    workspace: &mut Workspace,
+    app_state: Arc<AppState>,
+    cx: &mut ViewContext<Workspace>,
+) {
+    const MAX_LINES: usize = 1000;
+
+    workspace.with_local_workspace(cx, app_state.clone(), |_, cx| {
+        cx.spawn_weak(|workspace, mut cx| async move {
+            let (old_log, new_log) = futures::join!(
+                app_state.fs.load(&paths::OLD_LOG),
+                app_state.fs.load(&paths::LOG)
+            );
+
+            if let Some(workspace) = workspace.upgrade(&cx) {
+                let mut lines = VecDeque::with_capacity(MAX_LINES);
+                for line in old_log
+                    .iter()
+                    .flat_map(|log| log.lines())
+                    .chain(new_log.iter().flat_map(|log| log.lines()))
+                {
+                    if lines.len() == MAX_LINES {
+                        lines.pop_front();
+                    }
+                    lines.push_back(line);
+                }
+                let log = lines
+                    .into_iter()
+                    .flat_map(|line| [line, "\n"])
+                    .collect::<String>();
+
+                workspace.update(&mut cx, |workspace, cx| {
+                    let project = workspace.project().clone();
+                    let buffer = project
+                        .update(cx, |project, cx| project.create_buffer("", None, cx))
+                        .expect("creating buffers on a local workspace always succeeds");
+                    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, log)], None, cx));
+
+                    let buffer = cx.add_model(|cx| {
+                        MultiBuffer::singleton(buffer, cx).with_title("Log".into())
+                    });
+                    workspace.add_item(
+                        Box::new(
+                            cx.add_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx)),
+                        ),
+                        cx,
+                    );
+                });
+            }
+        })
+        .detach();
+    });
 }
 
 fn open_bundled_config_file(
@@ -429,6 +478,11 @@ fn open_bundled_config_file(
             cx,
         );
     });
+}
+
+fn schema_file_match(path: &Path) -> &Path {
+    path.strip_prefix(path.parent().unwrap().parent().unwrap())
+        .unwrap()
 }
 
 #[cfg(test)]

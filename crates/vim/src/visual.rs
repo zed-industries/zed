@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, Autoscroll, Bias, ClipboardSelection};
 use gpui::{actions, MutableAppContext, ViewContext};
-use language::SelectionGoal;
+use language::{AutoindentMode, SelectionGoal};
 use workspace::Workspace;
 
 use crate::{motion::Motion, state::Mode, utils::copy_selections_content, Vim};
@@ -254,7 +254,7 @@ pub fn paste(_: &mut Workspace, _: &VisualPaste, cx: &mut ViewContext<Workspace>
                                 }
                             }
                             drop(snapshot);
-                            buffer.edit_with_autoindent(edits, cx);
+                            buffer.edit(edits, Some(AutoindentMode::EachLine), cx);
                         });
 
                         editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
@@ -422,7 +422,7 @@ mod test {
     #[gpui::test]
     async fn test_visual_line_delete(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["shift-V", "x"]);
+        let mut cx = cx.binding(["shift-v", "x"]);
         cx.assert(
             indoc! {"
                 The qu|ick brown
@@ -457,7 +457,7 @@ mod test {
                 The quick brown
                 fox ju|mps over"},
         );
-        let mut cx = cx.binding(["shift-V", "j", "x"]);
+        let mut cx = cx.binding(["shift-v", "j", "x"]);
         cx.assert(
             indoc! {"
                 The qu|ick brown
@@ -558,7 +558,7 @@ mod test {
     #[gpui::test]
     async fn test_visual_line_change(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["shift-V", "c"]).mode_after(Mode::Insert);
+        let mut cx = cx.binding(["shift-v", "c"]).mode_after(Mode::Insert);
         cx.assert(
             indoc! {"
                 The qu|ick brown
@@ -597,7 +597,7 @@ mod test {
                 fox jumps over
                 |"},
         );
-        let mut cx = cx.binding(["shift-V", "j", "c"]).mode_after(Mode::Insert);
+        let mut cx = cx.binding(["shift-v", "j", "c"]).mode_after(Mode::Insert);
         cx.assert(
             indoc! {"
                 The qu|ick brown

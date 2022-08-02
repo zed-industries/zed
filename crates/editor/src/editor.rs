@@ -38,9 +38,9 @@ use hover_popover::{hide_hover, HoverState};
 pub use items::MAX_TAB_TITLE_LEN;
 pub use language::{char_kind, CharKind};
 use language::{
-    BracketPair, Buffer, CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticSeverity,
-    IndentKind, IndentSize, Language, OffsetRangeExt, OffsetUtf16, Point, Selection, SelectionGoal,
-    TransactionId,
+    AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion, Diagnostic,
+    DiagnosticSeverity, IndentKind, IndentSize, Language, OffsetRangeExt, OffsetUtf16, Point,
+    Selection, SelectionGoal, TransactionId,
 };
 use link_go_to_definition::LinkGoToDefinitionState;
 pub use multi_buffer::{
@@ -187,6 +187,7 @@ actions!(
         SelectLargerSyntaxNode,
         SelectSmallerSyntaxNode,
         GoToDefinition,
+        GoToTypeDefinition,
         MoveToEnclosingBracket,
         UndoSelection,
         RedoSelection,
@@ -297,6 +298,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::go_to_diagnostic);
     cx.add_action(Editor::go_to_prev_diagnostic);
     cx.add_action(Editor::go_to_definition);
+    cx.add_action(Editor::go_to_type_definition);
     cx.add_action(Editor::page_up);
     cx.add_action(Editor::page_down);
     cx.add_action(Editor::fold);
@@ -755,9 +757,11 @@ impl CompletionsMenu {
                 .collect()
         };
         matches.sort_unstable_by_key(|mat| {
+            let completion = &self.completions[mat.candidate_id];
             (
+                completion.lsp_completion.sort_text.as_ref(),
                 Reverse(OrderedFloat(mat.score)),
-                self.completions[mat.candidate_id].sort_key(),
+                completion.sort_key(),
             )
         });
 
@@ -877,6 +881,7 @@ struct ActiveDiagnosticGroup {
 pub struct ClipboardSelection {
     pub len: usize,
     pub is_entire_line: bool,
+    pub first_line_indent: u32,
 }
 
 #[derive(Debug)]
@@ -891,6 +896,11 @@ pub struct NavigationData {
 }
 
 pub struct EditorCreated(pub ViewHandle<Editor>);
+
+enum GotoDefinitionKind {
+    Symbol,
+    Type,
+}
 
 impl Editor {
     pub fn single_line(
@@ -1462,7 +1472,8 @@ impl Editor {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
-        self.buffer.update(cx, |buffer, cx| buffer.edit(edits, cx));
+        self.buffer
+            .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
     }
 
     pub fn edit_with_autoindent<I, S, T>(&mut self, edits: I, cx: &mut ViewContext<Self>)
@@ -1471,8 +1482,9 @@ impl Editor {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
-        self.buffer
-            .update(cx, |buffer, cx| buffer.edit_with_autoindent(edits, cx));
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.edit(edits, Some(AutoindentMode::EachLine), cx)
+        });
     }
 
     fn select(&mut self, Select(phase): &Select, cx: &mut ViewContext<Self>) {
@@ -1885,9 +1897,7 @@ impl Editor {
                     .unzip()
             };
 
-            this.buffer.update(cx, |buffer, cx| {
-                buffer.edit_with_autoindent(edits, cx);
-            });
+            this.edit_with_autoindent(edits, cx);
             let buffer = this.buffer.read(cx).snapshot(cx);
             let new_selections = selection_fixup_info
                 .into_iter()
@@ -1920,10 +1930,11 @@ impl Editor {
                         })
                         .collect::<Vec<_>>()
                 };
-                buffer.edit_with_autoindent(
+                buffer.edit(
                     old_selections
                         .iter()
                         .map(|s| (s.start..s.end, text.clone())),
+                    Some(AutoindentMode::EachLine),
                     cx,
                 );
                 anchors
@@ -1984,6 +1995,7 @@ impl Editor {
                             (s.end.clone()..s.end.clone(), pair_end.clone()),
                         ]
                     }),
+                    None,
                     cx,
                 );
             });
@@ -2059,6 +2071,7 @@ impl Editor {
                     selection_ranges
                         .iter()
                         .map(|range| (range.clone(), pair_end.clone())),
+                    None,
                     cx,
                 );
                 snapshot = buffer.snapshot(cx);
@@ -2361,8 +2374,11 @@ impl Editor {
                 this.insert_snippet(&ranges, snippet, cx).log_err();
             } else {
                 this.buffer.update(cx, |buffer, cx| {
-                    buffer
-                        .edit_with_autoindent(ranges.iter().map(|range| (range.clone(), text)), cx);
+                    buffer.edit(
+                        ranges.iter().map(|range| (range.clone(), text)),
+                        Some(AutoindentMode::EachLine),
+                        cx,
+                    );
                 });
             }
         });
@@ -2723,11 +2739,12 @@ impl Editor {
     ) -> Result<()> {
         let tabstops = self.buffer.update(cx, |buffer, cx| {
             let snippet_text: Arc<str> = snippet.text.clone().into();
-            buffer.edit_with_autoindent(
+            buffer.edit(
                 insertion_ranges
                     .iter()
                     .cloned()
                     .map(|range| (range, snippet_text.clone())),
+                Some(AutoindentMode::EachLine),
                 cx,
             );
 
@@ -2931,7 +2948,11 @@ impl Editor {
                             let chars_to_next_tab_stop = tab_size - (char_column as u32 % tab_size);
                             IndentSize::spaces(chars_to_next_tab_stop)
                         };
-                        buffer.edit([(cursor..cursor, tab_size.chars().collect::<String>())], cx);
+                        buffer.edit(
+                            [(cursor..cursor, tab_size.chars().collect::<String>())],
+                            None,
+                            cx,
+                        );
                         cursor.column += tab_size.len;
                         selection.start = cursor;
                         selection.end = cursor;
@@ -3004,6 +3025,7 @@ impl Editor {
                                 row_start..row_start,
                                 indent_delta.chars().collect::<String>(),
                             )],
+                            None,
                             cx,
                         );
 
@@ -3078,6 +3100,7 @@ impl Editor {
                     deletion_ranges
                         .into_iter()
                         .map(|range| (range, empty_str.clone())),
+                    None,
                     cx,
                 );
             });
@@ -3143,6 +3166,7 @@ impl Editor {
                     edit_ranges
                         .into_iter()
                         .map(|range| (range, empty_str.clone())),
+                    None,
                     cx,
                 );
                 buffer.snapshot(cx)
@@ -3200,7 +3224,7 @@ impl Editor {
 
         self.transact(cx, |this, cx| {
             this.buffer.update(cx, |buffer, cx| {
-                buffer.edit(edits, cx);
+                buffer.edit(edits, None, cx);
             });
 
             this.request_autoscroll(Autoscroll::Fit, cx);
@@ -3309,7 +3333,7 @@ impl Editor {
             this.unfold_ranges(unfold_ranges, true, cx);
             this.buffer.update(cx, |buffer, cx| {
                 for (range, text) in edits {
-                    buffer.edit([(range, text)], cx);
+                    buffer.edit([(range, text)], None, cx);
                 }
             });
             this.fold_ranges(refold_ranges, cx);
@@ -3414,7 +3438,7 @@ impl Editor {
             this.unfold_ranges(unfold_ranges, true, cx);
             this.buffer.update(cx, |buffer, cx| {
                 for (range, text) in edits {
-                    buffer.edit([(range, text)], cx);
+                    buffer.edit([(range, text)], None, cx);
                 }
             });
             this.fold_ranges(refold_ranges, cx);
@@ -3465,7 +3489,8 @@ impl Editor {
                 });
                 edits
             });
-            this.buffer.update(cx, |buffer, cx| buffer.edit(edits, cx));
+            this.buffer
+                .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
             let selections = this.selections.all::<usize>(cx);
             this.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.select(selections);
@@ -3495,6 +3520,7 @@ impl Editor {
                 clipboard_selections.push(ClipboardSelection {
                     len,
                     is_entire_line,
+                    first_line_indent: buffer.indent_size_for_line(selection.start.row).len,
                 });
             }
         }
@@ -3532,6 +3558,7 @@ impl Editor {
                 clipboard_selections.push(ClipboardSelection {
                     len,
                     is_entire_line,
+                    first_line_indent: buffer.indent_size_for_line(start.row).len,
                 });
             }
         }
@@ -3566,18 +3593,22 @@ impl Editor {
                         let snapshot = buffer.read(cx);
                         let mut start_offset = 0;
                         let mut edits = Vec::new();
+                        let mut start_columns = Vec::new();
                         let line_mode = this.selections.line_mode;
                         for (ix, selection) in old_selections.iter().enumerate() {
                             let to_insert;
                             let entire_line;
+                            let start_column;
                             if let Some(clipboard_selection) = clipboard_selections.get(ix) {
                                 let end_offset = start_offset + clipboard_selection.len;
                                 to_insert = &clipboard_text[start_offset..end_offset];
                                 entire_line = clipboard_selection.is_entire_line;
                                 start_offset = end_offset;
+                                start_column = clipboard_selection.first_line_indent;
                             } else {
                                 to_insert = clipboard_text.as_str();
                                 entire_line = all_selections_were_entire_line;
+                                start_column = 0;
                             }
 
                             // If the corresponding selection was empty when this slice of the
@@ -3593,9 +3624,16 @@ impl Editor {
                             };
 
                             edits.push((range, to_insert));
+                            start_columns.push(start_column);
                         }
                         drop(snapshot);
-                        buffer.edit_with_autoindent(edits, cx);
+                        buffer.edit(
+                            edits,
+                            Some(AutoindentMode::Block {
+                                original_indent_columns: start_columns,
+                            }),
+                            cx,
+                        );
                     });
 
                     let selections = this.selections.all::<usize>(cx);
@@ -4430,6 +4468,7 @@ impl Editor {
                                     .iter()
                                     .cloned()
                                     .map(|range| (range, empty_str.clone())),
+                                None,
                                 cx,
                             );
                         } else {
@@ -4439,7 +4478,7 @@ impl Editor {
                                 let position = Point::new(range.start.row, min_column);
                                 (position..position, full_comment_prefix.clone())
                             });
-                            buffer.edit(edits, cx);
+                            buffer.edit(edits, None, cx);
                         }
                     }
                 }
@@ -4662,6 +4701,22 @@ impl Editor {
         _: &GoToDefinition,
         cx: &mut ViewContext<Workspace>,
     ) {
+        Self::go_to_definition_of_kind(GotoDefinitionKind::Symbol, workspace, cx);
+    }
+
+    pub fn go_to_type_definition(
+        workspace: &mut Workspace,
+        _: &GoToTypeDefinition,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        Self::go_to_definition_of_kind(GotoDefinitionKind::Type, workspace, cx);
+    }
+
+    fn go_to_definition_of_kind(
+        kind: GotoDefinitionKind,
+        workspace: &mut Workspace,
+        cx: &mut ViewContext<Workspace>,
+    ) {
         let active_item = workspace.active_item(cx);
         let editor_handle = if let Some(editor) = active_item
             .as_ref()
@@ -4682,7 +4737,11 @@ impl Editor {
         };
 
         let project = workspace.project().clone();
-        let definitions = project.update(cx, |project, cx| project.definition(&buffer, head, cx));
+        let definitions = project.update(cx, |project, cx| match kind {
+            GotoDefinitionKind::Symbol => project.definition(&buffer, head, cx),
+            GotoDefinitionKind::Type => project.type_definition(&buffer, head, cx),
+        });
+
         cx.spawn(|workspace, mut cx| async move {
             let definitions = definitions.await?;
             workspace.update(&mut cx, |workspace, cx| {
@@ -4873,9 +4932,9 @@ impl Editor {
                             editor.override_text_style =
                                 Some(Box::new(move |style| old_highlight_id.style(&style.syntax)));
                         }
-                        editor
-                            .buffer
-                            .update(cx, |buffer, cx| buffer.edit([(0..0, old_name.clone())], cx));
+                        editor.buffer.update(cx, |buffer, cx| {
+                            buffer.edit([(0..0, old_name.clone())], None, cx)
+                        });
                         editor.select_all(&SelectAll, cx);
                         editor
                     });
@@ -6656,8 +6715,8 @@ mod tests {
             // Simulate an edit in another editor
             buffer.update(cx, |buffer, cx| {
                 buffer.start_transaction_at(now, cx);
-                buffer.edit([(0..1, "a")], cx);
-                buffer.edit([(1..1, "b")], cx);
+                buffer.edit([(0..1, "a")], None, cx);
+                buffer.edit([(1..1, "b")], None, cx);
                 buffer.end_transaction_at(now, cx);
             });
 
@@ -7198,6 +7257,7 @@ mod tests {
                     (Point::new(1, 0)..Point::new(1, 0), "\t"),
                     (Point::new(1, 1)..Point::new(1, 1), "\t"),
                 ],
+                None,
                 cx,
             );
         });
@@ -7834,6 +7894,7 @@ mod tests {
                     (Point::new(1, 2)..Point::new(3, 0), ""),
                     (Point::new(4, 2)..Point::new(6, 0), ""),
                 ],
+                None,
                 cx,
             );
             assert_eq!(
@@ -7892,7 +7953,7 @@ mod tests {
 
         // Edit the buffer directly, deleting ranges surrounding the editor's selections
         buffer.update(cx, |buffer, cx| {
-            buffer.edit([(2..5, ""), (10..13, ""), (18..21, "")], cx);
+            buffer.edit([(2..5, ""), (10..13, ""), (18..21, "")], None, cx);
             assert_eq!(buffer.read(cx).text(), "a(), b(), c()".unindent());
         });
 
@@ -8627,6 +8688,118 @@ mod tests {
             |x jumps over
             fox jumps over
             t|he lazy dog"});
+    }
+
+    #[gpui::test]
+    async fn test_paste_multiline(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx).await;
+        let language = Arc::new(Language::new(
+            LanguageConfig::default(),
+            Some(tree_sitter_rust::language()),
+        ));
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        // Cut an indented block, without the leading whitespace.
+        cx.set_state(indoc! {"
+            const a = (
+                b(),
+                [c(
+                    d,
+                    e
+                )}
+            );
+        "});
+        cx.update_editor(|e, cx| e.cut(&Cut, cx));
+        cx.assert_editor_state(indoc! {"
+            const a = (
+                b(),
+                |
+            );
+        "});
+
+        // Paste it at the same position.
+        cx.update_editor(|e, cx| e.paste(&Paste, cx));
+        cx.assert_editor_state(indoc! {"
+            const a = (
+                b(),
+                c(
+                    d,
+                    e
+                )|
+            );
+        "});
+
+        // Paste it at a line with a lower indent level.
+        cx.update_editor(|e, cx| e.paste(&Paste, cx));
+        cx.set_state(indoc! {"
+            |
+            const a = (
+                b(),
+            );
+        "});
+        cx.update_editor(|e, cx| e.paste(&Paste, cx));
+        cx.assert_editor_state(indoc! {"
+            c(
+                d,
+                e
+            )|
+            const a = (
+                b(),
+            );
+        "});
+
+        // Cut an indented block, with the leading whitespace.
+        cx.set_state(indoc! {"
+            const a = (
+                b(),
+            [    c(
+                    d,
+                    e
+                )
+            });
+        "});
+        cx.update_editor(|e, cx| e.cut(&Cut, cx));
+        cx.assert_editor_state(indoc! {"
+            const a = (
+                b(),
+            |);
+        "});
+
+        // Paste it at the same position.
+        cx.update_editor(|e, cx| e.paste(&Paste, cx));
+        cx.assert_editor_state(indoc! {"
+            const a = (
+                b(),
+                c(
+                    d,
+                    e
+                )
+            |);
+        "});
+
+        // Paste it at a line with a higher indent level.
+        cx.set_state(indoc! {"
+            const a = (
+                b(),
+                c(
+                    d,
+                    e|
+                )
+            );
+        "});
+        cx.update_editor(|e, cx| e.paste(&Paste, cx));
+        cx.set_state(indoc! {"
+            const a = (
+                b(),
+                c(
+                    d,
+                    ec(
+                        d,
+                        e
+                    )|
+                )
+            );
+        "});
     }
 
     #[gpui::test]

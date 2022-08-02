@@ -28,15 +28,7 @@ use project::{Fs, ProjectStore};
 use serde_json::json;
 use settings::{self, KeymapFileContent, Settings, SettingsFileContent};
 use smol::process::Command;
-use std::{
-    env,
-    ffi::OsStr,
-    fs, panic,
-    path::{Path, PathBuf},
-    sync::Arc,
-    thread,
-    time::Duration,
-};
+use std::{env, ffi::OsStr, fs, panic, path::PathBuf, sync::Arc, thread, time::Duration};
 use terminal;
 use theme::ThemeRegistry;
 use util::{ResultExt, TryFutureExt};
@@ -50,20 +42,17 @@ use zed::{
 
 fn main() {
     let http = http::client();
-    let home_dir = dirs::home_dir().expect("could not find home dir");
-    let db_dir_path = home_dir.join("Library/Application Support/Zed");
-    let logs_dir_path = home_dir.join("Library/Logs/Zed");
-    fs::create_dir_all(&db_dir_path).expect("could not create database path");
-    fs::create_dir_all(&logs_dir_path).expect("could not create logs path");
-    init_logger(&logs_dir_path);
+    init_paths();
+    init_logger();
 
+    log::info!("========== starting zed ==========");
     let mut app = gpui::App::new(Assets).unwrap();
     let app_version = ZED_APP_VERSION
         .or_else(|| app.platform().app_version().ok())
         .map_or("dev".to_string(), |v| v.to_string());
-    init_panic_hook(logs_dir_path, app_version, http.clone(), app.background());
+    init_panic_hook(app_version, http.clone(), app.background());
     let db = app.background().spawn(async move {
-        project::Db::open(db_dir_path.join("zed.db"))
+        project::Db::open(&*zed::paths::DB)
             .log_err()
             .unwrap_or(project::Db::null())
     });
@@ -99,7 +88,7 @@ fn main() {
     app.run(move |cx| {
         let client = client::Client::new(http.clone());
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
-        languages.set_language_server_download_dir(zed::ROOT_PATH.clone());
+        languages.set_language_server_download_dir(zed::paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
         let init_languages = cx
             .background()
@@ -204,35 +193,57 @@ fn main() {
     });
 }
 
-fn init_logger(logs_dir_path: &Path) {
+fn init_paths() {
+    fs::create_dir_all(&*zed::paths::CONFIG_DIR).expect("could not create config path");
+    fs::create_dir_all(&*zed::paths::LANGUAGES_DIR).expect("could not create languages path");
+    fs::create_dir_all(&*zed::paths::DB_DIR).expect("could not create database path");
+    fs::create_dir_all(&*zed::paths::LOGS_DIR).expect("could not create logs path");
+
+    // Copy setting files from legacy locations. TODO: remove this after a few releases.
+    thread::spawn(|| {
+        if fs::metadata(&*zed::paths::legacy::SETTINGS).is_ok()
+            && fs::metadata(&*zed::paths::SETTINGS).is_err()
+        {
+            fs::copy(&*zed::paths::legacy::SETTINGS, &*zed::paths::SETTINGS).log_err();
+        }
+
+        if fs::metadata(&*zed::paths::legacy::KEYMAP).is_ok()
+            && fs::metadata(&*zed::paths::KEYMAP).is_err()
+        {
+            fs::copy(&*zed::paths::legacy::KEYMAP, &*zed::paths::KEYMAP).log_err();
+        }
+    });
+}
+
+fn init_logger() {
     if stdout_is_a_pty() {
         env_logger::init();
     } else {
         let level = LevelFilter::Info;
-        let log_file_path = logs_dir_path.join("Zed.log");
+
+        // Prevent log file from becoming too large.
+        const MAX_LOG_BYTES: u64 = 1 * 1024 * 1024;
+        if fs::metadata(&*zed::paths::LOG).map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES)
+        {
+            let _ = fs::rename(&*zed::paths::LOG, &*zed::paths::OLD_LOG);
+        }
+
         let log_file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(log_file_path)
+            .open(&*zed::paths::LOG)
             .expect("could not open logfile");
         simplelog::WriteLogger::init(level, simplelog::Config::default(), log_file)
             .expect("could not initialize logger");
     }
 }
 
-fn init_panic_hook(
-    logs_dir_path: PathBuf,
-    app_version: String,
-    http: Arc<dyn HttpClient>,
-    background: Arc<Background>,
-) {
+fn init_panic_hook(app_version: String, http: Arc<dyn HttpClient>, background: Arc<Background>) {
     background
         .spawn({
-            let logs_dir_path = logs_dir_path.clone();
-
             async move {
                 let panic_report_url = format!("{}/api/panic", &*client::ZED_SERVER_URL);
-                let mut children = smol::fs::read_dir(&logs_dir_path).await?;
+                let mut children = smol::fs::read_dir(&*zed::paths::LOGS_DIR).await?;
                 while let Some(child) = children.next().await {
                     let child = child?;
                     let child_path = child.path();
@@ -322,7 +333,7 @@ fn init_panic_hook(
 
         let panic_filename = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
         fs::write(
-            logs_dir_path.join(format!("zed-{}-{}.panic", app_version, panic_filename)),
+            zed::paths::LOGS_DIR.join(format!("zed-{}-{}.panic", app_version, panic_filename)),
             &message,
         )
         .context("error writing panic to disk")
@@ -456,8 +467,8 @@ fn load_config_files(
         .clone()
         .spawn(async move {
             let settings_file =
-                WatchedJsonFile::new(fs.clone(), &executor, zed::SETTINGS_PATH.clone()).await;
-            let keymap_file = WatchedJsonFile::new(fs, &executor, zed::KEYMAP_PATH.clone()).await;
+                WatchedJsonFile::new(fs.clone(), &executor, zed::paths::SETTINGS.clone()).await;
+            let keymap_file = WatchedJsonFile::new(fs, &executor, zed::paths::KEYMAP.clone()).await;
             tx.send((settings_file, keymap_file)).ok()
         })
         .detach();

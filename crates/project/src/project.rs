@@ -254,10 +254,9 @@ pub struct DocumentHighlight {
 
 #[derive(Clone, Debug)]
 pub struct Symbol {
-    pub source_worktree_id: WorktreeId,
-    pub worktree_id: WorktreeId,
     pub language_server_name: LanguageServerName,
-    pub path: PathBuf,
+    pub source_worktree_id: WorktreeId,
+    pub path: ProjectPath,
     pub label: CodeLabel,
     pub name: String,
     pub kind: lsp::SymbolKind,
@@ -3169,7 +3168,7 @@ impl Project {
                 buffer.finalize_last_transaction();
                 buffer.start_transaction();
                 for (range, text) in edits {
-                    buffer.edit([(range, text)], cx);
+                    buffer.edit([(range, text)], None, cx);
                 }
                 if buffer.end_transaction(cx).is_some() {
                     let transaction = buffer.finalize_last_transaction().unwrap().clone();
@@ -3251,6 +3250,16 @@ impl Project {
         self.request_lsp(buffer.clone(), GetDefinition { position }, cx)
     }
 
+    pub fn type_definition<T: ToPointUtf16>(
+        &self,
+        buffer: &ModelHandle<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<LocationLink>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.request_lsp(buffer.clone(), GetTypeDefinition { position }, cx)
+    }
+
     pub fn references<T: ToPointUtf16>(
         &self,
         buffer: &ModelHandle<Buffer>,
@@ -3324,16 +3333,19 @@ impl Project {
                             if let Some((worktree, rel_path)) =
                                 this.find_local_worktree(&abs_path, cx)
                             {
-                                worktree_id = worktree.read(cx).id();
+                                worktree_id = (&worktree.read(cx)).id();
                                 path = rel_path;
                             } else {
                                 path = relativize_path(&worktree_abs_path, &abs_path);
                             }
 
-                            let signature = this.symbol_signature(worktree_id, &path);
-                            let language = this.languages.select_language(&path);
+                            let project_path = ProjectPath {
+                                worktree_id,
+                                path: path.into(),
+                            };
+                            let signature = this.symbol_signature(&project_path);
+                            let language = this.languages.select_language(&project_path.path);
                             let language_server_name = adapter.name.clone();
-
                             Some(async move {
                                 let label = if let Some(language) = language {
                                     language
@@ -3344,15 +3356,14 @@ impl Project {
                                 };
 
                                 Symbol {
-                                    source_worktree_id,
-                                    worktree_id,
                                     language_server_name,
+                                    source_worktree_id,
+                                    path: project_path,
                                     label: label.unwrap_or_else(|| {
                                         CodeLabel::plain(lsp_symbol.name.clone(), None)
                                     }),
                                     kind: lsp_symbol.kind,
                                     name: lsp_symbol.name,
-                                    path,
                                     range: range_from_lsp(lsp_symbol.location.range),
                                     signature,
                                 }
@@ -3410,7 +3421,7 @@ impl Project {
             };
 
             let worktree_abs_path = if let Some(worktree_abs_path) = self
-                .worktree_for_id(symbol.worktree_id, cx)
+                .worktree_for_id(symbol.path.worktree_id, cx)
                 .and_then(|worktree| worktree.read(cx).as_local())
                 .map(|local_worktree| local_worktree.abs_path())
             {
@@ -3418,7 +3429,7 @@ impl Project {
             } else {
                 return Task::ready(Err(anyhow!("worktree not found for symbol")));
             };
-            let symbol_abs_path = worktree_abs_path.join(&symbol.path);
+            let symbol_abs_path = worktree_abs_path.join(&symbol.path.path);
             let symbol_uri = if let Ok(uri) = lsp::Url::from_file_path(symbol_abs_path) {
                 uri
             } else {
@@ -3662,7 +3673,7 @@ impl Project {
                         buffer.finalize_last_transaction();
                         buffer.start_transaction();
                         for (range, text) in edits {
-                            buffer.edit([(range, text)], cx);
+                            buffer.edit([(range, text)], None, cx);
                         }
                         let transaction = if buffer.end_transaction(cx).is_some() {
                             let transaction = buffer.finalize_last_transaction().unwrap().clone();
@@ -4022,7 +4033,7 @@ impl Project {
                         buffer.finalize_last_transaction();
                         buffer.start_transaction();
                         for (range, text) in edits {
-                            buffer.edit([(range, text)], cx);
+                            buffer.edit([(range, text)], None, cx);
                         }
                         let transaction = if buffer.end_transaction(cx).is_some() {
                             let transaction = buffer.finalize_last_transaction().unwrap().clone();
@@ -4622,11 +4633,11 @@ impl Project {
         self.active_entry
     }
 
-    pub fn entry_for_path(&self, path: &ProjectPath, cx: &AppContext) -> Option<ProjectEntryId> {
+    pub fn entry_for_path(&self, path: &ProjectPath, cx: &AppContext) -> Option<Entry> {
         self.worktree_for_id(path.worktree_id, cx)?
             .read(cx)
             .entry_for_path(&path.path)
-            .map(|entry| entry.id)
+            .cloned()
     }
 
     pub fn path_for_entry(&self, entry_id: ProjectEntryId, cx: &AppContext) -> Option<ProjectPath> {
@@ -5436,7 +5447,7 @@ impl Project {
             .read_with(&cx, |this, _| this.deserialize_symbol(symbol))
             .await?;
         let symbol = this.read_with(&cx, |this, _| {
-            let signature = this.symbol_signature(symbol.worktree_id, &symbol.path);
+            let signature = this.symbol_signature(&symbol.path);
             if signature == symbol.signature {
                 Ok(symbol)
             } else {
@@ -5454,10 +5465,10 @@ impl Project {
         })
     }
 
-    fn symbol_signature(&self, worktree_id: WorktreeId, path: &Path) -> [u8; 32] {
+    fn symbol_signature(&self, project_path: &ProjectPath) -> [u8; 32] {
         let mut hasher = Sha256::new();
-        hasher.update(worktree_id.to_proto().to_be_bytes());
-        hasher.update(path.to_string_lossy().as_bytes());
+        hasher.update(project_path.worktree_id.to_proto().to_be_bytes());
+        hasher.update(project_path.path.to_string_lossy().as_bytes());
         hasher.update(self.nonce.to_be_bytes());
         hasher.finalize().as_slice().try_into().unwrap()
     }
@@ -5655,14 +5666,17 @@ impl Project {
                 .end
                 .ok_or_else(|| anyhow!("invalid end"))?;
             let kind = unsafe { mem::transmute(serialized_symbol.kind) };
-            let path = PathBuf::from(serialized_symbol.path);
-            let language = languages.select_language(&path);
-            Ok(Symbol {
-                source_worktree_id,
+            let path = ProjectPath {
                 worktree_id,
+                path: PathBuf::from(serialized_symbol.path).into(),
+            };
+            let language = languages.select_language(&path.path);
+            Ok(Symbol {
                 language_server_name: LanguageServerName(
                     serialized_symbol.language_server_name.into(),
                 ),
+                source_worktree_id,
+                path,
                 label: {
                     match language {
                         Some(language) => {
@@ -5676,7 +5690,6 @@ impl Project {
                 },
 
                 name: serialized_symbol.name,
-                path,
                 range: PointUtf16::new(start.row, start.column)
                     ..PointUtf16::new(end.row, end.column),
                 kind,
@@ -5764,6 +5777,10 @@ impl Project {
             let mut lsp_edits = lsp_edits.into_iter().peekable();
             let mut edits = Vec::new();
             while let Some((mut range, mut new_text)) = lsp_edits.next() {
+                // Clip invalid ranges provided by the language server.
+                range.start = snapshot.clip_point_utf16(range.start, Bias::Left);
+                range.end = snapshot.clip_point_utf16(range.end, Bias::Left);
+
                 // Combine any LSP edits that are adjacent.
                 //
                 // Also, combine LSP edits that are separated from each other by only
@@ -5789,12 +5806,6 @@ impl Project {
                     range.end = next_range.end;
                     new_text.push_str(&next_text);
                     lsp_edits.next();
-                }
-
-                if snapshot.clip_point_utf16(range.start, Bias::Left) != range.start
-                    || snapshot.clip_point_utf16(range.end, Bias::Left) != range.end
-                {
-                    return Err(anyhow!("invalid edits received from language server"));
                 }
 
                 // For multiline edits, perform a diff of the old and new text so that
@@ -6144,12 +6155,12 @@ impl From<lsp::DeleteFileOptions> for fs::RemoveOptions {
 
 fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {
     proto::Symbol {
-        source_worktree_id: symbol.source_worktree_id.to_proto(),
-        worktree_id: symbol.worktree_id.to_proto(),
         language_server_name: symbol.language_server_name.0.to_string(),
+        source_worktree_id: symbol.source_worktree_id.to_proto(),
+        worktree_id: symbol.path.worktree_id.to_proto(),
+        path: symbol.path.path.to_string_lossy().to_string(),
         name: symbol.name.clone(),
         kind: unsafe { mem::transmute(symbol.kind) },
-        path: symbol.path.to_string_lossy().to_string(),
         start: Some(proto::Point {
             row: symbol.range.start.row,
             column: symbol.range.start.column,

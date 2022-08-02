@@ -169,7 +169,7 @@ async fn test_managing_language_servers(
     });
 
     // Edit a buffer. The changes are reported to the language server.
-    rust_buffer.update(cx, |buffer, cx| buffer.edit([(16..16, "2")], cx));
+    rust_buffer.update(cx, |buffer, cx| buffer.edit([(16..16, "2")], None, cx));
     assert_eq!(
         fake_rust_server
             .receive_notification::<lsp::notification::DidChangeTextDocument>()
@@ -226,8 +226,10 @@ async fn test_managing_language_servers(
     });
 
     // Changes are reported only to servers matching the buffer's language.
-    toml_buffer.update(cx, |buffer, cx| buffer.edit([(5..5, "23")], cx));
-    rust_buffer2.update(cx, |buffer, cx| buffer.edit([(0..0, "let x = 1;")], cx));
+    toml_buffer.update(cx, |buffer, cx| buffer.edit([(5..5, "23")], None, cx));
+    rust_buffer2.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "let x = 1;")], None, cx)
+    });
     assert_eq!(
         fake_rust_server
             .receive_notification::<lsp::notification::DidChangeTextDocument>()
@@ -348,7 +350,7 @@ async fn test_managing_language_servers(
     });
 
     // The renamed file's version resets after changing language server.
-    rust_buffer2.update(cx, |buffer, cx| buffer.edit([(0..0, "// ")], cx));
+    rust_buffer2.update(cx, |buffer, cx| buffer.edit([(0..0, "// ")], None, cx));
     assert_eq!(
         fake_json_server
             .receive_notification::<lsp::notification::DidChangeTextDocument>()
@@ -972,7 +974,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
         .await;
 
     // Edit the buffer, moving the content down
-    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "\n\n")], cx));
+    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "\n\n")], None, cx));
     let change_notification_1 = fake_server
         .receive_notification::<lsp::notification::DidChangeTextDocument>()
         .await;
@@ -1137,9 +1139,13 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     // Keep editing the buffer and ensure disk-based diagnostics get translated according to the
     // changes since the last save.
     buffer.update(cx, |buffer, cx| {
-        buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "    ")], cx);
-        buffer.edit([(Point::new(2, 8)..Point::new(2, 10), "(x: usize)")], cx);
-        buffer.edit([(Point::new(3, 10)..Point::new(3, 10), "xxx")], cx);
+        buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "    ")], None, cx);
+        buffer.edit(
+            [(Point::new(2, 8)..Point::new(2, 10), "(x: usize)")],
+            None,
+            cx,
+        );
+        buffer.edit([(Point::new(3, 10)..Point::new(3, 10), "xxx")], None, cx);
     });
     let change_notification_2 = fake_server
         .receive_notification::<lsp::notification::DidChangeTextDocument>()
@@ -1330,6 +1336,7 @@ async fn test_edits_from_lsp_with_past_version(cx: &mut gpui::TestAppContext) {
                 Point::new(0, 0)..Point::new(0, 0),
                 "// above first function\n",
             )],
+            None,
             cx,
         );
         buffer.edit(
@@ -1337,6 +1344,7 @@ async fn test_edits_from_lsp_with_past_version(cx: &mut gpui::TestAppContext) {
                 Point::new(2, 0)..Point::new(2, 0),
                 "    // inside first function\n",
             )],
+            None,
             cx,
         );
         buffer.edit(
@@ -1344,6 +1352,7 @@ async fn test_edits_from_lsp_with_past_version(cx: &mut gpui::TestAppContext) {
                 Point::new(6, 4)..Point::new(6, 4),
                 "// inside second function ",
             )],
+            None,
             cx,
         );
 
@@ -1405,7 +1414,7 @@ async fn test_edits_from_lsp_with_past_version(cx: &mut gpui::TestAppContext) {
 
     buffer.update(cx, |buffer, cx| {
         for (range, new_text) in edits {
-            buffer.edit([(range, new_text)], cx);
+            buffer.edit([(range, new_text)], None, cx);
         }
         assert_eq!(
             buffer.text(),
@@ -1517,7 +1526,7 @@ async fn test_edits_from_lsp_with_edits_on_adjacent_lines(cx: &mut gpui::TestApp
         );
 
         for (range, new_text) in edits {
-            buffer.edit([(range, new_text)], cx);
+            buffer.edit([(range, new_text)], None, cx);
         }
         assert_eq!(
             buffer.text(),
@@ -1565,7 +1574,7 @@ async fn test_invalid_edits_from_lsp(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     // Simulate the language server sending us edits in a non-ordered fashion,
-    // with ranges sometimes being inverted.
+    // with ranges sometimes being inverted or pointing to invalid locations.
     let edits = project
         .update(cx, |project, cx| {
             project.edits_from_lsp(
@@ -1580,7 +1589,7 @@ async fn test_invalid_edits_from_lsp(cx: &mut gpui::TestAppContext) {
                         new_text: "a::{b, c}".into(),
                     },
                     lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(7, 0)),
+                        range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(99, 0)),
                         new_text: "".into(),
                     },
                     lsp::TextEdit {
@@ -1620,7 +1629,7 @@ async fn test_invalid_edits_from_lsp(cx: &mut gpui::TestAppContext) {
         );
 
         for (range, new_text) in edits {
-            buffer.edit([(range, new_text)], cx);
+            buffer.edit([(range, new_text)], None, cx);
         }
         assert_eq!(
             buffer.text(),
@@ -2025,7 +2034,7 @@ async fn test_save_file(cx: &mut gpui::TestAppContext) {
     buffer
         .update(cx, |buffer, cx| {
             assert_eq!(buffer.text(), "the old contents");
-            buffer.edit([(0..0, "a line of text.\n".repeat(10 * 1024))], cx);
+            buffer.edit([(0..0, "a line of text.\n".repeat(10 * 1024))], None, cx);
             buffer.save(cx)
         })
         .await
@@ -2053,7 +2062,7 @@ async fn test_save_in_single_file_worktree(cx: &mut gpui::TestAppContext) {
         .unwrap();
     buffer
         .update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "a line of text.\n".repeat(10 * 1024))], cx);
+            buffer.edit([(0..0, "a line of text.\n".repeat(10 * 1024))], None, cx);
             buffer.save(cx)
         })
         .await
@@ -2073,7 +2082,7 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
         project.create_buffer("", None, cx).unwrap()
     });
     buffer.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, "abc")], cx);
+        buffer.edit([(0..0, "abc")], None, cx);
         assert!(buffer.is_dirty());
         assert!(!buffer.has_conflict());
     });
@@ -2329,7 +2338,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         assert!(!buffer.is_dirty());
         assert!(events.borrow().is_empty());
 
-        buffer.edit([(1..2, "")], cx);
+        buffer.edit([(1..2, "")], None, cx);
     });
 
     // after the first edit, the buffer is dirty, and emits a dirtied event.
@@ -2356,8 +2365,8 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         assert_eq!(*events.borrow(), &[language::Event::Saved]);
         events.borrow_mut().clear();
 
-        buffer.edit([(1..1, "B")], cx);
-        buffer.edit([(2..2, "D")], cx);
+        buffer.edit([(1..1, "B")], None, cx);
+        buffer.edit([(2..2, "D")], None, cx);
     });
 
     // after editing again, the buffer is dirty, and emits another dirty event.
@@ -2376,7 +2385,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
 
         // After restoring the buffer to its previously-saved state,
         // the buffer is not considered dirty anymore.
-        buffer.edit([(1..3, "")], cx);
+        buffer.edit([(1..3, "")], None, cx);
         assert!(buffer.text() == "ac");
         assert!(!buffer.is_dirty());
     });
@@ -2427,7 +2436,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     });
 
     buffer3.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, "x")], cx);
+        buffer.edit([(0..0, "x")], None, cx);
     });
     events.borrow_mut().clear();
     fs.remove_file("/dir/file3".as_ref(), Default::default())
@@ -2495,7 +2504,7 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
 
     // Modify the buffer
     buffer.update(cx, |buffer, cx| {
-        buffer.edit([(0..0, " ")], cx);
+        buffer.edit([(0..0, " ")], None, cx);
         assert!(buffer.is_dirty());
         assert!(!buffer.has_conflict());
     });
@@ -2986,7 +2995,7 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
         .unwrap();
     buffer_4.update(cx, |buffer, cx| {
         let text = "two::TWO";
-        buffer.edit([(20..28, text), (31..43, text)], cx);
+        buffer.edit([(20..28, text), (31..43, text)], None, cx);
     });
 
     assert_eq!(

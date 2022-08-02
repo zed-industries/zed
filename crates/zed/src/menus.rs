@@ -275,6 +275,10 @@ pub fn menus() -> Vec<Menu<'static>> {
                     action: Box::new(editor::GoToDefinition),
                 },
                 MenuItem::Action {
+                    name: "Go to Type Definition",
+                    action: Box::new(editor::GoToTypeDefinition),
+                },
+                MenuItem::Action {
                     name: "Go to References",
                     action: Box::new(editor::FindAllReferences),
                 },

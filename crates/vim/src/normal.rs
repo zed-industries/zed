@@ -13,7 +13,7 @@ use change::init as change_init;
 use collections::HashSet;
 use editor::{Autoscroll, Bias, ClipboardSelection, DisplayPoint};
 use gpui::{actions, MutableAppContext, ViewContext};
-use language::{Point, SelectionGoal};
+use language::{AutoindentMode, Point, SelectionGoal};
 use workspace::Workspace;
 
 use self::{change::change_over, delete::delete_over, yank::yank_over};
@@ -278,7 +278,7 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
                                 }
                             }
                             drop(snapshot);
-                            buffer.edit_with_autoindent(edits, cx);
+                            buffer.edit(edits, Some(AutoindentMode::EachLine), cx);
                         });
 
                         editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
@@ -427,7 +427,7 @@ mod test {
     #[gpui::test]
     async fn test_jump_to_line_boundaries(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["shift-$"]);
+        let mut cx = cx.binding(["$"]);
         cx.assert("T|est test", "Test tes|t");
         cx.assert("Test tes|t", "Test tes|t");
         cx.assert(
@@ -471,7 +471,7 @@ mod test {
     #[gpui::test]
     async fn test_jump_to_end(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["shift-G"]);
+        let mut cx = cx.binding(["shift-g"]);
 
         cx.assert(
             indoc! {"
@@ -561,7 +561,7 @@ mod test {
         );
 
         for cursor_offset in cursor_offsets {
-            cx.simulate_keystroke("shift-W");
+            cx.simulate_keystroke("shift-w");
             cx.assert_editor_selections(vec![Selection::from_offset(cursor_offset)]);
         }
     }
@@ -607,7 +607,7 @@ mod test {
             Mode::Normal,
         );
         for cursor_offset in cursor_offsets {
-            cx.simulate_keystroke("shift-E");
+            cx.simulate_keystroke("shift-e");
             cx.assert_editor_selections(vec![Selection::from_offset(cursor_offset)]);
         }
     }
@@ -653,7 +653,7 @@ mod test {
             Mode::Normal,
         );
         for cursor_offset in cursor_offsets.into_iter().rev() {
-            cx.simulate_keystroke("shift-B");
+            cx.simulate_keystroke("shift-b");
             cx.assert_editor_selections(vec![Selection::from_offset(cursor_offset)]);
         }
     }
@@ -740,7 +740,7 @@ mod test {
     #[gpui::test]
     async fn test_insert_end_of_line(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["shift-A"]).mode_after(Mode::Insert);
+        let mut cx = cx.binding(["shift-a"]).mode_after(Mode::Insert);
         cx.assert("The q|uick", "The quick|");
         cx.assert("The q|uick ", "The quick |");
         cx.assert("|", "|");
@@ -765,7 +765,7 @@ mod test {
     #[gpui::test]
     async fn test_jump_to_first_non_whitespace(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["shift-^"]);
+        let mut cx = cx.binding(["^"]);
         cx.assert("The q|uick", "|The quick");
         cx.assert(" The q|uick", " |The quick");
         cx.assert("|", "|");
@@ -792,7 +792,7 @@ mod test {
     #[gpui::test]
     async fn test_insert_first_non_whitespace(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["shift-I"]).mode_after(Mode::Insert);
+        let mut cx = cx.binding(["shift-i"]).mode_after(Mode::Insert);
         cx.assert("The q|uick", "|The quick");
         cx.assert(" The q|uick", " |The quick");
         cx.assert("|", "|");
@@ -817,7 +817,7 @@ mod test {
     #[gpui::test]
     async fn test_delete_to_end_of_line(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["shift-D"]);
+        let mut cx = cx.binding(["shift-d"]);
         cx.assert(
             indoc! {"
                 The q|uick
@@ -858,7 +858,7 @@ mod test {
     #[gpui::test]
     async fn test_delete_left(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["shift-X"]);
+        let mut cx = cx.binding(["shift-x"]);
         cx.assert("Te|st", "T|st");
         cx.assert("T|est", "|est");
         cx.assert("|Test", "|Test");
@@ -956,7 +956,7 @@ mod test {
     #[gpui::test]
     async fn test_insert_line_above(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["shift-O"]).mode_after(Mode::Insert);
+        let mut cx = cx.binding(["shift-o"]).mode_after(Mode::Insert);
 
         cx.assert(
             "|",

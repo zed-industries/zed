@@ -2,8 +2,8 @@ use context_menu::ContextMenuItem;
 use gpui::{geometry::vector::Vector2F, impl_internal_actions, MutableAppContext, ViewContext};
 
 use crate::{
-    DisplayPoint, Editor, EditorMode, Event, FindAllReferences, GoToDefinition, Rename, SelectMode,
-    ToggleCodeActions,
+    DisplayPoint, Editor, EditorMode, Event, FindAllReferences, GoToDefinition, GoToTypeDefinition,
+    Rename, SelectMode, ToggleCodeActions,
 };
 
 #[derive(Clone, PartialEq)]
@@ -50,6 +50,7 @@ pub fn deploy_context_menu(
             vec![
                 ContextMenuItem::item("Rename Symbol", Rename),
                 ContextMenuItem::item("Go To Definition", GoToDefinition),
+                ContextMenuItem::item("Go To Type Definition", GoToTypeDefinition),
                 ContextMenuItem::item("Find All References", FindAllReferences),
                 ContextMenuItem::item(
                     "Code Actions",
