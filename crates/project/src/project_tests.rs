@@ -2498,7 +2498,7 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
             .collect::<Vec<_>>();
         assert_eq!(
             anchor_positions,
-            [Point::new(1, 1), Point::new(3, 1), Point::new(4, 0)]
+            [Point::new(1, 1), Point::new(3, 1), Point::new(3, 5)]
         );
     });
 

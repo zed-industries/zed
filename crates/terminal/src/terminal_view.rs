@@ -60,7 +60,14 @@ impl Entity for ErrorView {
 impl TerminalView {
     ///Create a new Terminal in the current working directory or the user's home directory
     pub fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
-        let working_directory = get_working_directory(workspace, cx);
+        let strategy = cx
+            .global::<Settings>()
+            .terminal_overrides
+            .working_directory
+            .clone()
+            .unwrap_or(WorkingDirectory::CurrentProjectDirectory);
+
+        let working_directory = get_working_directory(workspace, cx, strategy);
         let view = cx.add_view(|cx| TerminalView::new(working_directory, false, cx));
         workspace.add_item(Box::new(view), cx);
     }
@@ -306,15 +313,14 @@ impl Item for TerminalView {
 }
 
 ///Get's the working directory for the given workspace, respecting the user's settings.
-pub fn get_working_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
-    let wd_setting = cx
-        .global::<Settings>()
-        .terminal_overrides
-        .working_directory
-        .clone()
-        .unwrap_or(WorkingDirectory::CurrentProjectDirectory);
-    let res = match wd_setting {
-        WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx),
+pub fn get_working_directory(
+    workspace: &Workspace,
+    cx: &AppContext,
+    strategy: WorkingDirectory,
+) -> Option<PathBuf> {
+    let res = match strategy {
+        WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx)
+            .or_else(|| first_project_directory(workspace, cx)),
         WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
         WorkingDirectory::AlwaysHome => None,
         WorkingDirectory::Always { directory } => {
@@ -374,7 +380,7 @@ mod tests {
     #[gpui::test]
     async fn no_worktree(cx: &mut TestAppContext) {
         //Setup variables
-        let mut cx = TerminalTestContext::new(cx, true);
+        let mut cx = TerminalTestContext::new(cx);
         let (project, workspace) = cx.blank_workspace().await;
         //Test
         cx.cx.read(|cx| {
@@ -397,7 +403,7 @@ mod tests {
     async fn no_active_entry_worktree_is_file(cx: &mut TestAppContext) {
         //Setup variables
 
-        let mut cx = TerminalTestContext::new(cx, true);
+        let mut cx = TerminalTestContext::new(cx);
         let (project, workspace) = cx.blank_workspace().await;
         cx.create_file_wt(project.clone(), "/root.txt").await;
 
@@ -420,7 +426,7 @@ mod tests {
     #[gpui::test]
     async fn no_active_entry_worktree_is_dir(cx: &mut TestAppContext) {
         //Setup variables
-        let mut cx = TerminalTestContext::new(cx, true);
+        let mut cx = TerminalTestContext::new(cx);
         let (project, workspace) = cx.blank_workspace().await;
         let (_wt, _entry) = cx.create_folder_wt(project.clone(), "/root/").await;
 
@@ -443,7 +449,7 @@ mod tests {
     #[gpui::test]
     async fn active_entry_worktree_is_file(cx: &mut TestAppContext) {
         //Setup variables
-        let mut cx = TerminalTestContext::new(cx, true);
+        let mut cx = TerminalTestContext::new(cx);
         let (project, workspace) = cx.blank_workspace().await;
         let (_wt, _entry) = cx.create_folder_wt(project.clone(), "/root1/").await;
         let (wt2, entry2) = cx.create_file_wt(project.clone(), "/root2.txt").await;
@@ -467,7 +473,7 @@ mod tests {
     #[gpui::test]
     async fn active_entry_worktree_is_dir(cx: &mut TestAppContext) {
         //Setup variables
-        let mut cx = TerminalTestContext::new(cx, true);
+        let mut cx = TerminalTestContext::new(cx);
         let (project, workspace) = cx.blank_workspace().await;
         let (_wt, _entry) = cx.create_folder_wt(project.clone(), "/root1/").await;
         let (wt2, entry2) = cx.create_folder_wt(project.clone(), "/root2/").await;

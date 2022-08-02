@@ -4,11 +4,6 @@ pub mod mappings;
 pub mod modal;
 pub mod terminal_view;
 
-#[cfg(test)]
-use alacritty_terminal::term::cell::Cell;
-#[cfg(test)]
-use alacritty_terminal::Grid;
-
 use alacritty_terminal::{
     ansi::{ClearMode, Handler},
     config::{Config, Program, PtyConfig, Scrolling},
@@ -629,11 +624,6 @@ impl Terminal {
                 side,
             ))));
     }
-
-    #[cfg(test)]
-    fn grid(&self) -> Grid<Cell> {
-        self.term.lock().grid().clone()
-    }
 }
 
 impl Drop for Terminal {
@@ -649,20 +639,6 @@ impl Entity for Terminal {
 #[cfg(test)]
 mod tests {
     pub mod terminal_test_context;
-
-    use gpui::TestAppContext;
-
-    use crate::tests::terminal_test_context::TerminalTestContext;
-
-    ///Basic integration test, can we get the terminal to show up, execute a command,
-    //and produce noticable output?
-    #[gpui::test(retries = 5)]
-    async fn test_terminal(cx: &mut TestAppContext) {
-        let mut cx = TerminalTestContext::new(cx, true);
-
-        cx.execute_and_wait("expr 3 + 4", |content, _cx| content.contains("7"))
-            .await;
-    }
 }
 
 //TODO Move this around and clean up the code
@@ -741,29 +717,5 @@ mod alacritty_unix {
     #[cfg(not(target_os = "macos"))]
     pub fn default_shell(pw: &Passwd<'_>) -> Program {
         Program::Just(env::var("SHELL").unwrap_or_else(|_| pw.shell.to_owned()))
-    }
-
-    //Active entry with a work tree, worktree is a file, integration test with the strategy interface
-    #[gpui::test]
-    async fn active_entry_worktree_is_file_int(cx: &mut TestAppContext) {
-        //Setup variables
-        let mut cx = TerminalTestContext::new(cx, true);
-        let (project, workspace) = cx.blank_workspace().await;
-        let (_wt, _entry) = cx.create_folder_wt(project.clone(), "/root1/").await;
-        let (wt2, entry2) = cx.create_file_wt(project.clone(), "/root2.txt").await;
-        cx.insert_active_entry_for(wt2, entry2, project.clone());
-
-        //Test
-        cx.cx.update(|cx| {
-            let workspace = workspace.read(cx);
-            let active_entry = project.read(cx).active_entry();
-
-            assert!(active_entry.is_some());
-
-            let res =
-                get_working_directory(workspace, cx, WorkingDirectory::CurrentProjectDirectory);
-            let first = first_project_directory(workspace, cx);
-            assert_eq!(res, first);
-        });
     }
 }
