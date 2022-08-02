@@ -365,12 +365,12 @@ impl TerminalBuilder {
                     match this.upgrade(&cx) {
                         Some(this) => {
                             this.update(&mut cx, |this, cx| {
-                                //Process the event
                                 this.process_event(&event, cx);
                             });
                         }
                         None => {}
                     }
+
                     future::ready(())
                 })
                 .await;
