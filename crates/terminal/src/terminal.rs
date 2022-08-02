@@ -389,23 +389,13 @@ mod tests {
 
     mod terminal_test_context;
 
-    ///Basic integration test, can we get the terminal to show up, execute a command,
-    //and produce noticable output?
-    #[gpui::test(retries = 5)]
-    async fn test_terminal(cx: &mut TestAppContext) {
-        let mut cx = TerminalTestContext::new(cx, true);
-
-        cx.execute_and_wait("expr 3 + 4", |content, _cx| content.contains("7"))
-            .await;
-    }
-
     ///Working directory calculation tests
 
     ///No Worktrees in project -> home_dir()
     #[gpui::test]
     async fn no_worktree(cx: &mut TestAppContext) {
         //Setup variables
-        let mut cx = TerminalTestContext::new(cx, true);
+        let mut cx = TerminalTestContext::new(cx);
         let (project, workspace) = cx.blank_workspace().await;
         //Test
         cx.cx.read(|cx| {
@@ -428,7 +418,7 @@ mod tests {
     async fn no_active_entry_worktree_is_file(cx: &mut TestAppContext) {
         //Setup variables
 
-        let mut cx = TerminalTestContext::new(cx, true);
+        let mut cx = TerminalTestContext::new(cx);
         let (project, workspace) = cx.blank_workspace().await;
         cx.create_file_wt(project.clone(), "/root.txt").await;
 
@@ -451,7 +441,7 @@ mod tests {
     #[gpui::test]
     async fn no_active_entry_worktree_is_dir(cx: &mut TestAppContext) {
         //Setup variables
-        let mut cx = TerminalTestContext::new(cx, true);
+        let mut cx = TerminalTestContext::new(cx);
         let (project, workspace) = cx.blank_workspace().await;
         let (_wt, _entry) = cx.create_folder_wt(project.clone(), "/root/").await;
 
@@ -474,7 +464,7 @@ mod tests {
     #[gpui::test]
     async fn active_entry_worktree_is_file(cx: &mut TestAppContext) {
         //Setup variables
-        let mut cx = TerminalTestContext::new(cx, true);
+        let mut cx = TerminalTestContext::new(cx);
         let (project, workspace) = cx.blank_workspace().await;
         let (_wt, _entry) = cx.create_folder_wt(project.clone(), "/root1/").await;
         let (wt2, entry2) = cx.create_file_wt(project.clone(), "/root2.txt").await;
@@ -498,7 +488,7 @@ mod tests {
     #[gpui::test]
     async fn active_entry_worktree_is_dir(cx: &mut TestAppContext) {
         //Setup variables
-        let mut cx = TerminalTestContext::new(cx, true);
+        let mut cx = TerminalTestContext::new(cx);
         let (project, workspace) = cx.blank_workspace().await;
         let (_wt, _entry) = cx.create_folder_wt(project.clone(), "/root1/").await;
         let (wt2, entry2) = cx.create_folder_wt(project.clone(), "/root2/").await;
@@ -522,7 +512,7 @@ mod tests {
     #[gpui::test]
     async fn active_entry_worktree_is_file_int(cx: &mut TestAppContext) {
         //Setup variables
-        let mut cx = TerminalTestContext::new(cx, true);
+        let mut cx = TerminalTestContext::new(cx);
         let (project, workspace) = cx.blank_workspace().await;
         let (_wt, _entry) = cx.create_folder_wt(project.clone(), "/root1/").await;
         let (wt2, entry2) = cx.create_file_wt(project.clone(), "/root2.txt").await;
