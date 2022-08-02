@@ -2925,8 +2925,8 @@ impl Editor {
         for selection in &mut selections {
             if selection.start.row != prev_edited_row {
                 row_delta = 0;
-                prev_edited_row = selection.end.row;
             }
+            prev_edited_row = selection.end.row;
 
             if selection.is_empty() {
                 let cursor = selection.head();
@@ -2998,10 +2998,10 @@ impl Editor {
             if selection.start.row != prev_edited_row {
                 row_delta = 0;
             }
+            prev_edited_row = selection.end.row;
 
             row_delta =
                 Self::indent_selection(buffer, &snapshot, selection, &mut edits, row_delta, cx);
-            prev_edited_row = selection.end.row;
         }
 
         self.transact(cx, |this, cx| {
@@ -3075,7 +3075,11 @@ impl Editor {
             }
         }
 
-        delta_for_end_row
+        if selection.start.row == selection.end.row {
+            delta_for_start_row + delta_for_end_row
+        } else {
+            delta_for_end_row
+        }
     }
 
     pub fn outdent(&mut self, _: &Outdent, cx: &mut ViewContext<Self>) {
@@ -8000,6 +8004,16 @@ mod tests {
               |ab |c
               |🏀  |🏀  |efg
            d  |
+        "});
+
+        cx.set_state(indoc! {"
+            a
+            [🏀}🏀[🏀}🏀[🏀}
+        "});
+        cx.update_editor(|e, cx| e.tab(&Tab, cx));
+        cx.assert_editor_state(indoc! {"
+            a
+               [🏀}🏀[🏀}🏀[🏀}
         "});
     }
 
