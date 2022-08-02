@@ -1270,13 +1270,6 @@ mod tests {
             .detach();
         });
 
-        let request = server.receive::<proto::RegisterProject>().await.unwrap();
-        server
-            .respond(
-                request.receipt(),
-                proto::RegisterProjectResponse { project_id: 200 },
-            )
-            .await;
         let get_users_request = server.receive::<proto::GetUsers>().await.unwrap();
         server
             .respond(
@@ -1304,6 +1297,14 @@ mod tests {
                     }])
                     .collect(),
                 },
+            )
+            .await;
+
+        let request = server.receive::<proto::RegisterProject>().await.unwrap();
+        server
+            .respond(
+                request.receipt(),
+                proto::RegisterProjectResponse { project_id: 200 },
             )
             .await;
 
