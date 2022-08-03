@@ -19,10 +19,7 @@ use alacritty_terminal::{
 };
 use anyhow::{bail, Result};
 
-use futures::{
-    channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
-    future,
-};
+use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 
 use modal::deploy_modal;
 use settings::{Settings, Shell};
@@ -350,25 +347,32 @@ impl TerminalBuilder {
         })
     }
 
-    pub fn subscribe(self, cx: &mut ModelContext<Terminal>) -> Terminal {
+    pub fn subscribe(mut self, cx: &mut ModelContext<Terminal>) -> Terminal {
         //Event loop
         cx.spawn_weak(|this, mut cx| async move {
             use futures::StreamExt;
 
-            self.events_rx
-                .for_each(|event| {
-                    match this.upgrade(&cx) {
-                        Some(this) => {
-                            this.update(&mut cx, |this, cx| {
-                                this.process_event(&event, cx);
-                            });
-                        }
-                        None => {}
+            let mut events = Vec::new();
+            while let Some(event) = self.events_rx.next().await {
+                events.push(event);
+                while let Ok(Some(event)) = self.events_rx.try_next() {
+                    events.push(event);
+                    if events.len() > 1000 {
+                        break;
                     }
+                }
 
-                    future::ready(())
-                })
-                .await;
+                let this = this.upgrade(&cx)?;
+                this.update(&mut cx, |this, cx| {
+                    for event in events.drain(..) {
+                        this.process_event(&event, cx);
+                    }
+                });
+
+                smol::future::yield_now().await;
+            }
+
+            Some(())
         })
         .detach();
 
