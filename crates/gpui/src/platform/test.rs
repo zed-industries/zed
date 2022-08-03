@@ -135,6 +135,12 @@ impl super::Platform for Platform {
         None
     }
 
+    fn hide(&self) {}
+
+    fn hide_other_apps(&self) {}
+
+    fn unhide_other_apps(&self) {}
+
     fn quit(&self) {}
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
@@ -278,6 +284,10 @@ impl super::Window for Window {
     }
 
     fn show_character_palette(&self) {}
+
+    fn minimize(&self) {}
+
+    fn zoom(&self) {}
 }
 
 pub fn platform() -> Platform {

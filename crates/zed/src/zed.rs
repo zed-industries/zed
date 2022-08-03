@@ -46,6 +46,11 @@ actions!(
     zed,
     [
         About,
+        Hide,
+        HideOthers,
+        ShowAll,
+        Minimize,
+        Zoom,
         Quit,
         DebugElements,
         OpenSettings,
@@ -64,6 +69,25 @@ const MIN_FONT_SIZE: f32 = 6.0;
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_action(about);
+    cx.add_global_action(|_: &Hide, cx: &mut gpui::MutableAppContext| {
+        cx.platform().hide();
+    });
+    cx.add_global_action(|_: &HideOthers, cx: &mut gpui::MutableAppContext| {
+        cx.platform().hide_other_apps();
+    });
+    cx.add_global_action(|_: &ShowAll, cx: &mut gpui::MutableAppContext| {
+        cx.platform().unhide_other_apps();
+    });
+    cx.add_action(
+        |_: &mut Workspace, _: &Minimize, cx: &mut ViewContext<Workspace>| {
+            cx.minimize_window();
+        },
+    );
+    cx.add_action(
+        |_: &mut Workspace, _: &Zoom, cx: &mut ViewContext<Workspace>| {
+            cx.zoom_window();
+        },
+    );
     cx.add_global_action(quit);
     cx.add_global_action(move |action: &OpenBrowser, cx| cx.platform().open_url(&action.url));
     cx.add_global_action(move |_: &IncreaseBufferFontSize, cx| {

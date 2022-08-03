@@ -456,6 +456,27 @@ impl platform::Platform for MacPlatform {
         self.fonts.clone()
     }
 
+    fn hide(&self) {
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            let _: () = msg_send![app, hide: nil];
+        }
+    }
+
+    fn hide_other_apps(&self) {
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            let _: () = msg_send![app, hideOtherApplications: nil];
+        }
+    }
+
+    fn unhide_other_apps(&self) {
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            let _: () = msg_send![app, unhideAllApplications: nil];
+        }
+    }
+
     fn quit(&self) {
         // Quitting the app causes us to close windows, which invokes `Window::on_close` callbacks
         // synchronously before this method terminates. If we call `Platform::quit` while holding a

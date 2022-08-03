@@ -46,6 +46,9 @@ pub trait Platform: Send + Sync {
         executor: Rc<executor::Foreground>,
     ) -> Box<dyn Window>;
     fn key_window_id(&self) -> Option<usize>;
+    fn hide(&self);
+    fn hide_other_apps(&self);
+    fn unhide_other_apps(&self);
     fn quit(&self);
 
     fn write_to_clipboard(&self, item: ClipboardItem);
@@ -117,6 +120,8 @@ pub trait Window: WindowContext {
     fn set_title(&mut self, title: &str);
     fn set_edited(&mut self, edited: bool);
     fn show_character_palette(&self);
+    fn minimize(&self);
+    fn zoom(&self);
 }
 
 pub trait WindowContext {
