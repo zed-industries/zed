@@ -16,6 +16,7 @@ impl TabMap {
         let snapshot = TabSnapshot {
             fold_snapshot: input,
             tab_size,
+            version: 0,
         };
         (Self(Mutex::new(snapshot.clone())), snapshot)
     }
@@ -27,17 +28,23 @@ impl TabMap {
         tab_size: NonZeroU32,
     ) -> (TabSnapshot, Vec<TabEdit>) {
         let mut old_snapshot = self.0.lock();
-        let new_snapshot = TabSnapshot {
+        let mut new_snapshot = TabSnapshot {
             fold_snapshot,
             tab_size,
+            version: old_snapshot.version,
         };
 
         if old_snapshot.tab_size != new_snapshot.tab_size {
+            new_snapshot.version += 1;
             let edits = vec![TabEdit {
                 old: TabPoint::zero()..old_snapshot.max_point(),
                 new: TabPoint::zero()..new_snapshot.max_point(),
             }];
             return (new_snapshot, edits);
+        }
+
+        if old_snapshot.fold_snapshot.version != new_snapshot.fold_snapshot.version {
+            new_snapshot.version += 1;
         }
 
         let old_max_offset = old_snapshot.fold_snapshot.len();
@@ -97,6 +104,7 @@ impl TabMap {
 pub struct TabSnapshot {
     pub fold_snapshot: FoldSnapshot,
     pub tab_size: NonZeroU32,
+    pub version: usize,
 }
 
 impl TabSnapshot {
@@ -166,10 +174,6 @@ impl TabSnapshot {
             longest_row: input_summary.longest_row,
             longest_row_chars: input_summary.longest_row_chars,
         }
-    }
-
-    pub fn version(&self) -> usize {
-        self.fold_snapshot.version
     }
 
     pub fn chunks<'a>(
