@@ -96,6 +96,7 @@ actions!(
         FollowNextCollaborator,
         ToggleLeftSidebar,
         ToggleRightSidebar,
+        NewTerminal,
     ]
 );
 

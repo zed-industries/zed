@@ -1,5 +1,5 @@
 use super::{ItemHandle, SplitDirection};
-use crate::{toolbar::Toolbar, Item, WeakItemHandle, Workspace};
+use crate::{toolbar::Toolbar, Item, NewFile, NewTerminal, WeakItemHandle, Workspace};
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use context_menu::{ContextMenu, ContextMenuItem};
@@ -65,8 +65,13 @@ pub struct DeploySplitMenu {
     position: Vector2F,
 }
 
+#[derive(Clone, PartialEq)]
+pub struct DeployNewMenu {
+    position: Vector2F,
+}
+
 impl_actions!(pane, [GoBack, GoForward, ActivateItem]);
-impl_internal_actions!(pane, [CloseItem, DeploySplitMenu]);
+impl_internal_actions!(pane, [CloseItem, DeploySplitMenu, DeployNewMenu]);
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
@@ -98,6 +103,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx));
     cx.add_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx));
     cx.add_action(Pane::deploy_split_menu);
+    cx.add_action(Pane::deploy_new_menu);
     cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
         Pane::reopen_closed_item(workspace, cx).detach();
     });
@@ -845,6 +851,19 @@ impl Pane {
         });
     }
 
+    fn deploy_new_menu(&mut self, action: &DeployNewMenu, cx: &mut ViewContext<Self>) {
+        self.split_menu.update(cx, |menu, cx| {
+            menu.show(
+                action.position,
+                vec![
+                    ContextMenuItem::item("New File", NewFile),
+                    ContextMenuItem::item("New Terminal", NewTerminal),
+                ],
+                cx,
+            );
+        });
+    }
+
     pub fn toolbar(&self) -> &ViewHandle<Toolbar> {
         &self.toolbar
     }
@@ -1083,9 +1102,39 @@ impl View for Pane {
                                 .with_child(self.render_tabs(cx).flex(1., true).named("tabs"));
 
                             if self.is_active {
-                                tab_row.add_child(
+                                tab_row.add_children([
                                     MouseEventHandler::new::<SplitIcon, _, _>(
                                         0,
+                                        cx,
+                                        |mouse_state, cx| {
+                                            let theme =
+                                                &cx.global::<Settings>().theme.workspace.tab_bar;
+                                            let style =
+                                                theme.pane_button.style_for(mouse_state, false);
+                                            Svg::new("icons/bolt_12.svg")
+                                                .with_color(style.color)
+                                                .constrained()
+                                                .with_width(style.icon_width)
+                                                .aligned()
+                                                .contained()
+                                                .with_style(style.container)
+                                                .constrained()
+                                                .with_width(style.button_width)
+                                                .with_height(style.button_width)
+                                                .aligned()
+                                                .boxed()
+                                        },
+                                    )
+                                    .with_cursor_style(CursorStyle::PointingHand)
+                                    .on_down(
+                                        MouseButton::Left,
+                                        |MouseButtonEvent { position, .. }, cx| {
+                                            cx.dispatch_action(DeployNewMenu { position });
+                                        },
+                                    )
+                                    .boxed(),
+                                    MouseEventHandler::new::<SplitIcon, _, _>(
+                                        1,
                                         cx,
                                         |mouse_state, cx| {
                                             let theme =
@@ -1114,7 +1163,7 @@ impl View for Pane {
                                         },
                                     )
                                     .boxed(),
-                                )
+                                ])
                             }
 
                             tab_row
