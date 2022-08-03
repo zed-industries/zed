@@ -5368,6 +5368,7 @@ dependencies = [
  "settings",
  "shellexpand",
  "smallvec",
+ "smol",
  "theme",
  "thiserror",
  "util",

@@ -8,7 +8,7 @@ use alacritty_terminal::{
     ansi::{ClearMode, Handler},
     config::{Config, Program, PtyConfig, Scrolling},
     event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
-    event_loop::{EventLoop, Msg, Notifier, READ_BUFFER_SIZE},
+    event_loop::{EventLoop, Msg, Notifier},
     grid::{Dimensions, Scroll},
     index::{Direction, Point},
     selection::{Selection, SelectionType},
@@ -21,7 +21,7 @@ use anyhow::{bail, Result};
 
 use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
-    future,
+    FutureExt,
 };
 
 use modal::deploy_modal;
@@ -53,8 +53,8 @@ const DEBUG_TERMINAL_WIDTH: f32 = 500.;
 const DEBUG_TERMINAL_HEIGHT: f32 = 30.; //This needs to be wide enough that the CI & a local dev's prompt can fill the whole space.
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
-const MAX_FRAME_RATE: f32 = 60.;
-const BACK_BUFFER_SIZE: usize = 5000;
+// const MAX_FRAME_RATE: f32 = 60.;
+// const BACK_BUFFER_SIZE: usize = 5000;
 
 ///Upward flowing events, for changing the title and such
 #[derive(Clone, Copy, Debug)]
@@ -276,8 +276,8 @@ impl TerminalBuilder {
         //TODO: Properly set the current locale,
         env.insert("LC_ALL".to_string(), "en_US.UTF-8".to_string());
 
-        let mut alac_scrolling = Scrolling::default();
-        alac_scrolling.set_history((BACK_BUFFER_SIZE * 2) as u32);
+        let alac_scrolling = Scrolling::default();
+        // alac_scrolling.set_history((BACK_BUFFER_SIZE * 2) as u32);
 
         let config = Config {
             pty_config: pty_config.clone(),
@@ -341,7 +341,7 @@ impl TerminalBuilder {
             default_title: shell_txt,
             last_mode: TermMode::NONE,
             cur_size: initial_size,
-            utilization: 0.,
+            // utilization: 0.,
         };
 
         Ok(TerminalBuilder {
@@ -350,48 +350,64 @@ impl TerminalBuilder {
         })
     }
 
-    pub fn subscribe(self, cx: &mut ModelContext<Terminal>) -> Terminal {
+    pub fn subscribe(mut self, cx: &mut ModelContext<Terminal>) -> Terminal {
         //Event loop
         cx.spawn_weak(|this, mut cx| async move {
             use futures::StreamExt;
 
-            self.events_rx
-                .for_each(|event| {
-                    match this.upgrade(&cx) {
-                        Some(this) => {
-                            this.update(&mut cx, |this, cx| {
-                                this.process_event(&event, cx);
-                            });
-                        }
-                        None => {}
+            while let Some(event) = self.events_rx.next().await {
+                let mut timer = cx.background().timer(Duration::from_millis(2)).fuse();
+                let mut events = vec![event];
+
+                loop {
+                    futures::select_biased! {
+                        _ = timer => break,
+                        event = self.events_rx.next() => {
+                            if let Some(event) = event {
+                                events.push(event);
+                                if events.len() > 100 {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        },
                     }
+                }
 
-                    future::ready(())
-                })
-                .await;
-        })
-        .detach();
+                this.upgrade(&cx)?.update(&mut cx, |this, cx| {
+                    for event in events {
+                        this.process_event(&event, cx);
+                    }
+                });
 
-        //Render loop
-        cx.spawn_weak(|this, mut cx| async move {
-            loop {
-                let utilization = match this.upgrade(&cx) {
-                    Some(this) => this.update(&mut cx, |this, cx| {
-                        cx.notify();
-                        this.utilization()
-                    }),
-                    None => break,
-                };
-
-                let utilization = (1. - utilization).clamp(0.1, 1.);
-                let delay = cx.background().timer(Duration::from_secs_f32(
-                    1.0 / (Terminal::default_fps() * utilization),
-                ));
-
-                delay.await;
+                smol::future::yield_now().await;
             }
+
+            Some(())
         })
         .detach();
+
+        // //Render loop
+        // cx.spawn_weak(|this, mut cx| async move {
+        //     loop {
+        //         let utilization = match this.upgrade(&cx) {
+        //             Some(this) => this.update(&mut cx, |this, cx| {
+        //                 cx.notify();
+        //                 this.utilization()
+        //             }),
+        //             None => break,
+        //         };
+
+        //         let utilization = (1. - utilization).clamp(0.1, 1.);
+        //         let delay = cx.background().timer(Duration::from_secs_f32(
+        //             1.0 / (Terminal::default_fps() * utilization),
+        //         ));
+
+        //         delay.await;
+        //     }
+        // })
+        // .detach();
 
         self.terminal
     }
@@ -406,17 +422,17 @@ pub struct Terminal {
     cur_size: TerminalSize,
     last_mode: TermMode,
     //Percentage, between 0 and 1
-    utilization: f32,
+    // utilization: f32,
 }
 
 impl Terminal {
-    fn default_fps() -> f32 {
-        MAX_FRAME_RATE
-    }
+    // fn default_fps() -> f32 {
+    //     MAX_FRAME_RATE
+    // }
 
-    fn utilization(&self) -> f32 {
-        self.utilization
-    }
+    // fn utilization(&self) -> f32 {
+    //     self.utilization
+    // }
 
     fn process_event(&mut self, event: &AlacTermEvent, cx: &mut ModelContext<Self>) {
         match event {
@@ -452,6 +468,7 @@ impl Terminal {
             }
             AlacTermEvent::Wakeup => {
                 cx.emit(Event::Wakeup);
+                cx.notify();
             }
             AlacTermEvent::ColorRequest(_, _) => {
                 self.events.push(InternalEvent::TermEvent(event.clone()))
@@ -570,8 +587,7 @@ impl Terminal {
             self.process_terminal_event(&e, &mut term, cx)
         }
 
-        self.utilization = Self::estimate_utilization(term.take_last_processed_bytes());
-
+        // self.utilization = Self::estimate_utilization(term.take_last_processed_bytes());
         self.last_mode = term.mode().clone();
 
         let content = term.renderable_content();
@@ -581,12 +597,12 @@ impl Terminal {
         f(content, cursor_text)
     }
 
-    fn estimate_utilization(last_processed: usize) -> f32 {
-        let buffer_utilization = (last_processed as f32 / (READ_BUFFER_SIZE as f32)).clamp(0., 1.);
+    // fn estimate_utilization(last_processed: usize) -> f32 {
+    //     let buffer_utilization = (last_processed as f32 / (READ_BUFFER_SIZE as f32)).clamp(0., 1.);
 
-        //Scale result to bias low, then high
-        buffer_utilization * buffer_utilization
-    }
+    //     //Scale result to bias low, then high
+    //     buffer_utilization * buffer_utilization
+    // }
 
     ///Scroll the terminal
     pub fn scroll(&mut self, scroll: Scroll) {

@@ -17,6 +17,7 @@ settings = { path = "../settings" }
 workspace = { path = "../workspace" }
 project = { path = "../project" }
 smallvec = { version = "1.6", features = ["union"] }
+smol = "1.2.5"
 mio-extras = "2.0.6"
 futures = "0.3"
 ordered-float = "2.1.1"
