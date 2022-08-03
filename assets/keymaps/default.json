@@ -124,6 +124,7 @@
         "context": "Editor && mode == full",
         "bindings": {
             "enter": "editor::Newline",
+            "cmd-enter": "editor::NewlineBelow",
             "cmd-f": [
                 "buffer_search::Deploy",
                 {
@@ -141,7 +142,8 @@
     {
         "context": "Editor && mode == auto_height",
         "bindings": {
-            "alt-enter": "editor::Newline"
+            "alt-enter": "editor::Newline",
+            "cmd-alt-enter": "editor::NewlineBelow"
         }
     },
     {

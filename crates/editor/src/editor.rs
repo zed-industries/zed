@@ -132,6 +132,7 @@ actions!(
         Backspace,
         Delete,
         Newline,
+        NewlineBelow,
         GoToDiagnostic,
         GoToPrevDiagnostic,
         Indent,
@@ -236,6 +237,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::select);
     cx.add_action(Editor::cancel);
     cx.add_action(Editor::newline);
+    cx.add_action(Editor::newline_below);
     cx.add_action(Editor::backspace);
     cx.add_action(Editor::delete);
     cx.add_action(Editor::tab);
@@ -1915,6 +1917,48 @@ impl Editor {
         });
     }
 
+    pub fn newline_below(&mut self, _: &NewlineBelow, cx: &mut ViewContext<Self>) {
+        let buffer = self.buffer.read(cx);
+        let snapshot = buffer.snapshot(cx);
+
+        let mut edits = Vec::new();
+        let mut rows = Vec::new();
+        let mut rows_inserted = 0;
+
+        for selection in self.selections.all_adjusted(cx) {
+            let cursor = selection.head();
+            let row = cursor.row;
+
+            let end_of_line = snapshot
+                .clip_point(Point::new(row, snapshot.line_len(row)), Bias::Left)
+                .to_point(&snapshot);
+
+            let newline = "\n".to_string();
+            edits.push((end_of_line..end_of_line, newline));
+
+            rows_inserted += 1;
+            rows.push(row + rows_inserted);
+        }
+
+        self.transact(cx, |editor, cx| {
+            editor.edit_with_autoindent(edits, cx);
+
+            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                let mut index = 0;
+                s.move_cursors_with(|map, _, _| {
+                    let row = rows[index];
+                    index += 1;
+
+                    let point = Point::new(row, 0);
+                    let boundary = map.next_line_boundary(point).1;
+                    let clipped = map.clip_point(boundary, Bias::Left);
+
+                    (clipped, SelectionGoal::None)
+                });
+            });
+        });
+    }
+
     pub fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
         let text: Arc<str> = text.into();
         self.transact(cx, |this, cx| {
@@ -2923,8 +2967,8 @@ impl Editor {
         let mut selections = self.selections.all_adjusted(cx);
         let buffer = self.buffer.read(cx);
         let snapshot = buffer.snapshot(cx);
-        let suggested_indents =
-            snapshot.suggested_indents(selections.iter().map(|s| s.head().row), cx);
+        let rows_iter = selections.iter().map(|s| s.head().row);
+        let suggested_indents = snapshot.suggested_indents(rows_iter, cx);
 
         let mut edits = Vec::new();
         let mut prev_edited_row = 0;
@@ -7984,6 +8028,55 @@ mod tests {
                 ],
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_newline_below(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update(|cx| {
+            cx.update_global::<Settings, _, _>(|settings, _| {
+                settings.editor_overrides.tab_size = Some(NonZeroU32::new(4).unwrap());
+            });
+        });
+
+        let language = Arc::new(
+            Language::new(
+                LanguageConfig::default(),
+                Some(tree_sitter_rust::language()),
+            )
+            .with_indents_query(r#"(_ "(" ")" @end) @indent"#)
+            .unwrap(),
+        );
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+        cx.set_state(indoc! {"
+            const a: |A = (
+                (|
+                    [const_function}(|),
+                    so{m]et[h}ing_|else,|
+                )|
+            |);|
+            "});
+        cx.update_editor(|e, cx| e.newline_below(&NewlineBelow, cx));
+        cx.assert_editor_state(indoc! {"
+            const a: A = (
+                |
+                (
+                    |
+                    const_function(),
+                    |
+                    |
+                    something_else,
+                    |
+                    |
+                    |
+                    |
+                )
+                |
+            );
+            |
+            |
+            "});
     }
 
     #[gpui::test]
