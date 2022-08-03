@@ -331,7 +331,6 @@ impl TerminalEl {
                 rects.push(cur_rect.take().unwrap());
             }
         }
-        dbg!(&rects);
         (cells, rects, highlight_ranges)
     }
 
@@ -372,7 +371,6 @@ impl TerminalEl {
         font_cache: &FontCache,
         modal: bool,
     ) -> RunStyle {
-        dbg!(indexed);
         let flags = indexed.cell.flags;
         let fg = convert_color(&fg, &style.colors, modal);
 
