@@ -356,32 +356,43 @@ impl TerminalBuilder {
             use futures::StreamExt;
 
             while let Some(event) = self.events_rx.next().await {
-                let mut timer = cx.background().timer(Duration::from_millis(2)).fuse();
-                let mut events = vec![event];
-
-                loop {
-                    futures::select_biased! {
-                        _ = timer => break,
-                        event = self.events_rx.next() => {
-                            if let Some(event) = event {
-                                events.push(event);
-                                if events.len() > 100 {
-                                    break;
-                                }
-                            } else {
-                                break;
-                            }
-                        },
-                    }
-                }
-
                 this.upgrade(&cx)?.update(&mut cx, |this, cx| {
-                    for event in events {
-                        this.process_event(&event, cx);
-                    }
+                    //Process the first event immediately for lowered latency
+                    this.process_event(&event, cx);
                 });
 
-                smol::future::yield_now().await;
+                'outer: loop {
+                    let mut events = vec![];
+                    let mut timer = cx.background().timer(Duration::from_millis(4)).fuse();
+
+                    loop {
+                        futures::select_biased! {
+                            _ = timer => break,
+                            event = self.events_rx.next() => {
+                                if let Some(event) = event {
+                                    events.push(event);
+                                    if events.len() > 100 {
+                                        break;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            },
+                        }
+                    }
+
+                    if events.len() == 0 {
+                        smol::future::yield_now().await;
+                        break 'outer;
+                    } else {
+                        this.upgrade(&cx)?.update(&mut cx, |this, cx| {
+                            for event in events {
+                                this.process_event(&event, cx);
+                            }
+                        });
+                        smol::future::yield_now().await;
+                    }
+                }
             }
 
             Some(())
