@@ -16,6 +16,7 @@ impl TabMap {
         let snapshot = TabSnapshot {
             fold_snapshot: input,
             tab_size,
+            version: 0,
         };
         (Self(Mutex::new(snapshot.clone())), snapshot)
     }
@@ -27,56 +28,70 @@ impl TabMap {
         tab_size: NonZeroU32,
     ) -> (TabSnapshot, Vec<TabEdit>) {
         let mut old_snapshot = self.0.lock();
-        let max_offset = old_snapshot.fold_snapshot.len();
-        let new_snapshot = TabSnapshot {
+        let mut new_snapshot = TabSnapshot {
             fold_snapshot,
             tab_size,
+            version: old_snapshot.version,
         };
 
+        if old_snapshot.fold_snapshot.version != new_snapshot.fold_snapshot.version {
+            new_snapshot.version += 1;
+        }
+
+        let old_max_offset = old_snapshot.fold_snapshot.len();
         let mut tab_edits = Vec::with_capacity(fold_edits.len());
-        for fold_edit in &mut fold_edits {
-            let mut delta = 0;
-            for chunk in
-                old_snapshot
-                    .fold_snapshot
-                    .chunks(fold_edit.old.end..max_offset, false, None)
-            {
-                let patterns: &[_] = &['\t', '\n'];
-                if let Some(ix) = chunk.text.find(patterns) {
-                    if &chunk.text[ix..ix + 1] == "\t" {
-                        fold_edit.old.end.0 += delta + ix + 1;
-                        fold_edit.new.end.0 += delta + ix + 1;
+
+        if old_snapshot.tab_size == new_snapshot.tab_size {
+            for fold_edit in &mut fold_edits {
+                let mut delta = 0;
+                for chunk in old_snapshot.fold_snapshot.chunks(
+                    fold_edit.old.end..old_max_offset,
+                    false,
+                    None,
+                ) {
+                    let patterns: &[_] = &['\t', '\n'];
+                    if let Some(ix) = chunk.text.find(patterns) {
+                        if &chunk.text[ix..ix + 1] == "\t" {
+                            fold_edit.old.end.0 += delta + ix + 1;
+                            fold_edit.new.end.0 += delta + ix + 1;
+                        }
+
+                        break;
                     }
 
-                    break;
+                    delta += chunk.text.len();
                 }
-
-                delta += chunk.text.len();
             }
-        }
 
-        let mut ix = 1;
-        while ix < fold_edits.len() {
-            let (prev_edits, next_edits) = fold_edits.split_at_mut(ix);
-            let prev_edit = prev_edits.last_mut().unwrap();
-            let edit = &next_edits[0];
-            if prev_edit.old.end >= edit.old.start {
-                prev_edit.old.end = edit.old.end;
-                prev_edit.new.end = edit.new.end;
-                fold_edits.remove(ix);
-            } else {
-                ix += 1;
+            let mut ix = 1;
+            while ix < fold_edits.len() {
+                let (prev_edits, next_edits) = fold_edits.split_at_mut(ix);
+                let prev_edit = prev_edits.last_mut().unwrap();
+                let edit = &next_edits[0];
+                if prev_edit.old.end >= edit.old.start {
+                    prev_edit.old.end = edit.old.end;
+                    prev_edit.new.end = edit.new.end;
+                    fold_edits.remove(ix);
+                } else {
+                    ix += 1;
+                }
             }
-        }
 
-        for fold_edit in fold_edits {
-            let old_start = fold_edit.old.start.to_point(&old_snapshot.fold_snapshot);
-            let old_end = fold_edit.old.end.to_point(&old_snapshot.fold_snapshot);
-            let new_start = fold_edit.new.start.to_point(&new_snapshot.fold_snapshot);
-            let new_end = fold_edit.new.end.to_point(&new_snapshot.fold_snapshot);
+            for fold_edit in fold_edits {
+                let old_start = fold_edit.old.start.to_point(&old_snapshot.fold_snapshot);
+                let old_end = fold_edit.old.end.to_point(&old_snapshot.fold_snapshot);
+                let new_start = fold_edit.new.start.to_point(&new_snapshot.fold_snapshot);
+                let new_end = fold_edit.new.end.to_point(&new_snapshot.fold_snapshot);
+                tab_edits.push(TabEdit {
+                    old: old_snapshot.to_tab_point(old_start)..old_snapshot.to_tab_point(old_end),
+                    new: new_snapshot.to_tab_point(new_start)..new_snapshot.to_tab_point(new_end),
+                });
+            }
+        } else {
+            new_snapshot.version += 1;
             tab_edits.push(TabEdit {
-                old: old_snapshot.to_tab_point(old_start)..old_snapshot.to_tab_point(old_end),
-                new: new_snapshot.to_tab_point(new_start)..new_snapshot.to_tab_point(new_end),
+                old: TabPoint::zero()..old_snapshot.max_point(),
+                new: TabPoint::zero()..new_snapshot.max_point(),
             });
         }
 
@@ -89,6 +104,7 @@ impl TabMap {
 pub struct TabSnapshot {
     pub fold_snapshot: FoldSnapshot,
     pub tab_size: NonZeroU32,
+    pub version: usize,
 }
 
 impl TabSnapshot {
@@ -158,10 +174,6 @@ impl TabSnapshot {
             longest_row: input_summary.longest_row,
             longest_row_chars: input_summary.longest_row_chars,
         }
-    }
-
-    pub fn version(&self) -> usize {
-        self.fold_snapshot.version
     }
 
     pub fn chunks<'a>(

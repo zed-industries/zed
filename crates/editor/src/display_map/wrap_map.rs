@@ -220,7 +220,7 @@ impl WrapMap {
         if !self.snapshot.interpolated {
             let mut to_remove_len = 0;
             for (tab_snapshot, _) in &self.pending_edits {
-                if tab_snapshot.version() <= self.snapshot.tab_snapshot.version() {
+                if tab_snapshot.version <= self.snapshot.tab_snapshot.version {
                     to_remove_len += 1;
                 } else {
                     break;
@@ -282,7 +282,7 @@ impl WrapMap {
         let was_interpolated = self.snapshot.interpolated;
         let mut to_remove_len = 0;
         for (tab_snapshot, edits) in &self.pending_edits {
-            if tab_snapshot.version() <= self.snapshot.tab_snapshot.version() {
+            if tab_snapshot.version <= self.snapshot.tab_snapshot.version {
                 to_remove_len += 1;
             } else {
                 let interpolated_edits = self.snapshot.interpolate(tab_snapshot.clone(), &edits);

@@ -589,7 +589,7 @@ pub mod tests {
             .unwrap_or(10);
 
         let font_cache = cx.font_cache().clone();
-        let tab_size = rng.gen_range(1..=4);
+        let mut tab_size = rng.gen_range(1..=4);
         let buffer_start_excerpt_header_height = rng.gen_range(1..=5);
         let excerpt_header_height = rng.gen_range(1..=5);
         let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
@@ -607,7 +607,11 @@ pub mod tests {
         log::info!("tab size: {}", tab_size);
         log::info!("wrap width: {:?}", wrap_width);
 
-        cx.update(|cx| cx.set_global(Settings::test(cx)));
+        cx.update(|cx| {
+            let mut settings = Settings::test(cx);
+            settings.editor_overrides.tab_size = NonZeroU32::new(tab_size);
+            cx.set_global(settings)
+        });
 
         let buffer = cx.update(|cx| {
             if rng.gen() {
@@ -653,7 +657,18 @@ pub mod tests {
                     log::info!("setting wrap width to {:?}", wrap_width);
                     map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
                 }
-                20..=44 => {
+                20..=29 => {
+                    let mut tab_sizes = vec![1, 2, 3, 4];
+                    tab_sizes.remove((tab_size - 1) as usize);
+                    tab_size = *tab_sizes.choose(&mut rng).unwrap();
+                    log::info!("setting tab size to {:?}", tab_size);
+                    cx.update(|cx| {
+                        let mut settings = Settings::test(cx);
+                        settings.editor_overrides.tab_size = NonZeroU32::new(tab_size);
+                        cx.set_global(settings)
+                    });
+                }
+                30..=44 => {
                     map.update(cx, |map, cx| {
                         if rng.gen() || blocks.is_empty() {
                             let buffer = map.snapshot(cx).buffer_snapshot;
