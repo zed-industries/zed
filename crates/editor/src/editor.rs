@@ -339,7 +339,7 @@ pub enum SelectPhase {
     },
     BeginColumnar {
         position: DisplayPoint,
-        overshoot: u32,
+        goal_column: u32,
     },
     Extend {
         position: DisplayPoint,
@@ -347,7 +347,7 @@ pub enum SelectPhase {
     },
     Update {
         position: DisplayPoint,
-        overshoot: u32,
+        goal_column: u32,
         scroll_position: Vector2F,
     },
     End,
@@ -1500,17 +1500,17 @@ impl Editor {
             } => self.begin_selection(*position, *add, *click_count, cx),
             SelectPhase::BeginColumnar {
                 position,
-                overshoot,
-            } => self.begin_columnar_selection(*position, *overshoot, cx),
+                goal_column,
+            } => self.begin_columnar_selection(*position, *goal_column, cx),
             SelectPhase::Extend {
                 position,
                 click_count,
             } => self.extend_selection(*position, *click_count, cx),
             SelectPhase::Update {
                 position,
-                overshoot,
+                goal_column,
                 scroll_position,
-            } => self.update_selection(*position, *overshoot, *scroll_position, cx),
+            } => self.update_selection(*position, *goal_column, *scroll_position, cx),
             SelectPhase::End => self.end_selection(cx),
         }
     }
@@ -1618,7 +1618,7 @@ impl Editor {
     fn begin_columnar_selection(
         &mut self,
         position: DisplayPoint,
-        overshoot: u32,
+        goal_column: u32,
         cx: &mut ViewContext<Self>,
     ) {
         if !self.focused {
@@ -1633,7 +1633,7 @@ impl Editor {
         self.select_columns(
             tail.to_display_point(&display_map),
             position,
-            overshoot,
+            goal_column,
             &display_map,
             cx,
         );
@@ -1642,7 +1642,7 @@ impl Editor {
     fn update_selection(
         &mut self,
         position: DisplayPoint,
-        overshoot: u32,
+        goal_column: u32,
         scroll_position: Vector2F,
         cx: &mut ViewContext<Self>,
     ) {
@@ -1650,7 +1650,7 @@ impl Editor {
 
         if let Some(tail) = self.columnar_selection_tail.as_ref() {
             let tail = tail.to_display_point(&display_map);
-            self.select_columns(tail, position, overshoot, &display_map, cx);
+            self.select_columns(tail, position, goal_column, &display_map, cx);
         } else if let Some(mut pending) = self.selections.pending_anchor().clone() {
             let buffer = self.buffer.read(cx).snapshot(cx);
             let head;
@@ -1751,14 +1751,14 @@ impl Editor {
         &mut self,
         tail: DisplayPoint,
         head: DisplayPoint,
-        overshoot: u32,
+        goal_column: u32,
         display_map: &DisplaySnapshot,
         cx: &mut ViewContext<Self>,
     ) {
         let start_row = cmp::min(tail.row(), head.row());
         let end_row = cmp::max(tail.row(), head.row());
-        let start_column = cmp::min(tail.column(), head.column() + overshoot);
-        let end_column = cmp::max(tail.column(), head.column() + overshoot);
+        let start_column = cmp::min(tail.column(), goal_column);
+        let end_column = cmp::max(tail.column(), goal_column);
         let reversed = start_column < tail.column();
 
         let selection_ranges = (start_row..=end_row)
@@ -2979,61 +2979,59 @@ impl Editor {
             }
             prev_edited_row = selection.end.row;
 
-            if selection.is_empty() {
-                let cursor = selection.head();
-                let mut did_auto_indent = false;
-                if let Some(suggested_indent) = suggested_indents.get(&cursor.row).copied() {
-                    let current_indent = snapshot.indent_size_for_line(cursor.row);
-                    // Don't account for `row_delta` as we only care if the cursor *started* in the leading whitespace
-                    if cursor.column < suggested_indent.len
-                        && cursor.column <= current_indent.len
-                        && current_indent.len <= suggested_indent.len
-                    {
-                        selection.start = Point::new(cursor.row, suggested_indent.len);
-                        selection.end = selection.start;
-                        if row_delta == 0 {
-                            edits.extend(Buffer::edit_for_indent_size_adjustment(
-                                cursor.row,
-                                current_indent,
-                                suggested_indent,
-                            ));
-                            row_delta = suggested_indent.len - current_indent.len;
-                        }
-                        did_auto_indent = true;
-                    }
-                }
-
-                if !did_auto_indent {
-                    let language_name = buffer.language_at(cursor, cx).map(|l| l.name());
-                    let settings = cx.global::<Settings>();
-                    let tab_size = if settings.hard_tabs(language_name.as_deref()) {
-                        IndentSize::tab()
-                    } else {
-                        let tab_size = settings.tab_size(language_name.as_deref()).get();
-                        let char_column = snapshot
-                            .text_for_range(Point::new(cursor.row, 0)..cursor)
-                            .flat_map(str::chars)
-                            .count()
-                            + row_delta as usize;
-                        let chars_to_next_tab_stop = tab_size - (char_column as u32 % tab_size);
-                        IndentSize::spaces(chars_to_next_tab_stop)
-                    };
-
-                    selection.start =
-                        Point::new(cursor.row, cursor.column + row_delta + tab_size.len);
-                    selection.end = selection.start;
-                    edits.push((cursor..cursor, tab_size.chars().collect::<String>()));
-                    row_delta += tab_size.len;
-                }
-            } else {
+            // If the selection is non-empty, then increase the indentation of the selected lines.
+            if !selection.is_empty() {
                 row_delta =
                     Self::indent_selection(buffer, &snapshot, selection, &mut edits, row_delta, cx);
+                continue;
             }
+
+            // If the selection is empty and the cursor is in the leading whitespace before the
+            // suggested indentation, then auto-indent the line.
+            let cursor = selection.head();
+            if let Some(suggested_indent) = suggested_indents.get(&cursor.row).copied() {
+                let current_indent = snapshot.indent_size_for_line(cursor.row);
+                if cursor.column < suggested_indent.len
+                    && cursor.column <= current_indent.len
+                    && current_indent.len <= suggested_indent.len
+                {
+                    selection.start = Point::new(cursor.row, suggested_indent.len);
+                    selection.end = selection.start;
+                    if row_delta == 0 {
+                        edits.extend(Buffer::edit_for_indent_size_adjustment(
+                            cursor.row,
+                            current_indent,
+                            suggested_indent,
+                        ));
+                        row_delta = suggested_indent.len - current_indent.len;
+                    }
+                    continue;
+                }
+            }
+
+            // Otherwise, insert a hard or soft tab.
+            let settings = cx.global::<Settings>();
+            let language_name = buffer.language_at(cursor, cx).map(|l| l.name());
+            let tab_size = if settings.hard_tabs(language_name.as_deref()) {
+                IndentSize::tab()
+            } else {
+                let tab_size = settings.tab_size(language_name.as_deref()).get();
+                let char_column = snapshot
+                    .text_for_range(Point::new(cursor.row, 0)..cursor)
+                    .flat_map(str::chars)
+                    .count()
+                    + row_delta as usize;
+                let chars_to_next_tab_stop = tab_size - (char_column as u32 % tab_size);
+                IndentSize::spaces(chars_to_next_tab_stop)
+            };
+            selection.start = Point::new(cursor.row, cursor.column + row_delta + tab_size.len);
+            selection.end = selection.start;
+            edits.push((cursor..cursor, tab_size.chars().collect::<String>()));
+            row_delta += tab_size.len;
         }
 
         self.transact(cx, |this, cx| {
-            this.buffer
-                .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+            this.buffer.update(cx, |b, cx| b.edit(edits, None, cx));
             this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections))
         });
     }
@@ -3056,8 +3054,7 @@ impl Editor {
         }
 
         self.transact(cx, |this, cx| {
-            this.buffer
-                .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+            this.buffer.update(cx, |b, cx| b.edit(edits, None, cx));
             this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections));
         });
     }
@@ -4708,12 +4705,13 @@ impl Editor {
         if direction == Direction::Next {
             if let Some(popover) = self.hover_state.diagnostic_popover.as_ref() {
                 let (group_id, jump_to) = popover.activation_info();
-                self.activate_diagnostics(group_id, cx);
-                self.change_selections(Some(Autoscroll::Center), cx, |s| {
-                    let mut new_selection = s.newest_anchor().clone();
-                    new_selection.collapse_to(jump_to, SelectionGoal::None);
-                    s.select_anchors(vec![new_selection.clone()]);
-                });
+                if self.activate_diagnostics(group_id, cx) {
+                    self.change_selections(Some(Autoscroll::Center), cx, |s| {
+                        let mut new_selection = s.newest_anchor().clone();
+                        new_selection.collapse_to(jump_to, SelectionGoal::None);
+                        s.select_anchors(vec![new_selection.clone()]);
+                    });
+                }
                 return;
             }
         }
@@ -4753,16 +4751,17 @@ impl Editor {
             });
 
             if let Some((primary_range, group_id)) = group {
-                self.activate_diagnostics(group_id, cx);
-                self.change_selections(Some(Autoscroll::Center), cx, |s| {
-                    s.select(vec![Selection {
-                        id: selection.id,
-                        start: primary_range.start,
-                        end: primary_range.start,
-                        reversed: false,
-                        goal: SelectionGoal::None,
-                    }]);
-                });
+                if self.activate_diagnostics(group_id, cx) {
+                    self.change_selections(Some(Autoscroll::Center), cx, |s| {
+                        s.select(vec![Selection {
+                            id: selection.id,
+                            start: primary_range.start,
+                            end: primary_range.start,
+                            reversed: false,
+                            goal: SelectionGoal::None,
+                        }]);
+                    });
+                }
                 break;
             } else {
                 // Cycle around to the start of the buffer, potentially moving back to the start of
@@ -5209,7 +5208,7 @@ impl Editor {
         }
     }
 
-    fn activate_diagnostics(&mut self, group_id: usize, cx: &mut ViewContext<Self>) {
+    fn activate_diagnostics(&mut self, group_id: usize, cx: &mut ViewContext<Self>) -> bool {
         self.dismiss_diagnostics(cx);
         self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
             let buffer = self.buffer.read(cx).snapshot(cx);
@@ -5230,8 +5229,8 @@ impl Editor {
                     entry
                 })
                 .collect::<Vec<_>>();
-            let primary_range = primary_range.unwrap();
-            let primary_message = primary_message.unwrap();
+            let primary_range = primary_range?;
+            let primary_message = primary_message?;
             let primary_range =
                 buffer.anchor_after(primary_range.start)..buffer.anchor_before(primary_range.end);
 
@@ -5261,6 +5260,7 @@ impl Editor {
                 is_valid: true,
             })
         });
+        self.active_diagnostics.is_some()
     }
 
     fn dismiss_diagnostics(&mut self, cx: &mut ViewContext<Self>) {

@@ -122,8 +122,9 @@ impl EditorElement {
         cx: &mut EventContext,
     ) -> bool {
         if cmd && paint.text_bounds.contains_point(position) {
-            let (point, overshoot) = paint.point_for_position(&self.snapshot(cx), layout, position);
-            if overshoot.is_zero() {
+            let (point, target_point) =
+                paint.point_for_position(&self.snapshot(cx), layout, position);
+            if point == target_point {
                 if shift {
                     cx.dispatch_action(GoToFetchedTypeDefinition { point });
                 } else {
@@ -141,12 +142,12 @@ impl EditorElement {
         }
 
         let snapshot = self.snapshot(cx.app);
-        let (position, overshoot) = paint.point_for_position(&snapshot, layout, position);
+        let (position, target_position) = paint.point_for_position(&snapshot, layout, position);
 
         if shift && alt {
             cx.dispatch_action(Select(SelectPhase::BeginColumnar {
                 position,
-                overshoot: overshoot.column(),
+                goal_column: target_position.column(),
             }));
         } else if shift {
             cx.dispatch_action(Select(SelectPhase::Extend {
@@ -229,11 +230,11 @@ impl EditorElement {
             }
 
             let snapshot = self.snapshot(cx.app);
-            let (position, overshoot) = paint.point_for_position(&snapshot, layout, position);
+            let (position, target_position) = paint.point_for_position(&snapshot, layout, position);
 
             cx.dispatch_action(Select(SelectPhase::Update {
                 position,
-                overshoot: overshoot.column(),
+                goal_column: target_position.column(),
                 scroll_position: (snapshot.scroll_position() + scroll_delta)
                     .clamp(Vector2F::zero(), layout.scroll_max),
             }));
@@ -258,8 +259,9 @@ impl EditorElement {
         // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
         // Don't trigger hover popover if mouse is hovering over context menu
         let point = if paint.text_bounds.contains_point(position) {
-            let (point, overshoot) = paint.point_for_position(&self.snapshot(cx), layout, position);
-            if overshoot.is_zero() {
+            let (point, target_point) =
+                paint.point_for_position(&self.snapshot(cx), layout, position);
+            if point == target_point {
                 Some(point)
             } else {
                 None
@@ -1702,9 +1704,10 @@ pub struct PaintState {
 }
 
 impl PaintState {
-    /// Returns two display points. The first is the nearest valid
-    /// position in the current buffer and the second is the distance to the
-    /// nearest valid position if there was overshoot.
+    /// Returns two display points:
+    /// 1. The nearest *valid* position in the editor
+    /// 2. An unclipped, potentially *invalid* position that maps directly to
+    ///    the given pixel position.
     fn point_for_position(
         &self,
         snapshot: &EditorSnapshot,
@@ -1714,25 +1717,26 @@ impl PaintState {
         let scroll_position = snapshot.scroll_position();
         let position = position - self.text_bounds.origin();
         let y = position.y().max(0.0).min(layout.size.y());
-        let row = ((y / layout.line_height) + scroll_position.y()) as u32;
-        let row_overshoot = row.saturating_sub(snapshot.max_point().row());
-        let row = cmp::min(row, snapshot.max_point().row());
-        let line = &layout.line_layouts[(row - scroll_position.y() as u32) as usize];
         let x = position.x() + (scroll_position.x() * layout.em_width);
-
-        let column = if x >= 0.0 {
-            line.index_for_x(x)
-                .map(|ix| ix as u32)
-                .unwrap_or_else(|| snapshot.line_len(row))
+        let row = (y / layout.line_height + scroll_position.y()) as u32;
+        let (column, x_overshoot) = if let Some(line) = layout
+            .line_layouts
+            .get(row as usize - scroll_position.y() as usize)
+        {
+            if let Some(ix) = line.index_for_x(x) {
+                (ix as u32, 0.0)
+            } else {
+                (line.len() as u32, 0f32.max(x - line.width()))
+            }
         } else {
-            0
+            (0, x)
         };
 
-        let point = snapshot.clip_point(DisplayPoint::new(row, column), Bias::Left);
-        let mut column_overshoot = (0f32.max(x - line.width()) / layout.em_advance) as u32;
-        column_overshoot = column_overshoot + column - point.column();
+        let mut target_point = DisplayPoint::new(row, column);
+        let point = snapshot.clip_point(target_point, Bias::Left);
+        *target_point.column_mut() += (x_overshoot / layout.em_advance) as u32;
 
-        (point, DisplayPoint::new(row_overshoot, column_overshoot))
+        (point, target_point)
     }
 }
 
