@@ -4661,12 +4661,13 @@ impl Editor {
         if direction == Direction::Next {
             if let Some(popover) = self.hover_state.diagnostic_popover.as_ref() {
                 let (group_id, jump_to) = popover.activation_info();
-                self.activate_diagnostics(group_id, cx);
-                self.change_selections(Some(Autoscroll::Center), cx, |s| {
-                    let mut new_selection = s.newest_anchor().clone();
-                    new_selection.collapse_to(jump_to, SelectionGoal::None);
-                    s.select_anchors(vec![new_selection.clone()]);
-                });
+                if self.activate_diagnostics(group_id, cx) {
+                    self.change_selections(Some(Autoscroll::Center), cx, |s| {
+                        let mut new_selection = s.newest_anchor().clone();
+                        new_selection.collapse_to(jump_to, SelectionGoal::None);
+                        s.select_anchors(vec![new_selection.clone()]);
+                    });
+                }
                 return;
             }
         }
@@ -4706,16 +4707,17 @@ impl Editor {
             });
 
             if let Some((primary_range, group_id)) = group {
-                self.activate_diagnostics(group_id, cx);
-                self.change_selections(Some(Autoscroll::Center), cx, |s| {
-                    s.select(vec![Selection {
-                        id: selection.id,
-                        start: primary_range.start,
-                        end: primary_range.start,
-                        reversed: false,
-                        goal: SelectionGoal::None,
-                    }]);
-                });
+                if self.activate_diagnostics(group_id, cx) {
+                    self.change_selections(Some(Autoscroll::Center), cx, |s| {
+                        s.select(vec![Selection {
+                            id: selection.id,
+                            start: primary_range.start,
+                            end: primary_range.start,
+                            reversed: false,
+                            goal: SelectionGoal::None,
+                        }]);
+                    });
+                }
                 break;
             } else {
                 // Cycle around to the start of the buffer, potentially moving back to the start of
@@ -5162,7 +5164,7 @@ impl Editor {
         }
     }
 
-    fn activate_diagnostics(&mut self, group_id: usize, cx: &mut ViewContext<Self>) {
+    fn activate_diagnostics(&mut self, group_id: usize, cx: &mut ViewContext<Self>) -> bool {
         self.dismiss_diagnostics(cx);
         self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
             let buffer = self.buffer.read(cx).snapshot(cx);
@@ -5183,8 +5185,8 @@ impl Editor {
                     entry
                 })
                 .collect::<Vec<_>>();
-            let primary_range = primary_range.unwrap();
-            let primary_message = primary_message.unwrap();
+            let primary_range = primary_range?;
+            let primary_message = primary_message?;
             let primary_range =
                 buffer.anchor_after(primary_range.start)..buffer.anchor_before(primary_range.end);
 
@@ -5214,6 +5216,7 @@ impl Editor {
                 is_valid: true,
             })
         });
+        self.active_diagnostics.is_some()
     }
 
     fn dismiss_diagnostics(&mut self, cx: &mut ViewContext<Self>) {
