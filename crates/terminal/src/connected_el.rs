@@ -368,14 +368,7 @@ impl TerminalEl {
         let fg = convert_color(&fg, &style.colors, modal);
 
         let underline = flags
-            .contains(
-                Flags::UNDERLINE
-                    | Flags::DOUBLE_UNDERLINE
-                    | Flags::DOTTED_UNDERLINE
-                    | Flags::DASHED_UNDERLINE
-                    | Flags::UNDERCURL
-                    | Flags::ALL_UNDERLINES,
-            )
+            .intersects(Flags::ALL_UNDERLINES)
             .then(|| Underline {
                 color: Some(fg),
                 squiggly: flags.contains(Flags::UNDERCURL),
@@ -386,11 +379,11 @@ impl TerminalEl {
         let mut properties = Properties::new();
         if indexed
             .flags
-            .contains(Flags::BOLD | Flags::BOLD_ITALIC | Flags::DIM_BOLD)
+            .intersects(Flags::BOLD | Flags::BOLD_ITALIC | Flags::DIM_BOLD)
         {
             properties = *properties.weight(Weight::BOLD);
         }
-        if indexed.flags.contains(Flags::ITALIC | Flags::BOLD_ITALIC) {
+        if indexed.flags.intersects(Flags::ITALIC | Flags::BOLD_ITALIC) {
             properties = *properties.style(Italic);
         }
 
@@ -598,12 +591,13 @@ impl Element for TerminalEl {
                     cells.extend(
                         content
                             .display_iter
-                            .filter(|ic| {
-                                !ic.flags.contains(Flags::HIDDEN)
-                                    && !(ic.bg == Named(NamedColor::Background)
-                                        && ic.c == ' '
-                                        && !ic.flags.contains(Flags::INVERSE))
-                            })
+                            //TODO: Add this once there's a way to retain empty lines
+                            // .filter(|ic| {
+                            //     !ic.flags.contains(Flags::HIDDEN)
+                            //         && !(ic.bg == Named(NamedColor::Background)
+                            //             && ic.c == ' '
+                            //             && !ic.flags.contains(Flags::INVERSE))
+                            // })
                             .map(|ic| IndexedCell {
                                 point: ic.point.clone(),
                                 cell: ic.cell.clone(),
