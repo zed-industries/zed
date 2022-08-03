@@ -25,6 +25,9 @@
             "cmd-0": "zed::ResetBufferFontSize",
             "cmd-,": "zed::OpenSettings",
             "cmd-q": "zed::Quit",
+            "cmd-h": "zed::Hide",
+            "alt-cmd-h": "zed::HideOthers",
+            "cmd-m": "zed::Minimize",
             "cmd-n": "workspace::NewFile",
             "cmd-shift-n": "workspace::NewWindow",
             "cmd-o": "workspace::Open"

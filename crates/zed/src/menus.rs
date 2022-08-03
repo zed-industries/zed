@@ -46,6 +46,18 @@ pub fn menus() -> Vec<Menu<'static>> {
                 },
                 MenuItem::Separator,
                 MenuItem::Action {
+                    name: "Hide Zed",
+                    action: Box::new(super::Hide),
+                },
+                MenuItem::Action {
+                    name: "Hide Others",
+                    action: Box::new(super::HideOthers),
+                },
+                MenuItem::Action {
+                    name: "Show All",
+                    action: Box::new(super::ShowAll),
+                },
+                MenuItem::Action {
                     name: "Quit",
                     action: Box::new(super::Quit),
                 },
@@ -244,6 +256,7 @@ pub fn menus() -> Vec<Menu<'static>> {
                     name: "Diagnostics",
                     action: Box::new(diagnostics::Deploy),
                 },
+                MenuItem::Separator,
             ],
         },
         Menu {
@@ -299,7 +312,17 @@ pub fn menus() -> Vec<Menu<'static>> {
         },
         Menu {
             name: "Window",
-            items: vec![MenuItem::Separator],
+            items: vec![
+                MenuItem::Action {
+                    name: "Minimize",
+                    action: Box::new(super::Minimize),
+                },
+                MenuItem::Action {
+                    name: "Zoom",
+                    action: Box::new(super::Zoom),
+                },
+                MenuItem::Separator,
+            ],
         },
         Menu {
             name: "Help",

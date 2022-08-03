@@ -568,6 +568,25 @@ impl platform::Window for Window {
             let _: () = msg_send![app, orderFrontCharacterPalette: window];
         }
     }
+
+    fn minimize(&self) {
+        let window = self.0.borrow().native_window;
+        unsafe {
+            window.miniaturize_(nil);
+        }
+    }
+
+    fn zoom(&self) {
+        let this = self.0.borrow();
+        let window = this.native_window;
+        this.executor
+            .spawn(async move {
+                unsafe {
+                    window.zoom_(nil);
+                }
+            })
+            .detach();
+    }
 }
 
 impl platform::WindowContext for Window {
