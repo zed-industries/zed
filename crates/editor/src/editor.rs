@@ -2935,61 +2935,59 @@ impl Editor {
             }
             prev_edited_row = selection.end.row;
 
-            if selection.is_empty() {
-                let cursor = selection.head();
-                let mut did_auto_indent = false;
-                if let Some(suggested_indent) = suggested_indents.get(&cursor.row).copied() {
-                    let current_indent = snapshot.indent_size_for_line(cursor.row);
-                    // Don't account for `row_delta` as we only care if the cursor *started* in the leading whitespace
-                    if cursor.column < suggested_indent.len
-                        && cursor.column <= current_indent.len
-                        && current_indent.len <= suggested_indent.len
-                    {
-                        selection.start = Point::new(cursor.row, suggested_indent.len);
-                        selection.end = selection.start;
-                        if row_delta == 0 {
-                            edits.extend(Buffer::edit_for_indent_size_adjustment(
-                                cursor.row,
-                                current_indent,
-                                suggested_indent,
-                            ));
-                            row_delta = suggested_indent.len - current_indent.len;
-                        }
-                        did_auto_indent = true;
-                    }
-                }
-
-                if !did_auto_indent {
-                    let language_name = buffer.language_at(cursor, cx).map(|l| l.name());
-                    let settings = cx.global::<Settings>();
-                    let tab_size = if settings.hard_tabs(language_name.as_deref()) {
-                        IndentSize::tab()
-                    } else {
-                        let tab_size = settings.tab_size(language_name.as_deref()).get();
-                        let char_column = snapshot
-                            .text_for_range(Point::new(cursor.row, 0)..cursor)
-                            .flat_map(str::chars)
-                            .count()
-                            + row_delta as usize;
-                        let chars_to_next_tab_stop = tab_size - (char_column as u32 % tab_size);
-                        IndentSize::spaces(chars_to_next_tab_stop)
-                    };
-
-                    selection.start =
-                        Point::new(cursor.row, cursor.column + row_delta + tab_size.len);
-                    selection.end = selection.start;
-                    edits.push((cursor..cursor, tab_size.chars().collect::<String>()));
-                    row_delta += tab_size.len;
-                }
-            } else {
+            // If the selection is non-empty, then increase the indentation of the selected lines.
+            if !selection.is_empty() {
                 row_delta =
                     Self::indent_selection(buffer, &snapshot, selection, &mut edits, row_delta, cx);
+                continue;
             }
+
+            // If the selection is empty and the cursor is in the leading whitespace before the
+            // suggested indentation, then auto-indent the line.
+            let cursor = selection.head();
+            if let Some(suggested_indent) = suggested_indents.get(&cursor.row).copied() {
+                let current_indent = snapshot.indent_size_for_line(cursor.row);
+                if cursor.column < suggested_indent.len
+                    && cursor.column <= current_indent.len
+                    && current_indent.len <= suggested_indent.len
+                {
+                    selection.start = Point::new(cursor.row, suggested_indent.len);
+                    selection.end = selection.start;
+                    if row_delta == 0 {
+                        edits.extend(Buffer::edit_for_indent_size_adjustment(
+                            cursor.row,
+                            current_indent,
+                            suggested_indent,
+                        ));
+                        row_delta = suggested_indent.len - current_indent.len;
+                    }
+                    continue;
+                }
+            }
+
+            // Otherwise, insert a hard or soft tab.
+            let settings = cx.global::<Settings>();
+            let language_name = buffer.language_at(cursor, cx).map(|l| l.name());
+            let tab_size = if settings.hard_tabs(language_name.as_deref()) {
+                IndentSize::tab()
+            } else {
+                let tab_size = settings.tab_size(language_name.as_deref()).get();
+                let char_column = snapshot
+                    .text_for_range(Point::new(cursor.row, 0)..cursor)
+                    .flat_map(str::chars)
+                    .count()
+                    + row_delta as usize;
+                let chars_to_next_tab_stop = tab_size - (char_column as u32 % tab_size);
+                IndentSize::spaces(chars_to_next_tab_stop)
+            };
+            selection.start = Point::new(cursor.row, cursor.column + row_delta + tab_size.len);
+            selection.end = selection.start;
+            edits.push((cursor..cursor, tab_size.chars().collect::<String>()));
+            row_delta += tab_size.len;
         }
 
         self.transact(cx, |this, cx| {
-            this.buffer
-                .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+            this.buffer.update(cx, |b, cx| b.edit(edits, None, cx));
             this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections))
         });
     }
@@ -3012,8 +3010,7 @@ impl Editor {
         }
 
         self.transact(cx, |this, cx| {
-            this.buffer
-                .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+            this.buffer.update(cx, |b, cx| b.edit(edits, None, cx));
             this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections));
         });
     }
