@@ -27,19 +27,27 @@ impl TabMap {
         tab_size: NonZeroU32,
     ) -> (TabSnapshot, Vec<TabEdit>) {
         let mut old_snapshot = self.0.lock();
-        let max_offset = old_snapshot.fold_snapshot.len();
         let new_snapshot = TabSnapshot {
             fold_snapshot,
             tab_size,
         };
 
+        if old_snapshot.tab_size != new_snapshot.tab_size {
+            let edits = vec![TabEdit {
+                old: TabPoint::zero()..old_snapshot.max_point(),
+                new: TabPoint::zero()..new_snapshot.max_point(),
+            }];
+            return (new_snapshot, edits);
+        }
+
+        let old_max_offset = old_snapshot.fold_snapshot.len();
         let mut tab_edits = Vec::with_capacity(fold_edits.len());
         for fold_edit in &mut fold_edits {
             let mut delta = 0;
             for chunk in
                 old_snapshot
                     .fold_snapshot
-                    .chunks(fold_edit.old.end..max_offset, false, None)
+                    .chunks(fold_edit.old.end..old_max_offset, false, None)
             {
                 let patterns: &[_] = &['\t', '\n'];
                 if let Some(ix) = chunk.text.find(patterns) {

@@ -1351,6 +1351,39 @@ pub mod tests {
         )
     }
 
+    #[gpui::test]
+    fn test_changing_tab_size(cx: &mut gpui::MutableAppContext) {
+        cx.set_global({
+            let mut settings = Settings::test(cx);
+            settings.editor_overrides.tab_size = Some(NonZeroU32::new(4).unwrap());
+            settings
+        });
+        let buffer = MultiBuffer::build_simple("\ta\n\tb\n\tc", cx);
+        let font_cache = cx.font_cache();
+        let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
+        let font_id = font_cache
+            .select_font(family_id, &Default::default())
+            .unwrap();
+        let font_size = 14.0;
+
+        let map =
+            cx.add_model(|cx| DisplayMap::new(buffer.clone(), font_id, font_size, None, 1, 1, cx));
+        assert_eq!(
+            map.update(cx, |map, cx| map.snapshot(cx)).text(),
+            "    a\n    b\n    c"
+        );
+
+        cx.set_global({
+            let mut settings = Settings::test(cx);
+            settings.editor_overrides.tab_size = Some(NonZeroU32::new(2).unwrap());
+            settings
+        });
+        assert_eq!(
+            map.update(cx, |map, cx| map.snapshot(cx)).text(),
+            "  a\n  b\n  c"
+        );
+    }
+
     fn syntax_chunks<'a>(
         rows: Range<u32>,
         map: &ModelHandle<DisplayMap>,
