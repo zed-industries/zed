@@ -53,6 +53,7 @@ pub struct LayoutState {
     display_offset: usize,
 }
 
+#[derive(Debug)]
 struct IndexedCell {
     point: Point,
     cell: Cell,
@@ -108,7 +109,14 @@ impl LayoutCell {
         visible_bounds: RectF,
         cx: &mut PaintContext,
     ) {
-        let pos = point_to_absolute(origin, self.point, layout);
+        let pos = {
+            let point = self.point;
+            vec2f(
+                (origin.x() + point.column as f32 * layout.size.cell_width).floor(),
+                origin.y() + point.line as f32 * layout.size.line_height,
+            )
+        };
+
         self.text
             .paint(pos, visible_bounds, layout.size.line_height, cx);
     }
@@ -139,10 +147,15 @@ impl LayoutRect {
     }
 
     fn paint(&self, origin: Vector2F, layout: &LayoutState, cx: &mut PaintContext) {
-        let position = point_to_absolute(origin, self.point, layout);
-
+        let position = {
+            let point = self.point;
+            vec2f(
+                (origin.x() + point.column as f32 * layout.size.cell_width).floor(),
+                origin.y() + point.line as f32 * layout.size.line_height,
+            )
+        };
         let size = vec2f(
-            (layout.size.cell_width.ceil() * self.num_of_cells as f32).ceil(),
+            (layout.size.cell_width * self.num_of_cells as f32).ceil(),
             layout.size.line_height,
         );
 
@@ -153,13 +166,6 @@ impl LayoutRect {
             corner_radius: 0.,
         })
     }
-}
-
-fn point_to_absolute(origin: Vector2F, point: Point<i32, i32>, layout: &LayoutState) -> Vector2F {
-    vec2f(
-        (origin.x() + point.column as f32 * layout.size.cell_width).floor(),
-        origin.y() + point.line as f32 * layout.size.line_height,
-    )
 }
 
 #[derive(Clone, Debug, Default)]
@@ -325,7 +331,7 @@ impl TerminalEl {
                 rects.push(cur_rect.take().unwrap());
             }
         }
-
+        dbg!(&rects);
         (cells, rects, highlight_ranges)
     }
 
@@ -366,6 +372,7 @@ impl TerminalEl {
         font_cache: &FontCache,
         modal: bool,
     ) -> RunStyle {
+        dbg!(indexed);
         let flags = indexed.cell.flags;
         let fg = convert_color(&fg, &style.colors, modal);
 
