@@ -8050,33 +8050,33 @@ mod tests {
         cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
         cx.set_state(indoc! {"
-            const a: |A = (
-                (|
-                    [const_function}(|),
-                    so{m]et[h}ing_|else,|
-                )|
-            |);|
-            "});
+            const a: ˇA = (
+                (ˇ
+                    «const_functionˇ»(ˇ),
+                    so«mˇ»et«hˇ»ing_ˇelse,ˇ
+                )ˇ
+            ˇ);ˇ
+        "});
         cx.update_editor(|e, cx| e.newline_below(&NewlineBelow, cx));
         cx.assert_editor_state(indoc! {"
             const a: A = (
-                |
+                ˇ
                 (
-                    |
+                    ˇ
                     const_function(),
-                    |
-                    |
+                    ˇ
+                    ˇ
                     something_else,
-                    |
-                    |
-                    |
-                    |
+                    ˇ
+                    ˇ
+                    ˇ
+                    ˇ
                 )
-                |
+                ˇ
             );
-            |
-            |
-            "});
+            ˇ
+            ˇ
+        "});
     }
 
     #[gpui::test]
@@ -8115,25 +8115,25 @@ mod tests {
             });
         });
         cx.set_state(indoc! {"
-            |ab|c
-            |🏀|🏀|efg
-            d|
+            ˇabˇc
+            ˇ🏀ˇ🏀ˇefg
+            dˇ
         "});
         cx.update_editor(|e, cx| e.tab(&Tab, cx));
         cx.assert_editor_state(indoc! {"
-              |ab |c
-              |🏀  |🏀  |efg
-           d  |
+              ˇab ˇc
+              ˇ🏀  ˇ🏀  ˇefg
+           d  ˇ
         "});
 
         cx.set_state(indoc! {"
             a
-            [🏀}🏀[🏀}🏀[🏀}
+            «🏀ˇ»🏀«🏀ˇ»🏀«🏀ˇ»
         "});
         cx.update_editor(|e, cx| e.tab(&Tab, cx));
         cx.assert_editor_state(indoc! {"
             a
-               [🏀}🏀[🏀}🏀[🏀}
+               «🏀ˇ»🏀«🏀ˇ»🏀«🏀ˇ»
         "});
     }
 
@@ -8154,26 +8154,26 @@ mod tests {
         // a soft tab. cursors that are to the left of the suggested indent
         // auto-indent their line.
         cx.set_state(indoc! {"
-            |
+            ˇ
             const a: B = (
                 c(
                     d(
-            |
+            ˇ
                     )
-            |
-            |    )
+            ˇ
+            ˇ    )
             );
         "});
         cx.update_editor(|e, cx| e.tab(&Tab, cx));
         cx.assert_editor_state(indoc! {"
-                |
+                ˇ
             const a: B = (
                 c(
                     d(
-                        |
+                        ˇ
                     )
-                    |
-                |)
+                    ˇ
+                ˇ)
             );
         "});
 
@@ -8181,16 +8181,16 @@ mod tests {
         cx.set_state(indoc! {"
             const a: B = (
                 c(
-            |   |    
-            |    )
+            ˇ    ˇ    
+            ˇ    )
             );
         "});
         cx.update_editor(|e, cx| e.tab(&Tab, cx));
         cx.assert_editor_state(indoc! {"
             const a: B = (
                 c(
-                    |
-                |)
+                    ˇ
+                ˇ)
             );
         "});
     }
@@ -8200,58 +8200,68 @@ mod tests {
         let mut cx = EditorTestContext::new(cx).await;
 
         cx.set_state(indoc! {"
-              [one} [two}
+              «oneˇ» «twoˇ»
             three
-             four"});
+             four
+        "});
         cx.update_editor(|e, cx| e.tab(&Tab, cx));
         cx.assert_editor_state(indoc! {"
-                [one} [two}
+                «oneˇ» «twoˇ»
             three
-             four"});
+             four
+        "});
 
         cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
         cx.assert_editor_state(indoc! {"
-            [one} [two}
+            «oneˇ» «twoˇ»
             three
-             four"});
+             four
+        "});
 
         // select across line ending
         cx.set_state(indoc! {"
             one two
-            t[hree
-            } four"});
+            t«hree
+            ˇ» four
+        "});
         cx.update_editor(|e, cx| e.tab(&Tab, cx));
         cx.assert_editor_state(indoc! {"
             one two
-                t[hree
-            } four"});
+                t«hree
+            ˇ» four
+        "});
 
         cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
         cx.assert_editor_state(indoc! {"
             one two
-            t[hree
-            } four"});
+            t«hree
+            ˇ» four
+        "});
 
         // Ensure that indenting/outdenting works when the cursor is at column 0.
         cx.set_state(indoc! {"
             one two
-            |three
-                four"});
+            ˇthree
+                four
+        "});
         cx.update_editor(|e, cx| e.tab(&Tab, cx));
         cx.assert_editor_state(indoc! {"
             one two
-                |three
-                four"});
+                ˇthree
+                four
+        "});
 
         cx.set_state(indoc! {"
             one two
-            |    three
-             four"});
+            ˇ    three
+             four
+        "});
         cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
         cx.assert_editor_state(indoc! {"
             one two
-            |three
-             four"});
+            ˇthree
+             four
+        "});
     }
 
     #[gpui::test]
@@ -8265,75 +8275,90 @@ mod tests {
 
         // select two ranges on one line
         cx.set_state(indoc! {"
-            [one} [two}
+            «oneˇ» «twoˇ»
             three
-            four"});
+            four
+        "});
         cx.update_editor(|e, cx| e.tab(&Tab, cx));
         cx.assert_editor_state(indoc! {"
-            \t[one} [two}
+            \t«oneˇ» «twoˇ»
             three
-            four"});
+            four
+        "});
         cx.update_editor(|e, cx| e.tab(&Tab, cx));
         cx.assert_editor_state(indoc! {"
-            \t\t[one} [two}
+            \t\t«oneˇ» «twoˇ»
             three
-            four"});
+            four
+        "});
         cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
         cx.assert_editor_state(indoc! {"
-            \t[one} [two}
+            \t«oneˇ» «twoˇ»
             three
-            four"});
+            four
+        "});
         cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
         cx.assert_editor_state(indoc! {"
-            [one} [two}
+            «oneˇ» «twoˇ»
             three
-            four"});
+            four
+        "});
 
         // select across a line ending
         cx.set_state(indoc! {"
             one two
-            t[hree
-            }four"});
+            t«hree
+            ˇ»four
+        "});
         cx.update_editor(|e, cx| e.tab(&Tab, cx));
         cx.assert_editor_state(indoc! {"
             one two
-            \tt[hree
-            }four"});
+            \tt«hree
+            ˇ»four
+        "});
         cx.update_editor(|e, cx| e.tab(&Tab, cx));
         cx.assert_editor_state(indoc! {"
             one two
-            \t\tt[hree
-            }four"});
+            \t\tt«hree
+            ˇ»four
+        "});
         cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
         cx.assert_editor_state(indoc! {"
             one two
-            \tt[hree
-            }four"});
+            \tt«hree
+            ˇ»four
+        "});
         cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
         cx.assert_editor_state(indoc! {"
             one two
-            t[hree
-            }four"});
+            t«hree
+            ˇ»four
+        "});
 
         // Ensure that indenting/outdenting works when the cursor is at column 0.
         cx.set_state(indoc! {"
             one two
-            |three
-            four"});
-        cx.assert_editor_state(indoc! {"
-            one two
-            |three
-            four"});
-        cx.update_editor(|e, cx| e.tab(&Tab, cx));
-        cx.assert_editor_state(indoc! {"
-            one two
-            \t|three
-            four"});
+            ˇthree
+            four
+        "});
         cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
         cx.assert_editor_state(indoc! {"
             one two
-            |three
-            four"});
+            ˇthree
+            four
+        "});
+        cx.update_editor(|e, cx| e.tab(&Tab, cx));
+        cx.assert_editor_state(indoc! {"
+            one two
+            \tˇthree
+            four
+        "});
+        cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
+        cx.assert_editor_state(indoc! {"
+            one two
+            ˇthree
+            four
+        "});
     }
 
     #[gpui::test]
@@ -8412,10 +8437,10 @@ mod tests {
             select_ranges(
                 &mut editor,
                 indoc! {"
-                    [a] = 1
+                    «aˇ» = 1
                     b = 2
 
-                    [const c:] usize = 3;
+                    «const c:ˇ» usize = 3;
                 "},
                 cx,
             );
@@ -8424,10 +8449,10 @@ mod tests {
             assert_text_with_selections(
                 &mut editor,
                 indoc! {"
-                      [a] = 1
+                      «aˇ» = 1
                     b = 2
 
-                        [const c:] usize = 3;
+                        «const c:ˇ» usize = 3;
                 "},
                 cx,
             );
@@ -8435,10 +8460,10 @@ mod tests {
             assert_text_with_selections(
                 &mut editor,
                 indoc! {"
-                    [a] = 1
+                    «aˇ» = 1
                     b = 2
 
-                    [const c:] usize = 3;
+                    «const c:ˇ» usize = 3;
                 "},
                 cx,
             );
@@ -8450,43 +8475,48 @@ mod tests {
     #[gpui::test]
     async fn test_backspace(cx: &mut gpui::TestAppContext) {
         let mut cx = EditorTestContext::new(cx).await;
+
         // Basic backspace
         cx.set_state(indoc! {"
-            on|e two three
-            fou[r} five six
-            seven {eight nine
-            ]ten"});
+            onˇe two three
+            fou«rˇ» five six
+            seven «ˇeight nine
+            »ten
+        "});
         cx.update_editor(|e, cx| e.backspace(&Backspace, cx));
         cx.assert_editor_state(indoc! {"
-            o|e two three
-            fou| five six
-            seven |ten"});
+            oˇe two three
+            fouˇ five six
+            seven ˇten
+        "});
 
         // Test backspace inside and around indents
         cx.set_state(indoc! {"
             zero
-                |one
-                    |two
-                | | |  three
-            |  |  four"});
+                ˇone
+                    ˇtwo
+                ˇ ˇ ˇ  three
+            ˇ  ˇ  four
+        "});
         cx.update_editor(|e, cx| e.backspace(&Backspace, cx));
         cx.assert_editor_state(indoc! {"
             zero
-            |one
-                |two
-            |  three|  four"});
+            ˇone
+                ˇtwo
+            ˇ  threeˇ  four
+        "});
 
         // Test backspace with line_mode set to true
         cx.update_editor(|e, _| e.selections.line_mode = true);
         cx.set_state(indoc! {"
-            The |quick |brown
+            The ˇquick ˇbrown
             fox jumps over
             the lazy dog
-            |The qu[ick b}rown"});
+            ˇThe qu«ick bˇ»rown"});
         cx.update_editor(|e, cx| e.backspace(&Backspace, cx));
         cx.assert_editor_state(indoc! {"
-            |fox jumps over
-            the lazy dog|"});
+            ˇfox jumps over
+            the lazy dogˇ"});
     }
 
     #[gpui::test]
@@ -8494,25 +8524,27 @@ mod tests {
         let mut cx = EditorTestContext::new(cx).await;
 
         cx.set_state(indoc! {"
-            on|e two three
-            fou[r} five six
-            seven {eight nine
-            ]ten"});
+            onˇe two three
+            fou«rˇ» five six
+            seven «ˇeight nine
+            »ten
+        "});
         cx.update_editor(|e, cx| e.delete(&Delete, cx));
         cx.assert_editor_state(indoc! {"
-            on| two three
-            fou| five six
-            seven |ten"});
+            onˇ two three
+            fouˇ five six
+            seven ˇten
+        "});
 
         // Test backspace with line_mode set to true
         cx.update_editor(|e, _| e.selections.line_mode = true);
         cx.set_state(indoc! {"
-            The |quick |brown
-            fox {jum]ps over
+            The ˇquick ˇbrown
+            fox «ˇjum»ps over
             the lazy dog
-            |The qu[ick b}rown"});
+            ˇThe qu«ick bˇ»rown"});
         cx.update_editor(|e, cx| e.backspace(&Backspace, cx));
-        cx.assert_editor_state("|the lazy dog|");
+        cx.assert_editor_state("ˇthe lazy dogˇ");
     }
 
     #[gpui::test]
@@ -8824,19 +8856,19 @@ mod tests {
     async fn test_clipboard(cx: &mut gpui::TestAppContext) {
         let mut cx = EditorTestContext::new(cx).await;
 
-        cx.set_state("[one✅ }two [three }four [five }six ");
+        cx.set_state("«one✅ ˇ»two «three ˇ»four «five ˇ»six ");
         cx.update_editor(|e, cx| e.cut(&Cut, cx));
-        cx.assert_editor_state("|two |four |six ");
+        cx.assert_editor_state("ˇtwo ˇfour ˇsix ");
 
         // Paste with three cursors. Each cursor pastes one slice of the clipboard text.
-        cx.set_state("two |four |six |");
+        cx.set_state("two ˇfour ˇsix ˇ");
         cx.update_editor(|e, cx| e.paste(&Paste, cx));
-        cx.assert_editor_state("two one✅ |four three |six five |");
+        cx.assert_editor_state("two one✅ ˇfour three ˇsix five ˇ");
 
         // Paste again but with only two cursors. Since the number of cursors doesn't
         // match the number of slices in the clipboard, the entire clipboard text
         // is pasted at each cursor.
-        cx.set_state("|two one✅ four three six five |");
+        cx.set_state("ˇtwo one✅ four three six five ˇ");
         cx.update_editor(|e, cx| {
             e.handle_input("( ", cx);
             e.paste(&Paste, cx);
@@ -8845,37 +8877,37 @@ mod tests {
         cx.assert_editor_state(indoc! {"
             ( one✅ 
             three 
-            five ) |two one✅ four three six five ( one✅ 
+            five ) ˇtwo one✅ four three six five ( one✅ 
             three 
-            five ) |"});
+            five ) ˇ"});
 
         // Cut with three selections, one of which is full-line.
         cx.set_state(indoc! {"
-            1[2}3
-            4|567
-            [8}9"});
+            1«2ˇ»3
+            4ˇ567
+            «8ˇ»9"});
         cx.update_editor(|e, cx| e.cut(&Cut, cx));
         cx.assert_editor_state(indoc! {"
-            1|3
-            |9"});
+            1ˇ3
+            ˇ9"});
 
         // Paste with three selections, noticing how the copied selection that was full-line
         // gets inserted before the second cursor.
         cx.set_state(indoc! {"
-            1|3
-            9|
-            [o}ne"});
+            1ˇ3
+            9ˇ
+            «oˇ»ne"});
         cx.update_editor(|e, cx| e.paste(&Paste, cx));
         cx.assert_editor_state(indoc! {"
-            12|3
+            12ˇ3
             4567
-            9|
-            8|ne"});
+            9ˇ
+            8ˇne"});
 
         // Copy with a single cursor only, which writes the whole line into the clipboard.
         cx.set_state(indoc! {"
             The quick brown
-            fox ju|mps over
+            fox juˇmps over
             the lazy dog"});
         cx.update_editor(|e, cx| e.copy(&Copy, cx));
         cx.cx.assert_clipboard_content(Some("fox jumps over\n"));
@@ -8883,17 +8915,17 @@ mod tests {
         // Paste with three selections, noticing how the copied full-line selection is inserted
         // before the empty selections but replaces the selection that is non-empty.
         cx.set_state(indoc! {"
-            T|he quick brown
-            [fo}x jumps over
-            t|he lazy dog"});
+            Tˇhe quick brown
+            «foˇ»x jumps over
+            tˇhe lazy dog"});
         cx.update_editor(|e, cx| e.paste(&Paste, cx));
         cx.assert_editor_state(indoc! {"
             fox jumps over
-            T|he quick brown
+            Tˇhe quick brown
             fox jumps over
-            |x jumps over
+            ˇx jumps over
             fox jumps over
-            t|he lazy dog"});
+            tˇhe lazy dog"});
     }
 
     #[gpui::test]
@@ -8909,17 +8941,17 @@ mod tests {
         cx.set_state(indoc! {"
             const a: B = (
                 c(),
-                [d(
+                «d(
                     e,
                     f
-                )}
+                )ˇ»
             );
         "});
         cx.update_editor(|e, cx| e.cut(&Cut, cx));
         cx.assert_editor_state(indoc! {"
             const a: B = (
                 c(),
-                |
+                ˇ
             );
         "});
 
@@ -8931,13 +8963,13 @@ mod tests {
                 d(
                     e,
                     f
-                )|
+                )ˇ
             );
         "});
 
         // Paste it at a line with a lower indent level.
         cx.set_state(indoc! {"
-            |
+            ˇ
             const a: B = (
                 c(),
             );
@@ -8947,7 +8979,7 @@ mod tests {
             d(
                 e,
                 f
-            )|
+            )ˇ
             const a: B = (
                 c(),
             );
@@ -8957,17 +8989,17 @@ mod tests {
         cx.set_state(indoc! {"
             const a: B = (
                 c(),
-            [    d(
+            «    d(
                     e,
                     f
                 )
-            });
+            ˇ»);
         "});
         cx.update_editor(|e, cx| e.cut(&Cut, cx));
         cx.assert_editor_state(indoc! {"
             const a: B = (
                 c(),
-            |);
+            ˇ);
         "});
 
         // Paste it at the same position.
@@ -8979,7 +9011,7 @@ mod tests {
                     e,
                     f
                 )
-            |);
+            ˇ);
         "});
 
         // Paste it at a line with a higher indent level.
@@ -8988,7 +9020,7 @@ mod tests {
                 c(),
                 d(
                     e,
-                    f|
+                    fˇ
                 )
             );
         "});
@@ -9002,7 +9034,7 @@ mod tests {
                         e,
                         f
                     )
-            |
+            ˇ
                 )
             );
         "});
@@ -10293,16 +10325,18 @@ mod tests {
         .await;
 
         cx.set_state(indoc! {"
-            one|
+            oneˇ
             two
-            three"});
+            three
+        "});
         cx.simulate_keystroke(".");
         handle_completion_request(
             &mut cx,
             indoc! {"
                 one.|<>
                 two
-                three"},
+                three
+            "},
             vec!["first_completion", "second_completion"],
         )
         .await;
@@ -10315,9 +10349,10 @@ mod tests {
                 .unwrap()
         });
         cx.assert_editor_state(indoc! {"
-            one.second_completion|
+            one.second_completionˇ
             two
-            three"});
+            three
+        "});
 
         handle_resolve_completion_request(
             &mut cx,
@@ -10325,23 +10360,26 @@ mod tests {
                 indoc! {"
                     one.second_completion
                     two
-                    three<>"},
+                    three<>
+                "},
                 "\nadditional edit",
             )),
         )
         .await;
         apply_additional_edits.await.unwrap();
         cx.assert_editor_state(indoc! {"
-            one.second_completion|
+            one.second_completionˇ
             two
             three
-            additional edit"});
+            additional edit
+        "});
 
         cx.set_state(indoc! {"
             one.second_completion
-            two|
-            three|
-            additional edit"});
+            twoˇ
+            threeˇ
+            additional edit
+        "});
         cx.simulate_keystroke(" ");
         assert!(cx.editor(|e, _| e.context_menu.is_none()));
         cx.simulate_keystroke("s");
@@ -10349,16 +10387,18 @@ mod tests {
 
         cx.assert_editor_state(indoc! {"
             one.second_completion
-            two s|
-            three s|
-            additional edit"});
+            two sˇ
+            three sˇ
+            additional edit
+        "});
         handle_completion_request(
             &mut cx,
             indoc! {"
                 one.second_completion
                 two s
                 three <s|>
-                additional edit"},
+                additional edit
+            "},
             vec!["fourth_completion", "fifth_completion", "sixth_completion"],
         )
         .await;
@@ -10373,7 +10413,8 @@ mod tests {
                 one.second_completion
                 two si
                 three <si|>
-                additional edit"},
+                additional edit
+            "},
             vec!["fourth_completion", "fifth_completion", "sixth_completion"],
         )
         .await;
@@ -10387,9 +10428,10 @@ mod tests {
         });
         cx.assert_editor_state(indoc! {"
             one.second_completion
-            two sixth_completion|
-            three sixth_completion|
-            additional edit"});
+            two sixth_completionˇ
+            three sixth_completionˇ
+            additional edit
+        "});
 
         handle_resolve_completion_request(&mut cx, None).await;
         apply_additional_edits.await.unwrap();
@@ -10399,13 +10441,13 @@ mod tests {
                 settings.show_completions_on_input = false;
             })
         });
-        cx.set_state("editor|");
+        cx.set_state("editorˇ");
         cx.simulate_keystroke(".");
         assert!(cx.editor(|e, _| e.context_menu.is_none()));
         cx.simulate_keystroke("c");
         cx.simulate_keystroke("l");
         cx.simulate_keystroke("o");
-        cx.assert_editor_state("editor.clo|");
+        cx.assert_editor_state("editor.cloˇ");
         assert!(cx.editor(|e, _| e.context_menu.is_none()));
         cx.update_editor(|editor, cx| {
             editor.show_completions(&ShowCompletions, cx);
@@ -10418,7 +10460,7 @@ mod tests {
                 .confirm_completion(&ConfirmCompletion::default(), cx)
                 .unwrap()
         });
-        cx.assert_editor_state("editor.close|");
+        cx.assert_editor_state("editor.closeˇ");
         handle_resolve_completion_request(&mut cx, None).await;
         apply_additional_edits.await.unwrap();
 

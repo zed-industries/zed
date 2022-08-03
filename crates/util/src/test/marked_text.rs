@@ -1,4 +1,5 @@
-use std::{collections::HashMap, ops::Range};
+use anyhow::{anyhow, Result};
+use std::{cmp::Ordering, collections::HashMap, ops::Range};
 
 pub fn marked_text_by(
     marked_text: &str,
@@ -124,4 +125,123 @@ pub fn marked_text_ranges(full_marked_text: &str) -> (String, Vec<Range<usize>>)
 
     combined_ranges.sort_by_key(|range| range.start);
     (unmarked, combined_ranges)
+}
+
+///
+pub fn parse_marked_text(
+    input_text: &str,
+    indicate_cursors: bool,
+) -> Result<(String, Vec<Range<usize>>)> {
+    let mut output_text = String::with_capacity(input_text.len());
+    let mut ranges = Vec::new();
+    let mut prev_input_ix = 0;
+    let mut current_range_start = None;
+    let mut current_range_cursor = None;
+
+    for (input_ix, marker) in input_text.match_indices(&['«', '»', 'ˇ']) {
+        output_text.push_str(&input_text[prev_input_ix..input_ix]);
+        let output_len = output_text.len();
+        let len = marker.len();
+        prev_input_ix = input_ix + len;
+
+        match marker {
+            "ˇ" => {
+                if current_range_start.is_some() {
+                    if current_range_cursor.is_some() {
+                        Err(anyhow!("duplicate point marker 'ˇ' at index {input_ix}"))?;
+                    } else {
+                        current_range_cursor = Some(output_len);
+                    }
+                } else {
+                    ranges.push(output_len..output_len);
+                }
+            }
+            "«" => {
+                if current_range_start.is_some() {
+                    Err(anyhow!(
+                        "unexpected range start marker '«' at index {input_ix}"
+                    ))?;
+                }
+                current_range_start = Some(output_len);
+            }
+            "»" => {
+                let current_range_start = current_range_start.take().ok_or_else(|| {
+                    anyhow!("unexpected range end marker '»' at index {input_ix}")
+                })?;
+
+                let mut reversed = false;
+                if let Some(current_range_cursor) = current_range_cursor.take() {
+                    if current_range_cursor == current_range_start {
+                        reversed = true;
+                    } else if current_range_cursor != output_len {
+                        Err(anyhow!("unexpected 'ˇ' marker in the middle of a range"))?;
+                    }
+                } else if indicate_cursors {
+                    Err(anyhow!("missing 'ˇ' marker to indicate range direction"))?;
+                }
+
+                ranges.push(if reversed {
+                    output_len..current_range_start
+                } else {
+                    current_range_start..output_len
+                });
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    output_text.push_str(&input_text[prev_input_ix..]);
+    Ok((output_text, ranges))
+}
+
+pub fn generate_marked_text(
+    output_text: &str,
+    ranges: &[Range<usize>],
+    indicate_cursors: bool,
+) -> String {
+    let mut marked_text = output_text.to_string();
+    for range in ranges.iter().rev() {
+        if indicate_cursors {
+            match range.start.cmp(&range.end) {
+                Ordering::Less => {
+                    marked_text.insert_str(range.end, "ˇ»");
+                    marked_text.insert_str(range.start, "«");
+                }
+                Ordering::Equal => {
+                    marked_text.insert_str(range.start, "ˇ");
+                }
+                Ordering::Greater => {
+                    marked_text.insert_str(range.start, "»");
+                    marked_text.insert_str(range.end, "«ˇ");
+                }
+            }
+        } else {
+            marked_text.insert_str(range.end, "»");
+            marked_text.insert_str(range.start, "«");
+        }
+    }
+    marked_text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{generate_marked_text, parse_marked_text};
+
+    #[test]
+    fn test_marked_text() {
+        let (text, ranges) =
+            parse_marked_text("one «ˇtwo» «threeˇ» «ˇfour» fiveˇ six", true).unwrap();
+
+        assert_eq!(text, "one two three four five six");
+        assert_eq!(ranges.len(), 4);
+        assert_eq!(ranges[0], 7..4);
+        assert_eq!(ranges[1], 8..13);
+        assert_eq!(ranges[2], 18..14);
+        assert_eq!(ranges[3], 23..23);
+
+        assert_eq!(
+            generate_marked_text(&text, &ranges, true),
+            "one «ˇtwo» «threeˇ» «ˇfour» fiveˇ six"
+        );
+    }
 }

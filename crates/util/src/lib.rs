@@ -1,4 +1,4 @@
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
 use futures::Future;
