@@ -1,5 +1,5 @@
 use alacritty_terminal::{
-    ansi::{Color::Named, NamedColor},
+    ansi::{Color as AnsiColor, Color::Named, NamedColor},
     grid::{Dimensions, Scroll},
     index::{Column as GridCol, Line as GridLine, Point, Side},
     selection::SelectionRange,
@@ -9,7 +9,7 @@ use editor::{Cursor, CursorShape, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     color::Color,
     elements::*,
-    fonts::{TextStyle, Underline},
+    fonts::{Properties, Style::Italic, TextStyle, Underline, Weight},
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
@@ -27,6 +27,7 @@ use util::ResultExt;
 
 use std::{
     cmp::min,
+    mem,
     ops::{Deref, Range},
 };
 use std::{fmt::Debug, ops::Sub};
@@ -211,6 +212,7 @@ impl TerminalEl {
         text_style: &TextStyle,
         terminal_theme: &TerminalStyle,
         text_layout_cache: &TextLayoutCache,
+        font_cache: &FontCache,
         modal: bool,
         selection_range: Option<SelectionRange>,
     ) -> (
@@ -229,6 +231,12 @@ impl TerminalEl {
         let linegroups = grid.into_iter().group_by(|i| i.point.line);
         for (line_index, (_, line)) in linegroups.into_iter().enumerate() {
             for (x_index, cell) in line.enumerate() {
+                let mut fg = cell.fg;
+                let mut bg = cell.bg;
+                if cell.flags.contains(Flags::INVERSE) {
+                    mem::swap(&mut fg, &mut bg);
+                }
+
                 //Increase selection range
                 {
                     if selection_range
@@ -243,7 +251,7 @@ impl TerminalEl {
 
                 //Expand background rect range
                 {
-                    if matches!(cell.bg, Named(NamedColor::Background)) {
+                    if matches!(bg, Named(NamedColor::Background)) {
                         //Continue to next cell, resetting variables if nescessary
                         cur_alac_color = None;
                         if let Some(rect) = cur_rect {
@@ -253,26 +261,26 @@ impl TerminalEl {
                     } else {
                         match cur_alac_color {
                             Some(cur_color) => {
-                                if cell.cell.bg == cur_color {
+                                if bg == cur_color {
                                     cur_rect = cur_rect.take().map(|rect| rect.extend());
                                 } else {
-                                    cur_alac_color = Some(cell.bg);
+                                    cur_alac_color = Some(bg);
                                     if let Some(_) = cur_rect {
                                         rects.push(cur_rect.take().unwrap());
                                     }
                                     cur_rect = Some(LayoutRect::new(
                                         Point::new(line_index as i32, cell.point.column.0 as i32),
                                         1,
-                                        convert_color(&cell.bg, &terminal_theme.colors, modal),
+                                        convert_color(&bg, &terminal_theme.colors, modal),
                                     ));
                                 }
                             }
                             None => {
-                                cur_alac_color = Some(cell.bg);
+                                cur_alac_color = Some(bg);
                                 cur_rect = Some(LayoutRect::new(
                                     Point::new(line_index as i32, cell.point.column.0 as i32),
                                     1,
-                                    convert_color(&cell.bg, &terminal_theme.colors, modal),
+                                    convert_color(&bg, &terminal_theme.colors, modal),
                                 ));
                             }
                         }
@@ -283,8 +291,14 @@ impl TerminalEl {
                 {
                     let cell_text = &cell.c.to_string();
                     if cell_text != " " {
-                        let cell_style =
-                            TerminalEl::cell_style(&cell, terminal_theme, text_style, modal);
+                        let cell_style = TerminalEl::cell_style(
+                            &cell,
+                            fg,
+                            terminal_theme,
+                            text_style,
+                            font_cache,
+                            modal,
+                        );
 
                         let layout_cell = text_layout_cache.layout_str(
                             cell_text,
@@ -344,25 +358,49 @@ impl TerminalEl {
     ///Convert the Alacritty cell styles to GPUI text styles and background color
     fn cell_style(
         indexed: &IndexedCell,
+        fg: AnsiColor,
         style: &TerminalStyle,
         text_style: &TextStyle,
+        font_cache: &FontCache,
         modal: bool,
     ) -> RunStyle {
         let flags = indexed.cell.flags;
-        let fg = convert_color(&indexed.cell.fg, &style.colors, modal);
+        let fg = convert_color(&fg, &style.colors, modal);
 
         let underline = flags
-            .contains(Flags::UNDERLINE)
+            .contains(
+                Flags::UNDERLINE
+                    | Flags::DOUBLE_UNDERLINE
+                    | Flags::DOTTED_UNDERLINE
+                    | Flags::DASHED_UNDERLINE
+                    | Flags::UNDERCURL
+                    | Flags::ALL_UNDERLINES,
+            )
             .then(|| Underline {
                 color: Some(fg),
-                squiggly: false,
+                squiggly: flags.contains(Flags::UNDERCURL),
                 thickness: OrderedFloat(1.),
             })
             .unwrap_or_default();
 
+        let mut properties = Properties::new();
+        if indexed
+            .flags
+            .contains(Flags::BOLD | Flags::BOLD_ITALIC | Flags::DIM_BOLD)
+        {
+            properties = *properties.weight(Weight::BOLD);
+        }
+        if indexed.flags.contains(Flags::ITALIC | Flags::BOLD_ITALIC) {
+            properties = *properties.style(Italic);
+        }
+
+        let font_id = font_cache
+            .select_font(text_style.font_family_id, &properties)
+            .unwrap_or(text_style.font_id);
+
         RunStyle {
             color: fg,
-            font_id: text_style.font_id,
+            font_id: font_id,
             underline,
         }
     }
@@ -557,10 +595,20 @@ impl Element for TerminalEl {
                 terminal.set_size(dimensions);
                 terminal.render_lock(mcx, |content, cursor_text| {
                     let mut cells = vec![];
-                    cells.extend(content.display_iter.map(|ic| IndexedCell {
-                        point: ic.point.clone(),
-                        cell: ic.cell.clone(),
-                    }));
+                    cells.extend(
+                        content
+                            .display_iter
+                            .filter(|ic| {
+                                !ic.flags.contains(Flags::HIDDEN)
+                                    && !(ic.bg == Named(NamedColor::Background)
+                                        && ic.c == ' '
+                                        && !ic.flags.contains(Flags::INVERSE))
+                            })
+                            .map(|ic| IndexedCell {
+                                point: ic.point.clone(),
+                                cell: ic.cell.clone(),
+                            }),
+                    );
 
                     (
                         cells,
@@ -577,6 +625,7 @@ impl Element for TerminalEl {
             &text_style,
             &terminal_theme,
             cx.text_layout_cache,
+            cx.font_cache(),
             self.modal,
             selection,
         );
