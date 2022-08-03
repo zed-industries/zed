@@ -26,15 +26,17 @@ pub enum ContextMenuItem {
     Item {
         label: String,
         action: Box<dyn Action>,
+        icon: Option<String>,
     },
     Separator,
 }
 
 impl ContextMenuItem {
-    pub fn item(label: impl ToString, action: impl 'static + Action) -> Self {
+    pub fn item(label: impl ToString, icon: Option<&str>, action: impl 'static + Action) -> Self {
         Self::Item {
             label: label.to_string(),
             action: Box::new(action),
+            icon: icon.map(|item| item.to_string()),
         }
     }
 
@@ -254,14 +256,31 @@ impl ContextMenu {
                 Flex::column()
                     .with_children(self.items.iter().enumerate().map(|(ix, item)| {
                         match item {
-                            ContextMenuItem::Item { label, .. } => {
+                            ContextMenuItem::Item { label, icon, .. } => {
                                 let style = style
                                     .item
                                     .style_for(Default::default(), Some(ix) == self.selected_index);
-                                Label::new(label.to_string(), style.label.clone())
-                                    .contained()
-                                    .with_style(style.container)
-                                    .boxed()
+                                let mut line = Flex::row();
+                                if let Some(_) = icon {
+                                    line.add_child(
+                                        Empty::new()
+                                            .constrained()
+                                            .with_width(style.icon_width)
+                                            .boxed(),
+                                    );
+                                }
+                                line.add_child(
+                                    Label::new(label.to_string(), style.label.clone())
+                                        .contained()
+                                        .with_style(style.container)
+                                        .with_margin_left(if icon.is_some() {
+                                            style.icon_spacing
+                                        } else {
+                                            0.
+                                        })
+                                        .boxed(),
+                                );
+                                line.boxed()
                             }
                             ContextMenuItem::Separator => Empty::new()
                                 .collapsed()
@@ -314,27 +333,50 @@ impl ContextMenu {
             Flex::column()
                 .with_children(self.items.iter().enumerate().map(|(ix, item)| {
                     match item {
-                        ContextMenuItem::Item { label, action } => {
+                        ContextMenuItem::Item {
+                            label,
+                            action,
+                            icon,
+                        } => {
                             let action = action.boxed_clone();
                             MouseEventHandler::new::<MenuItem, _, _>(ix, cx, |state, _| {
                                 let style =
                                     style.item.style_for(state, Some(ix) == self.selected_index);
-                                Flex::row()
-                                    .with_child(
-                                        Label::new(label.to_string(), style.label.clone()).boxed(),
+
+                                let mut line = Flex::row();
+                                if let Some(icon_file) = icon {
+                                    line.add_child(
+                                        Svg::new(format!("icons/{}", icon_file))
+                                            .with_color(style.label.color)
+                                            .constrained()
+                                            .with_width(style.icon_width)
+                                            .aligned()
+                                            .boxed(),
                                     )
-                                    .with_child({
-                                        KeystrokeLabel::new(
-                                            action.boxed_clone(),
-                                            style.keystroke.container,
-                                            style.keystroke.text.clone(),
-                                        )
-                                        .flex_float()
-                                        .boxed()
-                                    })
-                                    .contained()
-                                    .with_style(style.container)
+                                }
+
+                                line.with_child(
+                                    Label::new(label.to_string(), style.label.clone())
+                                        .contained()
+                                        .with_margin_left(if icon.is_some() {
+                                            style.icon_spacing
+                                        } else {
+                                            0.
+                                        })
+                                        .boxed(),
+                                )
+                                .with_child({
+                                    KeystrokeLabel::new(
+                                        action.boxed_clone(),
+                                        style.keystroke.container,
+                                        style.keystroke.text.clone(),
+                                    )
+                                    .flex_float()
                                     .boxed()
+                                })
+                                .contained()
+                                .with_style(style.container)
+                                .boxed()
                             })
                             .with_cursor_style(CursorStyle::PointingHand)
                             .on_click(MouseButton::Left, move |_, cx| {

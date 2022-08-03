@@ -48,12 +48,13 @@ pub fn deploy_context_menu(
         menu.show(
             position,
             vec![
-                ContextMenuItem::item("Rename Symbol", Rename),
-                ContextMenuItem::item("Go To Definition", GoToDefinition),
-                ContextMenuItem::item("Go To Type Definition", GoToTypeDefinition),
-                ContextMenuItem::item("Find All References", FindAllReferences),
+                ContextMenuItem::item("Rename Symbol", None, Rename),
+                ContextMenuItem::item("Go To Definition", None, GoToDefinition),
+                ContextMenuItem::item("Go To Type Definition", None, GoToTypeDefinition),
+                ContextMenuItem::item("Find All References", None, FindAllReferences),
                 ContextMenuItem::item(
                     "Code Actions",
+                    None,
                     ToggleCodeActions {
                         deployed_from_indicator: false,
                     },

@@ -147,7 +147,7 @@ pub struct Pane {
     autoscroll: bool,
     nav_history: Rc<RefCell<NavHistory>>,
     toolbar: ViewHandle<Toolbar>,
-    split_menu: ViewHandle<ContextMenu>,
+    context_menu: ViewHandle<ContextMenu>,
 }
 
 pub struct ItemNavHistory {
@@ -203,7 +203,7 @@ impl Pane {
                 pane: handle.clone(),
             })),
             toolbar: cx.add_view(|_| Toolbar::new(handle)),
-            split_menu,
+            context_menu: split_menu,
         }
     }
 
@@ -837,14 +837,14 @@ impl Pane {
     }
 
     fn deploy_split_menu(&mut self, action: &DeploySplitMenu, cx: &mut ViewContext<Self>) {
-        self.split_menu.update(cx, |menu, cx| {
+        self.context_menu.update(cx, |menu, cx| {
             menu.show(
                 action.position,
                 vec![
-                    ContextMenuItem::item("Split Right", SplitRight),
-                    ContextMenuItem::item("Split Left", SplitLeft),
-                    ContextMenuItem::item("Split Up", SplitUp),
-                    ContextMenuItem::item("Split Down", SplitDown),
+                    ContextMenuItem::item("Split Right", None, SplitRight),
+                    ContextMenuItem::item("Split Left", None, SplitLeft),
+                    ContextMenuItem::item("Split Up", None, SplitUp),
+                    ContextMenuItem::item("Split Down", None, SplitDown),
                 ],
                 cx,
             );
@@ -852,12 +852,12 @@ impl Pane {
     }
 
     fn deploy_new_menu(&mut self, action: &DeployNewMenu, cx: &mut ViewContext<Self>) {
-        self.split_menu.update(cx, |menu, cx| {
+        self.context_menu.update(cx, |menu, cx| {
             menu.show(
                 action.position,
                 vec![
-                    ContextMenuItem::item("New File", NewFile),
-                    ContextMenuItem::item("New Terminal", NewTerminal),
+                    ContextMenuItem::item("New File", Some("circle_info_12.svg"), NewFile),
+                    ContextMenuItem::item("New Terminal", Some("terminal_12.svg"), NewTerminal),
                 ],
                 cx,
             );
@@ -1204,7 +1204,7 @@ impl View for Pane {
                 })
                 .boxed(),
             )
-            .with_child(ChildView::new(&self.split_menu).boxed())
+            .with_child(ChildView::new(&self.context_menu).boxed())
             .named("pane")
     }
 
