@@ -343,12 +343,14 @@ impl TerminalEl {
                 text_fragment.width()
             };
 
+            //Cursor should always surround as much of the text as possible,
+            //hence when on pixel boundaries round the origin down and the width up
             Some((
                 vec2f(
-                    cursor_point.col() as f32 * size.cell_width(),
-                    cursor_point.line() as f32 * size.line_height(),
+                    (cursor_point.col() as f32 * size.cell_width()).floor(),
+                    (cursor_point.line() as f32 * size.line_height()).floor(),
                 ),
-                cursor_width,
+                cursor_width.ceil(),
             ))
         } else {
             None
