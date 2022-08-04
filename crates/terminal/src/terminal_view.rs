@@ -1,11 +1,11 @@
 use crate::connected_view::ConnectedView;
 use crate::{Event, Terminal, TerminalBuilder, TerminalError};
+
 use dirs::home_dir;
 use gpui::{
-    actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, View, ViewContext,
-    ViewHandle,
+    actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MutableAppContext, View,
+    ViewContext, ViewHandle,
 };
-use theme::ContextMenu;
 use workspace::{Item, Workspace};
 
 use crate::TerminalSize;
@@ -17,6 +17,10 @@ use std::path::{Path, PathBuf};
 use crate::connected_el::TerminalEl;
 
 actions!(terminal, [DeployModal]);
+
+pub fn init(cx: &mut MutableAppContext) {
+    cx.add_action(TerminalView::deploy);
+}
 
 //Make terminal view an enum, that can give you views for the error and non-error states
 //Take away all the result unwrapping in the current TerminalView by making it 'infallible'
@@ -40,7 +44,6 @@ pub struct TerminalView {
     modal: bool,
     pub content: TerminalContent,
     associated_directory: Option<PathBuf>,
-    context_menu: ViewHandle<ContextMenu>,
 }
 
 pub struct ErrorView {
@@ -113,7 +116,6 @@ impl TerminalView {
             modal,
             content,
             associated_directory: working_directory,
-            context_menu: cx.add_view(|cx| ContextMenu::new(cx)),
         }
     }
 
@@ -141,7 +143,6 @@ impl View for TerminalView {
             TerminalContent::Connected(connected) => ChildView::new(connected),
             TerminalContent::Error(error) => ChildView::new(error),
         };
-
         if self.modal {
             let settings = cx.global::<Settings>();
             let container_style = settings.theme.terminal.modal_container;

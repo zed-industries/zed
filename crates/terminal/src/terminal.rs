@@ -27,7 +27,6 @@ use futures::{
 use modal::deploy_modal;
 use settings::{Settings, Shell};
 use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc, time::Duration};
-use terminal_view::TerminalView;
 use thiserror::Error;
 
 use gpui::{
@@ -43,9 +42,9 @@ use crate::mappings::{
 
 ///Initialize and register all of our action handlers
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(TerminalView::deploy);
     cx.add_action(deploy_modal);
 
+    terminal_view::init(cx);
     connected_view::init(cx);
 }
 
