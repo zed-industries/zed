@@ -5,17 +5,17 @@ use gpui::{
     actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, View, ViewContext,
     ViewHandle,
 };
+use workspace::{Item, Workspace};
 
 use crate::TerminalSize;
 use project::{LocalWorktree, Project, ProjectPath};
 use settings::{Settings, WorkingDirectory};
 use smallvec::SmallVec;
 use std::path::{Path, PathBuf};
-use workspace::{Item, Workspace};
 
 use crate::connected_el::TerminalEl;
 
-actions!(terminal, [Deploy, DeployModal]);
+actions!(terminal, [DeployModal]);
 
 //Make terminal view an enum, that can give you views for the error and non-error states
 //Take away all the result unwrapping in the current TerminalView by making it 'infallible'
@@ -59,7 +59,11 @@ impl Entity for ErrorView {
 
 impl TerminalView {
     ///Create a new Terminal in the current working directory or the user's home directory
-    pub fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
+    pub fn deploy(
+        workspace: &mut Workspace,
+        _: &workspace::NewTerminal,
+        cx: &mut ViewContext<Workspace>,
+    ) {
         let strategy = cx
             .global::<Settings>()
             .terminal_overrides

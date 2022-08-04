@@ -136,7 +136,7 @@ pub fn menus() -> Vec<Menu<'static>> {
                 },
                 MenuItem::Action {
                     name: "Find In Project",
-                    action: Box::new(search::project_search::Deploy),
+                    action: Box::new(workspace::NewSearch),
                 },
                 MenuItem::Separator,
                 MenuItem::Action {

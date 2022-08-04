@@ -22,6 +22,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ContextMenu::cancel);
 }
 
+//
 pub enum ContextMenuItem {
     Item {
         label: String,
@@ -258,6 +259,7 @@ impl ContextMenu {
                                 let style = style
                                     .item
                                     .style_for(Default::default(), Some(ix) == self.selected_index);
+
                                 Label::new(label.to_string(), style.label.clone())
                                     .contained()
                                     .with_style(style.container)
@@ -319,9 +321,12 @@ impl ContextMenu {
                             MouseEventHandler::new::<MenuItem, _, _>(ix, cx, |state, _| {
                                 let style =
                                     style.item.style_for(state, Some(ix) == self.selected_index);
+
                                 Flex::row()
                                     .with_child(
-                                        Label::new(label.to_string(), style.label.clone()).boxed(),
+                                        Label::new(label.to_string(), style.label.clone())
+                                            .contained()
+                                            .boxed(),
                                     )
                                     .with_child({
                                         KeystrokeLabel::new(
