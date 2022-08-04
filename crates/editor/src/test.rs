@@ -183,7 +183,7 @@ impl<'a> EditorTestContext<'a> {
         }
     }
 
-    pub fn ranges(&self, marked_text: &str) -> Vec<Range<usize>> {
+    fn ranges(&self, marked_text: &str) -> Vec<Range<usize>> {
         let (unmarked_text, ranges) = marked_text_ranges(marked_text, false);
         assert_eq!(self.buffer_text(), unmarked_text);
         ranges
@@ -204,6 +204,11 @@ impl<'a> EditorTestContext<'a> {
         snapshot.anchor_before(ranges[0].start)..snapshot.anchor_after(ranges[0].end)
     }
 
+    /// Change the editor's text and selections using a string containing
+    /// embedded range markers that represent the ranges and directions of
+    /// each selection.
+    ///
+    /// See the `util::test::marked_text_ranges` function for more information.
     pub fn set_state(&mut self, marked_text: &str) {
         let (unmarked_text, selection_ranges) = marked_text_ranges(marked_text, true);
         self.editor.update(self.cx, |editor, cx| {
@@ -214,6 +219,10 @@ impl<'a> EditorTestContext<'a> {
         })
     }
 
+    /// Make an assertion about the editor's text and the ranges and directions
+    /// of its selections using a string containing embedded range markers.
+    ///
+    /// See the `util::test::marked_text_ranges` function for more information.
     pub fn assert_editor_state(&mut self, marked_text: &str) {
         let (unmarked_text, expected_selections) = marked_text_ranges(marked_text, true);
         let buffer_text = self.buffer_text();
