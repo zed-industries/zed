@@ -284,44 +284,44 @@ mod test {
             .mode_after(Mode::Visual { line: false });
         cx.assert(
             indoc! {"
-                The |quick brown
+                The ˇquick brown
                 fox jumps over
                 the lazy dog"},
             indoc! {"
-                The [quick brown
-                fox jumps }over
+                The «quick brown
+                fox jumps ˇ»over
                 the lazy dog"},
         );
         cx.assert(
             indoc! {"
                 The quick brown
                 fox jumps over
-                the |lazy dog"},
+                the ˇlazy dog"},
             indoc! {"
                 The quick brown
                 fox jumps over
-                the [lazy }dog"},
+                the «lazy ˇ»dog"},
         );
         cx.assert(
             indoc! {"
                 The quick brown
-                fox jumps |over
+                fox jumps ˇover
                 the lazy dog"},
             indoc! {"
                 The quick brown
-                fox jumps [over
-                }the lazy dog"},
+                fox jumps «over
+                ˇ»the lazy dog"},
         );
         let mut cx = cx
             .binding(["v", "b", "k"])
             .mode_after(Mode::Visual { line: false });
         cx.assert(
             indoc! {"
-                The |quick brown
+                The ˇquick brown
                 fox jumps over
                 the lazy dog"},
             indoc! {"
-                {The q]uick brown
+                «ˇThe q»uick brown
                 fox jumps over
                 the lazy dog"},
         );
@@ -329,20 +329,20 @@ mod test {
             indoc! {"
                 The quick brown
                 fox jumps over
-                the |lazy dog"},
+                the ˇlazy dog"},
             indoc! {"
                 The quick brown
-                {fox jumps over
-                the l]azy dog"},
+                «ˇfox jumps over
+                the l»azy dog"},
         );
         cx.assert(
             indoc! {"
                 The quick brown
-                fox jumps |over
+                fox jumps ˇover
                 the lazy dog"},
             indoc! {"
-                The {quick brown
-                fox jumps o]ver
+                The «ˇquick brown
+                fox jumps o»ver
                 the lazy dog"},
         );
     }
@@ -351,51 +351,51 @@ mod test {
     async fn test_visual_delete(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
         let mut cx = cx.binding(["v", "w", "x"]);
-        cx.assert("The quick |brown", "The quick| ");
+        cx.assert("The quick ˇbrown", "The quickˇ ");
         let mut cx = cx.binding(["v", "w", "j", "x"]);
         cx.assert(
             indoc! {"
-                The |quick brown
+                The ˇquick brown
                 fox jumps over
                 the lazy dog"},
             indoc! {"
-                The |ver
+                The ˇver
                 the lazy dog"},
         );
         // Test pasting code copied on delete
         cx.simulate_keystrokes(["j", "p"]);
         cx.assert_editor_state(indoc! {"
             The ver
-            the l|quick brown
+            the lˇquick brown
             fox jumps oazy dog"});
 
         cx.assert(
             indoc! {"
                 The quick brown
                 fox jumps over
-                the |lazy dog"},
+                the ˇlazy dog"},
             indoc! {"
                 The quick brown
                 fox jumps over
-                the |og"},
+                the ˇog"},
         );
         cx.assert(
             indoc! {"
                 The quick brown
-                fox jumps |over
+                fox jumps ˇover
                 the lazy dog"},
             indoc! {"
                 The quick brown
-                fox jumps |he lazy dog"},
+                fox jumps ˇhe lazy dog"},
         );
         let mut cx = cx.binding(["v", "b", "k", "x"]);
         cx.assert(
             indoc! {"
-                The |quick brown
+                The ˇquick brown
                 fox jumps over
                 the lazy dog"},
             indoc! {"
-                |uick brown
+                ˇuick brown
                 fox jumps over
                 the lazy dog"},
         );
@@ -403,18 +403,18 @@ mod test {
             indoc! {"
                 The quick brown
                 fox jumps over
-                the |lazy dog"},
+                the ˇlazy dog"},
             indoc! {"
                 The quick brown
-                |azy dog"},
+                ˇazy dog"},
         );
         cx.assert(
             indoc! {"
                 The quick brown
-                fox jumps |over
+                fox jumps ˇover
                 the lazy dog"},
             indoc! {"
-                The |ver
+                The ˇver
                 the lazy dog"},
         );
     }
@@ -425,68 +425,68 @@ mod test {
         let mut cx = cx.binding(["shift-v", "x"]);
         cx.assert(
             indoc! {"
-                The qu|ick brown
+                The quˇick brown
                 fox jumps over
                 the lazy dog"},
             indoc! {"
-                fox ju|mps over
+                fox juˇmps over
                 the lazy dog"},
         );
         // Test pasting code copied on delete
         cx.simulate_keystroke("p");
         cx.assert_editor_state(indoc! {"
             fox jumps over
-            |The quick brown
+            ˇThe quick brown
             the lazy dog"});
 
         cx.assert(
             indoc! {"
                 The quick brown
-                fox ju|mps over
+                fox juˇmps over
                 the lazy dog"},
             indoc! {"
                 The quick brown
-                the la|zy dog"},
+                the laˇzy dog"},
         );
         cx.assert(
             indoc! {"
                 The quick brown
                 fox jumps over
-                the la|zy dog"},
+                the laˇzy dog"},
             indoc! {"
                 The quick brown
-                fox ju|mps over"},
+                fox juˇmps over"},
         );
         let mut cx = cx.binding(["shift-v", "j", "x"]);
         cx.assert(
             indoc! {"
-                The qu|ick brown
+                The quˇick brown
                 fox jumps over
                 the lazy dog"},
-            "the la|zy dog",
+            "the laˇzy dog",
         );
         // Test pasting code copied on delete
         cx.simulate_keystroke("p");
         cx.assert_editor_state(indoc! {"
             the lazy dog
-            |The quick brown
+            ˇThe quick brown
             fox jumps over"});
 
         cx.assert(
             indoc! {"
                 The quick brown
-                fox ju|mps over
+                fox juˇmps over
                 the lazy dog"},
-            "The qu|ick brown",
+            "The quˇick brown",
         );
         cx.assert(
             indoc! {"
                 The quick brown
                 fox jumps over
-                the la|zy dog"},
+                the laˇzy dog"},
             indoc! {"
                 The quick brown
-                fox ju|mps over"},
+                fox juˇmps over"},
         );
     }
 
@@ -494,44 +494,44 @@ mod test {
     async fn test_visual_change(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
         let mut cx = cx.binding(["v", "w", "c"]).mode_after(Mode::Insert);
-        cx.assert("The quick |brown", "The quick |");
+        cx.assert("The quick ˇbrown", "The quick ˇ");
         let mut cx = cx.binding(["v", "w", "j", "c"]).mode_after(Mode::Insert);
         cx.assert(
             indoc! {"
-                The |quick brown
+                The ˇquick brown
                 fox jumps over
                 the lazy dog"},
             indoc! {"
-                The |ver
+                The ˇver
                 the lazy dog"},
         );
         cx.assert(
             indoc! {"
                 The quick brown
                 fox jumps over
-                the |lazy dog"},
+                the ˇlazy dog"},
             indoc! {"
                 The quick brown
                 fox jumps over
-                the |og"},
+                the ˇog"},
         );
         cx.assert(
             indoc! {"
                 The quick brown
-                fox jumps |over
+                fox jumps ˇover
                 the lazy dog"},
             indoc! {"
                 The quick brown
-                fox jumps |he lazy dog"},
+                fox jumps ˇhe lazy dog"},
         );
         let mut cx = cx.binding(["v", "b", "k", "c"]).mode_after(Mode::Insert);
         cx.assert(
             indoc! {"
-                The |quick brown
+                The ˇquick brown
                 fox jumps over
                 the lazy dog"},
             indoc! {"
-                |uick brown
+                ˇuick brown
                 fox jumps over
                 the lazy dog"},
         );
@@ -539,18 +539,18 @@ mod test {
             indoc! {"
                 The quick brown
                 fox jumps over
-                the |lazy dog"},
+                the ˇlazy dog"},
             indoc! {"
                 The quick brown
-                |azy dog"},
+                ˇazy dog"},
         );
         cx.assert(
             indoc! {"
                 The quick brown
-                fox jumps |over
+                fox jumps ˇover
                 the lazy dog"},
             indoc! {"
-                The |ver
+                The ˇver
                 the lazy dog"},
         );
     }
@@ -561,11 +561,11 @@ mod test {
         let mut cx = cx.binding(["shift-v", "c"]).mode_after(Mode::Insert);
         cx.assert(
             indoc! {"
-                The qu|ick brown
+                The quˇick brown
                 fox jumps over
                 the lazy dog"},
             indoc! {"
-                |
+                ˇ
                 fox jumps over
                 the lazy dog"},
         );
@@ -574,37 +574,37 @@ mod test {
         cx.assert_editor_state(indoc! {"
             
             fox jumps over
-            |The quick brown
+            ˇThe quick brown
             the lazy dog"});
 
         cx.assert(
             indoc! {"
                 The quick brown
-                fox ju|mps over
+                fox juˇmps over
                 the lazy dog"},
             indoc! {"
                 The quick brown
-                |
+                ˇ
                 the lazy dog"},
         );
         cx.assert(
             indoc! {"
                 The quick brown
                 fox jumps over
-                the la|zy dog"},
+                the laˇzy dog"},
             indoc! {"
                 The quick brown
                 fox jumps over
-                |"},
+                ˇ"},
         );
         let mut cx = cx.binding(["shift-v", "j", "c"]).mode_after(Mode::Insert);
         cx.assert(
             indoc! {"
-                The qu|ick brown
+                The quˇick brown
                 fox jumps over
                 the lazy dog"},
             indoc! {"
-                |
+                ˇ
                 the lazy dog"},
         );
         // Test pasting code copied on delete
@@ -612,26 +612,26 @@ mod test {
         cx.assert_editor_state(indoc! {"
             
             the lazy dog
-            |The quick brown
+            ˇThe quick brown
             fox jumps over"});
         cx.assert(
             indoc! {"
                 The quick brown
-                fox ju|mps over
+                fox juˇmps over
                 the lazy dog"},
             indoc! {"
                 The quick brown
-                |"},
+                ˇ"},
         );
         cx.assert(
             indoc! {"
                 The quick brown
                 fox jumps over
-                the la|zy dog"},
+                the laˇzy dog"},
             indoc! {"
                 The quick brown
                 fox jumps over
-                |"},
+                ˇ"},
         );
     }
 
@@ -639,16 +639,16 @@ mod test {
     async fn test_visual_yank(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
         let mut cx = cx.binding(["v", "w", "y"]);
-        cx.assert("The quick |brown", "The quick |brown");
+        cx.assert("The quick ˇbrown", "The quick ˇbrown");
         cx.assert_clipboard_content(Some("brown"));
         let mut cx = cx.binding(["v", "w", "j", "y"]);
         cx.assert(
             indoc! {"
-                The |quick brown
+                The ˇquick brown
                 fox jumps over
                 the lazy dog"},
             indoc! {"
-                The |quick brown
+                The ˇquick brown
                 fox jumps over
                 the lazy dog"},
         );
@@ -659,21 +659,21 @@ mod test {
             indoc! {"
                 The quick brown
                 fox jumps over
-                the |lazy dog"},
+                the ˇlazy dog"},
             indoc! {"
                 The quick brown
                 fox jumps over
-                the |lazy dog"},
+                the ˇlazy dog"},
         );
         cx.assert_clipboard_content(Some("lazy d"));
         cx.assert(
             indoc! {"
                 The quick brown
-                fox jumps |over
+                fox jumps ˇover
                 the lazy dog"},
             indoc! {"
                 The quick brown
-                fox jumps |over
+                fox jumps ˇover
                 the lazy dog"},
         );
         cx.assert_clipboard_content(Some(indoc! {"
@@ -682,11 +682,11 @@ mod test {
         let mut cx = cx.binding(["v", "b", "k", "y"]);
         cx.assert(
             indoc! {"
-                The |quick brown
+                The ˇquick brown
                 fox jumps over
                 the lazy dog"},
             indoc! {"
-                |The quick brown
+                ˇThe quick brown
                 fox jumps over
                 the lazy dog"},
         );
@@ -695,10 +695,10 @@ mod test {
             indoc! {"
                 The quick brown
                 fox jumps over
-                the |lazy dog"},
+                the ˇlazy dog"},
             indoc! {"
                 The quick brown
-                |fox jumps over
+                ˇfox jumps over
                 the lazy dog"},
         );
         cx.assert_clipboard_content(Some(indoc! {"
@@ -707,10 +707,10 @@ mod test {
         cx.assert(
             indoc! {"
                 The quick brown
-                fox jumps |over
+                fox jumps ˇover
                 the lazy dog"},
             indoc! {"
-                The |quick brown
+                The ˇquick brown
                 fox jumps over
                 the lazy dog"},
         );
@@ -725,7 +725,7 @@ mod test {
         cx.set_state(
             indoc! {"
                 The quick brown
-                fox [jump}s over
+                fox «jumpˇ»s over
                 the lazy dog"},
             Mode::Visual { line: false },
         );
@@ -733,7 +733,7 @@ mod test {
         cx.set_state(
             indoc! {"
                 The quick brown
-                fox jump|s over
+                fox jumpˇs over
                 the lazy dog"},
             Mode::Normal,
         );
@@ -741,7 +741,7 @@ mod test {
         cx.assert_state(
             indoc! {"
                 The quick brown
-                fox jumps|jumps over
+                fox jumpsˇjumps over
                 the lazy dog"},
             Mode::Normal,
         );
@@ -749,7 +749,7 @@ mod test {
         cx.set_state(
             indoc! {"
                 The quick brown
-                fox ju|mps over
+                fox juˇmps over
                 the lazy dog"},
             Mode::Visual { line: true },
         );
@@ -757,13 +757,13 @@ mod test {
         cx.assert_state(
             indoc! {"
                 The quick brown
-                the la|zy dog"},
+                the laˇzy dog"},
             Mode::Normal,
         );
         cx.set_state(
             indoc! {"
                 The quick brown
-                the [laz}y dog"},
+                the «lazˇ»y dog"},
             Mode::Visual { line: false },
         );
         cx.simulate_keystroke("p");
@@ -771,7 +771,7 @@ mod test {
             indoc! {"
                 The quick brown
                 the 
-                |fox jumps over
+                ˇfox jumps over
                  dog"},
             Mode::Normal,
         );

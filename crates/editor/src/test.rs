@@ -1,33 +1,28 @@
-use std::{
-    any::TypeId,
-    ops::{Deref, DerefMut, Range},
-    sync::Arc,
-};
-
-use anyhow::Result;
-use futures::{Future, StreamExt};
-use indoc::indoc;
-
-use gpui::{
-    json, keymap::Keystroke, AppContext, ModelContext, ModelHandle, ViewContext, ViewHandle,
-};
-use language::{
-    point_to_lsp, Buffer, BufferSnapshot, FakeLspAdapter, Language, LanguageConfig, Selection,
-};
-use lsp::{notification, request};
-use project::Project;
-use settings::Settings;
-use util::{
-    assert_set_eq, set_eq,
-    test::{generate_marked_text, marked_text, parse_marked_text},
-};
-use workspace::{pane, AppState, Workspace, WorkspaceHandle};
-
 use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     multi_buffer::ToPointUtf16,
     AnchorRangeExt, Autoscroll, DisplayPoint, Editor, EditorMode, MultiBuffer, ToPoint,
 };
+use anyhow::Result;
+use futures::{Future, StreamExt};
+use gpui::{
+    json, keymap::Keystroke, AppContext, ModelContext, ModelHandle, ViewContext, ViewHandle,
+};
+use indoc::indoc;
+use language::{point_to_lsp, Buffer, BufferSnapshot, FakeLspAdapter, Language, LanguageConfig};
+use lsp::{notification, request};
+use project::Project;
+use settings::Settings;
+use std::{
+    any::TypeId,
+    ops::{Deref, DerefMut, Range},
+    sync::Arc,
+};
+use util::{
+    assert_set_eq, set_eq,
+    test::{generate_marked_text, marked_text, parse_marked_text},
+};
+use workspace::{pane, AppState, Workspace, WorkspaceHandle};
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -258,11 +253,7 @@ impl<'a> EditorTestContext<'a> {
         assert_set_eq!(actual_ranges, expected_ranges);
     }
 
-    pub fn assert_editor_selections(&mut self, expected_selections: Vec<Selection<usize>>) {
-        let expected_selections = expected_selections
-            .into_iter()
-            .map(|s| s.range())
-            .collect::<Vec<_>>();
+    pub fn assert_editor_selections(&mut self, expected_selections: Vec<Range<usize>>) {
         let expected_marked_text =
             generate_marked_text(&self.buffer_text(), &expected_selections, true);
         self.assert_selections(expected_selections, expected_marked_text)
@@ -277,7 +268,13 @@ impl<'a> EditorTestContext<'a> {
             .editor
             .read_with(self.cx, |editor, cx| editor.selections.all::<usize>(cx))
             .into_iter()
-            .map(|s| s.range())
+            .map(|s| {
+                if s.reversed {
+                    s.end..s.start
+                } else {
+                    s.start..s.end
+                }
+            })
             .collect::<Vec<_>>();
         let actual_marked_text =
             generate_marked_text(&self.buffer_text(), &actual_selections, true);
@@ -285,11 +282,13 @@ impl<'a> EditorTestContext<'a> {
             panic!(
                 indoc! {"
                     Editor has unexpected selections.
+
                     Expected selections:
                     {}
+
                     Actual selections:
-                    {}",
-                },
+                    {}
+                "},
                 expected_marked_text, actual_marked_text,
             );
         }
