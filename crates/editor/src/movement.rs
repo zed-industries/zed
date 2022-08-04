@@ -287,20 +287,20 @@ mod tests {
             );
         }
 
-        assert("\n|   |lorem", cx);
-        assert("|\n|   lorem", cx);
-        assert("    |lorem|", cx);
-        assert("|    |lorem", cx);
-        assert("    |lor|em", cx);
-        assert("\nlorem\n|   |ipsum", cx);
-        assert("\n\n|\n|", cx);
-        assert("    |lorem  |ipsum", cx);
-        assert("lorem|-|ipsum", cx);
-        assert("lorem|-#$@|ipsum", cx);
-        assert("|lorem_|ipsum", cx);
-        assert(" |defγ|", cx);
-        assert(" |bcΔ|", cx);
-        assert(" ab|——|cd", cx);
+        assert("\nˇ   ˇlorem", cx);
+        assert("ˇ\nˇ   lorem", cx);
+        assert("    ˇloremˇ", cx);
+        assert("ˇ    ˇlorem", cx);
+        assert("    ˇlorˇem", cx);
+        assert("\nlorem\nˇ   ˇipsum", cx);
+        assert("\n\nˇ\nˇ", cx);
+        assert("    ˇlorem  ˇipsum", cx);
+        assert("loremˇ-ˇipsum", cx);
+        assert("loremˇ-#$@ˇipsum", cx);
+        assert("ˇlorem_ˇipsum", cx);
+        assert(" ˇdefγˇ", cx);
+        assert(" ˇbcΔˇ", cx);
+        assert(" abˇ——ˇcd", cx);
     }
 
     #[gpui::test]
@@ -315,26 +315,26 @@ mod tests {
         }
 
         // Subword boundaries are respected
-        assert("lorem_|ip|sum", cx);
-        assert("lorem_|ipsum|", cx);
-        assert("|lorem_|ipsum", cx);
-        assert("lorem_|ipsum_|dolor", cx);
-        assert("lorem|Ip|sum", cx);
-        assert("lorem|Ipsum|", cx);
+        assert("lorem_ˇipˇsum", cx);
+        assert("lorem_ˇipsumˇ", cx);
+        assert("ˇlorem_ˇipsum", cx);
+        assert("lorem_ˇipsum_ˇdolor", cx);
+        assert("loremˇIpˇsum", cx);
+        assert("loremˇIpsumˇ", cx);
 
         // Word boundaries are still respected
-        assert("\n|   |lorem", cx);
-        assert("    |lorem|", cx);
-        assert("    |lor|em", cx);
-        assert("\nlorem\n|   |ipsum", cx);
-        assert("\n\n|\n|", cx);
-        assert("    |lorem  |ipsum", cx);
-        assert("lorem|-|ipsum", cx);
-        assert("lorem|-#$@|ipsum", cx);
-        assert(" |defγ|", cx);
-        assert(" bc|Δ|", cx);
-        assert(" |bcδ|", cx);
-        assert(" ab|——|cd", cx);
+        assert("\nˇ   ˇlorem", cx);
+        assert("    ˇloremˇ", cx);
+        assert("    ˇlorˇem", cx);
+        assert("\nlorem\nˇ   ˇipsum", cx);
+        assert("\n\nˇ\nˇ", cx);
+        assert("    ˇlorem  ˇipsum", cx);
+        assert("loremˇ-ˇipsum", cx);
+        assert("loremˇ-#$@ˇipsum", cx);
+        assert(" ˇdefγˇ", cx);
+        assert(" bcˇΔˇ", cx);
+        assert(" ˇbcδˇ", cx);
+        assert(" abˇ——ˇcd", cx);
     }
 
     #[gpui::test]
@@ -352,14 +352,14 @@ mod tests {
             );
         }
 
-        assert("abc|def\ngh\nij|k", cx, |left, right| {
+        assert("abcˇdef\ngh\nijˇk", cx, |left, right| {
             left == 'c' && right == 'd'
         });
-        assert("abcdef\n|gh\nij|k", cx, |left, right| {
+        assert("abcdef\nˇgh\nijˇk", cx, |left, right| {
             left == '\n' && right == 'g'
         });
         let mut line_count = 0;
-        assert("abcdef\n|gh\nij|k", cx, |left, _| {
+        assert("abcdef\nˇgh\nijˇk", cx, |left, _| {
             if left == '\n' {
                 line_count += 1;
                 line_count == 2
@@ -380,17 +380,17 @@ mod tests {
             );
         }
 
-        assert("\n|   lorem|", cx);
-        assert("    |lorem|", cx);
-        assert("    lor|em|", cx);
-        assert("    lorem|    |\nipsum\n", cx);
-        assert("\n|\n|\n\n", cx);
-        assert("lorem|    ipsum|   ", cx);
-        assert("lorem|-|ipsum", cx);
-        assert("lorem|#$@-|ipsum", cx);
-        assert("lorem|_ipsum|", cx);
-        assert(" |bcΔ|", cx);
-        assert(" ab|——|cd", cx);
+        assert("\nˇ   loremˇ", cx);
+        assert("    ˇloremˇ", cx);
+        assert("    lorˇemˇ", cx);
+        assert("    loremˇ    ˇ\nipsum\n", cx);
+        assert("\nˇ\nˇ\n\n", cx);
+        assert("loremˇ    ipsumˇ   ", cx);
+        assert("loremˇ-ˇipsum", cx);
+        assert("loremˇ#$@-ˇipsum", cx);
+        assert("loremˇ_ipsumˇ", cx);
+        assert(" ˇbcΔˇ", cx);
+        assert(" abˇ——ˇcd", cx);
     }
 
     #[gpui::test]
@@ -405,25 +405,25 @@ mod tests {
         }
 
         // Subword boundaries are respected
-        assert("lo|rem|_ipsum", cx);
-        assert("|lorem|_ipsum", cx);
-        assert("lorem|_ipsum|", cx);
-        assert("lorem|_ipsum|_dolor", cx);
-        assert("lo|rem|Ipsum", cx);
-        assert("lorem|Ipsum|Dolor", cx);
+        assert("loˇremˇ_ipsum", cx);
+        assert("ˇloremˇ_ipsum", cx);
+        assert("loremˇ_ipsumˇ", cx);
+        assert("loremˇ_ipsumˇ_dolor", cx);
+        assert("loˇremˇIpsum", cx);
+        assert("loremˇIpsumˇDolor", cx);
 
         // Word boundaries are still respected
-        assert("\n|   lorem|", cx);
-        assert("    |lorem|", cx);
-        assert("    lor|em|", cx);
-        assert("    lorem|    |\nipsum\n", cx);
-        assert("\n|\n|\n\n", cx);
-        assert("lorem|    ipsum|   ", cx);
-        assert("lorem|-|ipsum", cx);
-        assert("lorem|#$@-|ipsum", cx);
-        assert("lorem|_ipsum|", cx);
-        assert(" |bc|Δ", cx);
-        assert(" ab|——|cd", cx);
+        assert("\nˇ   loremˇ", cx);
+        assert("    ˇloremˇ", cx);
+        assert("    lorˇemˇ", cx);
+        assert("    loremˇ    ˇ\nipsum\n", cx);
+        assert("\nˇ\nˇ\n\n", cx);
+        assert("loremˇ    ipsumˇ   ", cx);
+        assert("loremˇ-ˇipsum", cx);
+        assert("loremˇ#$@-ˇipsum", cx);
+        assert("loremˇ_ipsumˇ", cx);
+        assert(" ˇbcˇΔ", cx);
+        assert(" abˇ——ˇcd", cx);
     }
 
     #[gpui::test]
@@ -441,14 +441,14 @@ mod tests {
             );
         }
 
-        assert("abc|def\ngh\nij|k", cx, |left, right| {
+        assert("abcˇdef\ngh\nijˇk", cx, |left, right| {
             left == 'j' && right == 'k'
         });
-        assert("ab|cdef\ngh\n|ijk", cx, |left, right| {
+        assert("abˇcdef\ngh\nˇijk", cx, |left, right| {
             left == '\n' && right == 'i'
         });
         let mut line_count = 0;
-        assert("abc|def\ngh\n|ijk", cx, |left, _| {
+        assert("abcˇdef\ngh\nˇijk", cx, |left, _| {
             if left == '\n' {
                 line_count += 1;
                 line_count == 2
@@ -469,14 +469,14 @@ mod tests {
             );
         }
 
-        assert("||lorem|  ipsum", cx);
-        assert("|lo|rem|  ipsum", cx);
-        assert("|lorem||  ipsum", cx);
-        assert("lorem| |  |ipsum", cx);
-        assert("lorem\n|||\nipsum", cx);
-        assert("lorem\n||ipsum|", cx);
-        assert("lorem,|| |ipsum", cx);
-        assert("|lorem||, ipsum", cx);
+        assert("ˇˇloremˇ  ipsum", cx);
+        assert("ˇloˇremˇ  ipsum", cx);
+        assert("ˇloremˇˇ  ipsum", cx);
+        assert("loremˇ ˇ  ˇipsum", cx);
+        assert("lorem\nˇˇˇ\nipsum", cx);
+        assert("lorem\nˇˇipsumˇ", cx);
+        assert("lorem,ˇˇ ˇipsum", cx);
+        assert("ˇloremˇˇ, ipsum", cx);
     }
 
     #[gpui::test]

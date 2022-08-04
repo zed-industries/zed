@@ -1170,7 +1170,7 @@ pub mod tests {
         );
         language.set_theme(&theme);
 
-        let (text, highlighted_ranges) = marked_text_ranges(r#"const[] [a]: B = "c [d]""#);
+        let (text, highlighted_ranges) = marked_text_ranges(r#"constˇ «a»: B = "c «d»""#, false);
 
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
@@ -1246,28 +1246,28 @@ pub mod tests {
         }
 
         use Bias::{Left, Right};
-        assert("||α", false, Left, cx);
-        assert("||α", true, Left, cx);
-        assert("||α", false, Right, cx);
-        assert("|α|", true, Right, cx);
-        assert("||✋", false, Left, cx);
-        assert("||✋", true, Left, cx);
-        assert("||✋", false, Right, cx);
-        assert("|✋|", true, Right, cx);
-        assert("||🍐", false, Left, cx);
-        assert("||🍐", true, Left, cx);
-        assert("||🍐", false, Right, cx);
-        assert("|🍐|", true, Right, cx);
-        assert("||\t", false, Left, cx);
-        assert("||\t", true, Left, cx);
-        assert("||\t", false, Right, cx);
-        assert("|\t|", true, Right, cx);
-        assert(" ||\t", false, Left, cx);
-        assert(" ||\t", true, Left, cx);
-        assert(" ||\t", false, Right, cx);
-        assert(" |\t|", true, Right, cx);
-        assert("   ||\t", false, Left, cx);
-        assert("   ||\t", false, Right, cx);
+        assert("ˇˇα", false, Left, cx);
+        assert("ˇˇα", true, Left, cx);
+        assert("ˇˇα", false, Right, cx);
+        assert("ˇαˇ", true, Right, cx);
+        assert("ˇˇ✋", false, Left, cx);
+        assert("ˇˇ✋", true, Left, cx);
+        assert("ˇˇ✋", false, Right, cx);
+        assert("ˇ✋ˇ", true, Right, cx);
+        assert("ˇˇ🍐", false, Left, cx);
+        assert("ˇˇ🍐", true, Left, cx);
+        assert("ˇˇ🍐", false, Right, cx);
+        assert("ˇ🍐ˇ", true, Right, cx);
+        assert("ˇˇ\t", false, Left, cx);
+        assert("ˇˇ\t", true, Left, cx);
+        assert("ˇˇ\t", false, Right, cx);
+        assert("ˇ\tˇ", true, Right, cx);
+        assert(" ˇˇ\t", false, Left, cx);
+        assert(" ˇˇ\t", true, Left, cx);
+        assert(" ˇˇ\t", false, Right, cx);
+        assert(" ˇ\tˇ", true, Right, cx);
+        assert("   ˇˇ\t", false, Left, cx);
+        assert("   ˇˇ\t", false, Right, cx);
     }
 
     #[gpui::test]
@@ -1283,10 +1283,10 @@ pub mod tests {
             );
         }
 
-        assert("||", cx);
-        assert("|a|", cx);
-        assert("a|b|", cx);
-        assert("a|α|", cx);
+        assert("ˇˇ", cx);
+        assert("ˇaˇ", cx);
+        assert("aˇbˇ", cx);
+        assert("aˇαˇ", cx);
     }
 
     #[gpui::test]

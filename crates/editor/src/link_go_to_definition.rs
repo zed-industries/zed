@@ -405,20 +405,20 @@ mod tests {
 
         cx.set_state(indoc! {"
             struct A;
-            let v|ariable = A;
+            let vˇariable = A;
         "});
 
         // Basic hold cmd+shift, expect highlight in region if response contains type definition
         let hover_point = cx.display_point(indoc! {"
             struct A;
-            let v|ariable = A;
+            let vˇariable = A;
         "});
         let symbol_range = cx.lsp_range(indoc! {"
             struct A;
-            let [variable] = A;
+            let «variable» = A;
         "});
         let target_range = cx.lsp_range(indoc! {"
-            struct [A];
+            struct «A»;
             let variable = A;
         "});
 
@@ -450,7 +450,7 @@ mod tests {
         cx.foreground().run_until_parked();
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
             struct A;
-            let [variable] = A;
+            let «variable» = A;
         "});
 
         // Unpress shift causes highlight to go away (normal goto-definition is not valid here)
@@ -473,10 +473,10 @@ mod tests {
         // Cmd+shift click without existing definition requests and jumps
         let hover_point = cx.display_point(indoc! {"
             struct A;
-            let v|ariable = A;
+            let vˇariable = A;
         "});
         let target_range = cx.lsp_range(indoc! {"
-            struct [A];
+            struct «A»;
             let variable = A;
         "});
 
@@ -503,7 +503,7 @@ mod tests {
         cx.foreground().run_until_parked();
 
         cx.assert_editor_state(indoc! {"
-            struct [A};
+            struct «Aˇ»;
             let variable = A;
         "});
     }
@@ -520,34 +520,22 @@ mod tests {
         .await;
 
         cx.set_state(indoc! {"
-            fn |test()
-                do_work();
-            
-            fn do_work()
-                test();
+            fn ˇtest() { do_work(); }
+            fn do_work() { test(); }
         "});
 
         // Basic hold cmd, expect highlight in region if response contains definition
         let hover_point = cx.display_point(indoc! {"
-            fn test()
-                do_w|ork();
-            
-            fn do_work()
-                test();
+            fn test() { do_wˇork(); }
+            fn do_work() { test(); }
         "});
         let symbol_range = cx.lsp_range(indoc! {"
-            fn test()
-                [do_work]();
-            
-            fn do_work()
-                test();
+            fn test() { «do_work»(); }
+            fn do_work() { test(); }
         "});
         let target_range = cx.lsp_range(indoc! {"
-            fn test()
-                do_work();
-            
-            fn [do_work]()
-                test();
+            fn test() { do_work(); }
+            fn «do_work»() { test(); }
         "});
 
         let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
@@ -575,11 +563,8 @@ mod tests {
         requests.next().await;
         cx.foreground().run_until_parked();
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
-            fn test()
-                [do_work]();
-            
-            fn do_work()
-                test();
+            fn test() { «do_work»(); }
+            fn do_work() { test(); }
         "});
 
         // Unpress cmd causes highlight to go away
@@ -593,13 +578,11 @@ mod tests {
                 cx,
             );
         });
+
         // Assert no link highlights
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
-            fn test()
-                do_work();
-            
-            fn do_work()
-                test();
+            fn test() { do_work(); }
+            fn do_work() { test(); }
         "});
 
         // Response without source range still highlights word
@@ -630,20 +613,14 @@ mod tests {
         cx.foreground().run_until_parked();
 
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
-            fn test()
-                [do_work]();
-            
-            fn do_work()
-                test();
+            fn test() { «do_work»(); }
+            fn do_work() { test(); }
         "});
 
         // Moving mouse to location with no response dismisses highlight
         let hover_point = cx.display_point(indoc! {"
-            f|n test()
-                do_work();
-            
-            fn do_work()
-                test();
+            fˇn test() { do_work(); }
+            fn do_work() { test(); }
         "});
         let mut requests = cx
             .lsp
@@ -667,20 +644,14 @@ mod tests {
 
         // Assert no link highlights
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
-            fn test()
-                do_work();
-            
-            fn do_work()
-                test();
+            fn test() { do_work(); }
+            fn do_work() { test(); }
         "});
 
         // Move mouse without cmd and then pressing cmd triggers highlight
         let hover_point = cx.display_point(indoc! {"
-            fn test()
-                do_work();
-            
-            fn do_work()
-                te|st();
+            fn test() { do_work(); }
+            fn do_work() { teˇst(); }
         "});
         cx.update_editor(|editor, cx| {
             update_go_to_definition_link(
@@ -697,26 +668,17 @@ mod tests {
 
         // Assert no link highlights
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
-            fn test()
-                do_work();
-            
-            fn do_work()
-                test();
+            fn test() { do_work(); }
+            fn do_work() { test(); }
         "});
 
         let symbol_range = cx.lsp_range(indoc! {"
-            fn test()
-                do_work();
-            
-            fn do_work()
-                [test]();
+            fn test() { do_work(); }
+            fn do_work() { «test»(); }
         "});
         let target_range = cx.lsp_range(indoc! {"
-            fn [test]()
-                do_work();
-            
-            fn do_work()
-                test();
+            fn «test»() { do_work(); }
+            fn do_work() { test(); }
         "});
 
         let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
@@ -743,20 +705,14 @@ mod tests {
         cx.foreground().run_until_parked();
 
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
-            fn test()
-                do_work();
-            
-            fn do_work()
-                [test]();
+            fn test() { do_work(); }
+            fn do_work() { «test»(); }
         "});
 
         // Moving within symbol range doesn't re-request
         let hover_point = cx.display_point(indoc! {"
-            fn test()
-                do_work();
-            
-            fn do_work()
-                tes|t();
+            fn test() { do_work(); }
+            fn do_work() { tesˇt(); }
         "});
         cx.update_editor(|editor, cx| {
             update_go_to_definition_link(
@@ -771,11 +727,8 @@ mod tests {
         });
         cx.foreground().run_until_parked();
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
-            fn test()
-                do_work();
-            
-            fn do_work()
-                [test]();
+            fn test() { do_work(); }
+            fn do_work() { «test»(); }
         "});
 
         // Cmd click with existing definition doesn't re-request and dismisses highlight
@@ -790,35 +743,24 @@ mod tests {
                 Ok(Some(lsp::GotoDefinitionResponse::Link(vec![])))
             });
         cx.assert_editor_state(indoc! {"
-            fn [test}()
-                do_work();
-            
-            fn do_work()
-                test();
+            fn «testˇ»() { do_work(); }
+            fn do_work() { test(); }
         "});
+
         // Assert no link highlights after jump
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
-            fn test()
-                do_work();
-            
-            fn do_work()
-                test();
+            fn test() { do_work(); }
+            fn do_work() { test(); }
         "});
 
         // Cmd click without existing definition requests and jumps
         let hover_point = cx.display_point(indoc! {"
-            fn test()
-                do_w|ork();
-            
-            fn do_work()
-                test();
+            fn test() { do_wˇork(); }
+            fn do_work() { test(); }
         "});
         let target_range = cx.lsp_range(indoc! {"
-            fn test()
-                do_work();
-            
-            fn [do_work]()
-                test();
+            fn test() { do_work(); }
+            fn «do_work»() { test(); }
         "});
 
         let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
@@ -836,13 +778,9 @@ mod tests {
         });
         requests.next().await;
         cx.foreground().run_until_parked();
-
         cx.assert_editor_state(indoc! {"
-            fn test()
-                do_work();
-            
-            fn [do_work}()
-                test();
+            fn test() { do_work(); }
+            fn «do_workˇ»() { test(); }
         "});
     }
 }

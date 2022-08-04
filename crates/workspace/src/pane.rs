@@ -1112,7 +1112,7 @@ impl View for Pane {
                                                 &cx.global::<Settings>().theme.workspace.tab_bar;
                                             let style =
                                                 theme.pane_button.style_for(mouse_state, false);
-                                            Svg::new("icons/bolt_12.svg")
+                                            Svg::new("icons/plus_12.svg")
                                                 .with_color(style.color)
                                                 .constrained()
                                                 .with_width(style.icon_width)

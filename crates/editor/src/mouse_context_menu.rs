@@ -67,11 +67,9 @@ pub fn deploy_context_menu(
 
 #[cfg(test)]
 mod tests {
-    use indoc::indoc;
-
-    use crate::test::EditorLspTestContext;
-
     use super::*;
+    use crate::test::EditorLspTestContext;
+    use indoc::indoc;
 
     #[gpui::test]
     async fn test_mouse_context_menu(cx: &mut gpui::TestAppContext) {
@@ -85,11 +83,15 @@ mod tests {
         .await;
 
         cx.set_state(indoc! {"
-            fn te|st()
-                do_work();"});
+            fn teˇst() {
+                do_work();
+            }
+        "});
         let point = cx.display_point(indoc! {"
-            fn test()
-                do_w|ork();"});
+            fn test() {
+                do_wˇork();
+            }
+        "});
         cx.update_editor(|editor, cx| {
             deploy_context_menu(
                 editor,
@@ -102,8 +104,10 @@ mod tests {
         });
 
         cx.assert_editor_state(indoc! {"
-            fn test()
-                do_w|ork();"});
+            fn test() {
+                do_wˇork();
+            }
+        "});
         cx.editor(|editor, app| assert!(editor.mouse_context_menu.read(app).visible()));
     }
 }
