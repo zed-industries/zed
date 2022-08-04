@@ -389,6 +389,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_get_completions);
         client.add_model_request_handler(Self::handle_lsp_command::<GetHover>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetDefinition>);
+        client.add_model_request_handler(Self::handle_lsp_command::<GetTypeDefinition>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetReferences>);
         client.add_model_request_handler(Self::handle_lsp_command::<PrepareRename>);

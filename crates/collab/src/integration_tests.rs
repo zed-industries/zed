@@ -2057,7 +2057,8 @@ async fn test_definition(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
                     "a.rs": "const ONE: usize = b::TWO + b::THREE;",
                 },
                 "dir-2": {
-                    "b.rs": "const TWO: usize = 2;\nconst THREE: usize = 3;",
+                    "b.rs": "const TWO: c::T2 = 2;\nconst THREE: usize = 3;",
+                    "c.rs": "type T2 = usize;",
                 }
             }),
         )
@@ -2093,7 +2094,7 @@ async fn test_definition(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         let target_buffer = definitions_1[0].target.buffer.read(cx);
         assert_eq!(
             target_buffer.text(),
-            "const TWO: usize = 2;\nconst THREE: usize = 3;"
+            "const TWO: c::T2 = 2;\nconst THREE: usize = 3;"
         );
         assert_eq!(
             definitions_1[0].target.range.to_point(target_buffer),
@@ -2122,7 +2123,7 @@ async fn test_definition(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         let target_buffer = definitions_2[0].target.buffer.read(cx);
         assert_eq!(
             target_buffer.text(),
-            "const TWO: usize = 2;\nconst THREE: usize = 3;"
+            "const TWO: c::T2 = 2;\nconst THREE: usize = 3;"
         );
         assert_eq!(
             definitions_2[0].target.range.to_point(target_buffer),
@@ -2133,6 +2134,35 @@ async fn test_definition(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         definitions_1[0].target.buffer,
         definitions_2[0].target.buffer
     );
+
+    fake_language_server.handle_request::<lsp::request::GotoTypeDefinition, _, _>(
+        |req, _| async move {
+            assert_eq!(
+                req.text_document_position_params.position,
+                lsp::Position::new(0, 7)
+            );
+            Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                lsp::Location::new(
+                    lsp::Url::from_file_path("/root/dir-2/c.rs").unwrap(),
+                    lsp::Range::new(lsp::Position::new(0, 5), lsp::Position::new(0, 7)),
+                ),
+            )))
+        },
+    );
+
+    let type_definitions = project_b
+        .update(cx_b, |p, cx| p.type_definition(&buffer_b, 7, cx))
+        .await
+        .unwrap();
+    cx_b.read(|cx| {
+        assert_eq!(type_definitions.len(), 1);
+        let target_buffer = type_definitions[0].target.buffer.read(cx);
+        assert_eq!(target_buffer.text(), "type T2 = usize;");
+        assert_eq!(
+            type_definitions[0].target.range.to_point(target_buffer),
+            Point::new(0, 5)..Point::new(0, 7)
+        );
+    });
 }
 
 #[gpui::test(iterations = 10)]
