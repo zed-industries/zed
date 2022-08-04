@@ -2071,6 +2071,24 @@ impl Project {
         None
     }
 
+    fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json::Value) {
+        use serde_json::Value;
+
+        match (source, target) {
+            (Value::Object(source), Value::Object(target)) => {
+                for (key, value) in source {
+                    if let Some(target) = target.get_mut(&key) {
+                        Self::merge_json_value_into(value, target);
+                    } else {
+                        target.insert(key.clone(), value);
+                    }
+                }
+            }
+
+            (source, target) => *target = source,
+        }
+    }
+
     fn start_language_server(
         &mut self,
         worktree_id: WorktreeId,
@@ -2092,6 +2110,20 @@ impl Project {
         };
         let key = (worktree_id, adapter.name.clone());
 
+        let mut initialization_options = adapter.initialization_options.clone();
+
+        let lsp = &cx.global::<Settings>().lsp.get(&adapter.name.0);
+        let override_options = lsp.map(|s| s.initialization_options.clone()).flatten();
+        match (&mut initialization_options, override_options) {
+            (Some(initialization_options), Some(override_options)) => {
+                Self::merge_json_value_into(override_options, initialization_options);
+            }
+
+            (None, override_options) => initialization_options = override_options,
+
+            _ => {}
+        }
+
         self.language_server_ids
             .entry(key.clone())
             .or_insert_with(|| {
@@ -2108,7 +2140,7 @@ impl Project {
                     LanguageServerState::Starting(cx.spawn_weak(|this, mut cx| async move {
                         let language_server = language_server?.await.log_err()?;
                         let language_server = language_server
-                            .initialize(adapter.initialization_options.clone())
+                            .initialize(initialization_options)
                             .await
                             .log_err()?;
                         let this = this.upgrade(&cx)?;
