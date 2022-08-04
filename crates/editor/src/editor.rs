@@ -6644,10 +6644,7 @@ mod tests {
     use unindent::Unindent;
     use util::{
         assert_set_eq,
-        test::{
-            marked_text_ranges, marked_text_ranges_by, parse_marked_text, sample_text,
-            TextRangeMarker,
-        },
+        test::{marked_text_ranges, marked_text_ranges_by, sample_text, TextRangeMarker},
     };
     use workspace::{FollowableItem, ItemHandle, NavigationEntry, Pane};
 
@@ -7045,7 +7042,7 @@ mod tests {
 
     #[gpui::test]
     fn test_clone(cx: &mut gpui::MutableAppContext) {
-        let (text, selection_ranges) = parse_marked_text(
+        let (text, selection_ranges) = marked_text_ranges(
             indoc! {"
                 one
                 two
@@ -7054,8 +7051,7 @@ mod tests {
                 fiveˇ
             "},
             true,
-        )
-        .unwrap();
+        );
         cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&text, cx);
 
@@ -9901,15 +9897,14 @@ mod tests {
     async fn test_snippets(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| cx.set_global(Settings::test(cx)));
 
-        let (text, insertion_ranges) = parse_marked_text(
+        let (text, insertion_ranges) = marked_text_ranges(
             indoc! {"
                 a.ˇ b
                 a.ˇ b
                 a.ˇ b
             "},
             false,
-        )
-        .unwrap();
+        );
 
         let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
         let (_, editor) = cx.add_window(|cx| build_editor(buffer, cx));
@@ -9921,9 +9916,8 @@ mod tests {
                 .insert_snippet(&insertion_ranges, snippet, cx)
                 .unwrap();
 
-            fn assert(editor: &mut Editor, cx: &mut ViewContext<Editor>, marked_text_ranges: &str) {
-                let (expected_text, selection_ranges) =
-                    parse_marked_text(marked_text_ranges, false).unwrap();
+            fn assert(editor: &mut Editor, cx: &mut ViewContext<Editor>, marked_text: &str) {
+                let (expected_text, selection_ranges) = marked_text_ranges(marked_text, false);
                 assert_eq!(editor.text(cx), expected_text);
                 assert_eq!(editor.selections.ranges::<usize>(cx), selection_ranges);
             }
@@ -10318,6 +10312,7 @@ mod tests {
             three sˇ
             additional edit
         "});
+        //
         handle_completion_request(
             &mut cx,
             indoc! {"
@@ -10443,7 +10438,7 @@ mod tests {
             edit: Option<(&'static str, &'static str)>,
         ) {
             let edit = edit.map(|(marked_string, new_text)| {
-                let (_, marked_ranges) = parse_marked_text(marked_string, false).unwrap();
+                let (_, marked_ranges) = marked_text_ranges(marked_string, false);
                 let replace_range = cx.to_lsp_range(marked_ranges[0].clone());
                 vec![lsp::TextEdit::new(replace_range, new_text.to_string())]
             });
@@ -10595,13 +10590,21 @@ mod tests {
     #[gpui::test]
     fn test_editing_overlapping_excerpts(cx: &mut gpui::MutableAppContext) {
         cx.set_global(Settings::test(cx));
-        let (initial_text, excerpt_ranges) = marked_text_ranges(indoc! {"
+        let markers = vec![('[', ']').into(), ('(', ')').into()];
+        let (initial_text, mut excerpt_ranges) = marked_text_ranges_by(
+            indoc! {"
                 [aaaa
                 (bbbb]
-                cccc)"});
-        let excerpt_ranges = excerpt_ranges.into_iter().map(|context| ExcerptRange {
-            context,
-            primary: None,
+                cccc)",
+            },
+            markers.clone(),
+        );
+        let excerpt_ranges = markers.into_iter().map(|marker| {
+            let context = excerpt_ranges.remove(&marker).unwrap()[0].clone();
+            ExcerptRange {
+                context,
+                primary: None,
+            }
         });
         let buffer = cx.add_model(|cx| Buffer::new(0, initial_text, cx));
         let multibuffer = cx.add_model(|cx| {
@@ -10612,7 +10615,7 @@ mod tests {
 
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(multibuffer, cx));
         view.update(cx, |view, cx| {
-            let (expected_text, selection_ranges) = parse_marked_text(
+            let (expected_text, selection_ranges) = marked_text_ranges(
                 indoc! {"
                     aaaa
                     bˇbbb
@@ -10620,14 +10623,13 @@ mod tests {
                     cccc"
                 },
                 true,
-            )
-            .unwrap();
+            );
             assert_eq!(view.text(cx), expected_text);
             view.change_selections(None, cx, |s| s.select_ranges(selection_ranges));
 
             view.handle_input("X", cx);
 
-            let (expected_text, expected_selections) = parse_marked_text(
+            let (expected_text, expected_selections) = marked_text_ranges(
                 indoc! {"
                     aaaa
                     bXˇbbXb
@@ -10635,13 +10637,12 @@ mod tests {
                     cccc"
                 },
                 false,
-            )
-            .unwrap();
+            );
             assert_eq!(view.text(cx), expected_text);
             assert_eq!(view.selections.ranges(cx), expected_selections);
 
             view.newline(&Newline, cx);
-            let (expected_text, expected_selections) = parse_marked_text(
+            let (expected_text, expected_selections) = marked_text_ranges(
                 indoc! {"
                     aaaa
                     bX
@@ -10653,8 +10654,7 @@ mod tests {
                     cccc"
                 },
                 false,
-            )
-            .unwrap();
+            );
             assert_eq!(view.text(cx), expected_text);
             assert_eq!(view.selections.ranges(cx), expected_selections);
         });
@@ -11132,7 +11132,7 @@ mod tests {
     }
 
     fn assert_selection_ranges(marked_text: &str, view: &mut Editor, cx: &mut ViewContext<Editor>) {
-        let (text, ranges) = parse_marked_text(marked_text, true).unwrap();
+        let (text, ranges) = marked_text_ranges(marked_text, true);
         assert_eq!(view.text(cx), text);
         assert_eq!(
             view.selections.ranges(cx),

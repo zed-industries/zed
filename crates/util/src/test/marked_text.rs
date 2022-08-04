@@ -1,7 +1,6 @@
-use anyhow::{anyhow, Result};
 use std::{cmp::Ordering, collections::HashMap, ops::Range};
 
-pub fn marked_text_by(
+pub fn marked_text_offsets_by(
     marked_text: &str,
     markers: Vec<char>,
 ) -> (String, HashMap<char, Vec<usize>>) {
@@ -20,118 +19,60 @@ pub fn marked_text_by(
     (unmarked_text, extracted_markers)
 }
 
-pub fn marked_text(marked_text: &str) -> (String, Vec<usize>) {
-    let (unmarked_text, mut markers) = marked_text_by(marked_text, vec!['|']);
-    (unmarked_text, markers.remove(&'|').unwrap_or_default())
-}
-
-#[derive(Clone, Eq, PartialEq, Hash)]
-pub enum TextRangeMarker {
-    Empty(char),
-    Range(char, char),
-    ReverseRange(char, char),
-}
-
-impl TextRangeMarker {
-    fn markers(&self) -> Vec<char> {
-        match self {
-            Self::Empty(m) => vec![*m],
-            Self::Range(l, r) => vec![*l, *r],
-            Self::ReverseRange(l, r) => vec![*l, *r],
-        }
-    }
-}
-
-impl From<char> for TextRangeMarker {
-    fn from(marker: char) -> Self {
-        Self::Empty(marker)
-    }
-}
-
-impl From<(char, char)> for TextRangeMarker {
-    fn from((left_marker, right_marker): (char, char)) -> Self {
-        Self::Range(left_marker, right_marker)
-    }
-}
-
 pub fn marked_text_ranges_by(
     marked_text: &str,
     markers: Vec<TextRangeMarker>,
 ) -> (String, HashMap<TextRangeMarker, Vec<Range<usize>>>) {
     let all_markers = markers.iter().flat_map(|m| m.markers()).collect();
 
-    let (unmarked_text, mut marker_offsets) = marked_text_by(marked_text, all_markers);
+    let (unmarked_text, mut marker_offsets) = marked_text_offsets_by(marked_text, all_markers);
     let range_lookup = markers
         .into_iter()
-        .map(|marker| match marker {
-            TextRangeMarker::Empty(empty_marker_char) => {
-                let ranges = marker_offsets
-                    .remove(&empty_marker_char)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|empty_index| empty_index..empty_index)
-                    .collect::<Vec<Range<usize>>>();
-                (marker, ranges)
-            }
-            TextRangeMarker::Range(start_marker, end_marker) => {
-                let starts = marker_offsets.remove(&start_marker).unwrap_or_default();
-                let ends = marker_offsets.remove(&end_marker).unwrap_or_default();
-                assert_eq!(starts.len(), ends.len(), "marked ranges are unbalanced");
-
-                let ranges = starts
-                    .into_iter()
-                    .zip(ends)
-                    .map(|(start, end)| {
-                        assert!(end >= start, "marked ranges must be disjoint");
-                        start..end
-                    })
-                    .collect::<Vec<Range<usize>>>();
-                (marker, ranges)
-            }
-            TextRangeMarker::ReverseRange(start_marker, end_marker) => {
-                let starts = marker_offsets.remove(&start_marker).unwrap_or_default();
-                let ends = marker_offsets.remove(&end_marker).unwrap_or_default();
-                assert_eq!(starts.len(), ends.len(), "marked ranges are unbalanced");
-
-                let ranges = starts
-                    .into_iter()
-                    .zip(ends)
-                    .map(|(start, end)| {
-                        assert!(end >= start, "marked ranges must be disjoint");
-                        end..start
-                    })
-                    .collect::<Vec<Range<usize>>>();
-                (marker, ranges)
-            }
+        .map(|marker| {
+            (
+                marker.clone(),
+                match marker {
+                    TextRangeMarker::Empty(empty_marker_char) => marker_offsets
+                        .remove(&empty_marker_char)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|empty_index| empty_index..empty_index)
+                        .collect::<Vec<Range<usize>>>(),
+                    TextRangeMarker::Range(start_marker, end_marker) => {
+                        let starts = marker_offsets.remove(&start_marker).unwrap_or_default();
+                        let ends = marker_offsets.remove(&end_marker).unwrap_or_default();
+                        assert_eq!(starts.len(), ends.len(), "marked ranges are unbalanced");
+                        starts
+                            .into_iter()
+                            .zip(ends)
+                            .map(|(start, end)| {
+                                assert!(end >= start, "marked ranges must be disjoint");
+                                start..end
+                            })
+                            .collect::<Vec<Range<usize>>>()
+                    }
+                    TextRangeMarker::ReverseRange(start_marker, end_marker) => {
+                        let starts = marker_offsets.remove(&start_marker).unwrap_or_default();
+                        let ends = marker_offsets.remove(&end_marker).unwrap_or_default();
+                        assert_eq!(starts.len(), ends.len(), "marked ranges are unbalanced");
+                        starts
+                            .into_iter()
+                            .zip(ends)
+                            .map(|(start, end)| {
+                                assert!(end >= start, "marked ranges must be disjoint");
+                                end..start
+                            })
+                            .collect::<Vec<Range<usize>>>()
+                    }
+                },
+            )
         })
         .collect();
 
     (unmarked_text, range_lookup)
 }
 
-// Returns ranges delimited by (), [], and <> ranges. Ranges using the same markers
-// must not be overlapping. May also include | for empty ranges
-pub fn marked_text_ranges(full_marked_text: &str) -> (String, Vec<Range<usize>>) {
-    let (unmarked, range_lookup) = marked_text_ranges_by(
-        &full_marked_text,
-        vec![
-            '|'.into(),
-            ('[', ']').into(),
-            ('(', ')').into(),
-            ('<', '>').into(),
-        ],
-    );
-    let mut combined_ranges: Vec<_> = range_lookup.into_values().flatten().collect();
-
-    combined_ranges.sort_by_key(|range| range.start);
-    (unmarked, combined_ranges)
-}
-
-///
-pub fn parse_marked_text(
-    input_text: &str,
-    indicate_cursors: bool,
-) -> Result<(String, Vec<Range<usize>>)> {
+pub fn marked_text_ranges(input_text: &str, indicate_cursors: bool) -> (String, Vec<Range<usize>>) {
     let mut output_text = String::with_capacity(input_text.len());
     let mut ranges = Vec::new();
     let mut prev_input_ix = 0;
@@ -148,7 +89,7 @@ pub fn parse_marked_text(
             "ˇ" => {
                 if current_range_start.is_some() {
                     if current_range_cursor.is_some() {
-                        Err(anyhow!("duplicate point marker 'ˇ' at index {input_ix}"))?;
+                        panic!("duplicate point marker 'ˇ' at index {input_ix}");
                     } else {
                         current_range_cursor = Some(output_len);
                     }
@@ -158,26 +99,26 @@ pub fn parse_marked_text(
             }
             "«" => {
                 if current_range_start.is_some() {
-                    Err(anyhow!(
-                        "unexpected range start marker '«' at index {input_ix}"
-                    ))?;
+                    panic!("unexpected range start marker '«' at index {input_ix}");
                 }
                 current_range_start = Some(output_len);
             }
             "»" => {
-                let current_range_start = current_range_start.take().ok_or_else(|| {
-                    anyhow!("unexpected range end marker '»' at index {input_ix}")
-                })?;
+                let current_range_start = if let Some(start) = current_range_start.take() {
+                    start
+                } else {
+                    panic!("unexpected range end marker '»' at index {input_ix}");
+                };
 
                 let mut reversed = false;
                 if let Some(current_range_cursor) = current_range_cursor.take() {
                     if current_range_cursor == current_range_start {
                         reversed = true;
                     } else if current_range_cursor != output_len {
-                        Err(anyhow!("unexpected 'ˇ' marker in the middle of a range"))?;
+                        panic!("unexpected 'ˇ' marker in the middle of a range");
                     }
                 } else if indicate_cursors {
-                    Err(anyhow!("missing 'ˇ' marker to indicate range direction"))?;
+                    panic!("missing 'ˇ' marker to indicate range direction");
                 }
 
                 ranges.push(if reversed {
@@ -191,7 +132,21 @@ pub fn parse_marked_text(
     }
 
     output_text.push_str(&input_text[prev_input_ix..]);
-    Ok((output_text, ranges))
+    (output_text, ranges)
+}
+
+pub fn marked_text_offsets(marked_text: &str) -> (String, Vec<usize>) {
+    let (text, ranges) = marked_text_ranges(marked_text, false);
+    (
+        text,
+        ranges
+            .into_iter()
+            .map(|range| {
+                assert_eq!(range.start, range.end);
+                range.start
+            })
+            .collect(),
+    )
 }
 
 pub fn generate_marked_text(
@@ -223,14 +178,42 @@ pub fn generate_marked_text(
     marked_text
 }
 
+#[derive(Clone, Eq, PartialEq, Hash)]
+pub enum TextRangeMarker {
+    Empty(char),
+    Range(char, char),
+    ReverseRange(char, char),
+}
+
+impl TextRangeMarker {
+    fn markers(&self) -> Vec<char> {
+        match self {
+            Self::Empty(m) => vec![*m],
+            Self::Range(l, r) => vec![*l, *r],
+            Self::ReverseRange(l, r) => vec![*l, *r],
+        }
+    }
+}
+
+impl From<char> for TextRangeMarker {
+    fn from(marker: char) -> Self {
+        Self::Empty(marker)
+    }
+}
+
+impl From<(char, char)> for TextRangeMarker {
+    fn from((left_marker, right_marker): (char, char)) -> Self {
+        Self::Range(left_marker, right_marker)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{generate_marked_text, parse_marked_text};
+    use super::{generate_marked_text, marked_text_ranges};
 
     #[test]
     fn test_marked_text() {
-        let (text, ranges) =
-            parse_marked_text("one «ˇtwo» «threeˇ» «ˇfour» fiveˇ six", true).unwrap();
+        let (text, ranges) = marked_text_ranges("one «ˇtwo» «threeˇ» «ˇfour» fiveˇ six", true);
 
         assert_eq!(text, "one two three four five six");
         assert_eq!(ranges.len(), 4);

@@ -20,7 +20,7 @@ use std::{
 };
 use util::{
     assert_set_eq, set_eq,
-    test::{generate_marked_text, marked_text, parse_marked_text},
+    test::{generate_marked_text, marked_text_offsets, marked_text_ranges},
 };
 use workspace::{pane, AppState, Workspace, WorkspaceHandle};
 
@@ -37,7 +37,7 @@ pub fn marked_display_snapshot(
     text: &str,
     cx: &mut gpui::MutableAppContext,
 ) -> (DisplaySnapshot, Vec<DisplayPoint>) {
-    let (unmarked_text, markers) = marked_text(text);
+    let (unmarked_text, markers) = marked_text_offsets(text);
 
     let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
     let font_id = cx
@@ -59,7 +59,7 @@ pub fn marked_display_snapshot(
 }
 
 pub fn select_ranges(editor: &mut Editor, marked_text: &str, cx: &mut ViewContext<Editor>) {
-    let (umarked_text, text_ranges) = parse_marked_text(marked_text, true).unwrap();
+    let (umarked_text, text_ranges) = marked_text_ranges(marked_text, true);
     assert_eq!(editor.text(cx), umarked_text);
     editor.change_selections(None, cx, |s| s.select_ranges(text_ranges));
 }
@@ -69,7 +69,7 @@ pub fn assert_text_with_selections(
     marked_text: &str,
     cx: &mut ViewContext<Editor>,
 ) {
-    let (unmarked_text, text_ranges) = parse_marked_text(marked_text, true).unwrap();
+    let (unmarked_text, text_ranges) = marked_text_ranges(marked_text, true);
     assert_eq!(editor.text(cx), unmarked_text);
     assert_eq!(editor.selections.ranges(cx), text_ranges);
 }
@@ -184,7 +184,7 @@ impl<'a> EditorTestContext<'a> {
     }
 
     pub fn ranges(&self, marked_text: &str) -> Vec<Range<usize>> {
-        let (unmarked_text, ranges) = parse_marked_text(marked_text, false).unwrap();
+        let (unmarked_text, ranges) = marked_text_ranges(marked_text, false);
         assert_eq!(self.buffer_text(), unmarked_text);
         ranges
     }
@@ -205,7 +205,7 @@ impl<'a> EditorTestContext<'a> {
     }
 
     pub fn set_state(&mut self, marked_text: &str) {
-        let (unmarked_text, selection_ranges) = parse_marked_text(marked_text, true).unwrap();
+        let (unmarked_text, selection_ranges) = marked_text_ranges(marked_text, true);
         self.editor.update(self.cx, |editor, cx| {
             editor.set_text(unmarked_text, cx);
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
@@ -215,7 +215,7 @@ impl<'a> EditorTestContext<'a> {
     }
 
     pub fn assert_editor_state(&mut self, marked_text: &str) {
-        let (unmarked_text, expected_selections) = parse_marked_text(marked_text, true).unwrap();
+        let (unmarked_text, expected_selections) = marked_text_ranges(marked_text, true);
         let buffer_text = self.buffer_text();
         assert_eq!(
             buffer_text, unmarked_text,

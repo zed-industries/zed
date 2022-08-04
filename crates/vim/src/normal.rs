@@ -297,7 +297,7 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
 #[cfg(test)]
 mod test {
     use indoc::indoc;
-    use util::test::marked_text;
+    use util::test::marked_text_offsets;
 
     use crate::{
         state::{
@@ -521,7 +521,7 @@ mod test {
     #[gpui::test]
     async fn test_w(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
-        let (_, cursor_offsets) = marked_text(indoc! {"
+        let (_, cursor_offsets) = marked_text_offsets(indoc! {"
             The ˇquickˇ-ˇbrown
             ˇ
             ˇ
@@ -543,7 +543,7 @@ mod test {
         }
 
         // Reset and test ignoring punctuation
-        let (_, cursor_offsets) = marked_text(indoc! {"
+        let (_, cursor_offsets) = marked_text_offsets(indoc! {"
             The ˇquick-brown
             ˇ
             ˇ
@@ -568,7 +568,7 @@ mod test {
     #[gpui::test]
     async fn test_e(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
-        let (_, cursor_offsets) = marked_text(indoc! {"
+        let (_, cursor_offsets) = marked_text_offsets(indoc! {"
             Thˇe quicˇkˇ-browˇn
             
             
@@ -590,7 +590,7 @@ mod test {
         }
 
         // Reset and test ignoring punctuation
-        let (_, cursor_offsets) = marked_text(indoc! {"
+        let (_, cursor_offsets) = marked_text_offsets(indoc! {"
             Thˇe quick-browˇn
             
             
@@ -614,7 +614,7 @@ mod test {
     #[gpui::test]
     async fn test_b(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
-        let (_, cursor_offsets) = marked_text(indoc! {"
+        let (_, cursor_offsets) = marked_text_offsets(indoc! {"
             ˇˇThe ˇquickˇ-ˇbrown
             ˇ
             ˇ
@@ -636,7 +636,7 @@ mod test {
         }
 
         // Reset and test ignoring punctuation
-        let (_, cursor_offsets) = marked_text(indoc! {"
+        let (_, cursor_offsets) = marked_text_offsets(indoc! {"
             ˇˇThe ˇquick-brown
             ˇ
             ˇ
