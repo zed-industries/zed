@@ -577,7 +577,7 @@ pub mod tests {
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
     use theme::SyntaxTheme;
-    use util::test::{marked_text_ranges, sample_text};
+    use util::test::{parse_marked_text, sample_text};
     use Bias::*;
 
     #[gpui::test(iterations = 100)]
@@ -1170,7 +1170,8 @@ pub mod tests {
         );
         language.set_theme(&theme);
 
-        let (text, highlighted_ranges) = marked_text_ranges(r#"const[] [a]: B = "c [d]""#);
+        let (text, highlighted_ranges) =
+            parse_marked_text(r#"constˇ «a»: B = "c «d»""#, false).unwrap();
 
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;

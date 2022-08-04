@@ -76,7 +76,7 @@ const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq, Default)]
 pub struct SelectNext {
     #[serde(default)]
     pub replace_newest: bool,
@@ -6645,7 +6645,8 @@ mod tests {
     use util::{
         assert_set_eq,
         test::{
-            marked_text_by, marked_text_ranges, marked_text_ranges_by, sample_text, TextRangeMarker,
+            marked_text_ranges, marked_text_ranges_by, parse_marked_text, sample_text,
+            TextRangeMarker,
         },
     };
     use workspace::{FollowableItem, ItemHandle, NavigationEntry, Pane};
@@ -7044,13 +7045,17 @@ mod tests {
 
     #[gpui::test]
     fn test_clone(cx: &mut gpui::MutableAppContext) {
-        let (text, selection_ranges) = marked_text_ranges(indoc! {"
-            one
-            two
-            three[]
-            four
-            five[]
-        "});
+        let (text, selection_ranges) = parse_marked_text(
+            indoc! {"
+                one
+                two
+                threeˇ
+                four
+                fiveˇ
+            "},
+            true,
+        )
+        .unwrap();
         cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&text, cx);
 
@@ -7732,93 +7737,38 @@ mod tests {
             });
 
             view.move_to_previous_word_start(&MoveToPreviousWordStart, cx);
-            assert_selection_ranges(
-                "use std::<>str::{foo, bar}\n\n  {[]baz.qux()}",
-                vec![('<', '>'), ('[', ']')],
-                view,
-                cx,
-            );
+            assert_selection_ranges("use std::ˇstr::{foo, bar}\n\n  {ˇbaz.qux()}", view, cx);
 
             view.move_to_previous_word_start(&MoveToPreviousWordStart, cx);
-            assert_selection_ranges(
-                "use std<>::str::{foo, bar}\n\n  []{baz.qux()}",
-                vec![('<', '>'), ('[', ']')],
-                view,
-                cx,
-            );
+            assert_selection_ranges("use stdˇ::str::{foo, bar}\n\n  ˇ{baz.qux()}", view, cx);
 
             view.move_to_previous_word_start(&MoveToPreviousWordStart, cx);
-            assert_selection_ranges(
-                "use <>std::str::{foo, bar}\n\n[]  {baz.qux()}",
-                vec![('<', '>'), ('[', ']')],
-                view,
-                cx,
-            );
+            assert_selection_ranges("use ˇstd::str::{foo, bar}\n\nˇ  {baz.qux()}", view, cx);
 
             view.move_to_previous_word_start(&MoveToPreviousWordStart, cx);
-            assert_selection_ranges(
-                "<>use std::str::{foo, bar}\n[]\n  {baz.qux()}",
-                vec![('<', '>'), ('[', ']')],
-                view,
-                cx,
-            );
+            assert_selection_ranges("ˇuse std::str::{foo, bar}\nˇ\n  {baz.qux()}", view, cx);
 
             view.move_to_previous_word_start(&MoveToPreviousWordStart, cx);
-            assert_selection_ranges(
-                "<>use std::str::{foo, bar[]}\n\n  {baz.qux()}",
-                vec![('<', '>'), ('[', ']')],
-                view,
-                cx,
-            );
+            assert_selection_ranges("ˇuse std::str::{foo, barˇ}\n\n  {baz.qux()}", view, cx);
 
             view.move_to_next_word_end(&MoveToNextWordEnd, cx);
-            assert_selection_ranges(
-                "use<> std::str::{foo, bar}[]\n\n  {baz.qux()}",
-                vec![('<', '>'), ('[', ']')],
-                view,
-                cx,
-            );
+            assert_selection_ranges("useˇ std::str::{foo, bar}ˇ\n\n  {baz.qux()}", view, cx);
 
             view.move_to_next_word_end(&MoveToNextWordEnd, cx);
-            assert_selection_ranges(
-                "use std<>::str::{foo, bar}\n[]\n  {baz.qux()}",
-                vec![('<', '>'), ('[', ']')],
-                view,
-                cx,
-            );
+            assert_selection_ranges("use stdˇ::str::{foo, bar}\nˇ\n  {baz.qux()}", view, cx);
 
             view.move_to_next_word_end(&MoveToNextWordEnd, cx);
-            assert_selection_ranges(
-                "use std::<>str::{foo, bar}\n\n  {[]baz.qux()}",
-                vec![('<', '>'), ('[', ']')],
-                view,
-                cx,
-            );
+            assert_selection_ranges("use std::ˇstr::{foo, bar}\n\n  {ˇbaz.qux()}", view, cx);
 
             view.move_right(&MoveRight, cx);
             view.select_to_previous_word_start(&SelectToPreviousWordStart, cx);
-            assert_selection_ranges(
-                "use std::>s<tr::{foo, bar}\n\n  {]b[az.qux()}",
-                vec![('<', '>'), ('[', ']')],
-                view,
-                cx,
-            );
+            assert_selection_ranges("use std::«ˇs»tr::{foo, bar}\n\n  {«ˇb»az.qux()}", view, cx);
 
             view.select_to_previous_word_start(&SelectToPreviousWordStart, cx);
-            assert_selection_ranges(
-                "use std>::s<tr::{foo, bar}\n\n  ]{b[az.qux()}",
-                vec![('<', '>'), ('[', ']')],
-                view,
-                cx,
-            );
+            assert_selection_ranges("use std«ˇ::s»tr::{foo, bar}\n\n  «ˇ{b»az.qux()}", view, cx);
 
             view.select_to_next_word_end(&SelectToNextWordEnd, cx);
-            assert_selection_ranges(
-                "use std::>s<tr::{foo, bar}\n\n  {]b[az.qux()}",
-                vec![('<', '>'), ('[', ']')],
-                view,
-                cx,
-            );
+            assert_selection_ranges("use std::«ˇs»tr::{foo, bar}\n\n  {«ˇb»az.qux()}", view, cx);
         });
     }
 
@@ -7878,15 +7828,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_delete_to_beginning_of_line(cx: &mut gpui::MutableAppContext) {
-        cx.set_global(Settings::test(cx));
-        let (text, ranges) = marked_text_ranges("one [two three] four");
-        let buffer = MultiBuffer::build_simple(&text, cx);
-
-        let (_, editor) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
-
-        editor.update(cx, |editor, cx| {
-            editor.change_selections(None, cx, |s| s.select_ranges(ranges));
+    async fn test_delete_to_beginning_of_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.set_state("one «two threeˇ» four");
+        cx.update_editor(|editor, cx| {
             editor.delete_to_beginning_of_line(&DeleteToBeginningOfLine, cx);
             assert_eq!(editor.text(cx), " four");
         });
@@ -9358,55 +9303,27 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_select_next(cx: &mut gpui::MutableAppContext) {
-        cx.set_global(Settings::test(cx));
+    async fn test_select_next(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.set_state("abc\nˇabc abc\ndefabc\nabc");
 
-        let (text, ranges) = marked_text_ranges("[abc]\n[abc] [abc]\ndefabc\n[abc]");
-        let buffer = MultiBuffer::build_simple(&text, cx);
-        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
+        cx.update_editor(|e, cx| e.select_next(&SelectNext::default(), cx));
+        cx.assert_editor_state("abc\n«abcˇ» abc\ndefabc\nabc");
 
-        view.update(cx, |view, cx| {
-            view.change_selections(None, cx, |s| {
-                s.select_ranges([ranges[1].start + 1..ranges[1].start + 1])
-            });
-            view.select_next(
-                &SelectNext {
-                    replace_newest: false,
-                },
-                cx,
-            );
-            assert_eq!(view.selections.ranges(cx), &ranges[1..2]);
+        cx.update_editor(|e, cx| e.select_next(&SelectNext::default(), cx));
+        cx.assert_editor_state("abc\n«abcˇ» «abcˇ»\ndefabc\nabc");
 
-            view.select_next(
-                &SelectNext {
-                    replace_newest: false,
-                },
-                cx,
-            );
-            assert_eq!(view.selections.ranges(cx), &ranges[1..3]);
+        cx.update_editor(|view, cx| view.undo_selection(&UndoSelection, cx));
+        cx.assert_editor_state("abc\n«abcˇ» abc\ndefabc\nabc");
 
-            view.undo_selection(&UndoSelection, cx);
-            assert_eq!(view.selections.ranges(cx), &ranges[1..2]);
+        cx.update_editor(|view, cx| view.redo_selection(&RedoSelection, cx));
+        cx.assert_editor_state("abc\n«abcˇ» «abcˇ»\ndefabc\nabc");
 
-            view.redo_selection(&RedoSelection, cx);
-            assert_eq!(view.selections.ranges(cx), &ranges[1..3]);
+        cx.update_editor(|e, cx| e.select_next(&SelectNext::default(), cx));
+        cx.assert_editor_state("abc\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
 
-            view.select_next(
-                &SelectNext {
-                    replace_newest: false,
-                },
-                cx,
-            );
-            assert_eq!(view.selections.ranges(cx), &ranges[1..4]);
-
-            view.select_next(
-                &SelectNext {
-                    replace_newest: false,
-                },
-                cx,
-            );
-            assert_eq!(view.selections.ranges(cx), &ranges[0..4]);
-        });
+        cx.update_editor(|e, cx| e.select_next(&SelectNext::default(), cx));
+        cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
     }
 
     #[gpui::test]
@@ -9984,10 +9901,16 @@ mod tests {
     async fn test_snippets(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| cx.set_global(Settings::test(cx)));
 
-        let (text, insertion_ranges) = marked_text_ranges(indoc! {"
-            a.| b
-            a.| b
-            a.| b"});
+        let (text, insertion_ranges) = parse_marked_text(
+            indoc! {"
+                a.ˇ b
+                a.ˇ b
+                a.ˇ b
+            "},
+            false,
+        )
+        .unwrap();
+
         let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
         let (_, editor) = cx.add_window(|cx| build_editor(buffer, cx));
 
@@ -9999,22 +9922,20 @@ mod tests {
                 .unwrap();
 
             fn assert(editor: &mut Editor, cx: &mut ViewContext<Editor>, marked_text_ranges: &str) {
-                let range_markers = ('<', '>');
-                let (expected_text, mut selection_ranges_lookup) =
-                    marked_text_ranges_by(marked_text_ranges, vec![range_markers.clone().into()]);
-                let selection_ranges = selection_ranges_lookup
-                    .remove(&range_markers.into())
-                    .unwrap();
+                let (expected_text, selection_ranges) =
+                    parse_marked_text(marked_text_ranges, false).unwrap();
                 assert_eq!(editor.text(cx), expected_text);
                 assert_eq!(editor.selections.ranges::<usize>(cx), selection_ranges);
             }
+
             assert(
                 editor,
                 cx,
                 indoc! {"
-                    a.f(<one>, two, <three>) b
-                    a.f(<one>, two, <three>) b
-                    a.f(<one>, two, <three>) b"},
+                    a.f(«one», two, «three») b
+                    a.f(«one», two, «three») b
+                    a.f(«one», two, «three») b
+                "},
             );
 
             // Can't move earlier than the first tab stop
@@ -10023,9 +9944,10 @@ mod tests {
                 editor,
                 cx,
                 indoc! {"
-                    a.f(<one>, two, <three>) b
-                    a.f(<one>, two, <three>) b
-                    a.f(<one>, two, <three>) b"},
+                    a.f(«one», two, «three») b
+                    a.f(«one», two, «three») b
+                    a.f(«one», two, «three») b
+                "},
             );
 
             assert!(editor.move_to_next_snippet_tabstop(cx));
@@ -10033,9 +9955,10 @@ mod tests {
                 editor,
                 cx,
                 indoc! {"
-                    a.f(one, <two>, three) b
-                    a.f(one, <two>, three) b
-                    a.f(one, <two>, three) b"},
+                    a.f(one, «two», three) b
+                    a.f(one, «two», three) b
+                    a.f(one, «two», three) b
+                "},
             );
 
             editor.move_to_prev_snippet_tabstop(cx);
@@ -10043,9 +9966,10 @@ mod tests {
                 editor,
                 cx,
                 indoc! {"
-                    a.f(<one>, two, <three>) b
-                    a.f(<one>, two, <three>) b
-                    a.f(<one>, two, <three>) b"},
+                    a.f(«one», two, «three») b
+                    a.f(«one», two, «three») b
+                    a.f(«one», two, «three») b
+                "},
             );
 
             assert!(editor.move_to_next_snippet_tabstop(cx));
@@ -10053,18 +9977,20 @@ mod tests {
                 editor,
                 cx,
                 indoc! {"
-                    a.f(one, <two>, three) b
-                    a.f(one, <two>, three) b
-                    a.f(one, <two>, three) b"},
+                    a.f(one, «two», three) b
+                    a.f(one, «two», three) b
+                    a.f(one, «two», three) b
+                "},
             );
             assert!(editor.move_to_next_snippet_tabstop(cx));
             assert(
                 editor,
                 cx,
                 indoc! {"
-                    a.f(one, two, three)<> b
-                    a.f(one, two, three)<> b
-                    a.f(one, two, three)<> b"},
+                    a.f(one, two, three)ˇ b
+                    a.f(one, two, three)ˇ b
+                    a.f(one, two, three)ˇ b
+                "},
             );
 
             // As soon as the last tab stop is reached, snippet state is gone
@@ -10073,9 +9999,10 @@ mod tests {
                 editor,
                 cx,
                 indoc! {"
-                    a.f(one, two, three)<> b
-                    a.f(one, two, three)<> b
-                    a.f(one, two, three)<> b"},
+                    a.f(one, two, three)ˇ b
+                    a.f(one, two, three)ˇ b
+                    a.f(one, two, three)ˇ b
+                "},
             );
         });
     }
@@ -10360,7 +10287,7 @@ mod tests {
                 indoc! {"
                     one.second_completion
                     two
-                    three<>
+                    threeˇ
                 "},
                 "\nadditional edit",
             )),
@@ -10516,13 +10443,8 @@ mod tests {
             edit: Option<(&'static str, &'static str)>,
         ) {
             let edit = edit.map(|(marked_string, new_text)| {
-                let replace_range_marker: TextRangeMarker = ('<', '>').into();
-                let (_, mut marked_ranges) =
-                    marked_text_ranges_by(marked_string, vec![replace_range_marker.clone()]);
-
-                let replace_range = cx
-                    .to_lsp_range(marked_ranges.remove(&replace_range_marker).unwrap()[0].clone());
-
+                let (_, marked_ranges) = parse_marked_text(marked_string, false).unwrap();
+                let replace_range = cx.to_lsp_range(marked_ranges[0].clone());
                 vec![lsp::TextEdit::new(replace_range, new_text.to_string())]
             });
 
@@ -10690,34 +10612,49 @@ mod tests {
 
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(multibuffer, cx));
         view.update(cx, |view, cx| {
-            let (expected_text, selection_ranges) = marked_text_ranges(indoc! {"
-                aaaa
-                b|bbb
-                b|bb|b
-                cccc"});
+            let (expected_text, selection_ranges) = parse_marked_text(
+                indoc! {"
+                    aaaa
+                    bˇbbb
+                    bˇbbˇb
+                    cccc"
+                },
+                true,
+            )
+            .unwrap();
             assert_eq!(view.text(cx), expected_text);
             view.change_selections(None, cx, |s| s.select_ranges(selection_ranges));
 
             view.handle_input("X", cx);
 
-            let (expected_text, expected_selections) = marked_text_ranges(indoc! {"
-                aaaa
-                bX|bbXb
-                bX|bbX|b
-                cccc"});
+            let (expected_text, expected_selections) = parse_marked_text(
+                indoc! {"
+                    aaaa
+                    bXˇbbXb
+                    bXˇbbXˇb
+                    cccc"
+                },
+                false,
+            )
+            .unwrap();
             assert_eq!(view.text(cx), expected_text);
             assert_eq!(view.selections.ranges(cx), expected_selections);
 
             view.newline(&Newline, cx);
-            let (expected_text, expected_selections) = marked_text_ranges(indoc! {"
-                aaaa
-                bX
-                |bbX
-                b
-                bX
-                |bbX
-                |b
-                cccc"});
+            let (expected_text, expected_selections) = parse_marked_text(
+                indoc! {"
+                    aaaa
+                    bX
+                    ˇbbX
+                    b
+                    bX
+                    ˇbbX
+                    ˇb
+                    cccc"
+                },
+                false,
+            )
+            .unwrap();
             assert_eq!(view.text(cx), expected_text);
             assert_eq!(view.selections.ranges(cx), expected_selections);
         });
@@ -11194,30 +11131,12 @@ mod tests {
         point..point
     }
 
-    fn assert_selection_ranges(
-        marked_text: &str,
-        selection_marker_pairs: Vec<(char, char)>,
-        view: &mut Editor,
-        cx: &mut ViewContext<Editor>,
-    ) {
-        let snapshot = view.snapshot(cx).display_snapshot;
-        let mut marker_chars = Vec::new();
-        for (start, end) in selection_marker_pairs.iter() {
-            marker_chars.push(*start);
-            marker_chars.push(*end);
-        }
-        let (_, markers) = marked_text_by(marked_text, marker_chars);
-        let asserted_ranges: Vec<Range<DisplayPoint>> = selection_marker_pairs
-            .iter()
-            .map(|(start, end)| {
-                let start = markers.get(start).unwrap()[0].to_display_point(&snapshot);
-                let end = markers.get(end).unwrap()[0].to_display_point(&snapshot);
-                start..end
-            })
-            .collect();
+    fn assert_selection_ranges(marked_text: &str, view: &mut Editor, cx: &mut ViewContext<Editor>) {
+        let (text, ranges) = parse_marked_text(marked_text, true).unwrap();
+        assert_eq!(view.text(cx), text);
         assert_eq!(
-            view.selections.display_ranges(cx),
-            &asserted_ranges[..],
+            view.selections.ranges(cx),
+            ranges,
             "Assert selections are {}",
             marked_text
         );
