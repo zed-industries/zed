@@ -5356,6 +5356,7 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "client",
+ "context_menu",
  "dirs 4.0.0",
  "editor",
  "futures",

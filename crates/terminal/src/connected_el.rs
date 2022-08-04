@@ -33,7 +33,9 @@ use std::{
 use std::{fmt::Debug, ops::Sub};
 
 use crate::{
-    connected_view::ConnectedView, mappings::colors::convert_color, Terminal, TerminalSize,
+    connected_view::{ConnectedView, DeployContextMenu},
+    mappings::colors::convert_color,
+    Terminal, TerminalSize,
 };
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
@@ -461,6 +463,12 @@ impl TerminalEl {
                                 cx.notify();
                             });
                         }
+                    },
+                )
+                .on_click(
+                    MouseButton::Right,
+                    move |MouseButtonEvent { position, .. }, cx| {
+                        cx.dispatch_action(DeployContextMenu { position });
                     },
                 )
                 .on_drag(
