@@ -16,6 +16,7 @@ theme = { path = "../theme" }
 settings = { path = "../settings" }
 workspace = { path = "../workspace" }
 project = { path = "../project" }
+context_menu = { path = "../context_menu" }
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2.5"
 mio-extras = "2.0.6"

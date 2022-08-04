@@ -5,6 +5,7 @@ use gpui::{
     actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, View, ViewContext,
     ViewHandle,
 };
+use theme::ContextMenu;
 use workspace::{Item, Workspace};
 
 use crate::TerminalSize;
@@ -39,6 +40,7 @@ pub struct TerminalView {
     modal: bool,
     pub content: TerminalContent,
     associated_directory: Option<PathBuf>,
+    context_menu: ViewHandle<ContextMenu>,
 }
 
 pub struct ErrorView {
@@ -111,6 +113,7 @@ impl TerminalView {
             modal,
             content,
             associated_directory: working_directory,
+            context_menu: cx.add_view(|cx| ContextMenu::new(cx)),
         }
     }
 
