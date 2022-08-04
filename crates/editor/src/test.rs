@@ -1,34 +1,28 @@
-use std::{
-    any::TypeId,
-    ops::{Deref, DerefMut, Range},
-    sync::Arc,
-};
-
-use anyhow::Result;
-use futures::{Future, StreamExt};
-use indoc::indoc;
-
-use collections::BTreeMap;
-use gpui::{
-    json, keymap::Keystroke, AppContext, ModelContext, ModelHandle, ViewContext, ViewHandle,
-};
-use language::{
-    point_to_lsp, Buffer, BufferSnapshot, FakeLspAdapter, Language, LanguageConfig, Selection,
-};
-use lsp::{notification, request};
-use project::Project;
-use settings::Settings;
-use util::{
-    assert_set_eq, set_eq,
-    test::{marked_text, marked_text_ranges, marked_text_ranges_by, SetEqError, TextRangeMarker},
-};
-use workspace::{pane, AppState, Workspace, WorkspaceHandle};
-
 use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     multi_buffer::ToPointUtf16,
     AnchorRangeExt, Autoscroll, DisplayPoint, Editor, EditorMode, MultiBuffer, ToPoint,
 };
+use anyhow::Result;
+use futures::{Future, StreamExt};
+use gpui::{
+    json, keymap::Keystroke, AppContext, ModelContext, ModelHandle, ViewContext, ViewHandle,
+};
+use indoc::indoc;
+use language::{point_to_lsp, Buffer, BufferSnapshot, FakeLspAdapter, Language, LanguageConfig};
+use lsp::{notification, request};
+use project::Project;
+use settings::Settings;
+use std::{
+    any::TypeId,
+    ops::{Deref, DerefMut, Range},
+    sync::Arc,
+};
+use util::{
+    assert_set_eq, set_eq,
+    test::{generate_marked_text, marked_text_offsets, marked_text_ranges},
+};
+use workspace::{pane, AppState, Workspace, WorkspaceHandle};
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -43,7 +37,7 @@ pub fn marked_display_snapshot(
     text: &str,
     cx: &mut gpui::MutableAppContext,
 ) -> (DisplaySnapshot, Vec<DisplayPoint>) {
-    let (unmarked_text, markers) = marked_text(text);
+    let (unmarked_text, markers) = marked_text_offsets(text);
 
     let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
     let font_id = cx
@@ -65,7 +59,7 @@ pub fn marked_display_snapshot(
 }
 
 pub fn select_ranges(editor: &mut Editor, marked_text: &str, cx: &mut ViewContext<Editor>) {
-    let (umarked_text, text_ranges) = marked_text_ranges(marked_text);
+    let (umarked_text, text_ranges) = marked_text_ranges(marked_text, true);
     assert_eq!(editor.text(cx), umarked_text);
     editor.change_selections(None, cx, |s| s.select_ranges(text_ranges));
 }
@@ -75,8 +69,7 @@ pub fn assert_text_with_selections(
     marked_text: &str,
     cx: &mut ViewContext<Editor>,
 ) {
-    let (unmarked_text, text_ranges) = marked_text_ranges(marked_text);
-
+    let (unmarked_text, text_ranges) = marked_text_ranges(marked_text, true);
     assert_eq!(editor.text(cx), unmarked_text);
     assert_eq!(editor.selections.ranges(cx), text_ranges);
 }
@@ -190,94 +183,58 @@ impl<'a> EditorTestContext<'a> {
         }
     }
 
-    pub fn display_point(&mut self, cursor_location: &str) -> DisplayPoint {
-        let (_, locations) = marked_text(cursor_location);
+    fn ranges(&self, marked_text: &str) -> Vec<Range<usize>> {
+        let (unmarked_text, ranges) = marked_text_ranges(marked_text, false);
+        assert_eq!(self.buffer_text(), unmarked_text);
+        ranges
+    }
+
+    pub fn display_point(&mut self, marked_text: &str) -> DisplayPoint {
+        let ranges = self.ranges(marked_text);
         let snapshot = self
             .editor
             .update(self.cx, |editor, cx| editor.snapshot(cx));
-        locations[0].to_display_point(&snapshot.display_snapshot)
+        ranges[0].start.to_display_point(&snapshot)
     }
 
-    // Returns anchors for the current buffer using `[`..`]`
+    // Returns anchors for the current buffer using `«` and `»`
     pub fn text_anchor_range(&self, marked_text: &str) -> Range<language::Anchor> {
-        let range_marker: TextRangeMarker = ('[', ']').into();
-        let (unmarked_text, mut ranges) =
-            marked_text_ranges_by(&marked_text, vec![range_marker.clone()]);
-        assert_eq!(self.buffer_text(), unmarked_text);
-        let offset_range = ranges.remove(&range_marker).unwrap()[0].clone();
+        let ranges = self.ranges(marked_text);
         let snapshot = self.buffer_snapshot();
-
-        snapshot.anchor_before(offset_range.start)..snapshot.anchor_after(offset_range.end)
+        snapshot.anchor_before(ranges[0].start)..snapshot.anchor_after(ranges[0].end)
     }
 
-    // Sets the editor state via a marked string.
-    // `|` characters represent empty selections
-    // `[` to `}` represents a non empty selection with the head at `}`
-    // `{` to `]` represents a non empty selection with the head at `{`
-    pub fn set_state(&mut self, text: &str) {
-        self.set_state_by(
-            vec![
-                '|'.into(),
-                ('[', '}').into(),
-                TextRangeMarker::ReverseRange('{', ']'),
-            ],
-            text,
-        );
-    }
-
-    pub fn set_state_by(&mut self, range_markers: Vec<TextRangeMarker>, text: &str) {
+    /// Change the editor's text and selections using a string containing
+    /// embedded range markers that represent the ranges and directions of
+    /// each selection.
+    ///
+    /// See the `util::test::marked_text_ranges` function for more information.
+    pub fn set_state(&mut self, marked_text: &str) {
+        let (unmarked_text, selection_ranges) = marked_text_ranges(marked_text, true);
         self.editor.update(self.cx, |editor, cx| {
-            let (unmarked_text, selection_ranges) = marked_text_ranges_by(&text, range_markers);
             editor.set_text(unmarked_text, cx);
-
-            let selection_ranges: Vec<Range<usize>> = selection_ranges
-                .values()
-                .into_iter()
-                .flatten()
-                .cloned()
-                .collect();
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.select_ranges(selection_ranges)
             })
         })
     }
 
-    // Asserts the editor state via a marked string.
-    // `|` characters represent empty selections
-    // `[` to `}` represents a non empty selection with the head at `}`
-    // `{` to `]` represents a non empty selection with the head at `{`
-    pub fn assert_editor_state(&mut self, text: &str) {
-        let (unmarked_text, mut selection_ranges) = marked_text_ranges_by(
-            &text,
-            vec!['|'.into(), ('[', '}').into(), ('{', ']').into()],
-        );
+    /// Make an assertion about the editor's text and the ranges and directions
+    /// of its selections using a string containing embedded range markers.
+    ///
+    /// See the `util::test::marked_text_ranges` function for more information.
+    pub fn assert_editor_state(&mut self, marked_text: &str) {
+        let (unmarked_text, expected_selections) = marked_text_ranges(marked_text, true);
         let buffer_text = self.buffer_text();
         assert_eq!(
             buffer_text, unmarked_text,
             "Unmarked text doesn't match buffer text"
         );
-
-        let expected_empty_selections = selection_ranges.remove(&'|'.into()).unwrap_or_default();
-        let expected_reverse_selections = selection_ranges
-            .remove(&('{', ']').into())
-            .unwrap_or_default();
-        let expected_forward_selections = selection_ranges
-            .remove(&('[', '}').into())
-            .unwrap_or_default();
-
-        self.assert_selections(
-            expected_empty_selections,
-            expected_reverse_selections,
-            expected_forward_selections,
-            Some(text.to_string()),
-        )
+        self.assert_selections(expected_selections, marked_text.to_string())
     }
 
     pub fn assert_editor_background_highlights<Tag: 'static>(&mut self, marked_text: &str) {
-        let (unmarked, mut ranges) = marked_text_ranges_by(marked_text, vec![('[', ']').into()]);
-        assert_eq!(unmarked, self.buffer_text());
-
-        let asserted_ranges = ranges.remove(&('[', ']').into()).unwrap();
+        let expected_ranges = self.ranges(marked_text);
         let actual_ranges: Vec<Range<usize>> = self.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
             editor
@@ -289,175 +246,61 @@ impl<'a> EditorTestContext<'a> {
                 .map(|range| range.to_offset(&snapshot.buffer_snapshot))
                 .collect()
         });
-
-        assert_set_eq!(asserted_ranges, actual_ranges);
+        assert_set_eq!(actual_ranges, expected_ranges);
     }
 
     pub fn assert_editor_text_highlights<Tag: ?Sized + 'static>(&mut self, marked_text: &str) {
-        let (unmarked, mut ranges) = marked_text_ranges_by(marked_text, vec![('[', ']').into()]);
-        assert_eq!(unmarked, self.buffer_text());
-
-        let asserted_ranges = ranges.remove(&('[', ']').into()).unwrap();
+        let expected_ranges = self.ranges(marked_text);
         let snapshot = self.update_editor(|editor, cx| editor.snapshot(cx));
         let actual_ranges: Vec<Range<usize>> = snapshot
-            .display_snapshot
             .highlight_ranges::<Tag>()
             .map(|ranges| ranges.as_ref().clone().1)
             .unwrap_or_default()
             .into_iter()
             .map(|range| range.to_offset(&snapshot.buffer_snapshot))
             .collect();
-
-        assert_set_eq!(asserted_ranges, actual_ranges);
+        assert_set_eq!(actual_ranges, expected_ranges);
     }
 
-    pub fn assert_editor_selections(&mut self, expected_selections: Vec<Selection<usize>>) {
-        let mut empty_selections = Vec::new();
-        let mut reverse_selections = Vec::new();
-        let mut forward_selections = Vec::new();
-
-        for selection in expected_selections {
-            let range = selection.range();
-            if selection.is_empty() {
-                empty_selections.push(range);
-            } else if selection.reversed {
-                reverse_selections.push(range);
-            } else {
-                forward_selections.push(range)
-            }
-        }
-
-        self.assert_selections(
-            empty_selections,
-            reverse_selections,
-            forward_selections,
-            None,
-        )
+    pub fn assert_editor_selections(&mut self, expected_selections: Vec<Range<usize>>) {
+        let expected_marked_text =
+            generate_marked_text(&self.buffer_text(), &expected_selections, true);
+        self.assert_selections(expected_selections, expected_marked_text)
     }
 
     fn assert_selections(
         &mut self,
-        expected_empty_selections: Vec<Range<usize>>,
-        expected_reverse_selections: Vec<Range<usize>>,
-        expected_forward_selections: Vec<Range<usize>>,
-        asserted_text: Option<String>,
+        expected_selections: Vec<Range<usize>>,
+        expected_marked_text: String,
     ) {
-        let (empty_selections, reverse_selections, forward_selections) =
-            self.editor.read_with(self.cx, |editor, cx| {
-                let mut empty_selections = Vec::new();
-                let mut reverse_selections = Vec::new();
-                let mut forward_selections = Vec::new();
-
-                for selection in editor.selections.all::<usize>(cx) {
-                    let range = selection.range();
-                    if selection.is_empty() {
-                        empty_selections.push(range);
-                    } else if selection.reversed {
-                        reverse_selections.push(range);
-                    } else {
-                        forward_selections.push(range)
-                    }
+        let actual_selections = self
+            .editor
+            .read_with(self.cx, |editor, cx| editor.selections.all::<usize>(cx))
+            .into_iter()
+            .map(|s| {
+                if s.reversed {
+                    s.end..s.start
+                } else {
+                    s.start..s.end
                 }
+            })
+            .collect::<Vec<_>>();
+        let actual_marked_text =
+            generate_marked_text(&self.buffer_text(), &actual_selections, true);
+        if expected_selections != actual_selections {
+            panic!(
+                indoc! {"
+                    Editor has unexpected selections.
 
-                (empty_selections, reverse_selections, forward_selections)
-            });
+                    Expected selections:
+                    {}
 
-        let asserted_selections = asserted_text.unwrap_or_else(|| {
-            self.insert_markers(
-                &expected_empty_selections,
-                &expected_reverse_selections,
-                &expected_forward_selections,
-            )
-        });
-        let actual_selections =
-            self.insert_markers(&empty_selections, &reverse_selections, &forward_selections);
-
-        let unmarked_text = self.buffer_text();
-        let all_eq: Result<(), SetEqError<String>> =
-            set_eq!(expected_empty_selections, empty_selections)
-                .map_err(|err| {
-                    err.map(|missing| {
-                        let mut error_text = unmarked_text.clone();
-                        error_text.insert(missing.start, '|');
-                        error_text
-                    })
-                })
-                .and_then(|_| {
-                    set_eq!(expected_reverse_selections, reverse_selections).map_err(|err| {
-                        err.map(|missing| {
-                            let mut error_text = unmarked_text.clone();
-                            error_text.insert(missing.start, '{');
-                            error_text.insert(missing.end, ']');
-                            error_text
-                        })
-                    })
-                })
-                .and_then(|_| {
-                    set_eq!(expected_forward_selections, forward_selections).map_err(|err| {
-                        err.map(|missing| {
-                            let mut error_text = unmarked_text.clone();
-                            error_text.insert(missing.start, '[');
-                            error_text.insert(missing.end, '}');
-                            error_text
-                        })
-                    })
-                });
-
-        match all_eq {
-            Err(SetEqError::LeftMissing(location_text)) => {
-                panic!(
-                    indoc! {"
-                        Editor has extra selection
-                        Extra Selection Location:
-                        {}
-                        Asserted selections:
-                        {}
-                        Actual selections:
-                        {}"},
-                    location_text, asserted_selections, actual_selections,
-                );
-            }
-            Err(SetEqError::RightMissing(location_text)) => {
-                panic!(
-                    indoc! {"
-                        Editor is missing empty selection
-                        Missing Selection Location:
-                        {}
-                        Asserted selections:
-                        {}
-                        Actual selections:
-                        {}"},
-                    location_text, asserted_selections, actual_selections,
-                );
-            }
-            _ => {}
+                    Actual selections:
+                    {}
+                "},
+                expected_marked_text, actual_marked_text,
+            );
         }
-    }
-
-    fn insert_markers(
-        &mut self,
-        empty_selections: &Vec<Range<usize>>,
-        reverse_selections: &Vec<Range<usize>>,
-        forward_selections: &Vec<Range<usize>>,
-    ) -> String {
-        let mut editor_text_with_selections = self.buffer_text();
-        let mut selection_marks = BTreeMap::new();
-        for range in empty_selections {
-            selection_marks.insert(&range.start, '|');
-        }
-        for range in reverse_selections {
-            selection_marks.insert(&range.start, '{');
-            selection_marks.insert(&range.end, ']');
-        }
-        for range in forward_selections {
-            selection_marks.insert(&range.start, '[');
-            selection_marks.insert(&range.end, '}');
-        }
-        for (offset, mark) in selection_marks.into_iter().rev() {
-            editor_text_with_selections.insert(*offset, mark);
-        }
-
-        editor_text_with_selections
     }
 }
 
@@ -575,10 +418,8 @@ impl<'a> EditorLspTestContext<'a> {
 
     // Constructs lsp range using a marked string with '[', ']' range delimiters
     pub fn lsp_range(&mut self, marked_text: &str) -> lsp::Range {
-        let (unmarked, mut ranges) = marked_text_ranges_by(marked_text, vec![('[', ']').into()]);
-        assert_eq!(unmarked, self.buffer_text());
-        let offset_range = ranges.remove(&('[', ']').into()).unwrap()[0].clone();
-        self.to_lsp_range(offset_range)
+        let ranges = self.ranges(marked_text);
+        self.to_lsp_range(ranges[0].clone())
     }
 
     pub fn to_lsp_range(&mut self, range: Range<usize>) -> lsp::Range {

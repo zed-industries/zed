@@ -32,13 +32,10 @@ pub fn refresh_matching_bracket_highlights(editor: &mut Editor, cx: &mut ViewCon
 
 #[cfg(test)]
 mod tests {
-    use indoc::indoc;
-
-    use language::{BracketPair, Language, LanguageConfig};
-
-    use crate::test::EditorLspTestContext;
-
     use super::*;
+    use crate::test::EditorLspTestContext;
+    use indoc::indoc;
+    use language::{BracketPair, Language, LanguageConfig};
 
     #[gpui::test]
     async fn test_matching_bracket_highlights(cx: &mut gpui::TestAppContext) {
@@ -76,67 +73,61 @@ mod tests {
         .await;
 
         // positioning cursor inside bracket highlights both
-        cx.set_state_by(
-            vec!['|'.into()],
-            indoc! {r#"
-                pub fn test("Test |argument") {
-                    another_test(1, 2, 3);
-                }"#},
-        );
+        cx.set_state(indoc! {r#"
+            pub fn test("Test ˇargument") {
+                another_test(1, 2, 3);
+            }
+        "#});
         cx.assert_editor_background_highlights::<MatchingBracketHighlight>(indoc! {r#"
-                pub fn test[(]"Test argument"[)] {
-                    another_test(1, 2, 3);
-                }"#});
+            pub fn test«(»"Test argument"«)» {
+                another_test(1, 2, 3);
+            }
+        "#});
 
-        cx.set_state_by(
-            vec!['|'.into()],
-            indoc! {r#"
-                pub fn test("Test argument") {
-                    another_test(1, |2, 3);
-                }"#},
-        );
+        cx.set_state(indoc! {r#"
+            pub fn test("Test argument") {
+                another_test(1, ˇ2, 3);
+            }
+        "#});
         cx.assert_editor_background_highlights::<MatchingBracketHighlight>(indoc! {r#"
             pub fn test("Test argument") {
-                another_test[(]1, 2, 3[)];
-            }"#});
+                another_test«(»1, 2, 3«)»;
+            }
+        "#});
 
-        cx.set_state_by(
-            vec!['|'.into()],
-            indoc! {r#"
-                pub fn test("Test argument") {
-                    another|_test(1, 2, 3);
-                }"#},
-        );
+        cx.set_state(indoc! {r#"
+            pub fn test("Test argument") {
+                anotherˇ_test(1, 2, 3);
+            }
+        "#});
         cx.assert_editor_background_highlights::<MatchingBracketHighlight>(indoc! {r#"
-            pub fn test("Test argument") [{]
+            pub fn test("Test argument") «{»
                 another_test(1, 2, 3);
-            [}]"#});
+            «}»
+        "#});
 
         // positioning outside of brackets removes highlight
-        cx.set_state_by(
-            vec!['|'.into()],
-            indoc! {r#"
-                pub f|n test("Test argument") {
-                    another_test(1, 2, 3);
-                }"#},
-        );
+        cx.set_state(indoc! {r#"
+            pub fˇn test("Test argument") {
+                another_test(1, 2, 3);
+            }
+        "#});
         cx.assert_editor_background_highlights::<MatchingBracketHighlight>(indoc! {r#"
             pub fn test("Test argument") {
                 another_test(1, 2, 3);
-            }"#});
+            }
+        "#});
 
         // non empty selection dismisses highlight
-        // positioning outside of brackets removes highlight
-        cx.set_state_by(
-            vec![('<', '>').into()],
-            indoc! {r#"
-                pub fn test("Te<st arg>ument") {
-                    another_test(1, 2, 3);
-                }"#},
-        );
+        cx.set_state(indoc! {r#"
+            pub fn test("Te«st argˇ»ument") {
+                another_test(1, 2, 3);
+            }
+        "#});
         cx.assert_editor_background_highlights::<MatchingBracketHighlight>(indoc! {r#"
             pub fn test("Test argument") {
                 another_test(1, 2, 3);
-            }"#});
+            }
+        "#});
     }
 }

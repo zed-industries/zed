@@ -439,11 +439,11 @@ mod tests {
 
         // Basic hover delays and then pops without moving the mouse
         cx.set_state(indoc! {"
-            fn |test()
-                println!();"});
+            fn ˇtest() { println!(); }
+        "});
         let hover_point = cx.display_point(indoc! {"
-            fn test()
-                print|ln!();"});
+            fn test() { printˇln!(); }
+        "});
 
         cx.update_editor(|editor, cx| {
             hover_at(
@@ -458,16 +458,16 @@ mod tests {
 
         // After delay, hover should be visible.
         let symbol_range = cx.lsp_range(indoc! {"
-            fn test()
-                [println!]();"});
+            fn test() { «println!»(); }
+        "});
         let mut requests =
             cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
                 Ok(Some(lsp::Hover {
                     contents: lsp::HoverContents::Markup(lsp::MarkupContent {
                         kind: lsp::MarkupKind::Markdown,
                         value: indoc! {"
-                                # Some basic docs
-                                Some test documentation"}
+                            # Some basic docs
+                            Some test documentation"}
                         .to_string(),
                     }),
                     range: Some(symbol_range),
@@ -496,8 +496,8 @@ mod tests {
 
         // Mouse moved with no hover response dismisses
         let hover_point = cx.display_point(indoc! {"
-            fn te|st()
-                println!();"});
+            fn teˇst() { println!(); }
+        "});
         let mut request = cx
             .lsp
             .handle_request::<lsp::request::HoverRequest, _, _>(|_, _| async move { Ok(None) });
@@ -531,12 +531,12 @@ mod tests {
 
         // Hover with keyboard has no delay
         cx.set_state(indoc! {"
-            f|n test()
-                println!();"});
+            fˇn test() { println!(); }
+        "});
         cx.update_editor(|editor, cx| hover(editor, &Hover, cx));
         let symbol_range = cx.lsp_range(indoc! {"
-            [fn] test()
-                println!();"});
+            «fn» test() { println!(); }
+        "});
         cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
             Ok(Some(lsp::Hover {
                 contents: lsp::HoverContents::Markup(lsp::MarkupContent {
@@ -584,13 +584,13 @@ mod tests {
         // Hover with just diagnostic, pops DiagnosticPopover immediately and then
         // info popover once request completes
         cx.set_state(indoc! {"
-            fn te|st()
-                println!();"});
+            fn teˇst() { println!(); }
+        "});
 
         // Send diagnostic to client
         let range = cx.text_anchor_range(indoc! {"
-            fn [test]()
-                println!();"});
+            fn «test»() { println!(); }
+        "});
         cx.update_buffer(|buffer, cx| {
             let snapshot = buffer.text_snapshot();
             let set = DiagnosticSet::from_sorted_entries(
@@ -616,15 +616,15 @@ mod tests {
 
         // Info Popover shows after request responded to
         let range = cx.lsp_range(indoc! {"
-            fn [test]()
-                println!();"});
+            fn «test»() { println!(); }
+        "});
         cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
             Ok(Some(lsp::Hover {
                 contents: lsp::HoverContents::Markup(lsp::MarkupContent {
                     kind: lsp::MarkupKind::Markdown,
                     value: indoc! {"
-                    # Some other basic docs
-                    Some other test documentation"}
+                        # Some other basic docs
+                        Some other test documentation"}
                     .to_string(),
                 }),
                 range: Some(range),

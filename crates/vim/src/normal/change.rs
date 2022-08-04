@@ -84,16 +84,16 @@ mod test {
     async fn test_change_h(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
         let mut cx = cx.binding(["c", "h"]).mode_after(Mode::Insert);
-        cx.assert("Te|st", "T|st");
-        cx.assert("T|est", "|est");
-        cx.assert("|Test", "|Test");
+        cx.assert("Teˇst", "Tˇst");
+        cx.assert("Tˇest", "ˇest");
+        cx.assert("ˇTest", "ˇTest");
         cx.assert(
             indoc! {"
                 Test
-                |test"},
+                ˇtest"},
             indoc! {"
                 Test
-                |test"},
+                ˇtest"},
         );
     }
 
@@ -101,111 +101,111 @@ mod test {
     async fn test_change_l(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
         let mut cx = cx.binding(["c", "l"]).mode_after(Mode::Insert);
-        cx.assert("Te|st", "Te|t");
-        cx.assert("Tes|t", "Tes|");
+        cx.assert("Teˇst", "Teˇt");
+        cx.assert("Tesˇt", "Tesˇ");
     }
 
     #[gpui::test]
     async fn test_change_w(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
         let mut cx = cx.binding(["c", "w"]).mode_after(Mode::Insert);
-        cx.assert("Te|st", "Te|");
-        cx.assert("T|est test", "T| test");
-        cx.assert("Test|  test", "Test|test");
+        cx.assert("Teˇst", "Teˇ");
+        cx.assert("Tˇest test", "Tˇ test");
+        cx.assert("Testˇ  test", "Testˇtest");
         cx.assert(
             indoc! {"
-                Test te|st
+                Test teˇst
                 test"},
             indoc! {"
-                Test te|
+                Test teˇ
                 test"},
         );
         cx.assert(
             indoc! {"
-                Test tes|t
+                Test tesˇt
                 test"},
             indoc! {"
-                Test tes|
+                Test tesˇ
                 test"},
         );
         cx.assert(
             indoc! {"
                 Test test
-                |
+                ˇ
                 test"},
             indoc! {"
                 Test test
-                |
+                ˇ
                 test"},
         );
 
         let mut cx = cx.binding(["c", "shift-w"]);
-        cx.assert("Test te|st-test test", "Test te| test");
+        cx.assert("Test teˇst-test test", "Test teˇ test");
     }
 
     #[gpui::test]
     async fn test_change_e(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
         let mut cx = cx.binding(["c", "e"]).mode_after(Mode::Insert);
-        cx.assert("Te|st Test", "Te| Test");
-        cx.assert("T|est test", "T| test");
+        cx.assert("Teˇst Test", "Teˇ Test");
+        cx.assert("Tˇest test", "Tˇ test");
         cx.assert(
             indoc! {"
-                Test te|st
+                Test teˇst
                 test"},
             indoc! {"
-                Test te|
+                Test teˇ
                 test"},
         );
         cx.assert(
             indoc! {"
-                Test tes|t
+                Test tesˇt
                 test"},
-            "Test tes|",
+            "Test tesˇ",
         );
         cx.assert(
             indoc! {"
                 Test test
-                |
+                ˇ
                 test"},
             indoc! {"
                 Test test
-                |
+                ˇ
                 test"},
         );
 
         let mut cx = cx.binding(["c", "shift-e"]);
-        cx.assert("Test te|st-test test", "Test te| test");
+        cx.assert("Test teˇst-test test", "Test teˇ test");
     }
 
     #[gpui::test]
     async fn test_change_b(cx: &mut gpui::TestAppContext) {
         let cx = VimTestContext::new(cx, true).await;
         let mut cx = cx.binding(["c", "b"]).mode_after(Mode::Insert);
-        cx.assert("Te|st Test", "|st Test");
-        cx.assert("Test |test", "|test");
-        cx.assert("Test1 test2 |test3", "Test1 |test3");
+        cx.assert("Teˇst Test", "ˇst Test");
+        cx.assert("Test ˇtest", "ˇtest");
+        cx.assert("Test1 test2 ˇtest3", "Test1 ˇtest3");
         cx.assert(
             indoc! {"
                 Test test
-                |test"},
+                ˇtest"},
             indoc! {"
-                Test |
+                Test ˇ
                 test"},
         );
         cx.assert(
             indoc! {"
                 Test test
-                |
+                ˇ
                 test"},
             indoc! {"
-                Test |
+                Test ˇ
                 
                 test"},
         );
 
         let mut cx = cx.binding(["c", "shift-b"]);
-        cx.assert("Test test-test |test", "Test |test");
+        cx.assert("Test test-test ˇtest", "Test ˇtest");
     }
 
     #[gpui::test]
@@ -214,20 +214,20 @@ mod test {
         let mut cx = cx.binding(["c", "$"]).mode_after(Mode::Insert);
         cx.assert(
             indoc! {"
-                The q|uick
+                The qˇuick
                 brown fox"},
             indoc! {"
-                The q|
+                The qˇ
                 brown fox"},
         );
         cx.assert(
             indoc! {"
                 The quick
-                |
+                ˇ
                 brown fox"},
             indoc! {"
                 The quick
-                |
+                ˇ
                 brown fox"},
         );
     }
@@ -238,20 +238,20 @@ mod test {
         let mut cx = cx.binding(["c", "0"]).mode_after(Mode::Insert);
         cx.assert(
             indoc! {"
-                The q|uick
+                The qˇuick
                 brown fox"},
             indoc! {"
-                |uick
+                ˇuick
                 brown fox"},
         );
         cx.assert(
             indoc! {"
                 The quick
-                |
+                ˇ
                 brown fox"},
             indoc! {"
                 The quick
-                |
+                ˇ
                 brown fox"},
         );
     }
@@ -263,38 +263,38 @@ mod test {
         cx.assert(
             indoc! {"
                 The quick
-                brown |fox
+                brown ˇfox
                 jumps over"},
             indoc! {"
-                |
+                ˇ
                 jumps over"},
         );
         cx.assert(
             indoc! {"
                 The quick
                 brown fox
-                jumps |over"},
+                jumps ˇover"},
             indoc! {"
                 The quick
-                |"},
+                ˇ"},
         );
         cx.assert(
             indoc! {"
-                The q|uick
+                The qˇuick
                 brown fox
                 jumps over"},
             indoc! {"
-                |
+                ˇ
                 brown fox
                 jumps over"},
         );
         cx.assert(
             indoc! {"
-                |
+                ˇ
                 brown fox
                 jumps over"},
             indoc! {"
-                |
+                ˇ
                 brown fox
                 jumps over"},
         );
@@ -307,40 +307,40 @@ mod test {
         cx.assert(
             indoc! {"
                 The quick
-                brown |fox
+                brown ˇfox
                 jumps over"},
             indoc! {"
                 The quick
-                |"},
+                ˇ"},
         );
         cx.assert(
             indoc! {"
                 The quick
                 brown fox
-                jumps |over"},
+                jumps ˇover"},
             indoc! {"
                 The quick
                 brown fox
-                |"},
+                ˇ"},
         );
         cx.assert(
             indoc! {"
-                The q|uick
+                The qˇuick
                 brown fox
                 jumps over"},
             indoc! {"
-                |
+                ˇ
                 jumps over"},
         );
         cx.assert(
             indoc! {"
                 The quick
                 brown fox
-                |"},
+                ˇ"},
             indoc! {"
                 The quick
                 brown fox
-                |"},
+                ˇ"},
         );
     }
 
@@ -351,46 +351,46 @@ mod test {
         cx.assert(
             indoc! {"
                 The quick
-                brown| fox
+                brownˇ fox
                 jumps over
                 the lazy"},
             indoc! {"
                 The quick
-                |"},
+                ˇ"},
         );
         cx.assert(
             indoc! {"
                 The quick
-                brown| fox
+                brownˇ fox
                 jumps over
                 the lazy"},
             indoc! {"
                 The quick
-                |"},
+                ˇ"},
         );
         cx.assert(
             indoc! {"
                 The quick
                 brown fox
                 jumps over
-                the l|azy"},
+                the lˇazy"},
             indoc! {"
                 The quick
                 brown fox
                 jumps over
-                |"},
+                ˇ"},
         );
         cx.assert(
             indoc! {"
                 The quick
                 brown fox
                 jumps over
-                |"},
+                ˇ"},
             indoc! {"
                 The quick
                 brown fox
                 jumps over
-                |"},
+                ˇ"},
         );
     }
 
@@ -401,11 +401,11 @@ mod test {
         cx.assert(
             indoc! {"
                 The quick
-                brown| fox
+                brownˇ fox
                 jumps over
                 the lazy"},
             indoc! {"
-                |
+                ˇ
                 jumps over
                 the lazy"},
         );
@@ -414,29 +414,29 @@ mod test {
                 The quick
                 brown fox
                 jumps over
-                the l|azy"},
-            "|",
+                the lˇazy"},
+            "ˇ",
         );
         cx.assert(
             indoc! {"
-                The q|uick
+                The qˇuick
                 brown fox
                 jumps over
                 the lazy"},
             indoc! {"
-                |
+                ˇ
                 brown fox
                 jumps over
                 the lazy"},
         );
         cx.assert(
             indoc! {"
-                |
+                ˇ
                 brown fox
                 jumps over
                 the lazy"},
             indoc! {"
-                |
+                ˇ
                 brown fox
                 jumps over
                 the lazy"},

@@ -34,9 +34,9 @@ mod test {
         cx.simulate_keystroke("i");
         assert_eq!(cx.mode(), Mode::Insert);
         cx.simulate_keystrokes(["T", "e", "s", "t"]);
-        cx.assert_editor_state("Test|");
+        cx.assert_editor_state("Testˇ");
         cx.simulate_keystroke("escape");
         assert_eq!(cx.mode(), Mode::Normal);
-        cx.assert_editor_state("Tes|t");
+        cx.assert_editor_state("Tesˇt");
     }
 }
