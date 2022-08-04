@@ -269,32 +269,30 @@ impl ProjectPanel {
             if !project.is_remote() {
                 menu_entries.push(ContextMenuItem::item(
                     "Add Folder to Project",
-                    None,
                     workspace::AddFolderToProject,
                 ));
                 if is_root {
                     menu_entries.push(ContextMenuItem::item(
                         "Remove from Project",
-                        None,
                         workspace::RemoveWorktreeFromProject(worktree_id),
                     ));
                 }
             }
-            menu_entries.push(ContextMenuItem::item("New File", None, AddFile));
-            menu_entries.push(ContextMenuItem::item("New Folder", None, AddDirectory));
+            menu_entries.push(ContextMenuItem::item("New File", AddFile));
+            menu_entries.push(ContextMenuItem::item("New Folder", AddDirectory));
             menu_entries.push(ContextMenuItem::Separator);
-            menu_entries.push(ContextMenuItem::item("Copy", None, Copy));
-            menu_entries.push(ContextMenuItem::item("Copy Path", None, CopyPath));
-            menu_entries.push(ContextMenuItem::item("Cut", None, Cut));
+            menu_entries.push(ContextMenuItem::item("Copy", Copy));
+            menu_entries.push(ContextMenuItem::item("Copy Path", CopyPath));
+            menu_entries.push(ContextMenuItem::item("Cut", Cut));
             if let Some(clipboard_entry) = self.clipboard_entry {
                 if clipboard_entry.worktree_id() == worktree.id() {
-                    menu_entries.push(ContextMenuItem::item("Paste", None, Paste));
+                    menu_entries.push(ContextMenuItem::item("Paste", Paste));
                 }
             }
             menu_entries.push(ContextMenuItem::Separator);
-            menu_entries.push(ContextMenuItem::item("Rename", None, Rename));
+            menu_entries.push(ContextMenuItem::item("Rename", Rename));
             if !is_root {
-                menu_entries.push(ContextMenuItem::item("Delete", None, Delete));
+                menu_entries.push(ContextMenuItem::item("Delete", Delete));
             }
         }
 

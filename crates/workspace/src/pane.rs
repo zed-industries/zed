@@ -1,5 +1,5 @@
 use super::{ItemHandle, SplitDirection};
-use crate::{toolbar::Toolbar, Item, NewFile, NewTerminal, WeakItemHandle, Workspace};
+use crate::{toolbar::Toolbar, Item, NewFile, NewSearch, NewTerminal, WeakItemHandle, Workspace};
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use context_menu::{ContextMenu, ContextMenuItem};
@@ -188,7 +188,7 @@ pub struct NavigationEntry {
 impl Pane {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let handle = cx.weak_handle();
-        let split_menu = cx.add_view(|cx| ContextMenu::new(cx));
+        let context_menu = cx.add_view(|cx| ContextMenu::new(cx));
         Self {
             items: Vec::new(),
             is_active: true,
@@ -203,7 +203,7 @@ impl Pane {
                 pane: handle.clone(),
             })),
             toolbar: cx.add_view(|_| Toolbar::new(handle)),
-            context_menu: split_menu,
+            context_menu,
         }
     }
 
@@ -841,10 +841,10 @@ impl Pane {
             menu.show(
                 action.position,
                 vec![
-                    ContextMenuItem::item("Split Right", None, SplitRight),
-                    ContextMenuItem::item("Split Left", None, SplitLeft),
-                    ContextMenuItem::item("Split Up", None, SplitUp),
-                    ContextMenuItem::item("Split Down", None, SplitDown),
+                    ContextMenuItem::item("Split Right", SplitRight),
+                    ContextMenuItem::item("Split Left", SplitLeft),
+                    ContextMenuItem::item("Split Up", SplitUp),
+                    ContextMenuItem::item("Split Down", SplitDown),
                 ],
                 cx,
             );
@@ -856,8 +856,9 @@ impl Pane {
             menu.show(
                 action.position,
                 vec![
-                    ContextMenuItem::item("New File", Some("circle_info_12.svg"), NewFile),
-                    ContextMenuItem::item("New Terminal", Some("terminal_12.svg"), NewTerminal),
+                    ContextMenuItem::item("New File", NewFile),
+                    ContextMenuItem::item("New Terminal", NewTerminal),
+                    ContextMenuItem::item("New Search", NewSearch),
                 ],
                 cx,
             );
