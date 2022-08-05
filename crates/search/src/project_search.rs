@@ -933,7 +933,8 @@ mod tests {
         cx.update(|cx| {
             let mut settings = Settings::test(cx);
             settings.theme = Arc::new(theme);
-            cx.set_global(settings)
+            cx.set_global(settings);
+            cx.set_global(ActiveSearches::default());
         });
 
         let fs = FakeFs::new(cx.background());
@@ -949,9 +950,7 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let search = cx.add_model(|cx| ProjectSearch::new(project, cx));
-        let search_view = cx.add_view(Default::default(), |cx| {
-            ProjectSearchView::new(search.clone(), cx)
-        });
+        let (_, search_view) = cx.add_window(|cx| ProjectSearchView::new(search.clone(), cx));
 
         search_view.update(cx, |search_view, cx| {
             search_view

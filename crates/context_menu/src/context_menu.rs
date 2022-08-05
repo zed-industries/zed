@@ -156,9 +156,7 @@ impl ContextMenu {
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some(ix) = self.selected_index {
             if let Some(ContextMenuItem::Item { action, .. }) = self.items.get(ix) {
-                let window_id = cx.window_id();
-                let view_id = cx.view_id();
-                cx.dispatch_action_at(window_id, view_id, action.as_ref());
+                cx.dispatch_any_action(action.boxed_clone());
                 self.reset(cx);
             }
         }

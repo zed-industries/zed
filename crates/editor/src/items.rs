@@ -54,8 +54,8 @@ impl FollowableItem for Editor {
                     })
                 })
                 .unwrap_or_else(|| {
-                    cx.add_view(pane.window_id(), |cx| {
-                        Editor::for_buffer(buffer, Some(project), cx)
+                    pane.update(&mut cx, |_, cx| {
+                        cx.add_view(|cx| Editor::for_buffer(buffer, Some(project), cx))
                     })
                 });
             editor.update(&mut cx, |editor, cx| {

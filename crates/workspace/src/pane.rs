@@ -386,7 +386,7 @@ impl Pane {
         project_entry_id: ProjectEntryId,
         focus_item: bool,
         cx: &mut ViewContext<Workspace>,
-        build_item: impl FnOnce(&mut MutableAppContext) -> Box<dyn ItemHandle>,
+        build_item: impl FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
     ) -> Box<dyn ItemHandle> {
         let existing_item = pane.update(cx, |pane, cx| {
             for (ix, item) in pane.items.iter().enumerate() {
@@ -403,7 +403,7 @@ impl Pane {
         if let Some(existing_item) = existing_item {
             existing_item
         } else {
-            let item = build_item(cx);
+            let item = pane.update(cx, |_, cx| build_item(cx));
             Self::add_item(workspace, pane, item.boxed_clone(), true, focus_item, cx);
             item
         }

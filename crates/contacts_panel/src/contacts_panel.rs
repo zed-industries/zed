@@ -1248,8 +1248,8 @@ mod tests {
             .0
             .read_with(cx, |worktree, _| worktree.id().to_proto());
 
-        let workspace = cx.add_view(0, |cx| Workspace::new(project.clone(), cx));
-        let panel = cx.add_view(0, |cx| {
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        let panel = cx.add_view(&workspace, |cx| {
             ContactsPanel::new(
                 user_store.clone(),
                 project_store.clone(),

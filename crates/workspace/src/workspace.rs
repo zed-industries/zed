@@ -59,7 +59,7 @@ use waiting_room::WaitingRoom;
 
 type ProjectItemBuilders = HashMap<
     TypeId,
-    fn(usize, ModelHandle<Project>, AnyModelHandle, &mut MutableAppContext) -> Box<dyn ItemHandle>,
+    fn(ModelHandle<Project>, AnyModelHandle, &mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
 >;
 
 type FollowableItemBuilder = fn(
@@ -219,9 +219,9 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
 
 pub fn register_project_item<I: ProjectItem>(cx: &mut MutableAppContext) {
     cx.update_default_global(|builders: &mut ProjectItemBuilders, _| {
-        builders.insert(TypeId::of::<I::Item>(), |window_id, project, model, cx| {
+        builders.insert(TypeId::of::<I::Item>(), |project, model, cx| {
             let item = model.downcast::<I::Item>().unwrap();
-            Box::new(cx.add_view(window_id, |cx| I::for_project_item(project, item, cx)))
+            Box::new(cx.add_view(|cx| I::for_project_item(project, item, cx)))
         });
     });
 }
@@ -1475,12 +1475,11 @@ impl Workspace {
     ) -> Task<
         Result<(
             ProjectEntryId,
-            impl 'static + FnOnce(&mut MutableAppContext) -> Box<dyn ItemHandle>,
+            impl 'static + FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
         )>,
     > {
         let project = self.project().clone();
         let project_item = project.update(cx, |project, cx| project.open_path(path, cx));
-        let window_id = cx.window_id();
         cx.as_mut().spawn(|mut cx| async move {
             let (project_entry_id, project_item) = project_item.await?;
             let build_item = cx.update(|cx| {
@@ -1490,7 +1489,7 @@ impl Workspace {
                     .cloned()
             })?;
             let build_item =
-                move |cx: &mut MutableAppContext| build_item(window_id, project, project_item, cx);
+                move |cx: &mut ViewContext<Pane>| build_item(project, project_item, cx);
             Ok((project_entry_id, build_item))
         })
     }
@@ -2732,7 +2731,7 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
         (app_state.initialize_workspace)(&mut workspace, app_state, cx);
         workspace
     });
-    cx.dispatch_action(window_id, vec![workspace.id()], &NewFile);
+    cx.dispatch_action_at(window_id, workspace.id(), NewFile);
 }
 
 #[cfg(test)]
@@ -2751,10 +2750,10 @@ mod tests {
 
         let fs = FakeFs::new(cx.background());
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
 
         // Adding an item with no ambiguity renders the tab without detail.
-        let item1 = cx.add_view(window_id, |_| {
+        let item1 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.tab_descriptions = Some(vec!["c", "b1/c", "a/b1/c"]);
             item
@@ -2766,7 +2765,7 @@ mod tests {
 
         // Adding an item that creates ambiguity increases the level of detail on
         // both tabs.
-        let item2 = cx.add_view(window_id, |_| {
+        let item2 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
             item
@@ -2780,7 +2779,7 @@ mod tests {
         // Adding an item that creates ambiguity increases the level of detail only
         // on the ambiguous tabs. In this case, the ambiguity can't be resolved so
         // we stop at the highest detail available.
-        let item3 = cx.add_view(window_id, |_| {
+        let item3 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
             item
@@ -2820,12 +2819,12 @@ mod tests {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
 
-        let item1 = cx.add_view(window_id, |_| {
+        let item1 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.project_path = Some((worktree_id, "one.txt").into());
             item
         });
-        let item2 = cx.add_view(window_id, |_| {
+        let item2 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.project_path = Some((worktree_id, "two.txt").into());
             item
@@ -2914,19 +2913,19 @@ mod tests {
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
 
         // When there are no dirty items, there's nothing to do.
-        let item1 = cx.add_view(window_id, |_| TestItem::new());
+        let item1 = cx.add_view(&workspace, |_| TestItem::new());
         workspace.update(cx, |w, cx| w.add_item(Box::new(item1.clone()), cx));
         let task = workspace.update(cx, |w, cx| w.prepare_to_close(cx));
         assert_eq!(task.await.unwrap(), true);
 
         // When there are dirty untitled items, prompt to save each one. If the user
         // cancels any prompt, then abort.
-        let item2 = cx.add_view(window_id, |_| {
+        let item2 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.is_dirty = true;
             item
         });
-        let item3 = cx.add_view(window_id, |_| {
+        let item3 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.is_dirty = true;
             item.project_entry_ids = vec![ProjectEntryId::from_proto(1)];
@@ -2953,27 +2952,27 @@ mod tests {
         let project = Project::test(fs, None, cx).await;
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
 
-        let item1 = cx.add_view(window_id, |_| {
+        let item1 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.is_dirty = true;
             item.project_entry_ids = vec![ProjectEntryId::from_proto(1)];
             item
         });
-        let item2 = cx.add_view(window_id, |_| {
+        let item2 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.is_dirty = true;
             item.has_conflict = true;
             item.project_entry_ids = vec![ProjectEntryId::from_proto(2)];
             item
         });
-        let item3 = cx.add_view(window_id, |_| {
+        let item3 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.is_dirty = true;
             item.has_conflict = true;
             item.project_entry_ids = vec![ProjectEntryId::from_proto(3)];
             item
         });
-        let item4 = cx.add_view(window_id, |_| {
+        let item4 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.is_dirty = true;
             item
@@ -3144,7 +3143,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
 
-        let item = cx.add_view(window_id, |_| {
+        let item = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.project_entry_ids = vec![ProjectEntryId::from_proto(1)];
             item
@@ -3259,9 +3258,9 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
 
-        let item = cx.add_view(window_id, |_| {
+        let item = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.project_entry_ids = vec![ProjectEntryId::from_proto(1)];
             item

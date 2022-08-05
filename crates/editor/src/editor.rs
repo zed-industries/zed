@@ -7099,10 +7099,10 @@ mod tests {
     fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
         cx.set_global(Settings::test(cx));
         use workspace::Item;
-        let pane = cx.add_view(Default::default(), |cx| Pane::new(cx));
+        let (_, pane) = cx.add_window(Default::default(), |cx| Pane::new(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
 
-        cx.add_window(Default::default(), |cx| {
+        cx.add_view(&pane, |cx| {
             let mut editor = build_editor(buffer.clone(), cx);
             let handle = cx.handle();
             editor.set_nav_history(Some(pane.read(cx).nav_history_for_item(&handle)));

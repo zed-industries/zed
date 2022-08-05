@@ -600,7 +600,7 @@ impl BufferSearchBar {
 mod tests {
     use super::*;
     use editor::{DisplayPoint, Editor};
-    use gpui::{color::Color, TestAppContext};
+    use gpui::{color::Color, test::EmptyView, TestAppContext};
     use language::Buffer;
     use std::sync::Arc;
     use unindent::Unindent as _;
@@ -629,11 +629,13 @@ mod tests {
                 cx,
             )
         });
-        let editor = cx.add_view(Default::default(), |cx| {
+        let (_, root_view) = cx.add_window(|_| EmptyView);
+
+        let editor = cx.add_view(&root_view, |cx| {
             Editor::for_buffer(buffer.clone(), None, cx)
         });
 
-        let search_bar = cx.add_view(Default::default(), |cx| {
+        let search_bar = cx.add_view(&root_view, |cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
             search_bar.show(false, true, cx);
