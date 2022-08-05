@@ -1,6 +1,6 @@
 {
     // The name of the Zed theme to use for the UI
-    "theme": "cave-dark",
+    "theme": "one-dark",
     // The name of a font to use for rendering text in the editor
     "buffer_font_family": "Zed Mono",
     // The default font size for text in the editor
