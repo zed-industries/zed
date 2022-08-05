@@ -791,6 +791,8 @@ impl Element for TerminalEl {
                             term.scroll(Scroll::Delta(vertical_scroll.round() as i32))
                         });
                     });
+
+                    cx.notify();
                 })
                 .is_some(),
             Event::KeyDown(KeyDownEvent { keystroke, .. }) => {
