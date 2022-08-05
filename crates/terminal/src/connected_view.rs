@@ -89,6 +89,7 @@ impl ConnectedView {
 
     fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
         self.terminal.update(cx, |term, _| term.clear());
+        cx.notify();
     }
 
     ///Attempt to paste the clipboard into the terminal
