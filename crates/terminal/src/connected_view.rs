@@ -1,8 +1,14 @@
 use alacritty_terminal::term::TermMode;
+use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
-    actions, keymap::Keystroke, AppContext, Element, ElementBox, ModelHandle, MutableAppContext,
-    View, ViewContext,
+    actions,
+    elements::{ChildView, ParentElement, Stack},
+    geometry::vector::Vector2F,
+    impl_internal_actions,
+    keymap::Keystroke,
+    AppContext, Element, ElementBox, ModelHandle, MutableAppContext, View, ViewContext, ViewHandle,
 };
+use workspace::pane;
 
 use crate::{connected_el::TerminalEl, Event, Terminal};
 
@@ -10,10 +16,16 @@ use crate::{connected_el::TerminalEl, Event, Terminal};
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScrollTerminal(pub i32);
 
+#[derive(Clone, PartialEq)]
+pub struct DeployContextMenu {
+    pub position: Vector2F,
+}
+
 actions!(
     terminal,
     [Up, Down, CtrlC, Escape, Enter, Clear, Copy, Paste,]
 );
+impl_internal_actions!(project_panel, [DeployContextMenu]);
 
 pub fn init(cx: &mut MutableAppContext) {
     //Global binding overrrides
@@ -23,6 +35,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ConnectedView::escape);
     cx.add_action(ConnectedView::enter);
     //Useful terminal views
+    cx.add_action(ConnectedView::deploy_context_menu);
     cx.add_action(ConnectedView::copy);
     cx.add_action(ConnectedView::paste);
     cx.add_action(ConnectedView::clear);
@@ -36,6 +49,7 @@ pub struct ConnectedView {
     has_bell: bool,
     // Only for styling purposes. Doesn't effect behavior
     modal: bool,
+    context_menu: ViewHandle<ContextMenu>,
 }
 
 impl ConnectedView {
@@ -67,6 +81,7 @@ impl ConnectedView {
             has_new_content: true,
             has_bell: false,
             modal,
+            context_menu: cx.add_view(|cx| ContextMenu::new(cx)),
         }
     }
 
@@ -85,6 +100,18 @@ impl ConnectedView {
     pub fn clear_bel(&mut self, cx: &mut ViewContext<ConnectedView>) {
         self.has_bell = false;
         cx.emit(Event::Wakeup);
+    }
+
+    pub fn deploy_context_menu(&mut self, action: &DeployContextMenu, cx: &mut ViewContext<Self>) {
+        let menu_entries = vec![
+            ContextMenuItem::item("Clear Buffer", Clear),
+            ContextMenuItem::item("Close Terminal", pane::CloseActiveItem),
+        ];
+
+        self.context_menu
+            .update(cx, |menu, cx| menu.show(action.position, menu_entries, cx));
+
+        cx.notify();
     }
 
     fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
@@ -152,8 +179,14 @@ impl View for ConnectedView {
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
         let terminal_handle = self.terminal.clone().downgrade();
-        TerminalEl::new(cx.handle(), terminal_handle, self.modal)
-            .contained()
+
+        Stack::new()
+            .with_child(
+                TerminalEl::new(cx.handle(), terminal_handle, self.modal)
+                    .contained()
+                    .boxed(),
+            )
+            .with_child(ChildView::new(&self.context_menu).boxed())
             .boxed()
     }
 

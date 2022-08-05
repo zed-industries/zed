@@ -96,6 +96,8 @@ actions!(
         FollowNextCollaborator,
         ToggleLeftSidebar,
         ToggleRightSidebar,
+        NewTerminal,
+        NewSearch
     ]
 );
 

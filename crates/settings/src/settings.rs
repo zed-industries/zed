@@ -34,6 +34,7 @@ pub struct Settings {
     pub terminal_overrides: TerminalSettings,
     pub language_defaults: HashMap<Arc<str>, EditorSettings>,
     pub language_overrides: HashMap<Arc<str>, EditorSettings>,
+    pub lsp: HashMap<Arc<str>, LspSettings>,
     pub theme: Arc<Theme>,
 }
 
@@ -131,7 +132,15 @@ pub struct SettingsFileContent {
     #[serde(alias = "language_overrides")]
     pub languages: HashMap<Arc<str>, EditorSettings>,
     #[serde(default)]
+    pub lsp: HashMap<Arc<str>, LspSettings>,
+    #[serde(default)]
     pub theme: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct LspSettings {
+    pub initialization_options: Option<Value>,
 }
 
 impl Settings {
@@ -174,6 +183,7 @@ impl Settings {
             terminal_overrides: Default::default(),
             language_defaults: defaults.languages,
             language_overrides: Default::default(),
+            lsp: defaults.lsp.clone(),
             theme: themes.get(&defaults.theme.unwrap()).unwrap(),
         }
     }
@@ -218,6 +228,7 @@ impl Settings {
         self.terminal_defaults.font_size = data.terminal.font_size;
         self.terminal_overrides = data.terminal;
         self.language_overrides = data.languages;
+        self.lsp = data.lsp;
     }
 
     pub fn with_language_defaults(
@@ -288,6 +299,7 @@ impl Settings {
             terminal_overrides: Default::default(),
             language_defaults: Default::default(),
             language_overrides: Default::default(),
+            lsp: Default::default(),
             projects_online_by_default: true,
             theme: gpui::fonts::with_font_cache(cx.font_cache().clone(), || Default::default()),
         }

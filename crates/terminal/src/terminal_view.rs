@@ -1,21 +1,26 @@
 use crate::connected_view::ConnectedView;
 use crate::{Event, Terminal, TerminalBuilder, TerminalError};
+
 use dirs::home_dir;
 use gpui::{
-    actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, View, ViewContext,
-    ViewHandle,
+    actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MutableAppContext, View,
+    ViewContext, ViewHandle,
 };
+use workspace::{Item, Workspace};
 
 use crate::TerminalSize;
 use project::{LocalWorktree, Project, ProjectPath};
 use settings::{Settings, WorkingDirectory};
 use smallvec::SmallVec;
 use std::path::{Path, PathBuf};
-use workspace::{Item, Workspace};
 
 use crate::connected_el::TerminalEl;
 
-actions!(terminal, [Deploy, DeployModal]);
+actions!(terminal, [DeployModal]);
+
+pub fn init(cx: &mut MutableAppContext) {
+    cx.add_action(TerminalView::deploy);
+}
 
 //Make terminal view an enum, that can give you views for the error and non-error states
 //Take away all the result unwrapping in the current TerminalView by making it 'infallible'
@@ -59,7 +64,11 @@ impl Entity for ErrorView {
 
 impl TerminalView {
     ///Create a new Terminal in the current working directory or the user's home directory
-    pub fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
+    pub fn deploy(
+        workspace: &mut Workspace,
+        _: &workspace::NewTerminal,
+        cx: &mut ViewContext<Workspace>,
+    ) {
         let strategy = cx
             .global::<Settings>()
             .terminal_overrides
@@ -134,7 +143,6 @@ impl View for TerminalView {
             TerminalContent::Connected(connected) => ChildView::new(connected),
             TerminalContent::Error(error) => ChildView::new(error),
         };
-
         if self.modal {
             let settings = cx.global::<Settings>();
             let container_style = settings.theme.terminal.modal_container;

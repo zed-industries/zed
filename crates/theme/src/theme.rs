@@ -267,6 +267,8 @@ pub struct ContextMenuItem {
     pub container: ContainerStyle,
     pub label: TextStyle,
     pub keystroke: ContainedText,
+    pub icon_width: f32,
+    pub icon_spacing: f32,
 }
 
 #[derive(Debug, Deserialize, Default)]

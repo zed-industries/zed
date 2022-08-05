@@ -16,6 +16,8 @@ export default function contextMenu(theme: Theme) {
     border: border(theme, "primary"),
     keystrokeMargin: 30,
     item: {
+      iconSpacing: 8,
+      iconWidth: 14,
       padding: { left: 4, right: 4, top: 2, bottom: 2 },
       cornerRadius: 6,
       label: text(theme, "sans", "primary", { size: "sm" }),

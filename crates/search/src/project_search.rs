@@ -24,7 +24,7 @@ use workspace::{
     Item, ItemHandle, ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
-actions!(project_search, [Deploy, SearchInNew, ToggleFocus]);
+actions!(project_search, [SearchInNew, ToggleFocus]);
 
 #[derive(Default)]
 struct ActiveSearches(HashMap<WeakModelHandle<Project>, WeakViewHandle<ProjectSearchView>>);
@@ -431,7 +431,11 @@ impl ProjectSearchView {
 
     // Re-activate the most recently activated search or the most recent if it has been closed.
     // If no search exists in the workspace, create a new one.
-    fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
+    fn deploy(
+        workspace: &mut Workspace,
+        _: &workspace::NewSearch,
+        cx: &mut ViewContext<Workspace>,
+    ) {
         // Clean up entries for dropped projects
         cx.update_global(|state: &mut ActiveSearches, cx| {
             state.0.retain(|project, _| project.is_upgradable(cx))
