@@ -2496,7 +2496,7 @@ impl Drop for QueryCursorHandle {
     }
 }
 
-trait ToTreeSitterPoint {
+pub(crate) trait ToTreeSitterPoint {
     fn to_ts_point(self) -> tree_sitter::Point;
     fn from_ts_point(point: tree_sitter::Point) -> Self;
 }

@@ -608,9 +608,9 @@ where
 
 impl<'a, F, T, S, U> Iterator for FilterCursor<'a, F, T, U>
 where
-    F: Fn(&T::Summary) -> bool,
+    F: FnMut(&T::Summary) -> bool,
     T: Item<Summary = S>,
-    S: Summary<Context = ()>,
+    S: Summary<Context = ()>, //Context for the summary must be unit type, as .next() doesn't take arguments
     U: Dimension<'a, T::Summary>,
 {
     type Item = &'a T;
@@ -621,7 +621,7 @@ where
         }
 
         if let Some(item) = self.item() {
-            self.cursor.next_internal(&self.filter_node, &());
+            self.cursor.next_internal(&mut self.filter_node, &());
             Some(item)
         } else {
             None

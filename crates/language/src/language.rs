@@ -3,6 +3,7 @@ mod diagnostic_set;
 mod highlight_map;
 mod outline;
 pub mod proto;
+mod syntax_map;
 #[cfg(test)]
 mod tests;
 
@@ -290,7 +291,15 @@ pub struct Grammar {
     pub(crate) brackets_query: Option<Query>,
     pub(crate) indents_query: Option<Query>,
     pub(crate) outline_query: Option<Query>,
+    pub(crate) injection_config: Option<InjectionConfig>,
     pub(crate) highlight_map: Mutex<HighlightMap>,
+}
+
+struct InjectionConfig {
+    query: Query,
+    content_capture_ix: u32,
+    language_capture_ix: Option<u32>,
+    languages_by_pattern_ix: Vec<Option<Box<str>>>,
 }
 
 #[derive(Clone)]
@@ -571,6 +580,7 @@ impl Language {
                     brackets_query: None,
                     indents_query: None,
                     outline_query: None,
+                    injection_config: None,
                     ts_language,
                     highlight_map: Default::default(),
                 })
@@ -607,6 +617,40 @@ impl Language {
     pub fn with_outline_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
         grammar.outline_query = Some(Query::new(grammar.ts_language, source)?);
+        Ok(self)
+    }
+
+    pub fn with_injection_query(mut self, source: &str) -> Result<Self> {
+        let grammar = self.grammar_mut();
+        let query = Query::new(grammar.ts_language, source)?;
+        let mut language_capture_ix = None;
+        let mut content_capture_ix = None;
+        for (ix, name) in query.capture_names().iter().enumerate() {
+            *match name.as_str() {
+                "language" => &mut language_capture_ix,
+                "content" => &mut content_capture_ix,
+                _ => continue,
+            } = Some(ix as u32);
+        }
+        let languages_by_pattern_ix = (0..query.pattern_count())
+            .map(|ix| {
+                query.property_settings(ix).iter().find_map(|setting| {
+                    if setting.key.as_ref() == "language" {
+                        return setting.value.clone();
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+        if let Some(content_capture_ix) = content_capture_ix {
+            grammar.injection_config = Some(InjectionConfig {
+                query,
+                language_capture_ix,
+                content_capture_ix,
+                languages_by_pattern_ix,
+            });
+        }
         Ok(self)
     }
 

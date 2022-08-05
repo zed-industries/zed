@@ -128,6 +128,11 @@ pub(crate) fn language(
             .with_outline_query(query.as_ref())
             .expect("failed to load outline query");
     }
+    if let Some(query) = load_query(name, "/injections") {
+        language = language
+            .with_injection_query(query.as_ref())
+            .expect("failed to load injection query");
+    }
     if let Some(lsp_adapter) = lsp_adapter {
         language = language.with_lsp_adapter(lsp_adapter)
     }
