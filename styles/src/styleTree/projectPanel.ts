@@ -6,7 +6,7 @@ export default function projectPanel(theme: Theme) {
   return {
     ...panel,
     padding: { left: 12, right: 12, top: 6, bottom: 6 },
-    indentWidth: 20,
+    indentWidth: 8,
     entry: {
       height: 24,
       iconColor: iconColor(theme, "muted"),
