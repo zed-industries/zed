@@ -10,8 +10,8 @@ use crate::{
     text_layout::TextLayoutCache,
     Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox, Entity,
     FontSystem, ModelHandle, MouseButtonEvent, MouseMovedEvent, MouseRegion, MouseRegionId,
-    ReadModel, ReadView, RenderContext, RenderParams, Scene, UpgradeModelHandle, UpgradeViewHandle,
-    View, ViewHandle, WeakModelHandle, WeakViewHandle,
+    ParentId, ReadModel, ReadView, RenderContext, RenderParams, Scene, UpgradeModelHandle,
+    UpgradeViewHandle, View, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use collections::{HashMap, HashSet};
 use pathfinder_geometry::vector::{vec2f, Vector2F};
@@ -482,6 +482,43 @@ impl<'a> LayoutContext<'a> {
     }
 
     fn layout(&mut self, view_id: usize, constraint: SizeConstraint) -> Vector2F {
+        let print_error = |view_id| {
+            format!(
+                "{} with id {}",
+                self.app.name_for_view(self.window_id, view_id).unwrap(),
+                view_id,
+            )
+        };
+        match (
+            self.view_stack.last(),
+            self.app.parents.get(&(self.window_id, view_id)),
+        ) {
+            (Some(layout_parent), Some(ParentId::View(app_parent))) => {
+                if layout_parent != app_parent {
+                    panic!(
+                        "View {} was laid out with parent {} when it was constructed with parent {}", 
+                        print_error(view_id), 
+                        print_error(*layout_parent),
+                        print_error(*app_parent))
+                }
+            }
+            (None, Some(ParentId::View(app_parent))) => panic!(
+                "View {} was laid out without a parent when it was constructed with parent {}",
+                print_error(view_id), 
+                print_error(*app_parent)
+            ),
+            (Some(layout_parent), Some(ParentId::Root)) => panic!(
+                "View {} was laid out with parent {} when it was constructed as a window root",
+                print_error(view_id), 
+                print_error(*layout_parent),
+            ),
+            (_, None) => panic!(
+                "View {} did not have a registered parent in the app context",
+                print_error(view_id), 
+            ),
+            _ => {}
+        }
+
         self.view_stack.push(view_id);
         let mut rendered_view = self.rendered_views.remove(&view_id).unwrap();
         let size = rendered_view.layout(constraint, self);

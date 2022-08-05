@@ -81,6 +81,7 @@ impl StatusBar {
     where
         T: 'static + StatusItemView,
     {
+        cx.reparent(&item);
         self.left_items.push(Box::new(item));
         cx.notify();
     }
@@ -89,6 +90,7 @@ impl StatusBar {
     where
         T: 'static + StatusItemView,
     {
+        cx.reparent(&item);
         self.right_items.push(Box::new(item));
         cx.notify();
     }

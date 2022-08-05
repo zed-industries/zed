@@ -230,7 +230,7 @@ impl App {
                 let mut cx = cx.borrow_mut();
                 if let Some(key_window_id) = cx.cx.platform.key_window_id() {
                     if let Some(view_id) = cx.focused_view_id(key_window_id) {
-                        cx.handle_dispatch_action_any_effect(key_window_id, Some(view_id), action);
+                        cx.handle_dispatch_action_from_effect(key_window_id, Some(view_id), action);
                         return;
                     }
                 }
@@ -457,7 +457,7 @@ impl TestAppContext {
     pub fn dispatch_action<A: Action>(&self, window_id: usize, action: A) {
         let mut cx = self.cx.borrow_mut();
         if let Some(view_id) = cx.focused_view_id(window_id) {
-            cx.handle_dispatch_action_any_effect(window_id, Some(view_id), &action);
+            cx.handle_dispatch_action_from_effect(window_id, Some(view_id), &action);
         }
     }
 
@@ -477,6 +477,7 @@ impl TestAppContext {
             if cx.dispatch_keystroke(window_id, &keystroke) {
                 return true;
             }
+
             if presenter.borrow_mut().dispatch_event(
                 Event::KeyDown(KeyDownEvent {
                     keystroke: keystroke.clone(),
@@ -1606,6 +1607,12 @@ impl MutableAppContext {
         }
     }
 
+    pub(crate) fn name_for_view(&self, window_id: usize, view_id: usize) -> Option<&str> {
+        self.views
+            .get(&(window_id, view_id))
+            .map(|view| view.ui_name())
+    }
+
     pub fn all_action_names<'a>(&'a self) -> impl Iterator<Item = &'static str> + 'a {
         self.action_deserializers.keys().copied()
     }
@@ -1685,29 +1692,6 @@ impl MutableAppContext {
         None
     }
 
-    // pub fn dispatch_action_at(&mut self, window_id: usize, view_id: usize, action: &dyn Action) {
-    //     let presenter = self
-    //         .presenters_and_platform_windows
-    //         .get(&window_id)
-    //         .unwrap()
-    //         .0
-    //         .clone();
-    //     let mut dispatch_path = Vec::new();
-    //     presenter
-    //         .borrow()
-    //         .compute_dispatch_path_from(view_id, &mut dispatch_path);
-    //     self.dispatch_action_any(window_id, &dispatch_path, action);
-    // }
-
-    // pub fn dispatch_action<A: Action>(
-    //     &mut self,
-    //     window_id: usize,
-    //     dispatch_path: Vec<usize>,
-    //     action: &A,
-    // ) {
-    //     self.dispatch_action_any(window_id, &dispatch_path, action);
-    // }
-
     // Traverses the parent tree. Walks down the tree toward the passed
     // view calling visit with true. Then walks back up the tree calling visit with false.
     // If `visit` returns false this function will immediately return.
@@ -1719,12 +1703,7 @@ impl MutableAppContext {
         mut visit: impl FnMut(usize, bool, &mut MutableAppContext) -> bool,
     ) -> bool {
         // List of view ids from the leaf to the root of the window
-        let mut path = vec![view_id];
-        let mut current_view = view_id;
-        while let Some(ParentId::View(parent_id)) = self.parents.get(&(window_id, current_view)) {
-            current_view = *parent_id;
-            path.push(current_view);
-        }
+        let path = self.parents(window_id, view_id).collect::<Vec<_>>();
 
         // Walk down from the root to the leaf calling visit with capture_phase = true
         for view_id in path.iter().rev() {
@@ -1746,15 +1725,18 @@ impl MutableAppContext {
     // Returns an iterator over all of the view ids from the passed view up to the root of the window
     // Includes the passed view itself
     fn parents(&self, window_id: usize, mut view_id: usize) -> impl Iterator<Item = usize> + '_ {
-        std::iter::from_fn(move || {
-            if let Some(ParentId::View(parent_id)) = self.parents.get(&(window_id, view_id)) {
-                view_id = *parent_id;
-                Some(view_id)
-            } else {
-                None
-            }
-        })
+        std::iter::once(view_id)
+            .into_iter()
+            .chain(std::iter::from_fn(move || {
+                if let Some(ParentId::View(parent_id)) = self.parents.get(&(window_id, view_id)) {
+                    view_id = *parent_id;
+                    Some(view_id)
+                } else {
+                    None
+                }
+            }))
     }
+
     fn actions_mut(
         &mut self,
         capture_phase: bool,
@@ -1793,8 +1775,8 @@ impl MutableAppContext {
     pub fn dispatch_keystroke(&mut self, window_id: usize, keystroke: &Keystroke) -> bool {
         let mut pending = false;
 
-        if let Some(view_id) = self.focused_view_id(window_id) {
-            for view_id in self.parents(window_id, view_id).collect::<Vec<_>>() {
+        if let Some(focused_view_id) = self.focused_view_id(window_id) {
+            for view_id in self.parents(window_id, focused_view_id).collect::<Vec<_>>() {
                 let keymap_context = self
                     .cx
                     .views
@@ -1810,7 +1792,7 @@ impl MutableAppContext {
                     MatchResult::None => {}
                     MatchResult::Pending => pending = true,
                     MatchResult::Action(action) => {
-                        if self.handle_dispatch_action_any_effect(
+                        if self.handle_dispatch_action_from_effect(
                             window_id,
                             Some(view_id),
                             action.as_ref(),
@@ -2303,7 +2285,7 @@ impl MutableAppContext {
                             view_id,
                             action,
                         } => {
-                            self.handle_dispatch_action_any_effect(
+                            self.handle_dispatch_action_from_effect(
                                 window_id,
                                 Some(view_id),
                                 action.as_ref(),
@@ -2579,7 +2561,7 @@ impl MutableAppContext {
         })
     }
 
-    fn handle_dispatch_action_any_effect(
+    fn handle_dispatch_action_from_effect(
         &mut self,
         window_id: usize,
         view_id: Option<usize>,
@@ -2587,6 +2569,7 @@ impl MutableAppContext {
     ) -> bool {
         self.update(|this| {
             if let Some(view_id) = view_id {
+                this.halt_action_dispatch = false;
                 this.visit_dispatch_path(window_id, view_id, |view_id, capture_phase, this| {
                     if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
                         let type_id = view.as_any().type_id();
@@ -2809,6 +2792,7 @@ impl Deref for MutableAppContext {
     }
 }
 
+#[derive(Debug)]
 pub enum ParentId {
     View(usize),
     Root,
@@ -2817,7 +2801,7 @@ pub enum ParentId {
 pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
     views: HashMap<(usize, usize), Box<dyn AnyView>>,
-    parents: HashMap<(usize, usize), ParentId>,
+    pub(crate) parents: HashMap<(usize, usize), ParentId>,
     windows: HashMap<usize, Window>,
     globals: HashMap<TypeId, Box<dyn Any>>,
     element_states: HashMap<ElementStateId, Box<dyn Any>>,
@@ -3731,6 +3715,21 @@ impl<'a, T: View> ViewContext<'a, T> {
     {
         self.app
             .build_and_insert_view(self.window_id, ParentId::View(self.view_id), build_view)
+    }
+
+    pub fn reparent(&mut self, view_handle: impl Into<AnyViewHandle>) {
+        let view_handle = view_handle.into();
+        if self.window_id != view_handle.window_id {
+            panic!("Can't reparent view to a view from a different window");
+        }
+        self.cx
+            .parents
+            .remove(&(view_handle.window_id, view_handle.view_id));
+        let new_parent_id = self.view_id;
+        self.cx.parents.insert(
+            (view_handle.window_id, view_handle.view_id),
+            ParentId::View(new_parent_id),
+        );
     }
 
     pub fn replace_root_view<V, F>(&mut self, build_root_view: F) -> ViewHandle<V>
@@ -6914,7 +6913,7 @@ mod tests {
         let view_3 = cx.add_view(&view_2, |_| ViewA { id: 3 });
         let view_4 = cx.add_view(&view_3, |_| ViewB { id: 4 });
 
-        cx.handle_dispatch_action_any_effect(
+        cx.handle_dispatch_action_from_effect(
             window_id,
             Some(view_4.id()),
             &Action("bar".to_string()),
@@ -6938,12 +6937,12 @@ mod tests {
 
         // Remove view_1, which doesn't propagate the action
 
-        let (window_id, view_2) = cx.add_window(Default::default(), |_| ViewA { id: 1 });
+        let (window_id, view_2) = cx.add_window(Default::default(), |_| ViewB { id: 2 });
         let view_3 = cx.add_view(&view_2, |_| ViewA { id: 3 });
         let view_4 = cx.add_view(&view_3, |_| ViewB { id: 4 });
 
         actions.borrow_mut().clear();
-        cx.handle_dispatch_action_any_effect(
+        cx.handle_dispatch_action_from_effect(
             window_id,
             Some(view_4.id()),
             &Action("bar".to_string()),
@@ -7019,8 +7018,10 @@ mod tests {
 
         let (window_id, view_1) = cx.add_window(Default::default(), |_| view_1);
         let view_2 = cx.add_view(&view_1, |_| view_2);
-        let view_3 = cx.add_view(&view_2, |_| view_3);
-        cx.focus(window_id, Some(view_3.id()));
+        let view_3 = cx.add_view(&view_2, |cx| {
+            cx.focus_self();
+            view_3
+        });
 
         // This keymap's only binding dispatches an action on view 2 because that view will have
         // "a" and "b" in its context, but not "c".

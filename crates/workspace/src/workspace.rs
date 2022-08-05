@@ -708,6 +708,12 @@ impl Into<AnyViewHandle> for Box<dyn ItemHandle> {
     }
 }
 
+impl Into<AnyViewHandle> for &Box<dyn ItemHandle> {
+    fn into(self) -> AnyViewHandle {
+        self.to_any()
+    }
+}
+
 impl Clone for Box<dyn ItemHandle> {
     fn clone(&self) -> Box<dyn ItemHandle> {
         self.boxed_clone()

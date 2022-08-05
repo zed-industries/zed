@@ -441,6 +441,7 @@ impl Pane {
                 pane.active_item_index = usize::MAX;
             };
 
+            cx.reparent(&item);
             pane.items.insert(item_ix, item);
             pane.activate_item(item_ix, activate_pane, focus_item, false, cx);
             cx.notify();
