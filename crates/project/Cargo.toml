@@ -49,7 +49,7 @@ similar = "1.3"
 smol = "1.2.5"
 thiserror = "1.0.29"
 toml = "0.5"
-rocksdb = "0.18"
+sled = "0.34.7"
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }

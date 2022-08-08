@@ -1,12 +1,17 @@
 use anyhow::Result;
+<<<<<<< HEAD
 use std::path::Path;
+=======
+use sled::Batch;
+use std::path::PathBuf;
+>>>>>>> 2eeabac6 (remove rocks db)
 use std::sync::Arc;
 
 pub struct Db(DbStore);
 
 enum DbStore {
     Null,
-    Real(rocksdb::DB),
+    Real(sled::Db),
 
     #[cfg(any(test, feature = "test-support"))]
     Fake {
@@ -17,7 +22,7 @@ enum DbStore {
 impl Db {
     /// Open or create a database at the given file path.
     pub fn open(path: &Path) -> Result<Arc<Self>> {
-        let db = rocksdb::DB::open_default(path)?;
+        let db = sled::open(&path)?;
         Ok(Arc::new(Self(DbStore::Real(db))))
     }
 
@@ -41,10 +46,13 @@ impl Db {
         I: IntoIterator<Item = K>,
     {
         match &self.0 {
-            DbStore::Real(db) => db
-                .multi_get(keys)
+            DbStore::Real(db) => keys
                 .into_iter()
-                .map(|e| e.map_err(Into::into))
+                .map(|key| {
+                    db.get(key)
+                        .map_err(Into::into)
+                        .map(|opt| opt.map(|vec| vec.into_iter().copied().collect::<Vec<_>>()))
+                })
                 .collect(),
 
             DbStore::Null => Ok(keys.into_iter().map(|_| None).collect()),
@@ -67,11 +75,11 @@ impl Db {
     {
         match &self.0 {
             DbStore::Real(db) => {
-                let mut batch = rocksdb::WriteBatch::default();
+                let mut batch = Batch::default();
                 for key in keys {
-                    batch.delete(key);
+                    batch.remove(key.as_ref());
                 }
-                db.write(batch)?;
+                db.apply_batch(batch)?;
             }
 
             DbStore::Null => {}
@@ -95,11 +103,11 @@ impl Db {
     {
         match &self.0 {
             DbStore::Real(db) => {
-                let mut batch = rocksdb::WriteBatch::default();
+                let mut batch = Batch::default();
                 for (key, value) in entries {
-                    batch.put(key, value);
+                    batch.insert(key.as_ref(), value.as_ref());
                 }
-                db.write(batch)?;
+                db.apply_batch(batch)?;
             }
 
             DbStore::Null => {}
