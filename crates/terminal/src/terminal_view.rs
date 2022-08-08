@@ -152,7 +152,7 @@ impl View for TerminalView {
         }
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         cx.emit(Event::Activate);
         cx.defer(|view, cx| {
             cx.focus(view.content.handle());

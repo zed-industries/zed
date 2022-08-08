@@ -161,13 +161,6 @@ impl Dimensions for TerminalSize {
     fn columns(&self) -> usize {
         self.num_columns()
     }
-
-    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::Activate);
-        cx.defer(|view, cx| {
-            cx.focus(view.content.handle());
-        });
-    }
 }
 
 #[derive(Error, Debug)]
