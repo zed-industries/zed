@@ -6,9 +6,9 @@ use crate::{
 use collections::HashMap;
 use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll, MAX_TAB_TITLE_LEN};
 use gpui::{
-    actions, elements::*, platform::CursorStyle, Action, AppContext, ElementBox, Entity,
-    ModelContext, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task,
-    View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
+    actions, elements::*, platform::CursorStyle, Action, AnyViewHandle, AppContext, ElementBox,
+    Entity, ModelContext, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription,
+    Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, Project};
@@ -190,7 +190,7 @@ impl View for ProjectSearchView {
         }
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         let handle = cx.weak_handle();
         cx.update_global(|state: &mut ActiveSearches, cx| {
             state

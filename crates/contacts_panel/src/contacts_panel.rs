@@ -13,9 +13,9 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
-    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MouseButton,
-    MutableAppContext, RenderContext, Subscription, View, ViewContext, ViewHandle, WeakModelHandle,
-    WeakViewHandle,
+    AnyViewHandle, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle,
+    MouseButton, MutableAppContext, RenderContext, Subscription, View, ViewContext, ViewHandle,
+    WeakModelHandle, WeakViewHandle,
 };
 use join_project_notification::JoinProjectNotification;
 use menu::{Confirm, SelectNext, SelectPrev};
@@ -1152,7 +1152,7 @@ impl View for ContactsPanel {
         .boxed()
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         cx.focus(&self.filter_editor);
     }
 

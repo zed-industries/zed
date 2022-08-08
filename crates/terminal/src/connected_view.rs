@@ -6,7 +6,8 @@ use gpui::{
     geometry::vector::Vector2F,
     impl_internal_actions,
     keymap::Keystroke,
-    AppContext, Element, ElementBox, ModelHandle, MutableAppContext, View, ViewContext, ViewHandle,
+    AnyViewHandle, AppContext, Element, ElementBox, ModelHandle, MutableAppContext, View,
+    ViewContext, ViewHandle,
 };
 use workspace::pane;
 
@@ -190,7 +191,7 @@ impl View for ConnectedView {
             .boxed()
     }
 
-    fn on_focus(&mut self, _cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, _cx: &mut ViewContext<Self>) {
         self.has_new_content = false;
     }
 

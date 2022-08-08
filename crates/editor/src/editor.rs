@@ -29,8 +29,8 @@ use gpui::{
     geometry::vector::{vec2f, Vector2F},
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
-    text_layout, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
-    ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View,
+    text_layout, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox,
+    Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
@@ -6025,7 +6025,7 @@ impl View for Editor {
         "Editor"
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         let focused_event = EditorFocused(cx.handle());
         cx.emit_global(focused_event);
         if let Some(rename) = self.pending_rename.as_ref() {
@@ -6046,7 +6046,7 @@ impl View for Editor {
         }
     }
 
-    fn on_blur(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         let blurred_event = EditorBlurred(cx.handle());
         cx.emit_global(blurred_event);
         self.focused = false;

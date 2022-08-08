@@ -4,7 +4,8 @@ use gpui::{
     actions,
     elements::{ChildView, Flex, Label, ParentElement},
     keymap::Keystroke,
-    Action, Element, Entity, MouseState, MutableAppContext, View, ViewContext, ViewHandle,
+    Action, AnyViewHandle, Element, Entity, MouseState, MutableAppContext, View, ViewContext,
+    ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
@@ -132,7 +133,7 @@ impl View for CommandPalette {
         ChildView::new(self.picker.clone()).boxed()
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         cx.focus(&self.picker);
     }
 }

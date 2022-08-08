@@ -1,7 +1,7 @@
 use client::{ContactRequestStatus, User, UserStore};
 use gpui::{
-    actions, elements::*, Entity, ModelHandle, MouseState, MutableAppContext, RenderContext, Task,
-    View, ViewContext, ViewHandle,
+    actions, elements::*, AnyViewHandle, Entity, ModelHandle, MouseState, MutableAppContext,
+    RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
@@ -42,7 +42,7 @@ impl View for ContactFinder {
         ChildView::new(self.picker.clone()).boxed()
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         cx.focus(&self.picker);
     }
 }

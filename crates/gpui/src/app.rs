@@ -55,8 +55,8 @@ pub trait Entity: 'static {
 pub trait View: Entity + Sized {
     fn ui_name() -> &'static str;
     fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox;
-    fn on_focus(&mut self, _: &mut ViewContext<Self>) {}
-    fn on_blur(&mut self, _: &mut ViewContext<Self>) {}
+    fn on_focus_in(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {}
+    fn on_focus_out(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {}
     fn keymap_context(&self, _: &AppContext) -> keymap::Context {
         Self::default_keymap_context()
     }
@@ -1903,7 +1903,7 @@ impl MutableAppContext {
                     is_fullscreen: false,
                 },
             );
-            root_view.update(this, |view, cx| view.on_focus(cx));
+            root_view.update(this, |view, cx| view.on_focus_in(cx.handle().into(), cx));
             this.open_platform_window(window_id, window_options);
 
             (window_id, root_view)
@@ -2500,14 +2500,16 @@ impl MutableAppContext {
             window.is_active = active;
 
             //Handle focus
-            let view_id = window.focused_view_id?;
-            if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
-                if active {
-                    view.on_focus(this, window_id, view_id);
-                } else {
-                    view.on_blur(this, window_id, view_id);
+            let focused_id = window.focused_view_id?;
+            for view_id in this.parents(window_id, focused_id).collect::<Vec<_>>() {
+                if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
+                    if active {
+                        view.on_focus_in(this, window_id, view_id, focused_id);
+                    } else {
+                        view.on_focus_out(this, window_id, view_id, focused_id);
+                    }
+                    this.cx.views.insert((window_id, view_id), view);
                 }
-                this.cx.views.insert((window_id, view_id), view);
             }
 
             let mut observations = this.window_activation_observations.clone();
@@ -2537,26 +2539,45 @@ impl MutableAppContext {
                 blurred_id
             });
 
-            if let Some(blurred_id) = blurred_id {
-                if let Some(mut blurred_view) = this.cx.views.remove(&(window_id, blurred_id)) {
-                    blurred_view.on_blur(this, window_id, blurred_id);
-                    this.cx.views.insert((window_id, blurred_id), blurred_view);
+            let blurred_parents = blurred_id
+                .map(|blurred_id| this.parents(window_id, blurred_id).collect::<Vec<_>>())
+                .unwrap_or_default();
+            let focused_parents = focused_id
+                .map(|focused_id| this.parents(window_id, focused_id).collect::<Vec<_>>())
+                .unwrap_or_default();
 
-                    let mut subscriptions = this.focus_observations.clone();
-                    subscriptions
-                        .emit_and_cleanup(blurred_id, this, |callback, this| callback(false, this));
+            if let Some(blurred_id) = blurred_id {
+                for view_id in blurred_parents.iter().copied() {
+                    // We've reached a common anscestor. Break.
+                    if focused_parents.contains(&view_id) {
+                        break;
+                    }
+
+                    if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
+                        view.on_focus_out(this, window_id, view_id, blurred_id);
+                        this.cx.views.insert((window_id, view_id), view);
+                    }
                 }
+
+                let mut subscriptions = this.focus_observations.clone();
+                subscriptions
+                    .emit_and_cleanup(blurred_id, this, |callback, this| callback(false, this));
             }
 
             if let Some(focused_id) = focused_id {
-                if let Some(mut focused_view) = this.cx.views.remove(&(window_id, focused_id)) {
-                    focused_view.on_focus(this, window_id, focused_id);
-                    this.cx.views.insert((window_id, focused_id), focused_view);
-
-                    let mut subscriptions = this.focus_observations.clone();
-                    subscriptions
-                        .emit_and_cleanup(focused_id, this, |callback, this| callback(true, this));
+                for view_id in focused_parents {
+                    if blurred_parents.contains(&view_id) {
+                        break;
+                    }
+                    if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
+                        view.on_focus_in(this, window_id, view_id, focused_id);
+                        this.cx.views.insert((window_id, focused_id), view);
+                    }
                 }
+
+                let mut subscriptions = this.focus_observations.clone();
+                subscriptions
+                    .emit_and_cleanup(focused_id, this, |callback, this| callback(true, this));
             }
         })
     }
@@ -2742,7 +2763,7 @@ impl ReadView for MutableAppContext {
         if let Some(view) = self.cx.views.get(&(handle.window_id, handle.view_id)) {
             view.as_any().downcast_ref().expect("downcast is type safe")
         } else {
-            panic!("circular view reference");
+            panic!("circular view reference for type {}", type_name::<T>());
         }
     }
 }
@@ -3216,8 +3237,20 @@ pub trait AnyView {
     ) -> Option<Pin<Box<dyn 'static + Future<Output = ()>>>>;
     fn ui_name(&self) -> &'static str;
     fn render<'a>(&mut self, params: RenderParams, cx: &mut MutableAppContext) -> ElementBox;
-    fn on_focus(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
-    fn on_blur(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
+    fn on_focus_in(
+        &mut self,
+        cx: &mut MutableAppContext,
+        window_id: usize,
+        view_id: usize,
+        focused_id: usize,
+    );
+    fn on_focus_out(
+        &mut self,
+        cx: &mut MutableAppContext,
+        window_id: usize,
+        view_id: usize,
+        focused_id: usize,
+    );
     fn keymap_context(&self, cx: &AppContext) -> keymap::Context;
     fn debug_json(&self, cx: &AppContext) -> serde_json::Value;
 
@@ -3242,6 +3275,14 @@ pub trait AnyView {
         window_id: usize,
         view_id: usize,
     );
+    fn any_handle(&self, window_id: usize, view_id: usize, cx: &AppContext) -> AnyViewHandle {
+        AnyViewHandle::new(
+            window_id,
+            view_id,
+            self.as_any().type_id(),
+            cx.ref_counts.clone(),
+        )
+    }
 }
 
 impl<T> AnyView for T
@@ -3275,14 +3316,48 @@ where
         View::render(self, &mut RenderContext::new(params, cx))
     }
 
-    fn on_focus(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize) {
+    fn on_focus_in(
+        &mut self,
+        cx: &mut MutableAppContext,
+        window_id: usize,
+        view_id: usize,
+        focused_id: usize,
+    ) {
         let mut cx = ViewContext::new(cx, window_id, view_id);
-        View::on_focus(self, &mut cx);
+        let focused_view_handle: AnyViewHandle = if view_id == focused_id {
+            cx.handle().into()
+        } else {
+            let focused_type = cx
+                .views
+                .get(&(window_id, focused_id))
+                .unwrap()
+                .as_any()
+                .type_id();
+            AnyViewHandle::new(window_id, focused_id, focused_type, cx.ref_counts.clone())
+        };
+        View::on_focus_in(self, focused_view_handle, &mut cx);
     }
 
-    fn on_blur(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize) {
+    fn on_focus_out(
+        &mut self,
+        cx: &mut MutableAppContext,
+        window_id: usize,
+        view_id: usize,
+        blurred_id: usize,
+    ) {
         let mut cx = ViewContext::new(cx, window_id, view_id);
-        View::on_blur(self, &mut cx);
+        let blurred_view_handle: AnyViewHandle = if view_id == blurred_id {
+            cx.handle().into()
+        } else {
+            let blurred_type = cx
+                .views
+                .get(&(window_id, blurred_id))
+                .unwrap()
+                .as_any()
+                .type_id();
+            AnyViewHandle::new(window_id, blurred_id, blurred_type, cx.ref_counts.clone())
+        };
+        View::on_focus_out(self, blurred_view_handle, &mut cx);
     }
 
     fn keymap_context(&self, cx: &AppContext) -> keymap::Context {
@@ -6665,12 +6740,16 @@ mod tests {
                 "View"
             }
 
-            fn on_focus(&mut self, _: &mut ViewContext<Self>) {
-                self.events.lock().push(format!("{} focused", &self.name));
+            fn on_focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
+                if cx.handle().id() == focused.id() {
+                    self.events.lock().push(format!("{} focused", &self.name));
+                }
             }
 
-            fn on_blur(&mut self, _: &mut ViewContext<Self>) {
-                self.events.lock().push(format!("{} blurred", &self.name));
+            fn on_focus_out(&mut self, blurred: AnyViewHandle, cx: &mut ViewContext<Self>) {
+                if cx.handle().id() == blurred.id() {
+                    self.events.lock().push(format!("{} blurred", &self.name));
+                }
             }
         }
 
@@ -7018,7 +7097,7 @@ mod tests {
 
         let (window_id, view_1) = cx.add_window(Default::default(), |_| view_1);
         let view_2 = cx.add_view(&view_1, |_| view_2);
-        let view_3 = cx.add_view(&view_2, |cx| {
+        cx.add_view(&view_2, |cx| {
             cx.focus_self();
             view_3
         });

@@ -1,6 +1,6 @@
 use gpui::{
     elements::*, geometry::vector::Vector2F, impl_internal_actions, keymap, platform::CursorStyle,
-    Action, AppContext, Axis, Entity, MouseButton, MutableAppContext, RenderContext,
+    Action, AnyViewHandle, AppContext, Axis, Entity, MouseButton, MutableAppContext, RenderContext,
     SizeConstraint, Subscription, View, ViewContext,
 };
 use menu::*;
@@ -106,7 +106,7 @@ impl View for ContextMenu {
             .boxed()
     }
 
-    fn on_blur(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         self.reset(cx);
     }
 }

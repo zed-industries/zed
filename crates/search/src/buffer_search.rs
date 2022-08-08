@@ -6,8 +6,8 @@ use crate::{
 use collections::HashMap;
 use editor::{Anchor, Autoscroll, Editor};
 use gpui::{
-    actions, elements::*, impl_actions, platform::CursorStyle, Action, AppContext, Entity,
-    MouseButton, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext,
+    actions, elements::*, impl_actions, platform::CursorStyle, Action, AnyViewHandle, AppContext,
+    Entity, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
 use language::OffsetRangeExt;
@@ -80,7 +80,7 @@ impl View for BufferSearchBar {
         "BufferSearchBar"
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         cx.focus(&self.query_editor);
     }
 

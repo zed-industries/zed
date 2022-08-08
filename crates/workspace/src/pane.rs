@@ -13,9 +13,9 @@ use gpui::{
     },
     impl_actions, impl_internal_actions,
     platform::{CursorStyle, NavigationDirection},
-    AppContext, AsyncAppContext, Entity, EventContext, ModelHandle, MouseButton, MouseButtonEvent,
-    MutableAppContext, PromptLevel, Quad, RenderContext, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    AnyViewHandle, AppContext, AsyncAppContext, Entity, EventContext, ModelHandle, MouseButton,
+    MouseButtonEvent, MutableAppContext, PromptLevel, Quad, RenderContext, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
@@ -830,6 +830,7 @@ impl Pane {
     pub fn focus_active_item(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(active_item) = self.active_item() {
             cx.focus(active_item);
+            self.activate(cx);
         }
     }
 
@@ -1210,8 +1211,12 @@ impl View for Pane {
             .named("pane")
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        self.focus_active_item(cx);
+    fn on_focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        if cx.handle().id() == focused.id() {
+            self.focus_active_item(cx);
+        } else {
+            self.activate(cx);
+        }
     }
 }
 

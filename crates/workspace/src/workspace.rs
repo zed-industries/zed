@@ -2489,7 +2489,7 @@ impl View for Workspace {
             .named("workspace")
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         cx.focus(&self.active_pane);
     }
 }

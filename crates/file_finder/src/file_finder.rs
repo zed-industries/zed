@@ -1,7 +1,7 @@
 use fuzzy::PathMatch;
 use gpui::{
-    actions, elements::*, AppContext, Entity, ModelHandle, MouseState, MutableAppContext,
-    RenderContext, Task, View, ViewContext, ViewHandle,
+    actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MouseState,
+    MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
@@ -53,7 +53,7 @@ impl View for FileFinder {
         ChildView::new(self.picker.clone()).boxed()
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         cx.focus(&self.picker);
     }
 }
