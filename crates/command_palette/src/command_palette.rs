@@ -86,8 +86,8 @@ impl CommandPalette {
         let focused_view_id = cx.focused_view_id(window_id).unwrap_or(workspace.id());
 
         cx.as_mut().defer(move |cx| {
+            let this = cx.add_view(workspace.clone(), |cx| Self::new(focused_view_id, cx));
             workspace.update(cx, |workspace, cx| {
-                let this = cx.add_view(|cx| Self::new(focused_view_id, cx));
                 workspace.toggle_modal(cx, |_, cx| {
                     cx.subscribe(&this, Self::on_event).detach();
                     this
