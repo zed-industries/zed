@@ -1,4 +1,5 @@
 pub mod action;
+mod callback_collection;
 
 use crate::{
     elements::ElementBox,
@@ -13,7 +14,8 @@ use crate::{
 };
 pub use action::*;
 use anyhow::{anyhow, Context, Result};
-use collections::btree_map;
+use callback_collection::CallbackCollection;
+use collections::{btree_map, hash_map::Entry, BTreeMap, HashMap, HashSet, VecDeque};
 use keymap::MatchResult;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
@@ -24,7 +26,6 @@ use smol::prelude::*;
 use std::{
     any::{type_name, Any, TypeId},
     cell::RefCell,
-    collections::{hash_map::Entry, BTreeMap, HashMap, HashSet, VecDeque},
     fmt::{self, Debug},
     hash::{Hash, Hasher},
     marker::PhantomData,
@@ -36,6 +37,8 @@ use std::{
     sync::{Arc, Weak},
     time::Duration,
 };
+
+use self::callback_collection::Mapping;
 
 pub trait Entity: 'static {
     type Event;
@@ -963,92 +966,6 @@ type WindowFullscreenCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> b
 type DeserializeActionCallback = fn(json: &str) -> anyhow::Result<Box<dyn Action>>;
 type WindowShouldCloseSubscriptionCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 
-// type SubscriptionMappings<T, F> = Arc<Mutex<HashMap<T, BTreeMap<usize, Option<F>>>>>;
-struct SubscriptionMappings<K: Hash + Eq, F> {
-    internal: Arc<Mutex<HashMap<K, BTreeMap<usize, Option<F>>>>>,
-}
-
-impl<K: Hash + Eq + Copy, F> Default for SubscriptionMappings<K, F> {
-    fn default() -> Self {
-        SubscriptionMappings {
-            internal: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-}
-
-impl<K: Hash + Eq + Copy, F> SubscriptionMappings<K, F> {
-    fn clone_ref(&self) -> Self {
-        Self {
-            internal: self.internal.clone(),
-        }
-    }
-
-    fn add_callback(&mut self, id: K, subscription_id: usize, callback: F) {
-        self.internal
-            .lock()
-            .entry(id)
-            .or_default()
-            .insert(subscription_id, Some(callback));
-    }
-
-    fn remove(&mut self, id: K) {
-        self.internal.lock().remove(&id);
-    }
-
-    fn add_or_remove_callback(&mut self, id: K, subscription_id: usize, callback: F) {
-        match self
-            .internal
-            .lock()
-            .entry(id)
-            .or_default()
-            .entry(subscription_id)
-        {
-            btree_map::Entry::Vacant(entry) => {
-                entry.insert(Some(callback));
-            }
-
-            btree_map::Entry::Occupied(entry) => {
-                // TODO: This seems like it should never be called because no code
-                // should ever attempt to remove an existing callback
-                debug_assert!(entry.get().is_none());
-                entry.remove();
-            }
-        }
-    }
-
-    fn emit_and_cleanup<C: FnMut(&mut F, &mut MutableAppContext) -> bool>(
-        &mut self,
-        id: K,
-        cx: &mut MutableAppContext,
-        mut call_callback: C,
-    ) {
-        let callbacks = self.internal.lock().remove(&id);
-        if let Some(callbacks) = callbacks {
-            for (subscription_id, callback) in callbacks {
-                if let Some(mut callback) = callback {
-                    let alive = call_callback(&mut callback, cx);
-                    if alive {
-                        match self
-                            .internal
-                            .lock()
-                            .entry(id)
-                            .or_default()
-                            .entry(subscription_id)
-                        {
-                            btree_map::Entry::Vacant(entry) => {
-                                entry.insert(Some(callback));
-                            }
-                            btree_map::Entry::Occupied(entry) => {
-                                entry.remove();
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 pub struct MutableAppContext {
     weak_self: Option<rc::Weak<RefCell<Self>>>,
     foreground_platform: Rc<dyn platform::ForegroundPlatform>,
@@ -1064,13 +981,13 @@ pub struct MutableAppContext {
     next_subscription_id: usize,
     frame_count: usize,
 
-    focus_observations: SubscriptionMappings<usize, FocusObservationCallback>,
-    global_subscriptions: SubscriptionMappings<TypeId, GlobalSubscriptionCallback>,
-    global_observations: SubscriptionMappings<TypeId, GlobalObservationCallback>,
-    subscriptions: SubscriptionMappings<usize, SubscriptionCallback>,
-    observations: SubscriptionMappings<usize, ObservationCallback>,
-    window_activation_observations: SubscriptionMappings<usize, WindowActivationCallback>,
-    window_fullscreen_observations: SubscriptionMappings<usize, WindowFullscreenCallback>,
+    focus_observations: CallbackCollection<usize, FocusObservationCallback>,
+    global_subscriptions: CallbackCollection<TypeId, GlobalSubscriptionCallback>,
+    global_observations: CallbackCollection<TypeId, GlobalObservationCallback>,
+    subscriptions: CallbackCollection<usize, SubscriptionCallback>,
+    observations: CallbackCollection<usize, ObservationCallback>,
+    window_activation_observations: CallbackCollection<usize, WindowActivationCallback>,
+    window_fullscreen_observations: CallbackCollection<usize, WindowFullscreenCallback>,
 
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
     action_dispatch_observations: Arc<Mutex<BTreeMap<usize, ActionObservationCallback>>>,
@@ -1112,10 +1029,10 @@ impl MutableAppContext {
                 font_cache,
                 platform,
             },
-            action_deserializers: HashMap::new(),
-            capture_actions: HashMap::new(),
-            actions: HashMap::new(),
-            global_actions: HashMap::new(),
+            action_deserializers: Default::default(),
+            capture_actions: Default::default(),
+            actions: Default::default(),
+            global_actions: Default::default(),
             keystroke_matcher: keymap::Matcher::default(),
             next_entity_id: 0,
             next_window_id: 0,
@@ -1130,12 +1047,12 @@ impl MutableAppContext {
             window_activation_observations: Default::default(),
             window_fullscreen_observations: Default::default(),
             action_dispatch_observations: Default::default(),
-            presenters_and_platform_windows: HashMap::new(),
+            presenters_and_platform_windows: Default::default(),
             foreground,
             pending_effects: VecDeque::new(),
             pending_focus_index: None,
-            pending_notifications: HashSet::new(),
-            pending_global_notifications: HashSet::new(),
+            pending_notifications: Default::default(),
+            pending_global_notifications: Default::default(),
             pending_flushes: 0,
             flushing_effects: false,
             halt_action_dispatch: false,
@@ -1480,10 +1397,11 @@ impl MutableAppContext {
                 callback(payload, cx)
             }),
         });
+
         Subscription::GlobalSubscription {
             id: subscription_id,
             type_id,
-            subscriptions: Some(Arc::downgrade(&self.global_subscriptions.internal)),
+            subscriptions: Some(self.global_subscriptions.downgrade()),
         }
     }
 
@@ -1524,7 +1442,7 @@ impl MutableAppContext {
         Subscription::Subscription {
             id: subscription_id,
             entity_id: handle.id(),
-            subscriptions: Some(Arc::downgrade(&self.subscriptions.internal)),
+            subscriptions: Some(self.subscriptions.downgrade()),
         }
     }
 
@@ -1552,7 +1470,7 @@ impl MutableAppContext {
         Subscription::Observation {
             id: subscription_id,
             entity_id,
-            observations: Some(Arc::downgrade(&self.observations.internal)),
+            observations: Some(self.observations.downgrade()),
         }
     }
 
@@ -1580,7 +1498,7 @@ impl MutableAppContext {
         Subscription::FocusObservation {
             id: subscription_id,
             view_id,
-            observations: Some(Arc::downgrade(&self.focus_observations.internal)),
+            observations: Some(self.focus_observations.downgrade()),
         }
     }
 
@@ -1601,7 +1519,7 @@ impl MutableAppContext {
         Subscription::GlobalObservation {
             id,
             type_id,
-            observations: Some(Arc::downgrade(&self.global_observations.internal)),
+            observations: Some(self.global_observations.downgrade()),
         }
     }
 
@@ -1659,9 +1577,7 @@ impl MutableAppContext {
         Subscription::WindowActivationObservation {
             id: subscription_id,
             window_id,
-            observations: Some(Arc::downgrade(
-                &self.window_activation_observations.internal,
-            )),
+            observations: Some(self.window_activation_observations.downgrade()),
         }
     }
 
@@ -1679,9 +1595,7 @@ impl MutableAppContext {
         Subscription::WindowFullscreenObservation {
             id: subscription_id,
             window_id,
-            observations: Some(Arc::downgrade(
-                &self.window_activation_observations.internal,
-            )),
+            observations: Some(self.window_activation_observations.downgrade()),
         }
     }
 
@@ -2280,7 +2194,7 @@ impl MutableAppContext {
                         ),
 
                         Effect::Event { entity_id, payload } => {
-                            let mut subscriptions = self.subscriptions.clone_ref();
+                            let mut subscriptions = self.subscriptions.clone();
                             subscriptions.emit_and_cleanup(entity_id, self, |callback, this| {
                                 callback(payload.as_ref(), this)
                             })
@@ -2309,7 +2223,7 @@ impl MutableAppContext {
                         ),
 
                         Effect::ModelNotification { model_id } => {
-                            let mut observations = self.observations.clone_ref();
+                            let mut observations = self.observations.clone();
                             observations
                                 .emit_and_cleanup(model_id, self, |callback, this| callback(this));
                         }
@@ -2319,7 +2233,7 @@ impl MutableAppContext {
                         }
 
                         Effect::GlobalNotification { type_id } => {
-                            let mut subscriptions = self.global_observations.clone_ref();
+                            let mut subscriptions = self.global_observations.clone();
                             subscriptions.emit_and_cleanup(type_id, self, |callback, this| {
                                 callback(this);
                                 true
@@ -2442,7 +2356,7 @@ impl MutableAppContext {
     }
 
     fn update_windows(&mut self) {
-        let mut invalidations = HashMap::new();
+        let mut invalidations: HashMap<_, _> = Default::default();
         for (window_id, window) in &mut self.cx.windows {
             if let Some(invalidation) = window.invalidation.take() {
                 invalidations.insert(*window_id, invalidation);
@@ -2513,7 +2427,7 @@ impl MutableAppContext {
     fn emit_global_event(&mut self, payload: Box<dyn Any>) {
         let type_id = (&*payload).type_id();
 
-        let mut subscriptions = self.global_subscriptions.clone_ref();
+        let mut subscriptions = self.global_subscriptions.clone();
         subscriptions.emit_and_cleanup(type_id, self, |callback, this| {
             callback(payload.as_ref(), this);
             true //Always alive
@@ -2538,7 +2452,7 @@ impl MutableAppContext {
                     .insert(observed_view_id);
             }
 
-            let mut observations = self.observations.clone_ref();
+            let mut observations = self.observations.clone();
             observations.emit_and_cleanup(observed_view_id, self, |callback, this| callback(this));
         }
     }
@@ -2568,7 +2482,7 @@ impl MutableAppContext {
             let window = this.cx.windows.get_mut(&window_id)?;
             window.is_fullscreen = is_fullscreen;
 
-            let mut observations = this.window_fullscreen_observations.clone_ref();
+            let mut observations = this.window_fullscreen_observations.clone();
             observations.emit_and_cleanup(window_id, this, |callback, this| {
                 callback(is_fullscreen, this)
             });
@@ -2604,7 +2518,7 @@ impl MutableAppContext {
                 this.cx.views.insert((window_id, view_id), view);
             }
 
-            let mut observations = this.window_activation_observations.clone_ref();
+            let mut observations = this.window_activation_observations.clone();
             observations.emit_and_cleanup(window_id, this, |callback, this| callback(active, this));
 
             Some(())
@@ -2636,7 +2550,7 @@ impl MutableAppContext {
                     blurred_view.on_blur(this, window_id, blurred_id);
                     this.cx.views.insert((window_id, blurred_id), blurred_view);
 
-                    let mut subscriptions = this.focus_observations.clone_ref();
+                    let mut subscriptions = this.focus_observations.clone();
                     subscriptions
                         .emit_and_cleanup(blurred_id, this, |callback, this| callback(false, this));
                 }
@@ -2647,7 +2561,7 @@ impl MutableAppContext {
                     focused_view.on_focus(this, window_id, focused_id);
                     this.cx.views.insert((window_id, focused_id), focused_view);
 
-                    let mut subscriptions = this.focus_observations.clone_ref();
+                    let mut subscriptions = this.focus_observations.clone();
                     subscriptions
                         .emit_and_cleanup(focused_id, this, |callback, this| callback(true, this));
                 }
@@ -5153,35 +5067,39 @@ pub enum Subscription {
     Subscription {
         id: usize,
         entity_id: usize,
-        subscriptions:
-            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<SubscriptionCallback>>>>>>,
+        subscriptions: Option<Weak<Mapping<usize, SubscriptionCallback>>>,
     },
     GlobalSubscription {
         id: usize,
         type_id: TypeId,
-        subscriptions: Option<
-            Weak<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalSubscriptionCallback>>>>>,
-        >,
+        subscriptions: Option<Weak<Mapping<TypeId, GlobalSubscriptionCallback>>>,
     },
     Observation {
         id: usize,
         entity_id: usize,
-        observations:
-            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<ObservationCallback>>>>>>,
+        observations: Option<Weak<Mapping<usize, ObservationCallback>>>,
     },
     GlobalObservation {
         id: usize,
         type_id: TypeId,
-        observations: Option<
-            Weak<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalObservationCallback>>>>>,
-        >,
+        observations: Option<Weak<Mapping<TypeId, GlobalObservationCallback>>>,
     },
     FocusObservation {
         id: usize,
         view_id: usize,
-        observations:
-            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<FocusObservationCallback>>>>>>,
+        observations: Option<Weak<Mapping<usize, FocusObservationCallback>>>,
     },
+    WindowActivationObservation {
+        id: usize,
+        window_id: usize,
+        observations: Option<Weak<Mapping<usize, WindowActivationCallback>>>,
+    },
+    WindowFullscreenObservation {
+        id: usize,
+        window_id: usize,
+        observations: Option<Weak<Mapping<usize, WindowFullscreenCallback>>>,
+    },
+
     ReleaseObservation {
         id: usize,
         entity_id: usize,
@@ -5191,18 +5109,6 @@ pub enum Subscription {
     ActionObservation {
         id: usize,
         observations: Option<Weak<Mutex<BTreeMap<usize, ActionObservationCallback>>>>,
-    },
-    WindowActivationObservation {
-        id: usize,
-        window_id: usize,
-        observations:
-            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<WindowActivationCallback>>>>>>,
-    },
-    WindowFullscreenObservation {
-        id: usize,
-        window_id: usize,
-        observations:
-            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<WindowActivationCallback>>>>>>,
     },
 }
 
@@ -5665,8 +5571,8 @@ mod tests {
         });
 
         assert_eq!(cx.cx.models.len(), 1);
-        assert!(cx.subscriptions.internal.lock().is_empty());
-        assert!(cx.observations.internal.lock().is_empty());
+        assert!(cx.subscriptions.is_empty());
+        assert!(cx.observations.is_empty());
     }
 
     #[crate::test(self)]
@@ -5916,8 +5822,8 @@ mod tests {
         });
 
         assert_eq!(cx.cx.views.len(), 2);
-        assert!(cx.subscriptions.internal.lock().is_empty());
-        assert!(cx.observations.internal.lock().is_empty());
+        assert!(cx.subscriptions.is_empty());
+        assert!(cx.observations.is_empty());
     }
 
     #[crate::test(self)]

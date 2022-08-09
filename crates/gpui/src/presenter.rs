@@ -13,11 +13,11 @@ use crate::{
     ReadModel, ReadView, RenderContext, RenderParams, Scene, UpgradeModelHandle, UpgradeViewHandle,
     View, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
+use collections::{HashMap, HashSet};
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
 use smallvec::SmallVec;
 use std::{
-    collections::{HashMap, HashSet},
     marker::PhantomData,
     ops::{Deref, DerefMut, Range},
     sync::Arc,
@@ -52,7 +52,7 @@ impl Presenter {
         Self {
             window_id,
             rendered_views: cx.render_views(window_id, titlebar_height),
-            parents: HashMap::new(),
+            parents: Default::default(),
             cursor_regions: Default::default(),
             mouse_regions: Default::default(),
             font_cache,
