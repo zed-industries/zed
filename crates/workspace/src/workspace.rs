@@ -297,9 +297,6 @@ pub trait Item: View {
         project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>>;
-    fn should_activate_item_on_event(_: &Self::Event) -> bool {
-        false
-    }
     fn should_close_item_on_event(_: &Self::Event) -> bool {
         false
     }
@@ -575,15 +572,6 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
             if T::should_close_item_on_event(event) {
                 Pane::close_item(workspace, pane, item.id(), cx).detach_and_log_err(cx);
                 return;
-            }
-
-            if T::should_activate_item_on_event(event) {
-                pane.update(cx, |pane, cx| {
-                    if let Some(ix) = pane.index_for_item(&item) {
-                        pane.activate_item(ix, true, true, false, cx);
-                        pane.activate(cx);
-                    }
-                });
             }
 
             if T::should_update_tab_on_event(event) {
@@ -1438,7 +1426,7 @@ impl Workspace {
         })
         .detach();
         self.panes.push(pane.clone());
-        self.activate_pane(pane.clone(), cx);
+        cx.focus(pane.clone());
         cx.emit(Event::PaneAdded(pane.clone()));
         pane
     }
@@ -1533,7 +1521,6 @@ impl Workspace {
             }
         });
         if let Some((pane, ix)) = result {
-            self.activate_pane(pane.clone(), cx);
             pane.update(cx, |pane, cx| pane.activate_item(ix, true, true, false, cx));
             true
         } else {
@@ -1544,7 +1531,7 @@ impl Workspace {
     fn activate_pane_at_index(&mut self, action: &ActivatePane, cx: &mut ViewContext<Self>) {
         let panes = self.center.panes();
         if let Some(pane) = panes.get(action.0).map(|p| (*p).clone()) {
-            self.activate_pane(pane, cx);
+            cx.focus(pane);
         } else {
             self.split_pane(self.active_pane.clone(), SplitDirection::Right, cx);
         }
@@ -1560,7 +1547,7 @@ impl Workspace {
             let next_ix = (ix + 1) % panes.len();
             panes[next_ix].clone()
         };
-        self.activate_pane(next_pane, cx);
+        cx.focus(next_pane);
     }
 
     pub fn activate_previous_pane(&mut self, cx: &mut ViewContext<Self>) {
@@ -1573,10 +1560,10 @@ impl Workspace {
             let prev_ix = if ix == 0 { panes.len() - 1 } else { ix - 1 };
             panes[prev_ix].clone()
         };
-        self.activate_pane(prev_pane, cx);
+        cx.focus(prev_pane);
     }
 
-    fn activate_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
+    fn handle_pane_focused(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
         if self.active_pane != pane {
             self.active_pane
                 .update(cx, |pane, cx| pane.set_active(false, cx));
@@ -1587,7 +1574,6 @@ impl Workspace {
                 status_bar.set_active_pane(&self.active_pane, cx);
             });
             self.active_item_path_changed(cx);
-            cx.focus(&self.active_pane);
             cx.notify();
         }
 
@@ -1614,8 +1600,8 @@ impl Workspace {
                 pane::Event::Remove => {
                     self.remove_pane(pane, cx);
                 }
-                pane::Event::Activate => {
-                    self.activate_pane(pane, cx);
+                pane::Event::Focused => {
+                    self.handle_pane_focused(pane, cx);
                 }
                 pane::Event::ActivateItem { local } => {
                     if *local {
@@ -1648,7 +1634,6 @@ impl Workspace {
     ) -> Option<ViewHandle<Pane>> {
         pane.read(cx).active_item().map(|item| {
             let new_pane = self.add_pane(cx);
-            self.activate_pane(new_pane.clone(), cx);
             if let Some(clone) = item.clone_on_split(cx.as_mut()) {
                 Pane::add_item(self, new_pane.clone(), clone, true, true, cx);
             }
@@ -1661,7 +1646,7 @@ impl Workspace {
     fn remove_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
         if self.center.remove(&pane).unwrap() {
             self.panes.retain(|p| p != &pane);
-            self.activate_pane(self.panes.last().unwrap().clone(), cx);
+            cx.focus(self.panes.last().unwrap().clone());
             self.unfollow(&pane, cx);
             self.last_leaders_by_pane.remove(&pane.downgrade());
             cx.notify();
@@ -2490,7 +2475,10 @@ impl View for Workspace {
     }
 
     fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.active_pane);
+        if cx.is_self_focused() {
+            println!("Active Pane Focused");
+            cx.focus(&self.active_pane);
+        }
     }
 }
 
@@ -3110,7 +3098,7 @@ mod tests {
         // once for project entry 0, and once for project entry 2. After those two
         // prompts, the task should complete.
         let close = workspace.update(cx, |workspace, cx| {
-            workspace.activate_pane(left_pane.clone(), cx);
+            cx.focus(left_pane.clone());
             Pane::close_items(workspace, left_pane.clone(), cx, |_| true)
         });
 

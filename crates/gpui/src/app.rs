@@ -1239,7 +1239,7 @@ impl MutableAppContext {
         let mut view = self
             .cx
             .views
-            .remove(&(params.window_id, params.view_id))
+            .remove(&(window_id, view_id))
             .ok_or(anyhow!("view not found"))?;
         let element = view.render(params, self);
         self.cx.views.insert((window_id, view_id), view);
@@ -1781,7 +1781,7 @@ impl MutableAppContext {
                     .cx
                     .views
                     .get(&(window_id, view_id))
-                    .expect("View passed to visit does not exist")
+                    .unwrap()
                     .keymap_context(self.as_ref());
 
                 match self.keystroke_matcher.push_keystroke(
@@ -2548,11 +2548,6 @@ impl MutableAppContext {
 
             if let Some(blurred_id) = blurred_id {
                 for view_id in blurred_parents.iter().copied() {
-                    // We've reached a common anscestor. Break.
-                    if focused_parents.contains(&view_id) {
-                        break;
-                    }
-
                     if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
                         view.on_focus_out(this, window_id, view_id, blurred_id);
                         this.cx.views.insert((window_id, view_id), view);
@@ -2566,12 +2561,9 @@ impl MutableAppContext {
 
             if let Some(focused_id) = focused_id {
                 for view_id in focused_parents {
-                    if blurred_parents.contains(&view_id) {
-                        break;
-                    }
                     if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
                         view.on_focus_in(this, window_id, view_id, focused_id);
-                        this.cx.views.insert((window_id, focused_id), view);
+                        this.cx.views.insert((window_id, view_id), view);
                     }
                 }
 

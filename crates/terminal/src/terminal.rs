@@ -60,7 +60,6 @@ const DEBUG_LINE_HEIGHT: f32 = 5.;
 pub enum Event {
     TitleChanged,
     CloseTerminal,
-    Activate,
     Bell,
     Wakeup,
 }

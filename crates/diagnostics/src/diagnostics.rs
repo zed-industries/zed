@@ -568,10 +568,6 @@ impl workspace::Item for ProjectDiagnosticsEditor {
         unreachable!()
     }
 
-    fn should_activate_item_on_event(event: &Self::Event) -> bool {
-        Editor::should_activate_item_on_event(event)
-    }
-
     fn should_update_tab_on_event(event: &Event) -> bool {
         Editor::should_update_tab_on_event(event)
     }

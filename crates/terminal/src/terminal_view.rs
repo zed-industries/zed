@@ -153,10 +153,7 @@ impl View for TerminalView {
     }
 
     fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::Activate);
-        cx.defer(|view, cx| {
-            cx.focus(view.content.handle());
-        });
+        cx.focus(self.content.handle());
     }
 
     fn keymap_context(&self, _: &gpui::AppContext) -> gpui::keymap::Context {
@@ -313,10 +310,6 @@ impl Item for TerminalView {
 
     fn should_close_item_on_event(event: &Self::Event) -> bool {
         matches!(event, &Event::CloseTerminal)
-    }
-
-    fn should_activate_item_on_event(event: &Self::Event) -> bool {
-        matches!(event, &Event::Activate)
     }
 }
 

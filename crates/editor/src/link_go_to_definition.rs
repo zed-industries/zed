@@ -8,8 +8,8 @@ use util::TryFutureExt;
 use workspace::Workspace;
 
 use crate::{
-    Anchor, DisplayPoint, Editor, EditorSnapshot, Event, GoToDefinition, GoToTypeDefinition,
-    Select, SelectPhase,
+    Anchor, DisplayPoint, Editor, EditorSnapshot, GoToDefinition, GoToTypeDefinition, Select,
+    SelectPhase,
 };
 
 #[derive(Clone, PartialEq)]
@@ -355,7 +355,6 @@ fn go_to_fetched_definition_of_kind(
         editor_handle.update(cx, |editor, cx| {
             if !editor.focused {
                 cx.focus_self();
-                cx.emit(Event::Activate);
             }
         });
 

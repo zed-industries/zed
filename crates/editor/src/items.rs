@@ -469,10 +469,6 @@ impl Item for Editor {
         })
     }
 
-    fn should_activate_item_on_event(event: &Event) -> bool {
-        matches!(event, Event::Activate)
-    }
-
     fn should_close_item_on_event(event: &Event) -> bool {
         matches!(event, Event::Closed)
     }

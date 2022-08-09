@@ -1561,7 +1561,6 @@ impl Editor {
     ) {
         if !self.focused {
             cx.focus_self();
-            cx.emit(Event::Activate);
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -1623,7 +1622,6 @@ impl Editor {
     ) {
         if !self.focused {
             cx.focus_self();
-            cx.emit(Event::Activate);
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -5969,7 +5967,6 @@ fn compute_scroll_position(
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Event {
-    Activate,
     BufferEdited,
     Edited,
     Reparsed,
