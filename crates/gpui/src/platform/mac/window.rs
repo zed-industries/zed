@@ -129,12 +129,12 @@ unsafe fn build_classes() {
             window_did_resize as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
-            sel!(windowDidEnterFullScreen:),
-            window_did_enter_fullscreen as extern "C" fn(&Object, Sel, id),
+            sel!(windowWillEnterFullScreen:),
+            window_will_enter_fullscreen as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
-            sel!(windowDidExitFullScreen:),
-            window_did_exit_fullscreen as extern "C" fn(&Object, Sel, id),
+            sel!(windowWillExitFullScreen:),
+            window_will_exit_fullscreen as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
             sel!(windowDidBecomeKey:),
@@ -922,11 +922,11 @@ extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
     window_state.as_ref().borrow().move_traffic_light();
 }
 
-extern "C" fn window_did_enter_fullscreen(this: &Object, _: Sel, _: id) {
+extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
     window_fullscreen_changed(this, true);
 }
 
-extern "C" fn window_did_exit_fullscreen(this: &Object, _: Sel, _: id) {
+extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
     window_fullscreen_changed(this, false);
 }
 
