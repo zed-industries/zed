@@ -243,7 +243,7 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode) -> Option<String> {
         }
     }
 
-    None
+    Some(keystroke.key.to_string())
 }
 
 ///   Code     Modifiers

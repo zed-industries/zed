@@ -292,6 +292,7 @@ struct WindowState {
     previous_modifiers_changed_event: Option<Event>,
 }
 
+#[derive(Debug)]
 struct InsertText {
     replacement_range: Option<Range<usize>>,
     text: String,
@@ -742,6 +743,8 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         let function_is_held;
         window_state_borrow.pending_key_down = match event {
             Event::KeyDown(event) => {
+                dbg!(&event);
+
                 let keydown = event.keystroke.clone();
                 // Ignore events from held-down keys after some of the initially-pressed keys
                 // were released.
@@ -752,12 +755,12 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 } else {
                     window_state_borrow.last_fresh_keydown = Some(keydown);
                 }
-
                 function_is_held = event.keystroke.function;
                 Some((event, None))
             }
             _ => return NO,
         };
+
         drop(window_state_borrow);
 
         if !function_is_held {
@@ -782,6 +785,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 }
 
                 if !handled {
+                    println!("not handling, {:?}", insert_text);
                     if let Some(insert) = insert_text {
                         handled = true;
                         with_input_handler(this, |input_handler| {
