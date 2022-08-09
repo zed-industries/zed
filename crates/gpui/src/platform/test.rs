@@ -37,6 +37,7 @@ pub struct Window {
     event_handlers: Vec<Box<dyn FnMut(super::Event) -> bool>>,
     resize_handlers: Vec<Box<dyn FnMut()>>,
     close_handlers: Vec<Box<dyn FnOnce()>>,
+    fullscreen_handlers: Vec<Box<dyn FnMut(bool)>>,
     pub(crate) active_status_change_handlers: Vec<Box<dyn FnMut(bool)>>,
     pub(crate) should_close_handler: Option<Box<dyn FnMut() -> bool>>,
     pub(crate) title: Option<String>,
@@ -199,6 +200,7 @@ impl Window {
             close_handlers: Default::default(),
             should_close_handler: Default::default(),
             active_status_change_handlers: Default::default(),
+            fullscreen_handlers: Default::default(),
             scale_factor: 1.0,
             current_scene: None,
             title: None,
@@ -251,6 +253,10 @@ impl super::Window for Window {
 
     fn on_active_status_change(&mut self, callback: Box<dyn FnMut(bool)>) {
         self.active_status_change_handlers.push(callback);
+    }
+
+    fn on_fullscreen(&mut self, callback: Box<dyn FnMut(bool)>) {
+        self.fullscreen_handlers.push(callback)
     }
 
     fn on_resize(&mut self, callback: Box<dyn FnMut()>) {

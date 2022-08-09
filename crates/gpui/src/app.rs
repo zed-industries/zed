@@ -1248,6 +1248,13 @@ impl MutableAppContext {
             .map_or(false, |window| window.is_active)
     }
 
+    pub fn window_is_fullscreen(&self, window_id: usize) -> bool {
+        self.cx
+            .windows
+            .get(&window_id)
+            .map_or(false, |window| window.is_fullscreen)
+    }
+
     pub fn render_view(&mut self, params: RenderParams) -> Result<ElementBox> {
         let window_id = params.window_id;
         let view_id = params.view_id;
@@ -1934,6 +1941,7 @@ impl MutableAppContext {
                     focused_view_id: Some(root_view.id()),
                     is_active: false,
                     invalidation: None,
+                    is_fullscreen: false,
                 },
             );
             root_view.update(this, |view, cx| view.on_focus(cx));
@@ -2007,6 +2015,13 @@ impl MutableAppContext {
             let mut app = self.upgrade();
             window.on_resize(Box::new(move || {
                 app.update(|cx| cx.window_was_resized(window_id))
+            }));
+        }
+
+        {
+            let mut app = self.upgrade();
+            window.on_fullscreen(Box::new(move |is_fullscreen| {
+                app.update(|cx| cx.window_was_fullscreen_changed(window_id, is_fullscreen))
             }));
         }
 
@@ -2151,7 +2166,9 @@ impl MutableAppContext {
                             subscription_id,
                             callback,
                         } => self.handle_subscription_effect(entity_id, subscription_id, callback),
+
                         Effect::Event { entity_id, payload } => self.emit_event(entity_id, payload),
+
                         Effect::GlobalSubscription {
                             type_id,
                             subscription_id,
@@ -2161,21 +2178,27 @@ impl MutableAppContext {
                             subscription_id,
                             callback,
                         ),
+
                         Effect::GlobalEvent { payload } => self.emit_global_event(payload),
+
                         Effect::Observation {
                             entity_id,
                             subscription_id,
                             callback,
                         } => self.handle_observation_effect(entity_id, subscription_id, callback),
+
                         Effect::ModelNotification { model_id } => {
                             self.handle_model_notification_effect(model_id)
                         }
+
                         Effect::ViewNotification { window_id, view_id } => {
                             self.handle_view_notification_effect(window_id, view_id)
                         }
+
                         Effect::GlobalNotification { type_id } => {
                             self.handle_global_notification_effect(type_id)
                         }
+
                         Effect::Deferred {
                             callback,
                             after_window_update,
@@ -2186,15 +2209,19 @@ impl MutableAppContext {
                                 callback(self)
                             }
                         }
+
                         Effect::ModelRelease { model_id, model } => {
                             self.handle_entity_release_effect(model_id, model.as_any())
                         }
+
                         Effect::ViewRelease { view_id, view } => {
                             self.handle_entity_release_effect(view_id, view.as_any())
                         }
+
                         Effect::Focus { window_id, view_id } => {
                             self.handle_focus_effect(window_id, view_id);
                         }
+
                         Effect::FocusObservation {
                             view_id,
                             subscription_id,
@@ -2202,6 +2229,7 @@ impl MutableAppContext {
                         } => {
                             self.handle_focus_observation_effect(view_id, subscription_id, callback)
                         }
+
                         Effect::ResizeWindow { window_id } => {
                             if let Some(window) = self.cx.windows.get_mut(&window_id) {
                                 window
@@ -2209,6 +2237,7 @@ impl MutableAppContext {
                                     .get_or_insert(WindowInvalidation::default());
                             }
                         }
+
                         Effect::WindowActivationObservation {
                             window_id,
                             subscription_id,
@@ -2218,10 +2247,17 @@ impl MutableAppContext {
                             subscription_id,
                             callback,
                         ),
+
                         Effect::ActivateWindow {
                             window_id,
                             is_active,
                         } => self.handle_window_activation_effect(window_id, is_active),
+
+                        Effect::FullscreenWindow {
+                            window_id,
+                            is_fullscreen,
+                        } => self.handle_fullscreen_effect(window_id, is_fullscreen),
+
                         Effect::RefreshWindows => {
                             refreshing = true;
                         }
@@ -2292,6 +2328,13 @@ impl MutableAppContext {
     fn window_was_resized(&mut self, window_id: usize) {
         self.pending_effects
             .push_back(Effect::ResizeWindow { window_id });
+    }
+
+    fn window_was_fullscreen_changed(&mut self, window_id: usize, is_fullscreen: bool) {
+        self.pending_effects.push_back(Effect::FullscreenWindow {
+            window_id,
+            is_fullscreen,
+        });
     }
 
     fn window_changed_active_status(&mut self, window_id: usize, is_active: bool) {
@@ -2608,13 +2651,36 @@ impl MutableAppContext {
         }
     }
 
-    fn handle_window_activation_effect(&mut self, window_id: usize, active: bool) {
+    fn handle_fullscreen_effect(&mut self, window_id: usize, is_fullscreen: bool) {
+        //Short circuit evaluation if we're already g2g
         if self
             .cx
             .windows
             .get(&window_id)
-            .map(|w| w.is_active)
-            .map_or(false, |cur_active| cur_active == active)
+            .map(|w| w.is_fullscreen == is_fullscreen)
+            .unwrap_or(false)
+        {
+            return;
+        }
+
+        self.update(|this| {
+            let window = this.cx.windows.get_mut(&window_id)?;
+            window.is_fullscreen = is_fullscreen;
+
+            // self.emit_event(entity_id, payload);
+
+            Some(())
+        });
+    }
+
+    fn handle_window_activation_effect(&mut self, window_id: usize, active: bool) {
+        //Short circuit evaluation if we're already g2g
+        if self
+            .cx
+            .windows
+            .get(&window_id)
+            .map(|w| w.is_active == active)
+            .unwrap_or(false)
         {
             return;
         }
@@ -2622,6 +2688,8 @@ impl MutableAppContext {
         self.update(|this| {
             let window = this.cx.windows.get_mut(&window_id)?;
             window.is_active = active;
+
+            //Handle focus
             let view_id = window.focused_view_id?;
             if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
                 if active {
@@ -2632,6 +2700,7 @@ impl MutableAppContext {
                 this.cx.views.insert((window_id, view_id), view);
             }
 
+            //Deliver events
             let callbacks = this
                 .window_activation_observations
                 .lock()
@@ -2640,6 +2709,7 @@ impl MutableAppContext {
                 for (id, callback) in callbacks {
                     if let Some(mut callback) = callback {
                         let alive = callback(active, this);
+                        //Put entry back
                         if alive {
                             match this
                                 .window_activation_observations
@@ -3072,6 +3142,7 @@ struct Window {
     root_view: AnyViewHandle,
     focused_view_id: Option<usize>,
     is_active: bool,
+    is_fullscreen: bool,
     invalidation: Option<WindowInvalidation>,
 }
 
@@ -3137,6 +3208,10 @@ pub enum Effect {
     },
     ResizeWindow {
         window_id: usize,
+    },
+    FullscreenWindow {
+        window_id: usize,
+        is_fullscreen: bool,
     },
     ActivateWindow {
         window_id: usize,
@@ -3255,6 +3330,14 @@ impl Debug for Effect {
                 .debug_struct("Effect::ActivateWindow")
                 .field("window_id", window_id)
                 .field("is_active", is_active)
+                .finish(),
+            Effect::FullscreenWindow {
+                window_id,
+                is_fullscreen,
+            } => f
+                .debug_struct("Effect::FullscreenWindow")
+                .field("window_id", window_id)
+                .field("is_fullscreen", is_fullscreen)
                 .finish(),
             Effect::RefreshWindows => f.debug_struct("Effect::FullViewRefresh").finish(),
             Effect::WindowShouldCloseSubscription { window_id, .. } => f
@@ -4030,6 +4113,10 @@ impl<'a, V: View> RenderContext<'a, V> {
 
     pub fn handle(&self) -> WeakViewHandle<V> {
         WeakViewHandle::new(self.window_id, self.view_id)
+    }
+
+    pub fn window_id(&self) -> usize {
+        self.window_id
     }
 
     pub fn view_id(&self) -> usize {

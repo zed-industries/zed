@@ -129,6 +129,14 @@ unsafe fn build_classes() {
             window_did_resize as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
+            sel!(windowDidEnterFullScreen:),
+            window_did_enter_fullscreen as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(windowDidExitFullScreen:),
+            window_did_exit_fullscreen as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
             sel!(windowDidBecomeKey:),
             window_did_change_key_status as extern "C" fn(&Object, Sel, id),
         );
@@ -276,6 +284,7 @@ struct WindowState {
     event_callback: Option<Box<dyn FnMut(Event) -> bool>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut()>>,
+    fullscreen_callback: Option<Box<dyn FnMut(bool)>>,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     input_handler: Option<Box<dyn InputHandler>>,
@@ -368,6 +377,7 @@ impl Window {
                 should_close_callback: None,
                 close_callback: None,
                 activate_callback: None,
+                fullscreen_callback: None,
                 input_handler: None,
                 pending_key_down: None,
                 performed_key_equivalent: false,
@@ -465,6 +475,10 @@ impl platform::Window for Window {
 
     fn on_resize(&mut self, callback: Box<dyn FnMut()>) {
         self.0.as_ref().borrow_mut().resize_callback = Some(callback);
+    }
+
+    fn on_fullscreen(&mut self, callback: Box<dyn FnMut(bool)>) {
+        self.0.as_ref().borrow_mut().fullscreen_callback = Some(callback);
     }
 
     fn on_should_close(&mut self, callback: Box<dyn FnMut() -> bool>) {
@@ -906,6 +920,24 @@ extern "C" fn send_event(this: &Object, _: Sel, native_event: id) {
 extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     window_state.as_ref().borrow().move_traffic_light();
+}
+
+extern "C" fn window_did_enter_fullscreen(this: &Object, _: Sel, _: id) {
+    window_fullscreen_changed(this, true);
+}
+
+extern "C" fn window_did_exit_fullscreen(this: &Object, _: Sel, _: id) {
+    window_fullscreen_changed(this, false);
+}
+
+fn window_fullscreen_changed(this: &Object, is_fullscreen: bool) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut window_state_borrow = window_state.as_ref().borrow_mut();
+    if let Some(mut callback) = window_state_borrow.fullscreen_callback.take() {
+        drop(window_state_borrow);
+        callback(is_fullscreen);
+        window_state.borrow_mut().fullscreen_callback = Some(callback);
+    }
 }
 
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
