@@ -823,6 +823,8 @@ enum FollowerItem {
 
 impl Workspace {
     pub fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
+        cx.observe_fullscreen(|_, _, cx| cx.notify()).detach();
+
         cx.observe_window_activation(Self::on_window_activation_changed)
             .detach();
         cx.observe(&project, |_, _, cx| cx.notify()).detach();

@@ -959,6 +959,7 @@ type GlobalObservationCallback = Box<dyn FnMut(&mut MutableAppContext)>;
 type ReleaseObservationCallback = Box<dyn FnOnce(&dyn Any, &mut MutableAppContext)>;
 type ActionObservationCallback = Box<dyn FnMut(TypeId, &mut MutableAppContext)>;
 type WindowActivationCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
+type WindowFullscreenCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
 type DeserializeActionCallback = fn(json: &str) -> anyhow::Result<Box<dyn Action>>;
 type WindowShouldCloseSubscriptionCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 
@@ -1069,7 +1070,8 @@ pub struct MutableAppContext {
     subscriptions: SubscriptionMappings<usize, SubscriptionCallback>,
     observations: SubscriptionMappings<usize, ObservationCallback>,
     window_activation_observations: SubscriptionMappings<usize, WindowActivationCallback>,
-    
+    window_fullscreen_observations: SubscriptionMappings<usize, WindowFullscreenCallback>,
+
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
     action_dispatch_observations: Arc<Mutex<BTreeMap<usize, ActionObservationCallback>>>,
 
@@ -1126,6 +1128,7 @@ impl MutableAppContext {
             release_observations: Default::default(),
             global_observations: Default::default(),
             window_activation_observations: Default::default(),
+            window_fullscreen_observations: Default::default(),
             action_dispatch_observations: Default::default(),
             presenters_and_platform_windows: HashMap::new(),
             foreground,
@@ -1654,6 +1657,26 @@ impl MutableAppContext {
                 callback: Box::new(callback),
             });
         Subscription::WindowActivationObservation {
+            id: subscription_id,
+            window_id,
+            observations: Some(Arc::downgrade(
+                &self.window_activation_observations.internal,
+            )),
+        }
+    }
+
+    fn observe_fullscreen<F>(&mut self, window_id: usize, callback: F) -> Subscription
+    where
+        F: 'static + FnMut(bool, &mut MutableAppContext) -> bool,
+    {
+        let subscription_id = post_inc(&mut self.next_subscription_id);
+        self.pending_effects
+            .push_back(Effect::WindowFullscreenObservation {
+                window_id,
+                subscription_id,
+                callback: Box::new(callback),
+            });
+        Subscription::WindowFullscreenObservation {
             id: subscription_id,
             window_id,
             observations: Some(Arc::downgrade(
@@ -2361,6 +2384,16 @@ impl MutableAppContext {
                             is_active,
                         } => self.handle_window_activation_effect(window_id, is_active),
 
+                        Effect::WindowFullscreenObservation {
+                            window_id,
+                            subscription_id,
+                            callback,
+                        } => self.window_fullscreen_observations.add_or_remove_callback(
+                            window_id,
+                            subscription_id,
+                            callback,
+                        ),
+
                         Effect::FullscreenWindow {
                             window_id,
                             is_fullscreen,
@@ -2534,6 +2567,11 @@ impl MutableAppContext {
         self.update(|this| {
             let window = this.cx.windows.get_mut(&window_id)?;
             window.is_fullscreen = is_fullscreen;
+
+            let mut observations = this.window_fullscreen_observations.clone_ref();
+            observations.emit_and_cleanup(window_id, this, |callback, this| {
+                callback(is_fullscreen, this)
+            });
 
             Some(())
         });
@@ -3019,6 +3057,11 @@ pub enum Effect {
         subscription_id: usize,
         callback: WindowActivationCallback,
     },
+    WindowFullscreenObservation {
+        window_id: usize,
+        subscription_id: usize,
+        callback: WindowFullscreenCallback,
+    },
     RefreshWindows,
     ActionDispatchNotification {
         action_id: TypeId,
@@ -3135,6 +3178,15 @@ impl Debug for Effect {
                 .debug_struct("Effect::FullscreenWindow")
                 .field("window_id", window_id)
                 .field("is_fullscreen", is_fullscreen)
+                .finish(),
+            Effect::WindowFullscreenObservation {
+                window_id,
+                subscription_id,
+                callback: _,
+            } => f
+                .debug_struct("Effect::WindowFullscreenObservation")
+                .field("window_id", window_id)
+                .field("subscription_id", subscription_id)
                 .finish(),
             Effect::RefreshWindows => f.debug_struct("Effect::FullViewRefresh").finish(),
             Effect::WindowShouldCloseSubscription { window_id, .. } => f
@@ -3796,6 +3848,24 @@ impl<'a, T: View> ViewContext<'a, T> {
         let observer = self.weak_handle();
         self.app
             .observe_window_activation(self.window_id(), move |active, cx| {
+                if let Some(observer) = observer.upgrade(cx) {
+                    observer.update(cx, |observer, cx| {
+                        callback(observer, active, cx);
+                    });
+                    true
+                } else {
+                    false
+                }
+            })
+    }
+
+    pub fn observe_fullscreen<F>(&mut self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut T, bool, &mut ViewContext<T>),
+    {
+        let observer = self.weak_handle();
+        self.app
+            .observe_fullscreen(self.window_id(), move |active, cx| {
                 if let Some(observer) = observer.upgrade(cx) {
                     observer.update(cx, |observer, cx| {
                         callback(observer, active, cx);
@@ -5128,6 +5198,12 @@ pub enum Subscription {
         observations:
             Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<WindowActivationCallback>>>>>>,
     },
+    WindowFullscreenObservation {
+        id: usize,
+        window_id: usize,
+        observations:
+            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<WindowActivationCallback>>>>>>,
+    },
 }
 
 impl Subscription {
@@ -5155,6 +5231,9 @@ impl Subscription {
                 observations.take();
             }
             Subscription::WindowActivationObservation { observations, .. } => {
+                observations.take();
+            }
+            Subscription::WindowFullscreenObservation { observations, .. } => {
                 observations.take();
             }
         }
@@ -5271,6 +5350,27 @@ impl Drop for Subscription {
                 }
             }
             Subscription::WindowActivationObservation {
+                id,
+                window_id,
+                observations,
+            } => {
+                if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
+                    match observations
+                        .lock()
+                        .entry(*window_id)
+                        .or_default()
+                        .entry(*id)
+                    {
+                        btree_map::Entry::Vacant(entry) => {
+                            entry.insert(None);
+                        }
+                        btree_map::Entry::Occupied(entry) => {
+                            entry.remove();
+                        }
+                    }
+                }
+            }
+            Subscription::WindowFullscreenObservation {
                 id,
                 window_id,
                 observations,
