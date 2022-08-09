@@ -119,7 +119,9 @@ impl<D: PickerDelegate> View for Picker<D> {
     }
 
     fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.query_editor);
+        if cx.is_self_focused() {
+            cx.focus(&self.query_editor);
+        }
     }
 }
 

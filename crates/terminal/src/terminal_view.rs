@@ -153,7 +153,9 @@ impl View for TerminalView {
     }
 
     fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        cx.focus(self.content.handle());
+        if cx.is_self_focused() {
+            cx.focus(self.content.handle());
+        }
     }
 
     fn keymap_context(&self, _: &gpui::AppContext) -> gpui::keymap::Context {
