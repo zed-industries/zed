@@ -28,6 +28,7 @@ jobs:
         run: |
           rustup set profile minimal
           rustup update stable
+          rustup component add clippy
           rustup target add wasm32-wasi
 
       - name: Install Node
@@ -39,7 +40,10 @@ jobs:
         uses: actions/checkout@v2
         with:
           clean: false
-
+          
+      - name: Run clippy
+        run: cargo clippy
+        
       - name: Run tests
         run: cargo test --workspace --no-fail-fast
     
