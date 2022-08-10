@@ -703,9 +703,9 @@ impl From<Box<dyn ItemHandle>> for AnyViewHandle {
     }
 }
 
-impl Into<AnyViewHandle> for &Box<dyn ItemHandle> {
-    fn into(self) -> AnyViewHandle {
-        self.to_any()
+impl From<&Box<dyn ItemHandle>> for AnyViewHandle {
+    fn from(val: &Box<dyn ItemHandle>) -> Self {
+        val.to_any()
     }
 }
 

@@ -1711,7 +1711,7 @@ impl Server {
         Ok(())
     }
 
-    pub(crate) async fn store(&self) -> StoreGuard {
+    pub(crate) async fn store(&self) -> StoreGuard<'_> {
         #[cfg(test)]
         tokio::task::yield_now().await;
         let guard = self.store.lock().await;

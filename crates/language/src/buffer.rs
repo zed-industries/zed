@@ -442,12 +442,11 @@ impl Buffer {
     }
 
     fn build(buffer: TextBuffer, file: Option<Arc<dyn File>>) -> Self {
-        let saved_mtime;
-        if let Some(file) = file.as_ref() {
-            saved_mtime = file.mtime();
+        let saved_mtime = if let Some(file) = file.as_ref() {
+            file.mtime()
         } else {
-            saved_mtime = UNIX_EPOCH;
-        }
+            UNIX_EPOCH
+        };
 
         Self {
             saved_mtime,
