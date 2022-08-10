@@ -113,7 +113,6 @@ impl EditorElement {
     fn mouse_down(
         &self,
         position: Vector2F,
-        cmd: bool,
         alt: bool,
         shift: bool,
         mut click_count: usize,
@@ -121,20 +120,6 @@ impl EditorElement {
         paint: &mut PaintState,
         cx: &mut EventContext,
     ) -> bool {
-        if cmd && paint.text_bounds.contains_point(position) {
-            let (point, target_point) =
-                paint.point_for_position(&self.snapshot(cx), layout, position);
-            if point == target_point {
-                if shift {
-                    cx.dispatch_action(GoToFetchedTypeDefinition { point });
-                } else {
-                    cx.dispatch_action(GoToFetchedDefinition { point });
-                }
-
-                return true;
-            }
-        }
-
         if paint.gutter_bounds.contains_point(position) {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
         } else if !paint.text_bounds.contains_point(position) {
@@ -183,13 +168,39 @@ impl EditorElement {
         true
     }
 
-    fn mouse_up(&self, _position: Vector2F, cx: &mut EventContext) -> bool {
-        if self.view(cx.app.as_ref()).is_selecting() {
+    fn mouse_up(
+        &self,
+        position: Vector2F,
+        cmd: bool,
+        shift: bool,
+        layout: &mut LayoutState,
+        paint: &mut PaintState,
+        cx: &mut EventContext,
+    ) -> bool {
+        let view = self.view(cx.app.as_ref());
+        let end_selection = view.is_selecting();
+        let selections_empty = view.are_selections_empty();
+
+        if end_selection {
             cx.dispatch_action(Select(SelectPhase::End));
-            true
-        } else {
-            false
         }
+
+        if selections_empty && cmd && paint.text_bounds.contains_point(position) {
+            let (point, target_point) =
+                paint.point_for_position(&self.snapshot(cx), layout, position);
+
+            if point == target_point {
+                if shift {
+                    cx.dispatch_action(GoToFetchedTypeDefinition { point });
+                } else {
+                    cx.dispatch_action(GoToFetchedDefinition { point });
+                }
+
+                return true;
+            }
+        }
+
+        end_selection
     }
 
     fn mouse_dragged(
@@ -1533,36 +1544,28 @@ impl Element for EditorElement {
         }
 
         match event {
-            Event::MouseDown(MouseButtonEvent {
+            &Event::MouseDown(MouseButtonEvent {
                 button: MouseButton::Left,
                 position,
-                cmd,
                 alt,
                 shift,
                 click_count,
                 ..
-            }) => self.mouse_down(
-                *position,
-                *cmd,
-                *alt,
-                *shift,
-                *click_count,
-                layout,
-                paint,
-                cx,
-            ),
+            }) => self.mouse_down(position, alt, shift, click_count, layout, paint, cx),
 
-            Event::MouseDown(MouseButtonEvent {
+            &Event::MouseDown(MouseButtonEvent {
                 button: MouseButton::Right,
                 position,
                 ..
-            }) => self.mouse_right_down(*position, layout, paint, cx),
+            }) => self.mouse_right_down(position, layout, paint, cx),
 
-            Event::MouseUp(MouseButtonEvent {
+            &Event::MouseUp(MouseButtonEvent {
                 button: MouseButton::Left,
                 position,
+                cmd,
+                shift,
                 ..
-            }) => self.mouse_up(*position, cx),
+            }) => self.mouse_up(position, cmd, shift, layout, paint, cx),
 
             Event::MouseMoved(MouseMovedEvent {
                 pressed_button: Some(MouseButton::Left),
