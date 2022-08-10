@@ -832,7 +832,7 @@ impl Server {
             // First, we send the metadata associated with each worktree.
             for (receipt, replica_id) in &receipts_with_replica_ids {
                 self.peer.respond(
-                    receipt.clone(),
+                    *receipt,
                     proto::JoinProjectResponse {
                         variant: Some(proto::join_project_response::Variant::Accept(
                             proto::join_project_response::Accept {
@@ -1711,7 +1711,7 @@ impl Server {
         Ok(())
     }
 
-    pub(crate) async fn store<'a>(&'a self) -> StoreGuard<'a> {
+    pub(crate) async fn store(&self) -> StoreGuard {
         #[cfg(test)]
         tokio::task::yield_now().await;
         let guard = self.store.lock().await;
@@ -1796,7 +1796,7 @@ impl Header for ProtocolVersion {
     {
         let version = values
             .next()
-            .ok_or_else(|| axum::headers::Error::invalid())?
+            .ok_or_else(axum::headers::Error::invalid)?
             .to_str()
             .map_err(|_| axum::headers::Error::invalid())?
             .parse()

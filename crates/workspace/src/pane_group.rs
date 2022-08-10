@@ -50,7 +50,7 @@ impl PaneGroup {
         }
     }
 
-    pub(crate) fn render<'a>(
+    pub(crate) fn render(
         &self,
         theme: &Theme,
         follower_states: &FollowerStatesByLeader,

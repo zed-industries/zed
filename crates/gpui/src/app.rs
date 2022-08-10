@@ -432,7 +432,7 @@ impl TestAppContext {
         first_entity_id: usize,
     ) -> Self {
         let mut cx = MutableAppContext::new(
-            foreground.clone(),
+            foreground,
             background,
             platform,
             foreground_platform.clone(),
@@ -964,6 +964,7 @@ pub struct MutableAppContext {
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
     action_dispatch_observations: Arc<Mutex<BTreeMap<usize, ActionObservationCallback>>>,
 
+    #[allow(clippy::type_complexity)]
     presenters_and_platform_windows:
         HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
     foreground: Rc<executor::Foreground>,
@@ -1172,7 +1173,9 @@ impl MutableAppContext {
         F: 'static + FnMut(&mut V, &A, &mut ViewContext<V>) -> Option<Task<Result<()>>>,
     {
         self.add_action(move |view, action, cx| {
-            handler(view, action, cx).map(|task| task.detach_and_log_err(cx));
+            if let Some(task) = handler(view, action, cx) {
+                task.detach_and_log_err(cx);
+            }
         })
     }
 
@@ -1240,7 +1243,7 @@ impl MutableAppContext {
             .cx
             .views
             .remove(&(window_id, view_id))
-            .ok_or(anyhow!("view not found"))?;
+            .ok_or_else(|| anyhow!("view not found"))?;
         let element = view.render(params, self);
         self.cx.views.insert((window_id, view_id), view);
         Ok(element)
@@ -1252,6 +1255,7 @@ impl MutableAppContext {
         titlebar_height: f32,
     ) -> HashMap<usize, ElementBox> {
         self.start_frame();
+        #[allow(clippy::needless_collect)]
         let view_ids = self
             .views
             .keys()
@@ -1263,6 +1267,7 @@ impl MutableAppContext {
                 }
             })
             .collect::<Vec<_>>();
+
         view_ids
             .into_iter()
             .map(|view_id| {
@@ -2401,7 +2406,7 @@ impl MutableAppContext {
             let mut invalidation = self
                 .cx
                 .windows
-                .get_mut(&window_id)
+                .get_mut(window_id)
                 .unwrap()
                 .invalidation
                 .take();
@@ -2626,7 +2631,7 @@ impl MutableAppContext {
 
     fn handle_action_dispatch_notification_effect(&mut self, action_id: TypeId) {
         let mut callbacks = mem::take(&mut *self.action_dispatch_observations.lock());
-        for (_, callback) in &mut callbacks {
+        for callback in callbacks.values_mut() {
             callback(action_id, self);
         }
         self.action_dispatch_observations.lock().extend(callbacks);
@@ -3228,7 +3233,7 @@ pub trait AnyView {
         cx: &mut MutableAppContext,
     ) -> Option<Pin<Box<dyn 'static + Future<Output = ()>>>>;
     fn ui_name(&self) -> &'static str;
-    fn render<'a>(&mut self, params: RenderParams, cx: &mut MutableAppContext) -> ElementBox;
+    fn render(&mut self, params: RenderParams, cx: &mut MutableAppContext) -> ElementBox;
     fn on_focus_in(
         &mut self,
         cx: &mut MutableAppContext,
@@ -3304,7 +3309,7 @@ where
         T::ui_name()
     }
 
-    fn render<'a>(&mut self, params: RenderParams, cx: &mut MutableAppContext) -> ElementBox {
+    fn render(&mut self, params: RenderParams, cx: &mut MutableAppContext) -> ElementBox {
         View::render(self, &mut RenderContext::new(params, cx))
     }
 
@@ -3611,7 +3616,7 @@ impl<M> Deref for ModelContext<'_, M> {
     type Target = MutableAppContext;
 
     fn deref(&self) -> &Self::Target {
-        &self.app
+        self.app
     }
 }
 
@@ -4140,7 +4145,7 @@ impl<M> Deref for ViewContext<'_, M> {
     type Target = MutableAppContext;
 
     fn deref(&self) -> &Self::Target {
-        &self.app
+        self.app
     }
 }
 
@@ -4290,7 +4295,7 @@ impl<T: Entity> ModelHandle<T> {
         cx.read_model(self)
     }
 
-    pub fn read_with<'a, C, F, S>(&self, cx: &C, read: F) -> S
+    pub fn read_with<C, F, S>(&self, cx: &C, read: F) -> S
     where
         C: ReadModelWith,
         F: FnOnce(&T, &AppContext) -> S,
@@ -4381,7 +4386,6 @@ impl<T: Entity> ModelHandle<T> {
                 }
             }),
             cx.subscribe(self, {
-                let tx = tx.clone();
                 move |_, _, _| {
                     tx.unbounded_send(()).ok();
                 }
@@ -5258,6 +5262,7 @@ pub enum Subscription {
     ReleaseObservation {
         id: usize,
         entity_id: usize,
+        #[allow(clippy::type_complexity)]
         observations:
             Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>>,
     },
@@ -5407,7 +5412,7 @@ impl Drop for Subscription {
             }
             Subscription::ActionObservation { id, observations } => {
                 if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
-                    observations.lock().remove(&id);
+                    observations.lock().remove(id);
                 }
             }
             Subscription::WindowActivationObservation {
@@ -5465,6 +5470,7 @@ lazy_static! {
 #[derive(Default)]
 pub struct LeakDetector {
     next_handle_id: usize,
+    #[allow(clippy::type_complexity)]
     handle_backtraces: HashMap<
         usize,
         (
@@ -5502,11 +5508,9 @@ impl LeakDetector {
 
     pub fn assert_dropped(&mut self, entity_id: usize) {
         if let Some((type_name, backtraces)) = self.handle_backtraces.get_mut(&entity_id) {
-            for trace in backtraces.values_mut() {
-                if let Some(trace) = trace {
-                    trace.resolve();
-                    eprintln!("{:?}", crate::util::CwdBacktrace(trace));
-                }
+            for trace in backtraces.values_mut().flatten() {
+                trace.resolve();
+                eprintln!("{:?}", crate::util::CwdBacktrace(trace));
             }
 
             let hint = if *LEAK_BACKTRACE {
@@ -5534,11 +5538,9 @@ impl LeakDetector {
                 type_name.unwrap_or("entity"),
                 id
             );
-            for trace in backtraces.values_mut() {
-                if let Some(trace) = trace {
-                    trace.resolve();
-                    eprintln!("{:?}", crate::util::CwdBacktrace(trace));
-                }
+            for trace in backtraces.values_mut().flatten() {
+                trace.resolve();
+                eprintln!("{:?}", crate::util::CwdBacktrace(trace));
             }
             found_leaks = true;
         }
@@ -6586,7 +6588,7 @@ mod tests {
                 let subscription = subscription.clone();
                 move |_, _, e, _| {
                     subscription.borrow_mut().take();
-                    events.borrow_mut().push(e.clone());
+                    events.borrow_mut().push(*e);
                 }
             }));
         });
@@ -7158,8 +7160,8 @@ mod tests {
 
         let model = cx.add_model(|_| Counter(0));
 
-        let condition1 = model.condition(&cx, |model, _| model.0 == 2);
-        let condition2 = model.condition(&cx, |model, _| model.0 == 3);
+        let condition1 = model.condition(cx, |model, _| model.0 == 2);
+        let condition2 = model.condition(cx, |model, _| model.0 == 3);
         smol::pin!(condition1, condition2);
 
         model.update(cx, |model, cx| model.inc(cx));
@@ -7186,7 +7188,7 @@ mod tests {
         }
 
         let model = cx.add_model(|_| Model);
-        model.condition(&cx, |_, _| false).await;
+        model.condition(cx, |_, _| false).await;
     }
 
     #[crate::test(self)]
@@ -7199,7 +7201,7 @@ mod tests {
         }
 
         let model = cx.add_model(|_| Model);
-        let condition = model.condition(&cx, |_, _| false);
+        let condition = model.condition(cx, |_, _| false);
         cx.update(|_| drop(model));
         condition.await;
     }
@@ -7231,8 +7233,8 @@ mod tests {
 
         let (_, view) = cx.add_window(|_| Counter(0));
 
-        let condition1 = view.condition(&cx, |view, _| view.0 == 2);
-        let condition2 = view.condition(&cx, |view, _| view.0 == 3);
+        let condition1 = view.condition(cx, |view, _| view.0 == 2);
+        let condition2 = view.condition(cx, |view, _| view.0 == 3);
         smol::pin!(condition1, condition2);
 
         view.update(cx, |view, cx| view.inc(cx));
@@ -7268,7 +7270,7 @@ mod tests {
         }
 
         let (_, view) = cx.add_window(|_| View);
-        view.condition(&cx, |_, _| false).await;
+        view.condition(cx, |_, _| false).await;
     }
 
     #[crate::test(self)]
@@ -7293,7 +7295,7 @@ mod tests {
         let (_, root_view) = cx.add_window(|_| View);
         let view = cx.add_view(&root_view, |_| View);
 
-        let condition = view.condition(&cx, |_, _| false);
+        let condition = view.condition(cx, |_, _| false);
         cx.update(|_| drop(view));
         condition.await;
     }

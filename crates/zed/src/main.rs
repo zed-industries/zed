@@ -29,7 +29,7 @@ use serde_json::json;
 use settings::{self, KeymapFileContent, Settings, SettingsFileContent};
 use smol::process::Command;
 use std::{env, ffi::OsStr, fs, panic, path::PathBuf, sync::Arc, thread, time::Duration};
-use terminal;
+
 use theme::ThemeRegistry;
 use util::{ResultExt, TryFutureExt};
 use workspace::{self, AppState, NewFile, OpenPaths};
@@ -54,7 +54,7 @@ fn main() {
     let db = app.background().spawn(async move {
         project::Db::open(&*zed::paths::DB)
             .log_err()
-            .unwrap_or(project::Db::null())
+            .unwrap_or_else(project::Db::null)
     });
 
     load_embedded_fonts(&app);
@@ -182,10 +182,8 @@ fn main() {
                 if client::IMPERSONATE_LOGIN.is_some() {
                     client.authenticate_and_connect(false, &cx).await?;
                 }
-            } else {
-                if client.has_keychain_credentials(&cx) {
-                    client.authenticate_and_connect(true, &cx).await?;
-                }
+            } else if client.has_keychain_credentials(&cx) {
+                client.authenticate_and_connect(true, &cx).await?;
             }
             Ok::<_, anyhow::Error>(())
         })
@@ -222,7 +220,9 @@ fn init_logger() {
         let level = LevelFilter::Info;
 
         // Prevent log file from becoming too large.
-        const MAX_LOG_BYTES: u64 = 1 * 1024 * 1024;
+        const KIB: u64 = 1024;
+        const MIB: u64 = 1024 * KIB;
+        const MAX_LOG_BYTES: u64 = MIB;
         if fs::metadata(&*zed::paths::LOG).map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES)
         {
             let _ = fs::rename(&*zed::paths::LOG, &*zed::paths::OLD_LOG);
@@ -406,7 +406,7 @@ fn load_embedded_fonts(app: &App) {
         for font_path in &font_paths {
             scope.spawn(async {
                 let font_path = &*font_path;
-                let font_bytes = Assets.load(&font_path).unwrap().to_vec();
+                let font_bytes = Assets.load(font_path).unwrap().to_vec();
                 embedded_fonts.lock().push(Arc::from(font_bytes));
             });
         }
@@ -426,7 +426,7 @@ async fn watch_themes(
     let mut events = fs
         .watch("styles/src".as_ref(), Duration::from_millis(100))
         .await;
-    while let Some(_) = events.next().await {
+    while (events.next().await).is_some() {
         let output = Command::new("npm")
             .current_dir("styles")
             .args(["run", "build-themes"])

@@ -29,7 +29,7 @@ impl __Buffer {
 pub extern "C" fn __alloc_buffer(len: u32) -> u32 {
     let vec = vec![0; len as usize];
     let buffer = unsafe { __Buffer::from_vec(vec) };
-    return buffer.ptr;
+    buffer.ptr
 }
 
 /// Frees a given buffer, requires the size.

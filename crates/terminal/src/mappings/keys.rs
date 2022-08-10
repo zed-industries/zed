@@ -48,7 +48,7 @@ pub fn might_convert(keystroke: &Keystroke) -> bool {
 }
 
 pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode) -> Option<String> {
-    let modifiers = Modifiers::new(&keystroke);
+    let modifiers = Modifiers::new(keystroke);
 
     // Manual Bindings including modifiers
     let manual_esc_str = match (keystroke.key.as_ref(), &modifiers) {
@@ -204,7 +204,7 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode) -> Option<String> {
 
     // Automated bindings applying modifiers
     if modifiers.any() {
-        let modifier_code = modifier_code(&keystroke);
+        let modifier_code = modifier_code(keystroke);
         let modified_esc_str = match keystroke.key.as_ref() {
             "up" => Some(format!("\x1b[1;{}A", modifier_code)),
             "down" => Some(format!("\x1b[1;{}B", modifier_code)),

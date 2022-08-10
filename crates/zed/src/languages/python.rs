@@ -206,7 +206,7 @@ mod tests {
             );
 
             // dedent the closing paren if it is shifted to the beginning of the line
-            let argument_ix = buffer.text().find("1").unwrap();
+            let argument_ix = buffer.text().find('1').unwrap();
             buffer.edit(
                 [(argument_ix..argument_ix + 1, "")],
                 Some(AutoindentMode::EachLine),

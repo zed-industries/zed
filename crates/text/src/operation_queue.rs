@@ -26,6 +26,12 @@ impl OperationKey {
     }
 }
 
+impl<T: Operation> Default for OperationQueue<T> {
+    fn default() -> Self {
+        OperationQueue::new()
+    }
+}
+
 impl<T: Operation> OperationQueue<T> {
     pub fn new() -> Self {
         OperationQueue(SumTree::new())
@@ -33,6 +39,10 @@ impl<T: Operation> OperationQueue<T> {
 
     pub fn len(&self) -> usize {
         self.0.summary().len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     pub fn insert(&mut self, mut ops: Vec<T>) {

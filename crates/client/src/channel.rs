@@ -145,7 +145,7 @@ impl ChannelList {
     }
 
     pub fn available_channels(&self) -> Option<&[ChannelDetails]> {
-        self.available_channels.as_ref().map(Vec::as_slice)
+        self.available_channels.as_deref()
     }
 
     pub fn get_channel(
@@ -601,8 +601,8 @@ mod tests {
 
         let user_id = 5;
         let http_client = FakeHttpClient::with_404_response();
-        let mut client = Client::new(http_client.clone());
-        let server = FakeServer::for_client(user_id, &mut client, &cx).await;
+        let client = Client::new(http_client.clone());
+        let server = FakeServer::for_client(user_id, &client, cx).await;
 
         Channel::init(&client);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
@@ -623,7 +623,7 @@ mod tests {
                 },
             )
             .await;
-        channel_list.next_notification(&cx).await;
+        channel_list.next_notification(cx).await;
         channel_list.read_with(cx, |list, _| {
             assert_eq!(
                 list.available_channels().unwrap(),
@@ -701,7 +701,7 @@ mod tests {
             .await;
 
         assert_eq!(
-            channel.next_event(&cx).await,
+            channel.next_event(cx).await,
             ChannelEvent::MessagesUpdated {
                 old_range: 0..0,
                 new_count: 2,
@@ -749,7 +749,7 @@ mod tests {
             .await;
 
         assert_eq!(
-            channel.next_event(&cx).await,
+            channel.next_event(cx).await,
             ChannelEvent::MessagesUpdated {
                 old_range: 2..2,
                 new_count: 1,
@@ -798,7 +798,7 @@ mod tests {
             .await;
 
         assert_eq!(
-            channel.next_event(&cx).await,
+            channel.next_event(cx).await,
             ChannelEvent::MessagesUpdated {
                 old_range: 0..0,
                 new_count: 2,

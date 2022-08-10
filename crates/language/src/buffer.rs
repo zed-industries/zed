@@ -737,9 +737,7 @@ impl Buffer {
                             this.parsing_in_background = false;
                             this.did_finish_parsing(new_tree, parsed_version, cx);
 
-                            if parse_again && this.reparse(cx) {
-                                return;
-                            }
+                            if parse_again && this.reparse(cx) {}
                         });
                     })
                     .detach();
@@ -933,10 +931,12 @@ impl Buffer {
                                 indent_sizes.entry(row).or_insert_with(|| {
                                     let mut size = snapshot.indent_size_for_line(row);
                                     if size.kind == new_indent.kind {
-                                        if delta > 0 {
-                                            size.len = size.len + delta as u32;
-                                        } else if delta < 0 {
-                                            size.len = size.len.saturating_sub(-delta as u32);
+                                        match delta.cmp(&0) {
+                                            Ordering::Greater => size.len += delta as u32,
+                                            Ordering::Less => {
+                                                size.len = size.len.saturating_sub(-delta as u32)
+                                            }
+                                            Ordering::Equal => {}
                                         }
                                     }
                                     size
@@ -961,7 +961,7 @@ impl Buffer {
         let edits: Vec<_> = indent_sizes
             .into_iter()
             .filter_map(|(row, indent_size)| {
-                let current_size = indent_size_for_line(&self, row);
+                let current_size = indent_size_for_line(self, row);
                 Self::edit_for_indent_size_adjustment(row, current_size, indent_size)
             })
             .collect();
@@ -978,21 +978,23 @@ impl Buffer {
             return None;
         }
 
-        if new_size.len > current_size.len {
-            let point = Point::new(row, 0);
-            Some((
-                point..point,
-                iter::repeat(new_size.char())
-                    .take((new_size.len - current_size.len) as usize)
-                    .collect::<String>(),
-            ))
-        } else if new_size.len < current_size.len {
-            Some((
+        match new_size.len.cmp(&current_size.len) {
+            Ordering::Greater => {
+                let point = Point::new(row, 0);
+                Some((
+                    point..point,
+                    iter::repeat(new_size.char())
+                        .take((new_size.len - current_size.len) as usize)
+                        .collect::<String>(),
+                ))
+            }
+
+            Ordering::Less => Some((
                 Point::new(row, 0)..Point::new(row, current_size.len - new_size.len),
                 String::new(),
-            ))
-        } else {
-            None
+            )),
+
+            Ordering::Equal => None,
         }
     }
 
@@ -1599,7 +1601,7 @@ impl Deref for Buffer {
 
 impl BufferSnapshot {
     pub fn indent_size_for_line(&self, row: u32) -> IndentSize {
-        indent_size_for_line(&self, row)
+        indent_size_for_line(self, row)
     }
 
     pub fn single_indent_size(&self, cx: &AppContext) -> IndentSize {
@@ -1643,10 +1645,10 @@ impl BufferSnapshot {
         result
     }
 
-    fn suggest_autoindents<'a>(
-        &'a self,
+    fn suggest_autoindents(
+        &self,
         row_range: Range<u32>,
-    ) -> Option<impl Iterator<Item = Option<IndentSuggestion>> + 'a> {
+    ) -> Option<impl Iterator<Item = Option<IndentSuggestion>> + '_> {
         let language = self.language.as_ref()?;
         let grammar = language.grammar.as_ref()?;
         let config = &language.config;
@@ -1675,7 +1677,7 @@ impl BufferSnapshot {
                     start.get_or_insert(Point::from_ts_point(capture.node.start_position()));
                     end.get_or_insert(Point::from_ts_point(capture.node.end_position()));
                 } else if Some(capture.index) == end_capture_ix {
-                    end = Some(Point::from_ts_point(capture.node.start_position().into()));
+                    end = Some(Point::from_ts_point(capture.node.start_position()));
                 }
             }
 
@@ -1733,15 +1735,17 @@ impl BufferSnapshot {
             let mut outdent_to_row = u32::MAX;
 
             while let Some((indent_row, delta)) = indent_changes.peek() {
-                if *indent_row == row {
-                    match delta {
+                match indent_row.cmp(&row) {
+                    Ordering::Equal => match delta {
                         Ordering::Less => outdent_from_prev_row = true,
                         Ordering::Greater => indent_from_prev_row = true,
                         _ => {}
-                    }
-                } else if *indent_row > row {
-                    break;
+                    },
+
+                    Ordering::Greater => break,
+                    Ordering::Less => {}
                 }
+
                 indent_changes.next();
             }
 
@@ -1805,11 +1809,7 @@ impl BufferSnapshot {
         None
     }
 
-    pub fn chunks<'a, T: ToOffset>(
-        &'a self,
-        range: Range<T>,
-        language_aware: bool,
-    ) -> BufferChunks<'a> {
+    pub fn chunks<T: ToOffset>(&self, range: Range<T>, language_aware: bool) -> BufferChunks {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
         let mut tree = None;
@@ -1843,7 +1843,7 @@ impl BufferSnapshot {
         )
     }
 
-    pub fn for_each_line<'a>(&'a self, range: Range<Point>, mut callback: impl FnMut(u32, &str)) {
+    pub fn for_each_line(&self, range: Range<Point>, mut callback: impl FnMut(u32, &str)) {
         let mut line = String::new();
         let mut row = range.start.row;
         for chunk in self
@@ -1969,7 +1969,7 @@ impl BufferSnapshot {
         position: T,
         theme: Option<&SyntaxTheme>,
     ) -> Option<Vec<OutlineItem<Anchor>>> {
-        let position = position.to_offset(&self);
+        let position = position.to_offset(self);
         let mut items =
             self.outline_items_containing(position.saturating_sub(1)..position + 1, theme)?;
         let mut prev_depth = None;
@@ -2050,7 +2050,7 @@ impl BufferSnapshot {
 
                     let mut offset = range.start;
                     chunks.seek(offset);
-                    while let Some(mut chunk) = chunks.next() {
+                    for mut chunk in chunks.by_ref() {
                         if chunk.text.len() > range.end - offset {
                             chunk.text = &chunk.text[0..(range.end - offset)];
                             offset = range.end;
@@ -2105,7 +2105,7 @@ impl BufferSnapshot {
         let range = range.start.to_offset(self).saturating_sub(1)..range.end.to_offset(self) + 1;
         let mut cursor = QueryCursorHandle::new();
         let matches = cursor.set_byte_range(range).matches(
-            &brackets_query,
+            brackets_query,
             tree.root_node(),
             TextProvider(self.as_rope()),
         );
@@ -2120,17 +2120,17 @@ impl BufferSnapshot {
             .min_by_key(|(open_range, close_range)| close_range.end - open_range.start)
     }
 
-    pub fn remote_selections_in_range<'a>(
-        &'a self,
+    #[allow(clippy::type_complexity)]
+    pub fn remote_selections_in_range(
+        &self,
         range: Range<Anchor>,
-    ) -> impl 'a
-           + Iterator<
+    ) -> impl Iterator<
         Item = (
             ReplicaId,
             bool,
-            impl 'a + Iterator<Item = &'a Selection<Anchor>>,
+            impl Iterator<Item = &Selection<Anchor>> + '_,
         ),
-    > {
+    > + '_ {
         self.remote_selections
             .iter()
             .filter(|(replica_id, set)| {
@@ -2165,8 +2165,7 @@ impl BufferSnapshot {
         T: 'a + Clone + ToOffset,
         O: 'a + FromAnchor,
     {
-        self.diagnostics
-            .range(search_range.clone(), self, true, reversed)
+        self.diagnostics.range(search_range, self, true, reversed)
     }
 
     pub fn diagnostic_groups(&self) -> Vec<DiagnosticGroup<Anchor>> {
@@ -2469,10 +2468,7 @@ impl<'a> Iterator for BufferChunks<'a> {
 
 impl QueryCursorHandle {
     pub(crate) fn new() -> Self {
-        let mut cursor = QUERY_CURSORS
-            .lock()
-            .pop()
-            .unwrap_or_else(|| QueryCursor::new());
+        let mut cursor = QUERY_CURSORS.lock().pop().unwrap_or_else(QueryCursor::new);
         cursor.set_match_limit(64);
         QueryCursorHandle(Some(cursor))
     }
@@ -2614,7 +2610,7 @@ pub fn contiguous_ranges(
     values: impl Iterator<Item = u32>,
     max_len: usize,
 ) -> impl Iterator<Item = Range<u32>> {
-    let mut values = values.into_iter();
+    let mut values = values;
     let mut current_range: Option<Range<u32>> = None;
     std::iter::from_fn(move || loop {
         if let Some(value) = values.next() {

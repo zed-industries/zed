@@ -216,7 +216,7 @@ impl BufferSearchBar {
 
     fn dismiss(&mut self, _: &Dismiss, cx: &mut ViewContext<Self>) {
         self.dismissed = true;
-        for (editor, _) in &self.editors_with_matches {
+        for editor in self.editors_with_matches.keys() {
             if let Some(editor) = editor.upgrade(cx) {
                 editor.update(cx, |editor, cx| {
                     editor.clear_background_highlights::<Self>(cx)
@@ -450,14 +450,11 @@ impl BufferSearchBar {
         event: &editor::Event,
         cx: &mut ViewContext<Self>,
     ) {
-        match event {
-            editor::Event::BufferEdited { .. } => {
-                self.query_contains_error = false;
-                self.clear_matches(cx);
-                self.update_matches(true, cx);
-                cx.notify();
-            }
-            _ => {}
+        if let editor::Event::BufferEdited { .. } = event {
+            self.query_contains_error = false;
+            self.clear_matches(cx);
+            self.update_matches(true, cx);
+            cx.notify();
         }
     }
 
@@ -586,7 +583,7 @@ impl BufferSearchBar {
             let ranges = self.editors_with_matches.get(&editor.downgrade())?;
             let editor = editor.read(cx);
             active_match_index(
-                &ranges,
+                ranges,
                 &editor.selections.newest_anchor().head(),
                 &editor.buffer().read(cx).snapshot(cx),
             )
@@ -610,7 +607,7 @@ mod tests {
     #[gpui::test]
     async fn test_search_simple(cx: &mut TestAppContext) {
         let fonts = cx.font_cache();
-        let mut theme = gpui::fonts::with_font_cache(fonts.clone(), || theme::Theme::default());
+        let mut theme = gpui::fonts::with_font_cache(fonts.clone(), theme::Theme::default);
         theme.search.match_background = Color::red();
         cx.update(|cx| {
             let mut settings = Settings::test(cx);
@@ -649,7 +646,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.set_query("us", cx);
         });
-        editor.next_notification(&cx).await;
+        editor.next_notification(cx).await;
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 editor.all_background_highlights(cx),
@@ -670,7 +667,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.toggle_search_option(SearchOption::CaseSensitive, cx);
         });
-        editor.next_notification(&cx).await;
+        editor.next_notification(cx).await;
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 editor.all_background_highlights(cx),
@@ -686,7 +683,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.set_query("or", cx);
         });
-        editor.next_notification(&cx).await;
+        editor.next_notification(cx).await;
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 editor.all_background_highlights(cx),
@@ -727,7 +724,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.toggle_search_option(SearchOption::WholeWord, cx);
         });
-        editor.next_notification(&cx).await;
+        editor.next_notification(cx).await;
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 editor.all_background_highlights(cx),

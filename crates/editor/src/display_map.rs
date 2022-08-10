@@ -253,7 +253,7 @@ impl DisplaySnapshot {
         self.buffer_snapshot.len() == 0
     }
 
-    pub fn buffer_rows<'a>(&'a self, start_row: u32) -> DisplayBufferRows<'a> {
+    pub fn buffer_rows(&self, start_row: u32) -> DisplayBufferRows {
         self.blocks_snapshot.buffer_rows(start_row)
     }
 
@@ -313,7 +313,7 @@ impl DisplaySnapshot {
     fn point_to_display_point(&self, point: Point, bias: Bias) -> DisplayPoint {
         let fold_point = self.folds_snapshot.to_fold_point(point, bias);
         let tab_point = self.tabs_snapshot.to_tab_point(fold_point);
-        let wrap_point = self.wraps_snapshot.from_tab_point(tab_point);
+        let wrap_point = self.wraps_snapshot.tab_point_to_wrap_point(tab_point);
         let block_point = self.blocks_snapshot.to_block_point(wrap_point);
         DisplayPoint(block_point)
     }
@@ -336,16 +336,12 @@ impl DisplaySnapshot {
             .map(|h| h.text)
     }
 
-    pub fn chunks<'a>(
-        &'a self,
-        display_rows: Range<u32>,
-        language_aware: bool,
-    ) -> DisplayChunks<'a> {
+    pub fn chunks(&self, display_rows: Range<u32>, language_aware: bool) -> DisplayChunks<'_> {
         self.blocks_snapshot
             .chunks(display_rows, language_aware, Some(&self.text_highlights))
     }
 
-    pub fn chars_at<'a>(&'a self, point: DisplayPoint) -> impl Iterator<Item = char> + 'a {
+    pub fn chars_at(&self, point: DisplayPoint) -> impl Iterator<Item = char> + '_ {
         let mut column = 0;
         let mut chars = self.text_chunks(point.row()).flat_map(str::chars);
         while column < point.column() {
@@ -372,15 +368,15 @@ impl DisplaySnapshot {
     }
 
     pub fn column_from_chars(&self, display_row: u32, char_count: u32) -> u32 {
-        let mut count = 0;
         let mut column = 0;
-        for c in self.chars_at(DisplayPoint::new(display_row, 0)) {
-            if c == '\n' || count >= char_count {
+
+        for (count, c) in self.chars_at(DisplayPoint::new(display_row, 0)).enumerate() {
+            if c == '\n' || count >= char_count as usize {
                 break;
             }
-            count += 1;
             column += c.len_utf8() as u32;
         }
+
         column
     }
 
@@ -401,20 +397,17 @@ impl DisplaySnapshot {
         DisplayPoint(point)
     }
 
-    pub fn folds_in_range<'a, T>(
-        &'a self,
-        range: Range<T>,
-    ) -> impl Iterator<Item = &'a Range<Anchor>>
+    pub fn folds_in_range<T>(&self, range: Range<T>) -> impl Iterator<Item = &Range<Anchor>>
     where
         T: ToOffset,
     {
         self.folds_snapshot.folds_in_range(range)
     }
 
-    pub fn blocks_in_range<'a>(
-        &'a self,
+    pub fn blocks_in_range(
+        &self,
         rows: Range<u32>,
-    ) -> impl Iterator<Item = (u32, &'a TransformBlock)> {
+    ) -> impl Iterator<Item = (u32, &TransformBlock)> {
         self.blocks_snapshot.blocks_in_range(rows)
     }
 
@@ -1015,7 +1008,7 @@ pub mod tests {
         });
 
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
-        buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
+        buffer.condition(cx, |buf, _| !buf.is_parsing()).await;
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
 
         let font_cache = cx.font_cache();
@@ -1102,7 +1095,7 @@ pub mod tests {
         cx.update(|cx| cx.set_global(Settings::test(cx)));
 
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
-        buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
+        buffer.condition(cx, |buf, _| !buf.is_parsing()).await;
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
 
         let font_cache = cx.font_cache();
@@ -1173,7 +1166,7 @@ pub mod tests {
         let (text, highlighted_ranges) = marked_text_ranges(r#"constˇ «a»: B = "c «d»""#, false);
 
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
-        buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
+        buffer.condition(cx, |buf, _| !buf.is_parsing()).await;
 
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));

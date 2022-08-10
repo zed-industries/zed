@@ -68,7 +68,7 @@ impl SelectionsCollection {
         self.pending = other.pending.clone();
     }
 
-    pub fn count<'a>(&self) -> usize {
+    pub fn count(&self) -> usize {
         let mut count = self.disjoint.len();
         if self.pending.is_some() {
             count += 1;
@@ -365,7 +365,7 @@ impl<'a> MutableSelectionsCollection<'a> {
         let mut changed = false;
         self.collection.disjoint = self
             .disjoint
-            .into_iter()
+            .iter()
             .filter(|selection| {
                 let found = selection.id == selection_id;
                 changed |= found;
@@ -464,7 +464,7 @@ impl<'a> MutableSelectionsCollection<'a> {
             return true;
         }
 
-        return false;
+        false
     }
 
     pub fn insert_range<T>(&mut self, range: Range<T>)
@@ -729,8 +729,7 @@ impl<'a> MutableSelectionsCollection<'a> {
                     kept_end
                 };
                 if !kept_head {
-                    selections_with_lost_position
-                        .insert(selection.id, selection.head().excerpt_id.clone());
+                    selections_with_lost_position.insert(selection.id, selection.head().excerpt_id);
                 }
 
                 Selection {
@@ -761,10 +760,8 @@ impl<'a> MutableSelectionsCollection<'a> {
                 kept_end
             };
             if !kept_head {
-                selections_with_lost_position.insert(
-                    pending.selection.id,
-                    pending.selection.head().excerpt_id.clone(),
-                );
+                selections_with_lost_position
+                    .insert(pending.selection.id, pending.selection.head().excerpt_id);
             }
 
             pending.selection.start = start;
@@ -814,5 +811,5 @@ fn resolve<D: TextDimension + Ord + Sub<D, Output = D>>(
     selection: &Selection<Anchor>,
     buffer: &MultiBufferSnapshot,
 ) -> Selection<D> {
-    selection.map(|p| p.summary::<D>(&buffer))
+    selection.map(|p| p.summary::<D>(buffer))
 }

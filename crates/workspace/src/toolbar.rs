@@ -133,12 +133,10 @@ impl View for Toolbar {
                     .with_child(nav_button(
                         "icons/arrow_right_16.svg",
                         button_style,
-                        tooltip_style.clone(),
+                        tooltip_style,
                         enable_go_forward,
                         spacing,
-                        super::GoForward {
-                            pane: Some(pane.clone()),
-                        },
+                        super::GoForward { pane: Some(pane) },
                         super::GoForward { pane: None },
                         "Go Forward",
                         cx,
@@ -156,6 +154,7 @@ impl View for Toolbar {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn nav_button<A: Action + Clone>(
     svg_path: &'static str,
     style: theme::Interactive<theme::IconButton>,
@@ -280,8 +279,8 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for ViewHandle<T> {
     }
 }
 
-impl Into<AnyViewHandle> for &dyn ToolbarItemViewHandle {
-    fn into(self) -> AnyViewHandle {
-        self.to_any()
+impl From<&dyn ToolbarItemViewHandle> for AnyViewHandle {
+    fn from(val: &dyn ToolbarItemViewHandle) -> Self {
+        val.to_any()
     }
 }

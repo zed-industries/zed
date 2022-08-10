@@ -126,8 +126,8 @@ impl<T: StatusItemView> StatusItemViewHandle for ViewHandle<T> {
     }
 }
 
-impl Into<AnyViewHandle> for &dyn StatusItemViewHandle {
-    fn into(self) -> AnyViewHandle {
-        self.to_any()
+impl From<&dyn StatusItemViewHandle> for AnyViewHandle {
+    fn from(val: &dyn StatusItemViewHandle) -> Self {
+        val.to_any()
     }
 }

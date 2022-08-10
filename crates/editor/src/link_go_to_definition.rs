@@ -83,7 +83,7 @@ pub fn update_go_to_definition_link(
         &point,
         &editor.link_go_to_definition_state.last_mouse_location,
     ) {
-        if a.cmp(&b, &snapshot.buffer_snapshot).is_eq() {
+        if a.cmp(b, &snapshot.buffer_snapshot).is_eq() {
             return;
         }
     }
@@ -126,7 +126,7 @@ pub fn cmd_shift_changed(
                 LinkDefinitionKind::Symbol
             };
 
-            show_link_definition(kind, editor, point.clone(), snapshot, cx);
+            show_link_definition(kind, editor, point, snapshot, cx);
         } else {
             hide_link_definition(editor, cx)
         }
@@ -204,12 +204,10 @@ pub fn show_link_definition(
             // query the LSP for definition info
             let definition_request = cx.update(|cx| {
                 project.update(cx, |project, cx| match definition_kind {
-                    LinkDefinitionKind::Symbol => {
-                        project.definition(&buffer, buffer_position.clone(), cx)
-                    }
+                    LinkDefinitionKind::Symbol => project.definition(&buffer, buffer_position, cx),
 
                     LinkDefinitionKind::Type => {
-                        project.type_definition(&buffer, buffer_position.clone(), cx)
+                        project.type_definition(&buffer, buffer_position, cx)
                     }
                 })
             });
@@ -363,7 +361,7 @@ fn go_to_fetched_definition_of_kind(
         editor_handle.update(cx, |editor, cx| {
             editor.select(
                 &Select(SelectPhase::Begin {
-                    position: point.clone(),
+                    position: point,
                     add: false,
                     click_count: 1,
                 }),

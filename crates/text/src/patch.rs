@@ -548,7 +548,7 @@ mod tests {
         let composed = patches[0].compose(&patches[1]);
         log::info!("composed patch: {:?}", &composed);
 
-        let mut actual_chars = initial_chars.clone();
+        let mut actual_chars = initial_chars;
         for edit in composed.0 {
             actual_chars.splice(
                 edit.new.start as usize..edit.new.start as usize + edit.old.len(),
@@ -570,7 +570,7 @@ mod tests {
         apply_patch(&mut expected, &old, &inserted);
         apply_patch(&mut expected, &new, &inserted);
 
-        let mut actual = original.clone();
+        let mut actual = original;
         apply_patch(&mut actual, &composed, &expected);
         assert_eq!(
             actual.into_iter().collect::<String>(),

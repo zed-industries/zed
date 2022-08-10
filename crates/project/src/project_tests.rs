@@ -499,7 +499,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
     });
 
     buffer_a.read_with(cx, |buffer, _| {
-        let chunks = chunks_with_diagnostics(&buffer, 0..buffer.len());
+        let chunks = chunks_with_diagnostics(buffer, 0..buffer.len());
         assert_eq!(
             chunks
                 .iter()
@@ -513,7 +513,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
         );
     });
     buffer_b.read_with(cx, |buffer, _| {
-        let chunks = chunks_with_diagnostics(&buffer, 0..buffer.len());
+        let chunks = chunks_with_diagnostics(buffer, 0..buffer.len());
         assert_eq!(
             chunks
                 .iter()
@@ -579,7 +579,7 @@ async fn test_hidden_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
     buffer.read_with(cx, |buffer, _| {
-        let chunks = chunks_with_diagnostics(&buffer, 0..buffer.len());
+        let chunks = chunks_with_diagnostics(buffer, 0..buffer.len());
         assert_eq!(
             chunks
                 .iter()
@@ -1262,7 +1262,7 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
     // At the end of a line, an empty range is extended backward to include
     // the preceding character.
     buffer.read_with(cx, |buffer, _| {
-        let chunks = chunks_with_diagnostics(&buffer, 0..buffer.len());
+        let chunks = chunks_with_diagnostics(buffer, 0..buffer.len());
         assert_eq!(
             chunks
                 .iter()
@@ -1511,7 +1511,7 @@ async fn test_edits_from_lsp_with_edits_on_adjacent_lines(cx: &mut gpui::TestApp
             .into_iter()
             .map(|(range, text)| {
                 (
-                    range.start.to_point(&buffer)..range.end.to_point(&buffer),
+                    range.start.to_point(buffer)..range.end.to_point(buffer),
                     text,
                 )
             })
@@ -1614,7 +1614,7 @@ async fn test_invalid_edits_from_lsp(cx: &mut gpui::TestAppContext) {
             .into_iter()
             .map(|(range, text)| {
                 (
-                    range.start.to_point(&buffer)..range.end.to_point(&buffer),
+                    range.start.to_point(buffer)..range.end.to_point(buffer),
                     text,
                 )
             })
@@ -2139,7 +2139,7 @@ async fn test_rescan_and_remote_updates(
             let tree = project.worktrees(cx).next().unwrap();
             tree.read(cx)
                 .entry_for_path(path)
-                .expect(&format!("no entry for path {}", path))
+                .unwrap_or_else(|| panic!("no entry for path {}", path))
                 .id
         })
     };
@@ -2149,9 +2149,9 @@ async fn test_rescan_and_remote_updates(
     let buffer4 = buffer_for_path("b/c/file4", cx).await;
     let buffer5 = buffer_for_path("b/c/file5", cx).await;
 
-    let file2_id = id_for_path("a/file2", &cx);
-    let file3_id = id_for_path("a/file3", &cx);
-    let file4_id = id_for_path("b/c/file4", &cx);
+    let file2_id = id_for_path("a/file2", cx);
+    let file3_id = id_for_path("a/file3", cx);
+    let file4_id = id_for_path("b/c/file4", cx);
 
     // Create a remote copy of this worktree.
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
@@ -2183,12 +2183,12 @@ async fn test_rescan_and_remote_updates(
     });
 
     // Rename and delete files and directories.
-    tree.flush_fs_events(&cx).await;
+    tree.flush_fs_events(cx).await;
     std::fs::rename(dir.path().join("a/file3"), dir.path().join("b/c/file3")).unwrap();
     std::fs::remove_file(dir.path().join("b/c/file5")).unwrap();
     std::fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
     std::fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
-    tree.flush_fs_events(&cx).await;
+    tree.flush_fs_events(cx).await;
 
     let expected_paths = vec![
         "a",
@@ -2209,9 +2209,9 @@ async fn test_rescan_and_remote_updates(
             expected_paths
         );
 
-        assert_eq!(id_for_path("a/file2.new", &cx), file2_id);
-        assert_eq!(id_for_path("d/file3", &cx), file3_id);
-        assert_eq!(id_for_path("d/file4", &cx), file4_id);
+        assert_eq!(id_for_path("a/file2.new", cx), file2_id);
+        assert_eq!(id_for_path("d/file3", cx), file3_id);
+        assert_eq!(id_for_path("d/file4", cx), file4_id);
 
         assert_eq!(
             buffer2.read(app).file().unwrap().path().as_ref(),
@@ -2689,7 +2689,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 message: "error 2 hint 2".to_string(),
                 related_information: Some(vec![lsp::DiagnosticRelatedInformation {
                     location: lsp::Location {
-                        uri: buffer_uri.clone(),
+                        uri: buffer_uri,
                         range: lsp::Range::new(lsp::Position::new(2, 8), lsp::Position::new(2, 17)),
                     },
                     message: "original diagnostic".to_string(),

@@ -38,7 +38,7 @@ where
     }
 
     fn is_focused(&self, cx: &AppContext) -> bool {
-        ViewHandle::is_focused(&self, cx) || self.read(cx).contains_focused_view(cx)
+        ViewHandle::is_focused(self, cx) || self.read(cx).contains_focused_view(cx)
     }
 
     fn to_any(&self) -> AnyViewHandle {
@@ -46,9 +46,9 @@ where
     }
 }
 
-impl Into<AnyViewHandle> for &dyn SidebarItemHandle {
-    fn into(self) -> AnyViewHandle {
-        self.to_any()
+impl From<&dyn SidebarItemHandle> for AnyViewHandle {
+    fn from(val: &dyn SidebarItemHandle) -> Self {
+        val.to_any()
     }
 }
 
@@ -284,11 +284,14 @@ impl View for SidebarButtons {
             Side::Left => theme.group_left,
             Side::Right => theme.group_right,
         };
+
+        #[allow(clippy::needless_collect)]
         let items = sidebar
             .items
             .iter()
             .map(|item| (item.icon_path, item.tooltip.clone(), item.view.clone()))
             .collect::<Vec<_>>();
+
         Flex::row()
             .with_children(items.into_iter().enumerate().map(
                 |(ix, (icon_path, tooltip, item_view))| {

@@ -85,11 +85,11 @@ impl gpui::Element for TextElement {
             text,
             font_size,
             &[
-                (1, normal.clone()),
-                (1, bold.clone()),
-                (1, normal.clone()),
-                (1, bold.clone()),
-                (text.len() - 4, normal.clone()),
+                (1, normal),
+                (1, bold),
+                (1, normal),
+                (1, bold),
+                (text.len() - 4, normal),
             ],
         );
 

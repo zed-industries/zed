@@ -116,7 +116,7 @@ impl WaitingRoom {
                                         workspace
                                     });
                                 }
-                                Err(error @ _) => {
+                                Err(error) => {
                                     let login = &contact.user.github_login;
                                     let message = match error {
                                         project::JoinProjectError::HostDeclined => {

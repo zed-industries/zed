@@ -367,7 +367,7 @@ impl ProjectSearchView {
         });
         // Subcribe to query_editor in order to reraise editor events for workspace item activation purposes
         cx.subscribe(&query_editor, |_, _, event, cx| {
-            cx.emit(ViewEvent::EditorEvent(event.clone()))
+            cx.emit(ViewEvent::EditorEvent(*event))
         })
         .detach();
 
@@ -384,7 +384,7 @@ impl ProjectSearchView {
                 this.update_match_index(cx);
             }
             // Reraise editor events for workspace item activation purposes
-            cx.emit(ViewEvent::EditorEvent(event.clone()));
+            cx.emit(ViewEvent::EditorEvent(*event));
         })
         .detach();
 
@@ -564,6 +564,12 @@ impl ProjectSearchView {
 
     pub fn has_matches(&self) -> bool {
         self.active_match_index.is_some()
+    }
+}
+
+impl Default for ProjectSearchBar {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -903,7 +909,7 @@ mod tests {
     #[gpui::test]
     async fn test_project_search(cx: &mut TestAppContext) {
         let fonts = cx.font_cache();
-        let mut theme = gpui::fonts::with_font_cache(fonts.clone(), || theme::Theme::default());
+        let mut theme = gpui::fonts::with_font_cache(fonts.clone(), theme::Theme::default);
         theme.search.match_background = Color::red();
         cx.update(|cx| {
             let mut settings = Settings::test(cx);
@@ -933,7 +939,7 @@ mod tests {
                 .update(cx, |query_editor, cx| query_editor.set_text("TWO", cx));
             search_view.search(cx);
         });
-        search_view.next_notification(&cx).await;
+        search_view.next_notification(cx).await;
         search_view.update(cx, |search_view, cx| {
             assert_eq!(
                 search_view

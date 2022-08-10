@@ -82,7 +82,7 @@ impl ConnectedView {
             has_new_content: true,
             has_bell: false,
             modal,
-            context_menu: cx.add_view(|cx| ContextMenu::new(cx)),
+            context_menu: cx.add_view(ContextMenu::new),
         }
     }
 
@@ -127,9 +127,9 @@ impl ConnectedView {
 
     ///Attempt to paste the clipboard into the terminal
     fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
-        cx.read_from_clipboard().map(|item| {
+        if let Some(item) = cx.read_from_clipboard() {
             self.terminal.read(cx).paste(item.text());
-        });
+        }
     }
 
     ///Synthesize the keyboard event corresponding to 'up'

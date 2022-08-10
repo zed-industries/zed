@@ -74,7 +74,7 @@ pub(crate) trait ForegroundPlatform {
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_event(&self, callback: Box<dyn FnMut(Event) -> bool>);
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
-    fn run(&self, on_finish_launching: Box<dyn FnOnce() -> ()>);
+    fn run(&self, on_finish_launching: Box<dyn FnOnce()>);
 
     fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_validate_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);

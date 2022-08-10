@@ -83,7 +83,9 @@ impl CommandPalette {
     fn toggle(_: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
         let workspace = cx.handle();
         let window_id = cx.window_id();
-        let focused_view_id = cx.focused_view_id(window_id).unwrap_or(workspace.id());
+        let focused_view_id = cx
+            .focused_view_id(window_id)
+            .unwrap_or_else(|| workspace.id());
 
         cx.as_mut().defer(move |cx| {
             let this = cx.add_view(workspace.clone(), |cx| Self::new(focused_view_id, cx));

@@ -195,19 +195,19 @@ pub fn generate_marked_text(
             match range.start.cmp(&range.end) {
                 Ordering::Less => {
                     marked_text.insert_str(range.end, "ˇ»");
-                    marked_text.insert_str(range.start, "«");
+                    marked_text.insert(range.start, '«');
                 }
                 Ordering::Equal => {
-                    marked_text.insert_str(range.start, "ˇ");
+                    marked_text.insert(range.start, 'ˇ');
                 }
                 Ordering::Greater => {
-                    marked_text.insert_str(range.start, "»");
+                    marked_text.insert(range.start, '»');
                     marked_text.insert_str(range.end, "«ˇ");
                 }
             }
         } else {
-            marked_text.insert_str(range.end, "»");
-            marked_text.insert_str(range.start, "«");
+            marked_text.insert(range.end, '»');
+            marked_text.insert(range.start, '«');
         }
     }
     marked_text

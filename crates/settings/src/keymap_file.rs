@@ -49,37 +49,37 @@ impl KeymapFileContent {
     pub fn load(asset_path: &str, cx: &mut MutableAppContext) -> Result<()> {
         let content = Assets::get(asset_path).unwrap().data;
         let content_str = std::str::from_utf8(content.as_ref()).unwrap();
-        Ok(parse_json_with_comments::<Self>(content_str)?.add(cx)?)
+        parse_json_with_comments::<Self>(content_str)?.add_to_cx(cx)
     }
 
-    pub fn add(self, cx: &mut MutableAppContext) -> Result<()> {
+    pub fn add_to_cx(self, cx: &mut MutableAppContext) -> Result<()> {
         for KeymapBlock { context, bindings } in self.0 {
-            cx.add_bindings(
-                bindings
-                    .into_iter()
-                    .map(|(keystroke, action)| {
-                        let action = action.0.get();
+            let bindings = bindings
+                .into_iter()
+                .map(|(keystroke, action)| {
+                    let action = action.0.get();
 
-                        // This is a workaround for a limitation in serde: serde-rs/json#497
-                        // We want to deserialize the action data as a `RawValue` so that we can
-                        // deserialize the action itself dynamically directly from the JSON
-                        // string. But `RawValue` currently does not work inside of an untagged enum.
-                        let action = if action.starts_with('[') {
-                            let ActionWithData(name, data) = serde_json::from_str(action)?;
-                            cx.deserialize_action(&name, Some(data.get()))
-                        } else {
-                            let name = serde_json::from_str(action)?;
-                            cx.deserialize_action(name, None)
-                        }
-                        .with_context(|| {
-                            format!(
+                    // This is a workaround for a limitation in serde: serde-rs/json#497
+                    // We want to deserialize the action data as a `RawValue` so that we can
+                    // deserialize the action itself dynamically directly from the JSON
+                    // string. But `RawValue` currently does not work inside of an untagged enum.
+                    let action = if action.starts_with('[') {
+                        let ActionWithData(name, data) = serde_json::from_str(action)?;
+                        cx.deserialize_action(&name, Some(data.get()))
+                    } else {
+                        let name = serde_json::from_str(action)?;
+                        cx.deserialize_action(name, None)
+                    }
+                    .with_context(|| {
+                        format!(
                             "invalid binding value for keystroke {keystroke}, context {context:?}"
                         )
-                        })?;
-                        Binding::load(&keystroke, action, context.as_deref())
-                    })
-                    .collect::<Result<Vec<_>>>()?,
-            )
+                    })?;
+                    Binding::load(&keystroke, action, context.as_deref())
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+            cx.add_bindings(bindings);
         }
         Ok(())
     }
@@ -98,7 +98,7 @@ pub fn keymap_file_json_schema(action_names: &[&'static str]) -> serde_json::Val
                     instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
                     enum_values: Some(
                         action_names
-                            .into_iter()
+                            .iter()
                             .map(|name| Value::String(name.to_string()))
                             .collect(),
                     ),

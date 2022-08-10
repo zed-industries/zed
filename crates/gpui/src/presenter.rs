@@ -89,8 +89,8 @@ impl Presenter {
     ) {
         cx.start_frame();
         for view_id in &invalidation.removed {
-            invalidation.updated.remove(&view_id);
-            self.rendered_views.remove(&view_id);
+            invalidation.updated.remove(view_id);
+            self.rendered_views.remove(view_id);
         }
         for view_id in &invalidation.updated {
             self.rendered_views.insert(
@@ -285,7 +285,7 @@ impl Presenter {
                     {
                         dragged_region = Some((
                             clicked_region.clone(),
-                            MouseRegionEvent::Drag(*prev_drag_position, e.clone()),
+                            MouseRegionEvent::Drag(*prev_drag_position, *e),
                         ));
                         *prev_drag_position = *position;
                     }
@@ -366,7 +366,7 @@ impl Presenter {
             },
         ) = event
         {
-            if let None = pressed_button {
+            if pressed_button.is_none() {
                 let mut style_to_assign = CursorStyle::Arrow;
                 for region in self.cursor_regions.iter().rev() {
                     if region.bounds.contains_point(*position) {
@@ -385,23 +385,17 @@ impl Presenter {
                         if let Some(region_id) = region.id() {
                             if !self.hovered_region_ids.contains(&region_id) {
                                 invalidated_views.push(region.view_id);
-                                hover_regions.push((
-                                    region.clone(),
-                                    MouseRegionEvent::Hover(true, e.clone()),
-                                ));
+                                hover_regions
+                                    .push((region.clone(), MouseRegionEvent::Hover(true, *e)));
                                 self.hovered_region_ids.insert(region_id);
                             }
                         }
-                    } else {
-                        if let Some(region_id) = region.id() {
-                            if self.hovered_region_ids.contains(&region_id) {
-                                invalidated_views.push(region.view_id);
-                                hover_regions.push((
-                                    region.clone(),
-                                    MouseRegionEvent::Hover(false, e.clone()),
-                                ));
-                                self.hovered_region_ids.remove(&region_id);
-                            }
+                    } else if let Some(region_id) = region.id() {
+                        if self.hovered_region_ids.contains(&region_id) {
+                            invalidated_views.push(region.view_id);
+                            hover_regions
+                                .push((region.clone(), MouseRegionEvent::Hover(false, *e)));
+                            self.hovered_region_ids.remove(&region_id);
                         }
                     }
                 }
@@ -625,7 +619,7 @@ impl<'a> PaintContext<'a> {
     #[inline]
     pub fn paint_layer<F>(&mut self, clip_bounds: Option<RectF>, f: F)
     where
-        F: FnOnce(&mut Self) -> (),
+        F: FnOnce(&mut Self),
     {
         self.scene.push_layer(clip_bounds);
         f(self);

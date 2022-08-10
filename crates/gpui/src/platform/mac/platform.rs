@@ -50,7 +50,7 @@ use time::UtcOffset;
 #[allow(non_upper_case_globals)]
 const NSUTF8StringEncoding: NSUInteger = 4;
 
-const MAC_PLATFORM_IVAR: &'static str = "platform";
+const MAC_PLATFORM_IVAR: &str = "platform";
 static mut APP_CLASS: *const Class = ptr::null();
 static mut APP_DELEGATE_CLASS: *const Class = ptr::null();
 
@@ -118,7 +118,7 @@ pub struct MacForegroundPlatformState {
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     will_open_menu: Option<Box<dyn FnMut()>>,
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
-    finish_launching: Option<Box<dyn FnOnce() -> ()>>,
+    finish_launching: Option<Box<dyn FnOnce()>>,
     menu_actions: Vec<Box<dyn Action>>,
 }
 
@@ -277,7 +277,7 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
         self.0.borrow_mut().open_urls = Some(callback);
     }
 
-    fn run(&self, on_finish_launching: Box<dyn FnOnce() -> ()>) {
+    fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         self.0.borrow_mut().finish_launching = Some(on_finish_launching);
 
         unsafe {
@@ -533,7 +533,7 @@ impl platform::Platform for MacPlatform {
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         unsafe {
             if let Some(text_bytes) = self.read_from_pasteboard(NSPasteboardTypeString) {
-                let text = String::from_utf8_lossy(&text_bytes).to_string();
+                let text = String::from_utf8_lossy(text_bytes).to_string();
                 let hash_bytes = self
                     .read_from_pasteboard(self.text_hash_pasteboard_type)
                     .and_then(|bytes| bytes.try_into().ok())

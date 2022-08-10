@@ -460,7 +460,7 @@ impl FakeFs {
                     }
                 }
                 Null => {
-                    self.create_dir(&path).await.unwrap();
+                    self.create_dir(path).await.unwrap();
                 }
                 String(contents) => {
                     self.insert_file(&path, contents).await;

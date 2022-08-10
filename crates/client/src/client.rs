@@ -41,13 +41,13 @@ pub use user::*;
 
 lazy_static! {
     pub static ref ZED_SERVER_URL: String =
-        std::env::var("ZED_SERVER_URL").unwrap_or("https://zed.dev".to_string());
+        std::env::var("ZED_SERVER_URL").unwrap_or_else(|_| "https://zed.dev".to_string());
     pub static ref IMPERSONATE_LOGIN: Option<String> = std::env::var("ZED_IMPERSONATE")
         .ok()
         .and_then(|s| if s.is_empty() { None } else { Some(s) });
 }
 
-pub const ZED_SECRET_CLIENT_TOKEN: &'static str = "618033988749894";
+pub const ZED_SECRET_CLIENT_TOKEN: &str = "618033988749894";
 
 actions!(client, [Authenticate]);
 
@@ -65,10 +65,13 @@ pub struct Client {
     http: Arc<dyn HttpClient>,
     state: RwLock<ClientState>,
 
+    #[allow(clippy::type_complexity)]
     #[cfg(any(test, feature = "test-support"))]
     authenticate: RwLock<
         Option<Box<dyn 'static + Send + Sync + Fn(&AsyncAppContext) -> Task<Result<Credentials>>>>,
     >,
+
+    #[allow(clippy::type_complexity)]
     #[cfg(any(test, feature = "test-support"))]
     establish_connection: RwLock<
         Option<
@@ -149,6 +152,7 @@ struct ClientState {
     entities_by_type_and_remote_id: HashMap<(TypeId, u64), AnyWeakEntityHandle>,
     models_by_message_type: HashMap<TypeId, AnyWeakModelHandle>,
     entity_types_by_message_type: HashMap<TypeId, TypeId>,
+    #[allow(clippy::type_complexity)]
     message_handlers: HashMap<
         TypeId,
         Arc<
@@ -596,7 +600,7 @@ impl Client {
             let mut status_rx = self.status();
             let _ = status_rx.next().await;
             futures::select_biased! {
-                authenticate = self.authenticate(&cx).fuse() => {
+                authenticate = self.authenticate(cx).fuse() => {
                     match authenticate {
                         Ok(creds) => credentials = Some(creds),
                         Err(err) => {
@@ -819,7 +823,7 @@ impl Client {
                     .get("Location")
                     .ok_or_else(|| anyhow!("missing location header in /rpc response"))?
                     .to_str()
-                    .map_err(|error| EstablishConnectionError::other(error))?
+                    .map_err(EstablishConnectionError::other)?
                     .to_string();
             }
             // Until we switch the zed.dev domain to point to the new Next.js app, there
@@ -1051,7 +1055,7 @@ fn write_credentials_to_keychain(credentials: &Credentials, cx: &AsyncAppContext
     )
 }
 
-const WORKTREE_URL_PREFIX: &'static str = "zed://worktrees/";
+const WORKTREE_URL_PREFIX: &str = "zed://worktrees/";
 
 pub fn encode_worktree_url(id: u64, access_token: &str) -> String {
     format!("{}{}/{}", WORKTREE_URL_PREFIX, id, access_token)
@@ -1081,8 +1085,8 @@ mod tests {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
-        let mut client = Client::new(FakeHttpClient::with_404_response());
-        let server = FakeServer::for_client(user_id, &mut client, &cx).await;
+        let client = Client::new(FakeHttpClient::with_404_response());
+        let server = FakeServer::for_client(user_id, &client, cx).await;
         let mut status = client.status();
         assert!(matches!(
             status.next().await,
@@ -1169,8 +1173,8 @@ mod tests {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
-        let mut client = Client::new(FakeHttpClient::with_404_response());
-        let server = FakeServer::for_client(user_id, &mut client, &cx).await;
+        let client = Client::new(FakeHttpClient::with_404_response());
+        let server = FakeServer::for_client(user_id, &client, cx).await;
 
         let (done_tx1, mut done_rx1) = smol::channel::unbounded();
         let (done_tx2, mut done_rx2) = smol::channel::unbounded();
@@ -1215,8 +1219,8 @@ mod tests {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
-        let mut client = Client::new(FakeHttpClient::with_404_response());
-        let server = FakeServer::for_client(user_id, &mut client, &cx).await;
+        let client = Client::new(FakeHttpClient::with_404_response());
+        let server = FakeServer::for_client(user_id, &client, cx).await;
 
         let model = cx.add_model(|_| Model::default());
         let (done_tx1, _done_rx1) = smol::channel::unbounded();
@@ -1243,8 +1247,8 @@ mod tests {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
-        let mut client = Client::new(FakeHttpClient::with_404_response());
-        let server = FakeServer::for_client(user_id, &mut client, &cx).await;
+        let client = Client::new(FakeHttpClient::with_404_response());
+        let server = FakeServer::for_client(user_id, &client, cx).await;
 
         let model = cx.add_model(|_| Model::default());
         let (done_tx, mut done_rx) = smol::channel::unbounded();
