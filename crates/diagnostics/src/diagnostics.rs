@@ -99,7 +99,7 @@ impl View for ProjectDiagnosticsEditor {
         }
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if !self.path_states.is_empty() {
             cx.focus(&self.editor);
         }
@@ -568,10 +568,6 @@ impl workspace::Item for ProjectDiagnosticsEditor {
         unreachable!()
     }
 
-    fn should_activate_item_on_event(event: &Self::Event) -> bool {
-        Editor::should_activate_item_on_event(event)
-    }
-
     fn should_update_tab_on_event(event: &Event) -> bool {
         Editor::should_update_tab_on_event(event)
     }
@@ -786,7 +782,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
-        let workspace = cx.add_view(0, |cx| Workspace::new(project.clone(), cx));
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
 
         // Create some diagnostics
         project.update(cx, |project, cx| {
@@ -873,7 +869,7 @@ mod tests {
         });
 
         // Open the project diagnostics view while there are already diagnostics.
-        let view = cx.add_view(0, |cx| {
+        let view = cx.add_view(&workspace, |cx| {
             ProjectDiagnosticsEditor::new(project.clone(), workspace.downgrade(), cx)
         });
 

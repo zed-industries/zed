@@ -3,8 +3,8 @@ use editor::{
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, elements::*, AppContext, Entity, ModelHandle, MouseState, MutableAppContext,
-    RenderContext, Task, View, ViewContext, ViewHandle,
+    actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MouseState,
+    MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -51,8 +51,10 @@ impl View for ProjectSymbolsView {
         ChildView::new(self.picker.clone()).boxed()
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.picker);
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        if cx.is_self_focused() {
+            cx.focus(&self.picker);
+        }
     }
 }
 

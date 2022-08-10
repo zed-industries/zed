@@ -10,8 +10,8 @@ use crate::{
     text_layout::TextLayoutCache,
     Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox, Entity,
     FontSystem, ModelHandle, MouseButtonEvent, MouseMovedEvent, MouseRegion, MouseRegionId,
-    ReadModel, ReadView, RenderContext, RenderParams, Scene, UpgradeModelHandle, UpgradeViewHandle,
-    View, ViewHandle, WeakModelHandle, WeakViewHandle,
+    ParentId, ReadModel, ReadView, RenderContext, RenderParams, Scene, UpgradeModelHandle,
+    UpgradeViewHandle, View, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use collections::{HashMap, HashSet};
 use pathfinder_geometry::vector::{vec2f, Vector2F};
@@ -26,7 +26,6 @@ use std::{
 pub struct Presenter {
     window_id: usize,
     pub(crate) rendered_views: HashMap<usize, ElementBox>,
-    parents: HashMap<usize, usize>,
     cursor_regions: Vec<CursorRegion>,
     mouse_regions: Vec<(MouseRegion, usize)>,
     font_cache: Arc<FontCache>,
@@ -52,7 +51,6 @@ impl Presenter {
         Self {
             window_id,
             rendered_views: cx.render_views(window_id, titlebar_height),
-            parents: Default::default(),
             cursor_regions: Default::default(),
             mouse_regions: Default::default(),
             font_cache,
@@ -67,22 +65,22 @@ impl Presenter {
         }
     }
 
-    pub fn dispatch_path(&self, app: &AppContext) -> Vec<usize> {
-        let mut path = Vec::new();
-        if let Some(view_id) = app.focused_view_id(self.window_id) {
-            self.compute_dispatch_path_from(view_id, &mut path)
-        }
-        path
-    }
+    // pub fn dispatch_path(&self, app: &AppContext) -> Vec<usize> {
+    //     let mut path = Vec::new();
+    //     if let Some(view_id) = app.focused_view_id(self.window_id) {
+    //         self.compute_dispatch_path_from(view_id, &mut path)
+    //     }
+    //     path
+    // }
 
-    pub(crate) fn compute_dispatch_path_from(&self, mut view_id: usize, path: &mut Vec<usize>) {
-        path.push(view_id);
-        while let Some(parent_id) = self.parents.get(&view_id).copied() {
-            path.push(parent_id);
-            view_id = parent_id;
-        }
-        path.reverse();
-    }
+    // pub(crate) fn compute_dispatch_path_from(&self, mut view_id: usize, path: &mut Vec<usize>) {
+    //     path.push(view_id);
+    //     while let Some(parent_id) = self.parents.get(&view_id).copied() {
+    //         path.push(parent_id);
+    //         view_id = parent_id;
+    //     }
+    //     path.reverse();
+    // }
 
     pub fn invalidate(
         &mut self,
@@ -93,7 +91,6 @@ impl Presenter {
         for view_id in &invalidation.removed {
             invalidation.updated.remove(&view_id);
             self.rendered_views.remove(&view_id);
-            self.parents.remove(&view_id);
         }
         for view_id in &invalidation.updated {
             self.rendered_views.insert(
@@ -191,7 +188,6 @@ impl Presenter {
         LayoutContext {
             window_id: self.window_id,
             rendered_views: &mut self.rendered_views,
-            parents: &mut self.parents,
             font_cache: &self.font_cache,
             font_system: cx.platform().fonts(),
             text_layout_cache: &self.text_layout_cache,
@@ -344,19 +340,9 @@ impl Presenter {
             }
 
             invalidated_views.extend(event_cx.invalidated_views);
-            let dispatch_directives = event_cx.dispatched_actions;
 
             for view_id in invalidated_views {
                 cx.notify_view(self.window_id, view_id);
-            }
-
-            let mut dispatch_path = Vec::new();
-            for directive in dispatch_directives {
-                dispatch_path.clear();
-                if let Some(view_id) = directive.dispatcher_view_id {
-                    self.compute_dispatch_path_from(view_id, &mut dispatch_path);
-                }
-                cx.dispatch_action_any(self.window_id, &dispatch_path, directive.action.as_ref());
             }
 
             handled
@@ -372,9 +358,6 @@ impl Presenter {
         cx: &'a mut MutableAppContext,
     ) -> (bool, EventContext<'a>) {
         let mut hover_regions = Vec::new();
-        // let mut unhovered_regions = Vec::new();
-        // let mut hovered_regions = Vec::new();
-
         if let Event::MouseMoved(
             e @ MouseMovedEvent {
                 position,
@@ -446,7 +429,6 @@ impl Presenter {
     ) -> EventContext<'a> {
         EventContext {
             rendered_views: &mut self.rendered_views,
-            dispatched_actions: Default::default(),
             font_cache: &self.font_cache,
             text_layout_cache: &self.text_layout_cache,
             view_stack: Default::default(),
@@ -473,15 +455,9 @@ impl Presenter {
     }
 }
 
-pub struct DispatchDirective {
-    pub dispatcher_view_id: Option<usize>,
-    pub action: Box<dyn Action>,
-}
-
 pub struct LayoutContext<'a> {
     window_id: usize,
     rendered_views: &'a mut HashMap<usize, ElementBox>,
-    parents: &'a mut HashMap<usize, usize>,
     view_stack: Vec<usize>,
     pub font_cache: &'a Arc<FontCache>,
     pub font_system: Arc<dyn FontSystem>,
@@ -506,9 +482,43 @@ impl<'a> LayoutContext<'a> {
     }
 
     fn layout(&mut self, view_id: usize, constraint: SizeConstraint) -> Vector2F {
-        if let Some(parent_id) = self.view_stack.last() {
-            self.parents.insert(view_id, *parent_id);
+        let print_error = |view_id| {
+            format!(
+                "{} with id {}",
+                self.app.name_for_view(self.window_id, view_id).unwrap(),
+                view_id,
+            )
+        };
+        match (
+            self.view_stack.last(),
+            self.app.parents.get(&(self.window_id, view_id)),
+        ) {
+            (Some(layout_parent), Some(ParentId::View(app_parent))) => {
+                if layout_parent != app_parent {
+                    panic!(
+                        "View {} was laid out with parent {} when it was constructed with parent {}", 
+                        print_error(view_id), 
+                        print_error(*layout_parent),
+                        print_error(*app_parent))
+                }
+            }
+            (None, Some(ParentId::View(app_parent))) => panic!(
+                "View {} was laid out without a parent when it was constructed with parent {}",
+                print_error(view_id), 
+                print_error(*app_parent)
+            ),
+            (Some(layout_parent), Some(ParentId::Root)) => panic!(
+                "View {} was laid out with parent {} when it was constructed as a window root",
+                print_error(view_id), 
+                print_error(*layout_parent),
+            ),
+            (_, None) => panic!(
+                "View {} did not have a registered parent in the app context",
+                print_error(view_id), 
+            ),
+            _ => {}
         }
+
         self.view_stack.push(view_id);
         let mut rendered_view = self.rendered_views.remove(&view_id).unwrap();
         let size = rendered_view.layout(constraint, self);
@@ -637,7 +647,6 @@ impl<'a> Deref for PaintContext<'a> {
 
 pub struct EventContext<'a> {
     rendered_views: &'a mut HashMap<usize, ElementBox>,
-    dispatched_actions: Vec<DispatchDirective>,
     pub font_cache: &'a FontCache,
     pub text_layout_cache: &'a TextLayoutCache,
     pub app: &'a mut MutableAppContext,
@@ -692,10 +701,8 @@ impl<'a> EventContext<'a> {
     }
 
     pub fn dispatch_any_action(&mut self, action: Box<dyn Action>) {
-        self.dispatched_actions.push(DispatchDirective {
-            dispatcher_view_id: self.view_stack.last().copied(),
-            action,
-        });
+        self.app
+            .dispatch_any_action_at(self.window_id, *self.view_stack.last().unwrap(), action)
     }
 
     pub fn dispatch_action<A: Action>(&mut self, action: A) {

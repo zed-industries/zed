@@ -4,7 +4,8 @@ use gpui::{
     actions,
     elements::{ChildView, Flex, Label, ParentElement},
     keymap::Keystroke,
-    Action, Element, Entity, MouseState, MutableAppContext, View, ViewContext, ViewHandle,
+    Action, AnyViewHandle, Element, Entity, MouseState, MutableAppContext, View, ViewContext,
+    ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
@@ -85,7 +86,7 @@ impl CommandPalette {
         let focused_view_id = cx.focused_view_id(window_id).unwrap_or(workspace.id());
 
         cx.as_mut().defer(move |cx| {
-            let this = cx.add_view(window_id, |cx| Self::new(focused_view_id, cx));
+            let this = cx.add_view(workspace.clone(), |cx| Self::new(focused_view_id, cx));
             workspace.update(cx, |workspace, cx| {
                 workspace.toggle_modal(cx, |_, cx| {
                     cx.subscribe(&this, Self::on_event).detach();
@@ -110,10 +111,10 @@ impl CommandPalette {
             } => {
                 let window_id = *window_id;
                 let focused_view_id = *focused_view_id;
-                let action = (*action).boxed_clone();
+                let action = action.boxed_clone();
                 workspace.dismiss_modal(cx);
                 cx.as_mut()
-                    .defer(move |cx| cx.dispatch_action_at(window_id, focused_view_id, &*action))
+                    .defer(move |cx| cx.dispatch_any_action_at(window_id, focused_view_id, action))
             }
         }
     }
@@ -132,8 +133,10 @@ impl View for CommandPalette {
         ChildView::new(self.picker.clone()).boxed()
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.picker);
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        if cx.is_self_focused() {
+            cx.focus(&self.picker);
+        }
     }
 }
 
@@ -345,8 +348,8 @@ mod tests {
         });
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
-        let editor = cx.add_view(window_id, |cx| {
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let editor = cx.add_view(&workspace, |cx| {
             let mut editor = Editor::single_line(None, cx);
             editor.set_text("abc", cx);
             editor

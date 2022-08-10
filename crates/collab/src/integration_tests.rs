@@ -18,6 +18,7 @@ use futures::{channel::mpsc, Future, StreamExt as _};
 use gpui::{
     executor::{self, Deterministic},
     geometry::vector::vec2f,
+    test::EmptyView,
     ModelHandle, Task, TestAppContext, ViewHandle,
 };
 use language::{
@@ -67,7 +68,7 @@ async fn test_share_project(
     cx_b2: &mut TestAppContext,
 ) {
     cx_a.foreground().forbid_parking();
-    let (window_b, _) = cx_b.add_window(|_| EmptyView);
+    let (_, window_b) = cx_b.add_window(|_| EmptyView);
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -145,7 +146,7 @@ async fn test_share_project(
         .await
         .unwrap();
 
-    let editor_b = cx_b.add_view(window_b, |cx| Editor::for_buffer(buffer_b, None, cx));
+    let editor_b = cx_b.add_view(&window_b, |cx| Editor::for_buffer(buffer_b, None, cx));
 
     // TODO
     // // Create a selection set as client B and see that selection set as client A.
@@ -1736,8 +1737,8 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
         .await
         .unwrap();
-    let (window_b, _) = cx_b.add_window(|_| EmptyView);
-    let editor_b = cx_b.add_view(window_b, |cx| {
+    let (_, window_b) = cx_b.add_window(|_| EmptyView);
+    let editor_b = cx_b.add_view(&window_b, |cx| {
         Editor::for_buffer(buffer_b.clone(), Some(project_b.clone()), cx)
     });
 
@@ -4245,7 +4246,10 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     // Clients A and B follow each other in split panes
     workspace_a.update(cx_a, |workspace, cx| {
         workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
-        assert_ne!(*workspace.active_pane(), pane_a1);
+        let pane_a1 = pane_a1.clone();
+        cx.defer(move |workspace, _| {
+            assert_ne!(*workspace.active_pane(), pane_a1);
+        });
     });
     workspace_a
         .update(cx_a, |workspace, cx| {
@@ -4258,7 +4262,10 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
         .unwrap();
     workspace_b.update(cx_b, |workspace, cx| {
         workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
-        assert_ne!(*workspace.active_pane(), pane_b1);
+        let pane_b1 = pane_b1.clone();
+        cx.defer(move |workspace, _| {
+            assert_ne!(*workspace.active_pane(), pane_b1);
+        });
     });
     workspace_b
         .update(cx_b, |workspace, cx| {
@@ -4270,17 +4277,26 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
         .await
         .unwrap();
 
+    workspace_a.update(cx_a, |workspace, cx| {
+        workspace.activate_next_pane(cx);
+    });
+    // Wait for focus effects to be fully flushed
+    workspace_a.update(cx_a, |workspace, _| {
+        assert_eq!(*workspace.active_pane(), pane_a1);
+    });
+
     workspace_a
         .update(cx_a, |workspace, cx| {
-            workspace.activate_next_pane(cx);
-            assert_eq!(*workspace.active_pane(), pane_a1);
             workspace.open_path((worktree_id, "3.txt"), true, cx)
         })
         .await
         .unwrap();
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.activate_next_pane(cx);
+    });
+
     workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace.activate_next_pane(cx);
             assert_eq!(*workspace.active_pane(), pane_b1);
             workspace.open_path((worktree_id, "4.txt"), true, cx)
         })
@@ -4310,17 +4326,24 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
             Some((worktree_id, "3.txt").into())
         );
         workspace.activate_next_pane(cx);
+    });
+
+    workspace_a.update(cx_a, |workspace, cx| {
         assert_eq!(
             workspace.active_item(cx).unwrap().project_path(cx),
             Some((worktree_id, "4.txt").into())
         );
     });
+
     workspace_b.update(cx_b, |workspace, cx| {
         assert_eq!(
             workspace.active_item(cx).unwrap().project_path(cx),
             Some((worktree_id, "4.txt").into())
         );
         workspace.activate_next_pane(cx);
+    });
+
+    workspace_b.update(cx_b, |workspace, cx| {
         assert_eq!(
             workspace.active_item(cx).unwrap().project_path(cx),
             Some((worktree_id, "3.txt").into())
@@ -5387,8 +5410,8 @@ impl TestClient {
         project: &ModelHandle<Project>,
         cx: &mut TestAppContext,
     ) -> ViewHandle<Workspace> {
-        let (window_id, _) = cx.add_window(|_| EmptyView);
-        cx.add_view(window_id, |cx| Workspace::new(project.clone(), cx))
+        let (_, root_view) = cx.add_window(|_| EmptyView);
+        cx.add_view(&root_view, |cx| Workspace::new(project.clone(), cx))
     }
 
     async fn simulate_host(
@@ -5900,20 +5923,4 @@ fn channel_messages(channel: &Channel) -> Vec<(String, String, bool)> {
             )
         })
         .collect()
-}
-
-struct EmptyView;
-
-impl gpui::Entity for EmptyView {
-    type Event = ();
-}
-
-impl gpui::View for EmptyView {
-    fn ui_name() -> &'static str {
-        "empty view"
-    }
-
-    fn render(&mut self, _: &mut gpui::RenderContext<Self>) -> gpui::ElementBox {
-        gpui::Element::boxed(gpui::elements::Empty::new())
-    }
 }

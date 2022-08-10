@@ -54,8 +54,8 @@ impl FollowableItem for Editor {
                     })
                 })
                 .unwrap_or_else(|| {
-                    cx.add_view(pane.window_id(), |cx| {
-                        Editor::for_buffer(buffer, Some(project), cx)
+                    pane.update(&mut cx, |_, cx| {
+                        cx.add_view(|cx| Editor::for_buffer(buffer, Some(project), cx))
                     })
                 });
             editor.update(&mut cx, |editor, cx| {
@@ -467,10 +467,6 @@ impl Item for Editor {
             });
             Ok(())
         })
-    }
-
-    fn should_activate_item_on_event(event: &Event) -> bool {
-        matches!(event, Event::Activate)
     }
 
     fn should_close_item_on_event(event: &Event) -> bool {

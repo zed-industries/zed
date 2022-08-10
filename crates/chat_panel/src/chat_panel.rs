@@ -8,8 +8,8 @@ use gpui::{
     elements::*,
     platform::CursorStyle,
     views::{ItemType, Select, SelectStyle},
-    AppContext, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription,
-    Task, View, ViewContext, ViewHandle,
+    AnyViewHandle, AppContext, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext,
+    Subscription, Task, View, ViewContext, ViewHandle,
 };
 use menu::Confirm;
 use postage::prelude::Stream;
@@ -397,7 +397,7 @@ impl View for ChatPanel {
         .boxed()
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if matches!(
             *self.rpc.status().borrow(),
             client::Status::Connected { .. }

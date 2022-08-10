@@ -13,9 +13,9 @@ use gpui::{
     },
     impl_actions, impl_internal_actions,
     platform::{CursorStyle, NavigationDirection},
-    AppContext, AsyncAppContext, Entity, EventContext, ModelHandle, MouseButton, MouseButtonEvent,
-    MutableAppContext, PromptLevel, Quad, RenderContext, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, EventContext,
+    ModelHandle, MouseButton, MouseButtonEvent, MutableAppContext, PromptLevel, Quad,
+    RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
@@ -132,7 +132,7 @@ pub fn init(cx: &mut MutableAppContext) {
 }
 
 pub enum Event {
-    Activate,
+    Focused,
     ActivateItem { local: bool },
     Remove,
     RemoveItem,
@@ -144,6 +144,7 @@ pub struct Pane {
     items: Vec<Box<dyn ItemHandle>>,
     is_active: bool,
     active_item_index: usize,
+    last_focused_view: Option<AnyWeakViewHandle>,
     autoscroll: bool,
     nav_history: Rc<RefCell<NavHistory>>,
     toolbar: ViewHandle<Toolbar>,
@@ -193,6 +194,7 @@ impl Pane {
             items: Vec::new(),
             is_active: true,
             active_item_index: 0,
+            last_focused_view: None,
             autoscroll: false,
             nav_history: Rc::new(RefCell::new(NavHistory {
                 mode: NavigationMode::Normal,
@@ -217,10 +219,6 @@ impl Pane {
             history: self.nav_history.clone(),
             item: Rc::new(item.downgrade()),
         }
-    }
-
-    pub fn activate(&self, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::Activate);
     }
 
     pub fn go_back(
@@ -287,7 +285,7 @@ impl Pane {
         mode: NavigationMode,
         cx: &mut ViewContext<Workspace>,
     ) -> Task<()> {
-        workspace.activate_pane(pane.clone(), cx);
+        cx.focus(pane.clone());
 
         let to_load = pane.update(cx, |pane, cx| {
             loop {
@@ -386,7 +384,7 @@ impl Pane {
         project_entry_id: ProjectEntryId,
         focus_item: bool,
         cx: &mut ViewContext<Workspace>,
-        build_item: impl FnOnce(&mut MutableAppContext) -> Box<dyn ItemHandle>,
+        build_item: impl FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
     ) -> Box<dyn ItemHandle> {
         let existing_item = pane.update(cx, |pane, cx| {
             for (ix, item) in pane.items.iter().enumerate() {
@@ -403,7 +401,7 @@ impl Pane {
         if let Some(existing_item) = existing_item {
             existing_item
         } else {
-            let item = build_item(cx);
+            let item = pane.update(cx, |_, cx| build_item(cx));
             Self::add_item(workspace, pane, item.boxed_clone(), true, focus_item, cx);
             item
         }
@@ -441,6 +439,7 @@ impl Pane {
                 pane.active_item_index = usize::MAX;
             };
 
+            cx.reparent(&item);
             pane.items.insert(item_ix, item);
             pane.activate_item(item_ix, activate_pane, focus_item, false, cx);
             cx.notify();
@@ -522,7 +521,7 @@ impl Pane {
                 self.focus_active_item(cx);
             }
             if activate_pane {
-                self.activate(cx);
+                cx.emit(Event::Focused);
             }
             self.autoscroll = true;
             cx.notify();
@@ -1209,8 +1208,21 @@ impl View for Pane {
             .named("pane")
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        self.focus_active_item(cx);
+    fn on_focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        if cx.is_self_focused() {
+            if let Some(last_focused_view) = self
+                .last_focused_view
+                .as_ref()
+                .and_then(|handle| handle.upgrade(cx))
+            {
+                cx.focus(last_focused_view);
+            } else {
+                self.focus_active_item(cx);
+            }
+        } else {
+            self.last_focused_view = Some(focused.downgrade());
+        }
+        cx.emit(Event::Focused);
     }
 }
 

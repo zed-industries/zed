@@ -4,8 +4,8 @@ use editor::{
 };
 use fuzzy::StringMatch;
 use gpui::{
-    actions, elements::*, geometry::vector::Vector2F, AppContext, Entity, MouseState,
-    MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
+    actions, elements::*, geometry::vector::Vector2F, AnyViewHandle, AppContext, Entity,
+    MouseState, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use language::Outline;
 use ordered_float::OrderedFloat;
@@ -52,8 +52,10 @@ impl View for OutlineView {
         ChildView::new(self.picker.clone()).boxed()
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.picker);
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        if cx.is_self_focused() {
+            cx.focus(&self.picker);
+        }
     }
 }
 

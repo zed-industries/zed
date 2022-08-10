@@ -29,8 +29,8 @@ use gpui::{
     geometry::vector::{vec2f, Vector2F},
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
-    text_layout, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
-    ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View,
+    text_layout, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox,
+    Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
@@ -1561,7 +1561,6 @@ impl Editor {
     ) {
         if !self.focused {
             cx.focus_self();
-            cx.emit(Event::Activate);
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -1623,7 +1622,6 @@ impl Editor {
     ) {
         if !self.focused {
             cx.focus_self();
-            cx.emit(Event::Activate);
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -5977,7 +5975,6 @@ fn compute_scroll_position(
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Event {
-    Activate,
     BufferEdited,
     Edited,
     Reparsed,
@@ -6033,7 +6030,7 @@ impl View for Editor {
         "Editor"
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         let focused_event = EditorFocused(cx.handle());
         cx.emit_global(focused_event);
         if let Some(rename) = self.pending_rename.as_ref() {
@@ -6054,7 +6051,7 @@ impl View for Editor {
         }
     }
 
-    fn on_blur(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         let blurred_event = EditorBlurred(cx.handle());
         cx.emit_global(blurred_event);
         self.focused = false;
@@ -7107,10 +7104,10 @@ mod tests {
     fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
         cx.set_global(Settings::test(cx));
         use workspace::Item;
-        let pane = cx.add_view(Default::default(), |cx| Pane::new(cx));
+        let (_, pane) = cx.add_window(Default::default(), |cx| Pane::new(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
 
-        cx.add_window(Default::default(), |cx| {
+        cx.add_view(&pane, |cx| {
             let mut editor = build_editor(buffer.clone(), cx);
             let handle = cx.handle();
             editor.set_nav_history(Some(pane.read(cx).nav_history_for_item(&handle)));

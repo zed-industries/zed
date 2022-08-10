@@ -6,8 +6,8 @@ use crate::{
 use collections::HashMap;
 use editor::{Anchor, Autoscroll, Editor};
 use gpui::{
-    actions, elements::*, impl_actions, platform::CursorStyle, Action, AppContext, Entity,
-    MouseButton, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext,
+    actions, elements::*, impl_actions, platform::CursorStyle, Action, AnyViewHandle, AppContext,
+    Entity, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
 use language::OffsetRangeExt;
@@ -80,8 +80,10 @@ impl View for BufferSearchBar {
         "BufferSearchBar"
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.query_editor);
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        if cx.is_self_focused() {
+            cx.focus(&self.query_editor);
+        }
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
@@ -600,7 +602,7 @@ impl BufferSearchBar {
 mod tests {
     use super::*;
     use editor::{DisplayPoint, Editor};
-    use gpui::{color::Color, TestAppContext};
+    use gpui::{color::Color, test::EmptyView, TestAppContext};
     use language::Buffer;
     use std::sync::Arc;
     use unindent::Unindent as _;
@@ -629,11 +631,13 @@ mod tests {
                 cx,
             )
         });
-        let editor = cx.add_view(Default::default(), |cx| {
+        let (_, root_view) = cx.add_window(|_| EmptyView);
+
+        let editor = cx.add_view(&root_view, |cx| {
             Editor::for_buffer(buffer.clone(), None, cx)
         });
 
-        let search_bar = cx.add_view(Default::default(), |cx| {
+        let search_bar = cx.add_view(&root_view, |cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
             search_bar.show(false, true, cx);
