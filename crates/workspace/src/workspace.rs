@@ -1,5 +1,6 @@
 /// NOTE: Focus only 'takes' after an update has flushed_effects. Pane sends an event in on_focus_in
 /// which the workspace uses to change the activated pane.
+///
 /// This may cause issues when you're trying to write tests that use workspace focus to add items at
 /// specific locations.
 pub mod pane;
