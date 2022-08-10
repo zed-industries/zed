@@ -4246,7 +4246,10 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     // Clients A and B follow each other in split panes
     workspace_a.update(cx_a, |workspace, cx| {
         workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
-        assert_ne!(*workspace.active_pane(), pane_a1);
+        let pane_a1 = pane_a1.clone();
+        cx.defer(move |workspace, _| {
+            assert_ne!(*workspace.active_pane(), pane_a1);
+        });
     });
     workspace_a
         .update(cx_a, |workspace, cx| {
@@ -4259,7 +4262,10 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
         .unwrap();
     workspace_b.update(cx_b, |workspace, cx| {
         workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
-        assert_ne!(*workspace.active_pane(), pane_b1);
+        let pane_b1 = pane_b1.clone();
+        cx.defer(move |workspace, _| {
+            assert_ne!(*workspace.active_pane(), pane_b1);
+        });
     });
     workspace_b
         .update(cx_b, |workspace, cx| {
@@ -4271,17 +4277,26 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
         .await
         .unwrap();
 
+    workspace_a.update(cx_a, |workspace, cx| {
+        workspace.activate_next_pane(cx);
+    });
+    // Wait for focus effects to be fully flushed
+    workspace_a.update(cx_a, |workspace, _| {
+        assert_eq!(*workspace.active_pane(), pane_a1);
+    });
+
     workspace_a
         .update(cx_a, |workspace, cx| {
-            workspace.activate_next_pane(cx);
-            assert_eq!(*workspace.active_pane(), pane_a1);
             workspace.open_path((worktree_id, "3.txt"), true, cx)
         })
         .await
         .unwrap();
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.activate_next_pane(cx);
+    });
+
     workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace.activate_next_pane(cx);
             assert_eq!(*workspace.active_pane(), pane_b1);
             workspace.open_path((worktree_id, "4.txt"), true, cx)
         })
@@ -4311,17 +4326,24 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
             Some((worktree_id, "3.txt").into())
         );
         workspace.activate_next_pane(cx);
+    });
+
+    workspace_a.update(cx_a, |workspace, cx| {
         assert_eq!(
             workspace.active_item(cx).unwrap().project_path(cx),
             Some((worktree_id, "4.txt").into())
         );
     });
+
     workspace_b.update(cx_b, |workspace, cx| {
         assert_eq!(
             workspace.active_item(cx).unwrap().project_path(cx),
             Some((worktree_id, "4.txt").into())
         );
         workspace.activate_next_pane(cx);
+    });
+
+    workspace_b.update(cx_b, |workspace, cx| {
         assert_eq!(
             workspace.active_item(cx).unwrap().project_path(cx),
             Some((worktree_id, "3.txt").into())

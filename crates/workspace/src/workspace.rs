@@ -1,3 +1,7 @@
+/// NOTE: Focus only 'takes' after an update has flushed_effects. Pane sends an event in on_focus_in
+/// which the workspace uses to change the activated pane.
+/// This may cause issues when you're trying to write tests that use workspace focus to add items at
+/// specific locations.
 pub mod pane;
 pub mod pane_group;
 pub mod sidebar;
@@ -3088,16 +3092,21 @@ mod tests {
             workspace
                 .split_pane(left_pane.clone(), SplitDirection::Right, cx)
                 .unwrap();
-            workspace.add_item(Box::new(cx.add_view(|_| item_3_4.clone())), cx);
 
             left_pane
+        });
+
+        //Need to cause an effect flush in order to respect new focus
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item(Box::new(cx.add_view(|_| item_3_4.clone())), cx);
+            cx.focus(left_pane.clone());
         });
 
         // When closing all of the items in the left pane, we should be prompted twice:
         // once for project entry 0, and once for project entry 2. After those two
         // prompts, the task should complete.
+
         let close = workspace.update(cx, |workspace, cx| {
-            cx.focus(left_pane.clone());
             Pane::close_items(workspace, left_pane.clone(), cx, |_| true)
         });
 

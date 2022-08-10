@@ -7089,7 +7089,7 @@ mod tests {
 
         let (window_id, view_1) = cx.add_window(Default::default(), |_| view_1);
         let view_2 = cx.add_view(&view_1, |_| view_2);
-        cx.add_view(&view_2, |cx| {
+        let _view_3 = cx.add_view(&view_2, |cx| {
             cx.focus_self();
             view_3
         });
@@ -7135,6 +7135,7 @@ mod tests {
         assert_eq!(&*actions.borrow(), &["2 a"]);
 
         actions.borrow_mut().clear();
+
         cx.dispatch_keystroke(window_id, &Keystroke::parse("b").unwrap());
 
         assert_eq!(&*actions.borrow(), &["3 b", "2 b", "1 b", "global b"]);
