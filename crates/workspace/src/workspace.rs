@@ -823,6 +823,8 @@ enum FollowerItem {
 
 impl Workspace {
     pub fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
+        cx.observe_fullscreen(|_, _, cx| cx.notify()).detach();
+
         cx.observe_window_activation(Self::on_window_activation_changed)
             .detach();
         cx.observe(&project, |_, _, cx| cx.notify()).detach();
@@ -1856,6 +1858,17 @@ impl Workspace {
             worktree_root_names.push_str(name);
         }
 
+        // TODO: There should be a better system in place for this
+        // (https://github.com/zed-industries/zed/issues/1290)
+        let is_fullscreen = cx.window_is_fullscreen(cx.window_id());
+        let container_theme = if is_fullscreen {
+            let mut container_theme = theme.workspace.titlebar.container;
+            container_theme.padding.left = container_theme.padding.right;
+            container_theme
+        } else {
+            theme.workspace.titlebar.container
+        };
+
         ConstrainedBox::new(
             Container::new(
                 Stack::new()
@@ -1883,7 +1896,7 @@ impl Workspace {
                     )
                     .boxed(),
             )
-            .with_style(theme.workspace.titlebar.container)
+            .with_style(container_theme)
             .boxed(),
         )
         .with_height(theme.workspace.titlebar.height)
