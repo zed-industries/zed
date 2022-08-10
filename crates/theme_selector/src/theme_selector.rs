@@ -1,7 +1,7 @@
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, elements::*, AppContext, Element, ElementBox, Entity, MouseState, MutableAppContext,
-    RenderContext, View, ViewContext, ViewHandle,
+    actions, elements::*, AnyViewHandle, AppContext, Element, ElementBox, Entity, MouseState,
+    MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
@@ -44,7 +44,7 @@ impl ThemeSelector {
         theme_names.sort_unstable_by(|a, b| {
             a.ends_with("dark")
                 .cmp(&b.ends_with("dark"))
-                .then_with(|| a.cmp(&b))
+                .then_with(|| a.cmp(b))
         });
         let matches = theme_names
             .iter()
@@ -249,7 +249,9 @@ impl View for ThemeSelector {
         ChildView::new(self.picker.clone()).boxed()
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.picker);
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        if cx.is_self_focused() {
+            cx.focus(&self.picker);
+        }
     }
 }

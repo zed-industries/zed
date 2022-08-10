@@ -1,7 +1,7 @@
 use fuzzy::PathMatch;
 use gpui::{
-    actions, elements::*, AppContext, Entity, ModelHandle, MouseState, MutableAppContext,
-    RenderContext, Task, View, ViewContext, ViewHandle,
+    actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MouseState,
+    MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
@@ -53,8 +53,10 @@ impl View for FileFinder {
         ChildView::new(self.picker.clone()).boxed()
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.picker);
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        if cx.is_self_focused() {
+            cx.focus(&self.picker);
+        }
     }
 }
 
@@ -260,7 +262,7 @@ impl PickerDelegate for FileFinder {
             self.labels_for_match(path_match);
         Flex::column()
             .with_child(
-                Label::new(file_name.to_string(), style.label.clone())
+                Label::new(file_name, style.label.clone())
                     .with_highlights(file_name_positions)
                     .boxed(),
             )
@@ -331,7 +333,7 @@ mod tests {
         cx.dispatch_action(window_id, SelectNext);
         cx.dispatch_action(window_id, Confirm);
         active_pane
-            .condition(&cx, |pane, _| pane.active_item().is_some())
+            .condition(cx, |pane, _| pane.active_item().is_some())
             .await;
         cx.read(|cx| {
             let active_item = active_pane.read(cx).active_item().unwrap();

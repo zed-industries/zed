@@ -110,10 +110,10 @@ impl EditorElement {
         self.update_view(cx, |view, cx| view.snapshot(cx))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn mouse_down(
         &self,
         position: Vector2F,
-        cmd: bool,
         alt: bool,
         shift: bool,
         mut click_count: usize,
@@ -121,20 +121,6 @@ impl EditorElement {
         paint: &mut PaintState,
         cx: &mut EventContext,
     ) -> bool {
-        if cmd && paint.text_bounds.contains_point(position) {
-            let (point, target_point) =
-                paint.point_for_position(&self.snapshot(cx), layout, position);
-            if point == target_point {
-                if shift {
-                    cx.dispatch_action(GoToFetchedTypeDefinition { point });
-                } else {
-                    cx.dispatch_action(GoToFetchedDefinition { point });
-                }
-
-                return true;
-            }
-        }
-
         if paint.gutter_bounds.contains_point(position) {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
         } else if !paint.text_bounds.contains_point(position) {
@@ -183,13 +169,39 @@ impl EditorElement {
         true
     }
 
-    fn mouse_up(&self, _position: Vector2F, cx: &mut EventContext) -> bool {
-        if self.view(cx.app.as_ref()).is_selecting() {
+    fn mouse_up(
+        &self,
+        position: Vector2F,
+        cmd: bool,
+        shift: bool,
+        layout: &mut LayoutState,
+        paint: &mut PaintState,
+        cx: &mut EventContext,
+    ) -> bool {
+        let view = self.view(cx.app.as_ref());
+        let end_selection = view.is_selecting();
+        let selections_empty = view.are_selections_empty();
+
+        if end_selection {
             cx.dispatch_action(Select(SelectPhase::End));
-            true
-        } else {
-            false
         }
+
+        if selections_empty && cmd && paint.text_bounds.contains_point(position) {
+            let (point, target_point) =
+                paint.point_for_position(&self.snapshot(cx), layout, position);
+
+            if point == target_point {
+                if shift {
+                    cx.dispatch_action(GoToFetchedTypeDefinition { point });
+                } else {
+                    cx.dispatch_action(GoToFetchedDefinition { point });
+                }
+
+                return true;
+            }
+        }
+
+        end_selection
     }
 
     fn mouse_dragged(
@@ -685,6 +697,7 @@ impl EditorElement {
         cx.scene.pop_layer();
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn paint_highlighted_range(
         &self,
         range: Range<DisplayPoint>,
@@ -846,7 +859,7 @@ impl EditorElement {
                 .style
                 .placeholder_text
                 .as_ref()
-                .unwrap_or_else(|| &self.style.text);
+                .unwrap_or(&self.style.text);
             let placeholder_text = snapshot.placeholder_text();
             let placeholder_lines = placeholder_text
                 .as_ref()
@@ -855,7 +868,7 @@ impl EditorElement {
                 .skip(rows.start as usize)
                 .chain(iter::repeat(""))
                 .take(rows.len());
-            return placeholder_lines
+            placeholder_lines
                 .map(|line| {
                     cx.text_layout_cache.layout_str(
                         line,
@@ -870,7 +883,7 @@ impl EditorElement {
                         )],
                     )
                 })
-                .collect();
+                .collect()
         } else {
             let style = &self.style;
             let chunks = snapshot.chunks(rows.clone(), true).map(|chunk| {
@@ -915,14 +928,15 @@ impl EditorElement {
             layout_highlighted_chunks(
                 chunks,
                 &style.text,
-                &cx.text_layout_cache,
-                &cx.font_cache,
+                cx.text_layout_cache,
+                cx.font_cache,
                 MAX_LINE_LEN,
                 rows.len() as usize,
             )
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_blocks(
         &mut self,
         rows: Range<u32>,
@@ -1288,7 +1302,9 @@ impl Element for EditorElement {
                 }
 
                 // Render the local selections in the leader's color when following.
-                let local_replica_id = view.leader_replica_id.unwrap_or(view.replica_id(cx));
+                let local_replica_id = view
+                    .leader_replica_id
+                    .unwrap_or_else(|| view.replica_id(cx));
 
                 selections.push((
                     local_replica_id,
@@ -1346,19 +1362,19 @@ impl Element for EditorElement {
 
         self.update_view(cx.app, |view, cx| {
             let clamped = view.clamp_scroll_left(scroll_max.x());
-            let autoscrolled;
-            if autoscroll_horizontally {
-                autoscrolled = view.autoscroll_horizontally(
+
+            let autoscrolled = if autoscroll_horizontally {
+                view.autoscroll_horizontally(
                     start_row,
                     text_size.x(),
                     scroll_width,
                     em_width,
                     &line_layouts,
                     cx,
-                );
+                )
             } else {
-                autoscrolled = false;
-            }
+                false
+            };
 
             if clamped || autoscrolled {
                 snapshot = view.snapshot(cx);
@@ -1533,36 +1549,28 @@ impl Element for EditorElement {
         }
 
         match event {
-            Event::MouseDown(MouseButtonEvent {
+            &Event::MouseDown(MouseButtonEvent {
                 button: MouseButton::Left,
                 position,
-                cmd,
                 alt,
                 shift,
                 click_count,
                 ..
-            }) => self.mouse_down(
-                *position,
-                *cmd,
-                *alt,
-                *shift,
-                *click_count,
-                layout,
-                paint,
-                cx,
-            ),
+            }) => self.mouse_down(position, alt, shift, click_count, layout, paint, cx),
 
-            Event::MouseDown(MouseButtonEvent {
+            &Event::MouseDown(MouseButtonEvent {
                 button: MouseButton::Right,
                 position,
                 ..
-            }) => self.mouse_right_down(*position, layout, paint, cx),
+            }) => self.mouse_right_down(position, layout, paint, cx),
 
-            Event::MouseUp(MouseButtonEvent {
+            &Event::MouseUp(MouseButtonEvent {
                 button: MouseButton::Left,
                 position,
+                cmd,
+                shift,
                 ..
-            }) => self.mouse_up(*position, cx),
+            }) => self.mouse_up(position, cmd, shift, layout, paint, cx),
 
             Event::MouseMoved(MouseMovedEvent {
                 pressed_button: Some(MouseButton::Left),
@@ -1988,8 +1996,8 @@ mod tests {
         let layouts = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             let mut presenter = cx.build_presenter(window_id, 30.);
-            let mut layout_cx = presenter.build_layout_context(Vector2F::zero(), false, cx);
-            element.layout_line_numbers(0..6, &Default::default(), &snapshot, &mut layout_cx)
+            let layout_cx = presenter.build_layout_context(Vector2F::zero(), false, cx);
+            element.layout_line_numbers(0..6, &Default::default(), &snapshot, &layout_cx)
         });
         assert_eq!(layouts.len(), 6);
     }

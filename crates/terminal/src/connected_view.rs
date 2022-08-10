@@ -6,7 +6,8 @@ use gpui::{
     geometry::vector::Vector2F,
     impl_internal_actions,
     keymap::Keystroke,
-    AppContext, Element, ElementBox, ModelHandle, MutableAppContext, View, ViewContext, ViewHandle,
+    AnyViewHandle, AppContext, Element, ElementBox, ModelHandle, MutableAppContext, View,
+    ViewContext, ViewHandle,
 };
 use workspace::pane;
 
@@ -81,7 +82,7 @@ impl ConnectedView {
             has_new_content: true,
             has_bell: false,
             modal,
-            context_menu: cx.add_view(|cx| ContextMenu::new(cx)),
+            context_menu: cx.add_view(ContextMenu::new),
         }
     }
 
@@ -126,9 +127,9 @@ impl ConnectedView {
 
     ///Attempt to paste the clipboard into the terminal
     fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
-        cx.read_from_clipboard().map(|item| {
+        if let Some(item) = cx.read_from_clipboard() {
             self.terminal.read(cx).paste(item.text());
-        });
+        }
     }
 
     ///Synthesize the keyboard event corresponding to 'up'
@@ -190,7 +191,7 @@ impl View for ConnectedView {
             .boxed()
     }
 
-    fn on_focus(&mut self, _cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, _cx: &mut ViewContext<Self>) {
         self.has_new_content = false;
     }
 

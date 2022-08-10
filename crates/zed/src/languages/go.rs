@@ -72,7 +72,7 @@ impl super::LspAdapter for GoLspAdapter {
                 }
             }
         } else if let Some(path) = this.cached_server_binary(container_dir.clone()).await {
-            return Ok(path.to_path_buf());
+            return Ok(path);
         }
 
         let gobin_dir = container_dir.join("gobin");
@@ -122,7 +122,7 @@ impl super::LspAdapter for GoLspAdapter {
             }
 
             if let Some(path) = last_binary_path {
-                Ok(path.to_path_buf())
+                Ok(path)
             } else {
                 Err(anyhow!("no cached binary"))
             }
@@ -141,7 +141,7 @@ impl super::LspAdapter for GoLspAdapter {
         // Gopls returns nested fields and methods as completions.
         // To syntax highlight these, combine their final component
         // with their detail.
-        let name_offset = label.rfind(".").unwrap_or(0);
+        let name_offset = label.rfind('.').unwrap_or(0);
 
         match completion.kind.zip(completion.detail.as_ref()) {
             Some((lsp::CompletionItemKind::MODULE, detail)) => {

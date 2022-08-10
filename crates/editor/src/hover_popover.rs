@@ -158,7 +158,7 @@ fn show_hover(
             // query the LSP for hover info
             let hover_request = cx.update(|cx| {
                 project.update(cx, |project, cx| {
-                    project.hover(&buffer, buffer_position.clone(), cx)
+                    project.hover(&buffer, buffer_position, cx)
                 })
             });
 
@@ -222,7 +222,7 @@ fn show_hover(
 
                 Some(InfoPopover {
                     project: project.clone(),
-                    symbol_range: range.clone(),
+                    symbol_range: range,
                     contents: hover_result.contents,
                 })
             });

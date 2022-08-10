@@ -29,8 +29,8 @@ use gpui::{
     geometry::vector::{vec2f, Vector2F},
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
-    text_layout, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
-    ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View,
+    text_layout, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox,
+    Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
@@ -425,6 +425,7 @@ pub struct Editor {
     vertical_scroll_margin: f32,
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
+    #[allow(clippy::type_complexity)]
     background_highlights: BTreeMap<TypeId, (fn(&Theme) -> Color, Vec<Range<Anchor>>)>,
     nav_history: Option<ItemNavHistory>,
     context_menu: Option<ContextMenu>,
@@ -475,6 +476,7 @@ impl Default for SelectionHistoryMode {
 
 #[derive(Default)]
 struct SelectionHistory {
+    #[allow(clippy::type_complexity)]
     selections_by_transaction:
         HashMap<TransactionId, (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)>,
     mode: SelectionHistoryMode,
@@ -492,6 +494,7 @@ impl SelectionHistory {
             .insert(transaction_id, (selections, None));
     }
 
+    #[allow(clippy::type_complexity)]
     fn transaction(
         &self,
         transaction_id: TransactionId,
@@ -499,6 +502,7 @@ impl SelectionHistory {
         self.selections_by_transaction.get(&transaction_id)
     }
 
+    #[allow(clippy::type_complexity)]
     fn transaction_mut(
         &mut self,
         transaction_id: TransactionId,
@@ -1023,7 +1027,7 @@ impl Editor {
             background_highlights: Default::default(),
             nav_history: None,
             context_menu: None,
-            mouse_context_menu: cx.add_view(|cx| context_menu::ContextMenu::new(cx)),
+            mouse_context_menu: cx.add_view(context_menu::ContextMenu::new),
             completion_tasks: Default::default(),
             next_completion_id: 0,
             available_code_actions: Default::default(),
@@ -1561,7 +1565,6 @@ impl Editor {
     ) {
         if !self.focused {
             cx.focus_self();
-            cx.emit(Event::Activate);
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -1623,7 +1626,6 @@ impl Editor {
     ) {
         if !self.focused {
             cx.focus_self();
-            cx.emit(Event::Activate);
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -1651,7 +1653,7 @@ impl Editor {
         if let Some(tail) = self.columnar_selection_tail.as_ref() {
             let tail = tail.to_display_point(&display_map);
             self.select_columns(tail, position, goal_column, &display_map, cx);
-        } else if let Some(mut pending) = self.selections.pending_anchor().clone() {
+        } else if let Some(mut pending) = self.selections.pending_anchor() {
             let buffer = self.buffer.read(cx).snapshot(cx);
             let head;
             let tail;
@@ -1766,10 +1768,10 @@ impl Editor {
                 if start_column <= display_map.line_len(row) && !display_map.is_block_line(row) {
                     let start = display_map
                         .clip_point(DisplayPoint::new(row, start_column), Bias::Left)
-                        .to_point(&display_map);
+                        .to_point(display_map);
                     let end = display_map
                         .clip_point(DisplayPoint::new(row, end_column), Bias::Right)
-                        .to_point(&display_map);
+                        .to_point(display_map);
                     if reversed {
                         Some(end..start)
                     } else {
@@ -1785,6 +1787,14 @@ impl Editor {
             s.select_ranges(selection_ranges);
         });
         cx.notify();
+    }
+
+    pub fn are_selections_empty(&self) -> bool {
+        let pending_empty = match self.selections.pending_anchor() {
+            Some(Selection { start, end, .. }) => start == end,
+            None => true,
+        };
+        pending_empty && self.columnar_selection_tail.is_none()
     }
 
     pub fn is_selecting(&self) -> bool {
@@ -1909,7 +1919,7 @@ impl Editor {
                         cursor.row -= 1;
                         cursor.column = buffer.line_len(cursor.row);
                     }
-                    new_selection.map(|_| cursor.clone())
+                    new_selection.map(|_| cursor)
                 })
                 .collect();
 
@@ -2273,7 +2283,7 @@ impl Editor {
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position.clone());
         let completions = project.update(cx, |project, cx| {
-            project.completions(&buffer, buffer_position.clone(), cx)
+            project.completions(&buffer, buffer_position, cx)
         });
 
         let id = post_inc(&mut self.next_completion_id);
@@ -2363,7 +2373,7 @@ impl Editor {
         };
         let selections = self.selections.all::<usize>(cx);
         let buffer = buffer_handle.read(cx);
-        let old_range = completion.old_range.to_offset(&buffer);
+        let old_range = completion.old_range.to_offset(buffer);
         let old_text = buffer.text_for_range(old_range.clone()).collect::<String>();
 
         let newest_selection = self.selections.newest_anchor();
@@ -2801,7 +2811,7 @@ impl Editor {
                     let mut tabstop_ranges = tabstop
                         .iter()
                         .flat_map(|tabstop_range| {
-                            let mut delta = 0 as isize;
+                            let mut delta = 0_isize;
                             insertion_ranges.iter().map(move |insertion_range| {
                                 let insertion_start = insertion_range.start as isize + delta;
                                 delta +=
@@ -2865,7 +2875,7 @@ impl Editor {
             }
             if let Some(current_ranges) = snippet.ranges.get(snippet.active_index) {
                 self.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                    s.select_anchor_ranges(current_ranges.into_iter().cloned())
+                    s.select_anchor_ranges(current_ranges.iter().cloned())
                 });
                 // If snippet state is not at the last tabstop, push it back on the stack
                 if snippet.active_index + 1 < snippet.ranges.len() {
@@ -2947,7 +2957,7 @@ impl Editor {
                     }
                 })
             });
-            this.insert(&"", cx);
+            this.insert("", cx);
         });
     }
 
@@ -3214,13 +3224,13 @@ impl Editor {
             }
 
             let buffer = &display_map.buffer_snapshot;
-            let mut edit_start = Point::new(rows.start, 0).to_offset(&buffer);
+            let mut edit_start = Point::new(rows.start, 0).to_offset(buffer);
             let edit_end;
             let cursor_buffer_row;
             if buffer.max_point().row >= rows.end {
                 // If there's a line after the range, delete the \n from the end of the row range
                 // and position the cursor on the next line.
-                edit_end = Point::new(rows.end, 0).to_offset(&buffer);
+                edit_end = Point::new(rows.end, 0).to_offset(buffer);
                 cursor_buffer_row = rows.end;
             } else {
                 // If there isn't a line after the range, delete the \n from the line before the
@@ -3286,7 +3296,7 @@ impl Editor {
 
             while let Some(next_selection) = selections_iter.peek() {
                 let next_rows = next_selection.spanned_rows(false, &display_map);
-                if next_rows.start <= rows.end - 1 {
+                if next_rows.start < rows.end {
                     rows.end = next_rows.end;
                     selections_iter.next().unwrap();
                 } else {
@@ -3408,7 +3418,7 @@ impl Editor {
             }
 
             // If we didn't move line(s), preserve the existing selections
-            new_selections.extend(contiguous_row_selections.drain(..));
+            new_selections.append(&mut contiguous_row_selections);
         }
 
         self.transact(cx, |this, cx| {
@@ -3513,7 +3523,7 @@ impl Editor {
             }
 
             // If we didn't move line(s), preserve the existing selections
-            new_selections.extend(contiguous_row_selections.drain(..));
+            new_selections.append(&mut contiguous_row_selections);
         }
 
         self.transact(cx, |this, cx| {
@@ -3825,7 +3835,7 @@ impl Editor {
                 if !selection.is_empty() && !line_mode {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) = movement::up(&map, selection.start, selection.goal, false);
+                let (cursor, goal) = movement::up(map, selection.start, selection.goal, false);
                 selection.collapse_to(cursor, goal);
             });
         })
@@ -3857,7 +3867,7 @@ impl Editor {
                 if !selection.is_empty() && !line_mode {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) = movement::down(&map, selection.end, selection.goal, false);
+                let (cursor, goal) = movement::down(map, selection.end, selection.goal, false);
                 selection.collapse_to(cursor, goal);
             });
         });
@@ -4773,12 +4783,10 @@ impl Editor {
                     } else {
                         search_start = buffer.len();
                     }
+                } else if search_start == 0 {
+                    break;
                 } else {
-                    if search_start == 0 {
-                        break;
-                    } else {
-                        search_start = 0;
-                    }
+                    search_start = 0;
                 }
             }
         }
@@ -5101,13 +5109,7 @@ impl Editor {
         })?;
 
         let rename = workspace.project().clone().update(cx, |project, cx| {
-            project.perform_rename(
-                buffer.clone(),
-                range.start.clone(),
-                new_name.clone(),
-                true,
-                cx,
-            )
+            project.perform_rename(buffer.clone(), range.start, new_name.clone(), true, cx)
         });
 
         Some(cx.spawn(|workspace, mut cx| async move {
@@ -5286,7 +5288,7 @@ impl Editor {
 
     fn push_to_selection_history(&mut self) {
         self.selection_history.push(SelectionHistoryEntry {
-            selections: self.selections.disjoint_anchors().clone(),
+            selections: self.selections.disjoint_anchors(),
             select_next_state: self.select_next_state.clone(),
             add_selections_state: self.add_selections_state.clone(),
         });
@@ -5319,7 +5321,7 @@ impl Editor {
             .update(cx, |buffer, cx| buffer.start_transaction_at(now, cx))
         {
             self.selection_history
-                .insert_transaction(tx_id, self.selections.disjoint_anchors().clone());
+                .insert_transaction(tx_id, self.selections.disjoint_anchors());
         }
     }
 
@@ -5333,7 +5335,7 @@ impl Editor {
             .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
         {
             if let Some((_, end_selections)) = self.selection_history.transaction_mut(tx_id) {
-                *end_selections = Some(self.selections.disjoint_anchors().clone());
+                *end_selections = Some(self.selections.disjoint_anchors());
             } else {
                 log::error!("unexpectedly ended a transaction that wasn't started by this editor");
             }
@@ -5435,7 +5437,7 @@ impl Editor {
         }
 
         let end = end.unwrap_or(max_point);
-        return start.to_point(display_map)..end.to_point(display_map);
+        start.to_point(display_map)..end.to_point(display_map)
     }
 
     pub fn fold_selected_ranges(&mut self, _: &FoldSelectedRanges, cx: &mut ViewContext<Self>) {
@@ -5582,6 +5584,7 @@ impl Editor {
         cx.notify();
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn clear_background_highlights<T: 'static>(
         &mut self,
         cx: &mut ViewContext<Self>,
@@ -5623,7 +5626,7 @@ impl Editor {
             .chain(write_highlights)
             .flat_map(move |ranges| {
                 let start_ix = match ranges.binary_search_by(|probe| {
-                    let cmp = probe.end.cmp(&left_position, &buffer);
+                    let cmp = probe.end.cmp(&left_position, buffer);
                     if cmp.is_ge() {
                         Ordering::Greater
                     } else {
@@ -5636,7 +5639,7 @@ impl Editor {
                 let right_position = right_position.clone();
                 ranges[start_ix..]
                     .iter()
-                    .take_while(move |range| range.start.cmp(&right_position, &buffer).is_le())
+                    .take_while(move |range| range.start.cmp(&right_position, buffer).is_le())
             })
     }
 
@@ -5651,7 +5654,7 @@ impl Editor {
         for (color_fetcher, ranges) in self.background_highlights.values() {
             let color = color_fetcher(theme);
             let start_ix = match ranges.binary_search_by(|probe| {
-                let cmp = probe.end.cmp(&search_range.start, &buffer);
+                let cmp = probe.end.cmp(&search_range.start, buffer);
                 if cmp.is_gt() {
                     Ordering::Greater
                 } else {
@@ -5661,7 +5664,7 @@ impl Editor {
                 Ok(i) | Err(i) => i,
             };
             for range in &ranges[start_ix..] {
-                if range.start.cmp(&search_range.end, &buffer).is_ge() {
+                if range.start.cmp(&search_range.end, buffer).is_ge() {
                     break;
                 }
                 let start = range
@@ -5893,7 +5896,7 @@ impl Editor {
         let (_, ranges) = self.text_highlights::<InputComposition>(cx)?;
         Some(
             ranges
-                .into_iter()
+                .iter()
                 .map(move |range| {
                     range.start.to_offset_utf16(&snapshot)..range.end.to_offset_utf16(&snapshot)
                 })
@@ -5969,7 +5972,6 @@ fn compute_scroll_position(
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Event {
-    Activate,
     BufferEdited,
     Edited,
     Reparsed,
@@ -6025,7 +6027,7 @@ impl View for Editor {
         "Editor"
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         let focused_event = EditorFocused(cx.handle());
         cx.emit_global(focused_event);
         if let Some(rename) = self.pending_rename.as_ref() {
@@ -6046,7 +6048,7 @@ impl View for Editor {
         }
     }
 
-    fn on_blur(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         let blurred_event = EditorBlurred(cx.handle());
         cx.emit_global(blurred_event);
         self.focused = false;
@@ -6133,10 +6135,8 @@ impl View for Editor {
             let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
                 let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
                 Some(this.selection_replacement_ranges(range_utf16, cx))
-            } else if let Some(marked_ranges) = this.marked_text_ranges(cx) {
-                Some(marked_ranges)
             } else {
-                None
+                this.marked_text_ranges(cx)
             };
 
             if let Some(new_selected_ranges) = new_selected_ranges {
@@ -6197,7 +6197,7 @@ impl View for Editor {
                 let snapshot = this.buffer.read(cx).read(cx);
                 this.selections
                     .disjoint_anchors()
-                    .into_iter()
+                    .iter()
                     .map(|selection| {
                         selection.start.bias_left(&*snapshot)..selection.end.bias_right(&*snapshot)
                     })
@@ -6380,9 +6380,9 @@ impl<T: InvalidationRegion> InvalidationStack<T> {
                 if selections.len() == region.ranges().len() {
                     selections
                         .iter()
-                        .zip(region.ranges().iter().map(|r| r.to_offset(&buffer)))
+                        .zip(region.ranges().iter().map(|r| r.to_offset(buffer)))
                         .all(|(selection, invalidation_range)| {
-                            let head = selection.head().to_offset(&buffer);
+                            let head = selection.head().to_offset(buffer);
                             invalidation_range.start <= head && invalidation_range.end >= head
                         })
                 } else {
@@ -6597,7 +6597,7 @@ pub fn styled_runs_for_code_label<'a>(
             } else {
                 return Default::default();
             };
-            let mut muted_style = style.clone();
+            let mut muted_style = style;
             muted_style.highlight(fade_out);
 
             let mut runs = SmallVec::<[(Range<usize>, HighlightStyle); 3]>::new();
@@ -7099,10 +7099,10 @@ mod tests {
     fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
         cx.set_global(Settings::test(cx));
         use workspace::Item;
-        let pane = cx.add_view(Default::default(), |cx| Pane::new(cx));
+        let (_, pane) = cx.add_window(Default::default(), Pane::new);
         let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
 
-        cx.add_window(Default::default(), |cx| {
+        cx.add_view(&pane, |cx| {
             let mut editor = build_editor(buffer.clone(), cx);
             let handle = cx.handle();
             editor.set_nav_history(Some(pane.read(cx).nav_history_for_item(&handle)));
@@ -7189,7 +7189,7 @@ mod tests {
                 Box::new(NavigationData {
                     cursor_anchor: invalid_anchor.clone(),
                     cursor_position: invalid_point,
-                    scroll_top_anchor: invalid_anchor.clone(),
+                    scroll_top_anchor: invalid_anchor,
                     scroll_top_row: invalid_point.row,
                     scroll_position: Default::default(),
                 }),
@@ -8699,98 +8699,102 @@ mod tests {
     fn test_transpose(cx: &mut gpui::MutableAppContext) {
         cx.set_global(Settings::test(cx));
 
-        cx.add_window(Default::default(), |cx| {
-            let mut editor = build_editor(MultiBuffer::build_simple("abc", cx), cx);
+        _ = cx
+            .add_window(Default::default(), |cx| {
+                let mut editor = build_editor(MultiBuffer::build_simple("abc", cx), cx);
 
-            editor.change_selections(None, cx, |s| s.select_ranges([1..1]));
-            editor.transpose(&Default::default(), cx);
-            assert_eq!(editor.text(cx), "bac");
-            assert_eq!(editor.selections.ranges(cx), [2..2]);
+                editor.change_selections(None, cx, |s| s.select_ranges([1..1]));
+                editor.transpose(&Default::default(), cx);
+                assert_eq!(editor.text(cx), "bac");
+                assert_eq!(editor.selections.ranges(cx), [2..2]);
 
-            editor.transpose(&Default::default(), cx);
-            assert_eq!(editor.text(cx), "bca");
-            assert_eq!(editor.selections.ranges(cx), [3..3]);
+                editor.transpose(&Default::default(), cx);
+                assert_eq!(editor.text(cx), "bca");
+                assert_eq!(editor.selections.ranges(cx), [3..3]);
 
-            editor.transpose(&Default::default(), cx);
-            assert_eq!(editor.text(cx), "bac");
-            assert_eq!(editor.selections.ranges(cx), [3..3]);
+                editor.transpose(&Default::default(), cx);
+                assert_eq!(editor.text(cx), "bac");
+                assert_eq!(editor.selections.ranges(cx), [3..3]);
 
-            editor
-        })
-        .1;
+                editor
+            })
+            .1;
 
-        cx.add_window(Default::default(), |cx| {
-            let mut editor = build_editor(MultiBuffer::build_simple("abc\nde", cx), cx);
+        _ = cx
+            .add_window(Default::default(), |cx| {
+                let mut editor = build_editor(MultiBuffer::build_simple("abc\nde", cx), cx);
 
-            editor.change_selections(None, cx, |s| s.select_ranges([3..3]));
-            editor.transpose(&Default::default(), cx);
-            assert_eq!(editor.text(cx), "acb\nde");
-            assert_eq!(editor.selections.ranges(cx), [3..3]);
+                editor.change_selections(None, cx, |s| s.select_ranges([3..3]));
+                editor.transpose(&Default::default(), cx);
+                assert_eq!(editor.text(cx), "acb\nde");
+                assert_eq!(editor.selections.ranges(cx), [3..3]);
 
-            editor.change_selections(None, cx, |s| s.select_ranges([4..4]));
-            editor.transpose(&Default::default(), cx);
-            assert_eq!(editor.text(cx), "acbd\ne");
-            assert_eq!(editor.selections.ranges(cx), [5..5]);
+                editor.change_selections(None, cx, |s| s.select_ranges([4..4]));
+                editor.transpose(&Default::default(), cx);
+                assert_eq!(editor.text(cx), "acbd\ne");
+                assert_eq!(editor.selections.ranges(cx), [5..5]);
 
-            editor.transpose(&Default::default(), cx);
-            assert_eq!(editor.text(cx), "acbde\n");
-            assert_eq!(editor.selections.ranges(cx), [6..6]);
+                editor.transpose(&Default::default(), cx);
+                assert_eq!(editor.text(cx), "acbde\n");
+                assert_eq!(editor.selections.ranges(cx), [6..6]);
 
-            editor.transpose(&Default::default(), cx);
-            assert_eq!(editor.text(cx), "acbd\ne");
-            assert_eq!(editor.selections.ranges(cx), [6..6]);
+                editor.transpose(&Default::default(), cx);
+                assert_eq!(editor.text(cx), "acbd\ne");
+                assert_eq!(editor.selections.ranges(cx), [6..6]);
 
-            editor
-        })
-        .1;
+                editor
+            })
+            .1;
 
-        cx.add_window(Default::default(), |cx| {
-            let mut editor = build_editor(MultiBuffer::build_simple("abc\nde", cx), cx);
+        _ = cx
+            .add_window(Default::default(), |cx| {
+                let mut editor = build_editor(MultiBuffer::build_simple("abc\nde", cx), cx);
 
-            editor.change_selections(None, cx, |s| s.select_ranges([1..1, 2..2, 4..4]));
-            editor.transpose(&Default::default(), cx);
-            assert_eq!(editor.text(cx), "bacd\ne");
-            assert_eq!(editor.selections.ranges(cx), [2..2, 3..3, 5..5]);
+                editor.change_selections(None, cx, |s| s.select_ranges([1..1, 2..2, 4..4]));
+                editor.transpose(&Default::default(), cx);
+                assert_eq!(editor.text(cx), "bacd\ne");
+                assert_eq!(editor.selections.ranges(cx), [2..2, 3..3, 5..5]);
 
-            editor.transpose(&Default::default(), cx);
-            assert_eq!(editor.text(cx), "bcade\n");
-            assert_eq!(editor.selections.ranges(cx), [3..3, 4..4, 6..6]);
+                editor.transpose(&Default::default(), cx);
+                assert_eq!(editor.text(cx), "bcade\n");
+                assert_eq!(editor.selections.ranges(cx), [3..3, 4..4, 6..6]);
 
-            editor.transpose(&Default::default(), cx);
-            assert_eq!(editor.text(cx), "bcda\ne");
-            assert_eq!(editor.selections.ranges(cx), [4..4, 6..6]);
+                editor.transpose(&Default::default(), cx);
+                assert_eq!(editor.text(cx), "bcda\ne");
+                assert_eq!(editor.selections.ranges(cx), [4..4, 6..6]);
 
-            editor.transpose(&Default::default(), cx);
-            assert_eq!(editor.text(cx), "bcade\n");
-            assert_eq!(editor.selections.ranges(cx), [4..4, 6..6]);
+                editor.transpose(&Default::default(), cx);
+                assert_eq!(editor.text(cx), "bcade\n");
+                assert_eq!(editor.selections.ranges(cx), [4..4, 6..6]);
 
-            editor.transpose(&Default::default(), cx);
-            assert_eq!(editor.text(cx), "bcaed\n");
-            assert_eq!(editor.selections.ranges(cx), [5..5, 6..6]);
+                editor.transpose(&Default::default(), cx);
+                assert_eq!(editor.text(cx), "bcaed\n");
+                assert_eq!(editor.selections.ranges(cx), [5..5, 6..6]);
 
-            editor
-        })
-        .1;
+                editor
+            })
+            .1;
 
-        cx.add_window(Default::default(), |cx| {
-            let mut editor = build_editor(MultiBuffer::build_simple("🍐🏀✋", cx), cx);
+        _ = cx
+            .add_window(Default::default(), |cx| {
+                let mut editor = build_editor(MultiBuffer::build_simple("🍐🏀✋", cx), cx);
 
-            editor.change_selections(None, cx, |s| s.select_ranges([4..4]));
-            editor.transpose(&Default::default(), cx);
-            assert_eq!(editor.text(cx), "🏀🍐✋");
-            assert_eq!(editor.selections.ranges(cx), [8..8]);
+                editor.change_selections(None, cx, |s| s.select_ranges([4..4]));
+                editor.transpose(&Default::default(), cx);
+                assert_eq!(editor.text(cx), "🏀🍐✋");
+                assert_eq!(editor.selections.ranges(cx), [8..8]);
 
-            editor.transpose(&Default::default(), cx);
-            assert_eq!(editor.text(cx), "🏀✋🍐");
-            assert_eq!(editor.selections.ranges(cx), [11..11]);
+                editor.transpose(&Default::default(), cx);
+                assert_eq!(editor.text(cx), "🏀✋🍐");
+                assert_eq!(editor.selections.ranges(cx), [11..11]);
 
-            editor.transpose(&Default::default(), cx);
-            assert_eq!(editor.text(cx), "🏀🍐✋");
-            assert_eq!(editor.selections.ranges(cx), [11..11]);
+                editor.transpose(&Default::default(), cx);
+                assert_eq!(editor.text(cx), "🏀🍐✋");
+                assert_eq!(editor.selections.ranges(cx), [11..11]);
 
-            editor
-        })
-        .1;
+                editor
+            })
+            .1;
     }
 
     #[gpui::test]
@@ -9342,7 +9346,7 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, view) = cx.add_window(|cx| build_editor(buffer, cx));
-        view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
+        view.condition(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
             .await;
 
         view.update(cx, |view, cx| {
@@ -9501,7 +9505,7 @@ mod tests {
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, editor) = cx.add_window(|cx| build_editor(buffer, cx));
         editor
-            .condition(&cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+            .condition(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
             .await;
 
         editor.update(cx, |editor, cx| {
@@ -9561,7 +9565,7 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, view) = cx.add_window(|cx| build_editor(buffer, cx));
-        view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
+        view.condition(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
             .await;
 
         view.update(cx, |view, cx| {
@@ -9737,7 +9741,7 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, view) = cx.add_window(|cx| build_editor(buffer, cx));
-        view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
+        view.condition(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
             .await;
 
         view.update(cx, |view, cx| {
@@ -9819,7 +9823,7 @@ mod tests {
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, editor) = cx.add_window(|cx| build_editor(buffer, cx));
         editor
-            .condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
+            .condition(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
             .await;
 
         editor.update(cx, |editor, cx| {
@@ -10023,7 +10027,7 @@ mod tests {
             }))
             .await;
 
-        let fs = FakeFs::new(cx.background().clone());
+        let fs = FakeFs::new(cx.background());
         fs.insert_file("/file.rs", Default::default()).await;
 
         let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
@@ -10137,7 +10141,7 @@ mod tests {
             }))
             .await;
 
-        let fs = FakeFs::new(cx.background().clone());
+        let fs = FakeFs::new(cx.background());
         fs.insert_file("/file.rs", Default::default()).await;
 
         let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
@@ -10420,7 +10424,7 @@ mod tests {
                             .map(|completion_text| lsp::CompletionItem {
                                 label: completion_text.to_string(),
                                 text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                                    range: replace_range.clone(),
+                                    range: replace_range,
                                     new_text: completion_text.to_string(),
                                 })),
                                 ..Default::default()
@@ -10851,7 +10855,7 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, view) = cx.add_window(|cx| build_editor(buffer, cx));
-        view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
+        view.condition(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
             .await;
 
         view.update(cx, |view, cx| {
@@ -11079,7 +11083,7 @@ mod tests {
         let match_indices = [4, 6, 7, 8];
         assert_eq!(
             combine_syntax_and_fuzzy_match_highlights(
-                &string,
+                string,
                 Default::default(),
                 syntax_ranges.into_iter(),
                 &match_indices,

@@ -45,6 +45,7 @@ pub struct LayoutState {
 pub struct UniformList {
     state: UniformListState,
     item_count: usize,
+    #[allow(clippy::type_complexity)]
     append_items: Box<dyn Fn(Range<usize>, &mut Vec<ElementBox>, &mut LayoutContext)>,
     padding_top: f32,
     padding_bottom: f32,
@@ -310,19 +311,17 @@ impl Element for UniformList {
             handled = item.dispatch_event(event, cx) || handled;
         }
 
-        match event {
-            Event::ScrollWheel(ScrollWheelEvent {
-                position,
-                delta,
-                precise,
-            }) => {
-                if bounds.contains_point(*position) {
-                    if self.scroll(*position, *delta, *precise, layout.scroll_max, cx) {
-                        handled = true;
-                    }
-                }
+        if let Event::ScrollWheel(ScrollWheelEvent {
+            position,
+            delta,
+            precise,
+        }) = event
+        {
+            if bounds.contains_point(*position)
+                && self.scroll(*position, *delta, *precise, layout.scroll_max, cx)
+            {
+                handled = true;
             }
-            _ => {}
         }
 
         handled

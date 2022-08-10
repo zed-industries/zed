@@ -308,6 +308,7 @@ pub struct LanguageRegistry {
     lsp_binary_statuses_tx: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
     lsp_binary_statuses_rx: async_broadcast::Receiver<(Arc<Language>, LanguageServerBinaryStatus)>,
     login_shell_env_loaded: Shared<Task<()>>,
+    #[allow(clippy::type_complexity)]
     lsp_binary_paths: Mutex<
         HashMap<
             LanguageServerName,
@@ -342,7 +343,7 @@ impl LanguageRegistry {
         if let Some(theme) = self.theme.read().clone() {
             language.set_theme(&theme.editor.syntax);
         }
-        self.languages.write().push(language.clone());
+        self.languages.write().push(language);
         *self.subscription.write().0.borrow_mut() = ();
     }
 
@@ -409,7 +410,7 @@ impl LanguageRegistry {
     ) -> Option<Task<Result<lsp::LanguageServer>>> {
         #[cfg(any(test, feature = "test-support"))]
         if language.fake_adapter.is_some() {
-            let language = language.clone();
+            let language = language;
             return Some(cx.spawn(|cx| async move {
                 let (servers_tx, fake_adapter) = language.fake_adapter.as_ref().unwrap();
                 let (server, mut fake_server) = lsp::LanguageServer::fake(
@@ -474,7 +475,7 @@ impl LanguageRegistry {
             let server = lsp::LanguageServer::new(
                 server_id,
                 &server_binary_path,
-                &server_args,
+                server_args,
                 &root_path,
                 cx,
             )?;

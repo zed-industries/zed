@@ -35,7 +35,7 @@ trait Match: Ord {
 
 trait MatchCandidate {
     fn has_chars(&self, bag: CharBag) -> bool;
-    fn to_string<'a>(&'a self) -> Cow<'a, str>;
+    fn to_string(&self) -> Cow<'_, str>;
 }
 
 #[derive(Clone, Debug)]
@@ -64,6 +64,9 @@ pub trait PathMatchCandidateSet<'a>: Send + Sync {
     type Candidates: Iterator<Item = PathMatchCandidate<'a>>;
     fn id(&self) -> usize;
     fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     fn prefix(&self) -> Arc<str>;
     fn candidates(&'a self, start: usize) -> Self::Candidates;
 }
@@ -239,7 +242,7 @@ pub async fn match_strings(
         if results.is_empty() {
             results = segment_result;
         } else {
-            util::extend_sorted(&mut results, segment_result, max_results, |a, b| b.cmp(&a));
+            util::extend_sorted(&mut results, segment_result, max_results, |a, b| b.cmp(a));
         }
     }
     results
@@ -299,7 +302,7 @@ pub async fn match_paths<'a, Set: PathMatchCandidateSet<'a>>(
                                 candidate_set.prefix(),
                                 candidates,
                                 results,
-                                &cancel_flag,
+                                cancel_flag,
                             );
                         }
                         if tree_end >= segment_end {
@@ -317,7 +320,7 @@ pub async fn match_paths<'a, Set: PathMatchCandidateSet<'a>>(
         if results.is_empty() {
             results = segment_result;
         } else {
-            util::extend_sorted(&mut results, segment_result, max_results, |a, b| b.cmp(&a));
+            util::extend_sorted(&mut results, segment_result, max_results, |a, b| b.cmp(a));
         }
     }
     results
@@ -426,7 +429,7 @@ impl<'a> Matcher<'a> {
                 lowercase_candidate_chars.push(c.to_ascii_lowercase());
             }
 
-            if !self.find_last_positions(&lowercase_prefix, &lowercase_candidate_chars) {
+            if !self.find_last_positions(lowercase_prefix, &lowercase_candidate_chars) {
                 continue;
             }
 
@@ -439,13 +442,13 @@ impl<'a> Matcher<'a> {
             let score = self.score_match(
                 &candidate_chars,
                 &lowercase_candidate_chars,
-                &prefix,
-                &lowercase_prefix,
+                prefix,
+                lowercase_prefix,
             );
 
             if score > 0.0 {
                 let mut mat = build_match(&candidate, score);
-                if let Err(i) = results.binary_search_by(|m| mat.cmp(&m)) {
+                if let Err(i) = results.binary_search_by(|m| mat.cmp(m)) {
                     if results.len() < self.max_results {
                         mat.set_positions(self.match_positions.clone());
                         results.insert(i, mat);
@@ -523,6 +526,7 @@ impl<'a> Matcher<'a> {
         score
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn recursive_score_match(
         &mut self,
         path: &[char],
@@ -579,9 +583,9 @@ impl<'a> Matcher<'a> {
 
                     if last == '/' {
                         char_score = 0.9;
-                    } else if last == '-' || last == '_' || last == ' ' || last.is_numeric() {
-                        char_score = 0.8;
-                    } else if last.is_lowercase() && curr.is_uppercase() {
+                    } else if (last == '-' || last == '_' || last == ' ' || last.is_numeric())
+                        || (last.is_lowercase() && curr.is_uppercase())
+                    {
                         char_score = 0.8;
                     } else if last == '.' {
                         char_score = 0.7;
@@ -662,18 +666,18 @@ mod tests {
         let mut query: &[char] = &['d', 'c'];
         let mut matcher = Matcher::new(query, query, query.into(), false, 10);
         let result = matcher.find_last_positions(&['a', 'b', 'c'], &['b', 'd', 'e', 'f']);
-        assert_eq!(result, false);
+        assert!(!result);
 
         query = &['c', 'd'];
         let mut matcher = Matcher::new(query, query, query.into(), false, 10);
         let result = matcher.find_last_positions(&['a', 'b', 'c'], &['b', 'd', 'e', 'f']);
-        assert_eq!(result, true);
+        assert!(result);
         assert_eq!(matcher.last_positions, vec![2, 4]);
 
         query = &['z', '/', 'z', 'f'];
         let mut matcher = Matcher::new(query, query, query.into(), false, 10);
         let result = matcher.find_last_positions(&['z', 'e', 'd', '/'], &['z', 'e', 'd', '/', 'f']);
-        assert_eq!(result, true);
+        assert!(result);
         assert_eq!(matcher.last_positions, vec![0, 3, 4, 8]);
     }
 
@@ -741,7 +745,7 @@ mod tests {
     fn match_query<'a>(
         query: &str,
         smart_case: bool,
-        paths: &Vec<&'a str>,
+        paths: &[&'a str],
     ) -> Vec<(&'a str, Vec<usize>)> {
         let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
         let query = query.chars().collect::<Vec<_>>();

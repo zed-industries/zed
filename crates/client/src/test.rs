@@ -56,7 +56,7 @@ impl FakeServer {
                 }
             })
             .override_establish_connection({
-                let peer = Arc::downgrade(&server.peer).clone();
+                let peer = Arc::downgrade(&server.peer);
                 let state = Arc::downgrade(&server.state);
                 move |credentials, cx| {
                     let peer = peer.clone();
@@ -123,6 +123,7 @@ impl FakeServer {
         self.peer.send(self.connection_id(), message).unwrap();
     }
 
+    #[allow(clippy::await_holding_lock)]
     pub async fn receive<M: proto::EnvelopedMessage>(&self) -> Result<TypedEnvelope<M>> {
         self.executor.start_waiting();
         let message = self
@@ -194,7 +195,7 @@ pub struct FakeHttpClient {
 }
 
 impl FakeHttpClient {
-    pub fn new<Fut, F>(handler: F) -> Arc<dyn HttpClient>
+    pub fn create<Fut, F>(handler: F) -> Arc<dyn HttpClient>
     where
         Fut: 'static + Send + Future<Output = Result<Response, http::Error>>,
         F: 'static + Send + Sync + Fn(Request) -> Fut,
@@ -205,7 +206,7 @@ impl FakeHttpClient {
     }
 
     pub fn with_404_response() -> Arc<dyn HttpClient> {
-        Self::new(|_| async move {
+        Self::create(|_| async move {
             Ok(isahc::Response::builder()
                 .status(404)
                 .body(Default::default())
@@ -221,7 +222,7 @@ impl fmt::Debug for FakeHttpClient {
 }
 
 impl HttpClient for FakeHttpClient {
-    fn send<'a>(&'a self, req: Request) -> BoxFuture<'a, Result<Response, crate::http::Error>> {
+    fn send(&self, req: Request) -> BoxFuture<Result<Response, crate::http::Error>> {
         let future = (self.handler)(req);
         Box::pin(async move { future.await.map(Into::into) })
     }

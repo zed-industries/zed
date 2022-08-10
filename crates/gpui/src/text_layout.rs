@@ -66,7 +66,7 @@ impl TextLayoutCache {
         let mut curr_frame = RwLockUpgradableReadGuard::upgrade(curr_frame);
         if let Some((key, layout)) = self.prev_frame.lock().remove_entry(key) {
             curr_frame.insert(key, layout.clone());
-            Line::new(layout.clone(), runs)
+            Line::new(layout, runs)
         } else {
             let layout = Arc::new(self.fonts.layout_line(text, font_size, runs));
             let key = CacheKeyValue {
@@ -81,7 +81,7 @@ impl TextLayoutCache {
 }
 
 trait CacheKey {
-    fn key<'a>(&'a self) -> CacheKeyRef<'a>;
+    fn key(&self) -> CacheKeyRef;
 }
 
 impl<'a> PartialEq for (dyn CacheKey + 'a) {
@@ -98,7 +98,7 @@ impl<'a> Hash for (dyn CacheKey + 'a) {
     }
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Eq)]
 struct CacheKeyValue {
     text: String,
     font_size: OrderedFloat<f32>,
@@ -106,12 +106,18 @@ struct CacheKeyValue {
 }
 
 impl CacheKey for CacheKeyValue {
-    fn key<'a>(&'a self) -> CacheKeyRef<'a> {
+    fn key(&self) -> CacheKeyRef {
         CacheKeyRef {
-            text: &self.text.as_str(),
+            text: self.text.as_str(),
             font_size: self.font_size,
             runs: self.runs.as_slice(),
         }
+    }
+}
+
+impl PartialEq for CacheKeyValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.key().eq(&other.key())
     }
 }
 
@@ -135,7 +141,7 @@ struct CacheKeyRef<'a> {
 }
 
 impl<'a> CacheKey for CacheKeyRef<'a> {
-    fn key<'b>(&'b self) -> CacheKeyRef<'b> {
+    fn key(&self) -> CacheKeyRef {
         *self
     }
 }
@@ -242,6 +248,10 @@ impl Line {
         self.layout.len
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.layout.len == 0
+    }
+
     pub fn index_for_x(&self, x: f32) -> Option<usize> {
         if x >= self.layout.width {
             None
@@ -300,7 +310,7 @@ impl Line {
                                 ),
                                 Underline {
                                     color: Some(run_underline.color.unwrap_or(*run_color)),
-                                    thickness: run_underline.thickness.into(),
+                                    thickness: run_underline.thickness,
                                     squiggly: run_underline.squiggly,
                                 },
                             ));
@@ -484,7 +494,7 @@ impl LineWrapper {
         let mut prev_c = '\0';
         let mut char_indices = line.char_indices();
         iter::from_fn(move || {
-            while let Some((ix, c)) = char_indices.next() {
+            for (ix, c) in char_indices.by_ref() {
                 if c == '\n' {
                     continue;
                 }
@@ -746,7 +756,7 @@ mod tests {
         let mut wrapper = LineWrapper::new(font_id, 16., font_system);
         assert_eq!(
             wrapper
-                .wrap_shaped_line(&text, &line, 72.0)
+                .wrap_shaped_line(text, &line, 72.0)
                 .collect::<Vec<_>>(),
             &[
                 ShapedBoundary {

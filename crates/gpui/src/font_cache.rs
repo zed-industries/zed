@@ -117,7 +117,7 @@ impl FontCache {
                 .font_selections
                 .entry(family_id)
                 .or_default()
-                .insert(properties.clone(), font_id);
+                .insert(*properties, font_id);
             Ok(font_id)
         }
     }
@@ -257,10 +257,10 @@ mod tests {
         let arial = fonts.load_family(&["Arial"]).unwrap();
         let arial_regular = fonts.select_font(arial, &Properties::new()).unwrap();
         let arial_italic = fonts
-            .select_font(arial, &Properties::new().style(Style::Italic))
+            .select_font(arial, Properties::new().style(Style::Italic))
             .unwrap();
         let arial_bold = fonts
-            .select_font(arial, &Properties::new().weight(Weight::BOLD))
+            .select_font(arial, Properties::new().weight(Weight::BOLD))
             .unwrap();
         assert_ne!(arial_regular, arial_italic);
         assert_ne!(arial_regular, arial_bold);

@@ -42,7 +42,7 @@ jobs:
           clean: false
           
       - name: Run clippy
-        run: cargo clippy
+        run: cargo clippy --workspace -- -D warnings -A clippy::reversed_empty_ranges -A clippy::missing_safety_doc -A clippy::let_unit_value
         
       - name: Run tests
         run: cargo test --workspace --no-fail-fast

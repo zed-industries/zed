@@ -24,13 +24,13 @@ impl Expanded {
         }
     }
 
-    pub fn to_full_width(mut self) -> Self {
+    pub fn full_width(mut self) -> Self {
         self.full_width = true;
         self.full_height = false;
         self
     }
 
-    pub fn to_full_height(mut self) -> Self {
+    pub fn full_height(mut self) -> Self {
         self.full_width = false;
         self.full_height = true;
         self

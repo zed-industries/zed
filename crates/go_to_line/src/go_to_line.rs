@@ -1,7 +1,7 @@
 use editor::{display_map::ToDisplayPoint, Autoscroll, DisplayPoint, Editor};
 use gpui::{
-    actions, elements::*, geometry::vector::Vector2F, Axis, Entity, MutableAppContext,
-    RenderContext, View, ViewContext, ViewHandle,
+    actions, elements::*, geometry::vector::Vector2F, AnyViewHandle, Axis, Entity,
+    MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
 };
 use menu::{Cancel, Confirm};
 use settings::Settings;
@@ -183,7 +183,7 @@ impl View for GoToLine {
         .named("go to line")
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         cx.focus(&self.line_editor);
     }
 }

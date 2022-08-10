@@ -13,8 +13,7 @@ use std::{env, ffi::OsString, path::PathBuf, sync::Arc, time::Duration};
 use update_notification::UpdateNotification;
 use workspace::Workspace;
 
-const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &'static str =
-    "auto-updater-should-show-updated-notification";
+const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 lazy_static! {
@@ -61,7 +60,7 @@ pub fn init(
     server_url: String,
     cx: &mut MutableAppContext,
 ) {
-    if let Some(version) = ZED_APP_VERSION.clone().or(cx.platform().app_version().ok()) {
+    if let Some(version) = (*ZED_APP_VERSION).or_else(|| cx.platform().app_version().ok()) {
         let auto_updater = cx.add_model(|cx| {
             let updater = AutoUpdater::new(version, db.clone(), http_client, server_url.clone());
             updater.start_polling(cx).detach();

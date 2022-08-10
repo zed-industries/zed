@@ -7,8 +7,8 @@ use gpui::{
     geometry::vector::{vec2f, Vector2F},
     keymap,
     platform::CursorStyle,
-    AppContext, Axis, Element, ElementBox, Entity, MouseButton, MouseState, MutableAppContext,
-    RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    AnyViewHandle, AppContext, Axis, Element, ElementBox, Entity, MouseButton, MouseState,
+    MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectIndex, SelectLast, SelectNext, SelectPrev};
 use settings::Settings;
@@ -118,8 +118,10 @@ impl<D: PickerDelegate> View for Picker<D> {
         cx
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.query_editor);
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        if cx.is_self_focused() {
+            cx.focus(&self.query_editor);
+        }
     }
 }
 

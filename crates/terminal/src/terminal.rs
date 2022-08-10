@@ -60,7 +60,6 @@ const DEBUG_LINE_HEIGHT: f32 = 5.;
 pub enum Event {
     TitleChanged,
     CloseTerminal,
-    Activate,
     Bell,
     Wakeup,
 }
@@ -138,13 +137,13 @@ impl Default for TerminalSize {
     }
 }
 
-impl Into<WindowSize> for TerminalSize {
-    fn into(self) -> WindowSize {
+impl From<TerminalSize> for WindowSize {
+    fn from(val: TerminalSize) -> Self {
         WindowSize {
-            num_lines: self.num_lines() as u16,
-            num_cols: self.num_columns() as u16,
-            cell_width: self.cell_width() as u16,
-            cell_height: self.line_height() as u16,
+            num_lines: val.num_lines() as u16,
+            num_cols: val.num_columns() as u16,
+            cell_width: val.cell_width() as u16,
+            cell_height: val.line_height() as u16,
         }
     }
 }
@@ -270,7 +269,7 @@ impl TerminalBuilder {
             }
         };
 
-        let mut env = env.unwrap_or_else(|| HashMap::new());
+        let mut env = env.unwrap_or_default();
 
         //TODO: Properly set the current locale,
         env.insert("LC_ALL".to_string(), "en_US.UTF-8".to_string());
@@ -294,7 +293,7 @@ impl TerminalBuilder {
         let term = Arc::new(FairMutex::new(term));
 
         //Setup the pty...
-        let pty = match tty::new(&pty_config, initial_size.clone().into(), None) {
+        let pty = match tty::new(&pty_config, initial_size.into(), None) {
             Ok(pty) => pty,
             Err(error) => {
                 bail!(TerminalError {
@@ -322,7 +321,7 @@ impl TerminalBuilder {
         //And connect them together
         let event_loop = EventLoop::new(
             term.clone(),
-            ZedListener(events_tx.clone()),
+            ZedListener(events_tx),
             pty,
             pty_config.hold,
             false,
@@ -380,7 +379,7 @@ impl TerminalBuilder {
                         }
                     }
 
-                    if events.len() == 0 {
+                    if events.is_empty() {
                         smol::future::yield_now().await;
                         break 'outer;
                     } else {
@@ -460,11 +459,11 @@ impl Terminal {
             AlacTermEvent::ClipboardLoad(_, format) => self.notify_pty(format(
                 &cx.read_from_clipboard()
                     .map(|ci| ci.text().to_string())
-                    .unwrap_or("".to_string()),
+                    .unwrap_or_else(|| "".to_string()),
             )),
             AlacTermEvent::PtyWrite(out) => self.notify_pty(out.clone()),
             AlacTermEvent::TextAreaSizeRequest(format) => {
-                self.notify_pty(format(self.cur_size.clone().into()))
+                self.notify_pty(format(self.cur_size.into()))
             }
             AlacTermEvent::CursorBlinkingChange => {
                 //TODO whatever state we need to set to get the cursor blinking
@@ -501,24 +500,19 @@ impl Terminal {
     ) {
         // TODO: Handle is_self_focused in subscription on terminal view
         match event {
-            InternalEvent::TermEvent(term_event) => match term_event {
-                //Needs to lock
-                AlacTermEvent::ColorRequest(index, format) => {
+            InternalEvent::TermEvent(term_event) => {
+                if let AlacTermEvent::ColorRequest(index, format) = term_event {
                     let color = term.colors()[*index].unwrap_or_else(|| {
                         let term_style = &cx.global::<Settings>().theme.terminal;
                         to_alac_rgb(get_color_at_index(index, &term_style.colors))
                     });
                     self.notify_pty(format(color))
                 }
-                _ => {} //Other events are handled in the event loop
-            },
+            }
             InternalEvent::Resize(new_size) => {
-                self.cur_size = new_size.clone();
+                self.cur_size = *new_size;
 
-                self.pty_tx
-                    .0
-                    .send(Msg::Resize(new_size.clone().into()))
-                    .ok();
+                self.pty_tx.0.send(Msg::Resize((*new_size).into())).ok();
 
                 term.resize(*new_size);
             }
@@ -554,7 +548,7 @@ impl Terminal {
 
     ///Resize the terminal and the PTY.
     pub fn set_size(&mut self, new_size: TerminalSize) {
-        self.events.push(InternalEvent::Resize(new_size.into()))
+        self.events.push(InternalEvent::Resize(new_size))
     }
 
     pub fn clear(&mut self) {
@@ -575,7 +569,7 @@ impl Terminal {
     pub fn paste(&self, text: &str) {
         if self.last_mode.contains(TermMode::BRACKETED_PASTE) {
             self.notify_pty("\x1b[200~".to_string());
-            self.notify_pty(text.replace('\x1b', "").to_string());
+            self.notify_pty(text.replace('\x1b', ""));
             self.notify_pty("\x1b[201~".to_string());
         } else {
             self.notify_pty(text.replace("\r\n", "\r").replace('\n', "\r"));
@@ -598,7 +592,7 @@ impl Terminal {
         }
 
         // self.utilization = Self::estimate_utilization(term.take_last_processed_bytes());
-        self.last_mode = term.mode().clone();
+        self.last_mode = *term.mode();
 
         let content = term.renderable_content();
 
@@ -669,7 +663,7 @@ mod tests {
 mod alacritty_unix {
     use alacritty_terminal::config::Program;
     use gpui::anyhow::{bail, Result};
-    use libc;
+
     use std::ffi::CStr;
     use std::mem::MaybeUninit;
     use std::ptr;

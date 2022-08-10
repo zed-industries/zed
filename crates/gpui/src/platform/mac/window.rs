@@ -48,7 +48,7 @@ use std::{
     time::Duration,
 };
 
-const WINDOW_STATE_IVAR: &'static str = "windowState";
+const WINDOW_STATE_IVAR: &str = "windowState";
 
 static mut WINDOW_CLASS: *const Class = ptr::null();
 static mut VIEW_CLASS: *const Class = ptr::null();
@@ -72,7 +72,7 @@ impl NSRange {
         self.location != NSNotFound as NSUInteger
     }
 
-    fn to_range(&self) -> Option<Range<usize>> {
+    fn to_range(self) -> Option<Range<usize>> {
         if self.is_valid() {
             let start = self.location as usize;
             let end = start + self.length as usize;
@@ -513,7 +513,7 @@ impl platform::Window for Window {
             };
             let _: () = msg_send![alert, setAlertStyle: alert_style];
             let _: () = msg_send![alert, setMessageText: ns_string(msg)];
-            for (ix, answer) in answers.into_iter().enumerate() {
+            for (ix, answer) in answers.iter().enumerate() {
                 let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer)];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
             }
@@ -721,14 +721,14 @@ extern "C" fn yes(_: &Object, _: Sel) -> BOOL {
 extern "C" fn dealloc_window(this: &Object, _: Sel) {
     unsafe {
         drop_window_state(this);
-        let () = msg_send![super(this, class!(NSWindow)), dealloc];
+        let _: () = msg_send![super(this, class!(NSWindow)), dealloc];
     }
 }
 
 extern "C" fn dealloc_view(this: &Object, _: Sel) {
     unsafe {
         drop_window_state(this);
-        let () = msg_send![super(this, class!(NSView)), dealloc];
+        let _: () = msg_send![super(this, class!(NSView)), dealloc];
     }
 }
 
@@ -912,7 +912,7 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
 
 extern "C" fn send_event(this: &Object, _: Sel, native_event: id) {
     unsafe {
-        let () = msg_send![super(this, class!(NSWindow)), sendEvent: native_event];
+        let _: () = msg_send![super(this, class!(NSWindow)), sendEvent: native_event];
         get_window_state(this).borrow_mut().performed_key_equivalent = false;
     }
 }
@@ -991,7 +991,7 @@ extern "C" fn close_window(this: &Object, _: Sel) {
             callback();
         }
 
-        let () = msg_send![super(this, class!(NSWindow)), close];
+        let _: () = msg_send![super(this, class!(NSWindow)), close];
     }
 }
 
@@ -1157,17 +1157,22 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
                 .flatten()
                 .is_some();
 
-        if is_composing || text.chars().count() > 1 || pending_key_down.is_none() {
-            with_input_handler(this, |input_handler| {
-                input_handler.replace_text_in_range(replacement_range, text)
-            });
-        } else {
-            let mut pending_key_down = pending_key_down.unwrap();
-            pending_key_down.1 = Some(InsertText {
-                replacement_range,
-                text: text.to_string(),
-            });
-            window_state.borrow_mut().pending_key_down = Some(pending_key_down);
+        match pending_key_down {
+            None | Some(_) if is_composing || text.chars().count() > 1 => {
+                with_input_handler(this, |input_handler| {
+                    input_handler.replace_text_in_range(replacement_range, text)
+                });
+            }
+
+            Some(mut pending_key_down) => {
+                pending_key_down.1 = Some(InsertText {
+                    replacement_range,
+                    text: text.to_string(),
+                });
+                window_state.borrow_mut().pending_key_down = Some(pending_key_down);
+            }
+
+            _ => unreachable!(),
         }
     }
 }

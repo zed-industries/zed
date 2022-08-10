@@ -20,7 +20,7 @@ use std::{
 use sum_tree::{Bias, SumTree};
 use text::{Edit, Point};
 
-const NEWLINES: &'static [u8] = &[b'\n'; u8::MAX as usize];
+const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 
 pub struct BlockMap {
     next_block_id: AtomicUsize,
@@ -102,6 +102,7 @@ struct Transform {
     block: Option<TransformBlock>,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub enum TransformBlock {
     Custom(Arc<Block>),
@@ -317,7 +318,7 @@ impl BlockMap {
             let start_block_ix = match self.blocks[last_block_ix..].binary_search_by(|probe| {
                 probe
                     .position
-                    .to_point(&buffer)
+                    .to_point(buffer)
                     .cmp(&new_buffer_start)
                     .then(Ordering::Greater)
             }) {
@@ -335,7 +336,7 @@ impl BlockMap {
                 match self.blocks[start_block_ix..].binary_search_by(|probe| {
                     probe
                         .position
-                        .to_point(&buffer)
+                        .to_point(buffer)
                         .cmp(&new_buffer_end)
                         .then(Ordering::Greater)
                 }) {
@@ -349,14 +350,14 @@ impl BlockMap {
                 self.blocks[start_block_ix..end_block_ix]
                     .iter()
                     .map(|block| {
-                        let mut position = block.position.to_point(&buffer);
+                        let mut position = block.position.to_point(buffer);
                         match block.disposition {
                             BlockDisposition::Above => position.column = 0,
                             BlockDisposition::Below => {
                                 position.column = buffer.line_len(position.row)
                             }
                         }
-                        let position = wrap_snapshot.from_point(position, Bias::Left);
+                        let position = wrap_snapshot.make_wrap_point(position, Bias::Left);
                         (position.row(), TransformBlock::Custom(block.clone()))
                     }),
             );
@@ -366,7 +367,7 @@ impl BlockMap {
                     .map(|excerpt_boundary| {
                         (
                             wrap_snapshot
-                                .from_point(Point::new(excerpt_boundary.row, 0), Bias::Left)
+                                .make_wrap_point(Point::new(excerpt_boundary.row, 0), Bias::Left)
                                 .row(),
                             TransformBlock::ExcerptHeader {
                                 key: excerpt_boundary.key,
@@ -385,7 +386,7 @@ impl BlockMap {
 
             // Place excerpt headers above custom blocks on the same row.
             blocks_in_edit.sort_unstable_by(|(row_a, block_a), (row_b, block_b)| {
-                row_a.cmp(&row_b).then_with(|| match (block_a, block_b) {
+                row_a.cmp(row_b).then_with(|| match (block_a, block_b) {
                     (
                         TransformBlock::ExcerptHeader { .. },
                         TransformBlock::ExcerptHeader { .. },
@@ -498,9 +499,9 @@ impl<'a> BlockMapWriter<'a> {
             ids.push(id);
 
             let position = block.position;
-            let point = position.to_point(&buffer);
+            let point = position.to_point(buffer);
             let wrap_row = wrap_snapshot
-                .from_point(Point::new(point.row, 0), Bias::Left)
+                .make_wrap_point(Point::new(point.row, 0), Bias::Left)
                 .row();
             let start_row = wrap_snapshot.prev_row_boundary(WrapPoint::new(wrap_row, 0));
             let end_row = wrap_snapshot
@@ -510,7 +511,7 @@ impl<'a> BlockMapWriter<'a> {
             let block_ix = match self
                 .0
                 .blocks
-                .binary_search_by(|probe| probe.position.cmp(&position, &buffer))
+                .binary_search_by(|probe| probe.position.cmp(&position, buffer))
             {
                 Ok(ix) | Err(ix) => ix,
             };
@@ -543,11 +544,11 @@ impl<'a> BlockMapWriter<'a> {
         let mut last_block_buffer_row = None;
         self.0.blocks.retain(|block| {
             if block_ids.contains(&block.id) {
-                let buffer_row = block.position.to_point(&buffer).row;
+                let buffer_row = block.position.to_point(buffer).row;
                 if last_block_buffer_row != Some(buffer_row) {
                     last_block_buffer_row = Some(buffer_row);
                     let wrap_row = wrap_snapshot
-                        .from_point(Point::new(buffer_row, 0), Bias::Left)
+                        .make_wrap_point(Point::new(buffer_row, 0), Bias::Left)
                         .row();
                     let start_row = wrap_snapshot.prev_row_boundary(WrapPoint::new(wrap_row, 0));
                     let end_row = wrap_snapshot
@@ -620,7 +621,7 @@ impl BlockSnapshot {
         }
     }
 
-    pub fn buffer_rows<'a>(&'a self, start_row: u32) -> BlockBufferRows<'a> {
+    pub fn buffer_rows(&self, start_row: u32) -> BlockBufferRows {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
         cursor.seek(&BlockRow(start_row), Bias::Right, &());
         let (output_start, input_start) = cursor.start();
@@ -638,10 +639,10 @@ impl BlockSnapshot {
         }
     }
 
-    pub fn blocks_in_range<'a>(
-        &'a self,
+    pub fn blocks_in_range(
+        &self,
         rows: Range<u32>,
-    ) -> impl Iterator<Item = (u32, &'a TransformBlock)> {
+    ) -> impl Iterator<Item = (u32, &TransformBlock)> {
         let mut cursor = self.transforms.cursor::<BlockRow>();
         cursor.seek(&BlockRow(rows.start), Bias::Right, &());
         std::iter::from_fn(move || {
@@ -1025,7 +1026,7 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let (fold_map, folds_snapshot) = FoldMap::new(buffer_snapshot.clone());
-        let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), 1.try_into().unwrap());
+        let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot, 1.try_into().unwrap());
         let (wrap_map, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, None, cx);
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
@@ -1194,7 +1195,7 @@ mod tests {
         let buffer = MultiBuffer::build_simple(text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, folds_snapshot) = FoldMap::new(buffer_snapshot.clone());
-        let (_, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), 1.try_into().unwrap());
+        let (_, tabs_snapshot) = TabMap::new(folds_snapshot, 1.try_into().unwrap());
         let (_, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, Some(60.), cx);
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
@@ -1262,11 +1263,11 @@ mod tests {
 
         let mut buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (fold_map, folds_snapshot) = FoldMap::new(buffer_snapshot.clone());
-        let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);
+        let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot, tab_size);
         let (wrap_map, wraps_snapshot) =
             WrapMap::new(tabs_snapshot, font_id, font_size, wrap_width, cx);
         let mut block_map = BlockMap::new(
-            wraps_snapshot.clone(),
+            wraps_snapshot,
             buffer_start_header_height,
             excerpt_header_height,
         );
@@ -1383,7 +1384,7 @@ mod tests {
                         position.column = buffer_snapshot.line_len(position.row);
                     }
                 };
-                let row = wraps_snapshot.from_point(position, Bias::Left).row();
+                let row = wraps_snapshot.make_wrap_point(position, Bias::Left).row();
                 (
                     row,
                     ExpectedBlock::Custom {
@@ -1396,7 +1397,7 @@ mod tests {
             expected_blocks.extend(buffer_snapshot.excerpt_boundaries_in_range(0..).map(
                 |boundary| {
                     let position =
-                        wraps_snapshot.from_point(Point::new(boundary.row, 0), Bias::Left);
+                        wraps_snapshot.make_wrap_point(Point::new(boundary.row, 0), Bias::Left);
                     (
                         position.row(),
                         ExpectedBlock::ExcerptHeader {

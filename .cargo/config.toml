@@ -1,0 +1,6 @@
+[target.'cfg(all())']
+rustflags = [
+    "-Aclippy::reversed_empty_ranges",
+    "-Aclippy::missing_safety_doc",
+    "-Aclippy::let_unit_value",
+]

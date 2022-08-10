@@ -123,6 +123,10 @@ impl Rope {
         self.chunks.extent(&())
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn max_point(&self) -> Point {
         self.chunks.extent(&())
     }
@@ -152,7 +156,7 @@ impl Rope {
         Bytes::new(self, range)
     }
 
-    pub fn chunks<'a>(&'a self) -> Chunks<'a> {
+    pub fn chunks(&self) -> Chunks {
         self.chunks_in_range(0..self.len())
     }
 
@@ -896,7 +900,7 @@ impl sum_tree::Summary for TextSummary {
     }
 }
 
-impl<'a> std::ops::Add<Self> for TextSummary {
+impl std::ops::Add<Self> for TextSummary {
     type Output = Self;
 
     fn add(mut self, rhs: Self) -> Self::Output {
@@ -946,7 +950,7 @@ pub trait TextDimension: 'static + for<'a> Dimension<'a, ChunkSummary> {
     fn add_assign(&mut self, other: &Self);
 }
 
-impl<'a, D1: TextDimension, D2: TextDimension> TextDimension for (D1, D2) {
+impl<D1: TextDimension, D2: TextDimension> TextDimension for (D1, D2) {
     fn from_text_summary(summary: &TextSummary) -> Self {
         (
             D1::from_text_summary(summary),

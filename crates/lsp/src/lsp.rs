@@ -27,8 +27,8 @@ use std::{
 use std::{path::Path, process::Stdio};
 use util::{ResultExt, TryFutureExt};
 
-const JSON_RPC_VERSION: &'static str = "2.0";
-const CONTENT_LEN_HEADER: &'static str = "Content-Length: ";
+const JSON_RPC_VERSION: &str = "2.0";
+const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 
 type NotificationHandler = Box<dyn Send + FnMut(Option<usize>, &str, AsyncAppContext)>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<&str, Error>)>;
@@ -42,6 +42,7 @@ pub struct LanguageServer {
     notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
     response_handlers: Arc<Mutex<HashMap<usize, ResponseHandler>>>,
     executor: Arc<executor::Background>,
+    #[allow(clippy::type_complexity)]
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     root_path: PathBuf,
@@ -112,7 +113,7 @@ impl LanguageServer {
         let working_dir = if root_path.is_dir() {
             root_path
         } else {
-            root_path.parent().unwrap_or(Path::new("/"))
+            root_path.parent().unwrap_or_else(|| Path::new("/"))
         };
         let mut server = process::Command::new(binary_path)
             .current_dir(working_dir)
@@ -251,7 +252,7 @@ impl LanguageServer {
             capabilities: Default::default(),
             next_id: Default::default(),
             outbound_tx,
-            executor: cx.background().clone(),
+            executor: cx.background(),
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             root_path: root_path.to_path_buf(),
@@ -641,7 +642,7 @@ impl LanguageServer {
                 stdin_reader,
                 None,
                 Path::new("/"),
-                cx.clone(),
+                cx,
                 move |msg| {
                     notifications_tx
                         .try_send((msg.method.to_string(), msg.params.get().to_string()))
@@ -651,7 +652,7 @@ impl LanguageServer {
             notifications_rx,
         };
         fake.handle_request::<request::Initialize, _, _>({
-            let capabilities = capabilities.clone();
+            let capabilities = capabilities;
             move |_, _| {
                 let capabilities = capabilities.clone();
                 let name = name.clone();
@@ -662,7 +663,6 @@ impl LanguageServer {
                             name,
                             ..Default::default()
                         }),
-                        ..Default::default()
                     })
                 }
             }
@@ -697,7 +697,7 @@ impl FakeLanguageServer {
 
         loop {
             let (method, params) = self.notifications_rx.next().await?;
-            if &method == T::METHOD {
+            if method == T::METHOD {
                 return Some(serde_json::from_str::<T::Params>(&params).unwrap());
             } else {
                 log::info!("skipping message in fake language server {:?}", params);

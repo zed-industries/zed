@@ -4,8 +4,8 @@ use editor::{
 };
 use fuzzy::StringMatch;
 use gpui::{
-    actions, elements::*, geometry::vector::Vector2F, AppContext, Entity, MouseState,
-    MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
+    actions, elements::*, geometry::vector::Vector2F, AnyViewHandle, AppContext, Entity,
+    MouseState, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use language::Outline;
 use ordered_float::OrderedFloat;
@@ -52,8 +52,10 @@ impl View for OutlineView {
         ChildView::new(self.picker.clone()).boxed()
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.picker);
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        if cx.is_self_focused() {
+            cx.focus(&self.picker);
+        }
     }
 }
 
@@ -113,8 +115,8 @@ impl OutlineView {
             self.active_editor.update(cx, |active_editor, cx| {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
                 let buffer_snapshot = &snapshot.buffer_snapshot;
-                let start = outline_item.range.start.to_point(&buffer_snapshot);
-                let end = outline_item.range.end.to_point(&buffer_snapshot);
+                let start = outline_item.range.start.to_point(buffer_snapshot);
+                let end = outline_item.range.end.to_point(buffer_snapshot);
                 let display_rows = start.to_display_point(&snapshot).row()
                     ..end.to_display_point(&snapshot).row() + 1;
                 active_editor.highlight_rows(Some(display_rows));
@@ -181,8 +183,8 @@ impl PickerDelegate for OutlineView {
                 .map(|(ix, item)| {
                     let range = item.range.to_offset(&buffer);
                     let distance_to_closest_endpoint = cmp::min(
-                        (range.start as isize - cursor_offset as isize).abs() as usize,
-                        (range.end as isize - cursor_offset as isize).abs() as usize,
+                        (range.start as isize - cursor_offset as isize).abs(),
+                        (range.end as isize - cursor_offset as isize).abs(),
                     );
                     let depth = if range.contains(&cursor_offset) {
                         Some(item.depth)

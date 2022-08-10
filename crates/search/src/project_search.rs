@@ -6,9 +6,9 @@ use crate::{
 use collections::HashMap;
 use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll, MAX_TAB_TITLE_LEN};
 use gpui::{
-    actions, elements::*, platform::CursorStyle, Action, AppContext, ElementBox, Entity,
-    ModelContext, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task,
-    View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
+    actions, elements::*, platform::CursorStyle, Action, AnyViewHandle, AppContext, ElementBox,
+    Entity, ModelContext, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription,
+    Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, Project};
@@ -73,7 +73,6 @@ pub struct ProjectSearchView {
     regex: bool,
     query_contains_error: bool,
     active_match_index: Option<usize>,
-    results_editor_was_focused: bool,
 }
 
 pub struct ProjectSearchBar {
@@ -190,19 +189,13 @@ impl View for ProjectSearchView {
         }
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         let handle = cx.weak_handle();
         cx.update_global(|state: &mut ActiveSearches, cx| {
             state
                 .0
                 .insert(self.model.read(cx).project.downgrade(), handle)
         });
-
-        if self.results_editor_was_focused && !self.model.read(cx).match_ranges.is_empty() {
-            self.focus_results_editor(cx);
-        } else {
-            cx.focus(&self.query_editor);
-        }
     }
 }
 
@@ -330,14 +323,6 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.navigate(data, cx))
     }
 
-    fn should_activate_item_on_event(event: &Self::Event) -> bool {
-        if let ViewEvent::EditorEvent(editor_event) = event {
-            Editor::should_activate_item_on_event(editor_event)
-        } else {
-            false
-        }
-    }
-
     fn should_update_tab_on_event(event: &ViewEvent) -> bool {
         matches!(event, ViewEvent::UpdateTab)
     }
@@ -382,13 +367,7 @@ impl ProjectSearchView {
         });
         // Subcribe to query_editor in order to reraise editor events for workspace item activation purposes
         cx.subscribe(&query_editor, |_, _, event, cx| {
-            cx.emit(ViewEvent::EditorEvent(event.clone()))
-        })
-        .detach();
-        cx.observe_focus(&query_editor, |this, _, focused, _| {
-            if focused {
-                this.results_editor_was_focused = false;
-            }
+            cx.emit(ViewEvent::EditorEvent(*event))
         })
         .detach();
 
@@ -399,18 +378,13 @@ impl ProjectSearchView {
         });
         cx.observe(&results_editor, |_, _, cx| cx.emit(ViewEvent::UpdateTab))
             .detach();
-        cx.observe_focus(&results_editor, |this, _, focused, _| {
-            if focused {
-                this.results_editor_was_focused = true;
-            }
-        })
-        .detach();
+
         cx.subscribe(&results_editor, |this, _, event, cx| {
             if matches!(event, editor::Event::SelectionsChanged { .. }) {
                 this.update_match_index(cx);
             }
             // Reraise editor events for workspace item activation purposes
-            cx.emit(ViewEvent::EditorEvent(event.clone()));
+            cx.emit(ViewEvent::EditorEvent(*event));
         })
         .detach();
 
@@ -423,7 +397,6 @@ impl ProjectSearchView {
             regex,
             query_contains_error: false,
             active_match_index: None,
-            results_editor_was_focused: false,
         };
         this.model_changed(false, cx);
         this
@@ -591,6 +564,12 @@ impl ProjectSearchView {
 
     pub fn has_matches(&self) -> bool {
         self.active_match_index.is_some()
+    }
+}
+
+impl Default for ProjectSearchBar {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -905,6 +884,8 @@ impl ToolbarItemView for ProjectSearchBar {
         self.subscription = None;
         self.active_project_search = None;
         if let Some(search) = active_pane_item.and_then(|i| i.downcast::<ProjectSearchView>()) {
+            let query_editor = search.read(cx).query_editor.clone();
+            cx.reparent(query_editor);
             self.subscription = Some(cx.observe(&search, |_, _, cx| cx.notify()));
             self.active_project_search = Some(search);
             ToolbarItemLocation::PrimaryLeft {
@@ -928,12 +909,13 @@ mod tests {
     #[gpui::test]
     async fn test_project_search(cx: &mut TestAppContext) {
         let fonts = cx.font_cache();
-        let mut theme = gpui::fonts::with_font_cache(fonts.clone(), || theme::Theme::default());
+        let mut theme = gpui::fonts::with_font_cache(fonts.clone(), theme::Theme::default);
         theme.search.match_background = Color::red();
         cx.update(|cx| {
             let mut settings = Settings::test(cx);
             settings.theme = Arc::new(theme);
-            cx.set_global(settings)
+            cx.set_global(settings);
+            cx.set_global(ActiveSearches::default());
         });
 
         let fs = FakeFs::new(cx.background());
@@ -949,9 +931,7 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let search = cx.add_model(|cx| ProjectSearch::new(project, cx));
-        let search_view = cx.add_view(Default::default(), |cx| {
-            ProjectSearchView::new(search.clone(), cx)
-        });
+        let (_, search_view) = cx.add_window(|cx| ProjectSearchView::new(search.clone(), cx));
 
         search_view.update(cx, |search_view, cx| {
             search_view
@@ -959,7 +939,7 @@ mod tests {
                 .update(cx, |query_editor, cx| query_editor.set_text("TWO", cx));
             search_view.search(cx);
         });
-        search_view.next_notification(&cx).await;
+        search_view.next_notification(cx).await;
         search_view.update(cx, |search_view, cx| {
             assert_eq!(
                 search_view

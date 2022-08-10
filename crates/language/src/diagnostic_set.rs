@@ -8,7 +8,7 @@ use std::{
 use sum_tree::{self, Bias, SumTree};
 use text::{Anchor, FromAnchor, PointUtf16, ToOffset};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct DiagnosticSet {
     diagnostics: SumTree<DiagnosticEntry<Anchor>>,
 }
@@ -167,24 +167,15 @@ impl DiagnosticSet {
             .map(|entry| entry.resolve(buffer))
     }
 }
-
-impl Default for DiagnosticSet {
-    fn default() -> Self {
-        Self {
-            diagnostics: Default::default(),
-        }
-    }
-}
-
 impl sum_tree::Item for DiagnosticEntry<Anchor> {
     type Summary = Summary;
 
     fn summary(&self) -> Self::Summary {
         Summary {
-            start: self.range.start.clone(),
-            end: self.range.end.clone(),
-            min_start: self.range.start.clone(),
-            max_end: self.range.end.clone(),
+            start: self.range.start,
+            end: self.range.end,
+            min_start: self.range.start,
+            max_end: self.range.end,
             count: 1,
         }
     }
@@ -217,13 +208,13 @@ impl sum_tree::Summary for Summary {
 
     fn add_summary(&mut self, other: &Self, buffer: &Self::Context) {
         if other.min_start.cmp(&self.min_start, buffer).is_lt() {
-            self.min_start = other.min_start.clone();
+            self.min_start = other.min_start;
         }
         if other.max_end.cmp(&self.max_end, buffer).is_gt() {
-            self.max_end = other.max_end.clone();
+            self.max_end = other.max_end;
         }
-        self.start = other.start.clone();
-        self.end = other.end.clone();
+        self.start = other.start;
+        self.end = other.end;
         self.count += other.count;
     }
 }

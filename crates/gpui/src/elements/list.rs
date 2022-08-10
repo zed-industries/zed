@@ -33,6 +33,7 @@ struct StateInner {
     logical_scroll_top: Option<ListOffset>,
     orientation: Orientation,
     overdraw: f32,
+    #[allow(clippy::type_complexity)]
     scroll_handler: Option<Box<dyn FnMut(Range<usize>, &mut EventContext)>>,
 }
 
@@ -311,19 +312,17 @@ impl Element for List {
         drop(cursor);
         state.items = new_items;
 
-        match event {
-            Event::ScrollWheel(ScrollWheelEvent {
-                position,
-                delta,
-                precise,
-            }) => {
-                if bounds.contains_point(*position) {
-                    if state.scroll(scroll_top, bounds.height(), *delta, *precise, cx) {
-                        handled = true;
-                    }
-                }
+        if let Event::ScrollWheel(ScrollWheelEvent {
+            position,
+            delta,
+            precise,
+        }) = event
+        {
+            if bounds.contains_point(*position)
+                && state.scroll(scroll_top, bounds.height(), *delta, *precise, cx)
+            {
+                handled = true;
             }
-            _ => {}
         }
 
         handled

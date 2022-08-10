@@ -159,8 +159,10 @@ impl Store {
         let connection_projects = mem::take(&mut connection.projects);
         let connection_channels = mem::take(&mut connection.channels);
 
-        let mut result = RemovedConnectionState::default();
-        result.user_id = user_id;
+        let mut result = RemovedConnectionState {
+            user_id,
+            ..Default::default()
+        };
 
         // Leave all channels.
         for channel_id in connection_channels {
@@ -223,10 +225,10 @@ impl Store {
             .user_id)
     }
 
-    pub fn connection_ids_for_user<'a>(
-        &'a self,
+    pub fn connection_ids_for_user(
+        &self,
         user_id: UserId,
-    ) -> impl 'a + Iterator<Item = ConnectionId> {
+    ) -> impl Iterator<Item = ConnectionId> + '_ {
         self.connections_by_user_id
             .get(&user_id)
             .into_iter()
@@ -425,14 +427,14 @@ impl Store {
                     }
 
                     for guest_connection in project.guests.keys() {
-                        if let Some(connection) = self.connections.get_mut(&guest_connection) {
+                        if let Some(connection) = self.connections.get_mut(guest_connection) {
                             connection.projects.remove(&project_id);
                         }
                     }
 
                     for requester_user_id in project.join_requests.keys() {
                         if let Some(requester_connection_ids) =
-                            self.connections_by_user_id.get_mut(&requester_user_id)
+                            self.connections_by_user_id.get_mut(requester_user_id)
                         {
                             for requester_connection_id in requester_connection_ids.iter() {
                                 if let Some(requester_connection) =
@@ -544,6 +546,7 @@ impl Store {
         Some(receipts)
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn accept_join_project_request(
         &mut self,
         responder_connection_id: ConnectionId,
@@ -638,6 +641,7 @@ impl Store {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn update_worktree(
         &mut self,
         connection_id: ConnectionId,
@@ -660,7 +664,7 @@ impl Store {
         worktree.root_name = worktree_root_name.to_string();
 
         for entry_id in removed_entries {
-            worktree.entries.remove(&entry_id);
+            worktree.entries.remove(entry_id);
         }
 
         for entry in updated_entries {
@@ -760,7 +764,7 @@ impl Store {
     pub fn check_invariants(&self) {
         for (connection_id, connection) in &self.connections {
             for project_id in &connection.projects {
-                let project = &self.projects.get(&project_id).unwrap();
+                let project = &self.projects.get(project_id).unwrap();
                 if project.host_connection_id != *connection_id {
                     assert!(project.guests.contains_key(connection_id));
                 }

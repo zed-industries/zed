@@ -94,6 +94,7 @@ pub struct ConnectionState {
     #[serde(skip)]
     outgoing_tx: mpsc::UnboundedSender<proto::Message>,
     next_message_id: Arc<AtomicU32>,
+    #[allow(clippy::type_complexity)]
     #[serde(skip)]
     response_channels:
         Arc<Mutex<Option<HashMap<u32, oneshot::Sender<(proto::Envelope, oneshot::Sender<()>)>>>>>,
@@ -139,7 +140,7 @@ impl Peer {
 
         let connection_id = ConnectionId(self.next_connection_id.fetch_add(1, SeqCst));
         let connection_state = ConnectionState {
-            outgoing_tx: outgoing_tx.clone(),
+            outgoing_tx,
             next_message_id: Default::default(),
             response_channels: Arc::new(Mutex::new(Some(Default::default()))),
         };

@@ -25,7 +25,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             NestedMeta::Meta(Meta::NameValue(meta)) => {
                 let key_name = meta.path.get_ident().map(|i| i.to_string());
                 let result = (|| {
-                    match key_name.as_ref().map(String::as_str) {
+                    match key_name.as_deref() {
                         Some("retries") => max_retries = parse_int(&meta.lit)?,
                         Some("iterations") => num_iterations = parse_int(&meta.lit)?,
                         Some("seed") => starting_seed = parse_int(&meta.lit)?,

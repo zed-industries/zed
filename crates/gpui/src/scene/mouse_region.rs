@@ -107,6 +107,7 @@ pub struct MouseRegionId {
 
 #[derive(Clone, Default)]
 pub struct HandlerSet {
+    #[allow(clippy::type_complexity)]
     pub set: HashMap<
         (Discriminant<MouseRegionEvent>, Option<MouseButton>),
         Rc<dyn Fn(MouseRegionEvent, &mut EventContext)>,
@@ -115,6 +116,7 @@ pub struct HandlerSet {
 
 impl HandlerSet {
     pub fn handle_all() -> Self {
+        #[allow(clippy::type_complexity)]
         let mut set: HashMap<
             (Discriminant<MouseRegionEvent>, Option<MouseButton>),
             Rc<dyn Fn(MouseRegionEvent, &mut EventContext)>,

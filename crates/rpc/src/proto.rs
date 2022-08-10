@@ -265,7 +265,9 @@ entity_messages!(
 
 entity_messages!(channel_id, ChannelMessageSent);
 
-const MAX_BUFFER_LEN: usize = 1 * 1024 * 1024;
+const KIB: usize = 1024;
+const MIB: usize = KIB * 1024;
+const MAX_BUFFER_LEN: usize = MIB;
 
 /// A stream of protobuf messages.
 pub struct MessageStream<S> {
@@ -273,6 +275,7 @@ pub struct MessageStream<S> {
     encoding_buffer: Vec<u8>,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum Message {
     Envelope(Envelope),
@@ -309,7 +312,7 @@ where
                 self.encoding_buffer.reserve(message.encoded_len());
                 message
                     .encode(&mut self.encoding_buffer)
-                    .map_err(|err| io::Error::from(err))?;
+                    .map_err(io::Error::from)?;
                 let buffer =
                     zstd::stream::encode_all(self.encoding_buffer.as_slice(), COMPRESSION_LEVEL)
                         .unwrap();
@@ -360,10 +363,10 @@ where
     }
 }
 
-impl Into<SystemTime> for Timestamp {
-    fn into(self) -> SystemTime {
+impl From<Timestamp> for SystemTime {
+    fn from(val: Timestamp) -> Self {
         UNIX_EPOCH
-            .checked_add(Duration::new(self.seconds, self.nanos))
+            .checked_add(Duration::new(val.seconds, val.nanos))
             .unwrap()
     }
 }
@@ -451,7 +454,7 @@ mod tests {
         .unwrap();
         assert!(sink.encoding_buffer.capacity() <= MAX_BUFFER_LEN);
 
-        let mut stream = MessageStream::new(rx.map(|msg| anyhow::Ok(msg)));
+        let mut stream = MessageStream::new(rx.map(anyhow::Ok));
         stream.read().await.unwrap();
         assert!(stream.encoding_buffer.capacity() <= MAX_BUFFER_LEN);
         stream.read().await.unwrap();

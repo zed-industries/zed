@@ -2,7 +2,7 @@ use context_menu::ContextMenuItem;
 use gpui::{geometry::vector::Vector2F, impl_internal_actions, MutableAppContext, ViewContext};
 
 use crate::{
-    DisplayPoint, Editor, EditorMode, Event, FindAllReferences, GoToDefinition, GoToTypeDefinition,
+    DisplayPoint, Editor, EditorMode, FindAllReferences, GoToDefinition, GoToTypeDefinition,
     Rename, SelectMode, ToggleCodeActions,
 };
 
@@ -25,7 +25,6 @@ pub fn deploy_context_menu(
 ) {
     if !editor.focused {
         cx.focus_self();
-        cx.emit(Event::Activate);
     }
 
     // Don't show context menu for inline editors

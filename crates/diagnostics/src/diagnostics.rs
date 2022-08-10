@@ -99,7 +99,7 @@ impl View for ProjectDiagnosticsEditor {
         }
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if !self.path_states.is_empty() {
             cx.focus(&self.editor);
         }
@@ -365,7 +365,7 @@ impl ProjectDiagnosticsEditor {
                                 if !diagnostic.message.is_empty() {
                                     group_state.block_count += 1;
                                     blocks_to_add.push(BlockProperties {
-                                        position: (excerpt_id.clone(), entry.range.start.clone()),
+                                        position: (excerpt_id.clone(), entry.range.start),
                                         height: diagnostic.message.matches('\n').count() as u8 + 1,
                                         style: BlockStyle::Fixed,
                                         render: diagnostic_block_renderer(diagnostic, true),
@@ -460,7 +460,7 @@ impl ProjectDiagnosticsEditor {
             for selection in &mut selections {
                 if let Some(new_excerpt_id) = new_excerpt_ids_by_selection_id.get(&selection.id) {
                     let group_ix = match groups.binary_search_by(|probe| {
-                        probe.excerpts.last().unwrap().cmp(&new_excerpt_id)
+                        probe.excerpts.last().unwrap().cmp(new_excerpt_id)
                     }) {
                         Ok(ix) | Err(ix) => ix,
                     };
@@ -468,7 +468,7 @@ impl ProjectDiagnosticsEditor {
                         let offset = excerpts_snapshot
                             .anchor_in_excerpt(
                                 group.excerpts[group.primary_excerpt_ix].clone(),
-                                group.primary_diagnostic.range.start.clone(),
+                                group.primary_diagnostic.range.start,
                             )
                             .to_offset(&excerpts_snapshot);
                         selection.start = offset;
@@ -486,10 +486,8 @@ impl ProjectDiagnosticsEditor {
             if self.editor.is_focused(cx) {
                 cx.focus_self();
             }
-        } else {
-            if cx.handle().is_focused(cx) {
-                cx.focus(&self.editor);
-            }
+        } else if cx.handle().is_focused(cx) {
+            cx.focus(&self.editor);
         }
         cx.notify();
     }
@@ -566,10 +564,6 @@ impl workspace::Item for ProjectDiagnosticsEditor {
         _: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         unreachable!()
-    }
-
-    fn should_activate_item_on_event(event: &Self::Event) -> bool {
-        Editor::should_activate_item_on_event(event)
     }
 
     fn should_update_tab_on_event(event: &Event) -> bool {
@@ -729,12 +723,12 @@ fn compare_diagnostics<L: language::ToOffset, R: language::ToOffset>(
 ) -> Ordering {
     lhs.range
         .start
-        .to_offset(&snapshot)
+        .to_offset(snapshot)
         .cmp(&rhs.range.start.to_offset(snapshot))
         .then_with(|| {
             lhs.range
                 .end
-                .to_offset(&snapshot)
+                .to_offset(snapshot)
                 .cmp(&rhs.range.end.to_offset(snapshot))
         })
         .then_with(|| lhs.diagnostic.message.cmp(&rhs.diagnostic.message))
@@ -786,7 +780,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
-        let workspace = cx.add_view(0, |cx| Workspace::new(project.clone(), cx));
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
 
         // Create some diagnostics
         project.update(cx, |project, cx| {
@@ -873,11 +867,11 @@ mod tests {
         });
 
         // Open the project diagnostics view while there are already diagnostics.
-        let view = cx.add_view(0, |cx| {
+        let view = cx.add_view(&workspace, |cx| {
             ProjectDiagnosticsEditor::new(project.clone(), workspace.downgrade(), cx)
         });
 
-        view.next_notification(&cx).await;
+        view.next_notification(cx).await;
         view.update(cx, |view, cx| {
             assert_eq!(
                 editor_blocks(&view.editor, cx),
@@ -964,7 +958,7 @@ mod tests {
             project.disk_based_diagnostics_finished(0, cx);
         });
 
-        view.next_notification(&cx).await;
+        view.next_notification(cx).await;
         view.update(cx, |view, cx| {
             assert_eq!(
                 editor_blocks(&view.editor, cx),
@@ -1078,7 +1072,7 @@ mod tests {
             project.disk_based_diagnostics_finished(0, cx);
         });
 
-        view.next_notification(&cx).await;
+        view.next_notification(cx).await;
         view.update(cx, |view, cx| {
             assert_eq!(
                 editor_blocks(&view.editor, cx),

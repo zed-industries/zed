@@ -99,7 +99,7 @@ impl TerminalView {
             Ok(terminal) => {
                 let terminal = cx.add_model(|cx| terminal.subscribe(cx));
                 let view = cx.add_view(|cx| ConnectedView::from_terminal(terminal, modal, cx));
-                cx.subscribe(&view, |_this, _content, event, cx| cx.emit(event.clone()))
+                cx.subscribe(&view, |_this, _content, event, cx| cx.emit(*event))
                     .detach();
                 TerminalContent::Connected(view)
             }
@@ -152,11 +152,10 @@ impl View for TerminalView {
         }
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::Activate);
-        cx.defer(|view, cx| {
-            cx.focus(view.content.handle());
-        });
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        if cx.is_self_focused() {
+            cx.focus(self.content.handle());
+        }
     }
 
     fn keymap_context(&self, _: &gpui::AppContext) -> gpui::keymap::Context {
@@ -207,7 +206,7 @@ impl View for ErrorView {
             )
             .with_child(Text::new(program_text, style.clone()).contained().boxed())
             .with_child(Text::new(directory_text, style.clone()).contained().boxed())
-            .with_child(Text::new(error_text, style.clone()).contained().boxed())
+            .with_child(Text::new(error_text, style).contained().boxed())
             .aligned()
             .boxed()
     }
@@ -314,10 +313,6 @@ impl Item for TerminalView {
     fn should_close_item_on_event(event: &Self::Event) -> bool {
         matches!(event, &Event::CloseTerminal)
     }
-
-    fn should_activate_item_on_event(event: &Self::Event) -> bool {
-        matches!(event, &Event::Activate)
-    }
 }
 
 ///Get's the working directory for the given workspace, respecting the user's settings.
@@ -338,7 +333,7 @@ pub fn get_working_directory(
                 .filter(|dir| dir.is_dir())
         }
     };
-    res.or_else(|| home_dir())
+    res.or_else(home_dir)
 }
 
 ///Get's the first project's home directory, or the home directory

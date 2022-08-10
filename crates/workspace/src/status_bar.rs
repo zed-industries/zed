@@ -81,6 +81,7 @@ impl StatusBar {
     where
         T: 'static + StatusItemView,
     {
+        cx.reparent(&item);
         self.left_items.push(Box::new(item));
         cx.notify();
     }
@@ -89,6 +90,7 @@ impl StatusBar {
     where
         T: 'static + StatusItemView,
     {
+        cx.reparent(&item);
         self.right_items.push(Box::new(item));
         cx.notify();
     }
@@ -124,8 +126,8 @@ impl<T: StatusItemView> StatusItemViewHandle for ViewHandle<T> {
     }
 }
 
-impl Into<AnyViewHandle> for &dyn StatusItemViewHandle {
-    fn into(self) -> AnyViewHandle {
-        self.to_any()
+impl From<&dyn StatusItemViewHandle> for AnyViewHandle {
+    fn from(val: &dyn StatusItemViewHandle) -> Self {
+        val.to_any()
     }
 }
