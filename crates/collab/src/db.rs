@@ -154,7 +154,7 @@ pub trait Db: Send + Sync {
     #[cfg(test)]
     async fn teardown(&self, url: &str);
     #[cfg(test)]
-    fn as_fake<'a>(&'a self) -> Option<&'a tests::FakeDb>;
+    fn as_fake(&self) -> Option<&tests::FakeDb>;
 }
 
 pub struct PostgresDb {
@@ -165,7 +165,7 @@ impl PostgresDb {
     pub async fn new(url: &str, max_connections: u32) -> Result<Self> {
         let pool = DbOptions::new()
             .max_connections(max_connections)
-            .connect(&url)
+            .connect(url)
             .await
             .context("failed to connect to postgres database")?;
         Ok(Self { pool })
@@ -568,7 +568,7 @@ impl Db for PostgresDb {
         for count in counts {
             extension_counts
                 .entry(count.worktree_id as u64)
-                .or_insert(HashMap::default())
+                .or_insert_with(HashMap::default)
                 .insert(count.extension, count.count as usize);
         }
         Ok(extension_counts)
@@ -863,20 +863,18 @@ impl Db for PostgresDb {
                         should_notify,
                     });
                 }
+            } else if accepted {
+                contacts.push(Contact::Accepted {
+                    user_id: user_id_a,
+                    should_notify: should_notify && !a_to_b,
+                });
+            } else if a_to_b {
+                contacts.push(Contact::Incoming {
+                    user_id: user_id_a,
+                    should_notify,
+                });
             } else {
-                if accepted {
-                    contacts.push(Contact::Accepted {
-                        user_id: user_id_a,
-                        should_notify: should_notify && !a_to_b,
-                    });
-                } else if a_to_b {
-                    contacts.push(Contact::Incoming {
-                        user_id: user_id_a,
-                        should_notify,
-                    });
-                } else {
-                    contacts.push(Contact::Outgoing { user_id: user_id_a });
-                }
+                contacts.push(Contact::Outgoing { user_id: user_id_a });
             }
         }
 
@@ -1331,7 +1329,7 @@ macro_rules! id_type {
             }
 
             #[allow(unused)]
-            pub fn to_proto(&self) -> u64 {
+            pub fn to_proto(self) -> u64 {
                 self.0 as u64
             }
         }
@@ -2408,6 +2406,7 @@ pub mod tests {
     }
 
     impl TestDb {
+        #[allow(clippy::await_holding_lock)]
         pub async fn postgres() -> Self {
             lazy_static! {
                 static ref LOCK: Mutex<()> = Mutex::new(());

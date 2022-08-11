@@ -45,7 +45,7 @@ impl<'a> VimTestContext<'a> {
         workspace.update(cx, |workspace, cx| {
             workspace.active_pane().update(cx, |pane, cx| {
                 pane.toolbar().update(cx, |toolbar, cx| {
-                    let buffer_search_bar = cx.add_view(|cx| BufferSearchBar::new(cx));
+                    let buffer_search_bar = cx.add_view(BufferSearchBar::new);
                     toolbar.add_item(buffer_search_bar, cx);
                     let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
                     toolbar.add_item(project_search_bar, cx);

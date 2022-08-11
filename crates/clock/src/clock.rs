@@ -54,14 +54,14 @@ impl<'a> Add<&'a Self> for Local {
     type Output = Local;
 
     fn add(self, other: &'a Self) -> Self::Output {
-        cmp::max(&self, other).clone()
+        *cmp::max(&self, other)
     }
 }
 
 impl<'a> AddAssign<&'a Local> for Local {
     fn add_assign(&mut self, other: &Self) {
         if *self < *other {
-            *self = other.clone();
+            *self = *other;
         }
     }
 }
@@ -177,7 +177,7 @@ impl Global {
         false
     }
 
-    pub fn iter<'a>(&'a self) -> impl 'a + Iterator<Item = Local> {
+    pub fn iter(&self) -> impl Iterator<Item = Local> + '_ {
         self.0.iter().enumerate().map(|(replica_id, seq)| Local {
             replica_id: replica_id as ReplicaId,
             value: *seq,

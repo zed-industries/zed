@@ -15,9 +15,9 @@ use workspace::{ItemHandle, StatusItemView, Workspace};
 
 actions!(lsp_status, [ShowErrorMessage]);
 
-const DOWNLOAD_ICON: &'static str = "icons/download_12.svg";
-const WARNING_ICON: &'static str = "icons/triangle_exclamation_12.svg";
-const DONE_ICON: &'static str = "icons/circle_check_12.svg";
+const DOWNLOAD_ICON: &str = "icons/download_12.svg";
+const WARNING_ICON: &str = "icons/triangle_exclamation_12.svg";
+const DONE_ICON: &str = "icons/circle_check_12.svg";
 
 pub enum Event {
     ShowError { lsp_name: Arc<str>, error: String },
@@ -76,7 +76,7 @@ impl ActivityIndicator {
         cx.subscribe(&this, move |workspace, _, event, cx| match event {
             Event::ShowError { lsp_name, error } => {
                 if let Some(buffer) = project
-                    .update(cx, |project, cx| project.create_buffer(&error, None, cx))
+                    .update(cx, |project, cx| project.create_buffer(error, None, cx))
                     .log_err()
                 {
                     buffer.update(cx, |buffer, cx| {

@@ -126,10 +126,10 @@ fn motion(motion: Motion, cx: &mut MutableAppContext) {
 impl Motion {
     pub fn linewise(self) -> bool {
         use Motion::*;
-        match self {
-            Down | Up | StartOfDocument | EndOfDocument | CurrentLine => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            Down | Up | StartOfDocument | EndOfDocument | CurrentLine
+        )
     }
 
     pub fn inclusive(self) -> bool {
@@ -282,8 +282,7 @@ fn next_word_end(
     // we have backtraced already
     if !map
         .chars_at(point)
-        .skip(1)
-        .next()
+        .nth(1)
         .map(|c| c == '\n')
         .unwrap_or(true)
     {

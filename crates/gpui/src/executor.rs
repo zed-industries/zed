@@ -332,7 +332,7 @@ impl Deterministic {
 
     pub fn now(&self) -> std::time::Instant {
         let state = self.state.lock();
-        state.now.clone()
+        state.now
     }
 
     pub fn advance_clock(&self, duration: Duration) {
@@ -678,6 +678,12 @@ impl Background {
                 panic!("this method can only be called on a deterministic executor")
             }
         }
+    }
+}
+
+impl Default for Background {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

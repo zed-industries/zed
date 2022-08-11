@@ -14,8 +14,7 @@ use metal::{MTLPixelFormat, MTLResourceOptions, NSRange};
 use shaders::ToFloat2 as _;
 use std::{collections::HashMap, ffi::c_void, iter::Peekable, mem, sync::Arc, vec};
 
-const SHADERS_METALLIB: &'static [u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
+const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
 const INSTANCE_BUFFER_SIZE: usize = 8192 * 1024; // This is an arbitrary decision. There's probably a more optimal value.
 
 pub struct Renderer {
@@ -385,10 +384,10 @@ impl Renderer {
         drawable_size: Vector2F,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) {
-        let clip_bounds = (layer.clip_bounds().unwrap_or(RectF::new(
-            vec2f(0., 0.),
-            drawable_size / scene.scale_factor(),
-        )) * scene.scale_factor())
+        let clip_bounds = (layer
+            .clip_bounds()
+            .unwrap_or_else(|| RectF::new(vec2f(0., 0.), drawable_size / scene.scale_factor()))
+            * scene.scale_factor())
         .round();
         command_encoder.set_scissor_rect(metal::MTLScissorRect {
             x: clip_bounds.origin_x() as NSUInteger,
@@ -438,8 +437,7 @@ impl Renderer {
         );
 
         let buffer_contents = unsafe {
-            (self.instances.contents() as *mut u8).offset(*offset as isize)
-                as *mut shaders::GPUIShadow
+            (self.instances.contents() as *mut u8).add(*offset) as *mut shaders::GPUIShadow
         };
         for (ix, shadow) in shadows.iter().enumerate() {
             let shape_bounds = shadow.bounds * scale_factor;
@@ -451,7 +449,7 @@ impl Renderer {
                 color: shadow.color.to_uchar4(),
             };
             unsafe {
-                *(buffer_contents.offset(ix as isize)) = shader_shadow;
+                *(buffer_contents.add(ix)) = shader_shadow;
             }
         }
 
@@ -503,8 +501,7 @@ impl Renderer {
         );
 
         let buffer_contents = unsafe {
-            (self.instances.contents() as *mut u8).offset(*offset as isize)
-                as *mut shaders::GPUIQuad
+            (self.instances.contents() as *mut u8).add(*offset) as *mut shaders::GPUIQuad
         };
         for (ix, quad) in quads.iter().enumerate() {
             let bounds = quad.bounds * scale_factor;
@@ -514,7 +511,7 @@ impl Renderer {
                 size: bounds.size().round().to_float2(),
                 background_color: quad
                     .background
-                    .unwrap_or(Color::transparent_black())
+                    .unwrap_or_else(Color::transparent_black)
                     .to_uchar4(),
                 border_top: border_width * (quad.border.top as usize as f32),
                 border_right: border_width * (quad.border.right as usize as f32),
@@ -524,7 +521,7 @@ impl Renderer {
                 corner_radius: quad.corner_radius * scale_factor,
             };
             unsafe {
-                *(buffer_contents.offset(ix as isize)) = shader_quad;
+                *(buffer_contents.add(ix)) = shader_quad;
             }
         }
 
@@ -641,9 +638,8 @@ impl Renderer {
             );
 
             unsafe {
-                let buffer_contents = (self.instances.contents() as *mut u8)
-                    .offset(*offset as isize)
-                    as *mut shaders::GPUISprite;
+                let buffer_contents =
+                    (self.instances.contents() as *mut u8).add(*offset) as *mut shaders::GPUISprite;
                 std::ptr::copy_nonoverlapping(sprites.as_ptr(), buffer_contents, sprites.len());
             }
 
@@ -757,9 +753,8 @@ impl Renderer {
             );
 
             unsafe {
-                let buffer_contents = (self.instances.contents() as *mut u8)
-                    .offset(*offset as isize)
-                    as *mut shaders::GPUIImage;
+                let buffer_contents =
+                    (self.instances.contents() as *mut u8).add(*offset) as *mut shaders::GPUIImage;
                 std::ptr::copy_nonoverlapping(images.as_ptr(), buffer_contents, images.len());
             }
 
@@ -821,10 +816,9 @@ impl Renderer {
             }
 
             unsafe {
-                let buffer_contents = (self.instances.contents() as *mut u8)
-                    .offset(*offset as isize)
-                    as *mut shaders::GPUISprite;
-                *buffer_contents.offset(atlas_sprite_count as isize) = sprite.shader_data;
+                let buffer_contents =
+                    (self.instances.contents() as *mut u8).add(*offset) as *mut shaders::GPUISprite;
+                *buffer_contents.add(atlas_sprite_count) = sprite.shader_data;
             }
 
             atlas_sprite_count += 1;
@@ -917,8 +911,7 @@ impl Renderer {
         );
 
         let buffer_contents = unsafe {
-            (self.instances.contents() as *mut u8).offset(*offset as isize)
-                as *mut shaders::GPUIUnderline
+            (self.instances.contents() as *mut u8).add(*offset) as *mut shaders::GPUIUnderline
         };
         for (ix, underline) in underlines.iter().enumerate() {
             let origin = underline.origin * scale_factor;
@@ -935,7 +928,7 @@ impl Renderer {
                 squiggly: underline.squiggly as u8,
             };
             unsafe {
-                *(buffer_contents.offset(ix as isize)) = shader_underline;
+                *(buffer_contents.add(ix)) = shader_underline;
             }
         }
 

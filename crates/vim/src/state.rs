@@ -54,10 +54,7 @@ impl VimState {
     }
 
     pub fn clip_at_line_end(&self) -> bool {
-        match self.mode {
-            Mode::Insert | Mode::Visual { .. } => false,
-            _ => true,
-        }
+        !matches!(self.mode, Mode::Insert | Mode::Visual { .. })
     }
 
     pub fn empty_selections_only(&self) -> bool {
@@ -99,6 +96,6 @@ impl Operator {
 
         context
             .map
-            .insert("vim_operator".to_string(), operator_context.to_string());
+            .insert("vim_operator".to_string(), operator_context);
     }
 }

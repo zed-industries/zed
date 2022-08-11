@@ -588,7 +588,9 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
 
             if T::is_edit_event(event) {
                 if let Autosave::AfterDelay { milliseconds } = cx.global::<Settings>().autosave {
-                    let prev_autosave = pending_autosave.take().unwrap_or(Task::ready(Some(())));
+                    let prev_autosave = pending_autosave
+                        .take()
+                        .unwrap_or_else(|| Task::ready(Some(())));
                     let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
                     let prev_cancel_tx = mem::replace(&mut cancel_pending_autosave, cancel_tx);
                     let project = workspace.project.downgrade();
@@ -695,15 +697,15 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
     }
 }
 
-impl Into<AnyViewHandle> for Box<dyn ItemHandle> {
-    fn into(self) -> AnyViewHandle {
-        self.to_any()
+impl From<Box<dyn ItemHandle>> for AnyViewHandle {
+    fn from(val: Box<dyn ItemHandle>) -> Self {
+        val.to_any()
     }
 }
 
-impl Into<AnyViewHandle> for &Box<dyn ItemHandle> {
-    fn into(self) -> AnyViewHandle {
-        self.to_any()
+impl From<&Box<dyn ItemHandle>> for AnyViewHandle {
+    fn from(val: &Box<dyn ItemHandle>) -> Self {
+        val.to_any()
     }
 }
 
@@ -742,9 +744,9 @@ impl<T: Notification> NotificationHandle for ViewHandle<T> {
     }
 }
 
-impl Into<AnyViewHandle> for &dyn NotificationHandle {
-    fn into(self) -> AnyViewHandle {
-        self.to_any()
+impl From<&dyn NotificationHandle> for AnyViewHandle {
+    fn from(val: &dyn NotificationHandle) -> Self {
+        val.to_any()
     }
 }
 
@@ -769,7 +771,7 @@ impl AppState {
             user_store,
             project_store,
             initialize_workspace: |_, _, _| {},
-            build_window_options: || Default::default(),
+            build_window_options: Default::default,
         })
     }
 }
@@ -848,7 +850,7 @@ impl Workspace {
         })
         .detach();
 
-        let pane = cx.add_view(|cx| Pane::new(cx));
+        let pane = cx.add_view(Pane::new);
         let pane_id = pane.id();
         cx.subscribe(&pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
@@ -860,8 +862,8 @@ impl Workspace {
         let fs = project.read(cx).fs().clone();
         let user_store = project.read(cx).user_store();
         let client = project.read(cx).client();
-        let mut current_user = user_store.read(cx).watch_current_user().clone();
-        let mut connection_status = client.status().clone();
+        let mut current_user = user_store.read(cx).watch_current_user();
+        let mut connection_status = client.status();
         let _observe_current_user = cx.spawn_weak(|this, mut cx| async move {
             current_user.recv().await;
             connection_status.recv().await;
@@ -1073,7 +1075,7 @@ impl Workspace {
                             project.clone(),
                             &pane,
                             ix,
-                            &item,
+                            &*item,
                             should_prompt_to_save,
                             &mut cx,
                         )
@@ -1088,6 +1090,7 @@ impl Workspace {
         })
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn open_paths(
         &mut self,
         mut abs_paths: Vec<PathBuf>,
@@ -1150,10 +1153,8 @@ impl Workspace {
                 let results = this
                     .update(&mut cx, |this, cx| this.open_paths(paths, true, cx))
                     .await;
-                for result in results {
-                    if let Some(result) = result {
-                        result.log_err();
-                    }
+                for result in results.into_iter().flatten() {
+                    result.log_err();
                 }
             }
         })
@@ -1316,7 +1317,7 @@ impl Workspace {
         if let Some(item) = self.active_item(cx) {
             if !force_name_change && item.can_save(cx) {
                 if item.has_conflict(cx.as_ref()) {
-                    const CONFLICT_MESSAGE: &'static str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
+                    const CONFLICT_MESSAGE: &str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
 
                     let mut answer = cx.prompt(
                         PromptLevel::Warning,
@@ -1424,7 +1425,7 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
-        let pane = cx.add_view(|cx| Pane::new(cx));
+        let pane = cx.add_view(Pane::new);
         let pane_id = pane.id();
         cx.subscribe(&pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
@@ -1519,11 +1520,9 @@ impl Workspace {
 
     pub fn activate_item(&mut self, item: &dyn ItemHandle, cx: &mut ViewContext<Self>) -> bool {
         let result = self.panes.iter().find_map(|pane| {
-            if let Some(ix) = pane.read(cx).index_for_item(item) {
-                Some((pane.clone(), ix))
-            } else {
-                None
-            }
+            pane.read(cx)
+                .index_for_item(item)
+                .map(|ix| (pane.clone(), ix))
         });
         if let Some((pane, ix)) = result {
             pane.update(cx, |pane, cx| pane.activate_item(ix, true, true, false, cx));
@@ -1749,7 +1748,7 @@ impl Workspace {
         let collaborators = self.project.read(cx).collaborators();
         let next_leader_id = if let Some(leader_id) = self.leader_for_pane(&self.active_pane) {
             let mut collaborators = collaborators.keys().copied();
-            while let Some(peer_id) = collaborators.next() {
+            for peer_id in collaborators.by_ref() {
                 if peer_id == leader_id {
                     break;
                 }
@@ -1779,7 +1778,7 @@ impl Workspace {
     ) -> Option<PeerId> {
         for (leader_id, states_by_pane) in &mut self.follower_states_by_leader {
             let leader_id = *leader_id;
-            if let Some(state) = states_by_pane.remove(&pane) {
+            if let Some(state) = states_by_pane.remove(pane) {
                 for (_, item) in state.items_by_leader_view_id {
                     if let FollowerItem::Loaded(item) = item {
                         item.set_leader_replica_id(None, cx);
@@ -2253,7 +2252,6 @@ impl Workspace {
                 .values()
                 .map(|b| b.0)
                 .collect::<Vec<_>>()
-                .clone()
         });
 
         let mut item_tasks_by_pane = HashMap::default();
@@ -2367,13 +2365,11 @@ impl Workspace {
     fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) -> Option<()> {
         let mut items_to_add = Vec::new();
         for (pane, state) in self.follower_states_by_leader.get(&leader_id)? {
-            if let Some(active_item) = state
+            if let Some(FollowerItem::Loaded(item)) = state
                 .active_view_id
                 .and_then(|id| state.items_by_leader_view_id.get(&id))
             {
-                if let FollowerItem::Loaded(item) = active_item {
-                    items_to_add.push((pane.clone(), item.boxed_clone()));
-                }
+                items_to_add.push((pane.clone(), item.boxed_clone()));
             }
         }
 
@@ -2626,6 +2622,7 @@ pub fn activate_workspace_for_project(
     None
 }
 
+#[allow(clippy::type_complexity)]
 pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: &Arc<AppState>,
@@ -2914,7 +2911,7 @@ mod tests {
         let item1 = cx.add_view(&workspace, |_| TestItem::new());
         workspace.update(cx, |w, cx| w.add_item(Box::new(item1.clone()), cx));
         let task = workspace.update(cx, |w, cx| w.prepare_to_close(cx));
-        assert_eq!(task.await.unwrap(), true);
+        assert!(task.await.unwrap());
 
         // When there are dirty untitled items, prompt to save each one. If the user
         // cancels any prompt, then abort.
@@ -2938,7 +2935,7 @@ mod tests {
         cx.simulate_prompt_answer(window_id, 2 /* cancel */);
         cx.foreground().run_until_parked();
         assert!(!cx.has_pending_prompt(window_id));
-        assert_eq!(task.await.unwrap(), false);
+        assert!(!task.await.unwrap());
     }
 
     #[gpui::test]
@@ -3396,7 +3393,7 @@ mod tests {
     impl Item for TestItem {
         fn tab_description<'a>(&'a self, detail: usize, _: &'a AppContext) -> Option<Cow<'a, str>> {
             self.tab_descriptions.as_ref().and_then(|descriptions| {
-                let description = *descriptions.get(detail).or(descriptions.last())?;
+                let description = *descriptions.get(detail).or_else(|| descriptions.last())?;
                 Some(description.into())
             })
         }
@@ -3452,7 +3449,7 @@ mod tests {
         }
 
         fn can_save(&self, _: &AppContext) -> bool {
-            self.project_entry_ids.len() > 0
+            !self.project_entry_ids.is_empty()
         }
 
         fn save(

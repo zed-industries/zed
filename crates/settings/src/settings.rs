@@ -200,7 +200,7 @@ impl Settings {
             }
         }
         if let Some(value) = &data.theme {
-            if let Some(theme) = theme_registry.get(&value.to_string()).log_err() {
+            if let Some(theme) = theme_registry.get(value).log_err() {
                 self.theme = theme;
             }
         }
@@ -301,7 +301,7 @@ impl Settings {
             language_overrides: Default::default(),
             lsp: Default::default(),
             projects_online_by_default: true,
-            theme: gpui::fonts::with_font_cache(cx.font_cache().clone(), || Default::default()),
+            theme: gpui::fonts::with_font_cache(cx.font_cache().clone(), Default::default),
         }
     }
 
@@ -309,7 +309,7 @@ impl Settings {
     pub fn test_async(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
             let settings = Self::test(cx);
-            cx.set_global(settings.clone());
+            cx.set_global(settings);
         });
     }
 }
@@ -327,12 +327,7 @@ pub fn settings_file_json_schema(
     // Create a schema for a theme name.
     let theme_name_schema = SchemaObject {
         instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
-        enum_values: Some(
-            theme_names
-                .into_iter()
-                .map(|name| Value::String(name))
-                .collect(),
-        ),
+        enum_values: Some(theme_names.into_iter().map(Value::String).collect()),
         ..Default::default()
     };
 

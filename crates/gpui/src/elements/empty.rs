@@ -11,13 +11,14 @@ use crate::{
 };
 use crate::{Element, Event, EventContext, LayoutContext, PaintContext, SizeConstraint};
 
+#[derive(Default)]
 pub struct Empty {
     collapsed: bool,
 }
 
 impl Empty {
     pub fn new() -> Self {
-        Self { collapsed: false }
+        Self::default()
     }
 
     pub fn collapsed(mut self) -> Self {

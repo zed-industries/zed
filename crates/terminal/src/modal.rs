@@ -58,9 +58,7 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
                 let terminal_handle = connected.read(cx).handle();
                 // Set the global immediately if terminal construction was successful,
                 // in case the user opens the command palette
-                cx.set_global::<Option<StoredTerminal>>(Some(StoredTerminal(
-                    terminal_handle.clone(),
-                )));
+                cx.set_global::<Option<StoredTerminal>>(Some(StoredTerminal(terminal_handle)));
             }
         }
     }

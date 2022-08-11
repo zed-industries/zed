@@ -145,5 +145,22 @@
             "tab_size": 2
         }
     },
-    "lsp": {}
+    //LSP Specific settings.
+    "lsp": {
+        //Specify the LSP name as a key here.
+        //As of 8/10/22, supported LSPs are:
+        //pyright
+        //gopls
+        //rust-analyzer
+        //typescript-language-server
+        //vscode-json-languageserver
+        "rust_analyzer": {
+            //These initialization options are merged into Zed's defaults
+            "initialization_options": {
+                "checkOnSave": {
+                    "command": "clippy"
+                }
+            }
+        }
+    }
 }

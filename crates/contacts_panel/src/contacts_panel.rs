@@ -131,9 +131,9 @@ impl ContactsPanel {
             move |_, cx| {
                 if let Some(workspace_handle) = workspace.upgrade(cx) {
                     cx.subscribe(&workspace_handle.read(cx).project().clone(), {
-                        let workspace = workspace.clone();
-                        move |_, project, event, cx| match event {
-                            project::Event::ContactRequestedJoin(user) => {
+                        let workspace = workspace;
+                        move |_, project, event, cx| {
+                            if let project::Event::ContactRequestedJoin(user) = event {
                                 if let Some(workspace) = workspace.upgrade(cx) {
                                     workspace.update(cx, |workspace, cx| {
                                         workspace.show_notification(user.id as usize, cx, |cx| {
@@ -148,7 +148,6 @@ impl ContactsPanel {
                                     });
                                 }
                             }
-                            _ => {}
                         }
                     })
                     .detach();
@@ -161,17 +160,16 @@ impl ContactsPanel {
 
         cx.subscribe(&user_store, move |_, user_store, event, cx| {
             if let Some(workspace) = workspace.upgrade(cx) {
-                workspace.update(cx, |workspace, cx| match event {
-                    client::Event::Contact { user, kind } => match kind {
-                        ContactEventKind::Requested | ContactEventKind::Accepted => workspace
-                            .show_notification(user.id as usize, cx, |cx| {
+                workspace.update(cx, |workspace, cx| {
+                    if let client::Event::Contact { user, kind } = event {
+                        if let ContactEventKind::Requested | ContactEventKind::Accepted = kind {
+                            workspace.show_notification(user.id as usize, cx, |cx| {
                                 cx.add_view(|cx| {
                                     ContactNotification::new(user.clone(), *kind, user_store, cx)
                                 })
-                            }),
-                        _ => {}
-                    },
-                    _ => {}
+                            })
+                        }
+                    }
                 });
             }
 
@@ -188,7 +186,7 @@ impl ContactsPanel {
 
             match &this.entries[ix] {
                 ContactEntry::Header(section) => {
-                    let is_collapsed = this.collapsed_sections.contains(&section);
+                    let is_collapsed = this.collapsed_sections.contains(section);
                     Self::render_header(
                         *section,
                         &theme.contacts_panel,
@@ -229,7 +227,7 @@ impl ContactsPanel {
                         contact.clone(),
                         current_user_id,
                         *project_ix,
-                        open_project.clone(),
+                        *open_project,
                         &theme.contacts_panel,
                         &theme.tooltip,
                         is_last_project_for_contact,
@@ -238,7 +236,7 @@ impl ContactsPanel {
                     )
                 }
                 ContactEntry::OfflineProject(project) => Self::render_offline_project(
-                    project.clone(),
+                    *project,
                     &theme.contacts_panel,
                     &theme.tooltip,
                     is_selected,
@@ -345,6 +343,7 @@ impl ContactsPanel {
             .boxed()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_project(
         contact: Arc<Contact>,
         current_user_id: Option<u64>,
@@ -370,7 +369,7 @@ impl ContactsPanel {
             .or(theme.contact_avatar.height)
             .unwrap_or(0.);
         let row = &theme.project_row.default;
-        let tree_branch = theme.tree_branch.clone();
+        let tree_branch = theme.tree_branch;
         let line_height = row.name.text.line_height(font_cache);
         let cap_height = row.name.text.cap_height(font_cache);
         let baseline_offset =
@@ -641,7 +640,7 @@ impl ContactsPanel {
                     let button_style = if is_contact_request_pending {
                         &theme.disabled_button
                     } else {
-                        &theme.contact_button.style_for(mouse_state, false)
+                        theme.contact_button.style_for(mouse_state, false)
                     };
                     render_icon_button(button_style, "icons/x_mark_8.svg")
                         .aligned()
@@ -663,7 +662,7 @@ impl ContactsPanel {
                     let button_style = if is_contact_request_pending {
                         &theme.disabled_button
                     } else {
-                        &theme.contact_button.style_for(mouse_state, false)
+                        theme.contact_button.style_for(mouse_state, false)
                     };
                     render_icon_button(button_style, "icons/check_8.svg")
                         .aligned()
@@ -685,7 +684,7 @@ impl ContactsPanel {
                     let button_style = if is_contact_request_pending {
                         &theme.disabled_button
                     } else {
-                        &theme.contact_button.style_for(mouse_state, false)
+                        theme.contact_button.style_for(mouse_state, false)
                     };
                     render_icon_button(button_style, "icons/x_mark_8.svg")
                         .aligned()
@@ -1224,7 +1223,7 @@ mod tests {
         let client = Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
         let project_store = cx.add_model(|_| ProjectStore::new(project::Db::open_fake()));
-        let server = FakeServer::for_client(current_user_id, &client, &cx).await;
+        let server = FakeServer::for_client(current_user_id, &client, cx).await;
         let fs = FakeFs::new(cx.background());
         fs.insert_tree("/private_dir", json!({ "one.rs": "" }))
             .await;

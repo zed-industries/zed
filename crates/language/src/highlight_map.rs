@@ -56,10 +56,7 @@ impl HighlightId {
     }
 
     pub fn style(&self, theme: &SyntaxTheme) -> Option<HighlightStyle> {
-        theme
-            .highlights
-            .get(self.0 as usize)
-            .map(|entry| entry.1.clone())
+        theme.highlights.get(self.0 as usize).map(|entry| entry.1)
     }
 
     #[cfg(any(test, feature = "test-support"))]

@@ -16,7 +16,7 @@ pub type Request = isahc::Request<AsyncBody>;
 pub type Response = isahc::Response<AsyncBody>;
 
 pub trait HttpClient: Send + Sync {
-    fn send<'a>(&'a self, req: Request) -> BoxFuture<'a, Result<Response, Error>>;
+    fn send(&self, req: Request) -> BoxFuture<Result<Response, Error>>;
 
     fn get<'a>(
         &'a self,
@@ -45,7 +45,7 @@ pub fn client() -> Arc<dyn HttpClient> {
 }
 
 impl HttpClient for isahc::HttpClient {
-    fn send<'a>(&'a self, req: Request) -> BoxFuture<'a, Result<Response, Error>> {
+    fn send(&self, req: Request) -> BoxFuture<Result<Response, Error>> {
         Box::pin(async move { self.send_async(req).await })
     }
 }

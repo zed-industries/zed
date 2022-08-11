@@ -99,7 +99,7 @@ impl TerminalView {
             Ok(terminal) => {
                 let terminal = cx.add_model(|cx| terminal.subscribe(cx));
                 let view = cx.add_view(|cx| ConnectedView::from_terminal(terminal, modal, cx));
-                cx.subscribe(&view, |_this, _content, event, cx| cx.emit(event.clone()))
+                cx.subscribe(&view, |_this, _content, event, cx| cx.emit(*event))
                     .detach();
                 TerminalContent::Connected(view)
             }
@@ -206,7 +206,7 @@ impl View for ErrorView {
             )
             .with_child(Text::new(program_text, style.clone()).contained().boxed())
             .with_child(Text::new(directory_text, style.clone()).contained().boxed())
-            .with_child(Text::new(error_text, style.clone()).contained().boxed())
+            .with_child(Text::new(error_text, style).contained().boxed())
             .aligned()
             .boxed()
     }
@@ -333,7 +333,7 @@ pub fn get_working_directory(
                 .filter(|dir| dir.is_dir())
         }
     };
-    res.or_else(|| home_dir())
+    res.or_else(home_dir)
 }
 
 ///Get's the first project's home directory, or the home directory

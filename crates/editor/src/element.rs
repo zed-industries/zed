@@ -110,6 +110,7 @@ impl EditorElement {
         self.update_view(cx, |view, cx| view.snapshot(cx))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn mouse_down(
         &self,
         position: Vector2F,
@@ -696,6 +697,7 @@ impl EditorElement {
         cx.scene.pop_layer();
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn paint_highlighted_range(
         &self,
         range: Range<DisplayPoint>,
@@ -857,7 +859,7 @@ impl EditorElement {
                 .style
                 .placeholder_text
                 .as_ref()
-                .unwrap_or_else(|| &self.style.text);
+                .unwrap_or(&self.style.text);
             let placeholder_text = snapshot.placeholder_text();
             let placeholder_lines = placeholder_text
                 .as_ref()
@@ -866,7 +868,7 @@ impl EditorElement {
                 .skip(rows.start as usize)
                 .chain(iter::repeat(""))
                 .take(rows.len());
-            return placeholder_lines
+            placeholder_lines
                 .map(|line| {
                     cx.text_layout_cache.layout_str(
                         line,
@@ -881,7 +883,7 @@ impl EditorElement {
                         )],
                     )
                 })
-                .collect();
+                .collect()
         } else {
             let style = &self.style;
             let chunks = snapshot.chunks(rows.clone(), true).map(|chunk| {
@@ -926,14 +928,15 @@ impl EditorElement {
             layout_highlighted_chunks(
                 chunks,
                 &style.text,
-                &cx.text_layout_cache,
-                &cx.font_cache,
+                cx.text_layout_cache,
+                cx.font_cache,
                 MAX_LINE_LEN,
                 rows.len() as usize,
             )
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_blocks(
         &mut self,
         rows: Range<u32>,
@@ -1299,7 +1302,9 @@ impl Element for EditorElement {
                 }
 
                 // Render the local selections in the leader's color when following.
-                let local_replica_id = view.leader_replica_id.unwrap_or(view.replica_id(cx));
+                let local_replica_id = view
+                    .leader_replica_id
+                    .unwrap_or_else(|| view.replica_id(cx));
 
                 selections.push((
                     local_replica_id,
@@ -1357,19 +1362,19 @@ impl Element for EditorElement {
 
         self.update_view(cx.app, |view, cx| {
             let clamped = view.clamp_scroll_left(scroll_max.x());
-            let autoscrolled;
-            if autoscroll_horizontally {
-                autoscrolled = view.autoscroll_horizontally(
+
+            let autoscrolled = if autoscroll_horizontally {
+                view.autoscroll_horizontally(
                     start_row,
                     text_size.x(),
                     scroll_width,
                     em_width,
                     &line_layouts,
                     cx,
-                );
+                )
             } else {
-                autoscrolled = false;
-            }
+                false
+            };
 
             if clamped || autoscrolled {
                 snapshot = view.snapshot(cx);
@@ -1991,8 +1996,8 @@ mod tests {
         let layouts = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             let mut presenter = cx.build_presenter(window_id, 30.);
-            let mut layout_cx = presenter.build_layout_context(Vector2F::zero(), false, cx);
-            element.layout_line_numbers(0..6, &Default::default(), &snapshot, &mut layout_cx)
+            let layout_cx = presenter.build_layout_context(Vector2F::zero(), false, cx);
+            element.layout_line_numbers(0..6, &Default::default(), &snapshot, &layout_cx)
         });
         assert_eq!(layouts.len(), 6);
     }

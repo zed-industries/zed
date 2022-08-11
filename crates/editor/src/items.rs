@@ -76,14 +76,14 @@ impl FollowableItem for Editor {
                     })
                     .collect::<Result<Vec<_>>>()?;
                 if !selections.is_empty() {
-                    editor.set_selections_from_remote(selections.into(), cx);
+                    editor.set_selections_from_remote(selections, cx);
                 }
 
                 if let Some(anchor) = state.scroll_top_anchor {
                     editor.set_scroll_top_anchor(
                         Anchor {
                             buffer_id: Some(state.buffer_id as usize),
-                            excerpt_id: excerpt_id.clone(),
+                            excerpt_id,
                             text_anchor: language::proto::deserialize_anchor(anchor)
                                 .ok_or_else(|| anyhow!("invalid scroll top"))?,
                         },
@@ -198,19 +198,17 @@ impl FollowableItem for Editor {
                 if !selections.is_empty() {
                     self.set_selections_from_remote(selections, cx);
                     self.request_autoscroll_remotely(Autoscroll::Newest, cx);
-                } else {
-                    if let Some(anchor) = message.scroll_top_anchor {
-                        self.set_scroll_top_anchor(
-                            Anchor {
-                                buffer_id: Some(buffer_id),
-                                excerpt_id: excerpt_id.clone(),
-                                text_anchor: language::proto::deserialize_anchor(anchor)
-                                    .ok_or_else(|| anyhow!("invalid scroll top"))?,
-                            },
-                            vec2f(message.scroll_x, message.scroll_y),
-                            cx,
-                        );
-                    }
+                } else if let Some(anchor) = message.scroll_top_anchor {
+                    self.set_scroll_top_anchor(
+                        Anchor {
+                            buffer_id: Some(buffer_id),
+                            excerpt_id,
+                            text_anchor: language::proto::deserialize_anchor(anchor)
+                                .ok_or_else(|| anyhow!("invalid scroll top"))?,
+                        },
+                        vec2f(message.scroll_x, message.scroll_y),
+                        cx,
+                    );
                 }
             }
         }
@@ -436,8 +434,7 @@ impl Item for Editor {
             .buffer()
             .read(cx)
             .as_singleton()
-            .expect("cannot call save_as on an excerpt list")
-            .clone();
+            .expect("cannot call save_as on an excerpt list");
 
         project.update(cx, |project, cx| {
             project.save_buffer_as(buffer, abs_path, cx)
@@ -501,6 +498,12 @@ pub struct CursorPosition {
     position: Option<Point>,
     selected_count: usize,
     _observe_active_editor: Option<Subscription>,
+}
+
+impl Default for CursorPosition {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CursorPosition {

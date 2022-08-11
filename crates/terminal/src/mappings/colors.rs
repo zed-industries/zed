@@ -110,7 +110,7 @@ pub fn get_color_at_index(index: &usize, colors: &TerminalColors) -> Color {
 ///
 ///This function does the reverse, calculating the r, g, and b components from a given index.
 fn rgb_for_index(i: &u8) -> (u8, u8, u8) {
-    debug_assert!(i >= &16 && i <= &231);
+    debug_assert!((&16..=&231).contains(&i));
     let i = i - 16;
     let r = (i - (i % 36)) / 36;
     let g = ((i % 36) - (i % 6)) / 6;

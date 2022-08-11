@@ -135,7 +135,7 @@ impl PluginBuilder {
                 // TODO: use try block once avaliable
                 let result: Result<(WasiBuffer, Memory, _), Trap> = (|| {
                     // grab a handle to the memory
-                    let mut plugin_memory = match caller.get_export("memory") {
+                    let plugin_memory = match caller.get_export("memory") {
                         Some(Extern::Memory(mem)) => mem,
                         _ => return Err(Trap::new("Could not grab slice of plugin memory"))?,
                     };
@@ -144,9 +144,9 @@ impl PluginBuilder {
 
                     // get the args passed from Guest
                     let args =
-                        Plugin::buffer_to_bytes(&mut plugin_memory, caller.as_context(), &buffer)?;
+                        Plugin::buffer_to_bytes(&plugin_memory, caller.as_context(), &buffer)?;
 
-                    let args: A = Plugin::deserialize_to_type(&args)?;
+                    let args: A = Plugin::deserialize_to_type(args)?;
 
                     // Call the Host-side function
                     let result = function(args);
@@ -214,7 +214,7 @@ impl PluginBuilder {
                 // TODO: use try block once avaliable
                 let result: Result<(WasiBuffer, Memory, Vec<u8>), Trap> = (|| {
                     // grab a handle to the memory
-                    let mut plugin_memory = match caller.get_export("memory") {
+                    let plugin_memory = match caller.get_export("memory") {
                         Some(Extern::Memory(mem)) => mem,
                         _ => return Err(Trap::new("Could not grab slice of plugin memory"))?,
                     };
@@ -222,7 +222,7 @@ impl PluginBuilder {
                     let buffer = WasiBuffer::from_u64(packed_buffer);
 
                     // get the args passed from Guest
-                    let args = Plugin::buffer_to_type(&mut plugin_memory, &mut caller, &buffer)?;
+                    let args = Plugin::buffer_to_type(&plugin_memory, &mut caller, &buffer)?;
 
                     // Call the Host-side function
                     let result: R = function(args);
@@ -258,7 +258,7 @@ impl PluginBuilder {
 
     /// Initializes a [`Plugin`] from a given compiled Wasm module.
     /// Both binary (`.wasm`) and text (`.wat`) module formats are supported.
-    pub async fn init<'a>(self, binary: PluginBinary<'a>) -> Result<Plugin, Error> {
+    pub async fn init(self, binary: PluginBinary<'_>) -> Result<Plugin, Error> {
         Plugin::init(binary, self).await
     }
 }
@@ -324,7 +324,7 @@ impl Plugin {
         println!();
     }
 
-    async fn init<'a>(binary: PluginBinary<'a>, plugin: PluginBuilder) -> Result<Self, Error> {
+    async fn init(binary: PluginBinary<'_>, plugin: PluginBuilder) -> Result<Self, Error> {
         // initialize the WebAssembly System Interface context
         let engine = plugin.engine;
         let mut linker = plugin.linker;
@@ -576,7 +576,7 @@ impl Plugin {
             .await?;
 
         Self::buffer_to_type(
-            &mut plugin_memory,
+            &plugin_memory,
             &mut self.store,
             &WasiBuffer::from_u64(result_buffer),
         )

@@ -332,8 +332,7 @@ impl<'de> Deserialize<'de> for TextStyle {
     where
         D: serde::Deserializer<'de>,
     {
-        Ok(Self::from_json(TextStyleJson::deserialize(deserializer)?)
-            .map_err(|e| de::Error::custom(e))?)
+        Self::from_json(TextStyleJson::deserialize(deserializer)?).map_err(de::Error::custom)
     }
 }
 

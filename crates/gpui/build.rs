@@ -41,7 +41,7 @@ fn compile_context_predicate_parser() {
         .compile("tree_sitter_context_predicate");
 }
 
-const SHADER_HEADER_PATH: &'static str = "./src/platform/mac/shaders/shaders.h";
+const SHADER_HEADER_PATH: &str = "./src/platform/mac/shaders/shaders.h";
 
 fn compile_metal_shaders() {
     let shader_path = "./src/platform/mac/shaders/shaders.metal";

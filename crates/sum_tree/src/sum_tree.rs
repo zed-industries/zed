@@ -304,7 +304,7 @@ impl<T: Item> SumTree<T> {
     }
 
     pub fn push_tree(&mut self, other: Self, cx: &<T::Summary as Summary>::Context) {
-        if !other.0.is_leaf() || other.0.items().len() > 0 {
+        if !other.0.is_leaf() || !other.0.items().is_empty() {
             if self.0.height() < other.0.height() {
                 for tree in other.0.child_trees() {
                     self.push_tree(tree.clone(), cx);
@@ -610,10 +610,7 @@ pub enum Node<T: Item> {
 
 impl<T: Item> Node<T> {
     fn is_leaf(&self) -> bool {
-        match self {
-            Node::Leaf { .. } => true,
-            _ => false,
-        }
+        matches!(self, Node::Leaf { .. })
     }
 
     fn height(&self) -> u8 {
@@ -786,8 +783,7 @@ mod tests {
                 while item_ix < expected_filtered_items.len() {
                     log::info!("filter_cursor, item_ix: {}", item_ix);
                     let actual_item = filter_cursor.item().unwrap();
-                    let (reference_index, reference_item) =
-                        expected_filtered_items[item_ix].clone();
+                    let (reference_index, reference_item) = expected_filtered_items[item_ix];
                     assert_eq!(actual_item, &reference_item);
                     assert_eq!(filter_cursor.start().0, reference_index);
                     log::info!("next");

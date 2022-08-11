@@ -223,7 +223,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     let cmd = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
     let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask)
         && first_char.map_or(true, |ch| {
-            ch < NSUpArrowFunctionKey || ch > NSModeSwitchFunctionKey
+            !(NSUpArrowFunctionKey..=NSModeSwitchFunctionKey).contains(&ch)
         });
 
     #[allow(non_upper_case_globals)]

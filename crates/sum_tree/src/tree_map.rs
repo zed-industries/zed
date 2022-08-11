@@ -73,7 +73,7 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
         removed
     }
 
-    pub fn iter<'a>(&'a self) -> impl 'a + Iterator<Item = (&'a K, &'a V)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> + '_ {
         self.0.iter().map(|entry| (&entry.key, &entry.value))
     }
 }
@@ -162,7 +162,7 @@ where
         self.0.get(key).is_some()
     }
 
-    pub fn iter<'a>(&'a self) -> impl 'a + Iterator<Item = &'a K> {
+    pub fn iter(&self) -> impl Iterator<Item = &K> + '_ {
         self.0.iter().map(|(k, _)| k)
     }
 }

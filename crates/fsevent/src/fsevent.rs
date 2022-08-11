@@ -233,11 +233,9 @@ impl EventStream {
                     }
                 }
 
-                if !events.is_empty() {
-                    if !callback(events) {
-                        fs::FSEventStreamStop(stream_ref);
-                        cf::CFRunLoopStop(cf::CFRunLoopGetCurrent());
-                    }
+                if !events.is_empty() && !callback(events) {
+                    fs::FSEventStreamStop(stream_ref);
+                    cf::CFRunLoopStop(cf::CFRunLoopGetCurrent());
                 }
             }
         }

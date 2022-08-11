@@ -28,7 +28,7 @@ pub fn change_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
                 });
             });
             copy_selections_content(editor, motion.linewise(), cx);
-            editor.insert(&"", cx);
+            editor.insert("", cx);
         });
     });
     vim.switch_mode(Mode::Insert, false, cx)
@@ -67,7 +67,7 @@ fn change_word(
                     });
                 });
                 copy_selections_content(editor, false, cx);
-                editor.insert(&"", cx);
+                editor.insert("", cx);
             });
         });
         vim.switch_mode(Mode::Insert, false, cx);

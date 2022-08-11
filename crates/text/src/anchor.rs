@@ -33,7 +33,7 @@ impl Anchor {
         } else {
             buffer
                 .fragment_id_for_anchor(self)
-                .cmp(&buffer.fragment_id_for_anchor(other))
+                .cmp(buffer.fragment_id_for_anchor(other))
         };
 
         fragment_id_comparison
@@ -43,17 +43,17 @@ impl Anchor {
 
     pub fn min(&self, other: &Self, buffer: &BufferSnapshot) -> Self {
         if self.cmp(other, buffer).is_le() {
-            self.clone()
+            *self
         } else {
-            other.clone()
+            *other
         }
     }
 
     pub fn max(&self, other: &Self, buffer: &BufferSnapshot) -> Self {
         if self.cmp(other, buffer).is_ge() {
-            self.clone()
+            *self
         } else {
-            other.clone()
+            *other
         }
     }
 
@@ -67,7 +67,7 @@ impl Anchor {
 
     pub fn bias_left(&self, buffer: &BufferSnapshot) -> Anchor {
         if self.bias == Bias::Left {
-            self.clone()
+            *self
         } else {
             buffer.anchor_before(self)
         }
@@ -75,13 +75,13 @@ impl Anchor {
 
     pub fn bias_right(&self, buffer: &BufferSnapshot) -> Anchor {
         if self.bias == Bias::Right {
-            self.clone()
+            *self
         } else {
             buffer.anchor_after(self)
         }
     }
 
-    pub fn summary<'a, D>(&self, content: &'a BufferSnapshot) -> D
+    pub fn summary<D>(&self, content: &BufferSnapshot) -> D
     where
         D: TextDimension,
     {
@@ -100,7 +100,7 @@ where
     T: ToOffset,
 {
     fn to_offset(&self, snapshot: &BufferSnapshot) -> Range<usize> {
-        self.start.to_offset(snapshot)..self.end.to_offset(&snapshot)
+        self.start.to_offset(snapshot)..self.end.to_offset(snapshot)
     }
 
     fn to_point(&self, snapshot: &BufferSnapshot) -> Range<Point> {
@@ -122,7 +122,7 @@ impl AnchorRangeExt for Range<Anchor> {
     fn cmp(&self, other: &Range<Anchor>, buffer: &BufferSnapshot) -> Result<Ordering> {
         Ok(match self.start.cmp(&other.start, buffer) {
             Ordering::Equal => other.end.cmp(&self.end, buffer),
-            ord @ _ => ord,
+            ord => ord,
         })
     }
 }

@@ -394,7 +394,7 @@ async fn create_access_token(
         } else {
             return Err(Error::Http(
                 StatusCode::UNAUTHORIZED,
-                format!("you do not have permission to impersonate other users"),
+                "you do not have permission to impersonate other users".to_string(),
             ));
         }
     }

@@ -254,7 +254,7 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
                                     }
                                     // Drop selection at the start of the next line
                                     let selection_point = Point::new(point.row + 1, 0);
-                                    new_selections.push(selection.map(|_| selection_point.clone()));
+                                    new_selections.push(selection.map(|_| selection_point));
                                     point
                                 } else {
                                     let mut point = selection.end;

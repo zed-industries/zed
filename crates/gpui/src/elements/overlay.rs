@@ -74,7 +74,7 @@ impl Element for Overlay {
         size: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) {
-        let mut bounds = RectF::new(self.abs_position.unwrap_or(bounds.origin()), *size);
+        let mut bounds = RectF::new(self.abs_position.unwrap_or_else(|| bounds.origin()), *size);
         cx.scene.push_stacking_context(None);
 
         if self.hoverable {

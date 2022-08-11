@@ -53,8 +53,8 @@ impl Element for Image {
         _: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
         let desired_size = vec2f(
-            self.style.width.unwrap_or(constraint.max.x()),
-            self.style.height.unwrap_or(constraint.max.y()),
+            self.style.width.unwrap_or_else(|| constraint.max.x()),
+            self.style.height.unwrap_or_else(|| constraint.max.y()),
         );
         let size = constrain_size_preserving_aspect_ratio(
             constraint.constrain(desired_size),

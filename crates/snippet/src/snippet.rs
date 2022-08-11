@@ -78,22 +78,22 @@ fn parse_tabstop<'a>(
 ) -> Result<&'a str> {
     let tabstop_start = text.len();
     let tabstop_index;
-    if source.chars().next() == Some('{') {
+    if source.starts_with('{') {
         let (index, rest) = parse_int(&source[1..])?;
         tabstop_index = index;
         source = rest;
 
-        if source.chars().next() == Some(':') {
+        if source.starts_with(':') {
             source = parse_snippet(&source[1..], true, text, tabstops)?;
         }
 
-        if source.chars().next() == Some('}') {
+        if source.starts_with('}') {
             source = &source[1..];
         } else {
             return Err(anyhow!("expected a closing brace"));
         }
     } else {
-        let (index, rest) = parse_int(&source)?;
+        let (index, rest) = parse_int(source)?;
         tabstop_index = index;
         source = rest;
     }

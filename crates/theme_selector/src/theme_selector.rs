@@ -44,7 +44,7 @@ impl ThemeSelector {
         theme_names.sort_unstable_by(|a, b| {
             a.ends_with("dark")
                 .cmp(&b.ends_with("dark"))
-                .then_with(|| a.cmp(&b))
+                .then_with(|| a.cmp(b))
         });
         let matches = theme_names
             .iter()

@@ -7,8 +7,7 @@ use gpui::{
 use settings::Settings;
 use workspace::StatusItemView;
 
-pub const NEW_ISSUE_URL: &'static str =
-    "https://github.com/zed-industries/feedback/issues/new/choose";
+pub const NEW_ISSUE_URL: &str = "https://github.com/zed-industries/feedback/issues/new/choose";
 
 pub struct FeedbackLink;
 

@@ -285,7 +285,7 @@ impl WrapMap {
             if tab_snapshot.version <= self.snapshot.tab_snapshot.version {
                 to_remove_len += 1;
             } else {
-                let interpolated_edits = self.snapshot.interpolate(tab_snapshot.clone(), &edits);
+                let interpolated_edits = self.snapshot.interpolate(tab_snapshot.clone(), edits);
                 self.edits_since_sync = self.edits_since_sync.compose(&interpolated_edits);
                 self.interpolated_edits = self.interpolated_edits.compose(&interpolated_edits);
             }
@@ -394,7 +394,7 @@ impl WrapSnapshot {
             new_rows: Range<u32>,
         }
 
-        let mut tab_edits_iter = tab_edits.into_iter().peekable();
+        let mut tab_edits_iter = tab_edits.iter().peekable();
         let mut row_edits = Vec::new();
         while let Some(edit) = tab_edits_iter.next() {
             let mut row_edit = RowEdit {
@@ -671,11 +671,11 @@ impl WrapSnapshot {
         self.tab_snapshot.to_point(self.to_tab_point(point), bias)
     }
 
-    pub fn from_point(&self, point: Point, bias: Bias) -> WrapPoint {
-        self.from_tab_point(self.tab_snapshot.from_point(point, bias))
+    pub fn make_wrap_point(&self, point: Point, bias: Bias) -> WrapPoint {
+        self.tab_point_to_wrap_point(self.tab_snapshot.make_tab_point(point, bias))
     }
 
-    pub fn from_tab_point(&self, point: TabPoint) -> WrapPoint {
+    pub fn tab_point_to_wrap_point(&self, point: TabPoint) -> WrapPoint {
         let mut cursor = self.transforms.cursor::<(TabPoint, WrapPoint)>();
         cursor.seek(&point, Bias::Right, &());
         WrapPoint(cursor.start().1 .0 + (point.0 - cursor.start().0 .0))
@@ -691,7 +691,7 @@ impl WrapSnapshot {
             }
         }
 
-        self.from_tab_point(self.tab_snapshot.clip_point(self.to_tab_point(point), bias))
+        self.tab_point_to_wrap_point(self.tab_snapshot.clip_point(self.to_tab_point(point), bias))
     }
 
     pub fn prev_row_boundary(&self, mut point: WrapPoint) -> u32 {
@@ -1301,7 +1301,7 @@ mod tests {
                 end_row += 1;
 
                 let mut expected_text = self.text_chunks(start_row).collect::<String>();
-                if expected_text.ends_with("\n") {
+                if expected_text.ends_with('\n') {
                     expected_text.push('\n');
                 }
                 let mut expected_text = expected_text

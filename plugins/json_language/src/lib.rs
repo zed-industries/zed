@@ -1,13 +1,12 @@
+use std::{fs, path::PathBuf};
+
 use plugin::prelude::*;
 use serde::Deserialize;
-use std::fs;
-use std::path::PathBuf;
 
 #[import]
 fn command(string: &str) -> Option<Vec<u8>>;
 
-const BIN_PATH: &'static str =
-    "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
+const BIN_PATH: &str = "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
 
 #[export]
 pub fn name() -> &'static str {
@@ -51,13 +50,11 @@ pub fn fetch_server_binary(container_dir: PathBuf, version: String) -> Result<Pa
             return Err("failed to install vscode-json-languageserver".to_string());
         }
 
-        if let Some(mut entries) = fs::read_dir(&container_dir).ok() {
-            while let Some(entry) = entries.next() {
-                if let Some(entry) = entry.ok() {
-                    let entry_path = entry.path();
-                    if entry_path.as_path() != version_dir {
-                        fs::remove_dir_all(&entry_path).ok();
-                    }
+        if let Ok(entries) = fs::read_dir(&container_dir) {
+            for entry in entries.flatten() {
+                let entry_path = entry.path();
+                if entry_path.as_path() != version_dir {
+                    fs::remove_dir_all(&entry_path).ok();
                 }
             }
         }
@@ -69,9 +66,9 @@ pub fn fetch_server_binary(container_dir: PathBuf, version: String) -> Result<Pa
 #[export]
 pub fn cached_server_binary(container_dir: PathBuf) -> Option<PathBuf> {
     let mut last_version_dir = None;
-    let mut entries = fs::read_dir(&container_dir).ok()?;
+    let entries = fs::read_dir(&container_dir).ok()?;
 
-    while let Some(entry) = entries.next() {
+    for entry in entries {
         let entry = entry.ok()?;
         if entry.file_type().ok()?.is_dir() {
             last_version_dir = Some(entry.path());

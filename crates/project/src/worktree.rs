@@ -57,6 +57,7 @@ lazy_static! {
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
 
+#[allow(clippy::large_enum_variant)]
 pub enum Worktree {
     Local(LocalWorktree),
     Remote(RemoteWorktree),
@@ -157,7 +158,7 @@ impl Worktree {
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
         let (tree, scan_states_tx) =
-            LocalWorktree::new(client, path, visible, fs.clone(), next_entry_id, cx).await?;
+            LocalWorktree::create(client, path, visible, fs.clone(), next_entry_id, cx).await?;
         tree.update(cx, |tree, cx| {
             let tree = tree.as_local_mut().unwrap();
             let abs_path = tree.abs_path().clone();
@@ -229,7 +230,7 @@ impl Worktree {
         cx.spawn(|mut cx| {
             let this = worktree_handle.downgrade();
             async move {
-                while let Some(_) = snapshot_updated_rx.recv().await {
+                while (snapshot_updated_rx.recv().await).is_some() {
                     if let Some(this) = this.upgrade(&cx) {
                         this.update(&mut cx, |this, cx| {
                             this.poll_snapshot(cx);
@@ -322,15 +323,15 @@ impl Worktree {
         }
     }
 
-    pub fn diagnostic_summaries<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = (Arc<Path>, DiagnosticSummary)> + 'a {
+    pub fn diagnostic_summaries(
+        &self,
+    ) -> impl Iterator<Item = (Arc<Path>, DiagnosticSummary)> + '_ {
         match self {
             Worktree::Local(worktree) => &worktree.diagnostic_summaries,
             Worktree::Remote(worktree) => &worktree.diagnostic_summaries,
         }
         .iter()
-        .map(|(path, summary)| (path.0.clone(), summary.clone()))
+        .map(|(path, summary)| (path.0.clone(), *summary))
     }
 
     fn poll_snapshot(&mut self, cx: &mut ModelContext<Self>) {
@@ -342,7 +343,7 @@ impl Worktree {
 }
 
 impl LocalWorktree {
-    async fn new(
+    async fn create(
         client: Arc<Client>,
         path: impl Into<Arc<Path>>,
         visible: bool,
@@ -386,7 +387,7 @@ impl LocalWorktree {
             };
             if let Some(metadata) = metadata {
                 let entry = Entry::new(
-                    path.into(),
+                    path,
                     &metadata,
                     &snapshot.next_entry_id,
                     snapshot.root_char_bag,
@@ -651,7 +652,7 @@ impl LocalWorktree {
         let abs_path = self.absolutize(&entry.path);
         let delete = cx.background().spawn({
             let fs = self.fs.clone();
-            let abs_path = abs_path.clone();
+            let abs_path = abs_path;
             async move {
                 if entry.is_file() {
                     fs.remove_file(&abs_path, Default::default()).await
@@ -848,7 +849,7 @@ impl LocalWorktree {
             let rpc = self.client.clone();
             let worktree_id = cx.model_id() as u64;
             let maintain_remote_snapshot = cx.background().spawn({
-                let rpc = rpc.clone();
+                let rpc = rpc;
                 let diagnostic_summaries = self.diagnostic_summaries.clone();
                 async move {
                     let mut prev_snapshot = match snapshots_rx.recv().await {
@@ -1002,10 +1003,9 @@ impl RemoteWorktree {
             warning_count: summary.warning_count as usize,
         };
         if summary.is_empty() {
-            self.diagnostic_summaries.remove(&PathKey(path.clone()));
+            self.diagnostic_summaries.remove(&PathKey(path));
         } else {
-            self.diagnostic_summaries
-                .insert(PathKey(path.clone()), summary);
+            self.diagnostic_summaries.insert(PathKey(path), summary);
         }
     }
 
@@ -1513,7 +1513,7 @@ impl LocalSnapshot {
 
         let mut ignore_stack = IgnoreStack::none();
         for (parent_abs_path, ignore) in new_ignores.into_iter().rev() {
-            if ignore_stack.is_abs_path_ignored(&parent_abs_path, true) {
+            if ignore_stack.is_abs_path_ignored(parent_abs_path, true) {
                 ignore_stack = IgnoreStack::all();
                 break;
             } else if let Some(ignore) = ignore {
@@ -1530,8 +1530,8 @@ impl LocalSnapshot {
 }
 
 async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
-    let contents = fs.load(&abs_path).await?;
-    let parent = abs_path.parent().unwrap_or(Path::new("/"));
+    let contents = fs.load(abs_path).await?;
+    let parent = abs_path.parent().unwrap_or_else(|| Path::new("/"));
     let mut builder = GitignoreBuilder::new(parent);
     for line in contents.lines() {
         builder.add_line(Some(abs_path.into()), line)?;
@@ -1769,7 +1769,7 @@ impl language::LocalFile for File {
                 .send(proto::BufferReloaded {
                     project_id,
                     buffer_id,
-                    version: serialize_version(&version),
+                    version: serialize_version(version),
                     mtime: Some(mtime.into()),
                     fingerprint,
                     line_ending: serialize_line_ending(line_ending) as i32,
@@ -2285,7 +2285,7 @@ impl BackgroundScanner {
             snapshot.scan_id += 1;
             for event in &events {
                 if let Ok(path) = event.path.strip_prefix(&root_canonical_path) {
-                    snapshot.remove_path(&path);
+                    snapshot.remove_path(path);
                 }
             }
 
@@ -2528,13 +2528,13 @@ impl WorktreeHandle for ModelHandle<Worktree> {
             fs.create_file(&root_path.join(filename), Default::default())
                 .await
                 .unwrap();
-            tree.condition(&cx, |tree, _| tree.entry_for_path(filename).is_some())
+            tree.condition(cx, |tree, _| tree.entry_for_path(filename).is_some())
                 .await;
 
             fs.remove_file(&root_path.join(filename), Default::default())
                 .await
                 .unwrap();
-            tree.condition(&cx, |tree, _| tree.entry_for_path(filename).is_none())
+            tree.condition(cx, |tree, _| tree.entry_for_path(filename).is_none())
                 .await;
 
             cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
@@ -2726,7 +2726,7 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
             let kind = if entry.is_dir {
                 EntryKind::Dir
             } else {
-                let mut char_bag = root_char_bag.clone();
+                let mut char_bag = *root_char_bag;
                 char_bag.extend(
                     String::from_utf8_lossy(&entry.path)
                         .chars()
@@ -2738,7 +2738,7 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
             Ok(Entry {
                 id: ProjectEntryId::from_proto(entry.id),
                 kind,
-                path: path.clone(),
+                path,
                 inode: entry.inode,
                 mtime: mtime.into(),
                 is_symlink: entry.is_symlink,
@@ -2955,7 +2955,7 @@ mod tests {
         .unwrap();
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
-        tree.flush_fs_events(&cx).await;
+        tree.flush_fs_events(cx).await;
         cx.read(|cx| {
             let tree = tree.read(cx);
             assert!(
@@ -2979,7 +2979,7 @@ mod tests {
         std::fs::write(dir.join("tracked-dir/tracked-file2"), "").unwrap();
         std::fs::write(dir.join("tracked-dir/ancestor-ignored-file2"), "").unwrap();
         std::fs::write(dir.join("ignored-dir/ignored-file2"), "").unwrap();
-        tree.flush_fs_events(&cx).await;
+        tree.flush_fs_events(cx).await;
         cx.read(|cx| {
             let tree = tree.read(cx);
             assert!(
@@ -3026,7 +3026,7 @@ mod tests {
         .unwrap();
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
-        tree.flush_fs_events(&cx).await;
+        tree.flush_fs_events(cx).await;
 
         tree.update(cx, |tree, cx| {
             tree.as_local().unwrap().write_file(
@@ -3052,8 +3052,8 @@ mod tests {
         tree.read_with(cx, |tree, _| {
             let tracked = tree.entry_for_path("tracked-dir/file.txt").unwrap();
             let ignored = tree.entry_for_path("ignored-dir/file.txt").unwrap();
-            assert_eq!(tracked.is_ignored, false);
-            assert_eq!(ignored.is_ignored, true);
+            assert!(!tracked.is_ignored);
+            assert!(ignored.is_ignored);
         });
     }
 
@@ -3226,9 +3226,9 @@ mod tests {
 
             let mut ignore_contents = String::new();
             for path_to_ignore in files_to_ignore.chain(dirs_to_ignore) {
-                write!(
+                writeln!(
                     ignore_contents,
-                    "{}\n",
+                    "{}",
                     path_to_ignore
                         .strip_prefix(&ignore_dir_path)?
                         .to_str()
@@ -3363,7 +3363,7 @@ mod tests {
                 .collect::<Vec<_>>();
             assert_eq!(dfs_paths_via_traversal, dfs_paths_via_iter);
 
-            for (ignore_parent_abs_path, _) in &self.ignores_by_parent_abs_path {
+            for ignore_parent_abs_path in self.ignores_by_parent_abs_path.keys() {
                 let ignore_parent_path =
                     ignore_parent_abs_path.strip_prefix(&self.abs_path).unwrap();
                 assert!(self.entry_for_path(&ignore_parent_path).is_some());
@@ -3389,7 +3389,7 @@ mod tests {
                     paths.push((entry.path.as_ref(), entry.inode, entry.is_ignored));
                 }
             }
-            paths.sort_by(|a, b| a.0.cmp(&b.0));
+            paths.sort_by(|a, b| a.0.cmp(b.0));
             paths
         }
     }

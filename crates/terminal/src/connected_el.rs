@@ -190,7 +190,7 @@ impl RelativeHighlightedRange {
         let end_x =
             origin.x() + self.range.end as f32 * layout.size.cell_width + layout.size.cell_width;
 
-        return HighlightedRangeLine { start_x, end_x };
+        HighlightedRangeLine { start_x, end_x }
     }
 }
 
@@ -273,7 +273,7 @@ impl TerminalEl {
                                     cur_rect = cur_rect.take().map(|rect| rect.extend());
                                 } else {
                                     cur_alac_color = Some(bg);
-                                    if let Some(_) = cur_rect {
+                                    if cur_rect.is_some() {
                                         rects.push(cur_rect.take().unwrap());
                                     }
                                     cur_rect = Some(LayoutRect::new(
@@ -402,7 +402,7 @@ impl TerminalEl {
 
         RunStyle {
             color: fg,
-            font_id: font_id,
+            font_id,
             underline,
         }
     }
@@ -416,9 +416,9 @@ impl TerminalEl {
         display_offset: usize,
         cx: &mut PaintContext,
     ) {
-        let mouse_down_connection = self.terminal.clone();
-        let click_connection = self.terminal.clone();
-        let drag_connection = self.terminal.clone();
+        let mouse_down_connection = self.terminal;
+        let click_connection = self.terminal;
+        let drag_connection = self.terminal;
         cx.scene.push_mouse_region(
             MouseRegion::new(view_id, None, visible_bounds)
                 .on_down(
@@ -500,7 +500,7 @@ impl TerminalEl {
             .terminal_overrides
             .font_family
             .as_ref()
-            .or_else(|| settings.terminal_defaults.font_family.as_ref())
+            .or(settings.terminal_defaults.font_family.as_ref())
             .and_then(|family_name| font_cache.load_family(&[family_name]).log_err())
             .unwrap_or(settings.buffer_font_family);
 
@@ -581,7 +581,7 @@ impl Element for TerminalEl {
 
         //Setup layout information
         let terminal_theme = settings.theme.terminal.clone(); //TODO: Try to minimize this clone.
-        let text_style = TerminalEl::make_text_style(font_cache, &settings);
+        let text_style = TerminalEl::make_text_style(font_cache, settings);
         let selection_color = settings.theme.editor.selection.selection;
         let dimensions = {
             let line_height = font_cache.line_height(text_style.font_size);
@@ -590,9 +590,9 @@ impl Element for TerminalEl {
         };
 
         let background_color = if self.modal {
-            terminal_theme.colors.modal_background.clone()
+            terminal_theme.colors.modal_background
         } else {
-            terminal_theme.colors.background.clone()
+            terminal_theme.colors.background
         };
 
         let (cells, selection, cursor, display_offset, cursor_text) = self
@@ -614,17 +614,17 @@ impl Element for TerminalEl {
                             //             && !ic.flags.contains(Flags::INVERSE))
                             // })
                             .map(|ic| IndexedCell {
-                                point: ic.point.clone(),
+                                point: ic.point,
                                 cell: ic.cell.clone(),
                             }),
                     );
 
                     (
                         cells,
-                        content.selection.clone(),
-                        content.cursor.clone(),
-                        content.display_offset.clone(),
-                        cursor_text.clone(),
+                        content.selection,
+                        content.cursor,
+                        content.display_offset,
+                        cursor_text,
                     )
                 })
             });
@@ -666,7 +666,7 @@ impl Element for TerminalEl {
                         dimensions.line_height,
                         terminal_theme.colors.cursor,
                         CursorShape::Block,
-                        Some(cursor_text.clone()),
+                        Some(cursor_text),
                     )
                 },
             )
@@ -721,7 +721,7 @@ impl Element for TerminalEl {
                 });
 
                 for rect in &layout.rects {
-                    rect.paint(origin, &layout, cx)
+                    rect.paint(origin, layout, cx)
                 }
             });
 
@@ -786,11 +786,11 @@ impl Element for TerminalEl {
                     let vertical_scroll =
                         (delta.y() / layout.size.line_height) * ALACRITTY_SCROLL_MULTIPLIER;
 
-                    self.terminal.upgrade(cx.app).map(|terminal| {
+                    if let Some(terminal) = self.terminal.upgrade(cx.app) {
                         terminal.update(cx.app, |term, _| {
                             term.scroll(Scroll::Delta(vertical_scroll.round() as i32))
                         });
-                    });
+                    }
 
                     cx.notify();
                 })

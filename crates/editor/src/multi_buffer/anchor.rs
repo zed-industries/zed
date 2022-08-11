@@ -34,7 +34,7 @@ impl Anchor {
         &self.excerpt_id
     }
 
-    pub fn cmp<'a>(&self, other: &Anchor, snapshot: &MultiBufferSnapshot) -> Ordering {
+    pub fn cmp(&self, other: &Anchor, snapshot: &MultiBufferSnapshot) -> Ordering {
         let excerpt_id_cmp = self.excerpt_id.cmp(&other.excerpt_id);
         if excerpt_id_cmp.is_eq() {
             if self.excerpt_id == ExcerptId::min() || self.excerpt_id == ExcerptId::max() {
@@ -111,15 +111,15 @@ impl AnchorRangeExt for Range<Anchor> {
     fn cmp(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> Ordering {
         match self.start.cmp(&other.start, buffer) {
             Ordering::Equal => other.end.cmp(&self.end, buffer),
-            ord @ _ => ord,
+            ord => ord,
         }
     }
 
     fn to_offset(&self, content: &MultiBufferSnapshot) -> Range<usize> {
-        self.start.to_offset(&content)..self.end.to_offset(&content)
+        self.start.to_offset(content)..self.end.to_offset(content)
     }
 
     fn to_point(&self, content: &MultiBufferSnapshot) -> Range<Point> {
-        self.start.to_point(&content)..self.end.to_point(&content)
+        self.start.to_point(content)..self.end.to_point(content)
     }
 }
