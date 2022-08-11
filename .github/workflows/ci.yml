@@ -42,8 +42,9 @@ jobs:
           clean: false
           
       - name: Run clippy
-        run: cargo clippy --workspace -- -D warnings
-        
+        run: |
+            cargo clippy --workspace -- -D warnings -Aclippy::reversed_empty_ranges -Aclippy::missing_safety_doc -Aclippy::let_unit_value
+            
       - name: Run tests
         run: cargo test --workspace --no-fail-fast
     
