@@ -1,7 +1,7 @@
 use crate::{worktree::WorktreeHandle, Event, *};
 use fs::RealFs;
 use futures::{future, StreamExt};
-use gpui::{executor::Deterministic, test::subscribe};
+use gpui::{executor::Deterministic, test::subscribe, SubscriptionTrait};
 use language::{
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
     LineEnding, OffsetRangeExt, Point, ToPoint,

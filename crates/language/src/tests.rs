@@ -1,7 +1,7 @@
 use super::*;
 use clock::ReplicaId;
 use collections::BTreeMap;
-use gpui::{ModelHandle, MutableAppContext};
+use gpui::{ModelHandle, MutableAppContext, SubscriptionTrait};
 use rand::prelude::*;
 use settings::Settings;
 use std::{

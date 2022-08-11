@@ -121,7 +121,7 @@ pub fn run_test(
 
 pub struct Observation<T> {
     rx: channel::Receiver<T>,
-    _subscription: impl Subscription,
+    _subscription: Subscription,
 }
 
 impl<T> futures::Stream for Observation<T> {
@@ -135,7 +135,10 @@ impl<T> futures::Stream for Observation<T> {
     }
 }
 
-pub fn observe<T: Entity>(entity: &impl Handle<T>, cx: &mut TestAppContext) -> Observation<()> {
+pub fn observe<T: Entity>(
+    entity: &'static impl Handle<T>,
+    cx: &mut TestAppContext,
+) -> Observation<()> {
     let (tx, rx) = smol::channel::unbounded();
     let _subscription = cx.update(|cx| {
         cx.observe(entity, move |_, _| {

@@ -1,7 +1,7 @@
 use gpui::{
     elements::*, geometry::vector::Vector2F, impl_internal_actions, keymap, platform::CursorStyle,
-    Action, AnyViewHandle, AppContext, Axis, Entity, MouseButton, MutableAppContext,
-    OldSubscription, RenderContext, SizeConstraint, View, ViewContext,
+    Action, AnyViewHandle, AppContext, Axis, Entity, MouseButton, MutableAppContext, RenderContext,
+    SizeConstraint, Subscription, View, ViewContext,
 };
 use menu::*;
 use settings::Settings;
@@ -63,7 +63,7 @@ pub struct ContextMenu {
     visible: bool,
     previously_focused_view_id: Option<usize>,
     clicked: bool,
-    _actions_observation: OldSubscription,
+    _actions_observation: Subscription,
 }
 
 impl Entity for ContextMenu {

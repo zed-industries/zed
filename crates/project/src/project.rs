@@ -15,7 +15,7 @@ use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use futures::{future::Shared, AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt};
 use gpui::{
     AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
-    MutableAppContext, Task, UpgradeModelHandle, WeakModelHandle,
+    MutableAppContext, SubscriptionTrait, Task, UpgradeModelHandle, WeakModelHandle,
 };
 use language::{
     point_to_lsp,
