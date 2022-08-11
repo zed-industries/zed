@@ -1,5 +1,6 @@
 pub mod action;
-mod subscription_manager;
+mod subscriptions; //Keep the subscription manager private...
+pub use subscriptions::Subscription; //But re-export the Subscription trait
 
 use crate::{
     elements::ElementBox,
@@ -14,7 +15,7 @@ use crate::{
 };
 pub use action::*;
 use anyhow::{anyhow, Context, Result};
-use collections::{btree_map, hash_map::Entry, BTreeMap, HashMap, HashSet, VecDeque};
+use collections::{hash_map::Entry, BTreeMap, HashMap, HashSet, VecDeque};
 use keymap::MatchResult;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
@@ -35,6 +36,10 @@ use std::{
     rc::{self, Rc},
     sync::{Arc, Weak},
     time::Duration,
+};
+
+use self::subscriptions::{
+    InternalSubscription, MultiCall, SingleCall, SubcriptionManager, Unkeyed,
 };
 
 pub trait Entity: 'static {
@@ -949,15 +954,15 @@ pub struct MutableAppContext {
     next_window_id: usize,
     next_subscription_id: usize,
     frame_count: usize,
-    focus_observations: Arc<Mutex<KeyedFallible<usize, FocusObservationCallback>>>,
-    global_subscriptions: Arc<Mutex<KeyedFallible<TypeId, GlobalSubscriptionCallback>>>,
-    global_observations: Arc<Mutex<KeyedFallible<TypeId, GlobalObservationCallback>>>,
-    subscriptions: Arc<Mutex<KeyedFallible<usize, SubscriptionCallback>>>,
-    observations: Arc<Mutex<KeyedFallible<usize, ObservationCallback>>>,
-    window_activation_observations: Arc<Mutex<KeyedFallible<usize, WindowActivationCallback>>>,
-    window_fullscreen_observations: Arc<Mutex<KeyedFallible<usize, WindowFullscreenCallback>>>,
-    release_observations: Arc<Mutex<KeyedInfallible<usize, ReleaseObservationCallback>>>,
-    action_dispatch_observations: Arc<Mutex<Unkeyed<ActionObservationCallback>>>,
+    focus_observations: Arc<MultiCall<usize, FocusObservationCallback>>,
+    global_subscriptions: Arc<MultiCall<TypeId, GlobalSubscriptionCallback>>,
+    global_observations: Arc<MultiCall<TypeId, GlobalObservationCallback>>,
+    subscriptions: Arc<MultiCall<usize, SubscriptionCallback>>,
+    observations: Arc<MultiCall<usize, ObservationCallback>>,
+    window_activation_observations: Arc<MultiCall<usize, WindowActivationCallback>>,
+    window_fullscreen_observations: Arc<MultiCall<usize, WindowFullscreenCallback>>,
+    release_observations: Arc<SingleCall<usize, ReleaseObservationCallback>>,
+    action_dispatch_observations: Arc<Unkeyed<ActionObservationCallback>>,
 
     #[allow(clippy::type_complexity)]
     presenters_and_platform_windows:
@@ -987,16 +992,16 @@ impl MutableAppContext {
             foreground_platform,
             assets: Arc::new(AssetCache::new(asset_source)),
             cx: AppContext {
+                ref_counts: Arc::new(Mutex::new(ref_counts)),
+                background,
+                font_cache,
+                platform,
                 models: Default::default(),
                 views: Default::default(),
                 parents: Default::default(),
                 windows: Default::default(),
                 globals: Default::default(),
                 element_states: Default::default(),
-                ref_counts: Arc::new(Mutex::new(ref_counts)),
-                background,
-                font_cache,
-                platform,
             },
             action_deserializers: Default::default(),
             capture_actions: Default::default(),
@@ -1007,14 +1012,14 @@ impl MutableAppContext {
             next_window_id: 0,
             next_subscription_id: 0,
             frame_count: 0,
-            subscriptions: KeyedFallible::new(),
-            global_subscriptions: KeyedFallible::new(),
-            observations: KeyedFallible::new(),
-            focus_observations: KeyedFallible::new(),
-            global_observations: KeyedFallible::new(),
-            window_activation_observations: KeyedFallible::new(),
-            window_fullscreen_observations: KeyedFallible::new(),
-            release_observations: KeyedInfallible::new(),
+            subscriptions: MultiCall::new(),
+            global_subscriptions: MultiCall::new(),
+            observations: MultiCall::new(),
+            focus_observations: MultiCall::new(),
+            global_observations: MultiCall::new(),
+            window_activation_observations: MultiCall::new(),
+            window_fullscreen_observations: MultiCall::new(),
+            release_observations: SingleCall::new(),
             action_dispatch_observations: Unkeyed::new(),
             presenters_and_platform_windows: Default::default(),
             foreground,
@@ -1362,6 +1367,7 @@ impl MutableAppContext {
     {
         let subscription_id = post_inc(&mut self.next_subscription_id);
         let type_id = TypeId::of::<E>();
+
         self.pending_effects.push_back(Effect::GlobalSubscription {
             type_id,
             subscription_id,
@@ -1371,11 +1377,7 @@ impl MutableAppContext {
             }),
         });
 
-        InternalSubscription::<_, _> {
-            subscription_id,
-            key_id: type_id,
-            subscriptions: Some(Arc::downgrade(&self.global_subscriptions)),
-        }
+        InternalSubscription::new((type_id, subscription_id), &self.global_subscriptions)
     }
 
     pub fn observe<E, H, F>(&mut self, handle: &H, mut callback: F) -> impl Subscription
@@ -1413,11 +1415,7 @@ impl MutableAppContext {
             }),
         });
 
-        InternalSubscription::<_, _> {
-            subscription_id,
-            key_id: handle.id(),
-            subscriptions: Some(Arc::downgrade(&self.subscriptions)),
-        }
+        InternalSubscription::new((handle.id(), subscription_id), &self.subscriptions)
     }
 
     fn observe_internal<E, H, F>(&mut self, handle: &H, mut callback: F) -> impl Subscription
@@ -1430,6 +1428,7 @@ impl MutableAppContext {
         let subscription_id = post_inc(&mut self.next_subscription_id);
         let observed = handle.downgrade();
         let entity_id = handle.id();
+
         self.pending_effects.push_back(Effect::Observation {
             entity_id,
             subscription_id,
@@ -1442,11 +1441,7 @@ impl MutableAppContext {
             }),
         });
 
-        InternalSubscription::<_, _> {
-            subscription_id,
-            key_id: entity_id,
-            subscriptions: Some(Arc::downgrade(&self.observations)),
-        }
+        InternalSubscription::new((entity_id, subscription_id), &self.observations)
     }
 
     fn observe_focus<F, V>(&mut self, handle: &ViewHandle<V>, mut callback: F) -> impl Subscription
@@ -1470,11 +1465,7 @@ impl MutableAppContext {
             }),
         });
 
-        InternalSubscription::<_, _> {
-            subscription_id,
-            key_id: view_id,
-            subscriptions: Some(Arc::downgrade(&self.focus_observations)),
-        }
+        InternalSubscription::new((view_id, subscription_id), &self.focus_observations)
     }
 
     pub fn observe_global<G, F>(&mut self, mut observe: F) -> impl Subscription
@@ -1491,11 +1482,7 @@ impl MutableAppContext {
             Box::new(move |cx: &mut MutableAppContext| observe(cx)),
         );
 
-        InternalSubscription::<_, _> {
-            subscription_id: id,
-            key_id: type_id,
-            subscriptions: Some(Arc::downgrade(&self.global_observations)),
-        }
+        InternalSubscription::new((type_id, id), &self.global_observations)
     }
 
     pub fn observe_release<E, H, F>(&mut self, handle: &H, callback: F) -> impl Subscription
@@ -1506,23 +1493,17 @@ impl MutableAppContext {
         F: 'static + FnOnce(&E, &mut Self),
     {
         let id = post_inc(&mut self.next_subscription_id);
-        self.release_observations
-            .lock()
-            .entry(handle.id())
-            .or_default()
-            .insert(
-                id,
-                Box::new(move |released, cx| {
-                    let released = released.downcast_ref().unwrap();
-                    callback(released, cx)
-                }),
-            );
 
-        InternalSubscription::<_, _> {
-            subscription_id: id,
-            key_id: handle.id(),
-            subscriptions: Some(Arc::downgrade(&self.release_observations)),
-        }
+        self.release_observations.add_callback(
+            handle.id(),
+            id,
+            Box::new(move |released, cx| {
+                let released = released.downcast_ref().unwrap();
+                callback(released, cx)
+            }),
+        );
+
+        InternalSubscription::new((handle.id(), id), &self.release_observations)
     }
 
     pub fn observe_actions<F>(&mut self, callback: F) -> impl Subscription
@@ -1530,15 +1511,11 @@ impl MutableAppContext {
         F: 'static + FnMut(TypeId, &mut MutableAppContext),
     {
         let id = post_inc(&mut self.next_subscription_id);
-        self.action_dispatch_observations
-            .lock()
-            .insert(id, Box::new(callback));
 
-        InternalSubscription::<_, _> {
-            subscription_id: id,
-            key_id: (),
-            subscriptions: Some(Arc::downgrade(&self.action_dispatch_observations)),
-        }
+        self.action_dispatch_observations
+            .add_callback(id, Box::new(callback));
+
+        InternalSubscription::new(id, &self.action_dispatch_observations)
     }
 
     fn observe_window_activation<F>(&mut self, window_id: usize, callback: F) -> impl Subscription
@@ -1546,6 +1523,7 @@ impl MutableAppContext {
         F: 'static + FnMut(bool, &mut MutableAppContext) -> bool,
     {
         let subscription_id = post_inc(&mut self.next_subscription_id);
+
         self.pending_effects
             .push_back(Effect::WindowActivationObservation {
                 window_id,
@@ -1553,11 +1531,10 @@ impl MutableAppContext {
                 callback: Box::new(callback),
             });
 
-        InternalSubscription::<_, _> {
-            subscription_id,
-            key_id: window_id,
-            subscriptions: Some(Arc::downgrade(&self.window_activation_observations)),
-        }
+        InternalSubscription::new(
+            (window_id, subscription_id),
+            &self.window_activation_observations,
+        )
     }
 
     fn observe_fullscreen<F>(&mut self, window_id: usize, callback: F) -> impl Subscription
@@ -1565,6 +1542,7 @@ impl MutableAppContext {
         F: 'static + FnMut(bool, &mut MutableAppContext) -> bool,
     {
         let subscription_id = post_inc(&mut self.next_subscription_id);
+
         self.pending_effects
             .push_back(Effect::WindowFullscreenObservation {
                 window_id,
@@ -1572,11 +1550,10 @@ impl MutableAppContext {
                 callback: Box::new(callback),
             });
 
-        InternalSubscription::<_, _> {
-            subscription_id,
-            key_id: window_id,
-            subscriptions: Some(Arc::downgrade(&self.window_fullscreen_observations)),
-        }
+        InternalSubscription::new(
+            (window_id, subscription_id),
+            &self.window_fullscreen_observations,
+        )
     }
 
     pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut MutableAppContext)) {
@@ -2099,8 +2076,8 @@ impl MutableAppContext {
             }
 
             for model_id in dropped_models {
-                self.subscriptions.remove(model_id);
-                self.observations.remove(model_id);
+                self.subscriptions.remove_key(model_id);
+                self.observations.remove_key(model_id);
                 let mut model = self.cx.models.remove(&model_id).unwrap();
                 model.release(self);
                 self.pending_effects
@@ -2108,8 +2085,8 @@ impl MutableAppContext {
             }
 
             for (window_id, view_id) in dropped_views {
-                self.subscriptions.remove(view_id);
-                self.observations.remove(view_id);
+                self.subscriptions.remove_key(view_id);
+                self.observations.remove_key(view_id);
                 let mut view = self.cx.views.remove(&(window_id, view_id)).unwrap();
                 view.release(self);
                 let change_focus_to = self.cx.windows.get_mut(&window_id).and_then(|window| {
@@ -2158,15 +2135,14 @@ impl MutableAppContext {
                             entity_id,
                             subscription_id,
                             callback,
-                        } => self.subscriptions.add_or_remove_callback(
-                            entity_id,
-                            subscription_id,
-                            callback,
-                        ),
+                        } => {
+                            self.subscriptions
+                                .toggle_callback(entity_id, subscription_id, callback)
+                        }
 
                         Effect::Event { entity_id, payload } => {
                             let mut subscriptions = self.subscriptions.clone();
-                            subscriptions.emit_and_cleanup(entity_id, self, |callback, this| {
+                            subscriptions.emit(entity_id, self, |callback, this| {
                                 callback(payload.as_ref(), this)
                             })
                         }
@@ -2175,7 +2151,7 @@ impl MutableAppContext {
                             type_id,
                             subscription_id,
                             callback,
-                        } => self.global_subscriptions.add_or_remove_callback(
+                        } => self.global_subscriptions.toggle_callback(
                             type_id,
                             subscription_id,
                             callback,
@@ -2187,16 +2163,14 @@ impl MutableAppContext {
                             entity_id,
                             subscription_id,
                             callback,
-                        } => self.observations.add_or_remove_callback(
-                            entity_id,
-                            subscription_id,
-                            callback,
-                        ),
+                        } => {
+                            self.observations
+                                .toggle_callback(entity_id, subscription_id, callback)
+                        }
 
                         Effect::ModelNotification { model_id } => {
                             let mut observations = self.observations.clone();
-                            observations
-                                .emit_and_cleanup(model_id, self, |callback, this| callback(this));
+                            observations.emit(model_id, self, |callback, this| callback(this));
                         }
 
                         Effect::ViewNotification { window_id, view_id } => {
@@ -2205,7 +2179,7 @@ impl MutableAppContext {
 
                         Effect::GlobalNotification { type_id } => {
                             let mut subscriptions = self.global_observations.clone();
-                            subscriptions.emit_and_cleanup(type_id, self, |callback, this| {
+                            subscriptions.emit(type_id, self, |callback, this| {
                                 callback(this);
                                 true
                             });
@@ -2239,7 +2213,7 @@ impl MutableAppContext {
                             subscription_id,
                             callback,
                         } => {
-                            self.focus_observations.add_or_remove_callback(
+                            self.focus_observations.toggle_callback(
                                 view_id,
                                 subscription_id,
                                 callback,
@@ -2258,7 +2232,7 @@ impl MutableAppContext {
                             window_id,
                             subscription_id,
                             callback,
-                        } => self.window_activation_observations.add_or_remove_callback(
+                        } => self.window_activation_observations.toggle_callback(
                             window_id,
                             subscription_id,
                             callback,
@@ -2273,7 +2247,7 @@ impl MutableAppContext {
                             window_id,
                             subscription_id,
                             callback,
-                        } => self.window_fullscreen_observations.add_or_remove_callback(
+                        } => self.window_fullscreen_observations.toggle_callback(
                             window_id,
                             subscription_id,
                             callback,
@@ -2299,7 +2273,8 @@ impl MutableAppContext {
                             );
                         }
                         Effect::ActionDispatchNotification { action_id } => {
-                            self.handle_action_dispatch_notification_effect(action_id)
+                            let mut action_obs = self.action_dispatch_observations.clone();
+                            action_obs.emit(self, |callback, this| callback(action_id, self));
                         }
                         Effect::WindowShouldCloseSubscription {
                             window_id,
@@ -2427,7 +2402,7 @@ impl MutableAppContext {
         let type_id = (&*payload).type_id();
 
         let mut subscriptions = self.global_subscriptions.clone();
-        subscriptions.emit_and_cleanup(type_id, self, |callback, this| {
+        subscriptions.emit(type_id, self, |callback, this| {
             callback(payload.as_ref(), this);
             true //Always alive
         });
@@ -2452,17 +2427,13 @@ impl MutableAppContext {
             }
 
             let mut observations = self.observations.clone();
-            observations.emit_and_cleanup(observed_view_id, self, |callback, this| callback(this));
+            observations.emit(observed_view_id, self, |callback, this| callback(this));
         }
     }
 
     fn handle_entity_release_effect(&mut self, entity_id: usize, entity: &dyn Any) {
-        let callbacks = self.release_observations.lock().remove(&entity_id);
-        if let Some(callbacks) = callbacks {
-            for (_, callback) in callbacks {
-                callback(entity, self);
-            }
-        }
+        let mut release_observations = self.release_observations.clone();
+        release_observations.emit(entity_id, self, |callback, this| callback(entity, this));
     }
 
     fn handle_fullscreen_effect(&mut self, window_id: usize, is_fullscreen: bool) {
@@ -2482,7 +2453,7 @@ impl MutableAppContext {
             window.is_fullscreen = is_fullscreen;
 
             let mut observations = this.window_fullscreen_observations.clone();
-            observations.emit_and_cleanup(window_id, this, |callback, this| {
+            observations.emit(window_id, this, |callback, this| {
                 callback(is_fullscreen, this)
             });
 
@@ -2520,7 +2491,7 @@ impl MutableAppContext {
             }
 
             let mut observations = this.window_activation_observations.clone();
-            observations.emit_and_cleanup(window_id, this, |callback, this| callback(active, this));
+            observations.emit(window_id, this, |callback, this| callback(active, this));
 
             Some(())
         });
@@ -2562,8 +2533,7 @@ impl MutableAppContext {
                 }
 
                 let mut subscriptions = this.focus_observations.clone();
-                subscriptions
-                    .emit_and_cleanup(blurred_id, this, |callback, this| callback(false, this));
+                subscriptions.emit(blurred_id, this, |callback, this| callback(false, this));
             }
 
             if let Some(focused_id) = focused_id {
@@ -2575,8 +2545,7 @@ impl MutableAppContext {
                 }
 
                 let mut subscriptions = this.focus_observations.clone();
-                subscriptions
-                    .emit_and_cleanup(focused_id, this, |callback, this| callback(true, this));
+                subscriptions.emit(focused_id, this, |callback, this| callback(true, this));
             }
         })
     }
@@ -2629,14 +2598,6 @@ impl MutableAppContext {
                 });
             this.halt_action_dispatch
         })
-    }
-
-    fn handle_action_dispatch_notification_effect(&mut self, action_id: TypeId) {
-        let mut callbacks = mem::take(&mut *self.action_dispatch_observations.lock());
-        for callback in callbacks.values_mut() {
-            callback(action_id, self);
-        }
-        self.action_dispatch_observations.lock().extend(callbacks);
     }
 
     fn handle_window_should_close_subscription_effect(
@@ -5226,123 +5187,6 @@ impl<T> Drop for ElementStateHandle<T> {
         }
     }
 }
-
-//***********
-#[must_use]
-pub trait Subscription {
-    fn detach(&mut self);
-}
-
-trait SubcriptionManager<K: Hash + Eq + Copy, F> {
-    fn new() -> Arc<Mutex<Self>>;
-    fn drop(&self, key_id: K, subscription_id: usize);
-    fn is_empty(this: Arc<Mutex<Self>>) -> bool;
-    fn add_callback(&mut self, key_id: K, subscription_id: usize, callback: F);
-    fn remove_key(&mut self, key_id: K);
-    fn add_or_remove_callback(&mut self, key_id: K, subscription_id: usize, callback: F);
-    fn emit_and_cleanup<C: FnMut(&mut F, &mut MutableAppContext) -> bool>(
-        &mut self,
-        key_id: K,
-        cx: &mut MutableAppContext,
-        call_callback: C,
-    );
-}
-
-//Why not put the mutexs in here?
-struct KeyedInfallible<K: Hash + Eq + Copy, F>(HashMap<K, BTreeMap<usize, F>>);
-struct KeyedFallible<K: Hash + Eq + Copy, F>(HashMap<K, BTreeMap<usize, Option<F>>>);
-struct Unkeyed<F>(BTreeMap<usize, F>);
-
-impl<K: Hash + Eq + Copy, F> SubcriptionManager<K, F> for KeyedInfallible<K, F> {
-    fn new() -> Arc<Mutex<Self>> {
-        Arc::new(Mutex::new(Self(Default::default())))
-    }
-
-    fn drop(&self, key_id: K, subscription_id: usize) {
-        if let Some(subscriptions) = self.0.get_mut(&key_id) {
-            subscriptions.remove(&subscription_id);
-        }
-    }
-}
-impl<K: Hash + Eq + Copy, F> SubcriptionManager<K, F> for KeyedFallible<K, F> {
-    fn new() -> Arc<Mutex<Self>> {
-        Arc::new(Mutex::new(Self(Default::default())))
-    }
-
-    fn drop(&self, key_id: K, subscription_id: usize) {
-        match self.0.entry(key_id).or_default().entry(subscription_id) {
-            btree_map::Entry::Vacant(entry) => {
-                entry.insert(None);
-            }
-            btree_map::Entry::Occupied(entry) => {
-                entry.remove();
-            }
-        }
-    }
-
-    fn is_empty(this: Arc<Mutex<Self>>) -> bool {
-        this.lock().0.is_empty()
-    }
-
-    fn add_callback(&mut self, key_id: K, subscription_id: usize, callback: F) {
-        todo!()
-    }
-
-    fn remove_key(&mut self, key_id: K) {
-        todo!()
-    }
-
-    fn add_or_remove_callback(&mut self, key_id: K, subscription_id: usize, callback: F) {
-        todo!()
-    }
-
-    fn emit_and_cleanup<C: FnMut(&mut F, &mut MutableAppContext) -> bool>(
-        &mut self,
-        key_id: K,
-        cx: &mut MutableAppContext,
-        call_callback: C,
-    ) {
-        todo!()
-    }
-}
-impl<F> SubcriptionManager<(), F> for Unkeyed<F> {
-    fn new() -> Arc<Mutex<Self>> {
-        Arc::new(Mutex::new(Self(Default::default())))
-    }
-
-    fn drop(&self, _: (), subscription_id: usize) {
-        self.0.remove(&subscription_id);
-    }
-}
-
-struct InternalSubscription<K: Hash + Eq + Copy, F, S: SubcriptionManager<K, F>> {
-    subscription_id: usize,
-    key_id: K,
-    subscriptions: Option<Weak<Mutex<S>>>,
-    _callback: PhantomData<F>,
-}
-
-impl<K: Hash + Eq + Copy, F, S: SubcriptionManager<K, F>> Subscription
-    for InternalSubscription<K, F, S>
-{
-    fn detach(&mut self) {
-        self.subscriptions.take();
-    }
-}
-
-impl<K: Hash + Eq + Copy, F, S: SubcriptionManager<K, F>> Drop for InternalSubscription<K, F, S> {
-    fn drop(&mut self) {
-        let key_id = self.key_id;
-        let subscription_id = self.subscription_id;
-
-        if let Some(subscriptions) = self.subscriptions.as_ref().and_then(Weak::upgrade) {
-            let storage = subscriptions.lock();
-            (*storage).drop(key_id, subscription_id);
-        }
-    }
-}
-
-//*******
 
 lazy_static! {
     static ref LEAK_BACKTRACE: bool =
