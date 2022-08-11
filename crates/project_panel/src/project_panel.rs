@@ -757,7 +757,9 @@ impl ProjectPanel {
     fn index_for_selection(&self, selection: Selection) -> Option<(usize, usize, usize)> {
         let mut entry_index = 0;
         let mut visible_entries_index = 0;
-        for (worktree_index, (worktree_id, worktree_entries)) in self.visible_entries.iter().enumerate() {
+        for (worktree_index, (worktree_id, worktree_entries)) in
+            self.visible_entries.iter().enumerate()
+        {
             if *worktree_id == selection.worktree_id {
                 for entry in worktree_entries {
                     if entry.id == selection.entry_id {

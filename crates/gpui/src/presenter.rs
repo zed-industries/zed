@@ -491,24 +491,24 @@ impl<'a> LayoutContext<'a> {
                 if layout_parent != app_parent {
                     panic!(
                         "View {} was laid out with parent {} when it was constructed with parent {}", 
-                        print_error(view_id), 
+                        print_error(view_id),
                         print_error(*layout_parent),
                         print_error(*app_parent))
                 }
             }
             (None, Some(ParentId::View(app_parent))) => panic!(
                 "View {} was laid out without a parent when it was constructed with parent {}",
-                print_error(view_id), 
+                print_error(view_id),
                 print_error(*app_parent)
             ),
             (Some(layout_parent), Some(ParentId::Root)) => panic!(
                 "View {} was laid out with parent {} when it was constructed as a window root",
-                print_error(view_id), 
+                print_error(view_id),
                 print_error(*layout_parent),
             ),
             (_, None) => panic!(
                 "View {} did not have a registered parent in the app context",
-                print_error(view_id), 
+                print_error(view_id),
             ),
             _ => {}
         }
