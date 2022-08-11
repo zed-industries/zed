@@ -284,15 +284,11 @@ impl Presenter {
                     {
                         events_to_send.push((
                             clicked_region.clone(),
-<<<<<<< HEAD
-                            MouseRegionEvent::Drag(*prev_drag_position, *e),
-=======
                             MouseRegionEvent::Drag(DragRegionEvent {
                                 region: clicked_region.bounds,
                                 prev_drag_position: *prev_drag_position,
                                 platform_event: e.clone(),
                             }),
->>>>>>> 4bd8a4b0 (wip tab drag and drop)
                         ));
                     }
 
@@ -313,7 +309,7 @@ impl Presenter {
                 _ => {}
             }
 
-            let (invalidated_views, dispatch_directives, handled) = {
+            let (invalidated_views, handled) = {
                 let mut event_cx = self.handle_hover_events(&event, cx);
                 event_cx.process_region_events(events_to_send);
 
@@ -321,24 +317,8 @@ impl Presenter {
                     event_cx.handled = event_cx.dispatch_event(root_view_id, &event);
                 }
 
-                if let Some(callback) = region.handlers.get(&event.handler_key()) {
-                    event_cx.with_current_view(region.view_id, |event_cx| {
-                        callback(event, event_cx);
-                    })
-                }
-                
-                (
-                    event_cx.invalidated_views,
-                    event_cx.dispatched_actions,
-                    event_cx.handled,
-                )
+                (event_cx.invalidated_views, event_cx.handled)
             };
-
-            if !handled {
-                handled = event_cx.dispatch_event(root_view_id, &event);
-            }
-
-            invalidated_views.extend(event_cx.invalidated_views);
 
             for view_id in invalidated_views {
                 cx.notify_view(self.window_id, view_id);
@@ -400,23 +380,23 @@ impl Presenter {
                         }
                     }
                 } else if let Some(region_id) = region.id() {
-                        if self.hovered_region_ids.contains(&region_id) {
-                            let region_event = if pressed_button.is_some() {
-                                MouseRegionEvent::DragOver(DragOverRegionEvent {
-                                    region: region.bounds,
-                                    started: false,
-                                    platform_event: e.clone(),
-                                })
-                            } else {
-                                MouseRegionEvent::Hover(HoverRegionEvent {
-                                    region: region.bounds,
-                                    started: false,
-                                    platform_event: e.clone(),
-                                })
-                            };
-                            events_to_send.push((region.clone(), region_event));
-                            self.hovered_region_ids.remove(&region_id);
-                        }
+                    if self.hovered_region_ids.contains(&region_id) {
+                        let region_event = if pressed_button.is_some() {
+                            MouseRegionEvent::DragOver(DragOverRegionEvent {
+                                region: region.bounds,
+                                started: false,
+                                platform_event: e.clone(),
+                            })
+                        } else {
+                            MouseRegionEvent::Hover(HoverRegionEvent {
+                                region: region.bounds,
+                                started: false,
+                                platform_event: e.clone(),
+                            })
+                        };
+                        events_to_send.push((region.clone(), region_event));
+                        self.hovered_region_ids.remove(&region_id);
+                    }
                 }
             }
         }

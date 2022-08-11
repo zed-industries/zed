@@ -421,75 +421,60 @@ impl TerminalEl {
         let drag_connection = self.terminal;
         cx.scene.push_mouse_region(
             MouseRegion::new(view_id, None, visible_bounds)
-                .on_down(
-                    MouseButton::Left,
-                    move |MouseButtonEvent { position, .. }, cx| {
-                        if let Some(conn_handle) = mouse_down_connection.upgrade(cx.app) {
-                            conn_handle.update(cx.app, |terminal, cx| {
-                                let (point, side) = TerminalEl::mouse_to_cell_data(
-                                    position,
-                                    origin,
-                                    cur_size,
-                                    display_offset,
-                                );
+                .on_down(MouseButton::Left, move |e, cx| {
+                    if let Some(conn_handle) = mouse_down_connection.upgrade(cx.app) {
+                        conn_handle.update(cx.app, |terminal, cx| {
+                            let (point, side) = TerminalEl::mouse_to_cell_data(
+                                e.position,
+                                origin,
+                                cur_size,
+                                display_offset,
+                            );
 
-                                terminal.mouse_down(point, side);
+                            terminal.mouse_down(point, side);
 
-                                cx.notify();
-                            })
-                        }
-                    },
-                )
-                .on_click(
-                    MouseButton::Left,
-                    move |MouseButtonEvent {
-                              position,
-                              click_count,
-                              ..
-                          },
-                          cx| {
-                        cx.focus_parent_view();
-                        if let Some(conn_handle) = click_connection.upgrade(cx.app) {
-                            conn_handle.update(cx.app, |terminal, cx| {
-                                let (point, side) = TerminalEl::mouse_to_cell_data(
-                                    position,
-                                    origin,
-                                    cur_size,
-                                    display_offset,
-                                );
+                            cx.notify();
+                        })
+                    }
+                })
+                .on_click(MouseButton::Left, move |e, cx| {
+                    cx.focus_parent_view();
+                    if let Some(conn_handle) = click_connection.upgrade(cx.app) {
+                        conn_handle.update(cx.app, |terminal, cx| {
+                            let (point, side) = TerminalEl::mouse_to_cell_data(
+                                e.position,
+                                origin,
+                                cur_size,
+                                display_offset,
+                            );
 
-                                terminal.click(point, side, click_count);
+                            terminal.click(point, side, e.click_count);
 
-                                cx.notify();
-                            });
-                        }
-                    },
-                )
-                .on_click(
-                    MouseButton::Right,
-                    move |MouseButtonEvent { position, .. }, cx| {
-                        cx.dispatch_action(DeployContextMenu { position });
-                    },
-                )
-                .on_drag(
-                    MouseButton::Left,
-                    move |_, MouseMovedEvent { position, .. }, cx| {
-                        if let Some(conn_handle) = drag_connection.upgrade(cx.app) {
-                            conn_handle.update(cx.app, |terminal, cx| {
-                                let (point, side) = TerminalEl::mouse_to_cell_data(
-                                    position,
-                                    origin,
-                                    cur_size,
-                                    display_offset,
-                                );
+                            cx.notify();
+                        });
+                    }
+                })
+                .on_click(MouseButton::Right, move |e, cx| {
+                    cx.dispatch_action(DeployContextMenu {
+                        position: e.position,
+                    });
+                })
+                .on_drag(MouseButton::Left, move |e, cx| {
+                    if let Some(conn_handle) = drag_connection.upgrade(cx.app) {
+                        conn_handle.update(cx.app, |terminal, cx| {
+                            let (point, side) = TerminalEl::mouse_to_cell_data(
+                                e.position,
+                                origin,
+                                cur_size,
+                                display_offset,
+                            );
 
-                                terminal.drag(point, side);
+                            terminal.drag(point, side);
 
-                                cx.notify()
-                            });
-                        }
-                    },
-                ),
+                            cx.notify()
+                        });
+                    }
+                }),
         );
     }
 

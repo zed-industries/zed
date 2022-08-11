@@ -14,8 +14,8 @@ use gpui::{
     impl_actions, impl_internal_actions,
     platform::{CursorStyle, NavigationDirection},
     AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, EventContext,
-    ModelHandle, MouseButton, MouseButtonEvent, MutableAppContext, PromptLevel, Quad,
-    RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    ModelHandle, MouseButton, MutableAppContext, PromptLevel, Quad, RenderContext, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
@@ -1143,12 +1143,11 @@ impl View for Pane {
                                         },
                                     )
                                     .with_cursor_style(CursorStyle::PointingHand)
-                                    .on_down(
-                                        MouseButton::Left,
-                                        |MouseButtonEvent { position, .. }, cx| {
-                                            cx.dispatch_action(DeployNewMenu { position });
-                                        },
-                                    )
+                                    .on_down(MouseButton::Left, |e, cx| {
+                                        cx.dispatch_action(DeployNewMenu {
+                                            position: e.position,
+                                        });
+                                    })
                                     .boxed(),
                                     MouseEventHandler::new::<SplitIcon, _, _>(
                                         1,
