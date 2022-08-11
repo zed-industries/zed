@@ -5233,16 +5233,27 @@ pub trait Subscription {
     fn detach(&mut self);
 }
 
-trait SubcriptionManager<K: Hash + Eq + Copy> {
+trait SubcriptionManager<K: Hash + Eq + Copy, F> {
     fn new() -> Arc<Mutex<Self>>;
     fn drop(&self, key_id: K, subscription_id: usize);
+    fn is_empty(this: Arc<Mutex<Self>>) -> bool;
+    fn add_callback(&mut self, key_id: K, subscription_id: usize, callback: F);
+    fn remove_key(&mut self, key_id: K);
+    fn add_or_remove_callback(&mut self, key_id: K, subscription_id: usize, callback: F);
+    fn emit_and_cleanup<C: FnMut(&mut F, &mut MutableAppContext) -> bool>(
+        &mut self,
+        key_id: K,
+        cx: &mut MutableAppContext,
+        call_callback: C,
+    );
 }
 
+//Why not put the mutexs in here?
 struct KeyedInfallible<K: Hash + Eq + Copy, F>(HashMap<K, BTreeMap<usize, F>>);
 struct KeyedFallible<K: Hash + Eq + Copy, F>(HashMap<K, BTreeMap<usize, Option<F>>>);
 struct Unkeyed<F>(BTreeMap<usize, F>);
 
-impl<K: Hash + Eq + Copy, F> SubcriptionManager<K> for KeyedInfallible<K, F> {
+impl<K: Hash + Eq + Copy, F> SubcriptionManager<K, F> for KeyedInfallible<K, F> {
     fn new() -> Arc<Mutex<Self>> {
         Arc::new(Mutex::new(Self(Default::default())))
     }
@@ -5253,7 +5264,7 @@ impl<K: Hash + Eq + Copy, F> SubcriptionManager<K> for KeyedInfallible<K, F> {
         }
     }
 }
-impl<K: Hash + Eq + Copy, F> SubcriptionManager<K> for KeyedFallible<K, F> {
+impl<K: Hash + Eq + Copy, F> SubcriptionManager<K, F> for KeyedFallible<K, F> {
     fn new() -> Arc<Mutex<Self>> {
         Arc::new(Mutex::new(Self(Default::default())))
     }
@@ -5268,8 +5279,33 @@ impl<K: Hash + Eq + Copy, F> SubcriptionManager<K> for KeyedFallible<K, F> {
             }
         }
     }
+
+    fn is_empty(this: Arc<Mutex<Self>>) -> bool {
+        this.lock().0.is_empty()
+    }
+
+    fn add_callback(&mut self, key_id: K, subscription_id: usize, callback: F) {
+        todo!()
+    }
+
+    fn remove_key(&mut self, key_id: K) {
+        todo!()
+    }
+
+    fn add_or_remove_callback(&mut self, key_id: K, subscription_id: usize, callback: F) {
+        todo!()
+    }
+
+    fn emit_and_cleanup<C: FnMut(&mut F, &mut MutableAppContext) -> bool>(
+        &mut self,
+        key_id: K,
+        cx: &mut MutableAppContext,
+        call_callback: C,
+    ) {
+        todo!()
+    }
 }
-impl<F> SubcriptionManager<()> for Unkeyed<F> {
+impl<F> SubcriptionManager<(), F> for Unkeyed<F> {
     fn new() -> Arc<Mutex<Self>> {
         Arc::new(Mutex::new(Self(Default::default())))
     }
@@ -5279,19 +5315,22 @@ impl<F> SubcriptionManager<()> for Unkeyed<F> {
     }
 }
 
-struct InternalSubscription<K: Hash + Eq + Copy, S: SubcriptionManager<K>> {
+struct InternalSubscription<K: Hash + Eq + Copy, F, S: SubcriptionManager<K, F>> {
     subscription_id: usize,
     key_id: K,
     subscriptions: Option<Weak<Mutex<S>>>,
+    _callback: PhantomData<F>,
 }
 
-impl<K: Hash + Eq + Copy, S: SubcriptionManager<K>> Subscription for InternalSubscription<K, S> {
+impl<K: Hash + Eq + Copy, F, S: SubcriptionManager<K, F>> Subscription
+    for InternalSubscription<K, F, S>
+{
     fn detach(&mut self) {
         self.subscriptions.take();
     }
 }
 
-impl<K: Hash + Eq + Copy, S: SubcriptionManager<K>> Drop for InternalSubscription<K, S> {
+impl<K: Hash + Eq + Copy, F, S: SubcriptionManager<K, F>> Drop for InternalSubscription<K, F, S> {
     fn drop(&mut self) {
         let key_id = self.key_id;
         let subscription_id = self.subscription_id;
