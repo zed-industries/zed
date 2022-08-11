@@ -154,13 +154,13 @@
         //rust-analyzer
         //typescript-language-server
         //vscode-json-languageserver
-        "rust_analyzer": {
-            //These initialization options are merged into Zed's defaults
-            "initialization_options": {
-                "checkOnSave": {
-                    "command": "clippy"
-                }
-            }
-        }
+        // "rust_analyzer": {
+        //     //These initialization options are merged into Zed's defaults
+        //     "initialization_options": {
+        //         "checkOnSave": {
+        //             "command": "clippy"
+        //         }
+        //     }
+        // }
     }
 }
