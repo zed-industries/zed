@@ -1,6 +1,6 @@
 {
     // The name of the Zed theme to use for the UI
-    "theme": "cave-dark",
+    "theme": "one-dark",
     // The name of a font to use for rendering text in the editor
     "buffer_font_family": "Zed Mono",
     // The default font size for text in the editor
@@ -145,5 +145,22 @@
             "tab_size": 2
         }
     },
-    "lsp": {}
+    //LSP Specific settings.
+    "lsp": {
+        //Specify the LSP name as a key here.
+        //As of 8/10/22, supported LSPs are:
+        //pyright
+        //gopls
+        //rust-analyzer
+        //typescript-language-server
+        //vscode-json-languageserver
+        // "rust_analyzer": {
+        //     //These initialization options are merged into Zed's defaults
+        //     "initialization_options": {
+        //         "checkOnSave": {
+        //             "command": "clippy"
+        //         }
+        //     }
+        // }
+    }
 }

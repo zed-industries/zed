@@ -129,7 +129,7 @@ impl Element for MouseEventHandler {
 
         cx.scene.push_mouse_region(MouseRegion::from_handlers(
             cx.current_view_id(),
-            Some(self.discriminant.clone()),
+            Some(self.discriminant),
             hit_bounds,
             self.handlers.clone(),
         ));

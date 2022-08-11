@@ -253,7 +253,7 @@ impl TabSnapshot {
         )
     }
 
-    pub fn from_point(&self, point: Point, bias: Bias) -> TabPoint {
+    pub fn make_tab_point(&self, point: Point, bias: Bias) -> TabPoint {
         self.to_tab_point(self.fold_snapshot.to_fold_point(point, bias))
     }
 
@@ -290,7 +290,7 @@ impl TabSnapshot {
     }
 
     fn collapse_tabs(
-        mut chars: impl Iterator<Item = char>,
+        chars: impl Iterator<Item = char>,
         column: usize,
         bias: Bias,
         tab_size: NonZeroU32,
@@ -298,7 +298,7 @@ impl TabSnapshot {
         let mut expanded_bytes = 0;
         let mut expanded_chars = 0;
         let mut collapsed_bytes = 0;
-        while let Some(c) = chars.next() {
+        for c in chars {
             if expanded_bytes >= column {
                 break;
             }
@@ -410,7 +410,7 @@ impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
 }
 
 // Handles a tab width <= 16
-const SPACES: &'static str = "                ";
+const SPACES: &str = "                ";
 
 pub struct TabChunks<'a> {
     fold_chunks: fold_map::FoldChunks<'a>,
@@ -518,7 +518,7 @@ mod tests {
 
         let (mut fold_map, _) = FoldMap::new(buffer_snapshot.clone());
         fold_map.randomly_mutate(&mut rng);
-        let (folds_snapshot, _) = fold_map.read(buffer_snapshot.clone(), vec![]);
+        let (folds_snapshot, _) = fold_map.read(buffer_snapshot, vec![]);
         log::info!("FoldMap text: {:?}", folds_snapshot.text());
 
         let (_, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);

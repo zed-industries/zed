@@ -8,8 +8,8 @@ use gpui::{
     elements::*,
     platform::CursorStyle,
     views::{ItemType, Select, SelectStyle},
-    AppContext, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription,
-    Task, View, ViewContext, ViewHandle,
+    AnyViewHandle, AppContext, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext,
+    Subscription, Task, View, ViewContext, ViewHandle,
 };
 use menu::Confirm;
 use postage::prelude::Stream;
@@ -70,7 +70,7 @@ impl ChatPanel {
                 let theme = &cx.global::<Settings>().theme.chat_panel.channel_select;
                 SelectStyle {
                     header: theme.header.container,
-                    menu: theme.menu.clone(),
+                    menu: theme.menu,
                 }
             })
         });
@@ -91,7 +91,7 @@ impl ChatPanel {
         let _observe_status = cx.spawn_weak(|this, mut cx| {
             let mut status = rpc.status();
             async move {
-                while let Some(_) = status.recv().await {
+                while (status.recv().await).is_some() {
                     if let Some(this) = this.upgrade(&cx) {
                         this.update(&mut cx, |_, cx| cx.notify());
                     } else {
@@ -397,7 +397,7 @@ impl View for ChatPanel {
         .boxed()
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if matches!(
             *self.rpc.status().borrow(),
             client::Status::Connected { .. }

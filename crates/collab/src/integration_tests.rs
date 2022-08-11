@@ -18,6 +18,7 @@ use futures::{channel::mpsc, Future, StreamExt as _};
 use gpui::{
     executor::{self, Deterministic},
     geometry::vector::vec2f,
+    test::EmptyView,
     ModelHandle, Task, TestAppContext, ViewHandle,
 };
 use language::{
@@ -67,7 +68,7 @@ async fn test_share_project(
     cx_b2: &mut TestAppContext,
 ) {
     cx_a.foreground().forbid_parking();
-    let (window_b, _) = cx_b.add_window(|_| EmptyView);
+    let (_, window_b) = cx_b.add_window(|_| EmptyView);
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -145,7 +146,7 @@ async fn test_share_project(
         .await
         .unwrap();
 
-    let editor_b = cx_b.add_view(window_b, |cx| Editor::for_buffer(buffer_b, None, cx));
+    let editor_b = cx_b.add_view(&window_b, |cx| Editor::for_buffer(buffer_b, None, cx));
 
     // TODO
     // // Create a selection set as client B and see that selection set as client A.
@@ -156,7 +157,7 @@ async fn test_share_project(
     // Edit the buffer as client B and see that edit as client A.
     editor_b.update(cx_b, |editor, cx| editor.handle_input("ok, ", cx));
     buffer_a
-        .condition(&cx_a, |buffer, _| buffer.text() == "ok, b-contents")
+        .condition(cx_a, |buffer, _| buffer.text() == "ok, b-contents")
         .await;
 
     // TODO
@@ -481,7 +482,7 @@ async fn test_cancel_join_request(
             client_b.client.clone(),
             client_b.user_store.clone(),
             client_b.project_store.clone(),
-            client_b.language_registry.clone().clone(),
+            client_b.language_registry.clone(),
             FakeFs::new(cx.background()),
             cx,
         )
@@ -503,7 +504,7 @@ async fn test_cancel_join_request(
     deterministic.run_until_parked();
     assert_eq!(
         &*project_a_events.borrow(),
-        &[project::Event::ContactCancelledJoinRequest(user_b.clone())]
+        &[project::Event::ContactCancelledJoinRequest(user_b)]
     );
 }
 
@@ -553,17 +554,17 @@ async fn test_offline_projects(
             user_store: ModelHandle<UserStore>,
             cx: &mut gpui::MutableAppContext,
         ) {
-            let open_project_ids = project_store
-                .read(cx)
-                .projects(cx)
-                .filter_map(|project| project.read(cx).remote_id())
-                .collect::<Vec<_>>();
-
             let user_store = user_store.read(cx);
             for contact in user_store.contacts() {
                 if contact.user.id == user_store.current_user().unwrap().id {
                     for project in &contact.projects {
-                        if !open_project_ids.contains(&project.id) {
+                        let store_contains_project = project_store
+                            .read(cx)
+                            .projects(cx)
+                            .filter_map(|project| project.read(cx).remote_id())
+                            .any(|x| x == project.id);
+
+                        if !store_contains_project {
                             panic!(
                                 concat!(
                                     "current user's contact data has a project",
@@ -902,7 +903,7 @@ async fn test_propagate_saves_and_fs_changes(
     client_a.fs.insert_file("/a/file4", "4".into()).await;
 
     worktree_a
-        .condition(&cx_a, |tree, _| {
+        .condition(cx_a, |tree, _| {
             tree.paths()
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>()
@@ -910,7 +911,7 @@ async fn test_propagate_saves_and_fs_changes(
         })
         .await;
     worktree_b
-        .condition(&cx_b, |tree, _| {
+        .condition(cx_b, |tree, _| {
             tree.paths()
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>()
@@ -918,7 +919,7 @@ async fn test_propagate_saves_and_fs_changes(
         })
         .await;
     worktree_c
-        .condition(&cx_c, |tree, _| {
+        .condition(cx_c, |tree, _| {
             tree.paths()
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>()
@@ -928,17 +929,17 @@ async fn test_propagate_saves_and_fs_changes(
 
     // Ensure buffer files are updated as well.
     buffer_a
-        .condition(&cx_a, |buf, _| {
+        .condition(cx_a, |buf, _| {
             buf.file().unwrap().path().to_str() == Some("file1-renamed")
         })
         .await;
     buffer_b
-        .condition(&cx_b, |buf, _| {
+        .condition(cx_b, |buf, _| {
             buf.file().unwrap().path().to_str() == Some("file1-renamed")
         })
         .await;
     buffer_c
-        .condition(&cx_c, |buf, _| {
+        .condition(cx_c, |buf, _| {
             buf.file().unwrap().path().to_str() == Some("file1-renamed")
         })
         .await;
@@ -1245,7 +1246,7 @@ async fn test_buffer_conflict_after_save(cx_a: &mut TestAppContext, cx_b: &mut T
 
     buffer_b.update(cx_b, |buf, cx| buf.save(cx)).await.unwrap();
     buffer_b
-        .condition(&cx_b, |buffer_b, _| !buffer_b.is_dirty())
+        .condition(cx_b, |buffer_b, _| !buffer_b.is_dirty())
         .await;
     buffer_b.read_with(cx_b, |buf, _| {
         assert!(!buf.has_conflict());
@@ -1298,7 +1299,7 @@ async fn test_buffer_reloading(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
         .await
         .unwrap();
     buffer_b
-        .condition(&cx_b, |buf, _| {
+        .condition(cx_b, |buf, _| {
             buf.text() == new_contents.to_string() && !buf.is_dirty()
         })
         .await;
@@ -1348,7 +1349,7 @@ async fn test_editing_while_guest_opens_buffer(
 
     let text = buffer_a.read_with(cx_a, |buf, _| buf.text());
     let buffer_b = buffer_b.await.unwrap();
-    buffer_b.condition(&cx_b, |buf, _| buf.text() == text).await;
+    buffer_b.condition(cx_b, |buf, _| buf.text() == text).await;
 }
 
 #[gpui::test(iterations = 10)]
@@ -1373,7 +1374,7 @@ async fn test_leaving_worktree_while_opening_buffer(
 
     // See that a guest has joined as client A.
     project_a
-        .condition(&cx_a, |p, _| p.collaborators().len() == 1)
+        .condition(cx_a, |p, _| p.collaborators().len() == 1)
         .await;
 
     // Begin opening a buffer as client B, but leave the project before the open completes.
@@ -1385,7 +1386,7 @@ async fn test_leaving_worktree_while_opening_buffer(
 
     // See that the guest has left.
     project_a
-        .condition(&cx_a, |p, _| p.collaborators().len() == 0)
+        .condition(cx_a, |p, _| p.collaborators().is_empty())
         .await;
 }
 
@@ -1420,7 +1421,7 @@ async fn test_leaving_project(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     // Drop client B's connection and ensure client A observes client B leaving the project.
     client_b.disconnect(&cx_b.to_async()).unwrap();
     project_a
-        .condition(cx_a, |p, _| p.collaborators().len() == 0)
+        .condition(cx_a, |p, _| p.collaborators().is_empty())
         .await;
 
     // Rejoin the project as client B
@@ -1436,7 +1437,7 @@ async fn test_leaving_project(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     server.disconnect_client(client_b.current_user_id(cx_b));
     cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
     project_a
-        .condition(cx_a, |p, _| p.collaborators().len() == 0)
+        .condition(cx_a, |p, _| p.collaborators().is_empty())
         .await;
 }
 
@@ -1638,7 +1639,6 @@ async fn test_collaborating_with_diagnostics(
             buffer
                 .snapshot()
                 .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
-                .map(|entry| entry)
                 .collect::<Vec<_>>(),
             &[
                 DiagnosticEntry {
@@ -1736,14 +1736,14 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
         .await
         .unwrap();
-    let (window_b, _) = cx_b.add_window(|_| EmptyView);
-    let editor_b = cx_b.add_view(window_b, |cx| {
+    let (_, window_b) = cx_b.add_window(|_| EmptyView);
+    let editor_b = cx_b.add_view(&window_b, |cx| {
         Editor::for_buffer(buffer_b.clone(), Some(project_b.clone()), cx)
     });
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
     buffer_b
-        .condition(&cx_b, |buffer, _| !buffer.completion_triggers().is_empty())
+        .condition(cx_b, |buffer, _| !buffer.completion_triggers().is_empty())
         .await;
 
     // Type a completion trigger character as the guest.
@@ -1807,12 +1807,12 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .await
         .unwrap();
     buffer_a
-        .condition(&cx_a, |buffer, _| buffer.text() == "fn main() { a. }")
+        .condition(cx_a, |buffer, _| buffer.text() == "fn main() { a. }")
         .await;
 
     // Confirm a completion on the guest.
     editor_b
-        .condition(&cx_b, |editor, _| editor.context_menu_visible())
+        .condition(cx_b, |editor, _| editor.context_menu_visible())
         .await;
     editor_b.update(cx_b, |editor, cx| {
         editor.confirm_completion(&ConfirmCompletion { item_ix: Some(0) }, cx);
@@ -1843,12 +1843,12 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
 
     // The additional edit is applied.
     buffer_a
-        .condition(&cx_a, |buffer, _| {
+        .condition(cx_a, |buffer, _| {
             buffer.text() == "use d::SomeTrait;\nfn main() { a.first_method() }"
         })
         .await;
     buffer_b
-        .condition(&cx_b, |buffer, _| {
+        .condition(cx_b, |buffer, _| {
             buffer.text() == "use d::SomeTrait;\nfn main() { a.first_method() }"
         })
         .await;
@@ -2255,9 +2255,9 @@ async fn test_references(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
             Path::new("three.rs")
         );
 
-        assert_eq!(references[0].range.to_offset(&two_buffer), 24..27);
-        assert_eq!(references[1].range.to_offset(&two_buffer), 35..38);
-        assert_eq!(references[2].range.to_offset(&three_buffer), 37..40);
+        assert_eq!(references[0].range.to_offset(two_buffer), 24..27);
+        assert_eq!(references[1].range.to_offset(two_buffer), 35..38);
+        assert_eq!(references[2].range.to_offset(three_buffer), 37..40);
     });
 }
 
@@ -2706,7 +2706,7 @@ async fn test_collaborating_with_code_actions(
     cx_b: &mut TestAppContext,
 ) {
     cx_a.foreground().forbid_parking();
-    cx_b.update(|cx| editor::init(cx));
+    cx_b.update(editor::init);
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -2838,7 +2838,7 @@ async fn test_collaborating_with_code_actions(
         );
     });
     editor_b
-        .condition(&cx_b, |editor, _| editor.context_menu_visible())
+        .condition(cx_b, |editor, _| editor.context_menu_visible())
         .await;
 
     fake_language_server.remove_request_handler::<lsp::request::CodeActionRequest>();
@@ -2911,7 +2911,7 @@ async fn test_collaborating_with_code_actions(
 #[gpui::test(iterations = 10)]
 async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
-    cx_b.update(|cx| editor::init(cx));
+    cx_b.update(editor::init);
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -3097,7 +3097,7 @@ async fn test_language_server_statuses(
 ) {
     deterministic.forbid_parking();
 
-    cx_b.update(|cx| editor::init(cx));
+    cx_b.update(editor::init);
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -3206,24 +3206,24 @@ async fn test_basic_chat(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     // Create an org that includes these 2 users.
     let db = &server.app_state.db;
     let org_id = db.create_org("Test Org", "test-org").await.unwrap();
-    db.add_org_member(org_id, client_a.current_user_id(&cx_a), false)
+    db.add_org_member(org_id, client_a.current_user_id(cx_a), false)
         .await
         .unwrap();
-    db.add_org_member(org_id, client_b.current_user_id(&cx_b), false)
+    db.add_org_member(org_id, client_b.current_user_id(cx_b), false)
         .await
         .unwrap();
 
     // Create a channel that includes all the users.
     let channel_id = db.create_org_channel(org_id, "test-channel").await.unwrap();
-    db.add_channel_member(channel_id, client_a.current_user_id(&cx_a), false)
+    db.add_channel_member(channel_id, client_a.current_user_id(cx_a), false)
         .await
         .unwrap();
-    db.add_channel_member(channel_id, client_b.current_user_id(&cx_b), false)
+    db.add_channel_member(channel_id, client_b.current_user_id(cx_b), false)
         .await
         .unwrap();
     db.create_channel_message(
         channel_id,
-        client_b.current_user_id(&cx_b),
+        client_b.current_user_id(cx_b),
         "hello A, it's B.",
         OffsetDateTime::now_utc(),
         1,
@@ -3250,7 +3250,7 @@ async fn test_basic_chat(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     });
     channel_a.read_with(cx_a, |channel, _| assert!(channel.messages().is_empty()));
     channel_a
-        .condition(&cx_a, |channel, _| {
+        .condition(cx_a, |channel, _| {
             channel_messages(channel)
                 == [("user_b".to_string(), "hello A, it's B.".to_string(), false)]
         })
@@ -3276,7 +3276,7 @@ async fn test_basic_chat(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     });
     channel_b.read_with(cx_b, |channel, _| assert!(channel.messages().is_empty()));
     channel_b
-        .condition(&cx_b, |channel, _| {
+        .condition(cx_b, |channel, _| {
             channel_messages(channel)
                 == [("user_b".to_string(), "hello A, it's B.".to_string(), false)]
         })
@@ -3303,7 +3303,7 @@ async fn test_basic_chat(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         .unwrap();
 
     channel_b
-        .condition(&cx_b, |channel, _| {
+        .condition(cx_b, |channel, _| {
             channel_messages(channel)
                 == [
                     ("user_b".to_string(), "hello A, it's B.".to_string(), false),
@@ -3343,10 +3343,10 @@ async fn test_chat_message_validation(cx_a: &mut TestAppContext) {
     let db = &server.app_state.db;
     let org_id = db.create_org("Test Org", "test-org").await.unwrap();
     let channel_id = db.create_org_channel(org_id, "test-channel").await.unwrap();
-    db.add_org_member(org_id, client_a.current_user_id(&cx_a), false)
+    db.add_org_member(org_id, client_a.current_user_id(cx_a), false)
         .await
         .unwrap();
-    db.add_channel_member(channel_id, client_a.current_user_id(&cx_a), false)
+    db.add_channel_member(channel_id, client_a.current_user_id(cx_a), false)
         .await
         .unwrap();
 
@@ -3405,24 +3405,24 @@ async fn test_chat_reconnection(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
     // Create an org that includes these 2 users.
     let db = &server.app_state.db;
     let org_id = db.create_org("Test Org", "test-org").await.unwrap();
-    db.add_org_member(org_id, client_a.current_user_id(&cx_a), false)
+    db.add_org_member(org_id, client_a.current_user_id(cx_a), false)
         .await
         .unwrap();
-    db.add_org_member(org_id, client_b.current_user_id(&cx_b), false)
+    db.add_org_member(org_id, client_b.current_user_id(cx_b), false)
         .await
         .unwrap();
 
     // Create a channel that includes all the users.
     let channel_id = db.create_org_channel(org_id, "test-channel").await.unwrap();
-    db.add_channel_member(channel_id, client_a.current_user_id(&cx_a), false)
+    db.add_channel_member(channel_id, client_a.current_user_id(cx_a), false)
         .await
         .unwrap();
-    db.add_channel_member(channel_id, client_b.current_user_id(&cx_b), false)
+    db.add_channel_member(channel_id, client_b.current_user_id(cx_b), false)
         .await
         .unwrap();
     db.create_channel_message(
         channel_id,
-        client_b.current_user_id(&cx_b),
+        client_b.current_user_id(cx_b),
         "hello A, it's B.",
         OffsetDateTime::now_utc(),
         2,
@@ -3450,7 +3450,7 @@ async fn test_chat_reconnection(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
     });
     channel_a.read_with(cx_a, |channel, _| assert!(channel.messages().is_empty()));
     channel_a
-        .condition(&cx_a, |channel, _| {
+        .condition(cx_a, |channel, _| {
             channel_messages(channel)
                 == [("user_b".to_string(), "hello A, it's B.".to_string(), false)]
         })
@@ -3476,7 +3476,7 @@ async fn test_chat_reconnection(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
     });
     channel_b.read_with(cx_b, |channel, _| assert!(channel.messages().is_empty()));
     channel_b
-        .condition(&cx_b, |channel, _| {
+        .condition(cx_b, |channel, _| {
             channel_messages(channel)
                 == [("user_b".to_string(), "hello A, it's B.".to_string(), false)]
         })
@@ -3484,7 +3484,7 @@ async fn test_chat_reconnection(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
 
     // Disconnect client B, ensuring we can still access its cached channel data.
     server.forbid_connections();
-    server.disconnect_client(client_b.current_user_id(&cx_b));
+    server.disconnect_client(client_b.current_user_id(cx_b));
     cx_b.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
     while !matches!(
         status_b.next().await,
@@ -3553,7 +3553,7 @@ async fn test_chat_reconnection(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
     // Verify that B sees the new messages upon reconnection, as well as the message client B
     // sent while offline.
     channel_b
-        .condition(&cx_b, |channel, _| {
+        .condition(cx_b, |channel, _| {
             channel_messages(channel)
                 == [
                     ("user_b".to_string(), "hello A, it's B.".to_string(), false),
@@ -3572,7 +3572,7 @@ async fn test_chat_reconnection(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
         .await
         .unwrap();
     channel_b
-        .condition(&cx_b, |channel, _| {
+        .condition(cx_b, |channel, _| {
             channel_messages(channel)
                 == [
                     ("user_b".to_string(), "hello A, it's B.".to_string(), false),
@@ -3591,7 +3591,7 @@ async fn test_chat_reconnection(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
         .await
         .unwrap();
     channel_a
-        .condition(&cx_a, |channel, _| {
+        .condition(cx_a, |channel, _| {
             channel_messages(channel)
                 == [
                     ("user_b".to_string(), "hello A, it's B.".to_string(), false),
@@ -3700,7 +3700,7 @@ async fn test_contacts(
     }
 
     project_a
-        .condition(&cx_a, |project, _| {
+        .condition(cx_a, |project, _| {
             project.collaborators().contains_key(&client_b.peer_id)
         })
         .await;
@@ -3765,6 +3765,7 @@ async fn test_contacts(
         });
     }
 
+    #[allow(clippy::type_complexity)]
     fn contacts(user_store: &UserStore) -> Vec<(&str, bool, Vec<(&str, Vec<&str>)>)> {
         user_store
             .contacts()
@@ -3830,27 +3831,27 @@ async fn test_contact_requests(
 
     // All users see the pending request appear in all their clients.
     assert_eq!(
-        client_a.summarize_contacts(&cx_a).outgoing_requests,
+        client_a.summarize_contacts(cx_a).outgoing_requests,
         &["user_b"]
     );
     assert_eq!(
-        client_a2.summarize_contacts(&cx_a2).outgoing_requests,
+        client_a2.summarize_contacts(cx_a2).outgoing_requests,
         &["user_b"]
     );
     assert_eq!(
-        client_b.summarize_contacts(&cx_b).incoming_requests,
+        client_b.summarize_contacts(cx_b).incoming_requests,
         &["user_a", "user_c"]
     );
     assert_eq!(
-        client_b2.summarize_contacts(&cx_b2).incoming_requests,
+        client_b2.summarize_contacts(cx_b2).incoming_requests,
         &["user_a", "user_c"]
     );
     assert_eq!(
-        client_c.summarize_contacts(&cx_c).outgoing_requests,
+        client_c.summarize_contacts(cx_c).outgoing_requests,
         &["user_b"]
     );
     assert_eq!(
-        client_c2.summarize_contacts(&cx_c2).outgoing_requests,
+        client_c2.summarize_contacts(cx_c2).outgoing_requests,
         &["user_b"]
     );
 
@@ -3860,15 +3861,15 @@ async fn test_contact_requests(
     disconnect_and_reconnect(&client_c, cx_c).await;
     executor.run_until_parked();
     assert_eq!(
-        client_a.summarize_contacts(&cx_a).outgoing_requests,
+        client_a.summarize_contacts(cx_a).outgoing_requests,
         &["user_b"]
     );
     assert_eq!(
-        client_b.summarize_contacts(&cx_b).incoming_requests,
+        client_b.summarize_contacts(cx_b).incoming_requests,
         &["user_a", "user_c"]
     );
     assert_eq!(
-        client_c.summarize_contacts(&cx_c).outgoing_requests,
+        client_c.summarize_contacts(cx_c).outgoing_requests,
         &["user_b"]
     );
 
@@ -3884,18 +3885,18 @@ async fn test_contact_requests(
     executor.run_until_parked();
 
     // User B sees user A as their contact now in all client, and the incoming request from them is removed.
-    let contacts_b = client_b.summarize_contacts(&cx_b);
+    let contacts_b = client_b.summarize_contacts(cx_b);
     assert_eq!(contacts_b.current, &["user_a", "user_b"]);
     assert_eq!(contacts_b.incoming_requests, &["user_c"]);
-    let contacts_b2 = client_b2.summarize_contacts(&cx_b2);
+    let contacts_b2 = client_b2.summarize_contacts(cx_b2);
     assert_eq!(contacts_b2.current, &["user_a", "user_b"]);
     assert_eq!(contacts_b2.incoming_requests, &["user_c"]);
 
     // User A sees user B as their contact now in all clients, and the outgoing request to them is removed.
-    let contacts_a = client_a.summarize_contacts(&cx_a);
+    let contacts_a = client_a.summarize_contacts(cx_a);
     assert_eq!(contacts_a.current, &["user_a", "user_b"]);
     assert!(contacts_a.outgoing_requests.is_empty());
-    let contacts_a2 = client_a2.summarize_contacts(&cx_a2);
+    let contacts_a2 = client_a2.summarize_contacts(cx_a2);
     assert_eq!(contacts_a2.current, &["user_a", "user_b"]);
     assert!(contacts_a2.outgoing_requests.is_empty());
 
@@ -3905,20 +3906,20 @@ async fn test_contact_requests(
     disconnect_and_reconnect(&client_c, cx_c).await;
     executor.run_until_parked();
     assert_eq!(
-        client_a.summarize_contacts(&cx_a).current,
+        client_a.summarize_contacts(cx_a).current,
         &["user_a", "user_b"]
     );
     assert_eq!(
-        client_b.summarize_contacts(&cx_b).current,
+        client_b.summarize_contacts(cx_b).current,
         &["user_a", "user_b"]
     );
     assert_eq!(
-        client_b.summarize_contacts(&cx_b).incoming_requests,
+        client_b.summarize_contacts(cx_b).incoming_requests,
         &["user_c"]
     );
-    assert_eq!(client_c.summarize_contacts(&cx_c).current, &["user_c"]);
+    assert_eq!(client_c.summarize_contacts(cx_c).current, &["user_c"]);
     assert_eq!(
-        client_c.summarize_contacts(&cx_c).outgoing_requests,
+        client_c.summarize_contacts(cx_c).outgoing_requests,
         &["user_b"]
     );
 
@@ -3934,18 +3935,18 @@ async fn test_contact_requests(
     executor.run_until_parked();
 
     // User B doesn't see user C as their contact, and the incoming request from them is removed.
-    let contacts_b = client_b.summarize_contacts(&cx_b);
+    let contacts_b = client_b.summarize_contacts(cx_b);
     assert_eq!(contacts_b.current, &["user_a", "user_b"]);
     assert!(contacts_b.incoming_requests.is_empty());
-    let contacts_b2 = client_b2.summarize_contacts(&cx_b2);
+    let contacts_b2 = client_b2.summarize_contacts(cx_b2);
     assert_eq!(contacts_b2.current, &["user_a", "user_b"]);
     assert!(contacts_b2.incoming_requests.is_empty());
 
     // User C doesn't see user B as their contact, and the outgoing request to them is removed.
-    let contacts_c = client_c.summarize_contacts(&cx_c);
+    let contacts_c = client_c.summarize_contacts(cx_c);
     assert_eq!(contacts_c.current, &["user_c"]);
     assert!(contacts_c.outgoing_requests.is_empty());
-    let contacts_c2 = client_c2.summarize_contacts(&cx_c2);
+    let contacts_c2 = client_c2.summarize_contacts(cx_c2);
     assert_eq!(contacts_c2.current, &["user_c"]);
     assert!(contacts_c2.outgoing_requests.is_empty());
 
@@ -3955,20 +3956,20 @@ async fn test_contact_requests(
     disconnect_and_reconnect(&client_c, cx_c).await;
     executor.run_until_parked();
     assert_eq!(
-        client_a.summarize_contacts(&cx_a).current,
+        client_a.summarize_contacts(cx_a).current,
         &["user_a", "user_b"]
     );
     assert_eq!(
-        client_b.summarize_contacts(&cx_b).current,
+        client_b.summarize_contacts(cx_b).current,
         &["user_a", "user_b"]
     );
     assert!(client_b
-        .summarize_contacts(&cx_b)
+        .summarize_contacts(cx_b)
         .incoming_requests
         .is_empty());
-    assert_eq!(client_c.summarize_contacts(&cx_c).current, &["user_c"]);
+    assert_eq!(client_c.summarize_contacts(cx_c).current, &["user_c"]);
     assert!(client_c
-        .summarize_contacts(&cx_c)
+        .summarize_contacts(cx_c)
         .outgoing_requests
         .is_empty());
 
@@ -4245,7 +4246,10 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     // Clients A and B follow each other in split panes
     workspace_a.update(cx_a, |workspace, cx| {
         workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
-        assert_ne!(*workspace.active_pane(), pane_a1);
+        let pane_a1 = pane_a1.clone();
+        cx.defer(move |workspace, _| {
+            assert_ne!(*workspace.active_pane(), pane_a1);
+        });
     });
     workspace_a
         .update(cx_a, |workspace, cx| {
@@ -4258,7 +4262,10 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
         .unwrap();
     workspace_b.update(cx_b, |workspace, cx| {
         workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
-        assert_ne!(*workspace.active_pane(), pane_b1);
+        let pane_b1 = pane_b1.clone();
+        cx.defer(move |workspace, _| {
+            assert_ne!(*workspace.active_pane(), pane_b1);
+        });
     });
     workspace_b
         .update(cx_b, |workspace, cx| {
@@ -4270,17 +4277,26 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
         .await
         .unwrap();
 
+    workspace_a.update(cx_a, |workspace, cx| {
+        workspace.activate_next_pane(cx);
+    });
+    // Wait for focus effects to be fully flushed
+    workspace_a.update(cx_a, |workspace, _| {
+        assert_eq!(*workspace.active_pane(), pane_a1);
+    });
+
     workspace_a
         .update(cx_a, |workspace, cx| {
-            workspace.activate_next_pane(cx);
-            assert_eq!(*workspace.active_pane(), pane_a1);
             workspace.open_path((worktree_id, "3.txt"), true, cx)
         })
         .await
         .unwrap();
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.activate_next_pane(cx);
+    });
+
     workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace.activate_next_pane(cx);
             assert_eq!(*workspace.active_pane(), pane_b1);
             workspace.open_path((worktree_id, "4.txt"), true, cx)
         })
@@ -4310,17 +4326,24 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
             Some((worktree_id, "3.txt").into())
         );
         workspace.activate_next_pane(cx);
+    });
+
+    workspace_a.update(cx_a, |workspace, cx| {
         assert_eq!(
             workspace.active_item(cx).unwrap().project_path(cx),
             Some((worktree_id, "4.txt").into())
         );
     });
+
     workspace_b.update(cx_b, |workspace, cx| {
         assert_eq!(
             workspace.active_item(cx).unwrap().project_path(cx),
             Some((worktree_id, "4.txt").into())
         );
         workspace.activate_next_pane(cx);
+    });
+
+    workspace_b.update(cx_b, |workspace, cx| {
         assert_eq!(
             workspace.active_item(cx).unwrap().project_path(cx),
             Some((worktree_id, "3.txt").into())
@@ -4530,13 +4553,13 @@ async fn test_peers_simultaneously_following_each_other(
     futures::try_join!(a_follow_b, b_follow_a).unwrap();
     workspace_a.read_with(cx_a, |workspace, _| {
         assert_eq!(
-            workspace.leader_for_pane(&workspace.active_pane()),
+            workspace.leader_for_pane(workspace.active_pane()),
             Some(client_b_id)
         );
     });
     workspace_b.read_with(cx_b, |workspace, _| {
         assert_eq!(
-            workspace.leader_for_pane(&workspace.active_pane()),
+            workspace.leader_for_pane(workspace.active_pane()),
             Some(client_a_id)
         );
     });
@@ -4717,7 +4740,7 @@ async fn test_random_collaboration(
 
                     fake_server.handle_request::<lsp::request::DocumentHighlightRequest, _, _>({
                         let rng = rng.clone();
-                        let project = project.clone();
+                        let project = project;
                         move |params, mut cx| {
                             let highlights = if let Some(project) = project.upgrade(&cx) {
                                 project.update(&mut cx, |project, cx| {
@@ -5004,10 +5027,12 @@ async fn test_random_collaboration(
         for guest_buffer in &guest_client.buffers {
             let buffer_id = guest_buffer.read_with(&guest_cx, |buffer, _| buffer.remote_id());
             let host_buffer = host_project.read_with(&host_cx, |project, cx| {
-                project.buffer_for_id(buffer_id, cx).expect(&format!(
-                    "host does not have buffer for guest:{}, peer:{}, id:{}",
-                    guest_client.username, guest_client.peer_id, buffer_id
-                ))
+                project.buffer_for_id(buffer_id, cx).unwrap_or_else(|| {
+                    panic!(
+                        "host does not have buffer for guest:{}, peer:{}, id:{}",
+                        guest_client.username, guest_client.peer_id, buffer_id
+                    )
+                })
             });
             let path =
                 host_buffer.read_with(&host_cx, |buffer, cx| buffer.file().unwrap().full_path(cx));
@@ -5151,7 +5176,7 @@ impl TestServer {
             languages: Arc::new(LanguageRegistry::new(Task::ready(()))),
             themes: ThemeRegistry::new((), cx.font_cache()),
             fs: fs.clone(),
-            build_window_options: || Default::default(),
+            build_window_options: Default::default,
             initialize_workspace: |_, _, _| unimplemented!(),
         });
 
@@ -5387,8 +5412,8 @@ impl TestClient {
         project: &ModelHandle<Project>,
         cx: &mut TestAppContext,
     ) -> ViewHandle<Workspace> {
-        let (window_id, _) = cx.add_window(|_| EmptyView);
-        cx.add_view(window_id, |cx| Workspace::new(project.clone(), cx))
+        let (_, root_view) = cx.add_window(|_| EmptyView);
+        cx.add_view(&root_view, |cx| Workspace::new(project.clone(), cx))
     }
 
     async fn simulate_host(
@@ -5517,7 +5542,7 @@ impl TestClient {
 
                         log::info!("Host: creating file {:?}", path,);
 
-                        if fs.create_dir(&parent_path).await.is_ok()
+                        if fs.create_dir(parent_path).await.is_ok()
                             && fs.create_file(&path, Default::default()).await.is_ok()
                         {
                             break;
@@ -5564,7 +5589,7 @@ impl TestClient {
                 let buffer = if client.buffers.is_empty() || rng.lock().gen() {
                     let worktree = if let Some(worktree) = project.read_with(cx, |project, cx| {
                         project
-                            .worktrees(&cx)
+                            .worktrees(cx)
                             .filter(|worktree| {
                                 let worktree = worktree.read(cx);
                                 worktree.is_visible()
@@ -5797,7 +5822,7 @@ impl TestClient {
                         let worktree = project
                             .read_with(cx, |project, cx| {
                                 project
-                                    .worktrees(&cx)
+                                    .worktrees(cx)
                                     .filter(|worktree| {
                                         let worktree = worktree.read(cx);
                                         worktree.is_visible()
@@ -5900,20 +5925,4 @@ fn channel_messages(channel: &Channel) -> Vec<(String, String, bool)> {
             )
         })
         .collect()
-}
-
-struct EmptyView;
-
-impl gpui::Entity for EmptyView {
-    type Event = ();
-}
-
-impl gpui::View for EmptyView {
-    fn ui_name() -> &'static str {
-        "empty view"
-    }
-
-    fn render(&mut self, _: &mut gpui::RenderContext<Self>) -> gpui::ElementBox {
-        gpui::Element::boxed(gpui::elements::Empty::new())
-    }
 }

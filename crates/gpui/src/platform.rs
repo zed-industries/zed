@@ -74,7 +74,7 @@ pub(crate) trait ForegroundPlatform {
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_event(&self, callback: Box<dyn FnMut(Event) -> bool>);
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
-    fn run(&self, on_finish_launching: Box<dyn FnOnce() -> ()>);
+    fn run(&self, on_finish_launching: Box<dyn FnOnce()>);
 
     fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_validate_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
@@ -112,6 +112,7 @@ pub trait Window: WindowContext {
     fn on_event(&mut self, callback: Box<dyn FnMut(Event) -> bool>);
     fn on_active_status_change(&mut self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&mut self, callback: Box<dyn FnMut()>);
+    fn on_fullscreen(&mut self, callback: Box<dyn FnMut(bool)>);
     fn on_should_close(&mut self, callback: Box<dyn FnMut() -> bool>);
     fn on_close(&mut self, callback: Box<dyn FnOnce()>);
     fn set_input_handler(&mut self, input_handler: Box<dyn InputHandler>);

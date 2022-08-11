@@ -408,10 +408,12 @@ pub async fn deserialize_completion(
     Ok(Completion {
         old_range: old_start..old_end,
         new_text: completion.new_text,
-        label: label.unwrap_or(CodeLabel::plain(
-            lsp_completion.label.clone(),
-            lsp_completion.filter_text.as_deref(),
-        )),
+        label: label.unwrap_or_else(|| {
+            CodeLabel::plain(
+                lsp_completion.label.clone(),
+                lsp_completion.filter_text.as_deref(),
+            )
+        }),
         lsp_completion,
     })
 }
@@ -465,7 +467,7 @@ pub fn deserialize_transaction(transaction: proto::Transaction) -> Result<Transa
             .into_iter()
             .map(deserialize_local_timestamp)
             .collect(),
-        start: deserialize_version(transaction.start.into()),
+        start: deserialize_version(transaction.start),
     })
 }
 

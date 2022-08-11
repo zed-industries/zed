@@ -44,7 +44,7 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
     let state = req.extensions().get::<Arc<AppState>>().unwrap();
     let mut credentials_valid = false;
     for password_hash in state.db.get_access_token_hashes(user_id).await? {
-        if verify_access_token(&access_token, &password_hash)? {
+        if verify_access_token(access_token, &password_hash)? {
             credentials_valid = true;
             break;
         }
@@ -100,7 +100,7 @@ pub fn encrypt_access_token(access_token: &str, public_key: String) -> Result<St
     let native_app_public_key =
         rpc::auth::PublicKey::try_from(public_key).context("failed to parse app public key")?;
     let encrypted_access_token = native_app_public_key
-        .encrypt_string(&access_token)
+        .encrypt_string(access_token)
         .context("failed to encrypt access token with public key")?;
     Ok(encrypted_access_token)
 }

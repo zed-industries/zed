@@ -186,15 +186,14 @@ impl ProjectPanel {
             });
 
             cx.observe_focus(&filename_editor, |this, _, is_focused, cx| {
-                if !is_focused {
-                    if this
+                if !is_focused
+                    && this
                         .edit_state
                         .as_ref()
                         .map_or(false, |state| state.processing_filename.is_none())
-                    {
-                        this.edit_state = None;
-                        this.update_visible_entries(None, cx);
-                    }
+                {
+                    this.edit_state = None;
+                    this.update_visible_entries(None, cx);
                 }
             })
             .detach();
@@ -209,7 +208,7 @@ impl ProjectPanel {
                 edit_state: None,
                 filename_editor,
                 clipboard_entry: None,
-                context_menu: cx.add_view(|cx| ContextMenu::new(cx)),
+                context_menu: cx.add_view(ContextMenu::new),
             };
             this.update_visible_entries(None, cx);
             this
@@ -380,13 +379,11 @@ impl ProjectPanel {
                 self.index_for_selection(selection).unwrap_or_default();
             if entry_ix > 0 {
                 entry_ix -= 1;
+            } else if worktree_ix > 0 {
+                worktree_ix -= 1;
+                entry_ix = self.visible_entries[worktree_ix].1.len() - 1;
             } else {
-                if worktree_ix > 0 {
-                    worktree_ix -= 1;
-                    entry_ix = self.visible_entries[worktree_ix].1.len() - 1;
-                } else {
-                    return;
-                }
+                return;
             }
 
             let (worktree_id, worktree_entries) = &self.visible_entries[worktree_ix];
@@ -734,17 +731,15 @@ impl ProjectPanel {
 
             self.clipboard_entry.take();
             if clipboard_entry.is_cut() {
-                self.project
-                    .update(cx, |project, cx| {
-                        project.rename_entry(clipboard_entry.entry_id(), new_path, cx)
-                    })
-                    .map(|task| task.detach_and_log_err(cx));
-            } else {
-                self.project
-                    .update(cx, |project, cx| {
-                        project.copy_entry(clipboard_entry.entry_id(), new_path, cx)
-                    })
-                    .map(|task| task.detach_and_log_err(cx));
+                if let Some(task) = self.project.update(cx, |project, cx| {
+                    project.rename_entry(clipboard_entry.entry_id(), new_path, cx)
+                }) {
+                    task.detach_and_log_err(cx)
+                }
+            } else if let Some(task) = self.project.update(cx, |project, cx| {
+                project.copy_entry(clipboard_entry.entry_id(), new_path, cx)
+            }) {
+                task.detach_and_log_err(cx)
             }
         }
         None
@@ -760,10 +755,11 @@ impl ProjectPanel {
     }
 
     fn index_for_selection(&self, selection: Selection) -> Option<(usize, usize, usize)> {
-        let mut worktree_index = 0;
         let mut entry_index = 0;
         let mut visible_entries_index = 0;
-        for (worktree_id, worktree_entries) in &self.visible_entries {
+        for (worktree_index, (worktree_id, worktree_entries)) in
+            self.visible_entries.iter().enumerate()
+        {
             if *worktree_id == selection.worktree_id {
                 for entry in worktree_entries {
                     if entry.id == selection.entry_id {
@@ -777,7 +773,6 @@ impl ProjectPanel {
             } else {
                 visible_entries_index += worktree_entries.len();
             }
-            worktree_index += 1;
         }
         None
     }
@@ -849,10 +844,10 @@ impl ProjectPanel {
                         is_ignored: false,
                     });
                 }
-                if expanded_dir_ids.binary_search(&entry.id).is_err() {
-                    if entry_iter.advance_to_sibling() {
-                        continue;
-                    }
+                if expanded_dir_ids.binary_search(&entry.id).is_err()
+                    && entry_iter.advance_to_sibling()
+                {
+                    continue;
                 }
                 entry_iter.advance();
             }
@@ -982,7 +977,7 @@ impl ProjectPanel {
                             if let Some(processing_filename) = &edit_state.processing_filename {
                                 details.is_processing = true;
                                 details.filename.clear();
-                                details.filename.push_str(&processing_filename);
+                                details.filename.push_str(processing_filename);
                             } else {
                                 if edit_state.is_new_entry {
                                     details.filename.clear();
@@ -1116,7 +1111,7 @@ impl View for ProjectPanel {
                         cx,
                         move |this, range, items, cx| {
                             let theme = cx.global::<Settings>().theme.clone();
-                            this.for_each_visible_entry(range.clone(), cx, |id, details, cx| {
+                            this.for_each_visible_entry(range, cx, |id, details, cx| {
                                 items.push(Self::render_entry(
                                     id,
                                     details,

@@ -48,7 +48,7 @@ use std::{
     time::Duration,
 };
 
-const WINDOW_STATE_IVAR: &'static str = "windowState";
+const WINDOW_STATE_IVAR: &str = "windowState";
 
 static mut WINDOW_CLASS: *const Class = ptr::null();
 static mut VIEW_CLASS: *const Class = ptr::null();
@@ -72,7 +72,7 @@ impl NSRange {
         self.location != NSNotFound as NSUInteger
     }
 
-    fn to_range(&self) -> Option<Range<usize>> {
+    fn to_range(self) -> Option<Range<usize>> {
         if self.is_valid() {
             let start = self.location as usize;
             let end = start + self.length as usize;
@@ -127,6 +127,14 @@ unsafe fn build_classes() {
         decl.add_method(
             sel!(windowDidResize:),
             window_did_resize as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(windowWillEnterFullScreen:),
+            window_will_enter_fullscreen as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(windowWillExitFullScreen:),
+            window_will_exit_fullscreen as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
             sel!(windowDidBecomeKey:),
@@ -276,6 +284,7 @@ struct WindowState {
     event_callback: Option<Box<dyn FnMut(Event) -> bool>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut()>>,
+    fullscreen_callback: Option<Box<dyn FnMut(bool)>>,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     input_handler: Option<Box<dyn InputHandler>>,
@@ -369,6 +378,7 @@ impl Window {
                 should_close_callback: None,
                 close_callback: None,
                 activate_callback: None,
+                fullscreen_callback: None,
                 input_handler: None,
                 pending_key_down: None,
                 performed_key_equivalent: false,
@@ -468,6 +478,10 @@ impl platform::Window for Window {
         self.0.as_ref().borrow_mut().resize_callback = Some(callback);
     }
 
+    fn on_fullscreen(&mut self, callback: Box<dyn FnMut(bool)>) {
+        self.0.as_ref().borrow_mut().fullscreen_callback = Some(callback);
+    }
+
     fn on_should_close(&mut self, callback: Box<dyn FnMut() -> bool>) {
         self.0.as_ref().borrow_mut().should_close_callback = Some(callback);
     }
@@ -500,7 +514,7 @@ impl platform::Window for Window {
             };
             let _: () = msg_send![alert, setAlertStyle: alert_style];
             let _: () = msg_send![alert, setMessageText: ns_string(msg)];
-            for (ix, answer) in answers.into_iter().enumerate() {
+            for (ix, answer) in answers.iter().enumerate() {
                 let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer)];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
             }
@@ -708,14 +722,14 @@ extern "C" fn yes(_: &Object, _: Sel) -> BOOL {
 extern "C" fn dealloc_window(this: &Object, _: Sel) {
     unsafe {
         drop_window_state(this);
-        let () = msg_send![super(this, class!(NSWindow)), dealloc];
+        let _: () = msg_send![super(this, class!(NSWindow)), dealloc];
     }
 }
 
 extern "C" fn dealloc_view(this: &Object, _: Sel) {
     unsafe {
         drop_window_state(this);
-        let () = msg_send![super(this, class!(NSView)), dealloc];
+        let _: () = msg_send![super(this, class!(NSView)), dealloc];
     }
 }
 
@@ -902,7 +916,7 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
 
 extern "C" fn send_event(this: &Object, _: Sel, native_event: id) {
     unsafe {
-        let () = msg_send![super(this, class!(NSWindow)), sendEvent: native_event];
+        let _: () = msg_send![super(this, class!(NSWindow)), sendEvent: native_event];
         get_window_state(this).borrow_mut().performed_key_equivalent = false;
     }
 }
@@ -910,6 +924,24 @@ extern "C" fn send_event(this: &Object, _: Sel, native_event: id) {
 extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     window_state.as_ref().borrow().move_traffic_light();
+}
+
+extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
+    window_fullscreen_changed(this, true);
+}
+
+extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
+    window_fullscreen_changed(this, false);
+}
+
+fn window_fullscreen_changed(this: &Object, is_fullscreen: bool) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut window_state_borrow = window_state.as_ref().borrow_mut();
+    if let Some(mut callback) = window_state_borrow.fullscreen_callback.take() {
+        drop(window_state_borrow);
+        callback(is_fullscreen);
+        window_state.borrow_mut().fullscreen_callback = Some(callback);
+    }
 }
 
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
@@ -963,7 +995,7 @@ extern "C" fn close_window(this: &Object, _: Sel) {
             callback();
         }
 
-        let () = msg_send![super(this, class!(NSWindow)), close];
+        let _: () = msg_send![super(this, class!(NSWindow)), close];
     }
 }
 
@@ -1129,17 +1161,22 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
                 .flatten()
                 .is_some();
 
-        if is_composing || text.chars().count() > 1 || pending_key_down.is_none() {
-            with_input_handler(this, |input_handler| {
-                input_handler.replace_text_in_range(replacement_range, text)
-            });
-        } else {
-            let mut pending_key_down = pending_key_down.unwrap();
-            pending_key_down.1 = Some(InsertText {
-                replacement_range,
-                text: text.to_string(),
-            });
-            window_state.borrow_mut().pending_key_down = Some(pending_key_down);
+        match pending_key_down {
+            None | Some(_) if is_composing || text.chars().count() > 1 => {
+                with_input_handler(this, |input_handler| {
+                    input_handler.replace_text_in_range(replacement_range, text)
+                });
+            }
+
+            Some(mut pending_key_down) => {
+                pending_key_down.1 = Some(InsertText {
+                    replacement_range,
+                    text: text.to_string(),
+                });
+                window_state.borrow_mut().pending_key_down = Some(pending_key_down);
+            }
+
+            _ => unreachable!(),
         }
     }
 }

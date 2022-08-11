@@ -103,7 +103,7 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
                 s.move_with(|map, selection| {
                     if line_mode {
                         original_columns
-                            .insert(selection.id, selection.head().to_point(&map).column);
+                            .insert(selection.id, selection.head().to_point(map).column);
                     } else if !selection.reversed {
                         // Head is at the end of the selection. Adjust the end position to
                         // to include the character under the cursor.
@@ -230,15 +230,15 @@ pub fn paste(_: &mut Workspace, _: &VisualPaste, cx: &mut ViewContext<Workspace>
 
                                 let new_position = if linewise {
                                     edits.push((range.start..range.start, "\n"));
-                                    let mut new_position = range.start.clone();
+                                    let mut new_position = range.start;
                                     new_position.column = 0;
                                     new_position.row += 1;
                                     new_position
                                 } else {
-                                    range.start.clone()
+                                    range.start
                                 };
 
-                                new_selections.push(selection.map(|_| new_position.clone()));
+                                new_selections.push(selection.map(|_| new_position));
 
                                 if linewise && to_insert.ends_with('\n') {
                                     edits.push((

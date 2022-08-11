@@ -42,11 +42,11 @@ where
     ///Loads the given watched JSON file. In the special case that the file is
     ///empty (ignoring whitespace) or is not a file, this will return T::default()
     async fn load(fs: Arc<dyn Fs>, path: &Path) -> Option<T> {
-        if !fs.is_file(&path).await {
+        if !fs.is_file(path).await {
             return Some(T::default());
         }
 
-        fs.load(&path).await.log_err().and_then(|data| {
+        fs.load(path).await.log_err().and_then(|data| {
             if data.trim().is_empty() {
                 Some(T::default())
             } else {
@@ -74,7 +74,7 @@ pub fn watch_settings_file(
 pub fn keymap_updated(content: KeymapFileContent, cx: &mut MutableAppContext) {
     cx.clear_bindings();
     settings::KeymapFileContent::load_defaults(cx);
-    content.add(cx).log_err();
+    content.add_to_cx(cx).log_err();
 }
 
 pub fn settings_updated(
@@ -84,7 +84,7 @@ pub fn settings_updated(
     cx: &mut MutableAppContext,
 ) {
     let mut settings = defaults.clone();
-    settings.set_user_settings(content, theme_registry, &cx.font_cache());
+    settings.set_user_settings(content, theme_registry, cx.font_cache());
     cx.set_global(settings);
     cx.refresh_windows();
 }

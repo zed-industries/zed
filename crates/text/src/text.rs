@@ -530,7 +530,7 @@ impl Buffer {
         let mut version = clock::Global::new();
 
         let visible_text = Rope::from(history.base_text.as_ref());
-        if visible_text.len() > 0 {
+        if !visible_text.is_empty() {
             let insertion_timestamp = InsertionTimestamp {
                 replica_id: 0,
                 local: 1,
@@ -860,7 +860,7 @@ impl Buffer {
             return;
         }
 
-        let edits = ranges.into_iter().zip(new_text.into_iter());
+        let edits = ranges.iter().zip(new_text.iter());
         let mut edits_patch = Patch::default();
         let mut insertion_slices = Vec::new();
         let cx = Some(version.clone());
@@ -1242,6 +1242,7 @@ impl Buffer {
         }
     }
 
+    #[allow(clippy::needless_collect)]
     pub fn undo_to_transaction(&mut self, transaction_id: TransactionId) -> Vec<Operation> {
         let transactions = self
             .history
@@ -1249,6 +1250,7 @@ impl Buffer {
             .iter()
             .map(|entry| entry.transaction.clone())
             .collect::<Vec<_>>();
+
         transactions
             .into_iter()
             .map(|transaction| self.undo_or_redo(transaction).unwrap())
@@ -1270,6 +1272,7 @@ impl Buffer {
         }
     }
 
+    #[allow(clippy::needless_collect)]
     pub fn redo_to_transaction(&mut self, transaction_id: TransactionId) -> Vec<Operation> {
         let transactions = self
             .history
@@ -1277,6 +1280,7 @@ impl Buffer {
             .iter()
             .map(|entry| entry.transaction.clone())
             .collect::<Vec<_>>();
+
         transactions
             .into_iter()
             .map(|transaction| self.undo_or_redo(transaction).unwrap())
@@ -1293,7 +1297,7 @@ impl Buffer {
             id: self.local_clock.tick(),
             version: self.version(),
             counts,
-            transaction_version: transaction.start.clone(),
+            transaction_version: transaction.start,
         };
         self.apply_undo(&undo)?;
         let operation = Operation::Undo {
@@ -1490,6 +1494,7 @@ impl Buffer {
         start..end
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn randomly_edit<T>(
         &mut self,
         rng: &mut T,
@@ -1574,6 +1579,10 @@ impl BufferSnapshot {
         self.visible_text.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn chars(&self) -> impl Iterator<Item = char> + '_ {
         self.chars_at(0)
     }
@@ -1609,8 +1618,8 @@ impl BufferSnapshot {
             .filter(|&len| {
                 let left = self
                     .chars_for_range(offset - len..offset)
-                    .flat_map(|c| char::to_lowercase(c));
-                let right = needle[..len].chars().flat_map(|c| char::to_lowercase(c));
+                    .flat_map(char::to_lowercase);
+                let right = needle[..len].chars().flat_map(char::to_lowercase);
                 left.eq(right)
             })
             .last()
@@ -1684,15 +1693,12 @@ impl BufferSnapshot {
         &self.version
     }
 
-    pub fn chars_at<'a, T: ToOffset>(&'a self, position: T) -> impl Iterator<Item = char> + 'a {
+    pub fn chars_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = char> + '_ {
         let offset = position.to_offset(self);
         self.visible_text.chars_at(offset)
     }
 
-    pub fn reversed_chars_at<'a, T: ToOffset>(
-        &'a self,
-        position: T,
-    ) -> impl Iterator<Item = char> + 'a {
+    pub fn reversed_chars_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = char> + '_ {
         let offset = position.to_offset(self);
         self.visible_text.reversed_chars_at(offset)
     }
@@ -1702,13 +1708,13 @@ impl BufferSnapshot {
         self.visible_text.reversed_chunks_in_range(range)
     }
 
-    pub fn bytes_in_range<'a, T: ToOffset>(&'a self, range: Range<T>) -> rope::Bytes<'a> {
+    pub fn bytes_in_range<T: ToOffset>(&self, range: Range<T>) -> rope::Bytes<'_> {
         let start = range.start.to_offset(self);
         let end = range.end.to_offset(self);
         self.visible_text.bytes_in_range(start..end)
     }
 
-    pub fn text_for_range<'a, T: ToOffset>(&'a self, range: Range<T>) -> Chunks<'a> {
+    pub fn text_for_range<T: ToOffset>(&self, range: Range<T>) -> Chunks<'_> {
         let start = range.start.to_offset(self);
         let end = range.end.to_offset(self);
         self.visible_text.chunks_in_range(start..end)
@@ -1729,7 +1735,7 @@ impl BufferSnapshot {
             .all(|chunk| chunk.matches(|c: char| !c.is_whitespace()).next().is_none())
     }
 
-    pub fn text_summary_for_range<'a, D, O: ToOffset>(&'a self, range: Range<O>) -> D
+    pub fn text_summary_for_range<D, O: ToOffset>(&self, range: Range<O>) -> D
     where
         D: TextDimension,
     {
@@ -1788,7 +1794,7 @@ impl BufferSnapshot {
         })
     }
 
-    fn summary_for_anchor<'a, D>(&'a self, anchor: &Anchor) -> D
+    fn summary_for_anchor<D>(&self, anchor: &Anchor) -> D
     where
         D: TextDimension,
     {
@@ -2048,7 +2054,7 @@ impl<'a, D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator fo
                 break;
             }
 
-            if !fragment.was_visible(&self.since, &self.undos) && fragment.visible {
+            if !fragment.was_visible(self.since, self.undos) && fragment.visible {
                 let mut visible_end = cursor.end(&None).visible;
                 if fragment.id == *self.range.end.0 {
                     visible_end = cmp::min(
@@ -2070,7 +2076,7 @@ impl<'a, D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator fo
                 }
 
                 self.new_end = new_end;
-            } else if fragment.was_visible(&self.since, &self.undos) && !fragment.visible {
+            } else if fragment.was_visible(self.since, self.undos) && !fragment.visible {
                 let mut deleted_end = cursor.end(&None).deleted;
                 if fragment.id == *self.range.end.0 {
                     deleted_end = cmp::min(
@@ -2354,10 +2360,7 @@ impl Operation {
     }
 
     pub fn is_edit(&self) -> bool {
-        match self {
-            Operation::Edit { .. } => true,
-            _ => false,
-        }
+        matches!(self, Operation::Edit { .. })
     }
 }
 
@@ -2423,7 +2426,7 @@ impl LineEnding {
 }
 
 pub trait ToOffset {
-    fn to_offset<'a>(&self, snapshot: &BufferSnapshot) -> usize;
+    fn to_offset(&self, snapshot: &BufferSnapshot) -> usize;
 }
 
 impl ToOffset for Point {
@@ -2464,7 +2467,7 @@ impl<'a, T: ToOffset> ToOffset for &'a T {
 }
 
 pub trait ToPoint {
-    fn to_point<'a>(&self, snapshot: &BufferSnapshot) -> Point;
+    fn to_point(&self, snapshot: &BufferSnapshot) -> Point;
 }
 
 impl ToPoint for Anchor {
@@ -2492,7 +2495,7 @@ impl ToPoint for Point {
 }
 
 pub trait ToPointUtf16 {
-    fn to_point_utf16<'a>(&self, snapshot: &BufferSnapshot) -> PointUtf16;
+    fn to_point_utf16(&self, snapshot: &BufferSnapshot) -> PointUtf16;
 }
 
 impl ToPointUtf16 for Anchor {
@@ -2520,7 +2523,7 @@ impl ToPointUtf16 for Point {
 }
 
 pub trait ToOffsetUtf16 {
-    fn to_offset_utf16<'a>(&self, snapshot: &BufferSnapshot) -> OffsetUtf16;
+    fn to_offset_utf16(&self, snapshot: &BufferSnapshot) -> OffsetUtf16;
 }
 
 impl ToOffsetUtf16 for Anchor {

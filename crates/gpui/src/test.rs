@@ -1,6 +1,6 @@
 use crate::{
-    executor, platform, Entity, FontCache, Handle, LeakDetector, MutableAppContext, Platform,
-    Subscription, TestAppContext,
+    elements::Empty, executor, platform, Element, ElementBox, Entity, FontCache, Handle,
+    LeakDetector, MutableAppContext, Platform, RenderContext, Subscription, TestAppContext, View,
 };
 use futures::StreamExt;
 use parking_lot::Mutex;
@@ -161,4 +161,20 @@ where
     });
 
     Observation { rx, _subscription }
+}
+
+pub struct EmptyView;
+
+impl Entity for EmptyView {
+    type Event = ();
+}
+
+impl View for EmptyView {
+    fn ui_name() -> &'static str {
+        "empty view"
+    }
+
+    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+        Element::boxed(Empty::new())
+    }
 }

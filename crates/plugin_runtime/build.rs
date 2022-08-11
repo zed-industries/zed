@@ -17,8 +17,7 @@ fn main() {
 
     // Clear out and recreate the plugin bin directory
     let _ = std::fs::remove_dir_all(base.join("bin"));
-    let _ =
-        std::fs::create_dir_all(base.join("bin")).expect("Could not make plugins bin directory");
+    std::fs::create_dir_all(base.join("bin")).expect("Could not make plugins bin directory");
 
     // Compile the plugins using the same profile as the current Zed build
     let (profile_flags, profile_target) = match std::env::var("PROFILE").unwrap().as_str() {
@@ -43,7 +42,7 @@ fn main() {
 
     // Get the target architecture for pre-cross-compilation of plugins
     // and create and engine with the appropriate config
-    let target_triple = std::env::var("TARGET").unwrap().to_string();
+    let target_triple = std::env::var("TARGET").unwrap();
     println!("cargo:rerun-if-env-changed=TARGET");
     let engine = create_default_engine(&target_triple);
 
@@ -77,7 +76,7 @@ fn create_default_engine(target_triple: &str) -> Engine {
     let mut config = Config::default();
     config
         .target(target_triple)
-        .expect(&format!("Could not set target to `{}`", target_triple));
+        .unwrap_or_else(|_| panic!("Could not set target to `{}`", target_triple));
     config.async_support(true);
     config.consume_fuel(true);
     Engine::new(&config).expect("Could not create precompilation engine")

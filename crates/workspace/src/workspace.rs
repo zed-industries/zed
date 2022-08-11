@@ -1,3 +1,8 @@
+/// NOTE: Focus only 'takes' after an update has flushed_effects. Pane sends an event in on_focus_in
+/// which the workspace uses to change the activated pane.
+///
+/// This may cause issues when you're trying to write tests that use workspace focus to add items at
+/// specific locations.
 pub mod pane;
 pub mod pane_group;
 pub mod sidebar;
@@ -59,7 +64,7 @@ use waiting_room::WaitingRoom;
 
 type ProjectItemBuilders = HashMap<
     TypeId,
-    fn(usize, ModelHandle<Project>, AnyModelHandle, &mut MutableAppContext) -> Box<dyn ItemHandle>,
+    fn(ModelHandle<Project>, AnyModelHandle, &mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
 >;
 
 type FollowableItemBuilder = fn(
@@ -219,9 +224,9 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
 
 pub fn register_project_item<I: ProjectItem>(cx: &mut MutableAppContext) {
     cx.update_default_global(|builders: &mut ProjectItemBuilders, _| {
-        builders.insert(TypeId::of::<I::Item>(), |window_id, project, model, cx| {
+        builders.insert(TypeId::of::<I::Item>(), |project, model, cx| {
             let item = model.downcast::<I::Item>().unwrap();
-            Box::new(cx.add_view(window_id, |cx| I::for_project_item(project, item, cx)))
+            Box::new(cx.add_view(|cx| I::for_project_item(project, item, cx)))
         });
     });
 }
@@ -297,9 +302,6 @@ pub trait Item: View {
         project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>>;
-    fn should_activate_item_on_event(_: &Self::Event) -> bool {
-        false
-    }
     fn should_close_item_on_event(_: &Self::Event) -> bool {
         false
     }
@@ -577,15 +579,6 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                 return;
             }
 
-            if T::should_activate_item_on_event(event) {
-                pane.update(cx, |pane, cx| {
-                    if let Some(ix) = pane.index_for_item(&item) {
-                        pane.activate_item(ix, true, true, false, cx);
-                        pane.activate(cx);
-                    }
-                });
-            }
-
             if T::should_update_tab_on_event(event) {
                 pane.update(cx, |_, cx| {
                     cx.emit(pane::Event::ChangeItemTitle);
@@ -595,7 +588,9 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
 
             if T::is_edit_event(event) {
                 if let Autosave::AfterDelay { milliseconds } = cx.global::<Settings>().autosave {
-                    let prev_autosave = pending_autosave.take().unwrap_or(Task::ready(Some(())));
+                    let prev_autosave = pending_autosave
+                        .take()
+                        .unwrap_or_else(|| Task::ready(Some(())));
                     let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
                     let prev_cancel_tx = mem::replace(&mut cancel_pending_autosave, cancel_tx);
                     let project = workspace.project.downgrade();
@@ -702,9 +697,15 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
     }
 }
 
-impl Into<AnyViewHandle> for Box<dyn ItemHandle> {
-    fn into(self) -> AnyViewHandle {
-        self.to_any()
+impl From<Box<dyn ItemHandle>> for AnyViewHandle {
+    fn from(val: Box<dyn ItemHandle>) -> Self {
+        val.to_any()
+    }
+}
+
+impl From<&Box<dyn ItemHandle>> for AnyViewHandle {
+    fn from(val: &Box<dyn ItemHandle>) -> Self {
+        val.to_any()
     }
 }
 
@@ -743,9 +744,9 @@ impl<T: Notification> NotificationHandle for ViewHandle<T> {
     }
 }
 
-impl Into<AnyViewHandle> for &dyn NotificationHandle {
-    fn into(self) -> AnyViewHandle {
-        self.to_any()
+impl From<&dyn NotificationHandle> for AnyViewHandle {
+    fn from(val: &dyn NotificationHandle) -> Self {
+        val.to_any()
     }
 }
 
@@ -770,7 +771,7 @@ impl AppState {
             user_store,
             project_store,
             initialize_workspace: |_, _, _| {},
-            build_window_options: || Default::default(),
+            build_window_options: Default::default,
         })
     }
 }
@@ -823,6 +824,8 @@ enum FollowerItem {
 
 impl Workspace {
     pub fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
+        cx.observe_fullscreen(|_, _, cx| cx.notify()).detach();
+
         cx.observe_window_activation(Self::on_window_activation_changed)
             .detach();
         cx.observe(&project, |_, _, cx| cx.notify()).detach();
@@ -847,7 +850,7 @@ impl Workspace {
         })
         .detach();
 
-        let pane = cx.add_view(|cx| Pane::new(cx));
+        let pane = cx.add_view(Pane::new);
         let pane_id = pane.id();
         cx.subscribe(&pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
@@ -859,8 +862,8 @@ impl Workspace {
         let fs = project.read(cx).fs().clone();
         let user_store = project.read(cx).user_store();
         let client = project.read(cx).client();
-        let mut current_user = user_store.read(cx).watch_current_user().clone();
-        let mut connection_status = client.status().clone();
+        let mut current_user = user_store.read(cx).watch_current_user();
+        let mut connection_status = client.status();
         let _observe_current_user = cx.spawn_weak(|this, mut cx| async move {
             current_user.recv().await;
             connection_status.recv().await;
@@ -1072,7 +1075,7 @@ impl Workspace {
                             project.clone(),
                             &pane,
                             ix,
-                            &item,
+                            &*item,
                             should_prompt_to_save,
                             &mut cx,
                         )
@@ -1087,6 +1090,7 @@ impl Workspace {
         })
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn open_paths(
         &mut self,
         mut abs_paths: Vec<PathBuf>,
@@ -1149,10 +1153,8 @@ impl Workspace {
                 let results = this
                     .update(&mut cx, |this, cx| this.open_paths(paths, true, cx))
                     .await;
-                for result in results {
-                    if let Some(result) = result {
-                        result.log_err();
-                    }
+                for result in results.into_iter().flatten() {
+                    result.log_err();
                 }
             }
         })
@@ -1315,7 +1317,7 @@ impl Workspace {
         if let Some(item) = self.active_item(cx) {
             if !force_name_change && item.can_save(cx) {
                 if item.has_conflict(cx.as_ref()) {
-                    const CONFLICT_MESSAGE: &'static str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
+                    const CONFLICT_MESSAGE: &str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
 
                     let mut answer = cx.prompt(
                         PromptLevel::Warning,
@@ -1423,14 +1425,14 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
-        let pane = cx.add_view(|cx| Pane::new(cx));
+        let pane = cx.add_view(Pane::new);
         let pane_id = pane.id();
         cx.subscribe(&pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
         })
         .detach();
         self.panes.push(pane.clone());
-        self.activate_pane(pane.clone(), cx);
+        cx.focus(pane.clone());
         cx.emit(Event::PaneAdded(pane.clone()));
         pane
     }
@@ -1473,12 +1475,11 @@ impl Workspace {
     ) -> Task<
         Result<(
             ProjectEntryId,
-            impl 'static + FnOnce(&mut MutableAppContext) -> Box<dyn ItemHandle>,
+            impl 'static + FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
         )>,
     > {
         let project = self.project().clone();
         let project_item = project.update(cx, |project, cx| project.open_path(path, cx));
-        let window_id = cx.window_id();
         cx.as_mut().spawn(|mut cx| async move {
             let (project_entry_id, project_item) = project_item.await?;
             let build_item = cx.update(|cx| {
@@ -1488,7 +1489,7 @@ impl Workspace {
                     .cloned()
             })?;
             let build_item =
-                move |cx: &mut MutableAppContext| build_item(window_id, project, project_item, cx);
+                move |cx: &mut ViewContext<Pane>| build_item(project, project_item, cx);
             Ok((project_entry_id, build_item))
         })
     }
@@ -1519,14 +1520,11 @@ impl Workspace {
 
     pub fn activate_item(&mut self, item: &dyn ItemHandle, cx: &mut ViewContext<Self>) -> bool {
         let result = self.panes.iter().find_map(|pane| {
-            if let Some(ix) = pane.read(cx).index_for_item(item) {
-                Some((pane.clone(), ix))
-            } else {
-                None
-            }
+            pane.read(cx)
+                .index_for_item(item)
+                .map(|ix| (pane.clone(), ix))
         });
         if let Some((pane, ix)) = result {
-            self.activate_pane(pane.clone(), cx);
             pane.update(cx, |pane, cx| pane.activate_item(ix, true, true, false, cx));
             true
         } else {
@@ -1537,7 +1535,7 @@ impl Workspace {
     fn activate_pane_at_index(&mut self, action: &ActivatePane, cx: &mut ViewContext<Self>) {
         let panes = self.center.panes();
         if let Some(pane) = panes.get(action.0).map(|p| (*p).clone()) {
-            self.activate_pane(pane, cx);
+            cx.focus(pane);
         } else {
             self.split_pane(self.active_pane.clone(), SplitDirection::Right, cx);
         }
@@ -1553,7 +1551,7 @@ impl Workspace {
             let next_ix = (ix + 1) % panes.len();
             panes[next_ix].clone()
         };
-        self.activate_pane(next_pane, cx);
+        cx.focus(next_pane);
     }
 
     pub fn activate_previous_pane(&mut self, cx: &mut ViewContext<Self>) {
@@ -1566,10 +1564,10 @@ impl Workspace {
             let prev_ix = if ix == 0 { panes.len() - 1 } else { ix - 1 };
             panes[prev_ix].clone()
         };
-        self.activate_pane(prev_pane, cx);
+        cx.focus(prev_pane);
     }
 
-    fn activate_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
+    fn handle_pane_focused(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
         if self.active_pane != pane {
             self.active_pane
                 .update(cx, |pane, cx| pane.set_active(false, cx));
@@ -1580,7 +1578,6 @@ impl Workspace {
                 status_bar.set_active_pane(&self.active_pane, cx);
             });
             self.active_item_path_changed(cx);
-            cx.focus(&self.active_pane);
             cx.notify();
         }
 
@@ -1607,8 +1604,8 @@ impl Workspace {
                 pane::Event::Remove => {
                     self.remove_pane(pane, cx);
                 }
-                pane::Event::Activate => {
-                    self.activate_pane(pane, cx);
+                pane::Event::Focused => {
+                    self.handle_pane_focused(pane, cx);
                 }
                 pane::Event::ActivateItem { local } => {
                     if *local {
@@ -1641,7 +1638,6 @@ impl Workspace {
     ) -> Option<ViewHandle<Pane>> {
         pane.read(cx).active_item().map(|item| {
             let new_pane = self.add_pane(cx);
-            self.activate_pane(new_pane.clone(), cx);
             if let Some(clone) = item.clone_on_split(cx.as_mut()) {
                 Pane::add_item(self, new_pane.clone(), clone, true, true, cx);
             }
@@ -1654,7 +1650,7 @@ impl Workspace {
     fn remove_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
         if self.center.remove(&pane).unwrap() {
             self.panes.retain(|p| p != &pane);
-            self.activate_pane(self.panes.last().unwrap().clone(), cx);
+            cx.focus(self.panes.last().unwrap().clone());
             self.unfollow(&pane, cx);
             self.last_leaders_by_pane.remove(&pane.downgrade());
             cx.notify();
@@ -1752,7 +1748,7 @@ impl Workspace {
         let collaborators = self.project.read(cx).collaborators();
         let next_leader_id = if let Some(leader_id) = self.leader_for_pane(&self.active_pane) {
             let mut collaborators = collaborators.keys().copied();
-            while let Some(peer_id) = collaborators.next() {
+            for peer_id in collaborators.by_ref() {
                 if peer_id == leader_id {
                     break;
                 }
@@ -1782,7 +1778,7 @@ impl Workspace {
     ) -> Option<PeerId> {
         for (leader_id, states_by_pane) in &mut self.follower_states_by_leader {
             let leader_id = *leader_id;
-            if let Some(state) = states_by_pane.remove(&pane) {
+            if let Some(state) = states_by_pane.remove(pane) {
                 for (_, item) in state.items_by_leader_view_id {
                     if let FollowerItem::Loaded(item) = item {
                         item.set_leader_replica_id(None, cx);
@@ -1856,6 +1852,17 @@ impl Workspace {
             worktree_root_names.push_str(name);
         }
 
+        // TODO: There should be a better system in place for this
+        // (https://github.com/zed-industries/zed/issues/1290)
+        let is_fullscreen = cx.window_is_fullscreen(cx.window_id());
+        let container_theme = if is_fullscreen {
+            let mut container_theme = theme.workspace.titlebar.container;
+            container_theme.padding.left = container_theme.padding.right;
+            container_theme
+        } else {
+            theme.workspace.titlebar.container
+        };
+
         ConstrainedBox::new(
             Container::new(
                 Stack::new()
@@ -1883,7 +1890,7 @@ impl Workspace {
                     )
                     .boxed(),
             )
-            .with_style(theme.workspace.titlebar.container)
+            .with_style(container_theme)
             .boxed(),
         )
         .with_height(theme.workspace.titlebar.height)
@@ -2245,7 +2252,6 @@ impl Workspace {
                 .values()
                 .map(|b| b.0)
                 .collect::<Vec<_>>()
-                .clone()
         });
 
         let mut item_tasks_by_pane = HashMap::default();
@@ -2359,13 +2365,11 @@ impl Workspace {
     fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) -> Option<()> {
         let mut items_to_add = Vec::new();
         for (pane, state) in self.follower_states_by_leader.get(&leader_id)? {
-            if let Some(active_item) = state
+            if let Some(FollowerItem::Loaded(item)) = state
                 .active_view_id
                 .and_then(|id| state.items_by_leader_view_id.get(&id))
             {
-                if let FollowerItem::Loaded(item) = active_item {
-                    items_to_add.push((pane.clone(), item.boxed_clone()));
-                }
+                items_to_add.push((pane.clone(), item.boxed_clone()));
             }
         }
 
@@ -2471,8 +2475,10 @@ impl View for Workspace {
             .named("workspace")
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.active_pane);
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        if cx.is_self_focused() {
+            cx.focus(&self.active_pane);
+        }
     }
 }
 
@@ -2616,6 +2622,7 @@ pub fn activate_workspace_for_project(
     None
 }
 
+#[allow(clippy::type_complexity)]
 pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: &Arc<AppState>,
@@ -2719,7 +2726,7 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
         (app_state.initialize_workspace)(&mut workspace, app_state, cx);
         workspace
     });
-    cx.dispatch_action(window_id, vec![workspace.id()], &NewFile);
+    cx.dispatch_action_at(window_id, workspace.id(), NewFile);
 }
 
 #[cfg(test)]
@@ -2738,10 +2745,10 @@ mod tests {
 
         let fs = FakeFs::new(cx.background());
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
 
         // Adding an item with no ambiguity renders the tab without detail.
-        let item1 = cx.add_view(window_id, |_| {
+        let item1 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.tab_descriptions = Some(vec!["c", "b1/c", "a/b1/c"]);
             item
@@ -2753,7 +2760,7 @@ mod tests {
 
         // Adding an item that creates ambiguity increases the level of detail on
         // both tabs.
-        let item2 = cx.add_view(window_id, |_| {
+        let item2 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
             item
@@ -2767,7 +2774,7 @@ mod tests {
         // Adding an item that creates ambiguity increases the level of detail only
         // on the ambiguous tabs. In this case, the ambiguity can't be resolved so
         // we stop at the highest detail available.
-        let item3 = cx.add_view(window_id, |_| {
+        let item3 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
             item
@@ -2807,12 +2814,12 @@ mod tests {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
 
-        let item1 = cx.add_view(window_id, |_| {
+        let item1 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.project_path = Some((worktree_id, "one.txt").into());
             item
         });
-        let item2 = cx.add_view(window_id, |_| {
+        let item2 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.project_path = Some((worktree_id, "two.txt").into());
             item
@@ -2901,19 +2908,19 @@ mod tests {
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
 
         // When there are no dirty items, there's nothing to do.
-        let item1 = cx.add_view(window_id, |_| TestItem::new());
+        let item1 = cx.add_view(&workspace, |_| TestItem::new());
         workspace.update(cx, |w, cx| w.add_item(Box::new(item1.clone()), cx));
         let task = workspace.update(cx, |w, cx| w.prepare_to_close(cx));
-        assert_eq!(task.await.unwrap(), true);
+        assert!(task.await.unwrap());
 
         // When there are dirty untitled items, prompt to save each one. If the user
         // cancels any prompt, then abort.
-        let item2 = cx.add_view(window_id, |_| {
+        let item2 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.is_dirty = true;
             item
         });
-        let item3 = cx.add_view(window_id, |_| {
+        let item3 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.is_dirty = true;
             item.project_entry_ids = vec![ProjectEntryId::from_proto(1)];
@@ -2928,7 +2935,7 @@ mod tests {
         cx.simulate_prompt_answer(window_id, 2 /* cancel */);
         cx.foreground().run_until_parked();
         assert!(!cx.has_pending_prompt(window_id));
-        assert_eq!(task.await.unwrap(), false);
+        assert!(!task.await.unwrap());
     }
 
     #[gpui::test]
@@ -2940,27 +2947,27 @@ mod tests {
         let project = Project::test(fs, None, cx).await;
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
 
-        let item1 = cx.add_view(window_id, |_| {
+        let item1 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.is_dirty = true;
             item.project_entry_ids = vec![ProjectEntryId::from_proto(1)];
             item
         });
-        let item2 = cx.add_view(window_id, |_| {
+        let item2 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.is_dirty = true;
             item.has_conflict = true;
             item.project_entry_ids = vec![ProjectEntryId::from_proto(2)];
             item
         });
-        let item3 = cx.add_view(window_id, |_| {
+        let item3 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.is_dirty = true;
             item.has_conflict = true;
             item.project_entry_ids = vec![ProjectEntryId::from_proto(3)];
             item
         });
-        let item4 = cx.add_view(window_id, |_| {
+        let item4 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.is_dirty = true;
             item
@@ -3083,16 +3090,21 @@ mod tests {
             workspace
                 .split_pane(left_pane.clone(), SplitDirection::Right, cx)
                 .unwrap();
-            workspace.add_item(Box::new(cx.add_view(|_| item_3_4.clone())), cx);
 
             left_pane
+        });
+
+        //Need to cause an effect flush in order to respect new focus
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item(Box::new(cx.add_view(|_| item_3_4.clone())), cx);
+            cx.focus(left_pane.clone());
         });
 
         // When closing all of the items in the left pane, we should be prompted twice:
         // once for project entry 0, and once for project entry 2. After those two
         // prompts, the task should complete.
+
         let close = workspace.update(cx, |workspace, cx| {
-            workspace.activate_pane(left_pane.clone(), cx);
             Pane::close_items(workspace, left_pane.clone(), cx, |_| true)
         });
 
@@ -3131,7 +3143,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
 
-        let item = cx.add_view(window_id, |_| {
+        let item = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.project_entry_ids = vec![ProjectEntryId::from_proto(1)];
             item
@@ -3246,9 +3258,9 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
 
-        let item = cx.add_view(window_id, |_| {
+        let item = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
             item.project_entry_ids = vec![ProjectEntryId::from_proto(1)];
             item
@@ -3381,7 +3393,7 @@ mod tests {
     impl Item for TestItem {
         fn tab_description<'a>(&'a self, detail: usize, _: &'a AppContext) -> Option<Cow<'a, str>> {
             self.tab_descriptions.as_ref().and_then(|descriptions| {
-                let description = *descriptions.get(detail).or(descriptions.last())?;
+                let description = *descriptions.get(detail).or_else(|| descriptions.last())?;
                 Some(description.into())
             })
         }
@@ -3437,7 +3449,7 @@ mod tests {
         }
 
         fn can_save(&self, _: &AppContext) -> bool {
-            self.project_entry_ids.len() > 0
+            !self.project_entry_ids.is_empty()
         }
 
         fn save(

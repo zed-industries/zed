@@ -13,9 +13,9 @@ use gpui::{
     },
     impl_actions, impl_internal_actions,
     platform::{CursorStyle, NavigationDirection},
-    AppContext, AsyncAppContext, Entity, EventContext, ModelHandle, MouseButton, MouseButtonEvent,
-    MutableAppContext, PromptLevel, Quad, RenderContext, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, EventContext,
+    ModelHandle, MouseButton, MouseButtonEvent, MutableAppContext, PromptLevel, Quad,
+    RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
@@ -132,7 +132,7 @@ pub fn init(cx: &mut MutableAppContext) {
 }
 
 pub enum Event {
-    Activate,
+    Focused,
     ActivateItem { local: bool },
     Remove,
     RemoveItem,
@@ -144,6 +144,7 @@ pub struct Pane {
     items: Vec<Box<dyn ItemHandle>>,
     is_active: bool,
     active_item_index: usize,
+    last_focused_view: Option<AnyWeakViewHandle>,
     autoscroll: bool,
     nav_history: Rc<RefCell<NavHistory>>,
     toolbar: ViewHandle<Toolbar>,
@@ -188,11 +189,12 @@ pub struct NavigationEntry {
 impl Pane {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let handle = cx.weak_handle();
-        let context_menu = cx.add_view(|cx| ContextMenu::new(cx));
+        let context_menu = cx.add_view(ContextMenu::new);
         Self {
             items: Vec::new(),
             is_active: true,
             active_item_index: 0,
+            last_focused_view: None,
             autoscroll: false,
             nav_history: Rc::new(RefCell::new(NavHistory {
                 mode: NavigationMode::Normal,
@@ -217,10 +219,6 @@ impl Pane {
             history: self.nav_history.clone(),
             item: Rc::new(item.downgrade()),
         }
-    }
-
-    pub fn activate(&self, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::Activate);
     }
 
     pub fn go_back(
@@ -287,7 +285,7 @@ impl Pane {
         mode: NavigationMode,
         cx: &mut ViewContext<Workspace>,
     ) -> Task<()> {
-        workspace.activate_pane(pane.clone(), cx);
+        cx.focus(pane.clone());
 
         let to_load = pane.update(cx, |pane, cx| {
             loop {
@@ -386,12 +384,12 @@ impl Pane {
         project_entry_id: ProjectEntryId,
         focus_item: bool,
         cx: &mut ViewContext<Workspace>,
-        build_item: impl FnOnce(&mut MutableAppContext) -> Box<dyn ItemHandle>,
+        build_item: impl FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
     ) -> Box<dyn ItemHandle> {
         let existing_item = pane.update(cx, |pane, cx| {
             for (ix, item) in pane.items.iter().enumerate() {
                 if item.project_path(cx).is_some()
-                    && item.project_entry_ids(cx).as_slice() == &[project_entry_id]
+                    && item.project_entry_ids(cx).as_slice() == [project_entry_id]
                 {
                     let item = item.boxed_clone();
                     pane.activate_item(ix, true, focus_item, true, cx);
@@ -403,7 +401,7 @@ impl Pane {
         if let Some(existing_item) = existing_item {
             existing_item
         } else {
-            let item = build_item(cx);
+            let item = pane.update(cx, |_, cx| build_item(cx));
             Self::add_item(workspace, pane, item.boxed_clone(), true, focus_item, cx);
             item
         }
@@ -441,6 +439,7 @@ impl Pane {
                 pane.active_item_index = usize::MAX;
             };
 
+            cx.reparent(&item);
             pane.items.insert(item_ix, item);
             pane.activate_item(item_ix, activate_pane, focus_item, false, cx);
             cx.notify();
@@ -451,7 +450,7 @@ impl Pane {
         self.items.iter()
     }
 
-    pub fn items_of_type<'a, T: View>(&'a self) -> impl 'a + Iterator<Item = ViewHandle<T>> {
+    pub fn items_of_type<T: View>(&self) -> impl '_ + Iterator<Item = ViewHandle<T>> {
         self.items
             .iter()
             .filter_map(|item| item.to_any().downcast())
@@ -467,7 +466,7 @@ impl Pane {
         cx: &AppContext,
     ) -> Option<Box<dyn ItemHandle>> {
         self.items.iter().find_map(|item| {
-            if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == &[entry_id] {
+            if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [entry_id] {
                 Some(item.boxed_clone())
             } else {
                 None
@@ -522,7 +521,7 @@ impl Pane {
                 self.focus_active_item(cx);
             }
             if activate_pane {
-                self.activate(cx);
+                cx.emit(Event::Focused);
             }
             self.autoscroll = true;
             cx.notify();
@@ -533,7 +532,7 @@ impl Pane {
         let mut index = self.active_item_index;
         if index > 0 {
             index -= 1;
-        } else if self.items.len() > 0 {
+        } else if !self.items.is_empty() {
             index = self.items.len() - 1;
         }
         self.activate_item(index, true, true, false, cx);
@@ -654,7 +653,7 @@ impl Pane {
                             {
                                 let other_project_entry_ids = item.project_entry_ids(cx);
                                 project_entry_ids
-                                    .retain(|id| !other_project_entry_ids.contains(&id));
+                                    .retain(|id| !other_project_entry_ids.contains(id));
                             }
                         }
                     });
@@ -663,12 +662,11 @@ impl Pane {
                         .any(|id| saved_project_entry_ids.insert(*id))
                 };
 
-                if should_save {
-                    if !Self::save_item(project.clone(), &pane, item_ix, &item, true, &mut cx)
+                if should_save
+                    && !Self::save_item(project.clone(), &pane, item_ix, &*item, true, &mut cx)
                         .await?
-                    {
-                        break;
-                    }
+                {
+                    break;
                 }
 
                 // Remove the item from the pane.
@@ -729,14 +727,13 @@ impl Pane {
         project: ModelHandle<Project>,
         pane: &ViewHandle<Pane>,
         item_ix: usize,
-        item: &Box<dyn ItemHandle>,
+        item: &dyn ItemHandle,
         should_prompt_for_save: bool,
         cx: &mut AsyncAppContext,
     ) -> Result<bool> {
-        const CONFLICT_MESSAGE: &'static str =
+        const CONFLICT_MESSAGE: &str =
             "This file has changed on disk since you started editing it. Do you want to overwrite it?";
-        const DIRTY_MESSAGE: &'static str =
-            "This file contains unsaved edits. Do you want to save it?";
+        const DIRTY_MESSAGE: &str = "This file contains unsaved edits. Do you want to save it?";
 
         let (has_conflict, is_dirty, can_save, is_singleton) = cx.read(|cx| {
             (
@@ -766,7 +763,7 @@ impl Pane {
                 matches!(
                     cx.global::<Settings>().autosave,
                     Autosave::OnFocusChange | Autosave::OnWindowChange
-                ) && Self::can_autosave_item(item.as_ref(), cx)
+                ) && Self::can_autosave_item(&*item, cx)
             });
             let should_save = if should_prompt_for_save && !will_autosave {
                 let mut answer = pane.update(cx, |pane, cx| {
@@ -795,7 +792,7 @@ impl Pane {
                             let worktree = project.visible_worktrees(cx).next()?;
                             Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
                         })
-                        .unwrap_or(Path::new("").into());
+                        .unwrap_or_else(|| Path::new("").into());
 
                     let mut abs_path = cx.update(|cx| cx.prompt_for_new_path(&start_abs_path));
                     if let Some(abs_path) = abs_path.next().await.flatten() {
@@ -1209,8 +1206,21 @@ impl View for Pane {
             .named("pane")
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        self.focus_active_item(cx);
+    fn on_focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        if cx.is_self_focused() {
+            if let Some(last_focused_view) = self
+                .last_focused_view
+                .as_ref()
+                .and_then(|handle| handle.upgrade(cx))
+            {
+                cx.focus(last_focused_view);
+            } else {
+                self.focus_active_item(cx);
+            }
+        } else {
+            self.last_focused_view = Some(focused.downgrade());
+        }
+        cx.emit(Event::Focused);
     }
 }
 

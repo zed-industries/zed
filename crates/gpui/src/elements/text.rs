@@ -100,7 +100,7 @@ impl Element for Text {
             chunks,
             &self.style,
             cx.text_layout_cache,
-            &cx.font_cache,
+            cx.font_cache,
             usize::MAX,
             self.text.matches('\n').count() + 1,
         );

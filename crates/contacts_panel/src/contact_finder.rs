@@ -1,7 +1,7 @@
 use client::{ContactRequestStatus, User, UserStore};
 use gpui::{
-    actions, elements::*, Entity, ModelHandle, MouseState, MutableAppContext, RenderContext, Task,
-    View, ViewContext, ViewHandle,
+    actions, elements::*, AnyViewHandle, Entity, ModelHandle, MouseState, MutableAppContext,
+    RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
@@ -42,7 +42,7 @@ impl View for ContactFinder {
         ChildView::new(self.picker.clone()).boxed()
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         cx.focus(&self.picker);
     }
 }
@@ -111,7 +111,7 @@ impl PickerDelegate for ContactFinder {
     ) -> ElementBox {
         let theme = &cx.global::<Settings>().theme;
         let user = &self.potential_contacts[ix];
-        let request_status = self.user_store.read(cx).contact_request_status(&user);
+        let request_status = self.user_store.read(cx).contact_request_status(user);
 
         let icon_path = match request_status {
             ContactRequestStatus::None | ContactRequestStatus::RequestReceived => {
@@ -121,7 +121,7 @@ impl PickerDelegate for ContactFinder {
                 "icons/x_mark_8.svg"
             }
         };
-        let button_style = if self.user_store.read(cx).is_contact_request_pending(&user) {
+        let button_style = if self.user_store.read(cx).is_contact_request_pending(user) {
             &theme.contact_finder.disabled_contact_button
         } else {
             &theme.contact_finder.contact_button

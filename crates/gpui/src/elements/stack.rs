@@ -8,15 +8,14 @@ use crate::{
     SizeConstraint,
 };
 
+#[derive(Default)]
 pub struct Stack {
     children: Vec<ElementBox>,
 }
 
 impl Stack {
     pub fn new() -> Self {
-        Stack {
-            children: Vec::new(),
-        }
+        Self::default()
     }
 }
 

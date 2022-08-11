@@ -116,7 +116,7 @@ impl super::LspAdapter for CLspAdapter {
     ) -> Option<CodeLabel> {
         let label = completion
             .label
-            .strip_prefix("•")
+            .strip_prefix('•')
             .unwrap_or(&completion.label)
             .trim();
 

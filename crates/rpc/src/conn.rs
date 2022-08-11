@@ -50,6 +50,7 @@ impl Connection {
             killed,
         );
 
+        #[allow(clippy::type_complexity)]
         fn channel(
             killed: Arc<AtomicBool>,
             executor: Arc<gpui::executor::Background>,
@@ -76,9 +77,7 @@ impl Connection {
 
                         // Writes to a half-open TCP connection will error.
                         if killed.load(SeqCst) {
-                            std::io::Result::Err(
-                                Error::new(ErrorKind::Other, "connection lost").into(),
-                            )?;
+                            std::io::Result::Err(Error::new(ErrorKind::Other, "connection lost"))?;
                         }
 
                         Ok(msg)
@@ -87,7 +86,7 @@ impl Connection {
             });
 
             let rx = rx.then({
-                let killed = killed.clone();
+                let killed = killed;
                 let executor = Arc::downgrade(&executor);
                 move |msg| {
                     let killed = killed.clone();

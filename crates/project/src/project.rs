@@ -114,10 +114,12 @@ pub struct Project {
     _subscriptions: Vec<gpui::Subscription>,
     opened_buffer: (Rc<RefCell<watch::Sender<()>>>, watch::Receiver<()>),
     shared_buffers: HashMap<PeerId, HashSet<u64>>,
+    #[allow(clippy::type_complexity)]
     loading_buffers: HashMap<
         ProjectPath,
         postage::watch::Receiver<Option<Result<ModelHandle<Buffer>, Arc<anyhow::Error>>>>,
     >,
+    #[allow(clippy::type_complexity)]
     loading_local_worktrees:
         HashMap<Arc<Path>, Shared<Task<Result<ModelHandle<Worktree>, Arc<anyhow::Error>>>>>,
     opened_buffers: HashMap<u64, OpenBuffer>,
@@ -993,7 +995,7 @@ impl Project {
                     .iter()
                     .filter_map(|worktree| {
                         worktree
-                            .upgrade(&cx)
+                            .upgrade(cx)
                             .map(|worktree| worktree.read(cx).as_local().unwrap().metadata_proto())
                     })
                     .collect()
@@ -1080,7 +1082,7 @@ impl Project {
         self.worktrees
             .iter()
             .filter_map(|worktree| {
-                let worktree = worktree.upgrade(&cx)?.read(cx);
+                let worktree = worktree.upgrade(cx)?.read(cx);
                 if worktree.is_visible() {
                     Some(format!(
                         "project-path-online:{}",
@@ -1121,7 +1123,7 @@ impl Project {
     }
 
     pub fn contains_paths(&self, paths: &[PathBuf], cx: &AppContext) -> bool {
-        paths.iter().all(|path| self.contains_path(&path, cx))
+        paths.iter().all(|path| self.contains_path(path, cx))
     }
 
     pub fn contains_path(&self, path: &Path, cx: &AppContext) -> bool {
@@ -1395,11 +1397,8 @@ impl Project {
             }
 
             for open_buffer in self.opened_buffers.values_mut() {
-                match open_buffer {
-                    OpenBuffer::Strong(buffer) => {
-                        *open_buffer = OpenBuffer::Weak(buffer.downgrade());
-                    }
-                    _ => {}
+                if let OpenBuffer::Strong(buffer) = open_buffer {
+                    *open_buffer = OpenBuffer::Weak(buffer.downgrade());
                 }
             }
 
@@ -1493,7 +1492,7 @@ impl Project {
 
         let buffer = cx.add_model(|cx| {
             Buffer::new(self.replica_id(), text, cx)
-                .with_language(language.unwrap_or(language::PLAIN_TEXT.clone()), cx)
+                .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx)
         });
         self.register_buffer(&buffer, cx)?;
         Ok(buffer)
@@ -1791,7 +1790,7 @@ impl Project {
                         server
                             .notify::<lsp::notification::DidCloseTextDocument>(
                                 lsp::DidCloseTextDocumentParams {
-                                    text_document: lsp::TextDocumentIdentifier::new(uri.clone()),
+                                    text_document: lsp::TextDocumentIdentifier::new(uri),
                                 },
                             )
                             .log_err();
@@ -1825,7 +1824,7 @@ impl Project {
                         language_server = self
                             .language_server_ids
                             .get(&(worktree_id, adapter.name.clone()))
-                            .and_then(|id| self.language_servers.get(&id))
+                            .and_then(|id| self.language_servers.get(id))
                             .and_then(|server_state| {
                                 if let LanguageServerState::Running { server, .. } = server_state {
                                     Some(server.clone())
@@ -1838,7 +1837,7 @@ impl Project {
 
                 if let Some(local_worktree) = file.worktree.read(cx).as_local() {
                     if let Some(diagnostics) = local_worktree.diagnostics_for_path(file.path()) {
-                        self.update_buffer_diagnostics(&buffer_handle, diagnostics, None, cx)
+                        self.update_buffer_diagnostics(buffer_handle, diagnostics, None, cx)
                             .log_err();
                     }
                 }
@@ -1853,8 +1852,7 @@ impl Project {
                                     0,
                                     initial_snapshot.text(),
                                 ),
-                            }
-                            .clone(),
+                            },
                         )
                         .log_err();
                     buffer_handle.update(cx, |buffer, cx| {
@@ -1864,7 +1862,7 @@ impl Project {
                                 .completion_provider
                                 .as_ref()
                                 .and_then(|provider| provider.trigger_characters.clone())
-                                .unwrap_or(Vec::new()),
+                                .unwrap_or_default(),
                             cx,
                         )
                     });
@@ -1910,7 +1908,7 @@ impl Project {
                     let request = self.client.request(proto::UpdateBuffer {
                         project_id,
                         buffer_id: buffer.read(cx).remote_id(),
-                        operations: vec![language::proto::serialize_operation(&operation)],
+                        operations: vec![language::proto::serialize_operation(operation)],
                     });
                     cx.background().spawn(request).detach_and_log_err(cx);
                 } else if let Some(project_id) = self.remote_id() {
@@ -2014,7 +2012,7 @@ impl Project {
             .filter_map(move |((language_server_worktree_id, _), id)| {
                 if *language_server_worktree_id == worktree_id {
                     if let Some(LanguageServerState::Running { adapter, server }) =
-                        self.language_servers.get(&id)
+                        self.language_servers.get(id)
                     {
                         return Some((adapter, server));
                     }
@@ -2151,7 +2149,7 @@ impl Project {
                                 let this = this.downgrade();
                                 let adapter = adapter.clone();
                                 move |mut params, cx| {
-                                    let this = this.clone();
+                                    let this = this;
                                     let adapter = adapter.clone();
                                     cx.spawn(|mut cx| async move {
                                         adapter.process_diagnostics(&mut params).await;
@@ -2371,7 +2369,7 @@ impl Project {
                                                 .and_then(|provider| {
                                                     provider.trigger_characters.clone()
                                                 })
-                                                .unwrap_or(Vec::new()),
+                                                .unwrap_or_default(),
                                             cx,
                                         )
                                     });
@@ -2502,10 +2500,8 @@ impl Project {
                         .cloned()
                     {
                         for orphaned_worktree in orphaned_worktrees {
-                            this.language_server_ids.insert(
-                                (orphaned_worktree, server_name.clone()),
-                                new_server_id.clone(),
-                            );
+                            this.language_server_ids
+                                .insert((orphaned_worktree, server_name.clone()), new_server_id);
                         }
                     }
                 });
@@ -2528,9 +2524,7 @@ impl Project {
                 return;
             }
         };
-        let progress = match progress.value {
-            lsp::ProgressParamsValue::WorkDone(value) => value,
-        };
+        let lsp::ProgressParamsValue::WorkDone(progress) = progress.value;
         let language_server_status =
             if let Some(status) = self.language_server_statuses.get_mut(&server_id) {
                 status
@@ -2543,7 +2537,7 @@ impl Project {
         }
 
         let is_disk_based_diagnostics_progress =
-            Some(token.as_ref()) == disk_based_diagnostics_progress_token.as_ref().map(|x| &**x);
+            Some(token.as_ref()) == disk_based_diagnostics_progress_token.as_deref();
 
         match progress {
             lsp::WorkDoneProgress::Begin(report) => {
@@ -2796,7 +2790,7 @@ impl Project {
             } else {
                 let group_id = post_inc(&mut self.next_diagnostic_group_id);
                 let is_disk_based =
-                    source.map_or(false, |source| disk_based_sources.contains(&source));
+                    source.map_or(false, |source| disk_based_sources.contains(source));
 
                 sources_by_group_id.insert(group_id, source);
                 primary_diagnostic_group_ids
@@ -3194,7 +3188,7 @@ impl Project {
         if let Some(lsp_edits) = lsp_edits {
             let edits = this
                 .update(cx, |this, cx| {
-                    this.edits_from_lsp(&buffer, lsp_edits, None, cx)
+                    this.edits_from_lsp(buffer, lsp_edits, None, cx)
                 })
                 .await?;
             buffer.update(cx, |buffer, cx| {
@@ -3366,7 +3360,7 @@ impl Project {
                             if let Some((worktree, rel_path)) =
                                 this.find_local_worktree(&abs_path, cx)
                             {
-                                worktree_id = (&worktree.read(cx)).id();
+                                worktree_id = worktree.read(cx).id();
                                 path = rel_path;
                             } else {
                                 path = relativize_path(&worktree_abs_path, &abs_path);
@@ -3613,7 +3607,7 @@ impl Project {
                                     .clone();
                                 (
                                     snapshot.anchor_before(start)..snapshot.anchor_after(end),
-                                    text.clone(),
+                                    text,
                                 )
                             }
                             Some(lsp::CompletionTextEdit::InsertAndReplace(_)) => {
@@ -3791,7 +3785,7 @@ impl Project {
 
             let lsp_range = range_to_lsp(range.to_point_utf16(buffer));
             cx.foreground().spawn(async move {
-                if !lang_server.capabilities().code_action_provider.is_some() {
+                if lang_server.capabilities().code_action_provider.is_none() {
                     return Ok(Default::default());
                 }
 
@@ -4120,6 +4114,7 @@ impl Project {
         )
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn search(
         &self,
         query: SearchQuery,
@@ -4341,7 +4336,7 @@ impl Project {
             ) {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), cx);
                 return cx.spawn(|this, cx| async move {
-                    if !request.check_capabilities(&language_server.capabilities()) {
+                    if !request.check_capabilities(language_server.capabilities()) {
                         return Ok(Default::default());
                     }
 
@@ -4375,7 +4370,7 @@ impl Project {
     ) -> Task<Result<(ModelHandle<Worktree>, PathBuf)>> {
         let abs_path = abs_path.as_ref();
         if let Some((tree, relative_path)) = self.find_local_worktree(abs_path, cx) {
-            Task::ready(Ok((tree.clone(), relative_path.into())))
+            Task::ready(Ok((tree, relative_path)))
         } else {
             let worktree = self.create_local_worktree(abs_path, visible, cx);
             cx.foreground()
@@ -4455,7 +4450,7 @@ impl Project {
 
                         Ok(worktree)
                     }
-                    .map_err(|err| Arc::new(err))
+                    .map_err(Arc::new)
                 })
                 .shared()
             })
@@ -4487,9 +4482,9 @@ impl Project {
     }
 
     fn add_worktree(&mut self, worktree: &ModelHandle<Worktree>, cx: &mut ModelContext<Self>) {
-        cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
+        cx.observe(worktree, |_, _, cx| cx.notify()).detach();
         if worktree.read(cx).is_local() {
-            cx.subscribe(&worktree, |this, worktree, _, cx| {
+            cx.subscribe(worktree, |this, worktree, _, cx| {
                 this.update_local_worktree_buffers(worktree, cx);
             })
             .detach();
@@ -4508,7 +4503,7 @@ impl Project {
         }
 
         self.metadata_changed(true, cx);
-        cx.observe_release(&worktree, |this, worktree, cx| {
+        cx.observe_release(worktree, |this, worktree, cx| {
             this.remove_worktree(worktree.id(), cx);
             cx.notify();
         })
@@ -4610,9 +4605,9 @@ impl Project {
         }
     }
 
-    pub fn language_servers_running_disk_based_diagnostics<'a>(
-        &'a self,
-    ) -> impl 'a + Iterator<Item = usize> {
+    pub fn language_servers_running_disk_based_diagnostics(
+        &self,
+    ) -> impl Iterator<Item = usize> + '_ {
         self.language_server_statuses
             .iter()
             .filter_map(|(id, status)| {
@@ -4762,7 +4757,7 @@ impl Project {
                 .remove(&peer_id)
                 .ok_or_else(|| anyhow!("unknown peer {:?}", peer_id))?
                 .replica_id;
-            for (_, buffer) in &this.opened_buffers {
+            for buffer in this.opened_buffers.values() {
                 if let Some(buffer) = buffer.upgrade(cx) {
                     buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
                 }
@@ -5088,7 +5083,7 @@ impl Project {
             let ops = payload
                 .operations
                 .into_iter()
-                .map(|op| language::proto::deserialize_operation(op))
+                .map(language::proto::deserialize_operation)
                 .collect::<Result<Vec<_>, _>>()?;
             let is_remote = this.is_remote();
             match this.opened_buffers.entry(buffer_id) {
@@ -5125,7 +5120,7 @@ impl Project {
             let worktree = this
                 .worktree_for_id(WorktreeId::from_proto(file.worktree_id), cx)
                 .ok_or_else(|| anyhow!("no such worktree"))?;
-            let file = File::from_proto(file, worktree.clone(), cx)?;
+            let file = File::from_proto(file, worktree, cx)?;
             let buffer = this
                 .opened_buffers
                 .get_mut(&buffer_id)
@@ -5791,6 +5786,7 @@ impl Project {
         })
     }
 
+    #[allow(clippy::type_complexity)]
     fn edits_from_lsp(
         &mut self,
         buffer: &ModelHandle<Buffer>,
@@ -5837,7 +5833,7 @@ impl Project {
                         new_text.push('\n');
                     }
                     range.end = next_range.end;
-                    new_text.push_str(&next_text);
+                    new_text.push_str(next_text);
                     lsp_edits.next();
                 }
 
@@ -5872,7 +5868,7 @@ impl Project {
                             ChangeTag::Insert => {
                                 if moved_since_edit {
                                     let anchor = snapshot.anchor_after(offset);
-                                    edits.push((anchor.clone()..anchor, value.to_string()));
+                                    edits.push((anchor..anchor, value.to_string()));
                                 } else {
                                     edits.last_mut().unwrap().1.push_str(value);
                                 }
@@ -5882,7 +5878,7 @@ impl Project {
                     }
                 } else if range.end == range.start {
                     let anchor = snapshot.anchor_after(range.start);
-                    edits.push((anchor.clone()..anchor, new_text));
+                    edits.push((anchor..anchor, new_text));
                 } else {
                     let edit_start = snapshot.anchor_after(range.start);
                     let edit_end = snapshot.anchor_before(range.end);
@@ -5944,7 +5940,7 @@ impl Project {
 
             if let Some(server_id) = self.language_server_ids.get(&key) {
                 if let Some(LanguageServerState::Running { adapter, server }) =
-                    self.language_servers.get(&server_id)
+                    self.language_servers.get(server_id)
                 {
                     return Some((adapter, server));
                 }

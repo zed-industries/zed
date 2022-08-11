@@ -1027,7 +1027,7 @@ impl LspCommand for GetHover {
                 lsp::HoverContents::Array(marked_strings) => {
                     let content: Vec<HoverBlock> = marked_strings
                         .into_iter()
-                        .filter_map(|marked_string| HoverBlock::try_new(marked_string))
+                        .filter_map(HoverBlock::try_new)
                         .collect();
                     if content.is_empty() {
                         None
@@ -1049,9 +1049,7 @@ impl LspCommand for GetHover {
                             }
                             Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(new_language))) => {
                                 if !current_text.is_empty() {
-                                    let text = std::mem::replace(&mut current_text, String::new())
-                                        .trim()
-                                        .to_string();
+                                    let text = std::mem::take(&mut current_text).trim().to_string();
                                     contents.push(HoverBlock { text, language });
                                 }
 
@@ -1067,9 +1065,7 @@ impl LspCommand for GetHover {
                             | Event::End(Tag::BlockQuote)
                             | Event::HardBreak => {
                                 if !current_text.is_empty() {
-                                    let text = std::mem::replace(&mut current_text, String::new())
-                                        .trim()
-                                        .to_string();
+                                    let text = std::mem::take(&mut current_text).trim().to_string();
                                     contents.push(HoverBlock { text, language });
                                 }
                                 language = None;

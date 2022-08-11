@@ -143,7 +143,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_action({
         let app_state = app_state.clone();
         move |_: &mut Workspace, _: &OpenKeymap, cx: &mut ViewContext<Workspace>| {
-            open_config_file(&paths::KEYMAP, app_state.clone(), cx, || Default::default());
+            open_config_file(&paths::KEYMAP, app_state.clone(), cx, Default::default);
         }
     });
     cx.add_action({
@@ -222,7 +222,7 @@ pub fn initialize_workspace(
                     pane.toolbar().update(cx, |toolbar, cx| {
                         let breadcrumbs = cx.add_view(|_| Breadcrumbs::new(project.clone()));
                         toolbar.add_item(breadcrumbs, cx);
-                        let buffer_search_bar = cx.add_view(|cx| BufferSearchBar::new(cx));
+                        let buffer_search_bar = cx.add_view(BufferSearchBar::new);
                         toolbar.add_item(buffer_search_bar, cx);
                         let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
                         toolbar.add_item(project_search_bar, cx);
@@ -273,7 +273,7 @@ pub fn initialize_workspace(
         sidebar.add_item(
             "icons/folder_tree_16.svg",
             "Project Panel".to_string(),
-            project_panel.into(),
+            project_panel,
             cx,
         )
     });
@@ -281,7 +281,7 @@ pub fn initialize_workspace(
         sidebar.add_item(
             "icons/user_group_16.svg",
             "Contacts Panel".to_string(),
-            contact_panel.into(),
+            contact_panel,
             cx,
         )
     });
@@ -487,7 +487,7 @@ fn open_bundled_config_file(
     title: &str,
     cx: &mut ViewContext<Workspace>,
 ) {
-    workspace.with_local_workspace(cx, app_state.clone(), |workspace, cx| {
+    workspace.with_local_workspace(cx, app_state, |workspace, cx| {
         let project = workspace.project().clone();
         let buffer = project.update(cx, |project, cx| {
             let text = Assets::get(asset_path).unwrap().data;
@@ -1005,7 +1005,7 @@ mod tests {
             .insert_file("/root/a.txt", "changed".to_string())
             .await;
         editor
-            .condition(&cx, |editor, cx| editor.has_conflict(cx))
+            .condition(cx, |editor, cx| editor.has_conflict(cx))
             .await;
         cx.read(|cx| assert!(editor.is_dirty(cx)));
 
@@ -1072,7 +1072,7 @@ mod tests {
         // Edit the file and save it again. This time, there is no filename prompt.
         editor.update(cx, |editor, cx| {
             editor.handle_input(" there", cx);
-            assert_eq!(editor.is_dirty(cx.as_ref()), true);
+            assert!(editor.is_dirty(cx.as_ref()));
         });
         let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
         save_task.await.unwrap();
@@ -1570,30 +1570,20 @@ mod tests {
 
         // Reopen all the closed items, ensuring they are reopened in the same order
         // in which they were closed.
-        workspace
-            .update(cx, |workspace, cx| Pane::reopen_closed_item(workspace, cx))
-            .await;
+        workspace.update(cx, Pane::reopen_closed_item).await;
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
-        workspace
-            .update(cx, |workspace, cx| Pane::reopen_closed_item(workspace, cx))
-            .await;
+        workspace.update(cx, Pane::reopen_closed_item).await;
         assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
 
-        workspace
-            .update(cx, |workspace, cx| Pane::reopen_closed_item(workspace, cx))
-            .await;
+        workspace.update(cx, Pane::reopen_closed_item).await;
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
-        workspace
-            .update(cx, |workspace, cx| Pane::reopen_closed_item(workspace, cx))
-            .await;
+        workspace.update(cx, Pane::reopen_closed_item).await;
         assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
 
         // Reopening past the last closed item is a no-op.
-        workspace
-            .update(cx, |workspace, cx| Pane::reopen_closed_item(workspace, cx))
-            .await;
+        workspace.update(cx, Pane::reopen_closed_item).await;
         assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
 
         // Reopening closed items doesn't interfere with navigation history.

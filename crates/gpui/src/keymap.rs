@@ -202,7 +202,7 @@ impl Keymap {
         for (ix, binding) in bindings.iter().enumerate() {
             binding_indices_by_action_type
                 .entry(binding.action.as_any().type_id())
-                .or_insert_with(|| SmallVec::new())
+                .or_insert_with(SmallVec::new)
                 .push(ix);
         }
         Self {
@@ -211,10 +211,7 @@ impl Keymap {
         }
     }
 
-    fn bindings_for_action_type<'a>(
-        &'a self,
-        action_type: TypeId,
-    ) -> impl Iterator<Item = &'a Binding> {
+    fn bindings_for_action_type(&self, action_type: TypeId) -> impl Iterator<Item = &'_ Binding> {
         self.binding_indices_by_action_type
             .get(&action_type)
             .map(SmallVec::as_slice)
@@ -253,7 +250,7 @@ impl Binding {
 
         let keystrokes = keystrokes
             .split_whitespace()
-            .map(|key| Keystroke::parse(key))
+            .map(Keystroke::parse)
             .collect::<Result<_>>()?;
 
         Ok(Self {
@@ -281,7 +278,7 @@ impl Keystroke {
         let mut function = false;
         let mut key = None;
 
-        let mut components = source.split("-").peekable();
+        let mut components = source.split('-').peekable();
         while let Some(component) = components.next() {
             match component {
                 "ctrl" => ctrl = true,
@@ -379,12 +376,12 @@ impl ContextPredicate {
         let kind = node.kind();
 
         match kind {
-            "source" => Self::from_node(node.child(0).ok_or(anyhow!(parse_error))?, source),
+            "source" => Self::from_node(node.child(0).ok_or_else(|| anyhow!(parse_error))?, source),
             "identifier" => Ok(Self::Identifier(node.utf8_text(source)?.into())),
             "not" => {
                 let child = Self::from_node(
                     node.child_by_field_name("expression")
-                        .ok_or(anyhow!(parse_error))?,
+                        .ok_or_else(|| anyhow!(parse_error))?,
                     source,
                 )?;
                 Ok(Self::Not(Box::new(child)))
@@ -392,12 +389,12 @@ impl ContextPredicate {
             "and" | "or" => {
                 let left = Box::new(Self::from_node(
                     node.child_by_field_name("left")
-                        .ok_or(anyhow!(parse_error))?,
+                        .ok_or_else(|| anyhow!(parse_error))?,
                     source,
                 )?);
                 let right = Box::new(Self::from_node(
                     node.child_by_field_name("right")
-                        .ok_or(anyhow!(parse_error))?,
+                        .ok_or_else(|| anyhow!(parse_error))?,
                     source,
                 )?);
                 if kind == "and" {
@@ -409,12 +406,12 @@ impl ContextPredicate {
             "equal" | "not_equal" => {
                 let left = node
                     .child_by_field_name("left")
-                    .ok_or(anyhow!(parse_error))?
+                    .ok_or_else(|| anyhow!(parse_error))?
                     .utf8_text(source)?
                     .into();
                 let right = node
                     .child_by_field_name("right")
-                    .ok_or(anyhow!(parse_error))?
+                    .ok_or_else(|| anyhow!(parse_error))?
                     .utf8_text(source)?
                     .into();
                 if kind == "equal" {
@@ -425,7 +422,7 @@ impl ContextPredicate {
             }
             "parenthesized" => Self::from_node(
                 node.child_by_field_name("expression")
-                    .ok_or(anyhow!(parse_error))?,
+                    .ok_or_else(|| anyhow!(parse_error))?,
                 source,
             ),
             _ => Err(anyhow!(parse_error)),
@@ -604,7 +601,7 @@ mod tests {
         Ok(())
     }
 
-    fn downcast<'a, A: Action>(action: &'a Option<Box<dyn Action>>) -> Option<&'a A> {
+    fn downcast<A: Action>(action: &Option<Box<dyn Action>>) -> Option<&A> {
         action
             .as_ref()
             .and_then(|action| action.as_any().downcast_ref())

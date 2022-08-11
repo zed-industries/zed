@@ -53,6 +53,12 @@ impl FontSystem {
     }
 }
 
+impl Default for FontSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl platform::FontSystem for FontSystem {
     fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> anyhow::Result<()> {
         self.0.write().add_fonts(fonts)
@@ -402,7 +408,7 @@ impl FontSystemState {
     fn wrap_line(&self, text: &str, font_id: FontId, font_size: f32, width: f32) -> Vec<usize> {
         let mut string = CFMutableAttributedString::new();
         string.replace_str(&CFString::new(text), CFRange::init(0, 0));
-        let cf_range = CFRange::init(0 as isize, text.encode_utf16().count() as isize);
+        let cf_range = CFRange::init(0, text.encode_utf16().count() as isize);
         let font = &self.fonts[font_id.0];
         unsafe {
             string.set_attribute(
@@ -505,14 +511,14 @@ mod tests {
         };
         let menlo_italic = RunStyle {
             font_id: fonts
-                .select_font(&menlo, &Properties::new().style(Style::Italic))
+                .select_font(&menlo, Properties::new().style(Style::Italic))
                 .unwrap(),
             color: Default::default(),
             underline: Default::default(),
         };
         let menlo_bold = RunStyle {
             font_id: fonts
-                .select_font(&menlo, &Properties::new().weight(Weight::BOLD))
+                .select_font(&menlo, Properties::new().weight(Weight::BOLD))
                 .unwrap(),
             color: Default::default(),
             underline: Default::default(),
@@ -599,7 +605,7 @@ mod tests {
             let name = format!("/Users/as-cii/Desktop/twog-{}.png", i);
             let path = Path::new(&name);
             let file = File::create(path).unwrap();
-            let ref mut w = BufWriter::new(file);
+            let w = &mut BufWriter::new(file);
 
             let mut encoder = png::Encoder::new(w, bounds.width() as u32, bounds.height() as u32);
             encoder.set_color(png::ColorType::Grayscale);

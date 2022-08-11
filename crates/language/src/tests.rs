@@ -107,7 +107,7 @@ fn test_edit_events(cx: &mut gpui::MutableAppContext) {
             let buffer_1_events = buffer_1_events.clone();
             cx.subscribe(&buffer1, move |_, _, event, _| match event.clone() {
                 Event::Operation(op) => buffer1_ops.borrow_mut().push(op),
-                event @ _ => buffer_1_events.borrow_mut().push(event),
+                event => buffer_1_events.borrow_mut().push(event),
             })
             .detach();
             let buffer_2_events = buffer_2_events.clone();
@@ -190,7 +190,7 @@ async fn test_apply_diff(cx: &mut gpui::TestAppContext) {
     buffer.update(cx, |buffer, cx| {
         buffer.apply_diff(diff, cx).unwrap();
         assert_eq!(buffer.text(), text);
-        assert_eq!(anchor.to_point(&buffer), Point::new(2, 3));
+        assert_eq!(anchor.to_point(buffer), Point::new(2, 3));
     });
 
     let text = "a\n1\n\nccc\ndd2dd\nffffff\n";
@@ -198,7 +198,7 @@ async fn test_apply_diff(cx: &mut gpui::TestAppContext) {
     buffer.update(cx, |buffer, cx| {
         buffer.apply_diff(diff, cx).unwrap();
         assert_eq!(buffer.text(), text);
-        assert_eq!(anchor.to_point(&buffer), Point::new(4, 4));
+        assert_eq!(anchor.to_point(buffer), Point::new(4, 4));
     });
 }
 
@@ -209,11 +209,9 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
         cx.add_model(|cx| Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx));
 
     // Wait for the initial text to parse
-    buffer
-        .condition(&cx, |buffer, _| !buffer.is_parsing())
-        .await;
+    buffer.condition(cx, |buffer, _| !buffer.is_parsing()).await;
     assert_eq!(
-        get_tree_sexp(&buffer, &cx),
+        get_tree_sexp(&buffer, cx),
         concat!(
             "(source_file (function_item name: (identifier) ",
             "parameters: (parameters) ",
@@ -230,11 +228,11 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
     buffer.update(cx, |buf, cx| {
         buf.start_transaction();
 
-        let offset = buf.text().find(")").unwrap();
+        let offset = buf.text().find(')').unwrap();
         buf.edit([(offset..offset, "b: C")], None, cx);
         assert!(!buf.is_parsing());
 
-        let offset = buf.text().find("}").unwrap();
+        let offset = buf.text().find('}').unwrap();
         buf.edit([(offset..offset, " d; ")], None, cx);
         assert!(!buf.is_parsing());
 
@@ -242,11 +240,9 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
         assert_eq!(buf.text(), "fn a(b: C) { d; }");
         assert!(buf.is_parsing());
     });
-    buffer
-        .condition(&cx, |buffer, _| !buffer.is_parsing())
-        .await;
+    buffer.condition(cx, |buffer, _| !buffer.is_parsing()).await;
     assert_eq!(
-        get_tree_sexp(&buffer, &cx),
+        get_tree_sexp(&buffer, cx),
         concat!(
             "(source_file (function_item name: (identifier) ",
             "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
@@ -259,13 +255,13 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
     // * turn field expression into a method call
     // * add a turbofish to the method call
     buffer.update(cx, |buf, cx| {
-        let offset = buf.text().find(";").unwrap();
+        let offset = buf.text().find(';').unwrap();
         buf.edit([(offset..offset, ".e")], None, cx);
         assert_eq!(buf.text(), "fn a(b: C) { d.e; }");
         assert!(buf.is_parsing());
     });
     buffer.update(cx, |buf, cx| {
-        let offset = buf.text().find(";").unwrap();
+        let offset = buf.text().find(';').unwrap();
         buf.edit([(offset..offset, "(f)")], None, cx);
         assert_eq!(buf.text(), "fn a(b: C) { d.e(f); }");
         assert!(buf.is_parsing());
@@ -276,11 +272,9 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
         assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
         assert!(buf.is_parsing());
     });
-    buffer
-        .condition(&cx, |buffer, _| !buffer.is_parsing())
-        .await;
+    buffer.condition(cx, |buffer, _| !buffer.is_parsing()).await;
     assert_eq!(
-        get_tree_sexp(&buffer, &cx),
+        get_tree_sexp(&buffer, cx),
         concat!(
             "(source_file (function_item name: (identifier) ",
             "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
@@ -297,11 +291,9 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
         assert_eq!(buf.text(), "fn a() {}");
         assert!(buf.is_parsing());
     });
-    buffer
-        .condition(&cx, |buffer, _| !buffer.is_parsing())
-        .await;
+    buffer.condition(cx, |buffer, _| !buffer.is_parsing()).await;
     assert_eq!(
-        get_tree_sexp(&buffer, &cx),
+        get_tree_sexp(&buffer, cx),
         concat!(
             "(source_file (function_item name: (identifier) ",
             "parameters: (parameters) ",
@@ -314,11 +306,9 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
         assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
         assert!(buf.is_parsing());
     });
-    buffer
-        .condition(&cx, |buffer, _| !buffer.is_parsing())
-        .await;
+    buffer.condition(cx, |buffer, _| !buffer.is_parsing()).await;
     assert_eq!(
-        get_tree_sexp(&buffer, &cx),
+        get_tree_sexp(&buffer, cx),
         concat!(
             "(source_file (function_item name: (identifier) ",
             "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
@@ -340,21 +330,17 @@ async fn test_resetting_language(cx: &mut gpui::TestAppContext) {
     });
 
     // Wait for the initial text to parse
-    buffer
-        .condition(&cx, |buffer, _| !buffer.is_parsing())
-        .await;
+    buffer.condition(cx, |buffer, _| !buffer.is_parsing()).await;
     assert_eq!(
-        get_tree_sexp(&buffer, &cx),
+        get_tree_sexp(&buffer, cx),
         "(source_file (expression_statement (block)))"
     );
 
     buffer.update(cx, |buffer, cx| {
         buffer.set_language(Some(Arc::new(json_lang())), cx)
     });
-    buffer
-        .condition(&cx, |buffer, _| !buffer.is_parsing())
-        .await;
-    assert_eq!(get_tree_sexp(&buffer, &cx), "(document (object))");
+    buffer.condition(cx, |buffer, _| !buffer.is_parsing()).await;
+    assert_eq!(get_tree_sexp(&buffer, cx), "(document (object))");
 }
 
 #[gpui::test]
@@ -417,7 +403,7 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
 
     // Without space, we only match on names
     assert_eq!(
-        search(&outline, "oon", &cx).await,
+        search(&outline, "oon", cx).await,
         &[
             ("mod module", vec![]),                    // included as the parent of a match
             ("enum LoginState", vec![]),               // included as the parent of a match
@@ -427,18 +413,18 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
     );
 
     assert_eq!(
-        search(&outline, "dp p", &cx).await,
+        search(&outline, "dp p", cx).await,
         &[
             ("impl Drop for Person", vec![5, 8, 9, 14]),
             ("fn drop", vec![]),
         ]
     );
     assert_eq!(
-        search(&outline, "dpn", &cx).await,
+        search(&outline, "dpn", cx).await,
         &[("impl Drop for Person", vec![5, 14, 19])]
     );
     assert_eq!(
-        search(&outline, "impl ", &cx).await,
+        search(&outline, "impl ", cx).await,
         &[
             ("impl Eq for Person", vec![0, 1, 2, 3, 4]),
             ("impl Drop for Person", vec![0, 1, 2, 3, 4]),
@@ -530,9 +516,9 @@ async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
         ]
     );
 
-    fn symbols_containing<'a>(
+    fn symbols_containing(
         position: Point,
-        snapshot: &'a BufferSnapshot,
+        snapshot: &BufferSnapshot,
     ) -> Vec<(String, Range<Point>)> {
         snapshot
             .symbols_containing(position, None)
@@ -799,7 +785,7 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
                 Ok(())
             }
             "
-            .replace("|", "") // included in the string to preserve trailing whites
+            .replace('|', "") // included in the string to preserve trailing whites
             .unindent()
         );
 
@@ -971,7 +957,7 @@ fn test_autoindent_block_mode(cx: &mut MutableAppContext) {
         buffer.undo(cx);
         buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "        ")], None, cx);
         buffer.edit(
-            [(Point::new(2, 8)..Point::new(2, 8), inserted_text.clone())],
+            [(Point::new(2, 8)..Point::new(2, 8), inserted_text)],
             Some(AutoindentMode::Block {
                 original_indent_columns: vec![0],
             }),
@@ -1098,7 +1084,7 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
                 if let Event::Operation(op) = event {
                     network
                         .borrow_mut()
-                        .broadcast(buffer.replica_id(), vec![proto::serialize_operation(&op)]);
+                        .broadcast(buffer.replica_id(), vec![proto::serialize_operation(op)]);
                 }
             })
             .detach();
@@ -1202,7 +1188,7 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
                         if let Event::Operation(op) = event {
                             network.borrow_mut().broadcast(
                                 buffer.replica_id(),
-                                vec![proto::serialize_operation(&op)],
+                                vec![proto::serialize_operation(op)],
                             );
                         }
                     })

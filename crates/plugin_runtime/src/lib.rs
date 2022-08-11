@@ -69,13 +69,13 @@ mod tests {
             let unsorted = vec![1, 3, 4, 2, 5];
             let sorted = vec![1, 2, 3, 4, 5];
 
-            assert_eq!(runtime.call(&plugin.noop, ()).await.unwrap(), ());
+            runtime.call(&plugin.noop, ()).await.unwrap();
             assert_eq!(runtime.call(&plugin.constant, ()).await.unwrap(), 27);
             assert_eq!(runtime.call(&plugin.identity, 58).await.unwrap(), 58);
             assert_eq!(runtime.call(&plugin.add, (3, 4)).await.unwrap(), 7);
             assert_eq!(runtime.call(&plugin.swap, (1, 2)).await.unwrap(), (2, 1));
             assert_eq!(runtime.call(&plugin.sort, unsorted).await.unwrap(), sorted);
-            assert_eq!(runtime.call(&plugin.print, "Hi!".into()).await.unwrap(), ());
+            runtime.call(&plugin.print, "Hi!".into()).await.unwrap();
             assert_eq!(runtime.call(&plugin.and_back, 1).await.unwrap(), 8);
             assert_eq!(runtime.call(&plugin.imports, 1).await.unwrap(), 8);
             assert_eq!(runtime.call(&plugin.half_async, 4).await.unwrap(), 2);

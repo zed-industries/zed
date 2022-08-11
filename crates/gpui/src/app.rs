@@ -1,4 +1,5 @@
 pub mod action;
+mod callback_collection;
 
 use crate::{
     elements::ElementBox,
@@ -13,7 +14,8 @@ use crate::{
 };
 pub use action::*;
 use anyhow::{anyhow, Context, Result};
-use collections::btree_map;
+use callback_collection::CallbackCollection;
+use collections::{btree_map, hash_map::Entry, BTreeMap, HashMap, HashSet, VecDeque};
 use keymap::MatchResult;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
@@ -24,7 +26,6 @@ use smol::prelude::*;
 use std::{
     any::{type_name, Any, TypeId},
     cell::RefCell,
-    collections::{hash_map::Entry, BTreeMap, HashMap, HashSet, VecDeque},
     fmt::{self, Debug},
     hash::{Hash, Hasher},
     marker::PhantomData,
@@ -36,6 +37,8 @@ use std::{
     sync::{Arc, Weak},
     time::Duration,
 };
+
+use self::callback_collection::Mapping;
 
 pub trait Entity: 'static {
     type Event;
@@ -52,8 +55,8 @@ pub trait Entity: 'static {
 pub trait View: Entity + Sized {
     fn ui_name() -> &'static str;
     fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox;
-    fn on_focus(&mut self, _: &mut ViewContext<Self>) {}
-    fn on_blur(&mut self, _: &mut ViewContext<Self>) {}
+    fn on_focus_in(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {}
+    fn on_focus_out(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {}
     fn keymap_context(&self, _: &AppContext) -> keymap::Context {
         Self::default_keymap_context()
     }
@@ -226,18 +229,12 @@ impl App {
             move |action| {
                 let mut cx = cx.borrow_mut();
                 if let Some(key_window_id) = cx.cx.platform.key_window_id() {
-                    if let Some((presenter, _)) =
-                        cx.presenters_and_platform_windows.get(&key_window_id)
-                    {
-                        let presenter = presenter.clone();
-                        let path = presenter.borrow().dispatch_path(cx.as_ref());
-                        cx.dispatch_action_any(key_window_id, &path, action);
-                    } else {
-                        cx.dispatch_global_action_any(action);
+                    if let Some(view_id) = cx.focused_view_id(key_window_id) {
+                        cx.handle_dispatch_action_from_effect(key_window_id, Some(view_id), action);
+                        return;
                     }
-                } else {
-                    cx.dispatch_global_action_any(action);
                 }
+                cx.dispatch_global_action_any(action);
             }
         }));
 
@@ -435,7 +432,7 @@ impl TestAppContext {
         first_entity_id: usize,
     ) -> Self {
         let mut cx = MutableAppContext::new(
-            foreground.clone(),
+            foreground,
             background,
             platform,
             foreground_platform.clone(),
@@ -459,15 +456,9 @@ impl TestAppContext {
 
     pub fn dispatch_action<A: Action>(&self, window_id: usize, action: A) {
         let mut cx = self.cx.borrow_mut();
-        let dispatch_path = cx
-            .presenters_and_platform_windows
-            .get(&window_id)
-            .unwrap()
-            .0
-            .borrow()
-            .dispatch_path(cx.as_ref());
-
-        cx.dispatch_action_any(window_id, &dispatch_path, &action);
+        if let Some(view_id) = cx.focused_view_id(window_id) {
+            cx.handle_dispatch_action_from_effect(window_id, Some(view_id), &action);
+        }
     }
 
     pub fn dispatch_global_action<A: Action>(&self, action: A) {
@@ -482,11 +473,11 @@ impl TestAppContext {
                 .unwrap()
                 .0
                 .clone();
-            let dispatch_path = presenter.borrow().dispatch_path(cx.as_ref());
 
-            if cx.dispatch_keystroke(window_id, dispatch_path, &keystroke) {
+            if cx.dispatch_keystroke(window_id, &keystroke) {
                 return true;
             }
+
             if presenter.borrow_mut().dispatch_event(
                 Event::KeyDown(KeyDownEvent {
                     keystroke: keystroke.clone(),
@@ -530,32 +521,24 @@ impl TestAppContext {
         (window_id, view)
     }
 
+    pub fn add_view<T, F>(
+        &mut self,
+        parent_handle: impl Into<AnyViewHandle>,
+        build_view: F,
+    ) -> ViewHandle<T>
+    where
+        T: View,
+        F: FnOnce(&mut ViewContext<T>) -> T,
+    {
+        self.cx.borrow_mut().add_view(parent_handle, build_view)
+    }
+
     pub fn window_ids(&self) -> Vec<usize> {
         self.cx.borrow().window_ids().collect()
     }
 
     pub fn root_view<T: View>(&self, window_id: usize) -> Option<ViewHandle<T>> {
         self.cx.borrow().root_view(window_id)
-    }
-
-    pub fn add_view<T, F>(&mut self, window_id: usize, build_view: F) -> ViewHandle<T>
-    where
-        T: View,
-        F: FnOnce(&mut ViewContext<T>) -> T,
-    {
-        self.cx.borrow_mut().add_view(window_id, build_view)
-    }
-
-    pub fn add_option_view<T, F>(
-        &mut self,
-        window_id: usize,
-        build_view: F,
-    ) -> Option<ViewHandle<T>>
-    where
-        T: View,
-        F: FnOnce(&mut ViewContext<T>) -> Option<T>,
-    {
-        self.cx.borrow_mut().add_option_view(window_id, build_view)
     }
 
     pub fn read<T, F: FnOnce(&AppContext) -> T>(&self, callback: F) -> T {
@@ -783,14 +766,6 @@ impl AsyncAppContext {
         self.update(|cx| cx.add_model(build_model))
     }
 
-    pub fn add_view<T, F>(&mut self, window_id: usize, build_view: F) -> ViewHandle<T>
-    where
-        T: View,
-        F: FnOnce(&mut ViewContext<T>) -> T,
-    {
-        self.update(|cx| cx.add_view(window_id, build_view))
-    }
-
     pub fn add_window<T, F>(
         &mut self,
         window_options: WindowOptions,
@@ -959,6 +934,7 @@ type GlobalObservationCallback = Box<dyn FnMut(&mut MutableAppContext)>;
 type ReleaseObservationCallback = Box<dyn FnOnce(&dyn Any, &mut MutableAppContext)>;
 type ActionObservationCallback = Box<dyn FnMut(TypeId, &mut MutableAppContext)>;
 type WindowActivationCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
+type WindowFullscreenCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
 type DeserializeActionCallback = fn(json: &str) -> anyhow::Result<Box<dyn Action>>;
 type WindowShouldCloseSubscriptionCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
 
@@ -976,18 +952,19 @@ pub struct MutableAppContext {
     next_window_id: usize,
     next_subscription_id: usize,
     frame_count: usize,
-    subscriptions: Arc<Mutex<HashMap<usize, BTreeMap<usize, Option<SubscriptionCallback>>>>>,
-    global_subscriptions:
-        Arc<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalSubscriptionCallback>>>>>,
-    observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, Option<ObservationCallback>>>>>,
-    focus_observations:
-        Arc<Mutex<HashMap<usize, BTreeMap<usize, Option<FocusObservationCallback>>>>>,
-    global_observations:
-        Arc<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalObservationCallback>>>>>,
+
+    focus_observations: CallbackCollection<usize, FocusObservationCallback>,
+    global_subscriptions: CallbackCollection<TypeId, GlobalSubscriptionCallback>,
+    global_observations: CallbackCollection<TypeId, GlobalObservationCallback>,
+    subscriptions: CallbackCollection<usize, SubscriptionCallback>,
+    observations: CallbackCollection<usize, ObservationCallback>,
+    window_activation_observations: CallbackCollection<usize, WindowActivationCallback>,
+    window_fullscreen_observations: CallbackCollection<usize, WindowFullscreenCallback>,
+
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
-    window_activation_observations:
-        Arc<Mutex<HashMap<usize, BTreeMap<usize, Option<WindowActivationCallback>>>>>,
     action_dispatch_observations: Arc<Mutex<BTreeMap<usize, ActionObservationCallback>>>,
+
+    #[allow(clippy::type_complexity)]
     presenters_and_platform_windows:
         HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
     foreground: Rc<executor::Foreground>,
@@ -1017,6 +994,7 @@ impl MutableAppContext {
             cx: AppContext {
                 models: Default::default(),
                 views: Default::default(),
+                parents: Default::default(),
                 windows: Default::default(),
                 globals: Default::default(),
                 element_states: Default::default(),
@@ -1025,10 +1003,10 @@ impl MutableAppContext {
                 font_cache,
                 platform,
             },
-            action_deserializers: HashMap::new(),
-            capture_actions: HashMap::new(),
-            actions: HashMap::new(),
-            global_actions: HashMap::new(),
+            action_deserializers: Default::default(),
+            capture_actions: Default::default(),
+            actions: Default::default(),
+            global_actions: Default::default(),
             keystroke_matcher: keymap::Matcher::default(),
             next_entity_id: 0,
             next_window_id: 0,
@@ -1041,13 +1019,14 @@ impl MutableAppContext {
             release_observations: Default::default(),
             global_observations: Default::default(),
             window_activation_observations: Default::default(),
+            window_fullscreen_observations: Default::default(),
             action_dispatch_observations: Default::default(),
-            presenters_and_platform_windows: HashMap::new(),
+            presenters_and_platform_windows: Default::default(),
             foreground,
             pending_effects: VecDeque::new(),
             pending_focus_index: None,
-            pending_notifications: HashSet::new(),
-            pending_global_notifications: HashSet::new(),
+            pending_notifications: Default::default(),
+            pending_global_notifications: Default::default(),
             pending_flushes: 0,
             flushing_effects: false,
             halt_action_dispatch: false,
@@ -1194,7 +1173,9 @@ impl MutableAppContext {
         F: 'static + FnMut(&mut V, &A, &mut ViewContext<V>) -> Option<Task<Result<()>>>,
     {
         self.add_action(move |view, action, cx| {
-            handler(view, action, cx).map(|task| task.detach_and_log_err(cx));
+            if let Some(task) = handler(view, action, cx) {
+                task.detach_and_log_err(cx);
+            }
         })
     }
 
@@ -1248,14 +1229,21 @@ impl MutableAppContext {
             .map_or(false, |window| window.is_active)
     }
 
+    pub fn window_is_fullscreen(&self, window_id: usize) -> bool {
+        self.cx
+            .windows
+            .get(&window_id)
+            .map_or(false, |window| window.is_fullscreen)
+    }
+
     pub fn render_view(&mut self, params: RenderParams) -> Result<ElementBox> {
         let window_id = params.window_id;
         let view_id = params.view_id;
         let mut view = self
             .cx
             .views
-            .remove(&(params.window_id, params.view_id))
-            .ok_or(anyhow!("view not found"))?;
+            .remove(&(window_id, view_id))
+            .ok_or_else(|| anyhow!("view not found"))?;
         let element = view.render(params, self);
         self.cx.views.insert((window_id, view_id), view);
         Ok(element)
@@ -1267,6 +1255,7 @@ impl MutableAppContext {
         titlebar_height: f32,
     ) -> HashMap<usize, ElementBox> {
         self.start_frame();
+        #[allow(clippy::needless_collect)]
         let view_ids = self
             .views
             .keys()
@@ -1278,6 +1267,7 @@ impl MutableAppContext {
                 }
             })
             .collect::<Vec<_>>();
+
         view_ids
             .into_iter()
             .map(|view_id| {
@@ -1385,10 +1375,11 @@ impl MutableAppContext {
                 callback(payload, cx)
             }),
         });
+
         Subscription::GlobalSubscription {
             id: subscription_id,
             type_id,
-            subscriptions: Some(Arc::downgrade(&self.global_subscriptions)),
+            subscriptions: Some(self.global_subscriptions.downgrade()),
         }
     }
 
@@ -1429,7 +1420,7 @@ impl MutableAppContext {
         Subscription::Subscription {
             id: subscription_id,
             entity_id: handle.id(),
-            subscriptions: Some(Arc::downgrade(&self.subscriptions)),
+            subscriptions: Some(self.subscriptions.downgrade()),
         }
     }
 
@@ -1457,7 +1448,7 @@ impl MutableAppContext {
         Subscription::Observation {
             id: subscription_id,
             entity_id,
-            observations: Some(Arc::downgrade(&self.observations)),
+            observations: Some(self.observations.downgrade()),
         }
     }
 
@@ -1469,6 +1460,7 @@ impl MutableAppContext {
         let subscription_id = post_inc(&mut self.next_subscription_id);
         let observed = handle.downgrade();
         let view_id = handle.id();
+
         self.pending_effects.push_back(Effect::FocusObservation {
             view_id,
             subscription_id,
@@ -1480,10 +1472,11 @@ impl MutableAppContext {
                 }
             }),
         });
+
         Subscription::FocusObservation {
             id: subscription_id,
             view_id,
-            observations: Some(Arc::downgrade(&self.focus_observations)),
+            observations: Some(self.focus_observations.downgrade()),
         }
     }
 
@@ -1495,20 +1488,16 @@ impl MutableAppContext {
         let type_id = TypeId::of::<G>();
         let id = post_inc(&mut self.next_subscription_id);
 
-        self.global_observations
-            .lock()
-            .entry(type_id)
-            .or_default()
-            .insert(
-                id,
-                Some(Box::new(move |cx: &mut MutableAppContext| observe(cx))
-                    as GlobalObservationCallback),
-            );
+        self.global_observations.add_callback(
+            type_id,
+            id,
+            Box::new(move |cx: &mut MutableAppContext| observe(cx)),
+        );
 
         Subscription::GlobalObservation {
             id,
             type_id,
-            observations: Some(Arc::downgrade(&self.global_observations)),
+            observations: Some(self.global_observations.downgrade()),
         }
     }
 
@@ -1566,7 +1555,25 @@ impl MutableAppContext {
         Subscription::WindowActivationObservation {
             id: subscription_id,
             window_id,
-            observations: Some(Arc::downgrade(&self.window_activation_observations)),
+            observations: Some(self.window_activation_observations.downgrade()),
+        }
+    }
+
+    fn observe_fullscreen<F>(&mut self, window_id: usize, callback: F) -> Subscription
+    where
+        F: 'static + FnMut(bool, &mut MutableAppContext) -> bool,
+    {
+        let subscription_id = post_inc(&mut self.next_subscription_id);
+        self.pending_effects
+            .push_back(Effect::WindowFullscreenObservation {
+                window_id,
+                subscription_id,
+                callback: Box::new(callback),
+            });
+        Subscription::WindowFullscreenObservation {
+            id: subscription_id,
+            window_id,
+            observations: Some(self.window_activation_observations.downgrade()),
         }
     }
 
@@ -1605,6 +1612,12 @@ impl MutableAppContext {
         }
     }
 
+    pub(crate) fn name_for_view(&self, window_id: usize, view_id: usize) -> Option<&str> {
+        self.views
+            .get(&(window_id, view_id))
+            .map(|view| view.ui_name())
+    }
+
     pub fn all_action_names<'a>(&'a self) -> impl Iterator<Item = &'static str> + 'a {
         self.action_deserializers.keys().copied()
     }
@@ -1616,17 +1629,7 @@ impl MutableAppContext {
     ) -> impl Iterator<Item = (&'static str, Box<dyn Action>, SmallVec<[&Binding; 1]>)> {
         let mut action_types: HashSet<_> = self.global_actions.keys().copied().collect();
 
-        let presenter = self
-            .presenters_and_platform_windows
-            .get(&window_id)
-            .unwrap()
-            .0
-            .clone();
-        let mut dispatch_path = Vec::new();
-        presenter
-            .borrow()
-            .compute_dispatch_path_from(view_id, &mut dispatch_path);
-        for view_id in dispatch_path {
+        for view_id in self.parents(window_id, view_id) {
             if let Some(view) = self.views.get(&(window_id, view_id)) {
                 let view_type = view.as_any().type_id();
                 if let Some(actions) = self.actions.get(&view_type) {
@@ -1655,9 +1658,8 @@ impl MutableAppContext {
     pub fn is_action_available(&self, action: &dyn Action) -> bool {
         let action_type = action.as_any().type_id();
         if let Some(window_id) = self.cx.platform.key_window_id() {
-            if let Some((presenter, _)) = self.presenters_and_platform_windows.get(&window_id) {
-                let dispatch_path = presenter.borrow().dispatch_path(&self.cx);
-                for view_id in dispatch_path {
+            if let Some(focused_view_id) = self.focused_view_id(window_id) {
+                for view_id in self.parents(window_id, focused_view_id) {
                     if let Some(view) = self.views.get(&(window_id, view_id)) {
                         let view_type = view.as_any().type_id();
                         if let Some(actions) = self.actions.get(&view_type) {
@@ -1695,81 +1697,49 @@ impl MutableAppContext {
         None
     }
 
-    pub fn dispatch_action_at(&mut self, window_id: usize, view_id: usize, action: &dyn Action) {
-        let presenter = self
-            .presenters_and_platform_windows
-            .get(&window_id)
-            .unwrap()
-            .0
-            .clone();
-        let mut dispatch_path = Vec::new();
-        presenter
-            .borrow()
-            .compute_dispatch_path_from(view_id, &mut dispatch_path);
-        self.dispatch_action_any(window_id, &dispatch_path, action);
-    }
-
-    pub fn dispatch_action<A: Action>(
+    // Traverses the parent tree. Walks down the tree toward the passed
+    // view calling visit with true. Then walks back up the tree calling visit with false.
+    // If `visit` returns false this function will immediately return.
+    // Returns a bool indicating if the traversal was completed early.
+    fn visit_dispatch_path(
         &mut self,
         window_id: usize,
-        dispatch_path: Vec<usize>,
-        action: &A,
-    ) {
-        self.dispatch_action_any(window_id, &dispatch_path, action);
-    }
-
-    pub(crate) fn dispatch_action_any(
-        &mut self,
-        window_id: usize,
-        path: &[usize],
-        action: &dyn Action,
+        view_id: usize,
+        mut visit: impl FnMut(usize, bool, &mut MutableAppContext) -> bool,
     ) -> bool {
-        self.update(|this| {
-            this.halt_action_dispatch = false;
-            for (capture_phase, view_id) in path
-                .iter()
-                .map(|view_id| (true, *view_id))
-                .chain(path.iter().rev().map(|view_id| (false, *view_id)))
-            {
-                if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
-                    let type_id = view.as_any().type_id();
+        // List of view ids from the leaf to the root of the window
+        let path = self.parents(window_id, view_id).collect::<Vec<_>>();
 
-                    if let Some((name, mut handlers)) = this
-                        .actions_mut(capture_phase)
-                        .get_mut(&type_id)
-                        .and_then(|h| h.remove_entry(&action.id()))
-                    {
-                        for handler in handlers.iter_mut().rev() {
-                            this.halt_action_dispatch = true;
-                            handler(view.as_mut(), action, this, window_id, view_id);
-                            if this.halt_action_dispatch {
-                                break;
-                            }
-                        }
-                        this.actions_mut(capture_phase)
-                            .get_mut(&type_id)
-                            .unwrap()
-                            .insert(name, handlers);
-                    }
+        // Walk down from the root to the leaf calling visit with capture_phase = true
+        for view_id in path.iter().rev() {
+            if !visit(*view_id, true, self) {
+                return false;
+            }
+        }
 
-                    this.cx.views.insert((window_id, view_id), view);
+        // Walk up from the leaf to the root calling visit with capture_phase = false
+        for view_id in path.iter() {
+            if !visit(*view_id, false, self) {
+                return false;
+            }
+        }
 
-                    if this.halt_action_dispatch {
-                        break;
-                    }
+        true
+    }
+
+    // Returns an iterator over all of the view ids from the passed view up to the root of the window
+    // Includes the passed view itself
+    fn parents(&self, window_id: usize, mut view_id: usize) -> impl Iterator<Item = usize> + '_ {
+        std::iter::once(view_id)
+            .into_iter()
+            .chain(std::iter::from_fn(move || {
+                if let Some(ParentId::View(parent_id)) = self.parents.get(&(window_id, view_id)) {
+                    view_id = *parent_id;
+                    Some(view_id)
+                } else {
+                    None
                 }
-            }
-
-            if !this.halt_action_dispatch {
-                this.halt_action_dispatch = this.dispatch_global_action_any(action);
-            }
-
-            this.pending_effects
-                .push_back(Effect::ActionDispatchNotification {
-                    action_id: action.id(),
-                });
-            this.halt_action_dispatch
-        })
+            }))
     }
 
     fn actions_mut(
@@ -1807,34 +1777,34 @@ impl MutableAppContext {
         self.keystroke_matcher.clear_bindings();
     }
 
-    pub fn dispatch_keystroke(
-        &mut self,
-        window_id: usize,
-        dispatch_path: Vec<usize>,
-        keystroke: &Keystroke,
-    ) -> bool {
-        let mut context_chain = Vec::new();
-        for view_id in &dispatch_path {
-            let view = self
-                .cx
-                .views
-                .get(&(window_id, *view_id))
-                .expect("view in responder chain does not exist");
-            context_chain.push(view.keymap_context(self.as_ref()));
-        }
-
+    pub fn dispatch_keystroke(&mut self, window_id: usize, keystroke: &Keystroke) -> bool {
         let mut pending = false;
-        for (i, cx) in context_chain.iter().enumerate().rev() {
-            match self
-                .keystroke_matcher
-                .push_keystroke(keystroke.clone(), dispatch_path[i], cx)
-            {
-                MatchResult::None => {}
-                MatchResult::Pending => pending = true,
-                MatchResult::Action(action) => {
-                    if self.dispatch_action_any(window_id, &dispatch_path[0..=i], action.as_ref()) {
-                        self.keystroke_matcher.clear_pending();
-                        return true;
+
+        if let Some(focused_view_id) = self.focused_view_id(window_id) {
+            for view_id in self.parents(window_id, focused_view_id).collect::<Vec<_>>() {
+                let keymap_context = self
+                    .cx
+                    .views
+                    .get(&(window_id, view_id))
+                    .unwrap()
+                    .keymap_context(self.as_ref());
+
+                match self.keystroke_matcher.push_keystroke(
+                    keystroke.clone(),
+                    view_id,
+                    &keymap_context,
+                ) {
+                    MatchResult::None => {}
+                    MatchResult::Pending => pending = true,
+                    MatchResult::Action(action) => {
+                        if self.handle_dispatch_action_from_effect(
+                            window_id,
+                            Some(view_id),
+                            action.as_ref(),
+                        ) {
+                            self.keystroke_matcher.clear_pending();
+                            return true;
+                        }
                     }
                 }
             }
@@ -1888,15 +1858,14 @@ impl MutableAppContext {
     {
         self.update(|this| {
             let type_id = TypeId::of::<T>();
-            let mut state = this
-                .cx
-                .globals
-                .remove(&type_id)
-                .expect("no global has been added for this type");
-            let result = update(state.downcast_mut().unwrap(), this);
-            this.cx.globals.insert(type_id, state);
-            this.notify_global(type_id);
-            result
+            if let Some(mut state) = this.cx.globals.remove(&type_id) {
+                let result = update(state.downcast_mut().unwrap(), this);
+                this.cx.globals.insert(type_id, state);
+                this.notify_global(type_id);
+                result
+            } else {
+                panic!("No global added for {}", std::any::type_name::<T>());
+            }
         })
     }
 
@@ -1926,7 +1895,9 @@ impl MutableAppContext {
     {
         self.update(|this| {
             let window_id = post_inc(&mut this.next_window_id);
-            let root_view = this.add_view(window_id, build_root_view);
+            let root_view = this
+                .build_and_insert_view(window_id, ParentId::Root, |cx| Some(build_root_view(cx)))
+                .unwrap();
             this.cx.windows.insert(
                 window_id,
                 Window {
@@ -1934,9 +1905,10 @@ impl MutableAppContext {
                     focused_view_id: Some(root_view.id()),
                     is_active: false,
                     invalidation: None,
+                    is_fullscreen: false,
                 },
             );
-            root_view.update(this, |view, cx| view.on_focus(cx));
+            root_view.update(this, |view, cx| view.on_focus_in(cx.handle().into(), cx));
             this.open_platform_window(window_id, window_options);
 
             (window_id, root_view)
@@ -1949,7 +1921,9 @@ impl MutableAppContext {
         F: FnOnce(&mut ViewContext<T>) -> T,
     {
         self.update(|this| {
-            let root_view = this.add_view(window_id, build_root_view);
+            let root_view = this
+                .build_and_insert_view(window_id, ParentId::Root, |cx| Some(build_root_view(cx)))
+                .unwrap();
             let window = this.cx.windows.get_mut(&window_id).unwrap();
             window.root_view = root_view.clone().into();
             window.focused_view_id = Some(root_view.id());
@@ -1979,11 +1953,7 @@ impl MutableAppContext {
                 app.update(|cx| {
                     if let Some(presenter) = presenter.upgrade() {
                         if let Event::KeyDown(KeyDownEvent { keystroke, .. }) = &event {
-                            if cx.dispatch_keystroke(
-                                window_id,
-                                presenter.borrow().dispatch_path(cx.as_ref()),
-                                keystroke,
-                            ) {
+                            if cx.dispatch_keystroke(window_id, keystroke) {
                                 return true;
                             }
                         }
@@ -2007,6 +1977,13 @@ impl MutableAppContext {
             let mut app = self.upgrade();
             window.on_resize(Box::new(move || {
                 app.update(|cx| cx.window_was_resized(window_id))
+            }));
+        }
+
+        {
+            let mut app = self.upgrade();
+            window.on_fullscreen(Box::new(move |is_fullscreen| {
+                app.update(|cx| cx.window_was_fullscreen_changed(window_id, is_fullscreen))
             }));
         }
 
@@ -2042,18 +2019,45 @@ impl MutableAppContext {
         )
     }
 
-    pub fn add_view<T, F>(&mut self, window_id: usize, build_view: F) -> ViewHandle<T>
+    pub fn add_view<T, F>(
+        &mut self,
+        parent_handle: impl Into<AnyViewHandle>,
+        build_view: F,
+    ) -> ViewHandle<T>
     where
         T: View,
         F: FnOnce(&mut ViewContext<T>) -> T,
     {
-        self.add_option_view(window_id, |cx| Some(build_view(cx)))
-            .unwrap()
+        let parent_handle = parent_handle.into();
+        self.build_and_insert_view(
+            parent_handle.window_id,
+            ParentId::View(parent_handle.view_id),
+            |cx| Some(build_view(cx)),
+        )
+        .unwrap()
     }
 
     pub fn add_option_view<T, F>(
         &mut self,
+        parent_handle: impl Into<AnyViewHandle>,
+        build_view: F,
+    ) -> Option<ViewHandle<T>>
+    where
+        T: View,
+        F: FnOnce(&mut ViewContext<T>) -> Option<T>,
+    {
+        let parent_handle = parent_handle.into();
+        self.build_and_insert_view(
+            parent_handle.window_id,
+            ParentId::View(parent_handle.view_id),
+            build_view,
+        )
+    }
+
+    pub(crate) fn build_and_insert_view<T, F>(
+        &mut self,
         window_id: usize,
+        parent_id: ParentId,
         build_view: F,
     ) -> Option<ViewHandle<T>>
     where
@@ -2065,6 +2069,7 @@ impl MutableAppContext {
             let mut cx = ViewContext::new(this, window_id, view_id);
             let handle = if let Some(view) = build_view(&mut cx) {
                 this.cx.views.insert((window_id, view_id), Box::new(view));
+                this.cx.parents.insert((window_id, view_id), parent_id);
                 if let Some(window) = this.cx.windows.get_mut(&window_id) {
                     window
                         .invalidation
@@ -2092,8 +2097,8 @@ impl MutableAppContext {
             }
 
             for model_id in dropped_models {
-                self.subscriptions.lock().remove(&model_id);
-                self.observations.lock().remove(&model_id);
+                self.subscriptions.remove(model_id);
+                self.observations.remove(model_id);
                 let mut model = self.cx.models.remove(&model_id).unwrap();
                 model.release(self);
                 self.pending_effects
@@ -2101,8 +2106,8 @@ impl MutableAppContext {
             }
 
             for (window_id, view_id) in dropped_views {
-                self.subscriptions.lock().remove(&view_id);
-                self.observations.lock().remove(&view_id);
+                self.subscriptions.remove(view_id);
+                self.observations.remove(view_id);
                 let mut view = self.cx.views.remove(&(window_id, view_id)).unwrap();
                 view.release(self);
                 let change_focus_to = self.cx.windows.get_mut(&window_id).and_then(|window| {
@@ -2117,6 +2122,7 @@ impl MutableAppContext {
                         None
                     }
                 });
+                self.cx.parents.remove(&(window_id, view_id));
 
                 if let Some(view_id) = change_focus_to {
                     self.handle_focus_effect(window_id, Some(view_id));
@@ -2150,32 +2156,59 @@ impl MutableAppContext {
                             entity_id,
                             subscription_id,
                             callback,
-                        } => self.handle_subscription_effect(entity_id, subscription_id, callback),
-                        Effect::Event { entity_id, payload } => self.emit_event(entity_id, payload),
+                        } => self.subscriptions.add_or_remove_callback(
+                            entity_id,
+                            subscription_id,
+                            callback,
+                        ),
+
+                        Effect::Event { entity_id, payload } => {
+                            let mut subscriptions = self.subscriptions.clone();
+                            subscriptions.emit_and_cleanup(entity_id, self, |callback, this| {
+                                callback(payload.as_ref(), this)
+                            })
+                        }
+
                         Effect::GlobalSubscription {
                             type_id,
                             subscription_id,
                             callback,
-                        } => self.handle_global_subscription_effect(
+                        } => self.global_subscriptions.add_or_remove_callback(
                             type_id,
                             subscription_id,
                             callback,
                         ),
+
                         Effect::GlobalEvent { payload } => self.emit_global_event(payload),
+
                         Effect::Observation {
                             entity_id,
                             subscription_id,
                             callback,
-                        } => self.handle_observation_effect(entity_id, subscription_id, callback),
+                        } => self.observations.add_or_remove_callback(
+                            entity_id,
+                            subscription_id,
+                            callback,
+                        ),
+
                         Effect::ModelNotification { model_id } => {
-                            self.handle_model_notification_effect(model_id)
+                            let mut observations = self.observations.clone();
+                            observations
+                                .emit_and_cleanup(model_id, self, |callback, this| callback(this));
                         }
+
                         Effect::ViewNotification { window_id, view_id } => {
                             self.handle_view_notification_effect(window_id, view_id)
                         }
+
                         Effect::GlobalNotification { type_id } => {
-                            self.handle_global_notification_effect(type_id)
+                            let mut subscriptions = self.global_observations.clone();
+                            subscriptions.emit_and_cleanup(type_id, self, |callback, this| {
+                                callback(this);
+                                true
+                            });
                         }
+
                         Effect::Deferred {
                             callback,
                             after_window_update,
@@ -2186,22 +2219,31 @@ impl MutableAppContext {
                                 callback(self)
                             }
                         }
+
                         Effect::ModelRelease { model_id, model } => {
                             self.handle_entity_release_effect(model_id, model.as_any())
                         }
+
                         Effect::ViewRelease { view_id, view } => {
                             self.handle_entity_release_effect(view_id, view.as_any())
                         }
+
                         Effect::Focus { window_id, view_id } => {
                             self.handle_focus_effect(window_id, view_id);
                         }
+
                         Effect::FocusObservation {
                             view_id,
                             subscription_id,
                             callback,
                         } => {
-                            self.handle_focus_observation_effect(view_id, subscription_id, callback)
+                            self.focus_observations.add_or_remove_callback(
+                                view_id,
+                                subscription_id,
+                                callback,
+                            );
                         }
+
                         Effect::ResizeWindow { window_id } => {
                             if let Some(window) = self.cx.windows.get_mut(&window_id) {
                                 window
@@ -2209,21 +2251,50 @@ impl MutableAppContext {
                                     .get_or_insert(WindowInvalidation::default());
                             }
                         }
+
                         Effect::WindowActivationObservation {
                             window_id,
                             subscription_id,
                             callback,
-                        } => self.handle_window_activation_observation_effect(
+                        } => self.window_activation_observations.add_or_remove_callback(
                             window_id,
                             subscription_id,
                             callback,
                         ),
+
                         Effect::ActivateWindow {
                             window_id,
                             is_active,
                         } => self.handle_window_activation_effect(window_id, is_active),
+
+                        Effect::WindowFullscreenObservation {
+                            window_id,
+                            subscription_id,
+                            callback,
+                        } => self.window_fullscreen_observations.add_or_remove_callback(
+                            window_id,
+                            subscription_id,
+                            callback,
+                        ),
+
+                        Effect::FullscreenWindow {
+                            window_id,
+                            is_fullscreen,
+                        } => self.handle_fullscreen_effect(window_id, is_fullscreen),
+
                         Effect::RefreshWindows => {
                             refreshing = true;
+                        }
+                        Effect::DispatchActionFrom {
+                            window_id,
+                            view_id,
+                            action,
+                        } => {
+                            self.handle_dispatch_action_from_effect(
+                                window_id,
+                                Some(view_id),
+                                action.as_ref(),
+                            );
                         }
                         Effect::ActionDispatchNotification { action_id } => {
                             self.handle_action_dispatch_notification_effect(action_id)
@@ -2265,7 +2336,7 @@ impl MutableAppContext {
     }
 
     fn update_windows(&mut self) {
-        let mut invalidations = HashMap::new();
+        let mut invalidations: HashMap<_, _> = Default::default();
         for (window_id, window) in &mut self.cx.windows {
             if let Some(invalidation) = window.invalidation.take() {
                 invalidations.insert(*window_id, invalidation);
@@ -2294,6 +2365,13 @@ impl MutableAppContext {
             .push_back(Effect::ResizeWindow { window_id });
     }
 
+    fn window_was_fullscreen_changed(&mut self, window_id: usize, is_fullscreen: bool) {
+        self.pending_effects.push_back(Effect::FullscreenWindow {
+            window_id,
+            is_fullscreen,
+        });
+    }
+
     fn window_changed_active_status(&mut self, window_id: usize, is_active: bool) {
         self.pending_effects.push_back(Effect::ActivateWindow {
             window_id,
@@ -2305,13 +2383,30 @@ impl MutableAppContext {
         self.pending_effects.push_back(Effect::RefreshWindows);
     }
 
+    pub fn dispatch_action_at(&mut self, window_id: usize, view_id: usize, action: impl Action) {
+        self.dispatch_any_action_at(window_id, view_id, Box::new(action));
+    }
+
+    pub fn dispatch_any_action_at(
+        &mut self,
+        window_id: usize,
+        view_id: usize,
+        action: Box<dyn Action>,
+    ) {
+        self.pending_effects.push_back(Effect::DispatchActionFrom {
+            window_id,
+            view_id,
+            action,
+        });
+    }
+
     fn perform_window_refresh(&mut self) {
         let mut presenters = mem::take(&mut self.presenters_and_platform_windows);
         for (window_id, (presenter, window)) in &mut presenters {
             let mut invalidation = self
                 .cx
                 .windows
-                .get_mut(&window_id)
+                .get_mut(window_id)
                 .unwrap()
                 .invalidation
                 .take();
@@ -2326,182 +2421,14 @@ impl MutableAppContext {
         self.presenters_and_platform_windows = presenters;
     }
 
-    fn handle_subscription_effect(
-        &mut self,
-        entity_id: usize,
-        subscription_id: usize,
-        callback: SubscriptionCallback,
-    ) {
-        match self
-            .subscriptions
-            .lock()
-            .entry(entity_id)
-            .or_default()
-            .entry(subscription_id)
-        {
-            btree_map::Entry::Vacant(entry) => {
-                entry.insert(Some(callback));
-            }
-            // Subscription was dropped before effect was processed
-            btree_map::Entry::Occupied(entry) => {
-                debug_assert!(entry.get().is_none());
-                entry.remove();
-            }
-        }
-    }
-
-    fn emit_event(&mut self, entity_id: usize, payload: Box<dyn Any>) {
-        let callbacks = self.subscriptions.lock().remove(&entity_id);
-        if let Some(callbacks) = callbacks {
-            for (id, callback) in callbacks {
-                if let Some(mut callback) = callback {
-                    let alive = callback(payload.as_ref(), self);
-                    if alive {
-                        match self
-                            .subscriptions
-                            .lock()
-                            .entry(entity_id)
-                            .or_default()
-                            .entry(id)
-                        {
-                            btree_map::Entry::Vacant(entry) => {
-                                entry.insert(Some(callback));
-                            }
-                            btree_map::Entry::Occupied(entry) => {
-                                entry.remove();
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn handle_global_subscription_effect(
-        &mut self,
-        type_id: TypeId,
-        subscription_id: usize,
-        callback: GlobalSubscriptionCallback,
-    ) {
-        match self
-            .global_subscriptions
-            .lock()
-            .entry(type_id)
-            .or_default()
-            .entry(subscription_id)
-        {
-            btree_map::Entry::Vacant(entry) => {
-                entry.insert(Some(callback));
-            }
-            // Subscription was dropped before effect was processed
-            btree_map::Entry::Occupied(entry) => {
-                debug_assert!(entry.get().is_none());
-                entry.remove();
-            }
-        }
-    }
-
     fn emit_global_event(&mut self, payload: Box<dyn Any>) {
         let type_id = (&*payload).type_id();
-        let callbacks = self.global_subscriptions.lock().remove(&type_id);
-        if let Some(callbacks) = callbacks {
-            for (id, callback) in callbacks {
-                if let Some(mut callback) = callback {
-                    callback(payload.as_ref(), self);
-                    match self
-                        .global_subscriptions
-                        .lock()
-                        .entry(type_id)
-                        .or_default()
-                        .entry(id)
-                    {
-                        btree_map::Entry::Vacant(entry) => {
-                            entry.insert(Some(callback));
-                        }
-                        btree_map::Entry::Occupied(entry) => {
-                            entry.remove();
-                        }
-                    }
-                }
-            }
-        }
-    }
 
-    fn handle_observation_effect(
-        &mut self,
-        entity_id: usize,
-        subscription_id: usize,
-        callback: ObservationCallback,
-    ) {
-        match self
-            .observations
-            .lock()
-            .entry(entity_id)
-            .or_default()
-            .entry(subscription_id)
-        {
-            btree_map::Entry::Vacant(entry) => {
-                entry.insert(Some(callback));
-            }
-            // Observation was dropped before effect was processed
-            btree_map::Entry::Occupied(entry) => {
-                debug_assert!(entry.get().is_none());
-                entry.remove();
-            }
-        }
-    }
-
-    fn handle_focus_observation_effect(
-        &mut self,
-        view_id: usize,
-        subscription_id: usize,
-        callback: FocusObservationCallback,
-    ) {
-        match self
-            .focus_observations
-            .lock()
-            .entry(view_id)
-            .or_default()
-            .entry(subscription_id)
-        {
-            btree_map::Entry::Vacant(entry) => {
-                entry.insert(Some(callback));
-            }
-            // Observation was dropped before effect was processed
-            btree_map::Entry::Occupied(entry) => {
-                debug_assert!(entry.get().is_none());
-                entry.remove();
-            }
-        }
-    }
-
-    fn handle_model_notification_effect(&mut self, observed_id: usize) {
-        let callbacks = self.observations.lock().remove(&observed_id);
-        if let Some(callbacks) = callbacks {
-            if self.cx.models.contains_key(&observed_id) {
-                for (id, callback) in callbacks {
-                    if let Some(mut callback) = callback {
-                        let alive = callback(self);
-                        if alive {
-                            match self
-                                .observations
-                                .lock()
-                                .entry(observed_id)
-                                .or_default()
-                                .entry(id)
-                            {
-                                btree_map::Entry::Vacant(entry) => {
-                                    entry.insert(Some(callback));
-                                }
-                                btree_map::Entry::Occupied(entry) => {
-                                    entry.remove();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let mut subscriptions = self.global_subscriptions.clone();
+        subscriptions.emit_and_cleanup(type_id, self, |callback, this| {
+            callback(payload.as_ref(), this);
+            true //Always alive
+        });
     }
 
     fn handle_view_notification_effect(
@@ -2509,8 +2436,6 @@ impl MutableAppContext {
         observed_window_id: usize,
         observed_view_id: usize,
     ) {
-        let callbacks = self.observations.lock().remove(&observed_view_id);
-
         if self
             .cx
             .views
@@ -2524,54 +2449,8 @@ impl MutableAppContext {
                     .insert(observed_view_id);
             }
 
-            if let Some(callbacks) = callbacks {
-                for (id, callback) in callbacks {
-                    if let Some(mut callback) = callback {
-                        let alive = callback(self);
-                        if alive {
-                            match self
-                                .observations
-                                .lock()
-                                .entry(observed_view_id)
-                                .or_default()
-                                .entry(id)
-                            {
-                                btree_map::Entry::Vacant(entry) => {
-                                    entry.insert(Some(callback));
-                                }
-                                btree_map::Entry::Occupied(entry) => {
-                                    entry.remove();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn handle_global_notification_effect(&mut self, observed_type_id: TypeId) {
-        let callbacks = self.global_observations.lock().remove(&observed_type_id);
-        if let Some(callbacks) = callbacks {
-            for (id, callback) in callbacks {
-                if let Some(mut callback) = callback {
-                    callback(self);
-                    match self
-                        .global_observations
-                        .lock()
-                        .entry(observed_type_id)
-                        .or_default()
-                        .entry(id)
-                    {
-                        collections::btree_map::Entry::Vacant(entry) => {
-                            entry.insert(Some(callback));
-                        }
-                        collections::btree_map::Entry::Occupied(entry) => {
-                            entry.remove();
-                        }
-                    }
-                }
-            }
+            let mut observations = self.observations.clone();
+            observations.emit_and_cleanup(observed_view_id, self, |callback, this| callback(this));
         }
     }
 
@@ -2584,37 +2463,39 @@ impl MutableAppContext {
         }
     }
 
-    fn handle_window_activation_observation_effect(
-        &mut self,
-        window_id: usize,
-        subscription_id: usize,
-        callback: WindowActivationCallback,
-    ) {
-        match self
-            .window_activation_observations
-            .lock()
-            .entry(window_id)
-            .or_default()
-            .entry(subscription_id)
-        {
-            btree_map::Entry::Vacant(entry) => {
-                entry.insert(Some(callback));
-            }
-            // Observation was dropped before effect was processed
-            btree_map::Entry::Occupied(entry) => {
-                debug_assert!(entry.get().is_none());
-                entry.remove();
-            }
-        }
-    }
-
-    fn handle_window_activation_effect(&mut self, window_id: usize, active: bool) {
+    fn handle_fullscreen_effect(&mut self, window_id: usize, is_fullscreen: bool) {
+        //Short circuit evaluation if we're already g2g
         if self
             .cx
             .windows
             .get(&window_id)
-            .map(|w| w.is_active)
-            .map_or(false, |cur_active| cur_active == active)
+            .map(|w| w.is_fullscreen == is_fullscreen)
+            .unwrap_or(false)
+        {
+            return;
+        }
+
+        self.update(|this| {
+            let window = this.cx.windows.get_mut(&window_id)?;
+            window.is_fullscreen = is_fullscreen;
+
+            let mut observations = this.window_fullscreen_observations.clone();
+            observations.emit_and_cleanup(window_id, this, |callback, this| {
+                callback(is_fullscreen, this)
+            });
+
+            Some(())
+        });
+    }
+
+    fn handle_window_activation_effect(&mut self, window_id: usize, active: bool) {
+        //Short circuit evaluation if we're already g2g
+        if self
+            .cx
+            .windows
+            .get(&window_id)
+            .map(|w| w.is_active == active)
+            .unwrap_or(false)
         {
             return;
         }
@@ -2622,43 +2503,22 @@ impl MutableAppContext {
         self.update(|this| {
             let window = this.cx.windows.get_mut(&window_id)?;
             window.is_active = active;
-            let view_id = window.focused_view_id?;
-            if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
-                if active {
-                    view.on_focus(this, window_id, view_id);
-                } else {
-                    view.on_blur(this, window_id, view_id);
+
+            //Handle focus
+            let focused_id = window.focused_view_id?;
+            for view_id in this.parents(window_id, focused_id).collect::<Vec<_>>() {
+                if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
+                    if active {
+                        view.on_focus_in(this, window_id, view_id, focused_id);
+                    } else {
+                        view.on_focus_out(this, window_id, view_id, focused_id);
+                    }
+                    this.cx.views.insert((window_id, view_id), view);
                 }
-                this.cx.views.insert((window_id, view_id), view);
             }
 
-            let callbacks = this
-                .window_activation_observations
-                .lock()
-                .remove(&window_id);
-            if let Some(callbacks) = callbacks {
-                for (id, callback) in callbacks {
-                    if let Some(mut callback) = callback {
-                        let alive = callback(active, this);
-                        if alive {
-                            match this
-                                .window_activation_observations
-                                .lock()
-                                .entry(window_id)
-                                .or_default()
-                                .entry(id)
-                            {
-                                btree_map::Entry::Vacant(entry) => {
-                                    entry.insert(Some(callback));
-                                }
-                                btree_map::Entry::Occupied(entry) => {
-                                    entry.remove();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            let mut observations = this.window_activation_observations.clone();
+            observations.emit_and_cleanup(window_id, this, |callback, this| callback(active, this));
 
             Some(())
         });
@@ -2684,75 +2544,94 @@ impl MutableAppContext {
                 blurred_id
             });
 
-            if let Some(blurred_id) = blurred_id {
-                if let Some(mut blurred_view) = this.cx.views.remove(&(window_id, blurred_id)) {
-                    blurred_view.on_blur(this, window_id, blurred_id);
-                    this.cx.views.insert((window_id, blurred_id), blurred_view);
+            let blurred_parents = blurred_id
+                .map(|blurred_id| this.parents(window_id, blurred_id).collect::<Vec<_>>())
+                .unwrap_or_default();
+            let focused_parents = focused_id
+                .map(|focused_id| this.parents(window_id, focused_id).collect::<Vec<_>>())
+                .unwrap_or_default();
 
-                    let callbacks = this.focus_observations.lock().remove(&blurred_id);
-                    if let Some(callbacks) = callbacks {
-                        for (id, callback) in callbacks {
-                            if let Some(mut callback) = callback {
-                                let alive = callback(false, this);
-                                if alive {
-                                    match this
-                                        .focus_observations
-                                        .lock()
-                                        .entry(blurred_id)
-                                        .or_default()
-                                        .entry(id)
-                                    {
-                                        btree_map::Entry::Vacant(entry) => {
-                                            entry.insert(Some(callback));
-                                        }
-                                        btree_map::Entry::Occupied(entry) => {
-                                            entry.remove();
-                                        }
-                                    }
-                                }
-                            }
-                        }
+            if let Some(blurred_id) = blurred_id {
+                for view_id in blurred_parents.iter().copied() {
+                    if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
+                        view.on_focus_out(this, window_id, view_id, blurred_id);
+                        this.cx.views.insert((window_id, view_id), view);
                     }
                 }
+
+                let mut subscriptions = this.focus_observations.clone();
+                subscriptions
+                    .emit_and_cleanup(blurred_id, this, |callback, this| callback(false, this));
             }
 
             if let Some(focused_id) = focused_id {
-                if let Some(mut focused_view) = this.cx.views.remove(&(window_id, focused_id)) {
-                    focused_view.on_focus(this, window_id, focused_id);
-                    this.cx.views.insert((window_id, focused_id), focused_view);
-
-                    let callbacks = this.focus_observations.lock().remove(&focused_id);
-                    if let Some(callbacks) = callbacks {
-                        for (id, callback) in callbacks {
-                            if let Some(mut callback) = callback {
-                                let alive = callback(true, this);
-                                if alive {
-                                    match this
-                                        .focus_observations
-                                        .lock()
-                                        .entry(focused_id)
-                                        .or_default()
-                                        .entry(id)
-                                    {
-                                        btree_map::Entry::Vacant(entry) => {
-                                            entry.insert(Some(callback));
-                                        }
-                                        btree_map::Entry::Occupied(entry) => {
-                                            entry.remove();
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                for view_id in focused_parents {
+                    if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
+                        view.on_focus_in(this, window_id, view_id, focused_id);
+                        this.cx.views.insert((window_id, view_id), view);
                     }
                 }
+
+                let mut subscriptions = this.focus_observations.clone();
+                subscriptions
+                    .emit_and_cleanup(focused_id, this, |callback, this| callback(true, this));
             }
+        })
+    }
+
+    fn handle_dispatch_action_from_effect(
+        &mut self,
+        window_id: usize,
+        view_id: Option<usize>,
+        action: &dyn Action,
+    ) -> bool {
+        self.update(|this| {
+            if let Some(view_id) = view_id {
+                this.halt_action_dispatch = false;
+                this.visit_dispatch_path(window_id, view_id, |view_id, capture_phase, this| {
+                    if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
+                        let type_id = view.as_any().type_id();
+
+                        if let Some((name, mut handlers)) = this
+                            .actions_mut(capture_phase)
+                            .get_mut(&type_id)
+                            .and_then(|h| h.remove_entry(&action.id()))
+                        {
+                            for handler in handlers.iter_mut().rev() {
+                                this.halt_action_dispatch = true;
+                                handler(view.as_mut(), action, this, window_id, view_id);
+                                if this.halt_action_dispatch {
+                                    break;
+                                }
+                            }
+                            this.actions_mut(capture_phase)
+                                .get_mut(&type_id)
+                                .unwrap()
+                                .insert(name, handlers);
+                        }
+
+                        this.cx.views.insert((window_id, view_id), view);
+                    }
+
+                    !this.halt_action_dispatch
+                });
+            }
+
+            if !this.halt_action_dispatch {
+                this.halt_action_dispatch = this.dispatch_global_action_any(action);
+            }
+
+            this.pending_effects
+                .push_back(Effect::ActionDispatchNotification {
+                    action_id: action.id(),
+                });
+            this.halt_action_dispatch
         })
     }
 
     fn handle_action_dispatch_notification_effect(&mut self, action_id: TypeId) {
         let mut callbacks = mem::take(&mut *self.action_dispatch_observations.lock());
-        for (_, callback) in &mut callbacks {
+        for callback in callbacks.values_mut() {
             callback(action_id, self);
         }
         self.action_dispatch_observations.lock().extend(callbacks);
@@ -2881,7 +2760,7 @@ impl ReadView for MutableAppContext {
         if let Some(view) = self.cx.views.get(&(handle.window_id, handle.view_id)) {
             view.as_any().downcast_ref().expect("downcast is type safe")
         } else {
-            panic!("circular view reference");
+            panic!("circular view reference for type {}", type_name::<T>());
         }
     }
 }
@@ -2931,9 +2810,16 @@ impl Deref for MutableAppContext {
     }
 }
 
+#[derive(Debug)]
+pub enum ParentId {
+    View(usize),
+    Root,
+}
+
 pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
     views: HashMap<(usize, usize), Box<dyn AnyView>>,
+    pub(crate) parents: HashMap<(usize, usize), ParentId>,
     windows: HashMap<usize, Window>,
     globals: HashMap<TypeId, Box<dyn Any>>,
     element_states: HashMap<ElementStateId, Box<dyn Any>>,
@@ -3072,6 +2958,7 @@ struct Window {
     root_view: AnyViewHandle,
     focused_view_id: Option<usize>,
     is_active: bool,
+    is_fullscreen: bool,
     invalidation: Option<WindowInvalidation>,
 }
 
@@ -3138,6 +3025,10 @@ pub enum Effect {
     ResizeWindow {
         window_id: usize,
     },
+    FullscreenWindow {
+        window_id: usize,
+        is_fullscreen: bool,
+    },
     ActivateWindow {
         window_id: usize,
         is_active: bool,
@@ -3147,7 +3038,17 @@ pub enum Effect {
         subscription_id: usize,
         callback: WindowActivationCallback,
     },
+    WindowFullscreenObservation {
+        window_id: usize,
+        subscription_id: usize,
+        callback: WindowFullscreenCallback,
+    },
     RefreshWindows,
+    DispatchActionFrom {
+        window_id: usize,
+        view_id: usize,
+        action: Box<dyn Action>,
+    },
     ActionDispatchNotification {
         action_id: TypeId,
     },
@@ -3231,6 +3132,13 @@ impl Debug for Effect {
                 .field("view_id", view_id)
                 .field("subscription_id", subscription_id)
                 .finish(),
+            Effect::DispatchActionFrom {
+                window_id, view_id, ..
+            } => f
+                .debug_struct("Effect::DispatchActionFrom")
+                .field("window_id", window_id)
+                .field("view_id", view_id)
+                .finish(),
             Effect::ActionDispatchNotification { action_id, .. } => f
                 .debug_struct("Effect::ActionDispatchNotification")
                 .field("action_id", action_id)
@@ -3255,6 +3163,23 @@ impl Debug for Effect {
                 .debug_struct("Effect::ActivateWindow")
                 .field("window_id", window_id)
                 .field("is_active", is_active)
+                .finish(),
+            Effect::FullscreenWindow {
+                window_id,
+                is_fullscreen,
+            } => f
+                .debug_struct("Effect::FullscreenWindow")
+                .field("window_id", window_id)
+                .field("is_fullscreen", is_fullscreen)
+                .finish(),
+            Effect::WindowFullscreenObservation {
+                window_id,
+                subscription_id,
+                callback: _,
+            } => f
+                .debug_struct("Effect::WindowFullscreenObservation")
+                .field("window_id", window_id)
+                .field("subscription_id", subscription_id)
                 .finish(),
             Effect::RefreshWindows => f.debug_struct("Effect::FullViewRefresh").finish(),
             Effect::WindowShouldCloseSubscription { window_id, .. } => f
@@ -3308,9 +3233,21 @@ pub trait AnyView {
         cx: &mut MutableAppContext,
     ) -> Option<Pin<Box<dyn 'static + Future<Output = ()>>>>;
     fn ui_name(&self) -> &'static str;
-    fn render<'a>(&mut self, params: RenderParams, cx: &mut MutableAppContext) -> ElementBox;
-    fn on_focus(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
-    fn on_blur(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
+    fn render(&mut self, params: RenderParams, cx: &mut MutableAppContext) -> ElementBox;
+    fn on_focus_in(
+        &mut self,
+        cx: &mut MutableAppContext,
+        window_id: usize,
+        view_id: usize,
+        focused_id: usize,
+    );
+    fn on_focus_out(
+        &mut self,
+        cx: &mut MutableAppContext,
+        window_id: usize,
+        view_id: usize,
+        focused_id: usize,
+    );
     fn keymap_context(&self, cx: &AppContext) -> keymap::Context;
     fn debug_json(&self, cx: &AppContext) -> serde_json::Value;
 
@@ -3335,6 +3272,14 @@ pub trait AnyView {
         window_id: usize,
         view_id: usize,
     );
+    fn any_handle(&self, window_id: usize, view_id: usize, cx: &AppContext) -> AnyViewHandle {
+        AnyViewHandle::new(
+            window_id,
+            view_id,
+            self.as_any().type_id(),
+            cx.ref_counts.clone(),
+        )
+    }
 }
 
 impl<T> AnyView for T
@@ -3364,18 +3309,52 @@ where
         T::ui_name()
     }
 
-    fn render<'a>(&mut self, params: RenderParams, cx: &mut MutableAppContext) -> ElementBox {
+    fn render(&mut self, params: RenderParams, cx: &mut MutableAppContext) -> ElementBox {
         View::render(self, &mut RenderContext::new(params, cx))
     }
 
-    fn on_focus(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize) {
+    fn on_focus_in(
+        &mut self,
+        cx: &mut MutableAppContext,
+        window_id: usize,
+        view_id: usize,
+        focused_id: usize,
+    ) {
         let mut cx = ViewContext::new(cx, window_id, view_id);
-        View::on_focus(self, &mut cx);
+        let focused_view_handle: AnyViewHandle = if view_id == focused_id {
+            cx.handle().into()
+        } else {
+            let focused_type = cx
+                .views
+                .get(&(window_id, focused_id))
+                .unwrap()
+                .as_any()
+                .type_id();
+            AnyViewHandle::new(window_id, focused_id, focused_type, cx.ref_counts.clone())
+        };
+        View::on_focus_in(self, focused_view_handle, &mut cx);
     }
 
-    fn on_blur(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize) {
+    fn on_focus_out(
+        &mut self,
+        cx: &mut MutableAppContext,
+        window_id: usize,
+        view_id: usize,
+        blurred_id: usize,
+    ) {
         let mut cx = ViewContext::new(cx, window_id, view_id);
-        View::on_blur(self, &mut cx);
+        let blurred_view_handle: AnyViewHandle = if view_id == blurred_id {
+            cx.handle().into()
+        } else {
+            let blurred_type = cx
+                .views
+                .get(&(window_id, blurred_id))
+                .unwrap()
+                .as_any()
+                .type_id();
+            AnyViewHandle::new(window_id, blurred_id, blurred_type, cx.ref_counts.clone())
+        };
+        View::on_focus_out(self, blurred_view_handle, &mut cx);
     }
 
     fn keymap_context(&self, cx: &AppContext) -> keymap::Context {
@@ -3637,7 +3616,7 @@ impl<M> Deref for ModelContext<'_, M> {
     type Target = MutableAppContext;
 
     fn deref(&self) -> &Self::Target {
-        &self.app
+        self.app
     }
 }
 
@@ -3794,7 +3773,11 @@ impl<'a, T: View> ViewContext<'a, T> {
         S: View,
         F: FnOnce(&mut ViewContext<S>) -> S,
     {
-        self.app.add_view(self.window_id, build_view)
+        self.app
+            .build_and_insert_view(self.window_id, ParentId::View(self.view_id), |cx| {
+                Some(build_view(cx))
+            })
+            .unwrap()
     }
 
     pub fn add_option_view<S, F>(&mut self, build_view: F) -> Option<ViewHandle<S>>
@@ -3802,7 +3785,23 @@ impl<'a, T: View> ViewContext<'a, T> {
         S: View,
         F: FnOnce(&mut ViewContext<S>) -> Option<S>,
     {
-        self.app.add_option_view(self.window_id, build_view)
+        self.app
+            .build_and_insert_view(self.window_id, ParentId::View(self.view_id), build_view)
+    }
+
+    pub fn reparent(&mut self, view_handle: impl Into<AnyViewHandle>) {
+        let view_handle = view_handle.into();
+        if self.window_id != view_handle.window_id {
+            panic!("Can't reparent view to a view from a different window");
+        }
+        self.cx
+            .parents
+            .remove(&(view_handle.window_id, view_handle.view_id));
+        let new_parent_id = self.view_id;
+        self.cx.parents.insert(
+            (view_handle.window_id, view_handle.view_id),
+            ParentId::View(new_parent_id),
+        );
     }
 
     pub fn replace_root_view<V, F>(&mut self, build_root_view: F) -> ViewHandle<V>
@@ -3812,7 +3811,9 @@ impl<'a, T: View> ViewContext<'a, T> {
     {
         let window_id = self.window_id;
         self.update(|this| {
-            let root_view = this.add_view(window_id, build_root_view);
+            let root_view = this
+                .build_and_insert_view(window_id, ParentId::Root, |cx| Some(build_root_view(cx)))
+                .unwrap();
             let window = this.cx.windows.get_mut(&window_id).unwrap();
             window.root_view = root_view.clone().into();
             window.focused_view_id = Some(root_view.id());
@@ -3927,6 +3928,24 @@ impl<'a, T: View> ViewContext<'a, T> {
             })
     }
 
+    pub fn observe_fullscreen<F>(&mut self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut T, bool, &mut ViewContext<T>),
+    {
+        let observer = self.weak_handle();
+        self.app
+            .observe_fullscreen(self.window_id(), move |active, cx| {
+                if let Some(observer) = observer.upgrade(cx) {
+                    observer.update(cx, |observer, cx| {
+                        callback(observer, active, cx);
+                    });
+                    true
+                } else {
+                    false
+                }
+            })
+    }
+
     pub fn emit(&mut self, payload: T::Event) {
         self.app.pending_effects.push_back(Effect::Event {
             entity_id: self.view_id,
@@ -3936,6 +3955,11 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn notify(&mut self) {
         self.app.notify_view(self.window_id, self.view_id);
+    }
+
+    pub fn dispatch_any_action(&mut self, action: Box<dyn Action>) {
+        self.app
+            .dispatch_any_action_at(self.window_id, self.view_id, action)
     }
 
     pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut T, &mut ViewContext<T>)) {
@@ -4032,6 +4056,10 @@ impl<'a, V: View> RenderContext<'a, V> {
         WeakViewHandle::new(self.window_id, self.view_id)
     }
 
+    pub fn window_id(&self) -> usize {
+        self.window_id
+    }
+
     pub fn view_id(&self) -> usize {
         self.view_id
     }
@@ -4117,7 +4145,7 @@ impl<M> Deref for ViewContext<'_, M> {
     type Target = MutableAppContext;
 
     fn deref(&self) -> &Self::Target {
-        &self.app
+        self.app
     }
 }
 
@@ -4267,7 +4295,7 @@ impl<T: Entity> ModelHandle<T> {
         cx.read_model(self)
     }
 
-    pub fn read_with<'a, C, F, S>(&self, cx: &C, read: F) -> S
+    pub fn read_with<C, F, S>(&self, cx: &C, read: F) -> S
     where
         C: ReadModelWith,
         F: FnOnce(&T, &AppContext) -> S,
@@ -4358,7 +4386,6 @@ impl<T: Entity> ModelHandle<T> {
                 }
             }),
             cx.subscribe(self, {
-                let tx = tx.clone();
                 move |_, _, _| {
                     tx.unbounded_send(()).ok();
                 }
@@ -5199,50 +5226,49 @@ pub enum Subscription {
     Subscription {
         id: usize,
         entity_id: usize,
-        subscriptions:
-            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<SubscriptionCallback>>>>>>,
+        subscriptions: Option<Weak<Mapping<usize, SubscriptionCallback>>>,
     },
     GlobalSubscription {
         id: usize,
         type_id: TypeId,
-        subscriptions: Option<
-            Weak<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalSubscriptionCallback>>>>>,
-        >,
+        subscriptions: Option<Weak<Mapping<TypeId, GlobalSubscriptionCallback>>>,
     },
     Observation {
         id: usize,
         entity_id: usize,
-        observations:
-            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<ObservationCallback>>>>>>,
+        observations: Option<Weak<Mapping<usize, ObservationCallback>>>,
     },
     GlobalObservation {
         id: usize,
         type_id: TypeId,
-        observations: Option<
-            Weak<Mutex<HashMap<TypeId, BTreeMap<usize, Option<GlobalObservationCallback>>>>>,
-        >,
+        observations: Option<Weak<Mapping<TypeId, GlobalObservationCallback>>>,
     },
     FocusObservation {
         id: usize,
         view_id: usize,
-        observations:
-            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<FocusObservationCallback>>>>>>,
+        observations: Option<Weak<Mapping<usize, FocusObservationCallback>>>,
     },
+    WindowActivationObservation {
+        id: usize,
+        window_id: usize,
+        observations: Option<Weak<Mapping<usize, WindowActivationCallback>>>,
+    },
+    WindowFullscreenObservation {
+        id: usize,
+        window_id: usize,
+        observations: Option<Weak<Mapping<usize, WindowFullscreenCallback>>>,
+    },
+
     ReleaseObservation {
         id: usize,
         entity_id: usize,
+        #[allow(clippy::type_complexity)]
         observations:
             Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>>,
     },
     ActionObservation {
         id: usize,
         observations: Option<Weak<Mutex<BTreeMap<usize, ActionObservationCallback>>>>,
-    },
-    WindowActivationObservation {
-        id: usize,
-        window_id: usize,
-        observations:
-            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, Option<WindowActivationCallback>>>>>>,
     },
 }
 
@@ -5271,6 +5297,9 @@ impl Subscription {
                 observations.take();
             }
             Subscription::WindowActivationObservation { observations, .. } => {
+                observations.take();
+            }
+            Subscription::WindowFullscreenObservation { observations, .. } => {
                 observations.take();
             }
         }
@@ -5383,10 +5412,31 @@ impl Drop for Subscription {
             }
             Subscription::ActionObservation { id, observations } => {
                 if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
-                    observations.lock().remove(&id);
+                    observations.lock().remove(id);
                 }
             }
             Subscription::WindowActivationObservation {
+                id,
+                window_id,
+                observations,
+            } => {
+                if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
+                    match observations
+                        .lock()
+                        .entry(*window_id)
+                        .or_default()
+                        .entry(*id)
+                    {
+                        btree_map::Entry::Vacant(entry) => {
+                            entry.insert(None);
+                        }
+                        btree_map::Entry::Occupied(entry) => {
+                            entry.remove();
+                        }
+                    }
+                }
+            }
+            Subscription::WindowFullscreenObservation {
                 id,
                 window_id,
                 observations,
@@ -5420,6 +5470,7 @@ lazy_static! {
 #[derive(Default)]
 pub struct LeakDetector {
     next_handle_id: usize,
+    #[allow(clippy::type_complexity)]
     handle_backtraces: HashMap<
         usize,
         (
@@ -5457,11 +5508,9 @@ impl LeakDetector {
 
     pub fn assert_dropped(&mut self, entity_id: usize) {
         if let Some((type_name, backtraces)) = self.handle_backtraces.get_mut(&entity_id) {
-            for trace in backtraces.values_mut() {
-                if let Some(trace) = trace {
-                    trace.resolve();
-                    eprintln!("{:?}", crate::util::CwdBacktrace(trace));
-                }
+            for trace in backtraces.values_mut().flatten() {
+                trace.resolve();
+                eprintln!("{:?}", crate::util::CwdBacktrace(trace));
             }
 
             let hint = if *LEAK_BACKTRACE {
@@ -5489,11 +5538,9 @@ impl LeakDetector {
                 type_name.unwrap_or("entity"),
                 id
             );
-            for trace in backtraces.values_mut() {
-                if let Some(trace) = trace {
-                    trace.resolve();
-                    eprintln!("{:?}", crate::util::CwdBacktrace(trace));
-                }
+            for trace in backtraces.values_mut().flatten() {
+                trace.resolve();
+                eprintln!("{:?}", crate::util::CwdBacktrace(trace));
             }
             found_leaks = true;
         }
@@ -5681,8 +5728,8 @@ mod tests {
         });
 
         assert_eq!(cx.cx.models.len(), 1);
-        assert!(cx.subscriptions.lock().is_empty());
-        assert!(cx.observations.lock().is_empty());
+        assert!(cx.subscriptions.is_empty());
+        assert!(cx.observations.is_empty());
     }
 
     #[crate::test(self)]
@@ -5907,9 +5954,9 @@ mod tests {
             }
         }
 
-        let (window_id, _) = cx.add_window(Default::default(), |cx| View::new(None, cx));
-        let handle_1 = cx.add_view(window_id, |cx| View::new(None, cx));
-        let handle_2 = cx.add_view(window_id, |cx| View::new(Some(handle_1.clone()), cx));
+        let (_, root_view) = cx.add_window(Default::default(), |cx| View::new(None, cx));
+        let handle_1 = cx.add_view(&root_view, |cx| View::new(None, cx));
+        let handle_2 = cx.add_view(&root_view, |cx| View::new(Some(handle_1.clone()), cx));
         assert_eq!(cx.cx.views.len(), 3);
 
         handle_1.update(cx, |view, cx| {
@@ -5932,8 +5979,8 @@ mod tests {
         });
 
         assert_eq!(cx.cx.views.len(), 2);
-        assert!(cx.subscriptions.lock().is_empty());
-        assert!(cx.observations.lock().is_empty());
+        assert!(cx.subscriptions.is_empty());
+        assert!(cx.observations.is_empty());
     }
 
     #[crate::test(self)]
@@ -6083,8 +6130,8 @@ mod tests {
             type Event = usize;
         }
 
-        let (window_id, handle_1) = cx.add_window(Default::default(), |_| View::default());
-        let handle_2 = cx.add_view(window_id, |_| View::default());
+        let (_, handle_1) = cx.add_window(Default::default(), |_| View::default());
+        let handle_2 = cx.add_view(&handle_1, |_| View::default());
         let handle_3 = cx.add_model(|_| Model);
 
         handle_1.update(cx, |_, cx| {
@@ -6324,9 +6371,9 @@ mod tests {
             type Event = ();
         }
 
-        let (window_id, _) = cx.add_window(Default::default(), |_| View);
-        let observing_view = cx.add_view(window_id, |_| View);
-        let emitting_view = cx.add_view(window_id, |_| View);
+        let (_, root_view) = cx.add_window(Default::default(), |_| View);
+        let observing_view = cx.add_view(&root_view, |_| View);
+        let emitting_view = cx.add_view(&root_view, |_| View);
         let observing_model = cx.add_model(|_| Model);
         let observed_model = cx.add_model(|_| Model);
 
@@ -6500,8 +6547,8 @@ mod tests {
             type Event = ();
         }
 
-        let (window_id, _) = cx.add_window(Default::default(), |_| View);
-        let observing_view = cx.add_view(window_id, |_| View);
+        let (_, root_view) = cx.add_window(Default::default(), |_| View);
+        let observing_view = cx.add_view(root_view, |_| View);
         let observing_model = cx.add_model(|_| Model);
         let observed_model = cx.add_model(|_| Model);
 
@@ -6541,7 +6588,7 @@ mod tests {
                 let subscription = subscription.clone();
                 move |_, _, e, _| {
                     subscription.borrow_mut().take();
-                    events.borrow_mut().push(e.clone());
+                    events.borrow_mut().push(*e);
                 }
             }));
         });
@@ -6623,9 +6670,9 @@ mod tests {
             }
         }
 
-        let (window_id, _) = cx.add_window(Default::default(), |_| View);
-        let observing_view = cx.add_view(window_id, |_| View);
-        let observed_view = cx.add_view(window_id, |_| View);
+        let (_, root_view) = cx.add_window(Default::default(), |_| View);
+        let observing_view = cx.add_view(&root_view, |_| View);
+        let observed_view = cx.add_view(&root_view, |_| View);
 
         let observation_count = Rc::new(RefCell::new(0));
         observing_view.update(cx, |_, cx| {
@@ -6687,21 +6734,25 @@ mod tests {
                 "View"
             }
 
-            fn on_focus(&mut self, _: &mut ViewContext<Self>) {
-                self.events.lock().push(format!("{} focused", &self.name));
+            fn on_focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
+                if cx.handle().id() == focused.id() {
+                    self.events.lock().push(format!("{} focused", &self.name));
+                }
             }
 
-            fn on_blur(&mut self, _: &mut ViewContext<Self>) {
-                self.events.lock().push(format!("{} blurred", &self.name));
+            fn on_focus_out(&mut self, blurred: AnyViewHandle, cx: &mut ViewContext<Self>) {
+                if cx.handle().id() == blurred.id() {
+                    self.events.lock().push(format!("{} blurred", &self.name));
+                }
             }
         }
 
         let view_events: Arc<Mutex<Vec<String>>> = Default::default();
-        let (window_id, view_1) = cx.add_window(Default::default(), |_| View {
+        let (_, view_1) = cx.add_window(Default::default(), |_| View {
             events: view_events.clone(),
             name: "view 1".to_string(),
         });
-        let view_2 = cx.add_view(window_id, |_| View {
+        let view_2 = cx.add_view(&view_1, |_| View {
             events: view_events.clone(),
             name: "view 2".to_string(),
         });
@@ -6923,11 +6974,6 @@ mod tests {
             }
         });
 
-        let (window_id, view_1) = cx.add_window(Default::default(), |_| ViewA { id: 1 });
-        let view_2 = cx.add_view(window_id, |_| ViewB { id: 2 });
-        let view_3 = cx.add_view(window_id, |_| ViewA { id: 3 });
-        let view_4 = cx.add_view(window_id, |_| ViewB { id: 4 });
-
         let observed_actions = Rc::new(RefCell::new(Vec::new()));
         cx.observe_actions({
             let observed_actions = observed_actions.clone();
@@ -6935,9 +6981,14 @@ mod tests {
         })
         .detach();
 
-        cx.dispatch_action(
+        let (window_id, view_1) = cx.add_window(Default::default(), |_| ViewA { id: 1 });
+        let view_2 = cx.add_view(&view_1, |_| ViewB { id: 2 });
+        let view_3 = cx.add_view(&view_2, |_| ViewA { id: 3 });
+        let view_4 = cx.add_view(&view_3, |_| ViewB { id: 4 });
+
+        cx.handle_dispatch_action_from_effect(
             window_id,
-            vec![view_1.id(), view_2.id(), view_3.id(), view_4.id()],
+            Some(view_4.id()),
             &Action("bar".to_string()),
         );
 
@@ -6958,10 +7009,15 @@ mod tests {
         assert_eq!(*observed_actions.borrow(), [Action::default().id()]);
 
         // Remove view_1, which doesn't propagate the action
+
+        let (window_id, view_2) = cx.add_window(Default::default(), |_| ViewB { id: 2 });
+        let view_3 = cx.add_view(&view_2, |_| ViewA { id: 3 });
+        let view_4 = cx.add_view(&view_3, |_| ViewB { id: 4 });
+
         actions.borrow_mut().clear();
-        cx.dispatch_action(
+        cx.handle_dispatch_action_from_effect(
             window_id,
-            vec![view_2.id(), view_3.id(), view_4.id()],
+            Some(view_4.id()),
             &Action("bar".to_string()),
         );
 
@@ -7034,8 +7090,11 @@ mod tests {
         view_3.keymap_context.set.insert("c".into());
 
         let (window_id, view_1) = cx.add_window(Default::default(), |_| view_1);
-        let view_2 = cx.add_view(window_id, |_| view_2);
-        let view_3 = cx.add_view(window_id, |_| view_3);
+        let view_2 = cx.add_view(&view_1, |_| view_2);
+        let _view_3 = cx.add_view(&view_2, |cx| {
+            cx.focus_self();
+            view_3
+        });
 
         // This keymap's only binding dispatches an action on view 2 because that view will have
         // "a" and "b" in its context, but not "c".
@@ -7073,20 +7132,13 @@ mod tests {
             }
         });
 
-        cx.dispatch_keystroke(
-            window_id,
-            vec![view_1.id(), view_2.id(), view_3.id()],
-            &Keystroke::parse("a").unwrap(),
-        );
+        cx.dispatch_keystroke(window_id, &Keystroke::parse("a").unwrap());
 
         assert_eq!(&*actions.borrow(), &["2 a"]);
 
         actions.borrow_mut().clear();
-        cx.dispatch_keystroke(
-            window_id,
-            vec![view_1.id(), view_2.id(), view_3.id()],
-            &Keystroke::parse("b").unwrap(),
-        );
+
+        cx.dispatch_keystroke(window_id, &Keystroke::parse("b").unwrap());
 
         assert_eq!(&*actions.borrow(), &["3 b", "2 b", "1 b", "global b"]);
     }
@@ -7108,8 +7160,8 @@ mod tests {
 
         let model = cx.add_model(|_| Counter(0));
 
-        let condition1 = model.condition(&cx, |model, _| model.0 == 2);
-        let condition2 = model.condition(&cx, |model, _| model.0 == 3);
+        let condition1 = model.condition(cx, |model, _| model.0 == 2);
+        let condition2 = model.condition(cx, |model, _| model.0 == 3);
         smol::pin!(condition1, condition2);
 
         model.update(cx, |model, cx| model.inc(cx));
@@ -7136,7 +7188,7 @@ mod tests {
         }
 
         let model = cx.add_model(|_| Model);
-        model.condition(&cx, |_, _| false).await;
+        model.condition(cx, |_, _| false).await;
     }
 
     #[crate::test(self)]
@@ -7149,7 +7201,7 @@ mod tests {
         }
 
         let model = cx.add_model(|_| Model);
-        let condition = model.condition(&cx, |_, _| false);
+        let condition = model.condition(cx, |_, _| false);
         cx.update(|_| drop(model));
         condition.await;
     }
@@ -7181,8 +7233,8 @@ mod tests {
 
         let (_, view) = cx.add_window(|_| Counter(0));
 
-        let condition1 = view.condition(&cx, |view, _| view.0 == 2);
-        let condition2 = view.condition(&cx, |view, _| view.0 == 3);
+        let condition1 = view.condition(cx, |view, _| view.0 == 2);
+        let condition2 = view.condition(cx, |view, _| view.0 == 3);
         smol::pin!(condition1, condition2);
 
         view.update(cx, |view, cx| view.inc(cx));
@@ -7218,7 +7270,7 @@ mod tests {
         }
 
         let (_, view) = cx.add_window(|_| View);
-        view.condition(&cx, |_, _| false).await;
+        view.condition(cx, |_, _| false).await;
     }
 
     #[crate::test(self)]
@@ -7240,10 +7292,10 @@ mod tests {
             }
         }
 
-        let window_id = cx.add_window(|_| View).0;
-        let view = cx.add_view(window_id, |_| View);
+        let (_, root_view) = cx.add_window(|_| View);
+        let view = cx.add_view(&root_view, |_| View);
 
-        let condition = view.condition(&cx, |_, _| false);
+        let condition = view.condition(cx, |_, _| false);
         cx.update(|_| drop(view));
         condition.await;
     }
@@ -7274,7 +7326,7 @@ mod tests {
             Some("render count: 0")
         );
 
-        let view = cx.add_view(window_id, |cx| {
+        let view = cx.add_view(&root_view, |cx| {
             cx.refresh_windows();
             View(0)
         });

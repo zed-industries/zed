@@ -19,6 +19,12 @@ enum PathVertexKind {
     Quadratic,
 }
 
+impl Default for PathBuilder {
+    fn default() -> Self {
+        PathBuilder::new()
+    }
+}
+
 impl PathBuilder {
     pub fn new() -> Self {
         Self {
@@ -58,10 +64,7 @@ impl PathBuilder {
 
     pub fn build(mut self, color: Color, clip_bounds: Option<RectF>) -> Path {
         if let Some(clip_bounds) = clip_bounds {
-            self.bounds = self
-                .bounds
-                .intersection(clip_bounds)
-                .unwrap_or(RectF::default());
+            self.bounds = self.bounds.intersection(clip_bounds).unwrap_or_default();
         }
         Path {
             bounds: self.bounds,

@@ -16,7 +16,7 @@ pub fn delete_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
                 });
             });
             copy_selections_content(editor, motion.linewise(), cx);
-            editor.insert(&"", cx);
+            editor.insert("", cx);
 
             // Fixup cursor position after the deletion
             editor.set_clip_at_line_ends(true, cx);

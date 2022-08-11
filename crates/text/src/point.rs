@@ -23,7 +23,7 @@ impl Point {
         Point::new(0, 0)
     }
 
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_str(s: &str) -> Self {
         let mut point = Self::zero();
         for (row, line) in s.split('\n').enumerate() {
             point.row = row as u32;

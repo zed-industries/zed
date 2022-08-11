@@ -389,9 +389,9 @@ impl ElementBox {
     }
 }
 
-impl Into<ElementRc> for ElementBox {
-    fn into(self) -> ElementRc {
-        self.0
+impl From<ElementBox> for ElementRc {
+    fn from(val: ElementBox) -> Self {
+        val.0
     }
 }
 

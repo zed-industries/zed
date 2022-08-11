@@ -41,27 +41,27 @@ impl FoldPoint {
         &mut self.0.column
     }
 
-    pub fn to_buffer_point(&self, snapshot: &FoldSnapshot) -> Point {
+    pub fn to_buffer_point(self, snapshot: &FoldSnapshot) -> Point {
         let mut cursor = snapshot.transforms.cursor::<(FoldPoint, Point)>();
-        cursor.seek(self, Bias::Right, &());
+        cursor.seek(&self, Bias::Right, &());
         let overshoot = self.0 - cursor.start().0 .0;
         cursor.start().1 + overshoot
     }
 
-    pub fn to_buffer_offset(&self, snapshot: &FoldSnapshot) -> usize {
+    pub fn to_buffer_offset(self, snapshot: &FoldSnapshot) -> usize {
         let mut cursor = snapshot.transforms.cursor::<(FoldPoint, Point)>();
-        cursor.seek(self, Bias::Right, &());
+        cursor.seek(&self, Bias::Right, &());
         let overshoot = self.0 - cursor.start().0 .0;
         snapshot
             .buffer_snapshot
             .point_to_offset(cursor.start().1 + overshoot)
     }
 
-    pub fn to_offset(&self, snapshot: &FoldSnapshot) -> FoldOffset {
+    pub fn to_offset(self, snapshot: &FoldSnapshot) -> FoldOffset {
         let mut cursor = snapshot
             .transforms
             .cursor::<(FoldPoint, TransformSummary)>();
-        cursor.seek(self, Bias::Right, &());
+        cursor.seek(&self, Bias::Right, &());
         let overshoot = self.0 - cursor.start().1.output.lines;
         let mut offset = cursor.start().1.output.len;
         if !overshoot.is_zero() {
@@ -600,10 +600,7 @@ impl FoldSnapshot {
         self.transforms.summary().output.longest_row
     }
 
-    pub fn folds_in_range<'a, T>(
-        &'a self,
-        range: Range<T>,
-    ) -> impl Iterator<Item = &'a Range<Anchor>>
+    pub fn folds_in_range<T>(&self, range: Range<T>) -> impl Iterator<Item = &Range<Anchor>>
     where
         T: ToOffset,
     {
@@ -689,7 +686,7 @@ impl FoldSnapshot {
                             let ranges = &highlights.1;
 
                             let start_ix = match ranges.binary_search_by(|probe| {
-                                let cmp = probe.end.cmp(&transform_start, &self.buffer_snapshot());
+                                let cmp = probe.end.cmp(&transform_start, self.buffer_snapshot());
                                 if cmp.is_gt() {
                                     Ordering::Greater
                                 } else {
@@ -1040,11 +1037,7 @@ impl<'a> Iterator for FoldChunks<'a> {
             return None;
         }
 
-        let transform = if let Some(item) = self.transform_cursor.item() {
-            item
-        } else {
-            return None;
-        };
+        let transform = self.transform_cursor.item()?;
 
         // If we're in a fold, then return the fold's display text and
         // advance the transform and buffer cursors to the end of the fold.
@@ -1150,11 +1143,11 @@ impl Ord for HighlightEndpoint {
 pub struct FoldOffset(pub usize);
 
 impl FoldOffset {
-    pub fn to_point(&self, snapshot: &FoldSnapshot) -> FoldPoint {
+    pub fn to_point(self, snapshot: &FoldSnapshot) -> FoldPoint {
         let mut cursor = snapshot
             .transforms
             .cursor::<(FoldOffset, TransformSummary)>();
-        cursor.seek(self, Bias::Right, &());
+        cursor.seek(&self, Bias::Right, &());
         let overshoot = if cursor.item().map_or(true, |t| t.is_fold()) {
             Point::new(0, (self.0 - cursor.start().0 .0) as u32)
         } else {
@@ -1214,7 +1207,7 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let mut map = FoldMap::new(buffer_snapshot.clone()).0;
 
-        let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
+        let (mut writer, _, _) = map.write(buffer_snapshot, vec![]);
         let (snapshot2, edits) = writer.fold(vec![
             Point::new(0, 2)..Point::new(2, 2),
             Point::new(2, 4)..Point::new(4, 1),
@@ -1245,8 +1238,7 @@ mod tests {
             );
             buffer.snapshot(cx)
         });
-        let (snapshot3, edits) =
-            map.read(buffer_snapshot.clone(), subscription.consume().into_inner());
+        let (snapshot3, edits) = map.read(buffer_snapshot, subscription.consume().into_inner());
         assert_eq!(snapshot3.text(), "123a…c123c…eeeee");
         assert_eq!(
             edits,
@@ -1276,7 +1268,7 @@ mod tests {
 
         let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
         writer.unfold(Some(Point::new(0, 4)..Point::new(0, 4)), true);
-        let (snapshot6, _) = map.read(buffer_snapshot.clone(), vec![]);
+        let (snapshot6, _) = map.read(buffer_snapshot, vec![]);
         assert_eq!(snapshot6.text(), "123aaaaa\nbbbbbb\nccc123456eee");
     }
 
@@ -1314,7 +1306,7 @@ mod tests {
             // Create two adjacent folds.
             let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
             writer.fold(vec![0..2, 2..5]);
-            let (snapshot, _) = map.read(buffer_snapshot.clone(), vec![]);
+            let (snapshot, _) = map.read(buffer_snapshot, vec![]);
             assert_eq!(snapshot.text(), "…fghijkl");
 
             // Edit within one of the folds.
@@ -1322,8 +1314,7 @@ mod tests {
                 buffer.edit([(0..1, "12345")], None, cx);
                 buffer.snapshot(cx)
             });
-            let (snapshot, _) =
-                map.read(buffer_snapshot.clone(), subscription.consume().into_inner());
+            let (snapshot, _) = map.read(buffer_snapshot, subscription.consume().into_inner());
             assert_eq!(snapshot.text(), "12345…fghijkl");
         }
     }
@@ -1340,7 +1331,7 @@ mod tests {
             Point::new(1, 2)..Point::new(3, 2),
             Point::new(3, 1)..Point::new(4, 1),
         ]);
-        let (snapshot, _) = map.read(buffer_snapshot.clone(), vec![]);
+        let (snapshot, _) = map.read(buffer_snapshot, vec![]);
         assert_eq!(snapshot.text(), "aa…eeeee");
     }
 
@@ -1357,14 +1348,14 @@ mod tests {
             Point::new(0, 2)..Point::new(2, 2),
             Point::new(3, 1)..Point::new(4, 1),
         ]);
-        let (snapshot, _) = map.read(buffer_snapshot.clone(), vec![]);
+        let (snapshot, _) = map.read(buffer_snapshot, vec![]);
         assert_eq!(snapshot.text(), "aa…cccc\nd…eeeee");
 
         let buffer_snapshot = buffer.update(cx, |buffer, cx| {
             buffer.edit([(Point::new(2, 2)..Point::new(3, 1), "")], None, cx);
             buffer.snapshot(cx)
         });
-        let (snapshot, _) = map.read(buffer_snapshot.clone(), subscription.consume().into_inner());
+        let (snapshot, _) = map.read(buffer_snapshot, subscription.consume().into_inner());
         assert_eq!(snapshot.text(), "aa…eeeee");
     }
 
@@ -1661,7 +1652,7 @@ mod tests {
             Point::new(3, 1)..Point::new(4, 1),
         ]);
 
-        let (snapshot, _) = map.read(buffer_snapshot.clone(), vec![]);
+        let (snapshot, _) = map.read(buffer_snapshot, vec![]);
         assert_eq!(snapshot.text(), "aa…cccc\nd…eeeee\nffffff\n");
         assert_eq!(
             snapshot.buffer_rows(0).collect::<Vec<_>>(),

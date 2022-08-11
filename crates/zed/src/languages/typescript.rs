@@ -65,7 +65,7 @@ impl LspAdapter for TypeScriptLspAdapter {
                     ("typescript", versions.typescript_version.as_str()),
                     (
                         "typescript-language-server",
-                        &versions.server_version.as_str(),
+                        versions.server_version.as_str(),
                     ),
                 ],
                 &version_dir,

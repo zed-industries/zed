@@ -6,8 +6,8 @@ use crate::{
 use collections::HashMap;
 use editor::{Anchor, Autoscroll, Editor};
 use gpui::{
-    actions, elements::*, impl_actions, platform::CursorStyle, Action, AppContext, Entity,
-    MouseButton, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext,
+    actions, elements::*, impl_actions, platform::CursorStyle, Action, AnyViewHandle, AppContext,
+    Entity, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
 use language::OffsetRangeExt;
@@ -80,8 +80,10 @@ impl View for BufferSearchBar {
         "BufferSearchBar"
     }
 
-    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.query_editor);
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        if cx.is_self_focused() {
+            cx.focus(&self.query_editor);
+        }
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
@@ -214,7 +216,7 @@ impl BufferSearchBar {
 
     fn dismiss(&mut self, _: &Dismiss, cx: &mut ViewContext<Self>) {
         self.dismissed = true;
-        for (editor, _) in &self.editors_with_matches {
+        for editor in self.editors_with_matches.keys() {
             if let Some(editor) = editor.upgrade(cx) {
                 editor.update(cx, |editor, cx| {
                     editor.clear_background_highlights::<Self>(cx)
@@ -448,14 +450,11 @@ impl BufferSearchBar {
         event: &editor::Event,
         cx: &mut ViewContext<Self>,
     ) {
-        match event {
-            editor::Event::BufferEdited { .. } => {
-                self.query_contains_error = false;
-                self.clear_matches(cx);
-                self.update_matches(true, cx);
-                cx.notify();
-            }
-            _ => {}
+        if let editor::Event::BufferEdited { .. } = event {
+            self.query_contains_error = false;
+            self.clear_matches(cx);
+            self.update_matches(true, cx);
+            cx.notify();
         }
     }
 
@@ -584,7 +583,7 @@ impl BufferSearchBar {
             let ranges = self.editors_with_matches.get(&editor.downgrade())?;
             let editor = editor.read(cx);
             active_match_index(
-                &ranges,
+                ranges,
                 &editor.selections.newest_anchor().head(),
                 &editor.buffer().read(cx).snapshot(cx),
             )
@@ -600,7 +599,7 @@ impl BufferSearchBar {
 mod tests {
     use super::*;
     use editor::{DisplayPoint, Editor};
-    use gpui::{color::Color, TestAppContext};
+    use gpui::{color::Color, test::EmptyView, TestAppContext};
     use language::Buffer;
     use std::sync::Arc;
     use unindent::Unindent as _;
@@ -608,7 +607,7 @@ mod tests {
     #[gpui::test]
     async fn test_search_simple(cx: &mut TestAppContext) {
         let fonts = cx.font_cache();
-        let mut theme = gpui::fonts::with_font_cache(fonts.clone(), || theme::Theme::default());
+        let mut theme = gpui::fonts::with_font_cache(fonts.clone(), theme::Theme::default);
         theme.search.match_background = Color::red();
         cx.update(|cx| {
             let mut settings = Settings::test(cx);
@@ -629,11 +628,13 @@ mod tests {
                 cx,
             )
         });
-        let editor = cx.add_view(Default::default(), |cx| {
+        let (_, root_view) = cx.add_window(|_| EmptyView);
+
+        let editor = cx.add_view(&root_view, |cx| {
             Editor::for_buffer(buffer.clone(), None, cx)
         });
 
-        let search_bar = cx.add_view(Default::default(), |cx| {
+        let search_bar = cx.add_view(&root_view, |cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
             search_bar.show(false, true, cx);
@@ -645,7 +646,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.set_query("us", cx);
         });
-        editor.next_notification(&cx).await;
+        editor.next_notification(cx).await;
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 editor.all_background_highlights(cx),
@@ -666,7 +667,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.toggle_search_option(SearchOption::CaseSensitive, cx);
         });
-        editor.next_notification(&cx).await;
+        editor.next_notification(cx).await;
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 editor.all_background_highlights(cx),
@@ -682,7 +683,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.set_query("or", cx);
         });
-        editor.next_notification(&cx).await;
+        editor.next_notification(cx).await;
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 editor.all_background_highlights(cx),
@@ -723,7 +724,7 @@ mod tests {
         search_bar.update(cx, |search_bar, cx| {
             search_bar.toggle_search_option(SearchOption::WholeWord, cx);
         });
-        editor.next_notification(&cx).await;
+        editor.next_notification(cx).await;
         editor.update(cx, |editor, cx| {
             assert_eq!(
                 editor.all_background_highlights(cx),

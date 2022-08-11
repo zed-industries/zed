@@ -160,7 +160,7 @@ where
 
         let mut descending = false;
         while !self.stack.is_empty() {
-            if let Some(StackEntry { position, .. }) = self.stack.iter().rev().skip(1).next() {
+            if let Some(StackEntry { position, .. }) = self.stack.iter().rev().nth(1) {
                 self.position = position.clone();
             } else {
                 self.position = D::default();
@@ -224,7 +224,7 @@ where
             self.did_seek = true;
         }
 
-        while self.stack.len() > 0 {
+        while !self.stack.is_empty() {
             let new_subtree = {
                 let entry = self.stack.last_mut().unwrap();
                 match entry.tree.0.as_ref() {
@@ -409,7 +409,7 @@ where
                         .zip(&child_summaries[entry.index..])
                     {
                         let mut child_end = self.position.clone();
-                        child_end.add_summary(&child_summary, cx);
+                        child_end.add_summary(child_summary, cx);
 
                         let comparison = target.cmp(&child_end, cx);
                         if comparison == Ordering::Greater
@@ -503,7 +503,7 @@ impl<'a, T: Item> Iterator for Iter<'a, T> {
             descend = true;
         }
 
-        while self.stack.len() > 0 {
+        while !self.stack.is_empty() {
             let new_subtree = {
                 let entry = self.stack.last_mut().unwrap();
                 match entry.tree.0.as_ref() {

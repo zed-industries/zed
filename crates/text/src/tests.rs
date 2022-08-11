@@ -42,7 +42,7 @@ fn test_random_edits(mut rng: StdRng) {
     let mut reference_string = RandomCharIter::new(&mut rng)
         .take(reference_string_len)
         .collect::<String>();
-    let mut buffer = Buffer::new(0, 0, reference_string.clone().into());
+    let mut buffer = Buffer::new(0, 0, reference_string.clone());
     LineEnding::normalize(&mut reference_string);
 
     buffer.history.group_interval = Duration::from_millis(rng.gen_range(0..=200));
@@ -56,7 +56,7 @@ fn test_random_edits(mut rng: StdRng) {
     for _i in 0..operations {
         let (edits, _) = buffer.randomly_edit(&mut rng, 5);
         for (old_range, new_text) in edits.iter().rev() {
-            reference_string.replace_range(old_range.clone(), &new_text);
+            reference_string.replace_range(old_range.clone(), new_text);
         }
 
         assert_eq!(buffer.text(), reference_string);
@@ -677,9 +677,9 @@ fn test_concurrent_edits() {
     buffer1.apply_op(buf2_op.clone()).unwrap();
     buffer1.apply_op(buf3_op.clone()).unwrap();
     buffer2.apply_op(buf1_op.clone()).unwrap();
-    buffer2.apply_op(buf3_op.clone()).unwrap();
-    buffer3.apply_op(buf1_op.clone()).unwrap();
-    buffer3.apply_op(buf2_op.clone()).unwrap();
+    buffer2.apply_op(buf3_op).unwrap();
+    buffer3.apply_op(buf1_op).unwrap();
+    buffer3.apply_op(buf2_op).unwrap();
 
     assert_eq!(buffer1.text(), "a12c34e56");
     assert_eq!(buffer2.text(), "a12c34e56");
@@ -704,7 +704,7 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
     let mut network = Network::new(rng.clone());
 
     for i in 0..peers {
-        let mut buffer = Buffer::new(i as ReplicaId, 0, base_text.clone().into());
+        let mut buffer = Buffer::new(i as ReplicaId, 0, base_text.clone());
         buffer.history.group_interval = Duration::from_millis(rng.gen_range(0..=200));
         buffers.push(buffer);
         replica_ids.push(i as u16);
