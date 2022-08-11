@@ -91,7 +91,7 @@ struct BufferState {
     last_diagnostics_update_count: usize,
     last_file_update_count: usize,
     excerpts: Vec<ExcerptId>,
-    _subscriptions: [gpui::Subscription; 2],
+    _subscriptions: [gpui::OldSubscription; 2],
 }
 
 #[derive(Clone, Default)]

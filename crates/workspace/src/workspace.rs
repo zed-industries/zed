@@ -454,7 +454,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
         &self,
         cx: &mut MutableAppContext,
         callback: Box<dyn FnOnce(&mut MutableAppContext)>,
-    ) -> gpui::Subscription;
+    ) -> gpui::OldSubscription;
 }
 
 pub trait WeakItemHandle {
@@ -692,7 +692,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         &self,
         cx: &mut MutableAppContext,
         callback: Box<dyn FnOnce(&mut MutableAppContext)>,
-    ) -> gpui::Subscription {
+    ) -> gpui::OldSubscription {
         cx.observe_release(self, move |_, cx| callback(cx))
     }
 }

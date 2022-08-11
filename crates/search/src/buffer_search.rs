@@ -7,8 +7,8 @@ use collections::HashMap;
 use editor::{Anchor, Autoscroll, Editor};
 use gpui::{
     actions, elements::*, impl_actions, platform::CursorStyle, Action, AnyViewHandle, AppContext,
-    Entity, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    Entity, MouseButton, MutableAppContext, OldSubscription, RenderContext, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::OffsetRangeExt;
 use project::search::SearchQuery;
@@ -61,7 +61,7 @@ pub struct BufferSearchBar {
     pub query_editor: ViewHandle<Editor>,
     active_editor: Option<ViewHandle<Editor>>,
     active_match_index: Option<usize>,
-    active_editor_subscription: Option<Subscription>,
+    active_editor_subscription: Option<OldSubscription>,
     editors_with_matches: HashMap<WeakViewHandle<Editor>, Vec<Range<Anchor>>>,
     pending_search: Option<Task<()>>,
     case_sensitive: bool,

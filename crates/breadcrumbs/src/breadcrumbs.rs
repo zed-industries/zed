@@ -1,7 +1,7 @@
 use editor::{Anchor, Editor};
 use gpui::{
-    elements::*, AppContext, Entity, ModelHandle, RenderContext, Subscription, View, ViewContext,
-    ViewHandle,
+    elements::*, AppContext, Entity, ModelHandle, OldSubscription, RenderContext, View,
+    ViewContext, ViewHandle,
 };
 use language::{Buffer, OutlineItem};
 use project::Project;
@@ -18,7 +18,7 @@ pub struct Breadcrumbs {
     project: ModelHandle<Project>,
     editor: Option<ViewHandle<Editor>>,
     project_search: Option<ViewHandle<ProjectSearchView>>,
-    subscriptions: Vec<Subscription>,
+    subscriptions: Vec<OldSubscription>,
 }
 
 impl Breadcrumbs {

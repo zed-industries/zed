@@ -30,8 +30,8 @@ use gpui::{
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
     text_layout, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox,
-    Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    Entity, ModelHandle, MouseButton, MutableAppContext, OldSubscription, RenderContext, Task,
+    View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -443,7 +443,7 @@ pub struct Editor {
     leader_replica_id: Option<u16>,
     hover_state: HoverState,
     link_go_to_definition_state: LinkGoToDefinitionState,
-    _subscriptions: Vec<Subscription>,
+    _subscriptions: Vec<OldSubscription>,
 }
 
 pub struct EditorSnapshot {

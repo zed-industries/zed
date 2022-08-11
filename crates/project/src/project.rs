@@ -111,7 +111,7 @@ pub struct Project {
     client_state: ProjectClientState,
     collaborators: HashMap<PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
-    _subscriptions: Vec<gpui::Subscription>,
+    _subscriptions: Vec<gpui::OldSubscription>,
     opened_buffer: (Rc<RefCell<watch::Sender<()>>>, watch::Receiver<()>),
     shared_buffers: HashMap<PeerId, HashSet<u64>>,
     #[allow(clippy::type_complexity)]

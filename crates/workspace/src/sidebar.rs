@@ -1,7 +1,7 @@
 use crate::StatusItemView;
 use gpui::{
     elements::*, impl_actions, platform::CursorStyle, AnyViewHandle, AppContext, Entity,
-    MouseButton, MouseMovedEvent, RenderContext, Subscription, View, ViewContext, ViewHandle,
+    MouseButton, MouseMovedEvent, OldSubscription, RenderContext, View, ViewContext, ViewHandle,
 };
 use serde::Deserialize;
 use settings::Settings;
@@ -71,7 +71,7 @@ struct Item {
     icon_path: &'static str,
     tooltip: String,
     view: Rc<dyn SidebarItemHandle>,
-    _subscriptions: [Subscription; 2],
+    _subscriptions: [OldSubscription; 2],
 }
 
 pub struct SidebarButtons {

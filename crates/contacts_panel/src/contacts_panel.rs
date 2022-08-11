@@ -14,7 +14,7 @@ use gpui::{
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
     AnyViewHandle, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle,
-    MouseButton, MutableAppContext, RenderContext, Subscription, View, ViewContext, ViewHandle,
+    MouseButton, MutableAppContext, OldSubscription, RenderContext, View, ViewContext, ViewHandle,
     WeakModelHandle, WeakViewHandle,
 };
 use join_project_notification::JoinProjectNotification;
@@ -64,7 +64,7 @@ pub struct ContactsPanel {
     filter_editor: ViewHandle<Editor>,
     collapsed_sections: Vec<Section>,
     selection: Option<usize>,
-    _maintain_contacts: Subscription,
+    _maintain_contacts: OldSubscription,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]

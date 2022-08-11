@@ -1,5 +1,5 @@
 pub mod action;
-mod callback_collection;
+mod subscription_manager;
 
 use crate::{
     elements::ElementBox,
@@ -14,7 +14,6 @@ use crate::{
 };
 pub use action::*;
 use anyhow::{anyhow, Context, Result};
-use callback_collection::CallbackCollection;
 use collections::{btree_map, hash_map::Entry, BTreeMap, HashMap, HashSet, VecDeque};
 use keymap::MatchResult;
 use lazy_static::lazy_static;
@@ -37,8 +36,6 @@ use std::{
     sync::{Arc, Weak},
     time::Duration,
 };
-
-use self::callback_collection::Mapping;
 
 pub trait Entity: 'static {
     type Event;
@@ -952,17 +949,15 @@ pub struct MutableAppContext {
     next_window_id: usize,
     next_subscription_id: usize,
     frame_count: usize,
-
-    focus_observations: CallbackCollection<usize, FocusObservationCallback>,
-    global_subscriptions: CallbackCollection<TypeId, GlobalSubscriptionCallback>,
-    global_observations: CallbackCollection<TypeId, GlobalObservationCallback>,
-    subscriptions: CallbackCollection<usize, SubscriptionCallback>,
-    observations: CallbackCollection<usize, ObservationCallback>,
-    window_activation_observations: CallbackCollection<usize, WindowActivationCallback>,
-    window_fullscreen_observations: CallbackCollection<usize, WindowFullscreenCallback>,
-
-    release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
-    action_dispatch_observations: Arc<Mutex<BTreeMap<usize, ActionObservationCallback>>>,
+    focus_observations: Arc<Mutex<KeyedFallible<usize, FocusObservationCallback>>>,
+    global_subscriptions: Arc<Mutex<KeyedFallible<TypeId, GlobalSubscriptionCallback>>>,
+    global_observations: Arc<Mutex<KeyedFallible<TypeId, GlobalObservationCallback>>>,
+    subscriptions: Arc<Mutex<KeyedFallible<usize, SubscriptionCallback>>>,
+    observations: Arc<Mutex<KeyedFallible<usize, ObservationCallback>>>,
+    window_activation_observations: Arc<Mutex<KeyedFallible<usize, WindowActivationCallback>>>,
+    window_fullscreen_observations: Arc<Mutex<KeyedFallible<usize, WindowFullscreenCallback>>>,
+    release_observations: Arc<Mutex<KeyedInfallible<usize, ReleaseObservationCallback>>>,
+    action_dispatch_observations: Arc<Mutex<Unkeyed<ActionObservationCallback>>>,
 
     #[allow(clippy::type_complexity)]
     presenters_and_platform_windows:
@@ -1012,15 +1007,15 @@ impl MutableAppContext {
             next_window_id: 0,
             next_subscription_id: 0,
             frame_count: 0,
-            subscriptions: Default::default(),
-            global_subscriptions: Default::default(),
-            observations: Default::default(),
-            focus_observations: Default::default(),
-            release_observations: Default::default(),
-            global_observations: Default::default(),
-            window_activation_observations: Default::default(),
-            window_fullscreen_observations: Default::default(),
-            action_dispatch_observations: Default::default(),
+            subscriptions: KeyedFallible::new(),
+            global_subscriptions: KeyedFallible::new(),
+            observations: KeyedFallible::new(),
+            focus_observations: KeyedFallible::new(),
+            global_observations: KeyedFallible::new(),
+            window_activation_observations: KeyedFallible::new(),
+            window_fullscreen_observations: KeyedFallible::new(),
+            release_observations: KeyedInfallible::new(),
+            action_dispatch_observations: Unkeyed::new(),
             presenters_and_platform_windows: Default::default(),
             foreground,
             pending_effects: VecDeque::new(),
@@ -1347,7 +1342,7 @@ impl MutableAppContext {
         });
     }
 
-    pub fn subscribe<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
+    pub fn subscribe<E, H, F>(&mut self, handle: &H, mut callback: F) -> impl Subscription
     where
         E: Entity,
         E::Event: 'static,
@@ -1360,7 +1355,7 @@ impl MutableAppContext {
         })
     }
 
-    pub fn subscribe_global<E, F>(&mut self, mut callback: F) -> Subscription
+    pub fn subscribe_global<E, F>(&mut self, mut callback: F) -> impl Subscription
     where
         E: Any,
         F: 'static + FnMut(&E, &mut Self),
@@ -1376,14 +1371,14 @@ impl MutableAppContext {
             }),
         });
 
-        Subscription::GlobalSubscription {
-            id: subscription_id,
-            type_id,
-            subscriptions: Some(self.global_subscriptions.downgrade()),
+        InternalSubscription::<_, _> {
+            subscription_id,
+            key_id: type_id,
+            subscriptions: Some(Arc::downgrade(&self.global_subscriptions)),
         }
     }
 
-    pub fn observe<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
+    pub fn observe<E, H, F>(&mut self, handle: &H, mut callback: F) -> impl Subscription
     where
         E: Entity,
         E::Event: 'static,
@@ -1396,7 +1391,7 @@ impl MutableAppContext {
         })
     }
 
-    pub fn subscribe_internal<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
+    pub fn subscribe_internal<E, H, F>(&mut self, handle: &H, mut callback: F) -> impl Subscription
     where
         E: Entity,
         E::Event: 'static,
@@ -1417,14 +1412,15 @@ impl MutableAppContext {
                 }
             }),
         });
-        Subscription::Subscription {
-            id: subscription_id,
-            entity_id: handle.id(),
-            subscriptions: Some(self.subscriptions.downgrade()),
+
+        InternalSubscription::<_, _> {
+            subscription_id,
+            key_id: handle.id(),
+            subscriptions: Some(Arc::downgrade(&self.subscriptions)),
         }
     }
 
-    fn observe_internal<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
+    fn observe_internal<E, H, F>(&mut self, handle: &H, mut callback: F) -> impl Subscription
     where
         E: Entity,
         E::Event: 'static,
@@ -1445,14 +1441,15 @@ impl MutableAppContext {
                 }
             }),
         });
-        Subscription::Observation {
-            id: subscription_id,
-            entity_id,
-            observations: Some(self.observations.downgrade()),
+
+        InternalSubscription::<_, _> {
+            subscription_id,
+            key_id: entity_id,
+            subscriptions: Some(Arc::downgrade(&self.observations)),
         }
     }
 
-    fn observe_focus<F, V>(&mut self, handle: &ViewHandle<V>, mut callback: F) -> Subscription
+    fn observe_focus<F, V>(&mut self, handle: &ViewHandle<V>, mut callback: F) -> impl Subscription
     where
         F: 'static + FnMut(ViewHandle<V>, bool, &mut MutableAppContext) -> bool,
         V: View,
@@ -1473,14 +1470,14 @@ impl MutableAppContext {
             }),
         });
 
-        Subscription::FocusObservation {
-            id: subscription_id,
-            view_id,
-            observations: Some(self.focus_observations.downgrade()),
+        InternalSubscription::<_, _> {
+            subscription_id,
+            key_id: view_id,
+            subscriptions: Some(Arc::downgrade(&self.focus_observations)),
         }
     }
 
-    pub fn observe_global<G, F>(&mut self, mut observe: F) -> Subscription
+    pub fn observe_global<G, F>(&mut self, mut observe: F) -> impl Subscription
     where
         G: Any,
         F: 'static + FnMut(&mut MutableAppContext),
@@ -1494,14 +1491,14 @@ impl MutableAppContext {
             Box::new(move |cx: &mut MutableAppContext| observe(cx)),
         );
 
-        Subscription::GlobalObservation {
-            id,
-            type_id,
-            observations: Some(self.global_observations.downgrade()),
+        InternalSubscription::<_, _> {
+            subscription_id: id,
+            key_id: type_id,
+            subscriptions: Some(Arc::downgrade(&self.global_observations)),
         }
     }
 
-    pub fn observe_release<E, H, F>(&mut self, handle: &H, callback: F) -> Subscription
+    pub fn observe_release<E, H, F>(&mut self, handle: &H, callback: F) -> impl Subscription
     where
         E: Entity,
         E::Event: 'static,
@@ -1520,14 +1517,15 @@ impl MutableAppContext {
                     callback(released, cx)
                 }),
             );
-        Subscription::ReleaseObservation {
-            id,
-            entity_id: handle.id(),
-            observations: Some(Arc::downgrade(&self.release_observations)),
+
+        InternalSubscription::<_, _> {
+            subscription_id: id,
+            key_id: handle.id(),
+            subscriptions: Some(Arc::downgrade(&self.release_observations)),
         }
     }
 
-    pub fn observe_actions<F>(&mut self, callback: F) -> Subscription
+    pub fn observe_actions<F>(&mut self, callback: F) -> impl Subscription
     where
         F: 'static + FnMut(TypeId, &mut MutableAppContext),
     {
@@ -1535,13 +1533,15 @@ impl MutableAppContext {
         self.action_dispatch_observations
             .lock()
             .insert(id, Box::new(callback));
-        Subscription::ActionObservation {
-            id,
-            observations: Some(Arc::downgrade(&self.action_dispatch_observations)),
+
+        InternalSubscription::<_, _> {
+            subscription_id: id,
+            key_id: (),
+            subscriptions: Some(Arc::downgrade(&self.action_dispatch_observations)),
         }
     }
 
-    fn observe_window_activation<F>(&mut self, window_id: usize, callback: F) -> Subscription
+    fn observe_window_activation<F>(&mut self, window_id: usize, callback: F) -> impl Subscription
     where
         F: 'static + FnMut(bool, &mut MutableAppContext) -> bool,
     {
@@ -1552,14 +1552,15 @@ impl MutableAppContext {
                 subscription_id,
                 callback: Box::new(callback),
             });
-        Subscription::WindowActivationObservation {
-            id: subscription_id,
-            window_id,
-            observations: Some(self.window_activation_observations.downgrade()),
+
+        InternalSubscription::<_, _> {
+            subscription_id,
+            key_id: window_id,
+            subscriptions: Some(Arc::downgrade(&self.window_activation_observations)),
         }
     }
 
-    fn observe_fullscreen<F>(&mut self, window_id: usize, callback: F) -> Subscription
+    fn observe_fullscreen<F>(&mut self, window_id: usize, callback: F) -> impl Subscription
     where
         F: 'static + FnMut(bool, &mut MutableAppContext) -> bool,
     {
@@ -1570,10 +1571,11 @@ impl MutableAppContext {
                 subscription_id,
                 callback: Box::new(callback),
             });
-        Subscription::WindowFullscreenObservation {
-            id: subscription_id,
-            window_id,
-            observations: Some(self.window_activation_observations.downgrade()),
+
+        InternalSubscription::<_, _> {
+            subscription_id,
+            key_id: window_id,
+            subscriptions: Some(Arc::downgrade(&self.window_fullscreen_observations)),
         }
     }
 
@@ -3469,7 +3471,7 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         &mut self,
         handle: &ModelHandle<S>,
         mut callback: F,
-    ) -> Subscription
+    ) -> impl Subscription
     where
         S::Event: 'static,
         F: 'static + FnMut(&mut T, ModelHandle<S>, &S::Event, &mut ModelContext<T>),
@@ -3488,7 +3490,7 @@ impl<'a, T: Entity> ModelContext<'a, T> {
             })
     }
 
-    pub fn observe<S, F>(&mut self, handle: &ModelHandle<S>, mut callback: F) -> Subscription
+    pub fn observe<S, F>(&mut self, handle: &ModelHandle<S>, mut callback: F) -> impl Subscription
     where
         S: Entity,
         F: 'static + FnMut(&mut T, ModelHandle<S>, &mut ModelContext<T>),
@@ -3506,7 +3508,7 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         })
     }
 
-    pub fn observe_global<G, F>(&mut self, mut callback: F) -> Subscription
+    pub fn observe_global<G, F>(&mut self, mut callback: F) -> impl Subscription
     where
         G: Any,
         F: 'static + FnMut(&mut T, &mut ModelContext<T>),
@@ -3523,7 +3525,7 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         &mut self,
         handle: &ModelHandle<S>,
         mut callback: F,
-    ) -> Subscription
+    ) -> impl Subscription
     where
         S: Entity,
         F: 'static + FnMut(&mut T, &S, &mut ModelContext<T>),
@@ -3821,7 +3823,7 @@ impl<'a, T: View> ViewContext<'a, T> {
         })
     }
 
-    pub fn subscribe<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
+    pub fn subscribe<E, H, F>(&mut self, handle: &H, mut callback: F) -> impl Subscription
     where
         E: Entity,
         E::Event: 'static,
@@ -3842,7 +3844,7 @@ impl<'a, T: View> ViewContext<'a, T> {
             })
     }
 
-    pub fn observe<E, F, H>(&mut self, handle: &H, mut callback: F) -> Subscription
+    pub fn observe<E, F, H>(&mut self, handle: &H, mut callback: F) -> impl Subscription
     where
         E: Entity,
         H: Handle<E>,
@@ -3861,7 +3863,11 @@ impl<'a, T: View> ViewContext<'a, T> {
         })
     }
 
-    pub fn observe_focus<F, V>(&mut self, handle: &ViewHandle<V>, mut callback: F) -> Subscription
+    pub fn observe_focus<F, V>(
+        &mut self,
+        handle: &ViewHandle<V>,
+        mut callback: F,
+    ) -> impl Subscription
     where
         F: 'static + FnMut(&mut T, ViewHandle<V>, bool, &mut ViewContext<T>),
         V: View,
@@ -3880,7 +3886,7 @@ impl<'a, T: View> ViewContext<'a, T> {
             })
     }
 
-    pub fn observe_release<E, F, H>(&mut self, handle: &H, mut callback: F) -> Subscription
+    pub fn observe_release<E, F, H>(&mut self, handle: &H, mut callback: F) -> impl Subscription
     where
         E: Entity,
         H: Handle<E>,
@@ -3896,7 +3902,7 @@ impl<'a, T: View> ViewContext<'a, T> {
         })
     }
 
-    pub fn observe_actions<F>(&mut self, mut callback: F) -> Subscription
+    pub fn observe_actions<F>(&mut self, mut callback: F) -> impl Subscription
     where
         F: 'static + FnMut(&mut T, TypeId, &mut ViewContext<T>),
     {
@@ -3910,7 +3916,7 @@ impl<'a, T: View> ViewContext<'a, T> {
         })
     }
 
-    pub fn observe_window_activation<F>(&mut self, mut callback: F) -> Subscription
+    pub fn observe_window_activation<F>(&mut self, mut callback: F) -> impl Subscription
     where
         F: 'static + FnMut(&mut T, bool, &mut ViewContext<T>),
     {
@@ -3928,7 +3934,7 @@ impl<'a, T: View> ViewContext<'a, T> {
             })
     }
 
-    pub fn observe_fullscreen<F>(&mut self, mut callback: F) -> Subscription
+    pub fn observe_fullscreen<F>(&mut self, mut callback: F) -> impl Subscription
     where
         F: 'static + FnMut(&mut T, bool, &mut ViewContext<T>),
     {
@@ -5221,245 +5227,83 @@ impl<T> Drop for ElementStateHandle<T> {
     }
 }
 
+//***********
 #[must_use]
-pub enum Subscription {
-    Subscription {
-        id: usize,
-        entity_id: usize,
-        subscriptions: Option<Weak<Mapping<usize, SubscriptionCallback>>>,
-    },
-    GlobalSubscription {
-        id: usize,
-        type_id: TypeId,
-        subscriptions: Option<Weak<Mapping<TypeId, GlobalSubscriptionCallback>>>,
-    },
-    Observation {
-        id: usize,
-        entity_id: usize,
-        observations: Option<Weak<Mapping<usize, ObservationCallback>>>,
-    },
-    GlobalObservation {
-        id: usize,
-        type_id: TypeId,
-        observations: Option<Weak<Mapping<TypeId, GlobalObservationCallback>>>,
-    },
-    FocusObservation {
-        id: usize,
-        view_id: usize,
-        observations: Option<Weak<Mapping<usize, FocusObservationCallback>>>,
-    },
-    WindowActivationObservation {
-        id: usize,
-        window_id: usize,
-        observations: Option<Weak<Mapping<usize, WindowActivationCallback>>>,
-    },
-    WindowFullscreenObservation {
-        id: usize,
-        window_id: usize,
-        observations: Option<Weak<Mapping<usize, WindowFullscreenCallback>>>,
-    },
-
-    ReleaseObservation {
-        id: usize,
-        entity_id: usize,
-        #[allow(clippy::type_complexity)]
-        observations:
-            Option<Weak<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>>,
-    },
-    ActionObservation {
-        id: usize,
-        observations: Option<Weak<Mutex<BTreeMap<usize, ActionObservationCallback>>>>,
-    },
+pub trait Subscription {
+    fn detach(&mut self);
 }
 
-impl Subscription {
-    pub fn detach(&mut self) {
-        match self {
-            Subscription::Subscription { subscriptions, .. } => {
-                subscriptions.take();
+trait SubcriptionManager<K: Hash + Eq + Copy> {
+    fn new() -> Arc<Mutex<Self>>;
+    fn drop(&self, key_id: K, subscription_id: usize);
+}
+
+struct KeyedInfallible<K: Hash + Eq + Copy, F>(HashMap<K, BTreeMap<usize, F>>);
+struct KeyedFallible<K: Hash + Eq + Copy, F>(HashMap<K, BTreeMap<usize, Option<F>>>);
+struct Unkeyed<F>(BTreeMap<usize, F>);
+
+impl<K: Hash + Eq + Copy, F> SubcriptionManager<K> for KeyedInfallible<K, F> {
+    fn new() -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(Self(Default::default())))
+    }
+
+    fn drop(&self, key_id: K, subscription_id: usize) {
+        if let Some(subscriptions) = self.0.get_mut(&key_id) {
+            subscriptions.remove(&subscription_id);
+        }
+    }
+}
+impl<K: Hash + Eq + Copy, F> SubcriptionManager<K> for KeyedFallible<K, F> {
+    fn new() -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(Self(Default::default())))
+    }
+
+    fn drop(&self, key_id: K, subscription_id: usize) {
+        match self.0.entry(key_id).or_default().entry(subscription_id) {
+            btree_map::Entry::Vacant(entry) => {
+                entry.insert(None);
             }
-            Subscription::GlobalSubscription { subscriptions, .. } => {
-                subscriptions.take();
-            }
-            Subscription::Observation { observations, .. } => {
-                observations.take();
-            }
-            Subscription::GlobalObservation { observations, .. } => {
-                observations.take();
-            }
-            Subscription::ReleaseObservation { observations, .. } => {
-                observations.take();
-            }
-            Subscription::FocusObservation { observations, .. } => {
-                observations.take();
-            }
-            Subscription::ActionObservation { observations, .. } => {
-                observations.take();
-            }
-            Subscription::WindowActivationObservation { observations, .. } => {
-                observations.take();
-            }
-            Subscription::WindowFullscreenObservation { observations, .. } => {
-                observations.take();
+            btree_map::Entry::Occupied(entry) => {
+                entry.remove();
             }
         }
     }
 }
+impl<F> SubcriptionManager<()> for Unkeyed<F> {
+    fn new() -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(Self(Default::default())))
+    }
 
-impl Drop for Subscription {
+    fn drop(&self, _: (), subscription_id: usize) {
+        self.0.remove(&subscription_id);
+    }
+}
+
+struct InternalSubscription<K: Hash + Eq + Copy, S: SubcriptionManager<K>> {
+    subscription_id: usize,
+    key_id: K,
+    subscriptions: Option<Weak<Mutex<S>>>,
+}
+
+impl<K: Hash + Eq + Copy, S: SubcriptionManager<K>> Subscription for InternalSubscription<K, S> {
+    fn detach(&mut self) {
+        self.subscriptions.take();
+    }
+}
+
+impl<K: Hash + Eq + Copy, S: SubcriptionManager<K>> Drop for InternalSubscription<K, S> {
     fn drop(&mut self) {
-        match self {
-            Subscription::Subscription {
-                id,
-                entity_id,
-                subscriptions,
-            } => {
-                if let Some(subscriptions) = subscriptions.as_ref().and_then(Weak::upgrade) {
-                    match subscriptions
-                        .lock()
-                        .entry(*entity_id)
-                        .or_default()
-                        .entry(*id)
-                    {
-                        btree_map::Entry::Vacant(entry) => {
-                            entry.insert(None);
-                        }
-                        btree_map::Entry::Occupied(entry) => {
-                            entry.remove();
-                        }
-                    }
-                }
-            }
-            Subscription::GlobalSubscription {
-                id,
-                type_id,
-                subscriptions,
-            } => {
-                if let Some(subscriptions) = subscriptions.as_ref().and_then(Weak::upgrade) {
-                    match subscriptions.lock().entry(*type_id).or_default().entry(*id) {
-                        btree_map::Entry::Vacant(entry) => {
-                            entry.insert(None);
-                        }
-                        btree_map::Entry::Occupied(entry) => {
-                            entry.remove();
-                        }
-                    }
-                }
-            }
-            Subscription::Observation {
-                id,
-                entity_id,
-                observations,
-            } => {
-                if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
-                    match observations
-                        .lock()
-                        .entry(*entity_id)
-                        .or_default()
-                        .entry(*id)
-                    {
-                        btree_map::Entry::Vacant(entry) => {
-                            entry.insert(None);
-                        }
-                        btree_map::Entry::Occupied(entry) => {
-                            entry.remove();
-                        }
-                    }
-                }
-            }
-            Subscription::GlobalObservation {
-                id,
-                type_id,
-                observations,
-            } => {
-                if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
-                    match observations.lock().entry(*type_id).or_default().entry(*id) {
-                        collections::btree_map::Entry::Vacant(entry) => {
-                            entry.insert(None);
-                        }
-                        collections::btree_map::Entry::Occupied(entry) => {
-                            entry.remove();
-                        }
-                    }
-                }
-            }
-            Subscription::ReleaseObservation {
-                id,
-                entity_id,
-                observations,
-            } => {
-                if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
-                    if let Some(observations) = observations.lock().get_mut(entity_id) {
-                        observations.remove(id);
-                    }
-                }
-            }
-            Subscription::FocusObservation {
-                id,
-                view_id,
-                observations,
-            } => {
-                if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
-                    match observations.lock().entry(*view_id).or_default().entry(*id) {
-                        btree_map::Entry::Vacant(entry) => {
-                            entry.insert(None);
-                        }
-                        btree_map::Entry::Occupied(entry) => {
-                            entry.remove();
-                        }
-                    }
-                }
-            }
-            Subscription::ActionObservation { id, observations } => {
-                if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
-                    observations.lock().remove(id);
-                }
-            }
-            Subscription::WindowActivationObservation {
-                id,
-                window_id,
-                observations,
-            } => {
-                if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
-                    match observations
-                        .lock()
-                        .entry(*window_id)
-                        .or_default()
-                        .entry(*id)
-                    {
-                        btree_map::Entry::Vacant(entry) => {
-                            entry.insert(None);
-                        }
-                        btree_map::Entry::Occupied(entry) => {
-                            entry.remove();
-                        }
-                    }
-                }
-            }
-            Subscription::WindowFullscreenObservation {
-                id,
-                window_id,
-                observations,
-            } => {
-                if let Some(observations) = observations.as_ref().and_then(Weak::upgrade) {
-                    match observations
-                        .lock()
-                        .entry(*window_id)
-                        .or_default()
-                        .entry(*id)
-                    {
-                        btree_map::Entry::Vacant(entry) => {
-                            entry.insert(None);
-                        }
-                        btree_map::Entry::Occupied(entry) => {
-                            entry.remove();
-                        }
-                    }
-                }
-            }
+        let key_id = self.key_id;
+        let subscription_id = self.subscription_id;
+
+        if let Some(subscriptions) = self.subscriptions.as_ref().and_then(Weak::upgrade) {
+            let storage = subscriptions.lock();
+            (*storage).drop(key_id, subscription_id);
         }
     }
 }
+
+//*******
 
 lazy_static! {
     static ref LEAK_BACKTRACE: bool =

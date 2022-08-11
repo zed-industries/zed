@@ -7,8 +7,8 @@ use collections::HashMap;
 use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll, MAX_TAB_TITLE_LEN};
 use gpui::{
     actions, elements::*, platform::CursorStyle, Action, AnyViewHandle, AppContext, ElementBox,
-    Entity, ModelContext, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription,
-    Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
+    Entity, ModelContext, ModelHandle, MouseButton, MutableAppContext, OldSubscription,
+    RenderContext, Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, Project};
@@ -77,7 +77,7 @@ pub struct ProjectSearchView {
 
 pub struct ProjectSearchBar {
     active_project_search: Option<ViewHandle<ProjectSearchView>>,
-    subscription: Option<Subscription>,
+    subscription: Option<OldSubscription>,
 }
 
 impl Entity for ProjectSearch {

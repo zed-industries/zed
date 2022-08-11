@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 use futures::FutureExt;
 use gpui::{
     elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, MutableAppContext,
-    RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
+    OldSubscription, RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use language::{Bias, Buffer, File as _, SelectionGoal};
 use project::{File, Project, ProjectEntryId, ProjectPath};
@@ -497,7 +497,7 @@ impl ProjectItem for Editor {
 pub struct CursorPosition {
     position: Option<Point>,
     selected_count: usize,
-    _observe_active_editor: Option<Subscription>,
+    _observe_active_editor: Option<OldSubscription>,
 }
 
 impl Default for CursorPosition {

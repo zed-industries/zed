@@ -1,6 +1,6 @@
 use crate::{
     elements::Empty, executor, platform, Element, ElementBox, Entity, FontCache, Handle,
-    LeakDetector, MutableAppContext, Platform, RenderContext, Subscription, TestAppContext, View,
+    LeakDetector, MutableAppContext, Platform, RenderContext, TestAppContext, View,
 };
 use futures::StreamExt;
 use parking_lot::Mutex;
@@ -121,7 +121,7 @@ pub fn run_test(
 
 pub struct Observation<T> {
     rx: channel::Receiver<T>,
-    _subscription: Subscription,
+    _subscription: OldSubscription,
 }
 
 impl<T> futures::Stream for Observation<T> {

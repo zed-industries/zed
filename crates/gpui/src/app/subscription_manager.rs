@@ -7,7 +7,7 @@ use collections::{btree_map, BTreeMap, HashMap};
 
 use crate::MutableAppContext;
 
-pub type Mapping<K, F> = Mutex<HashMap<K, BTreeMap<usize, Option<F>>>>;
+pub type Mapping<K, F> = HashMap<K, BTreeMap<usize, Option<F>>>;
 
 pub struct CallbackCollection<K: Hash + Eq, F> {
     internal: Arc<Mapping<K, F>>,

@@ -8,8 +8,8 @@ use gpui::{
     elements::*,
     platform::CursorStyle,
     views::{ItemType, Select, SelectStyle},
-    AnyViewHandle, AppContext, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext,
-    Subscription, Task, View, ViewContext, ViewHandle,
+    AnyViewHandle, AppContext, Entity, ModelHandle, MouseButton, MutableAppContext,
+    OldSubscription, RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use menu::Confirm;
 use postage::prelude::Stream;
@@ -23,7 +23,7 @@ const MESSAGE_LOADING_THRESHOLD: usize = 50;
 pub struct ChatPanel {
     rpc: Arc<Client>,
     channel_list: ModelHandle<ChannelList>,
-    active_channel: Option<(ModelHandle<Channel>, Subscription)>,
+    active_channel: Option<(ModelHandle<Channel>, OldSubscription)>,
     message_list: ListState,
     input_editor: ViewHandle<Editor>,
     channel_select: ViewHandle<Select>,

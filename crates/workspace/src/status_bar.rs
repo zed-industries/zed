@@ -1,7 +1,7 @@
 use crate::{ItemHandle, Pane};
 use gpui::{
-    elements::*, AnyViewHandle, ElementBox, Entity, MutableAppContext, RenderContext, Subscription,
-    View, ViewContext, ViewHandle,
+    elements::*, AnyViewHandle, ElementBox, Entity, MutableAppContext, OldSubscription,
+    RenderContext, View, ViewContext, ViewHandle,
 };
 use settings::Settings;
 
@@ -26,7 +26,7 @@ pub struct StatusBar {
     left_items: Vec<Box<dyn StatusItemViewHandle>>,
     right_items: Vec<Box<dyn StatusItemViewHandle>>,
     active_pane: ViewHandle<Pane>,
-    _observe_active_pane: Subscription,
+    _observe_active_pane: OldSubscription,
 }
 
 impl Entity for StatusBar {
