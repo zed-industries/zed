@@ -1,4 +1,4 @@
-use std::{any::Any, sync::Arc};
+use std::{any::Any, rc::Rc};
 
 use gpui::{
     elements::{Container, MouseEventHandler},
@@ -10,8 +10,8 @@ use gpui::{
 struct State<V: View> {
     position: Vector2F,
     region_offset: Vector2F,
-    payload: Arc<dyn Any>,
-    render: Arc<dyn Fn(Arc<dyn Any>, &mut RenderContext<V>) -> ElementBox>,
+    payload: Rc<dyn Any + 'static>,
+    render: Rc<dyn Fn(Rc<dyn Any>, &mut RenderContext<V>) -> ElementBox>,
 }
 
 impl<V: View> Clone for State<V> {
@@ -46,13 +46,15 @@ impl<V: View> DragAndDrop<V> {
         }
     }
 
-    pub fn currently_dragged<T: Any>(&self) -> Option<(Vector2F, &T)> {
+    pub fn currently_dragged<T: Any>(&self) -> Option<(Vector2F, Rc<T>)> {
         self.currently_dragged.as_ref().and_then(
             |State {
                  position, payload, ..
              }| {
                 payload
-                    .downcast_ref::<T>()
+                    .clone()
+                    .downcast::<T>()
+                    .ok()
                     .map(|payload| (position.clone(), payload))
             },
         )
@@ -61,9 +63,9 @@ impl<V: View> DragAndDrop<V> {
     pub fn dragging<T: Any>(
         relative_to: Option<RectF>,
         position: Vector2F,
-        payload: Arc<T>,
+        payload: Rc<T>,
         cx: &mut EventContext,
-        render: Arc<impl 'static + Fn(&T, &mut RenderContext<V>) -> ElementBox>,
+        render: Rc<impl 'static + Fn(&T, &mut RenderContext<V>) -> ElementBox>,
     ) {
         cx.update_global::<Self, _, _>(|this, cx| {
             let region_offset = if let Some(previous_state) = this.currently_dragged.as_ref() {
@@ -80,7 +82,7 @@ impl<V: View> DragAndDrop<V> {
                 region_offset,
                 position,
                 payload,
-                render: Arc::new(move |payload, cx| {
+                render: Rc::new(move |payload, cx| {
                     render(payload.downcast_ref::<T>().unwrap(), cx)
                 }),
             });
@@ -143,8 +145,8 @@ impl Draggable for MouseEventHandler {
     where
         Self: Sized,
     {
-        let payload = Arc::new(payload);
-        let render = Arc::new(render);
+        let payload = Rc::new(payload);
+        let render = Rc::new(render);
         self.on_drag(MouseButton::Left, move |e, cx| {
             let payload = payload.clone();
             let render = render.clone();

@@ -3,7 +3,7 @@ use crate::{toolbar::Toolbar, Item, NewFile, NewSearch, NewTerminal, WeakItemHan
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use context_menu::{ContextMenu, ContextMenuItem};
-use drag_and_drop::Draggable;
+use drag_and_drop::{DragAndDrop, Draggable};
 use futures::StreamExt;
 use gpui::{
     actions,
@@ -49,6 +49,14 @@ pub struct CloseItem {
     pub pane: WeakViewHandle<Pane>,
 }
 
+#[derive(Clone, PartialEq)]
+pub struct MoveItem {
+    pub item_id: usize,
+    pub from: WeakViewHandle<Pane>,
+    pub to: WeakViewHandle<Pane>,
+    pub destination_index: usize,
+}
+
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct GoBack {
     #[serde(skip_deserializing)]
@@ -72,7 +80,7 @@ pub struct DeployNewMenu {
 }
 
 impl_actions!(pane, [GoBack, GoForward, ActivateItem]);
-impl_internal_actions!(pane, [CloseItem, DeploySplitMenu, DeployNewMenu]);
+impl_internal_actions!(pane, [CloseItem, DeploySplitMenu, DeployNewMenu, MoveItem]);
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
@@ -98,6 +106,47 @@ pub fn init(cx: &mut MutableAppContext) {
             task.await?;
             Ok(())
         }))
+    });
+    cx.add_action(|workspace: &mut Workspace, action: &MoveItem, cx| {
+        // Get item handle to move
+        let from = if let Some(from) = action.from.upgrade(cx) {
+            from
+        } else {
+            return;
+        };
+
+        let (item_ix, item_handle) = from
+            .read(cx)
+            .items()
+            .enumerate()
+            .find(|(_, item_handle)| item_handle.id() == action.item_id)
+            .expect("Tried to move item handle which was not in from pane");
+
+        // Add item to new pane at given index
+        let to = if let Some(to) = action.to.upgrade(cx) {
+            to
+        } else {
+            return;
+        };
+
+        // This automatically removes duplicate items in the pane
+        Pane::add_item_at(
+            workspace,
+            to,
+            item_handle.clone(),
+            true,
+            true,
+            Some(action.destination_index),
+            cx,
+        );
+
+        if action.from != action.to {
+            // Close item from previous pane
+            from.update(cx, |from, cx| {
+                from.remove_item(item_ix, cx);
+                dbg!(from.items().collect::<Vec<_>>());
+            });
+        }
     });
     cx.add_action(|pane: &mut Pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx));
     cx.add_action(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx));
@@ -408,12 +457,13 @@ impl Pane {
         }
     }
 
-    pub(crate) fn add_item(
+    pub fn add_item_at(
         workspace: &mut Workspace,
         pane: ViewHandle<Pane>,
         item: Box<dyn ItemHandle>,
         activate_pane: bool,
         focus_item: bool,
+        destination_index: Option<usize>,
         cx: &mut ViewContext<Workspace>,
     ) {
         // Prevent adding the same item to the pane more than once.
@@ -428,16 +478,20 @@ impl Pane {
 
         item.added_to_pane(workspace, pane.clone(), cx);
         pane.update(cx, |pane, cx| {
-            // If there is already an active item, then insert the new item
-            // right after it. Otherwise, adjust the `active_item_index` field
-            // before activating the new item, so that in the `activate_item`
-            // method, we can detect that the active item is changing.
-            let item_ix;
-            if pane.active_item_index < pane.items.len() {
-                item_ix = pane.active_item_index + 1
+            let item_ix = if let Some(destination_index) = destination_index {
+                destination_index
             } else {
-                item_ix = pane.items.len();
-                pane.active_item_index = usize::MAX;
+                // If there is already an active item, then insert the new item
+                // right after it. Otherwise, adjust the `active_item_index` field
+                // before activating the new item, so that in the `activate_item`
+                // method, we can detect that the active item is changing.
+                if pane.active_item_index < pane.items.len() {
+                    pane.active_item_index + 1
+                } else {
+                    let ix = pane.items.len();
+                    pane.active_item_index = usize::MAX;
+                    ix
+                }
             };
 
             cx.reparent(&item);
@@ -445,6 +499,17 @@ impl Pane {
             pane.activate_item(item_ix, activate_pane, focus_item, false, cx);
             cx.notify();
         });
+    }
+
+    pub(crate) fn add_item(
+        workspace: &mut Workspace,
+        pane: ViewHandle<Pane>,
+        item: Box<dyn ItemHandle>,
+        activate_pane: bool,
+        focus_item: bool,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        Self::add_item_at(workspace, pane, item, activate_pane, focus_item, None, cx)
     }
 
     pub fn items(&self) -> impl Iterator<Item = &Box<dyn ItemHandle>> {
@@ -673,48 +738,7 @@ impl Pane {
                 // Remove the item from the pane.
                 pane.update(&mut cx, |pane, cx| {
                     if let Some(item_ix) = pane.items.iter().position(|i| i.id() == item.id()) {
-                        if item_ix == pane.active_item_index {
-                            // Activate the previous item if possible.
-                            // This returns the user to the previously opened tab if they closed
-                            // a ne item they just navigated to.
-                            if item_ix > 0 {
-                                pane.activate_prev_item(cx);
-                            } else if item_ix + 1 < pane.items.len() {
-                                pane.activate_next_item(cx);
-                            }
-                        }
-
-                        let item = pane.items.remove(item_ix);
-                        cx.emit(Event::RemoveItem);
-                        if pane.items.is_empty() {
-                            item.deactivated(cx);
-                            pane.update_toolbar(cx);
-                            cx.emit(Event::Remove);
-                        }
-
-                        if item_ix < pane.active_item_index {
-                            pane.active_item_index -= 1;
-                        }
-
-                        pane.nav_history
-                            .borrow_mut()
-                            .set_mode(NavigationMode::ClosingItem);
-                        item.deactivated(cx);
-                        pane.nav_history
-                            .borrow_mut()
-                            .set_mode(NavigationMode::Normal);
-
-                        if let Some(path) = item.project_path(cx) {
-                            pane.nav_history
-                                .borrow_mut()
-                                .paths_by_item
-                                .insert(item.id(), path);
-                        } else {
-                            pane.nav_history
-                                .borrow_mut()
-                                .paths_by_item
-                                .remove(&item.id());
-                        }
+                        pane.remove_item(item_ix, cx);
                     }
                 });
             }
@@ -722,6 +746,53 @@ impl Pane {
             pane.update(&mut cx, |_, cx| cx.notify());
             Ok(true)
         })
+    }
+
+    fn remove_item(&mut self, item_ix: usize, cx: &mut ViewContext<Self>) {
+        if item_ix == self.active_item_index {
+            // Activate the previous item if possible.
+            // This returns the user to the previously opened tab if they closed
+            // a new item they just navigated to.
+            if item_ix > 0 {
+                self.activate_prev_item(cx);
+            } else if item_ix + 1 < self.items.len() {
+                self.activate_next_item(cx);
+            }
+        }
+
+        let item = self.items.remove(item_ix);
+        cx.emit(Event::RemoveItem);
+        if self.items.is_empty() {
+            item.deactivated(cx);
+            self.update_toolbar(cx);
+            cx.emit(Event::Remove);
+        }
+
+        if item_ix < self.active_item_index {
+            self.active_item_index -= 1;
+        }
+
+        self.nav_history
+            .borrow_mut()
+            .set_mode(NavigationMode::ClosingItem);
+        item.deactivated(cx);
+        self.nav_history
+            .borrow_mut()
+            .set_mode(NavigationMode::Normal);
+
+        if let Some(path) = item.project_path(cx) {
+            self.nav_history
+                .borrow_mut()
+                .paths_by_item
+                .insert(item.id(), path);
+        } else {
+            self.nav_history
+                .borrow_mut()
+                .paths_by_item
+                .remove(&item.id());
+        }
+
+        cx.notify();
     }
 
     pub async fn save_item(
@@ -880,6 +951,11 @@ impl Pane {
     fn render_tab_bar(&mut self, cx: &mut RenderContext<Self>) -> impl Element {
         let theme = cx.global::<Settings>().theme.clone();
 
+        struct DraggedItem {
+            item: Box<dyn ItemHandle>,
+            pane: WeakViewHandle<Pane>,
+        }
+
         enum Tabs {}
         enum Tab {}
         let pane = cx.handle();
@@ -940,15 +1016,43 @@ impl Pane {
                             })
                         }
                     })
-                    .as_draggable(item, {
+                    .on_up(MouseButton::Left, {
                         let pane = pane.clone();
-                        let detail = detail.clone();
-
-                        move |item, cx: &mut RenderContext<Workspace>| {
-                            let pane = pane.clone();
-                            Pane::render_tab(item, pane, detail, false, pane_active, tab_active, cx)
+                        move |_, cx: &mut EventContext| {
+                            if let Some((_, dragged_item)) = cx
+                                .global::<DragAndDrop<Workspace>>()
+                                .currently_dragged::<DraggedItem>()
+                            {
+                                cx.dispatch_action(MoveItem {
+                                    item_id: dragged_item.item.id(),
+                                    from: dragged_item.pane.clone(),
+                                    to: pane.clone(),
+                                    destination_index: ix,
+                                })
+                            }
+                            cx.propogate_event();
                         }
                     })
+                    .as_draggable(
+                        DraggedItem {
+                            item,
+                            pane: pane.clone(),
+                        },
+                        {
+                            let detail = detail.clone();
+                            move |dragged_item, cx: &mut RenderContext<Workspace>| {
+                                Pane::render_tab(
+                                    &dragged_item.item,
+                                    dragged_item.pane.clone(),
+                                    detail,
+                                    false,
+                                    pane_active,
+                                    tab_active,
+                                    cx,
+                                )
+                            }
+                        },
+                    )
                     .boxed()
                 })
             }

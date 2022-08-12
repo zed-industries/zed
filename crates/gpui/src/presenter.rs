@@ -224,6 +224,8 @@ impl Presenter {
                 Event::MouseDown(e @ MouseButtonEvent { position, .. }) => {
                     for (region, _) in self.mouse_regions.iter().rev() {
                         if region.bounds.contains_point(*position) {
+                            self.clicked_region = Some(region.clone());
+                            self.prev_drag_position = Some(*position);
                             events_to_send.push((
                                 region.clone(),
                                 MouseRegionEvent::Down(DownRegionEvent {
@@ -277,19 +279,19 @@ impl Presenter {
                     }
                 }
                 Event::MouseMoved(e @ MouseMovedEvent { position, .. }) => {
-                    if let Some((clicked_region, prev_drag_position)) = self
-                        .clicked_region
-                        .as_ref()
-                        .zip(self.prev_drag_position.as_mut())
-                    {
-                        events_to_send.push((
-                            clicked_region.clone(),
-                            MouseRegionEvent::Drag(DragRegionEvent {
-                                region: clicked_region.bounds,
-                                prev_drag_position: *prev_drag_position,
-                                platform_event: e.clone(),
-                            }),
-                        ));
+                    if let Some(clicked_region) = self.clicked_region.as_ref() {
+                        if let Some(prev_drag_position) = self.prev_drag_position {
+                            events_to_send.push((
+                                clicked_region.clone(),
+                                MouseRegionEvent::Drag(DragRegionEvent {
+                                    region: clicked_region.bounds,
+                                    prev_drag_position,
+                                    platform_event: e.clone(),
+                                }),
+                            ));
+                        }
+
+                        self.prev_drag_position = Some(*position)
                     }
 
                     for (region, _) in self.mouse_regions.iter().rev() {
@@ -417,8 +419,6 @@ impl Presenter {
             view_stack: Default::default(),
             invalidated_views: Default::default(),
             notify_count: 0,
-            clicked_region: &mut self.clicked_region,
-            prev_drag_position: &mut self.prev_drag_position,
             handled: false,
             window_id: self.window_id,
             app: cx,
@@ -639,8 +639,6 @@ pub struct EventContext<'a> {
     pub window_id: usize,
     pub notify_count: usize,
     view_stack: Vec<usize>,
-    clicked_region: &'a mut Option<MouseRegion>,
-    prev_drag_position: &'a mut Option<Vector2F>,
     handled: bool,
     invalidated_views: HashSet<usize>,
 }
@@ -662,17 +660,6 @@ impl<'a> EventContext<'a> {
             if event.is_local() {
                 if self.handled {
                     continue;
-                }
-
-                match &event {
-                    MouseRegionEvent::Down(e) => {
-                        *self.clicked_region = Some(region.clone());
-                        *self.prev_drag_position = Some(e.position);
-                    }
-                    MouseRegionEvent::Drag(e) => {
-                        *self.prev_drag_position = Some(e.position);
-                    }
-                    _ => {}
                 }
 
                 self.invalidated_views.insert(region.view_id);
