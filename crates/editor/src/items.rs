@@ -397,7 +397,7 @@ impl Item for Editor {
         let buffers = buffer.read(cx).all_buffers();
         let mut timeout = cx.background().timer(FORMAT_TIMEOUT).fuse();
         let format = project.update(cx, |project, cx| project.format(buffers, true, cx));
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|_, mut cx| async move {
             let transaction = futures::select_biased! {
                 _ = timeout => {
                     log::warn!("timed out waiting for formatting");
@@ -406,9 +406,6 @@ impl Item for Editor {
                 transaction = format.log_err().fuse() => transaction,
             };
 
-            this.update(&mut cx, |editor, cx| {
-                editor.request_autoscroll(Autoscroll::Fit, cx)
-            });
             buffer
                 .update(&mut cx, |buffer, cx| {
                     if let Some(transaction) = transaction {
