@@ -107,6 +107,9 @@ impl<V: View> DragAndDrop<V> {
                     Container::new(render(payload, cx))
                         .with_margin_left(position.x())
                         .with_margin_top(position.y())
+                        .aligned()
+                        .top()
+                        .left()
                         .boxed()
                 })
                 .on_up(MouseButton::Left, |_, cx| {

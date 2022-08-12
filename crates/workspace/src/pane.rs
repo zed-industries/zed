@@ -3,6 +3,7 @@ use crate::{toolbar::Toolbar, Item, NewFile, NewSearch, NewTerminal, WeakItemHan
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use context_menu::{ContextMenu, ContextMenuItem};
+use drag_and_drop::Draggable;
 use futures::StreamExt;
 use gpui::{
     actions,
@@ -906,6 +907,7 @@ impl Pane {
                     MouseEventHandler::new::<Tab, _, _>(ix, cx, {
                         let item = item.clone();
                         let pane = pane.clone();
+                        let detail = detail.clone();
                         let hovered = mouse_state.hovered;
 
                         move |_, cx| {
@@ -929,12 +931,22 @@ impl Pane {
                         cx.dispatch_action(ActivateItem(ix));
                     })
                     .on_click(MouseButton::Middle, {
+                        let item = item.clone();
                         let pane = pane.clone();
                         move |_, cx: &mut EventContext| {
                             cx.dispatch_action(CloseItem {
                                 item_id: item.id(),
                                 pane: pane.clone(),
                             })
+                        }
+                    })
+                    .as_draggable(item, {
+                        let pane = pane.clone();
+                        let detail = detail.clone();
+
+                        move |item, cx: &mut RenderContext<Workspace>| {
+                            let pane = pane.clone();
+                            Pane::render_tab(item, pane, detail, false, pane_active, tab_active, cx)
                         }
                     })
                     .boxed()
@@ -1005,94 +1017,93 @@ impl Pane {
         let tab_style = theme.workspace.tab_bar.tab_style(pane_active, tab_active);
         let title = item.tab_content(detail, tab_style, cx);
 
-        Container::new(
-            Flex::row()
-                .with_child(
-                    Align::new({
-                        let diameter = 7.0;
-                        let icon_color = if item.has_conflict(cx) {
-                            Some(tab_style.icon_conflict)
-                        } else if item.is_dirty(cx) {
-                            Some(tab_style.icon_dirty)
-                        } else {
-                            None
-                        };
+        Flex::row()
+            .with_child(
+                Align::new({
+                    let diameter = 7.0;
+                    let icon_color = if item.has_conflict(cx) {
+                        Some(tab_style.icon_conflict)
+                    } else if item.is_dirty(cx) {
+                        Some(tab_style.icon_dirty)
+                    } else {
+                        None
+                    };
 
-                        ConstrainedBox::new(
-                            Canvas::new(move |bounds, _, cx| {
-                                if let Some(color) = icon_color {
-                                    let square =
-                                        RectF::new(bounds.origin(), vec2f(diameter, diameter));
-                                    cx.scene.push_quad(Quad {
-                                        bounds: square,
-                                        background: Some(color),
-                                        border: Default::default(),
-                                        corner_radius: diameter / 2.,
-                                    });
-                                }
-                            })
-                            .boxed(),
-                        )
-                        .with_width(diameter)
-                        .with_height(diameter)
-                        .boxed()
-                    })
-                    .boxed(),
-                )
-                .with_child(
-                    Container::new(Align::new(title).boxed())
-                        .with_style(ContainerStyle {
-                            margin: Margin {
-                                left: tab_style.spacing,
-                                right: tab_style.spacing,
-                                ..Default::default()
-                            },
-                            ..Default::default()
+                    ConstrainedBox::new(
+                        Canvas::new(move |bounds, _, cx| {
+                            if let Some(color) = icon_color {
+                                let square = RectF::new(bounds.origin(), vec2f(diameter, diameter));
+                                cx.scene.push_quad(Quad {
+                                    bounds: square,
+                                    background: Some(color),
+                                    border: Default::default(),
+                                    corner_radius: diameter / 2.,
+                                });
+                            }
                         })
-                        .boxed(),
-                )
-                .with_child(
-                    Align::new(
-                        ConstrainedBox::new(if hovered {
-                            let item_id = item.id();
-                            enum TabCloseButton {}
-                            let icon = Svg::new("icons/x_mark_thin_8.svg");
-                            MouseEventHandler::new::<TabCloseButton, _, _>(
-                                item_id,
-                                cx,
-                                |mouse_state, _| {
-                                    if mouse_state.hovered {
-                                        icon.with_color(tab_style.icon_close_active).boxed()
-                                    } else {
-                                        icon.with_color(tab_style.icon_close).boxed()
-                                    }
-                                },
-                            )
-                            .with_padding(Padding::uniform(4.))
-                            .with_cursor_style(CursorStyle::PointingHand)
-                            .on_click(MouseButton::Left, {
-                                let pane = pane.clone();
-                                move |_, cx| {
-                                    cx.dispatch_action(CloseItem {
-                                        item_id,
-                                        pane: pane.clone(),
-                                    })
-                                }
-                            })
-                            .on_click(MouseButton::Middle, |_, cx| cx.propogate_event())
-                            .named("close-tab-icon")
-                        } else {
-                            Empty::new().boxed()
-                        })
-                        .with_width(tab_style.icon_width)
                         .boxed(),
                     )
+                    .with_width(diameter)
+                    .with_height(diameter)
+                    .boxed()
+                })
+                .boxed(),
+            )
+            .with_child(
+                Container::new(Align::new(title).boxed())
+                    .with_style(ContainerStyle {
+                        margin: Margin {
+                            left: tab_style.spacing,
+                            right: tab_style.spacing,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    })
+                    .boxed(),
+            )
+            .with_child(
+                Align::new(
+                    ConstrainedBox::new(if hovered {
+                        let item_id = item.id();
+                        enum TabCloseButton {}
+                        let icon = Svg::new("icons/x_mark_thin_8.svg");
+                        MouseEventHandler::new::<TabCloseButton, _, _>(
+                            item_id,
+                            cx,
+                            |mouse_state, _| {
+                                if mouse_state.hovered {
+                                    icon.with_color(tab_style.icon_close_active).boxed()
+                                } else {
+                                    icon.with_color(tab_style.icon_close).boxed()
+                                }
+                            },
+                        )
+                        .with_padding(Padding::uniform(4.))
+                        .with_cursor_style(CursorStyle::PointingHand)
+                        .on_click(MouseButton::Left, {
+                            let pane = pane.clone();
+                            move |_, cx| {
+                                cx.dispatch_action(CloseItem {
+                                    item_id,
+                                    pane: pane.clone(),
+                                })
+                            }
+                        })
+                        .on_click(MouseButton::Middle, |_, cx| cx.propogate_event())
+                        .named("close-tab-icon")
+                    } else {
+                        Empty::new().boxed()
+                    })
+                    .with_width(tab_style.icon_width)
                     .boxed(),
                 )
                 .boxed(),
-        )
-        .with_style(tab_style.container)
-        .boxed()
+            )
+            .contained()
+            .with_style(tab_style.container)
+            .constrained()
+            .with_height(tab_style.height)
+            .boxed()
     }
 }
 
