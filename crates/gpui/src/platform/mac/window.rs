@@ -766,12 +766,12 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 } else {
                     window_state_borrow.last_fresh_keydown = Some(keydown);
                 }
-
                 function_is_held = event.keystroke.function;
                 Some((event, None))
             }
             _ => return NO,
         };
+
         drop(window_state_borrow);
 
         if !function_is_held {
