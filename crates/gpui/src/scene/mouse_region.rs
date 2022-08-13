@@ -6,8 +6,8 @@ use pathfinder_geometry::rect::RectF;
 use crate::{EventContext, MouseButton};
 
 use super::mouse_region_event::{
-    ClickRegionEvent, DownOutRegionEvent, DownRegionEvent, DragOverRegionEvent, DragRegionEvent,
-    HoverRegionEvent, MouseRegionEvent, MoveRegionEvent, UpOutRegionEvent, UpRegionEvent,
+    ClickRegionEvent, DownOutRegionEvent, DownRegionEvent, DragRegionEvent, HoverRegionEvent,
+    MouseRegionEvent, MoveRegionEvent, UpOutRegionEvent, UpRegionEvent,
 };
 
 #[derive(Clone, Default)]
@@ -104,15 +104,6 @@ impl MouseRegion {
         self
     }
 
-    pub fn on_drag_over(
-        mut self,
-        button: MouseButton,
-        handler: impl Fn(DragOverRegionEvent, &mut EventContext) + 'static,
-    ) -> Self {
-        self.handlers = self.handlers.on_drag_over(button, handler);
-        self
-    }
-
     pub fn on_hover(
         mut self,
         handler: impl Fn(HoverRegionEvent, &mut EventContext) + 'static,
@@ -150,10 +141,6 @@ impl HandlerSet {
         for button in MouseButton::all() {
             set.insert(
                 (MouseRegionEvent::drag_disc(), Some(button)),
-                Rc::new(|_, _| {}),
-            );
-            set.insert(
-                (MouseRegionEvent::drag_over_disc(), Some(button)),
                 Rc::new(|_, _| {}),
             );
             set.insert(
@@ -311,24 +298,6 @@ impl HandlerSet {
                 } else {
                     panic!(
                         "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Drag, found {:?}", 
-                        region_event);
-                }
-            }));
-        self
-    }
-
-    pub fn on_drag_over(
-        mut self,
-        button: MouseButton,
-        handler: impl Fn(DragOverRegionEvent, &mut EventContext) + 'static,
-    ) -> Self {
-        self.set.insert((MouseRegionEvent::drag_over_disc(), Some(button)),
-            Rc::new(move |region_event, cx| {
-                if let MouseRegionEvent::DragOver(e) = region_event {
-                    handler(e, cx);
-                } else {
-                    panic!(
-                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::DragOver, found {:?}", 
                         region_event);
                 }
             }));

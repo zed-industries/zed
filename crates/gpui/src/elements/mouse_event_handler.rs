@@ -6,9 +6,8 @@ use crate::{
     },
     platform::CursorStyle,
     scene::{
-        ClickRegionEvent, CursorRegion, DownOutRegionEvent, DownRegionEvent, DragOverRegionEvent,
-        DragRegionEvent, HandlerSet, HoverRegionEvent, MoveRegionEvent, UpOutRegionEvent,
-        UpRegionEvent,
+        ClickRegionEvent, CursorRegion, DownOutRegionEvent, DownRegionEvent, DragRegionEvent,
+        HandlerSet, HoverRegionEvent, MoveRegionEvent, UpOutRegionEvent, UpRegionEvent,
     },
     DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, MeasurementContext,
     MouseButton, MouseRegion, MouseState, PaintContext, RenderContext, SizeConstraint, View,
@@ -104,15 +103,6 @@ impl MouseEventHandler {
         handler: impl Fn(DragRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_drag(button, handler);
-        self
-    }
-
-    pub fn on_drag_over(
-        mut self,
-        button: MouseButton,
-        handler: impl Fn(DragOverRegionEvent, &mut EventContext) + 'static,
-    ) -> Self {
-        self.handlers = self.handlers.on_drag_over(button, handler);
         self
     }
 

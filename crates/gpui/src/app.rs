@@ -9,7 +9,7 @@ use crate::{
     platform::{self, KeyDownEvent, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::post_inc,
-    AssetCache, AssetSource, ClipboardItem, FontCache, InputHandler, MouseRegionId,
+    AssetCache, AssetSource, ClipboardItem, FontCache, InputHandler, MouseButton, MouseRegionId,
     PathPromptOptions, TextLayoutCache,
 };
 pub use action::*;
@@ -483,6 +483,7 @@ impl TestAppContext {
                     keystroke: keystroke.clone(),
                     is_held,
                 }),
+                false,
                 cx,
             ) {
                 return true;
@@ -569,8 +570,7 @@ impl TestAppContext {
                 view_type: PhantomData,
                 titlebar_height: 0.,
                 hovered_region_ids: Default::default(),
-                clicked_region_id: None,
-                right_clicked_region_id: None,
+                clicked_region_ids: None,
                 refreshing: false,
             };
             f(view, &mut render_cx)
@@ -1278,8 +1278,7 @@ impl MutableAppContext {
                         view_id,
                         titlebar_height,
                         hovered_region_ids: Default::default(),
-                        clicked_region_id: None,
-                        right_clicked_region_id: None,
+                        clicked_region_ids: None,
                         refreshing: false,
                     })
                     .unwrap(),
@@ -1958,7 +1957,7 @@ impl MutableAppContext {
                             }
                         }
 
-                        presenter.borrow_mut().dispatch_event(event, cx)
+                        presenter.borrow_mut().dispatch_event(event, false, cx)
                     } else {
                         false
                     }
@@ -4013,8 +4012,7 @@ pub struct RenderParams {
     pub view_id: usize,
     pub titlebar_height: f32,
     pub hovered_region_ids: HashSet<MouseRegionId>,
-    pub clicked_region_id: Option<MouseRegionId>,
-    pub right_clicked_region_id: Option<MouseRegionId>,
+    pub clicked_region_ids: Option<(Vec<MouseRegionId>, MouseButton)>,
     pub refreshing: bool,
 }
 
@@ -4023,8 +4021,7 @@ pub struct RenderContext<'a, T: View> {
     pub(crate) view_id: usize,
     pub(crate) view_type: PhantomData<T>,
     pub(crate) hovered_region_ids: HashSet<MouseRegionId>,
-    pub(crate) clicked_region_id: Option<MouseRegionId>,
-    pub(crate) right_clicked_region_id: Option<MouseRegionId>,
+    pub(crate) clicked_region_ids: Option<(Vec<MouseRegionId>, MouseButton)>,
     pub app: &'a mut MutableAppContext,
     pub titlebar_height: f32,
     pub refreshing: bool,
@@ -4033,8 +4030,7 @@ pub struct RenderContext<'a, T: View> {
 #[derive(Clone, Copy, Default)]
 pub struct MouseState {
     pub hovered: bool,
-    pub clicked: bool,
-    pub right_clicked: bool,
+    pub clicked: Option<MouseButton>,
 }
 
 impl<'a, V: View> RenderContext<'a, V> {
@@ -4046,8 +4042,7 @@ impl<'a, V: View> RenderContext<'a, V> {
             view_type: PhantomData,
             titlebar_height: params.titlebar_height,
             hovered_region_ids: params.hovered_region_ids.clone(),
-            clicked_region_id: params.clicked_region_id,
-            right_clicked_region_id: params.right_clicked_region_id,
+            clicked_region_ids: params.clicked_region_ids.clone(),
             refreshing: params.refreshing,
         }
     }
@@ -4071,8 +4066,13 @@ impl<'a, V: View> RenderContext<'a, V> {
         };
         MouseState {
             hovered: self.hovered_region_ids.contains(&region_id),
-            clicked: self.clicked_region_id == Some(region_id),
-            right_clicked: self.right_clicked_region_id == Some(region_id),
+            clicked: self.clicked_region_ids.as_ref().and_then(|(ids, button)| {
+                if ids.contains(&region_id) {
+                    Some(*button)
+                } else {
+                    None
+                }
+            }),
         }
     }
 
@@ -6025,6 +6025,7 @@ mod tests {
                 cmd: false,
                 click_count: 1,
             }),
+            false,
             cx,
         );
         assert_eq!(mouse_down_count.load(SeqCst), 1);
