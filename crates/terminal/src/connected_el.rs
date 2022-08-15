@@ -647,6 +647,13 @@ impl Element for TerminalEl {
             let cursor_point = DisplayCursor::from(cursor.point, display_offset);
             let cursor_text = {
                 let str_trxt = cursor_text.to_string();
+
+                let color = if self.focused {
+                    terminal_theme.colors.background
+                } else {
+                    terminal_theme.colors.foreground
+                };
+
                 cx.text_layout_cache.layout_str(
                     &str_trxt,
                     text_style.font_size,
@@ -654,7 +661,7 @@ impl Element for TerminalEl {
                         str_trxt.len(),
                         RunStyle {
                             font_id: text_style.font_id,
-                            color: terminal_theme.colors.background,
+                            color,
                             underline: Default::default(),
                         },
                     )],
