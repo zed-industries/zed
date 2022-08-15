@@ -601,16 +601,21 @@ impl Terminal {
         f(content, cursor_text)
     }
 
-    // fn estimate_utilization(last_processed: usize) -> f32 {
-    //     let buffer_utilization = (last_processed as f32 / (READ_BUFFER_SIZE as f32)).clamp(0., 1.);
-
-    //     //Scale result to bias low, then high
-    //     buffer_utilization * buffer_utilization
-    // }
-
     ///Scroll the terminal
     pub fn scroll(&mut self, scroll: Scroll) {
         self.events.push(InternalEvent::Scroll(scroll));
+    }
+
+    pub fn focus_in(&self) {
+        if self.last_mode.contains(TermMode::FOCUS_IN_OUT) {
+            self.notify_pty("\x1b[I".to_string());
+        }
+    }
+
+    pub fn focus_out(&self) {
+        if self.last_mode.contains(TermMode::FOCUS_IN_OUT) {
+            self.notify_pty("\x1b[O".to_string());
+        }
     }
 
     pub fn click(&mut self, point: Point, side: Direction, clicks: usize) {
