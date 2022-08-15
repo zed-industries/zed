@@ -709,7 +709,7 @@ impl Db for PostgresDb {
                 user_durations.user_id = project_durations.user_id AND
                 user_durations.user_id = users.id AND
                 project_durations.project_id = project_collaborators.project_id
-            ORDER BY total_duration DESC, user_id ASC
+            ORDER BY total_duration DESC, user_id ASC, project_id ASC
         ";
 
         let mut rows = sqlx::query_as::<_, (UserId, String, ProjectId, i64, i64)>(query)
