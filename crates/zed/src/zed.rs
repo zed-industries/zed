@@ -51,6 +51,7 @@ actions!(
         ShowAll,
         Minimize,
         Zoom,
+        ToggleFullScreen,
         Quit,
         DebugElements,
         OpenSettings,
@@ -86,6 +87,11 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_action(
         |_: &mut Workspace, _: &Zoom, cx: &mut ViewContext<Workspace>| {
             cx.zoom_window();
+        },
+    );
+    cx.add_action(
+        |_: &mut Workspace, _: &ToggleFullScreen, cx: &mut ViewContext<Workspace>| {
+            cx.toggle_full_screen();
         },
     );
     cx.add_global_action(quit);

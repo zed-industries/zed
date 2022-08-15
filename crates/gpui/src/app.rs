@@ -1319,6 +1319,11 @@ impl MutableAppContext {
         window.zoom();
     }
 
+    pub fn toggle_window_full_screen(&self, window_id: usize) {
+        let (_, window) = &self.presenters_and_platform_windows[&window_id];
+        window.toggle_full_screen();
+    }
+
     fn prompt(
         &self,
         window_id: usize,
@@ -3681,6 +3686,10 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn zoom_window(&self) {
         self.app.zoom_window(self.window_id)
+    }
+
+    pub fn toggle_full_screen(&self) {
+        self.app.toggle_window_full_screen(self.window_id)
     }
 
     pub fn prompt(
