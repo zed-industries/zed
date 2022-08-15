@@ -161,7 +161,7 @@ impl ProjectPanel {
                     {
                         this.expand_entry(worktree_id, *entry_id, cx);
                         this.update_visible_entries(Some((worktree_id, *entry_id)), cx);
-                        this.autoscroll();
+                        this.autoscroll(cx);
                         cx.notify();
                     }
                 }
@@ -185,6 +185,13 @@ impl ProjectPanel {
                 )
             });
 
+            cx.subscribe(&filename_editor, |this, _, event, cx| match event {
+                editor::Event::BufferEdited | editor::Event::SelectionsChanged { .. } => {
+                    this.autoscroll(cx);
+                }
+                _ => {}
+            })
+            .detach();
             cx.observe_focus(&filename_editor, |this, _, is_focused, cx| {
                 if !is_focused
                     && this
@@ -391,7 +398,7 @@ impl ProjectPanel {
                 worktree_id: *worktree_id,
                 entry_id: worktree_entries[entry_ix].id,
             });
-            self.autoscroll();
+            self.autoscroll(cx);
             cx.notify();
         } else {
             self.select_first(cx);
@@ -559,6 +566,7 @@ impl ProjectPanel {
                 .update(cx, |editor, cx| editor.clear(cx));
             cx.focus(&self.filename_editor);
             self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), cx);
+            self.autoscroll(cx);
             cx.notify();
         }
     }
@@ -588,6 +596,7 @@ impl ProjectPanel {
                     });
                     cx.focus(&self.filename_editor);
                     self.update_visible_entries(None, cx);
+                    self.autoscroll(cx);
                     cx.notify();
                 }
             }
@@ -636,7 +645,7 @@ impl ProjectPanel {
                         worktree_id: *worktree_id,
                         entry_id: entry.id,
                     });
-                    self.autoscroll();
+                    self.autoscroll(cx);
                     cx.notify();
                 }
             }
@@ -658,15 +667,16 @@ impl ProjectPanel {
                     worktree_id,
                     entry_id: root_entry.id,
                 });
-                self.autoscroll();
+                self.autoscroll(cx);
                 cx.notify();
             }
         }
     }
 
-    fn autoscroll(&mut self) {
+    fn autoscroll(&mut self, cx: &mut ViewContext<Self>) {
         if let Some((_, _, index)) = self.selection.and_then(|s| self.index_for_selection(s)) {
             self.list.scroll_to(ScrollTarget::Show(index));
+            cx.notify();
         }
     }
 
