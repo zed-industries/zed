@@ -201,12 +201,16 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         },
     );
     cx.add_action(
-        |workspace: &mut Workspace, _: &project_panel::Toggle, cx: &mut ViewContext<Workspace>| {
+        |workspace: &mut Workspace,
+         _: &project_panel::ToggleFocus,
+         cx: &mut ViewContext<Workspace>| {
             workspace.toggle_sidebar_item_focus(Side::Left, 0, cx);
         },
     );
     cx.add_action(
-        |workspace: &mut Workspace, _: &contacts_panel::Toggle, cx: &mut ViewContext<Workspace>| {
+        |workspace: &mut Workspace,
+         _: &contacts_panel::ToggleFocus,
+         cx: &mut ViewContext<Workspace>| {
             workspace.toggle_sidebar_item_focus(Side::Right, 0, cx);
         },
     );

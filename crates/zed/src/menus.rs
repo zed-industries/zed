@@ -242,11 +242,11 @@ pub fn menus() -> Vec<Menu<'static>> {
                 MenuItem::Separator,
                 MenuItem::Action {
                     name: "Project Panel",
-                    action: Box::new(project_panel::Toggle),
+                    action: Box::new(project_panel::ToggleFocus),
                 },
                 MenuItem::Action {
                     name: "Contacts Panel",
-                    action: Box::new(contacts_panel::Toggle),
+                    action: Box::new(contacts_panel::ToggleFocus),
                 },
                 MenuItem::Action {
                     name: "Command Palette",

@@ -111,7 +111,7 @@ actions!(
         Paste,
         Delete,
         Rename,
-        Toggle
+        ToggleFocus
     ]
 );
 impl_internal_actions!(project_panel, [Open, ToggleExpanded, DeployContextMenu]);
