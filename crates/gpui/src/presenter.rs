@@ -299,24 +299,19 @@ impl Presenter {
                     }
                     cx.platform().set_cursor_style(style_to_assign);
 
-                    if pressed_button.is_some() {
-                        events_to_send.push(MouseRegionEvent::Drag(DragRegionEvent {
+                    if !event_reused {
+                        if pressed_button.is_some() {
+                            events_to_send.push(MouseRegionEvent::Drag(DragRegionEvent {
+                                region: Default::default(),
+                                prev_mouse_position: self.mouse_position,
+                                platform_event: e.clone(),
+                            }));
+                        }
+                        events_to_send.push(MouseRegionEvent::Move(MoveRegionEvent {
                             region: Default::default(),
-                            prev_mouse_position: self.mouse_position,
                             platform_event: e.clone(),
                         }));
                     }
-
-                    events_to_send.push(MouseRegionEvent::Move(MoveRegionEvent {
-                        region: Default::default(),
-                        platform_event: e.clone(),
-                    }));
-
-                    events_to_send.push(MouseRegionEvent::Hover(HoverRegionEvent {
-                        region: Default::default(),
-                        platform_event: e.clone(),
-                        started: true,
-                    }));
 
                     events_to_send.push(MouseRegionEvent::Hover(HoverRegionEvent {
                         region: Default::default(),
@@ -399,7 +394,7 @@ impl Presenter {
 
                 //3. Fire region events
                 let hovered_region_ids = self.hovered_region_ids.clone();
-                let mut event_cx = self.build_event_context(cx);
+                let mut event_cx = self.build_event_context(&mut invalidated_views, cx);
                 for valid_region in valid_regions.into_iter() {
                     region_event.set_region(valid_region.bounds);
                     if let MouseRegionEvent::Hover(e) = &mut region_event {
@@ -410,7 +405,7 @@ impl Presenter {
                     }
 
                     if let Some(callback) = valid_region.handlers.get(&region_event.handler_key()) {
-                        if event_reused {
+                        if !event_reused {
                             invalidated_views.insert(valid_region.view_id);
                         }
 
@@ -424,21 +419,19 @@ impl Presenter {
                         });
 
                         // For bubbling events, if the event was handled, don't continue dispatching
-                        // This only makes sense for local events. 'Out*' events are already
+                        // This only makes sense for local events.
                         if event_cx.handled && local {
                             break;
                         }
                     }
                 }
 
-                invalidated_views.extend(event_cx.invalidated_views);
                 any_event_handled = any_event_handled && event_cx.handled;
             }
 
             if !any_event_handled {
-                let mut event_cx = self.build_event_context(cx);
+                let mut event_cx = self.build_event_context(&mut invalidated_views, cx);
                 any_event_handled = event_cx.dispatch_event(root_view_id, &event);
-                invalidated_views.extend(event_cx.invalidated_views);
             }
 
             for view_id in invalidated_views {
@@ -453,6 +446,7 @@ impl Presenter {
 
     pub fn build_event_context<'a>(
         &'a mut self,
+        invalidated_views: &'a mut HashSet<usize>,
         cx: &'a mut MutableAppContext,
     ) -> EventContext<'a> {
         EventContext {
@@ -460,7 +454,7 @@ impl Presenter {
             font_cache: &self.font_cache,
             text_layout_cache: &self.text_layout_cache,
             view_stack: Default::default(),
-            invalidated_views: Default::default(),
+            invalidated_views,
             notify_count: 0,
             handled: false,
             window_id: self.window_id,
@@ -681,7 +675,7 @@ pub struct EventContext<'a> {
     pub notify_count: usize,
     view_stack: Vec<usize>,
     handled: bool,
-    invalidated_views: HashSet<usize>,
+    invalidated_views: &'a mut HashSet<usize>,
 }
 
 impl<'a> EventContext<'a> {
