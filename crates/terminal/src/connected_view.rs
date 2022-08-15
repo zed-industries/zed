@@ -181,9 +181,15 @@ impl View for ConnectedView {
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
         let terminal_handle = self.terminal.clone().downgrade();
 
+        let self_id = cx.view_id();
+        let focused = cx
+            .focused_view_id(cx.window_id())
+            .filter(|view_id| *view_id == self_id)
+            .is_some();
+
         Stack::new()
             .with_child(
-                TerminalEl::new(cx.handle(), terminal_handle, self.modal)
+                TerminalEl::new(cx.handle(), terminal_handle, self.modal, focused)
                     .contained()
                     .boxed(),
             )
@@ -191,8 +197,15 @@ impl View for ConnectedView {
             .boxed()
     }
 
-    fn on_focus_in(&mut self, _: AnyViewHandle, _cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         self.has_new_content = false;
+        self.terminal.read(cx).focus_in();
+        cx.notify();
+    }
+
+    fn on_focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        self.terminal.read(cx).focus_out();
+        cx.notify();
     }
 
     fn selected_text_range(&self, cx: &AppContext) -> Option<std::ops::Range<usize>> {

@@ -200,6 +200,7 @@ pub struct TerminalEl {
     terminal: WeakModelHandle<Terminal>,
     view: WeakViewHandle<ConnectedView>,
     modal: bool,
+    focused: bool,
 }
 
 impl TerminalEl {
@@ -207,11 +208,13 @@ impl TerminalEl {
         view: WeakViewHandle<ConnectedView>,
         terminal: WeakModelHandle<Terminal>,
         modal: bool,
+        focused: bool,
     ) -> TerminalEl {
         TerminalEl {
             view,
             terminal,
             modal,
+            focused,
         }
     }
 
@@ -644,6 +647,13 @@ impl Element for TerminalEl {
             let cursor_point = DisplayCursor::from(cursor.point, display_offset);
             let cursor_text = {
                 let str_trxt = cursor_text.to_string();
+
+                let color = if self.focused {
+                    terminal_theme.colors.background
+                } else {
+                    terminal_theme.colors.foreground
+                };
+
                 cx.text_layout_cache.layout_str(
                     &str_trxt,
                     text_style.font_size,
@@ -651,7 +661,7 @@ impl Element for TerminalEl {
                         str_trxt.len(),
                         RunStyle {
                             font_id: text_style.font_id,
-                            color: terminal_theme.colors.background,
+                            color,
                             underline: Default::default(),
                         },
                     )],
@@ -660,12 +670,18 @@ impl Element for TerminalEl {
 
             TerminalEl::shape_cursor(cursor_point, dimensions, &cursor_text).map(
                 move |(cursor_position, block_width)| {
+                    let (shape, color) = if self.focused {
+                        (CursorShape::Block, terminal_theme.colors.cursor)
+                    } else {
+                        (CursorShape::Underscore, terminal_theme.colors.foreground)
+                    };
+
                     Cursor::new(
                         cursor_position,
                         block_width,
                         dimensions.line_height,
-                        terminal_theme.colors.cursor,
-                        CursorShape::Block,
+                        color,
+                        shape,
                         Some(cursor_text),
                     )
                 },
