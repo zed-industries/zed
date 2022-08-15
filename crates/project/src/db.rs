@@ -1,10 +1,6 @@
 use anyhow::Result;
-<<<<<<< HEAD
-use std::path::Path;
-=======
 use sled::Batch;
-use std::path::PathBuf;
->>>>>>> 2eeabac6 (remove rocks db)
+use std::path::Path;
 use std::sync::Arc;
 
 pub struct Db(DbStore);
