@@ -123,6 +123,7 @@ pub trait Window: WindowContext {
     fn show_character_palette(&self);
     fn minimize(&self);
     fn zoom(&self);
+    fn toggle_full_screen(&self);
 }
 
 pub trait WindowContext {

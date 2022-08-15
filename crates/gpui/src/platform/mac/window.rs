@@ -601,6 +601,18 @@ impl platform::Window for Window {
             })
             .detach();
     }
+
+    fn toggle_full_screen(&self) {
+        let this = self.0.borrow();
+        let window = this.native_window;
+        this.executor
+            .spawn(async move {
+                unsafe {
+                    window.toggleFullScreen_(nil);
+                }
+            })
+            .detach();
+    }
 }
 
 impl platform::WindowContext for Window {

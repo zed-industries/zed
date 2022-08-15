@@ -294,6 +294,8 @@ impl super::Window for Window {
     fn minimize(&self) {}
 
     fn zoom(&self) {}
+
+    fn toggle_full_screen(&self) {}
 }
 
 pub fn platform() -> Platform {

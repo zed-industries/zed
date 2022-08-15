@@ -28,6 +28,7 @@
             "cmd-h": "zed::Hide",
             "alt-cmd-h": "zed::HideOthers",
             "cmd-m": "zed::Minimize",
+            "ctrl-cmd-f": "zed::ToggleFullScreen",
             "cmd-n": "workspace::NewFile",
             "cmd-shift-n": "workspace::NewWindow",
             "cmd-o": "workspace::Open",
