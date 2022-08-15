@@ -18,9 +18,3 @@ CREATE TABLE IF NOT EXISTS "signups" (
     "email_address" VARCHAR,
     "about" TEXT
 );
-
-INSERT INTO users (github_login, admin)
-VALUES
-    ('nathansobo', true),
-    ('maxbrunsfeld', true),
-    ('as-cii', true);

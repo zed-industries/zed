@@ -1,8 +1,7 @@
-use clap::Parser;
 use collab::{Error, Result};
 use db::{Db, PostgresDb, UserId};
 use rand::prelude::*;
-use serde::Deserialize;
+use serde::{de::DeserializeOwned, Deserialize};
 use std::fmt::Write;
 use time::{Duration, OffsetDateTime};
 
@@ -10,62 +9,52 @@ use time::{Duration, OffsetDateTime};
 #[path = "../db.rs"]
 mod db;
 
-#[derive(Parser)]
-struct Args {
-    /// Seed users from GitHub.
-    #[clap(short, long)]
-    github_users: bool,
-}
-
 #[derive(Debug, Deserialize)]
 struct GitHubUser {
     id: usize,
     login: String,
+    email: Option<String>,
 }
 
 #[tokio::main]
 async fn main() {
-    let args = Args::parse();
     let mut rng = StdRng::from_entropy();
     let database_url = std::env::var("DATABASE_URL").expect("missing DATABASE_URL env var");
     let db = PostgresDb::new(&database_url, 5)
         .await
         .expect("failed to connect to postgres database");
+    let github_token = std::env::var("GITHUB_TOKEN").expect("missing GITHUB_TOKEN env var");
+    let client = reqwest::Client::new();
 
-    let mut zed_users = vec![
-        ("nathansobo".to_string(), Some("nathan@zed.dev")),
-        ("maxbrunsfeld".to_string(), Some("max@zed.dev")),
-        ("as-cii".to_string(), Some("antonio@zed.dev")),
-        ("iamnbutler".to_string(), Some("nate@zed.dev")),
-        ("gibusu".to_string(), Some("greg@zed.dev")),
-        ("Kethku".to_string(), Some("keith@zed.dev")),
-    ];
+    let current_user =
+        fetch_github::<GitHubUser>(&client, &github_token, "https://api.github.com/user").await;
+    let staff_users = fetch_github::<Vec<GitHubUser>>(
+        &client,
+        &github_token,
+        "https://api.github.com/orgs/zed-industries/teams/staff/members",
+    )
+    .await;
 
-    if args.github_users {
-        let github_token = std::env::var("GITHUB_TOKEN").expect("missing GITHUB_TOKEN env var");
-        let client = reqwest::Client::new();
+    let mut zed_users = Vec::new();
+    zed_users.push((current_user, true));
+    zed_users.extend(staff_users.into_iter().map(|user| (user, true)));
+
+    let user_count = db
+        .get_all_users(0, 200)
+        .await
+        .expect("failed to load users from db")
+        .len();
+    if user_count < 100 {
         let mut last_user_id = None;
-        for page in 0..20 {
-            println!("Downloading users from GitHub, page {}", page);
+        for _ in 0..10 {
             let mut uri = "https://api.github.com/users?per_page=100".to_string();
             if let Some(last_user_id) = last_user_id {
                 write!(&mut uri, "&since={}", last_user_id).unwrap();
             }
-            let response = client
-                .get(uri)
-                .bearer_auth(&github_token)
-                .header("user-agent", "zed")
-                .send()
-                .await
-                .expect("failed to fetch github users");
-            let users = response
-                .json::<Vec<GitHubUser>>()
-                .await
-                .expect("failed to deserialize github user");
-            zed_users.extend(users.iter().map(|user| (user.login.clone(), None)));
-
+            let users = fetch_github::<Vec<GitHubUser>>(&client, &github_token, &uri).await;
             if let Some(last_user) = users.last() {
                 last_user_id = Some(last_user.id);
+                zed_users.extend(users.into_iter().map(|user| (user, false)));
             } else {
                 break;
             }
@@ -73,16 +62,16 @@ async fn main() {
     }
 
     let mut zed_user_ids = Vec::<UserId>::new();
-    for (zed_user, email) in zed_users {
+    for (github_user, admin) in zed_users {
         if let Some(user) = db
-            .get_user_by_github_login(&zed_user)
+            .get_user_by_github_login(&github_user.login)
             .await
             .expect("failed to fetch user")
         {
             zed_user_ids.push(user.id);
         } else {
             zed_user_ids.push(
-                db.create_user(&zed_user, email, true)
+                db.create_user(&github_user.login, github_user.email.as_deref(), admin)
                     .await
                     .expect("failed to insert user"),
             );
@@ -139,4 +128,22 @@ async fn main() {
             .await
             .expect("failed to insert channel membership");
     }
+}
+
+async fn fetch_github<T: DeserializeOwned>(
+    client: &reqwest::Client,
+    access_token: &str,
+    url: &str,
+) -> T {
+    let response = client
+        .get(url)
+        .bearer_auth(&access_token)
+        .header("user-agent", "zed")
+        .send()
+        .await
+        .expect(&format!("failed to fetch '{}'", url));
+    response
+        .json()
+        .await
+        .expect(&format!("failed to deserialize github user from '{}'", url))
 }
