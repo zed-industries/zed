@@ -52,7 +52,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(go_to_fetched_type_definition);
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct LinkGoToDefinitionState {
     pub last_mouse_location: Option<Anchor>,
     pub symbol_range: Option<Range<Anchor>>,
@@ -706,7 +706,34 @@ mod tests {
             fn do_work() { «test»(); }
         "});
 
-        // Moving within symbol range doesn't re-request
+        // Deactivating the window dismisses the highlight
+        cx.update_workspace(|workspace, cx| {
+            workspace.on_window_activation_changed(false, cx);
+        });
+        cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
+            fn test() { do_work(); }
+            fn do_work() { test(); }
+        "});
+
+        // Moving the mouse restores the highlights.
+        cx.update_editor(|editor, cx| {
+            update_go_to_definition_link(
+                editor,
+                &UpdateGoToDefinitionLink {
+                    point: Some(hover_point),
+                    cmd_held: true,
+                    shift_held: false,
+                },
+                cx,
+            );
+        });
+        cx.foreground().run_until_parked();
+        cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
+            fn test() { do_work(); }
+            fn do_work() { «test»(); }
+        "});
+
+        // Moving again within the same symbol range doesn't re-request
         let hover_point = cx.display_point(indoc! {"
             fn test() { do_work(); }
             fn do_work() { tesˇt(); }
