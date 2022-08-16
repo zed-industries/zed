@@ -607,11 +607,6 @@ impl Terminal {
         f(content, cursor_text)
     }
 
-    ///Scroll the terminal
-    pub fn scroll(&mut self, scroll: Scroll) {
-        self.events.push(InternalEvent::Scroll(scroll));
-    }
-
     pub fn focus_in(&self) {
         if self.last_mode.contains(TermMode::FOCUS_IN_OUT) {
             self.write_to_pty("\x1b[I".to_string());
@@ -624,34 +619,60 @@ impl Terminal {
         }
     }
 
+    ///Scroll the terminal
+    pub fn scroll(&mut self, scroll: Scroll) {
+        if self.last_mode.intersects(TermMode::MOUSE_MODE) {
+            //TODE: MOUSE MODE
+        }
+
+        self.events.push(InternalEvent::Scroll(scroll));
+    }
+
     pub fn click(&mut self, point: Point, side: Direction, clicks: usize) {
-        let selection_type = match clicks {
-            0 => return, //This is a release
-            1 => Some(SelectionType::Simple),
-            2 => Some(SelectionType::Semantic),
-            3 => Some(SelectionType::Lines),
-            _ => None,
-        };
+        if self.last_mode.intersects(TermMode::MOUSE_MODE) {
+            //TODE: MOUSE MODE
+        } else {
+            let selection_type = match clicks {
+                0 => return, //This is a release
+                1 => Some(SelectionType::Simple),
+                2 => Some(SelectionType::Semantic),
+                3 => Some(SelectionType::Lines),
+                _ => None,
+            };
 
-        let selection =
-            selection_type.map(|selection_type| Selection::new(selection_type, point, side));
+            let selection =
+                selection_type.map(|selection_type| Selection::new(selection_type, point, side));
 
-        self.events.push(InternalEvent::SetSelection(selection));
+            self.events.push(InternalEvent::SetSelection(selection));
+        }
+    }
+
+    pub fn mouse_move(&mut self, point: Point, side: Direction, clicks: usize) {
+        if self.last_mode.intersects(TermMode::MOUSE_MODE) {
+            //TODE: MOUSE MODE
+        }
     }
 
     pub fn drag(&mut self, point: Point, side: Direction) {
-        self.events
-            .push(InternalEvent::UpdateSelection((point, side)));
+        if self.last_mode.intersects(TermMode::MOUSE_MODE) {
+            //TODE: MOUSE MODE
+        } else {
+            self.events
+                .push(InternalEvent::UpdateSelection((point, side)));
+        }
     }
 
-    ///TODO: Check if the mouse_down-then-click assumption holds, so this code works as expected
     pub fn mouse_down(&mut self, point: Point, side: Direction) {
-        self.events
-            .push(InternalEvent::SetSelection(Some(Selection::new(
-                SelectionType::Simple,
-                point,
-                side,
-            ))));
+        if self.last_mode.intersects(TermMode::MOUSE_MODE) {
+            //TODE: MOUSE MODE
+        } else {
+            self.events
+                .push(InternalEvent::SetSelection(Some(Selection::new(
+                    SelectionType::Simple,
+                    point,
+                    side,
+                ))));
+        }
     }
 }
 
