@@ -643,49 +643,64 @@ impl Element for TerminalEl {
         );
 
         //Layout cursor
+        //TODO: This logic can be a lot better
+        let show_cursor = if let Some(view_handle) = self.view.upgrade(cx) {
+            if view_handle.read(cx).show_cursor() {
+                false
+            } else {
+                true
+            }
+        } else {
+            true
+        };
+
         let cursor = {
-            let cursor_point = DisplayCursor::from(cursor.point, display_offset);
-            let cursor_text = {
-                let str_trxt = cursor_text.to_string();
+            if show_cursor {
+                None
+            } else {
+                let cursor_point = DisplayCursor::from(cursor.point, display_offset);
+                let cursor_text = {
+                    let str_trxt = cursor_text.to_string();
 
-                let color = if self.focused {
-                    terminal_theme.colors.background
-                } else {
-                    terminal_theme.colors.foreground
-                };
-
-                cx.text_layout_cache.layout_str(
-                    &str_trxt,
-                    text_style.font_size,
-                    &[(
-                        str_trxt.len(),
-                        RunStyle {
-                            font_id: text_style.font_id,
-                            color,
-                            underline: Default::default(),
-                        },
-                    )],
-                )
-            };
-
-            TerminalEl::shape_cursor(cursor_point, dimensions, &cursor_text).map(
-                move |(cursor_position, block_width)| {
-                    let (shape, color) = if self.focused {
-                        (CursorShape::Block, terminal_theme.colors.cursor)
+                    let color = if self.focused {
+                        terminal_theme.colors.background
                     } else {
-                        (CursorShape::Underscore, terminal_theme.colors.foreground)
+                        terminal_theme.colors.foreground
                     };
 
-                    Cursor::new(
-                        cursor_position,
-                        block_width,
-                        dimensions.line_height,
-                        color,
-                        shape,
-                        Some(cursor_text),
+                    cx.text_layout_cache.layout_str(
+                        &str_trxt,
+                        text_style.font_size,
+                        &[(
+                            str_trxt.len(),
+                            RunStyle {
+                                font_id: text_style.font_id,
+                                color,
+                                underline: Default::default(),
+                            },
+                        )],
                     )
-                },
-            )
+                };
+
+                TerminalEl::shape_cursor(cursor_point, dimensions, &cursor_text).map(
+                    move |(cursor_position, block_width)| {
+                        let (shape, color) = if self.focused {
+                            (CursorShape::Block, terminal_theme.colors.cursor)
+                        } else {
+                            (CursorShape::Underscore, terminal_theme.colors.foreground)
+                        };
+
+                        Cursor::new(
+                            cursor_position,
+                            block_width,
+                            dimensions.line_height,
+                            color,
+                            shape,
+                            Some(cursor_text),
+                        )
+                    },
+                )
+            }
         };
 
         //Done!
@@ -818,7 +833,10 @@ impl Element for TerminalEl {
 
                 //TODO Talk to keith about how to catch events emitted from an element.
                 if let Some(view) = self.view.upgrade(cx.app) {
-                    view.update(cx.app, |view, cx| view.clear_bel(cx))
+                    view.update(cx.app, |view, cx| {
+                        view.clear_bel(cx);
+                        view.pause_cursor_blinking(cx);
+                    })
                 }
 
                 self.terminal

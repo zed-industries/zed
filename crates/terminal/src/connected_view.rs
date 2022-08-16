@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use alacritty_terminal::term::TermMode;
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
@@ -9,9 +11,12 @@ use gpui::{
     AnyViewHandle, AppContext, Element, ElementBox, ModelHandle, MutableAppContext, View,
     ViewContext, ViewHandle,
 };
+use smol::Timer;
 use workspace::pane;
 
 use crate::{connected_el::TerminalEl, Event, Terminal};
+
+const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
 ///Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
@@ -51,6 +56,9 @@ pub struct ConnectedView {
     // Only for styling purposes. Doesn't effect behavior
     modal: bool,
     context_menu: ViewHandle<ContextMenu>,
+    show_cursor: bool,
+    blinking_paused: bool,
+    blink_epoch: usize,
 }
 
 impl ConnectedView {
@@ -83,6 +91,9 @@ impl ConnectedView {
             has_bell: false,
             modal,
             context_menu: cx.add_view(ContextMenu::new),
+            show_cursor: true,
+            blinking_paused: false,
+            blink_epoch: 0,
         }
     }
 
@@ -118,6 +129,59 @@ impl ConnectedView {
     fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
         self.terminal.update(cx, |term, _| term.clear());
         cx.notify();
+    }
+
+    //Following code copied from editor cursor
+    pub fn show_cursor(&self) -> bool {
+        self.blinking_paused || self.show_cursor
+    }
+
+    fn blink_cursors(&mut self, epoch: usize, cx: &mut ViewContext<Self>) {
+        if epoch == self.blink_epoch && !self.blinking_paused {
+            self.show_cursor = !self.show_cursor;
+            cx.notify();
+
+            let epoch = self.next_blink_epoch();
+            cx.spawn(|this, mut cx| {
+                let this = this.downgrade();
+                async move {
+                    Timer::after(CURSOR_BLINK_INTERVAL).await;
+                    if let Some(this) = this.upgrade(&cx) {
+                        this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx));
+                    }
+                }
+            })
+            .detach();
+        }
+    }
+
+    pub fn pause_cursor_blinking(&mut self, cx: &mut ViewContext<Self>) {
+        self.show_cursor = true;
+        cx.notify();
+
+        let epoch = self.next_blink_epoch();
+        cx.spawn(|this, mut cx| {
+            let this = this.downgrade();
+            async move {
+                Timer::after(CURSOR_BLINK_INTERVAL).await;
+                if let Some(this) = this.upgrade(&cx) {
+                    this.update(&mut cx, |this, cx| this.resume_cursor_blinking(epoch, cx))
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn next_blink_epoch(&mut self) -> usize {
+        self.blink_epoch += 1;
+        self.blink_epoch
+    }
+
+    fn resume_cursor_blinking(&mut self, epoch: usize, cx: &mut ViewContext<Self>) {
+        if epoch == self.blink_epoch {
+            self.blinking_paused = false;
+            self.blink_cursors(epoch, cx);
+        }
     }
 
     ///Attempt to paste the clipboard into the terminal
@@ -200,6 +264,7 @@ impl View for ConnectedView {
     fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         self.has_new_content = false;
         self.terminal.read(cx).focus_in();
+        self.blink_cursors(self.blink_epoch, cx);
         cx.notify();
     }
 
@@ -208,6 +273,7 @@ impl View for ConnectedView {
         cx.notify();
     }
 
+    //IME stuff
     fn selected_text_range(&self, cx: &AppContext) -> Option<std::ops::Range<usize>> {
         if self
             .terminal

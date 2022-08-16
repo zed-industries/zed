@@ -287,6 +287,7 @@ impl TerminalBuilder {
         setup_env(&config);
 
         //Spawn a task so the Alacritty EventLoop can communicate with us in a view context
+        //TODO: Remove with a bounded sender which can be dispatched on &self
         let (events_tx, events_rx) = unbounded();
         //Set up the terminal...
         let term = Term::new(&config, &initial_size, ZedListener(events_tx.clone()));
