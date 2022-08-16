@@ -278,6 +278,18 @@ unsafe fn build_classes() {
 
 pub struct Window(Rc<RefCell<WindowState>>);
 
+///Used to track what the IME does when we send it a keystroke.
+///This is only used to handle the case where the IME mysteriously
+///swallows certain keys.
+///
+///Basically a direct copy of the approach that WezTerm uses in:
+///github.com/wez/wezterm : d5755f3e : window/src/os/macos/window.rs
+enum ImeState {
+    Continue,
+    Acted,
+    None,
+}
+
 struct WindowState {
     id: usize,
     native_window: id,
@@ -299,6 +311,10 @@ struct WindowState {
     layer: id,
     traffic_light_position: Option<Vector2F>,
     previous_modifiers_changed_event: Option<Event>,
+    //State tracking what the IME did after the last request
+    ime_state: ImeState,
+    //Retains the last IME keystroke that was in the 'Acted' state
+    last_ime_key: Option<Keystroke>,
 }
 
 struct InsertText {
