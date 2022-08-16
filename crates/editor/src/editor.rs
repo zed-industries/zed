@@ -42,7 +42,7 @@ use language::{
     DiagnosticSeverity, IndentKind, IndentSize, Language, OffsetRangeExt, OffsetUtf16, Point,
     Selection, SelectionGoal, TransactionId,
 };
-use link_go_to_definition::LinkGoToDefinitionState;
+use link_go_to_definition::{hide_link_definition, LinkGoToDefinitionState};
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
     ToPoint,
@@ -6010,6 +6010,7 @@ impl View for Editor {
                 if let Some(editor) = handle.upgrade(cx) {
                     editor.update(cx, |editor, cx| {
                         hide_hover(editor, cx);
+                        hide_link_definition(editor, cx);
                     })
                 }
             });

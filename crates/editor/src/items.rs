@@ -1,5 +1,6 @@
 use crate::{
-    Anchor, Autoscroll, Editor, Event, ExcerptId, MultiBuffer, NavigationData, ToPoint as _,
+    link_go_to_definition::hide_link_definition, Anchor, Autoscroll, Editor, Event, ExcerptId,
+    MultiBuffer, NavigationData, ToPoint as _,
 };
 use anyhow::{anyhow, Result};
 use futures::FutureExt;
@@ -374,6 +375,11 @@ impl Item for Editor {
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
         let selection = self.selections.newest_anchor();
         self.push_to_nav_history(selection.head(), None, cx);
+    }
+
+    fn workspace_deactivated(&mut self, cx: &mut ViewContext<Self>) {
+        hide_link_definition(self, cx);
+        self.link_go_to_definition_state.last_mouse_location = None;
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
