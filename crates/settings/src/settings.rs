@@ -83,6 +83,22 @@ pub struct TerminalSettings {
     pub font_size: Option<f32>,
     pub font_family: Option<String>,
     pub env: Option<HashMap<String, String>>,
+    pub blinking: Option<TerminalBlink>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalBlink {
+    Never,
+    On,
+    Off,
+    Always,
+}
+
+impl Default for TerminalBlink {
+    fn default() -> Self {
+        TerminalBlink::On
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]

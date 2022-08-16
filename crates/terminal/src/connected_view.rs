@@ -132,7 +132,7 @@ impl ConnectedView {
     }
 
     //Following code copied from editor cursor
-    pub fn show_cursor(&self) -> bool {
+    pub fn blink_show(&self) -> bool {
         self.blinking_paused || self.show_cursor
     }
 
@@ -253,9 +253,15 @@ impl View for ConnectedView {
 
         Stack::new()
             .with_child(
-                TerminalEl::new(cx.handle(), terminal_handle, self.modal, focused)
-                    .contained()
-                    .boxed(),
+                TerminalEl::new(
+                    cx.handle(),
+                    terminal_handle,
+                    self.modal,
+                    focused,
+                    self.blink_show(),
+                )
+                .contained()
+                .boxed(),
             )
             .with_child(ChildView::new(&self.context_menu).boxed())
             .boxed()
