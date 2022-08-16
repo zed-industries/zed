@@ -635,7 +635,7 @@ impl Element for TerminalEl {
             .unwrap()
             .update(cx.app, |terminal, mcx| {
                 terminal.set_size(dimensions);
-                terminal.render_lock(mcx, |content, cursor_text, style| {
+                terminal.render_lock(mcx, |content, cursor_text, blink_mode| {
                     let mut cells = vec![];
                     cells.extend(
                         content
@@ -659,7 +659,7 @@ impl Element for TerminalEl {
                         content.cursor,
                         content.display_offset,
                         cursor_text,
-                        style,
+                        blink_mode,
                     )
                 })
             });
@@ -713,7 +713,7 @@ impl Element for TerminalEl {
                         let (shape, color) = if self.focused {
                             (CursorShape::Block, terminal_theme.colors.cursor)
                         } else {
-                            (CursorShape::Underscore, terminal_theme.colors.foreground)
+                            (CursorShape::Hollow, terminal_theme.colors.foreground)
                         };
 
                         Cursor::new(
