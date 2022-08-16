@@ -1753,6 +1753,7 @@ pub enum CursorShape {
     Bar,
     Block,
     Underscore,
+    Hollow,
 }
 
 impl Default for CursorShape {
@@ -1808,7 +1809,18 @@ impl Cursor {
                 self.origin + origin + Vector2F::new(0.0, self.line_height - 2.0),
                 vec2f(self.block_width, 2.0),
             ),
+            CursorShape::Hollow => RectF::new(
+                self.origin + origin + Vector2F::new(0.0, self.line_height - 1.0),
+                vec2f(self.block_width, 1.0),
+            ),
         };
+
+        //Draw text under the hollow block if need be
+        if matches!(self.shape, CursorShape::Hollow) {
+            if let Some(block_text) = &self.block_text {
+                block_text.paint(self.origin + origin, bounds, self.line_height, cx);
+            }
+        }
 
         cx.scene.push_quad(Quad {
             bounds,
@@ -1817,8 +1829,38 @@ impl Cursor {
             corner_radius: 0.,
         });
 
-        if let Some(block_text) = &self.block_text {
-            block_text.paint(self.origin + origin, bounds, self.line_height, cx);
+        if matches!(self.shape, CursorShape::Hollow) {
+            //Top
+            cx.scene.push_quad(Quad {
+                bounds: RectF::new(
+                    self.origin + origin + Vector2F::new(0.0, -1.0),
+                    vec2f(self.block_width + 1., 1.0),
+                ),
+                background: Some(self.color),
+                border: Border::new(0., Color::black()),
+                corner_radius: 0.,
+            });
+            //Left
+            cx.scene.push_quad(Quad {
+                bounds: RectF::new(self.origin + origin, vec2f(1.0, self.line_height)),
+                background: Some(self.color),
+                border: Border::new(0., Color::black()),
+                corner_radius: 0.,
+            });
+            //Right
+            cx.scene.push_quad(Quad {
+                bounds: RectF::new(
+                    self.origin + origin + vec2f(self.block_width, 0.),
+                    vec2f(1.0, self.line_height),
+                ),
+                background: Some(self.color),
+                border: Border::new(0., Color::black()),
+                corner_radius: 0.,
+            });
+        } else {
+            if let Some(block_text) = &self.block_text {
+                block_text.paint(self.origin + origin, bounds, self.line_height, cx);
+            }
         }
     }
 }

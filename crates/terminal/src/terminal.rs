@@ -25,7 +25,7 @@ use futures::{
 };
 
 use modal::deploy_modal;
-use settings::{Settings, Shell};
+use settings::{Settings, Shell, TerminalBlink};
 use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc, time::Duration};
 use thiserror::Error;
 
@@ -254,6 +254,7 @@ impl TerminalBuilder {
         shell: Option<Shell>,
         env: Option<HashMap<String, String>>,
         initial_size: TerminalSize,
+        blink_settings: Option<TerminalBlink>,
     ) -> Result<TerminalBuilder> {
         let pty_config = {
             let alac_shell = shell.clone().and_then(|shell| match shell {
@@ -287,9 +288,21 @@ impl TerminalBuilder {
         setup_env(&config);
 
         //Spawn a task so the Alacritty EventLoop can communicate with us in a view context
+        //TODO: Remove with a bounded sender which can be dispatched on &self
         let (events_tx, events_rx) = unbounded();
         //Set up the terminal...
-        let term = Term::new(&config, &initial_size, ZedListener(events_tx.clone()));
+        let mut term = Term::new(&config, &initial_size, ZedListener(events_tx.clone()));
+
+        //Start off blinking if we need to
+        match blink_settings {
+            Some(setting) => match setting {
+                TerminalBlink::On | TerminalBlink::Always => {
+                    term.set_mode(alacritty_terminal::ansi::Mode::BlinkingCursor)
+                }
+                _ => {}
+            },
+            None => term.set_mode(alacritty_terminal::ansi::Mode::BlinkingCursor),
+        }
         let term = Arc::new(FairMutex::new(term));
 
         //Setup the pty...
@@ -321,7 +334,7 @@ impl TerminalBuilder {
         //And connect them together
         let event_loop = EventLoop::new(
             term.clone(),
-            ZedListener(events_tx),
+            ZedListener(events_tx.clone()),
             pty,
             pty_config.hold,
             false,
@@ -582,7 +595,7 @@ impl Terminal {
 
     pub fn render_lock<F, T>(&mut self, cx: &mut ModelContext<Self>, f: F) -> T
     where
-        F: FnOnce(RenderableContent, char) -> T,
+        F: FnOnce(RenderableContent, char, bool) -> T,
     {
         let m = self.term.clone(); //Arc clone
         let mut term = m.lock();
@@ -598,7 +611,7 @@ impl Terminal {
 
         let cursor_text = term.grid()[content.cursor.point].c;
 
-        f(content, cursor_text)
+        f(content, cursor_text, term.cursor_style().blinking)
     }
 
     ///Scroll the terminal

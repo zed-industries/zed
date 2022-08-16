@@ -94,8 +94,13 @@ impl TerminalView {
         let shell = settings.terminal_overrides.shell.clone();
         let envs = settings.terminal_overrides.env.clone(); //Should be short and cheap.
 
-        let content = match TerminalBuilder::new(working_directory.clone(), shell, envs, size_info)
-        {
+        let content = match TerminalBuilder::new(
+            working_directory.clone(),
+            shell,
+            envs,
+            size_info,
+            settings.terminal_overrides.blinking.clone(),
+        ) {
             Ok(terminal) => {
                 let terminal = cx.add_model(|cx| terminal.subscribe(cx));
                 let view = cx.add_view(|cx| ConnectedView::from_terminal(terminal, modal, cx));
