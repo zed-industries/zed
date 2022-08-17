@@ -138,7 +138,14 @@ impl ConnectedView {
     }
 
     fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
-        cx.show_character_palette();
+        if self
+            .terminal
+            .read(cx)
+            .last_mode
+            .contains(TermMode::ALT_SCREEN)
+        {
+            cx.show_character_palette();
+        }
     }
 
     fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
