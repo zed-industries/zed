@@ -777,8 +777,6 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
     let event = unsafe { Event::from_native(native_event, Some(window_state_borrow.size().y())) };
 
-    println!("Handle key event! {:?}", event);
-
     if let Some(event) = event {
         if key_equivalent {
             window_state_borrow.performed_key_equivalent = true;
@@ -1202,18 +1200,10 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
         window_state.borrow_mut().ime_text = Some(text.to_string());
         window_state.borrow_mut().ime_state = ImeState::Acted;
 
-        //Conceptually incorrect
         let is_composing =
             with_input_handler(this, |input_handler| input_handler.marked_text_range())
                 .flatten()
                 .is_some();
-
-        println!(
-            "Insert text, is_composing {}, text {}, have pending key down? {:?}",
-            is_composing,
-            &text,
-            &pending_key_down.is_some()
-        );
 
         if is_composing || text.chars().count() > 1 || pending_key_down.is_none() {
             with_input_handler(this, |input_handler| {
@@ -1227,30 +1217,6 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
             });
             window_state.borrow_mut().pending_key_down = Some(pending_key_down);
         }
-
-        // if let Some(mut pending_key_down) = pending_key_down {
-        //     pending_key_down.1 = Some(InsertText {
-        //         replacement_range,
-        //         text: text.to_string(),
-        //     });
-        //     window_state.borrow_mut().pending_key_down = Some(pending_key_down);
-
-        //     //Modifier key combos (˜ˆ) (success / failure)
-        //     //Press-and-hold replacements ((hold i) 1 -> î) (success / failure)
-        //     //Pop down chinese composition menu
-        //     //Handwriting menu
-        //     //Emoji Picker (😤)
-
-        //     //Regression -> alt-i l only causes 'l' to be placed, instead of ˆl
-        //     //
-        // }
-        // //If no pending key down, then handle_key_event isn't going to
-        // //insert the text for us. Do it ourselves
-        // else {
-        //     with_input_handler(this, |input_handler| {
-        //         input_handler.replace_text_in_range(replacement_range, text)
-        //     });
-        // }
     }
 }
 
@@ -1281,8 +1247,6 @@ extern "C" fn set_marked_text(
         window_state.borrow_mut().ime_state = ImeState::Acted;
         window_state.borrow_mut().ime_text = Some(text.to_string());
 
-        println!("set_marked_text({selected_range:?}, {replacement_range:?}, {text:?})");
-
         with_input_handler(this, |input_handler| {
             input_handler.replace_and_mark_text_in_range(replacement_range, text, selected_range);
         });
@@ -1296,8 +1260,6 @@ extern "C" fn unmark_text(this: &Object, _: Sel) {
         borrow.ime_state = ImeState::Acted;
         borrow.ime_text.take();
     }
-
-    println!("unmark_text()");
 
     with_input_handler(this, |input_handler| input_handler.unmark_text());
 }
