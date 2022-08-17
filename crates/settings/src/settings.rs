@@ -90,14 +90,13 @@ pub struct TerminalSettings {
 #[serde(rename_all = "snake_case")]
 pub enum TerminalBlink {
     Never,
-    On,
-    Off,
+    TerminalControlled,
     Always,
 }
 
 impl Default for TerminalBlink {
     fn default() -> Self {
-        TerminalBlink::On
+        TerminalBlink::TerminalControlled
     }
 }
 

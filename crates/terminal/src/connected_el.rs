@@ -21,7 +21,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
-use settings::{Settings, TerminalBlink};
+use settings::Settings;
 use theme::TerminalStyle;
 use util::ResultExt;
 
@@ -201,7 +201,7 @@ pub struct TerminalEl {
     view: WeakViewHandle<ConnectedView>,
     modal: bool,
     focused: bool,
-    blink_state: bool,
+    cursor_visible: bool,
 }
 
 impl TerminalEl {
@@ -210,14 +210,14 @@ impl TerminalEl {
         terminal: WeakModelHandle<Terminal>,
         modal: bool,
         focused: bool,
-        blink_state: bool,
+        cursor_visible: bool,
     ) -> TerminalEl {
         TerminalEl {
             view,
             terminal,
             modal,
             focused,
-            blink_state,
+            cursor_visible,
         }
     }
 
@@ -571,33 +571,6 @@ impl TerminalEl {
 
         (point, side)
     }
-
-    pub fn should_show_cursor(
-        settings: Option<TerminalBlink>,
-        blinking_on: bool,
-        focused: bool,
-        blink_show: bool,
-    ) -> bool {
-        if !focused {
-            true
-        } else {
-            match settings {
-                Some(setting) => match setting {
-                TerminalBlink::Never => true,
-                TerminalBlink::On | TerminalBlink::Off if blinking_on => blink_show,
-                TerminalBlink::On | TerminalBlink::Off /*if !blinking_on */ => true,
-                TerminalBlink::Always => focused && blink_show,
-            },
-                None => {
-                    if blinking_on {
-                        blink_show
-                    } else {
-                        false
-                    }
-                }
-            }
-        }
-    }
 }
 
 impl Element for TerminalEl {
@@ -610,7 +583,6 @@ impl Element for TerminalEl {
         cx: &mut gpui::LayoutContext,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         let settings = cx.global::<Settings>();
-        let blink_settings = settings.terminal_overrides.blinking.clone();
         let font_cache = cx.font_cache();
 
         //Setup layout information
@@ -629,13 +601,13 @@ impl Element for TerminalEl {
             terminal_theme.colors.background
         };
 
-        let (cells, selection, cursor, display_offset, cursor_text, blink_mode) = self
+        let (cells, selection, cursor, display_offset, cursor_text) = self
             .terminal
             .upgrade(cx)
             .unwrap()
             .update(cx.app, |terminal, mcx| {
                 terminal.set_size(dimensions);
-                terminal.render_lock(mcx, |content, cursor_text, blink_mode| {
+                terminal.render_lock(mcx, |content, cursor_text| {
                     let mut cells = vec![];
                     cells.extend(
                         content
@@ -659,7 +631,6 @@ impl Element for TerminalEl {
                         content.cursor,
                         content.display_offset,
                         cursor_text,
-                        blink_mode,
                     )
                 })
             });
@@ -676,14 +647,7 @@ impl Element for TerminalEl {
 
         //Layout cursor
         let cursor = {
-            if !TerminalEl::should_show_cursor(
-                blink_settings,
-                blink_mode,
-                self.focused,
-                self.blink_state,
-            ) {
-                None
-            } else {
+            if self.cursor_visible {
                 let cursor_point = DisplayCursor::from(cursor.point, display_offset);
                 let cursor_text = {
                     let str_trxt = cursor_text.to_string();
@@ -710,22 +674,24 @@ impl Element for TerminalEl {
 
                 TerminalEl::shape_cursor(cursor_point, dimensions, &cursor_text).map(
                     move |(cursor_position, block_width)| {
-                        let (shape, color) = if self.focused {
-                            (CursorShape::Block, terminal_theme.colors.cursor)
+                        let shape = if self.focused {
+                            CursorShape::Block
                         } else {
-                            (CursorShape::Hollow, terminal_theme.colors.foreground)
+                            CursorShape::Hollow
                         };
 
                         Cursor::new(
                             cursor_position,
                             block_width,
                             dimensions.line_height,
-                            color,
+                            terminal_theme.colors.cursor,
                             shape,
                             Some(cursor_text),
                         )
                     },
                 )
+            } else {
+                None
             }
         };
 

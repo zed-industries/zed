@@ -11,6 +11,7 @@ use gpui::{
     AnyViewHandle, AppContext, Element, ElementBox, ModelHandle, MutableAppContext, View,
     ViewContext, ViewHandle,
 };
+use settings::{Settings, TerminalBlink};
 use smol::Timer;
 use workspace::pane;
 
@@ -67,7 +68,8 @@ pub struct ConnectedView {
     // Only for styling purposes. Doesn't effect behavior
     modal: bool,
     context_menu: ViewHandle<ContextMenu>,
-    show_cursor: bool,
+    blink_state: bool,
+    blinking_on: bool,
     blinking_paused: bool,
     blink_epoch: usize,
 }
@@ -91,7 +93,7 @@ impl ConnectedView {
                 this.has_bell = true;
                 cx.emit(Event::Wakeup);
             }
-
+            Event::BlinkChanged => this.blinking_on = !this.blinking_on,
             _ => cx.emit(*event),
         })
         .detach();
@@ -102,7 +104,8 @@ impl ConnectedView {
             has_bell: false,
             modal,
             context_menu: cx.add_view(ContextMenu::new),
-            show_cursor: true,
+            blink_state: true,
+            blinking_on: false,
             blinking_paused: false,
             blink_epoch: 0,
         }
@@ -153,14 +156,46 @@ impl ConnectedView {
         cx.notify();
     }
 
-    //Following code copied from editor cursor
-    pub fn blink_show(&self) -> bool {
-        self.blinking_paused || self.show_cursor
+    //2 -> Character palette shows up! But it's incorrectly positioned
+
+    pub fn should_show_cursor(
+        &self,
+        focused: bool,
+        cx: &mut gpui::RenderContext<'_, Self>,
+    ) -> bool {
+        //Don't blink the cursor when not focused, blinking is disabled, or paused
+        if !focused
+            || !self.blinking_on
+            || self.blinking_paused
+            || self
+                .terminal
+                .read(cx)
+                .last_mode
+                .contains(TermMode::ALT_SCREEN)
+        {
+            return true;
+        }
+
+        let setting = {
+            let settings = cx.global::<Settings>();
+            settings
+                .terminal_overrides
+                .blinking
+                .clone()
+                .unwrap_or(TerminalBlink::TerminalControlled)
+        };
+
+        match setting {
+            //If the user requested to never blink, don't blink it.
+            TerminalBlink::Never => true,
+            //If the terminal is controlling it, check terminal mode
+            TerminalBlink::TerminalControlled | TerminalBlink::Always => self.blink_state,
+        }
     }
 
     fn blink_cursors(&mut self, epoch: usize, cx: &mut ViewContext<Self>) {
         if epoch == self.blink_epoch && !self.blinking_paused {
-            self.show_cursor = !self.show_cursor;
+            self.blink_state = !self.blink_state;
             cx.notify();
 
             let epoch = self.next_blink_epoch();
@@ -178,7 +213,7 @@ impl ConnectedView {
     }
 
     pub fn pause_cursor_blinking(&mut self, cx: &mut ViewContext<Self>) {
-        self.show_cursor = true;
+        self.blink_state = true;
         cx.notify();
 
         let epoch = self.next_blink_epoch();
@@ -280,7 +315,7 @@ impl View for ConnectedView {
                     terminal_handle,
                     self.modal,
                     focused,
-                    self.blink_show(),
+                    self.should_show_cursor(focused, cx),
                 )
                 .contained()
                 .boxed(),

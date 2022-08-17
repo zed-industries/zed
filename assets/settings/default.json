@@ -106,15 +106,12 @@
         //May take 4 values:
         // 1. Never blink the cursor, ignoring the terminal mode
         //        "blinking": "never",
-        // 2. Default the cursor blink to off, but allow the terminal to 
-        //    turn blinking on
-        //        "blinking": "off",
-        // 3. Default the cursor blink to on, but allow the terminal to 
+        // 2. Default the cursor blink to on, but allow the terminal to 
         //    turn blinking off
-        //        "blinking": "on",
-        // 4. Always blink the cursor, ignoring the terminal mode
+        //        "blinking": "terminal_controlled",
+        // 3. Always blink the cursor, ignoring the terminal mode
         //        "blinking": "always",
-        "blinking": "on",
+        "blinking": "terminal_controlled",
         //Any key-value pairs added to this list will be added to the terminal's
         //enviroment. Use `:` to seperate multiple values.
         "env": {

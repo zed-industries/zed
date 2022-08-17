@@ -19,6 +19,8 @@ use alacritty_terminal::{
 };
 use anyhow::{bail, Result};
 
+//When you type a key, scroll does not happen in terminal !!!TODO
+
 use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
     FutureExt,
@@ -62,6 +64,7 @@ pub enum Event {
     CloseTerminal,
     Bell,
     Wakeup,
+    BlinkChanged,
 }
 
 #[derive(Clone, Debug)]
@@ -295,14 +298,12 @@ impl TerminalBuilder {
 
         //Start off blinking if we need to
         match blink_settings {
-            Some(setting) => match setting {
-                TerminalBlink::On | TerminalBlink::Always => {
-                    term.set_mode(alacritty_terminal::ansi::Mode::BlinkingCursor)
-                }
-                _ => {}
-            },
-            None => term.set_mode(alacritty_terminal::ansi::Mode::BlinkingCursor),
+            None | Some(TerminalBlink::TerminalControlled) | Some(TerminalBlink::Always) => {
+                term.set_mode(alacritty_terminal::ansi::Mode::BlinkingCursor)
+            }
+            _ => {}
         }
+
         let term = Arc::new(FairMutex::new(term));
 
         //Setup the pty...
@@ -479,7 +480,7 @@ impl Terminal {
                 self.notify_pty(format(self.cur_size.into()))
             }
             AlacTermEvent::CursorBlinkingChange => {
-                //TODO whatever state we need to set to get the cursor blinking
+                cx.emit(Event::BlinkChanged);
             }
             AlacTermEvent::Bell => {
                 cx.emit(Event::Bell);
@@ -595,7 +596,7 @@ impl Terminal {
 
     pub fn render_lock<F, T>(&mut self, cx: &mut ModelContext<Self>, f: F) -> T
     where
-        F: FnOnce(RenderableContent, char, bool) -> T,
+        F: FnOnce(RenderableContent, char) -> T,
     {
         let m = self.term.clone(); //Arc clone
         let mut term = m.lock();
@@ -611,7 +612,7 @@ impl Terminal {
 
         let cursor_text = term.grid()[content.cursor.point].c;
 
-        f(content, cursor_text, term.cursor_style().blinking)
+        f(content, cursor_text)
     }
 
     ///Scroll the terminal
