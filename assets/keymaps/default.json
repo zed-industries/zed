@@ -420,6 +420,7 @@
             "enter": "terminal::Enter",
             "ctrl-c": "terminal::CtrlC",
             // Useful terminal actions:
+            "ctrl-cmd-space": "terminal::ShowCharacterPalette",
             "cmd-c": "terminal::Copy",
             "cmd-v": "terminal::Paste",
             "cmd-k": "terminal::Clear"
@@ -428,6 +429,7 @@
     {
         "context": "ModalTerminal",
         "bindings": {
+            "ctrl-cmd-space": "terminal::ShowCharacterPalette",
             "shift-escape": "terminal::DeployModal"
         }
     }

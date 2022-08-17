@@ -29,7 +29,17 @@ pub struct DeployContextMenu {
 
 actions!(
     terminal,
-    [Up, Down, CtrlC, Escape, Enter, Clear, Copy, Paste,]
+    [
+        Up,
+        Down,
+        CtrlC,
+        Escape,
+        Enter,
+        Clear,
+        Copy,
+        Paste,
+        ShowCharacterPalette
+    ]
 );
 impl_internal_actions!(project_panel, [DeployContextMenu]);
 
@@ -45,6 +55,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ConnectedView::copy);
     cx.add_action(ConnectedView::paste);
     cx.add_action(ConnectedView::clear);
+    cx.add_action(ConnectedView::show_character_palette);
 }
 
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
@@ -124,6 +135,10 @@ impl ConnectedView {
             .update(cx, |menu, cx| menu.show(action.position, menu_entries, cx));
 
         cx.notify();
+    }
+
+    fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
+        cx.show_character_palette();
     }
 
     fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
