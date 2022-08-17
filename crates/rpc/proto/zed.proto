@@ -901,8 +901,7 @@ message Operation {
         uint32 local_timestamp = 2;
         uint32 lamport_timestamp = 3;
         repeated VectorClockEntry version = 4;
-        repeated VectorClockEntry transaction_version = 6;
-        repeated UndoCount counts = 7;
+        repeated UndoCount counts = 5;
     }
 
     message UpdateSelections {
