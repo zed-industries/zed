@@ -1391,6 +1391,52 @@ async fn test_leaving_worktree_while_opening_buffer(
 }
 
 #[gpui::test(iterations = 10)]
+async fn test_canceling_buffer_opening(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+
+    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    client_a
+        .fs
+        .insert_tree(
+            "/dir",
+            json!({
+                "a.txt": "abc",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+
+    let buffer_a = project_a
+        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+        .await
+        .unwrap();
+
+    // Open a buffer as client B but cancel after a random amount of time.
+    let buffer_b = project_b.update(cx_b, |p, cx| p.open_buffer_by_id(buffer_a.id() as u64, cx));
+    deterministic.simulate_random_delay().await;
+    drop(buffer_b);
+
+    // Try opening the same buffer again as client B, and ensure we can
+    // still do it despite the cancellation above.
+    let buffer_b = project_b
+        .update(cx_b, |p, cx| p.open_buffer_by_id(buffer_a.id() as u64, cx))
+        .await
+        .unwrap();
+    buffer_b.read_with(cx_b, |buf, _| assert_eq!(buf.text(), "abc"));
+}
+
+#[gpui::test(iterations = 10)]
 async fn test_leaving_project(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;

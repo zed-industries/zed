@@ -187,6 +187,7 @@ impl Server {
             .add_request_handler(Server::forward_project_request::<proto::RenameProjectEntry>)
             .add_request_handler(Server::forward_project_request::<proto::CopyProjectEntry>)
             .add_request_handler(Server::forward_project_request::<proto::DeleteProjectEntry>)
+            .add_message_handler(Server::create_buffer_for_peer)
             .add_request_handler(Server::update_buffer)
             .add_message_handler(Server::update_buffer_file)
             .add_message_handler(Server::buffer_reloaded)
@@ -1183,6 +1184,18 @@ impl Server {
                 .forward_send(host, conn_id, response_payload.clone())
         });
         response.send(response_payload)?;
+        Ok(())
+    }
+
+    async fn create_buffer_for_peer(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::CreateBufferForPeer>,
+    ) -> Result<()> {
+        self.peer.forward_send(
+            request.sender_id,
+            ConnectionId(request.payload.peer_id),
+            request.payload,
+        )?;
         Ok(())
     }
 

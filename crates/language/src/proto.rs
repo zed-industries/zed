@@ -9,7 +9,7 @@ use rpc::proto;
 use std::{ops::Range, sync::Arc};
 use text::*;
 
-pub use proto::{Buffer, BufferState, LineEnding, SelectionSet};
+pub use proto::{Buffer, LineEnding, SelectionSet};
 
 pub fn deserialize_line_ending(message: proto::LineEnding) -> text::LineEnding {
     match message {

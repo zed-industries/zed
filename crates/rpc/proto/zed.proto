@@ -55,58 +55,59 @@ message Envelope {
         OpenBufferById open_buffer_by_id = 44;
         OpenBufferByPath open_buffer_by_path = 45;
         OpenBufferResponse open_buffer_response = 46;
-        UpdateBuffer update_buffer = 47;
-        UpdateBufferFile update_buffer_file = 48;
-        SaveBuffer save_buffer = 49;
-        BufferSaved buffer_saved = 50;
-        BufferReloaded buffer_reloaded = 51;
-        ReloadBuffers reload_buffers = 52;
-        ReloadBuffersResponse reload_buffers_response = 53;
-        FormatBuffers format_buffers = 54;
-        FormatBuffersResponse format_buffers_response = 55;
-        GetCompletions get_completions = 56;
-        GetCompletionsResponse get_completions_response = 57;
-        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 58;
-        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 59;
-        GetCodeActions get_code_actions = 60;
-        GetCodeActionsResponse get_code_actions_response = 61;
-        GetHover get_hover = 62;
-        GetHoverResponse get_hover_response = 63;
-        ApplyCodeAction apply_code_action = 64;
-        ApplyCodeActionResponse apply_code_action_response = 65;
-        PrepareRename prepare_rename = 66;
-        PrepareRenameResponse prepare_rename_response = 67;
-        PerformRename perform_rename = 68;
-        PerformRenameResponse perform_rename_response = 69;
-        SearchProject search_project = 70;
-        SearchProjectResponse search_project_response = 71;
+        CreateBufferForPeer create_buffer_for_peer = 47;
+        UpdateBuffer update_buffer = 48;
+        UpdateBufferFile update_buffer_file = 49;
+        SaveBuffer save_buffer = 50;
+        BufferSaved buffer_saved = 51;
+        BufferReloaded buffer_reloaded = 52;
+        ReloadBuffers reload_buffers = 53;
+        ReloadBuffersResponse reload_buffers_response = 54;
+        FormatBuffers format_buffers = 55;
+        FormatBuffersResponse format_buffers_response = 56;
+        GetCompletions get_completions = 57;
+        GetCompletionsResponse get_completions_response = 58;
+        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 59;
+        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 60;
+        GetCodeActions get_code_actions = 61;
+        GetCodeActionsResponse get_code_actions_response = 62;
+        GetHover get_hover = 63;
+        GetHoverResponse get_hover_response = 64;
+        ApplyCodeAction apply_code_action = 65;
+        ApplyCodeActionResponse apply_code_action_response = 66;
+        PrepareRename prepare_rename = 67;
+        PrepareRenameResponse prepare_rename_response = 68;
+        PerformRename perform_rename = 69;
+        PerformRenameResponse perform_rename_response = 70;
+        SearchProject search_project = 71;
+        SearchProjectResponse search_project_response = 72;
 
-        GetChannels get_channels = 72;
-        GetChannelsResponse get_channels_response = 73;
-        JoinChannel join_channel = 74;
-        JoinChannelResponse join_channel_response = 75;
-        LeaveChannel leave_channel = 76;
-        SendChannelMessage send_channel_message = 77;
-        SendChannelMessageResponse send_channel_message_response = 78;
-        ChannelMessageSent channel_message_sent = 79;
-        GetChannelMessages get_channel_messages = 80;
-        GetChannelMessagesResponse get_channel_messages_response = 81;
+        GetChannels get_channels = 73;
+        GetChannelsResponse get_channels_response = 74;
+        JoinChannel join_channel = 75;
+        JoinChannelResponse join_channel_response = 76;
+        LeaveChannel leave_channel = 77;
+        SendChannelMessage send_channel_message = 78;
+        SendChannelMessageResponse send_channel_message_response = 79;
+        ChannelMessageSent channel_message_sent = 80;
+        GetChannelMessages get_channel_messages = 81;
+        GetChannelMessagesResponse get_channel_messages_response = 82;
 
-        UpdateContacts update_contacts = 82;
-        UpdateInviteInfo update_invite_info = 83;
-        ShowContacts show_contacts = 84;
+        UpdateContacts update_contacts = 83;
+        UpdateInviteInfo update_invite_info = 84;
+        ShowContacts show_contacts = 85;
 
-        GetUsers get_users = 85;
-        FuzzySearchUsers fuzzy_search_users = 86;
-        UsersResponse users_response = 87;
-        RequestContact request_contact = 88;
-        RespondToContactRequest respond_to_contact_request = 89;
-        RemoveContact remove_contact = 90;
+        GetUsers get_users = 86;
+        FuzzySearchUsers fuzzy_search_users = 87;
+        UsersResponse users_response = 88;
+        RequestContact request_contact = 89;
+        RespondToContactRequest respond_to_contact_request = 90;
+        RemoveContact remove_contact = 91;
 
-        Follow follow = 91;
-        FollowResponse follow_response = 92;
-        UpdateFollowers update_followers = 93;
-        Unfollow unfollow = 94;
+        Follow follow = 92;
+        FollowResponse follow_response = 93;
+        UpdateFollowers update_followers = 94;
+        Unfollow unfollow = 95;
     }
 }
 
@@ -299,7 +300,7 @@ message GetDocumentHighlightsResponse {
 }
 
 message Location {
-    Buffer buffer = 1;
+    uint64 buffer_id = 1;
     Anchor start = 2;
     Anchor end = 3;
 }
@@ -348,7 +349,7 @@ message OpenBufferForSymbol {
 }
 
 message OpenBufferForSymbolResponse {
-    Buffer buffer = 1;
+    uint64 buffer_id = 1;
 }
 
 message OpenBufferByPath {
@@ -363,12 +364,13 @@ message OpenBufferById {
 }
 
 message OpenBufferResponse {
-    Buffer buffer = 1;
+    uint64 buffer_id = 1;
 }
 
-message CloseBuffer {
+message CreateBufferForPeer {
     uint64 project_id = 1;
-    uint64 buffer_id = 2;
+    uint32 peer_id = 2;
+    Buffer buffer = 3;
 }
 
 message UpdateBuffer {
@@ -539,7 +541,7 @@ message CodeAction {
 }
 
 message ProjectTransaction {
-    repeated Buffer buffers = 1;
+    repeated uint64 buffer_ids = 1;
     repeated Transaction transactions = 2;
 }
 
@@ -807,13 +809,6 @@ message Entry {
 }
 
 message Buffer {
-    oneof variant {
-        uint64 id = 1;
-        BufferState state = 2;
-    }
-}
-
-message BufferState {
     uint64 id = 1;
     optional File file = 2;
     string base_text = 3;

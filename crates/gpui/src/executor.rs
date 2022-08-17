@@ -381,6 +381,17 @@ impl Deterministic {
         state.forbid_parking = true;
         state.rng = StdRng::seed_from_u64(state.seed);
     }
+
+    pub async fn simulate_random_delay(&self) {
+        use rand::prelude::*;
+        use smol::future::yield_now;
+        if self.state.lock().rng.gen_bool(0.2) {
+            let yields = self.state.lock().rng.gen_range(1..=10);
+            for _ in 0..yields {
+                yield_now().await;
+            }
+        }
+    }
 }
 
 impl Drop for Timer {
@@ -662,17 +673,9 @@ impl Background {
 
     #[cfg(any(test, feature = "test-support"))]
     pub async fn simulate_random_delay(&self) {
-        use rand::prelude::*;
-        use smol::future::yield_now;
-
         match self {
             Self::Deterministic { executor, .. } => {
-                if executor.state.lock().rng.gen_bool(0.2) {
-                    let yields = executor.state.lock().rng.gen_range(1..=10);
-                    for _ in 0..yields {
-                        yield_now().await;
-                    }
-                }
+                executor.simulate_random_delay().await;
             }
             _ => {
                 panic!("this method can only be called on a deterministic executor")
