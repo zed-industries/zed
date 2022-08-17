@@ -1169,22 +1169,17 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
                 .flatten()
                 .is_some();
 
-        match pending_key_down {
-            None | Some(_) if is_composing || text.chars().count() > 1 => {
-                with_input_handler(this, |input_handler| {
-                    input_handler.replace_text_in_range(replacement_range, text)
-                });
-            }
-
-            Some(mut pending_key_down) => {
-                pending_key_down.1 = Some(InsertText {
-                    replacement_range,
-                    text: text.to_string(),
-                });
-                window_state.borrow_mut().pending_key_down = Some(pending_key_down);
-            }
-
-            _ => unreachable!(),
+        if is_composing || text.chars().count() > 1 || pending_key_down.is_none() {
+            with_input_handler(this, |input_handler| {
+                input_handler.replace_text_in_range(replacement_range, text)
+            });
+        } else {
+            let mut pending_key_down = pending_key_down.unwrap();
+            pending_key_down.1 = Some(InsertText {
+                replacement_range,
+                text: text.to_string(),
+            });
+            window_state.borrow_mut().pending_key_down = Some(pending_key_down);
         }
     }
 }
