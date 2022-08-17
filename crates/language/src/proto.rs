@@ -39,7 +39,6 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                 local_timestamp: undo.id.value,
                 lamport_timestamp: lamport_timestamp.value,
                 version: serialize_version(&undo.version),
-                transaction_version: serialize_version(&undo.transaction_version),
                 counts: undo
                     .counts
                     .iter()
@@ -199,7 +198,6 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                             )
                         })
                         .collect(),
-                    transaction_version: deserialize_version(undo.transaction_version),
                 },
             }),
             proto::operation::Variant::UpdateSelections(message) => {
