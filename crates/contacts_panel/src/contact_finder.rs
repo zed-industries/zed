@@ -43,7 +43,9 @@ impl View for ContactFinder {
     }
 
     fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.picker);
+        if cx.is_self_focused() {
+            cx.focus(&self.picker);
+        }
     }
 }
 
