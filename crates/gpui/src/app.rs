@@ -344,7 +344,14 @@ impl WindowInputHandler {
     where
         F: FnOnce(&dyn AnyView, &AppContext) -> T,
     {
-        let app = self.app.borrow();
+        // Input-related application hooks are sometimes called by the OS during
+        // a call to a window-manipulation API, like prompting the user for file
+        // paths. In that case, the AppContext will already be borrowed, so any
+        // InputHandler methods need to fail gracefully.
+        //
+        // See https://github.com/zed-industries/feedback/issues/444
+        let app = self.app.try_borrow().ok()?;
+
         let view_id = app.focused_view_id(self.window_id)?;
         let view = app.cx.views.get(&(self.window_id, view_id))?;
         let result = f(view.as_ref(), &app);
@@ -355,7 +362,7 @@ impl WindowInputHandler {
     where
         F: FnOnce(usize, usize, &mut dyn AnyView, &mut MutableAppContext) -> T,
     {
-        let mut app = self.app.borrow_mut();
+        let mut app = self.app.try_borrow_mut().ok()?;
         app.update(|app| {
             let view_id = app.focused_view_id(self.window_id)?;
             let mut view = app.cx.views.remove(&(self.window_id, view_id))?;
