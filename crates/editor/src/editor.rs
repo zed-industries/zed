@@ -1789,15 +1789,15 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn are_selections_empty(&self) -> bool {
-        let pending_empty = match self.selections.pending_anchor() {
-            Some(Selection { start, end, .. }) => start == end,
-            None => true,
+    pub fn has_pending_nonempty_selection(&self) -> bool {
+        let pending_nonempty_selection = match self.selections.pending_anchor() {
+            Some(Selection { start, end, .. }) => start != end,
+            None => false,
         };
-        pending_empty && self.columnar_selection_tail.is_none()
+        pending_nonempty_selection || self.columnar_selection_tail.is_some()
     }
 
-    pub fn is_selecting(&self) -> bool {
+    pub fn has_pending_selection(&self) -> bool {
         self.selections.pending_anchor().is_some() || self.columnar_selection_tail.is_some()
     }
 
