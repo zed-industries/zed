@@ -467,14 +467,14 @@ impl Terminal {
             AlacTermEvent::ClipboardStore(_, data) => {
                 cx.write_to_clipboard(ClipboardItem::new(data.to_string()))
             }
-            AlacTermEvent::ClipboardLoad(_, format) => self.notify_pty(format(
+            AlacTermEvent::ClipboardLoad(_, format) => self.write_to_pty(format(
                 &cx.read_from_clipboard()
                     .map(|ci| ci.text().to_string())
                     .unwrap_or_else(|| "".to_string()),
             )),
-            AlacTermEvent::PtyWrite(out) => self.notify_pty(out.clone()),
+            AlacTermEvent::PtyWrite(out) => self.write_to_pty(out.clone()),
             AlacTermEvent::TextAreaSizeRequest(format) => {
-                self.notify_pty(format(self.cur_size.into()))
+                self.write_to_pty(format(self.cur_size.into()))
             }
             AlacTermEvent::CursorBlinkingChange => {
                 cx.emit(Event::BlinkChanged);
@@ -517,7 +517,7 @@ impl Terminal {
                         let term_style = &cx.global::<Settings>().theme.terminal;
                         to_alac_rgb(get_color_at_index(index, &term_style.colors))
                     });
-                    self.notify_pty(format(color))
+                    self.write_to_pty(format(color))
                 }
             }
             InternalEvent::Resize(new_size) => {
@@ -528,7 +528,7 @@ impl Terminal {
                 term.resize(*new_size);
             }
             InternalEvent::Clear => {
-                self.notify_pty("\x0c".to_string());
+                self.write_to_pty("\x0c".to_string());
                 term.clear_screen(ClearMode::Saved);
             }
             InternalEvent::Scroll(scroll) => term.scroll_display(*scroll),
@@ -548,12 +548,8 @@ impl Terminal {
         }
     }
 
-    pub fn notify_pty(&self, txt: String) {
-        self.pty_tx.notify(txt.into_bytes());
-    }
-
     ///Write the Input payload to the tty.
-    pub fn write_to_pty(&mut self, input: String) {
+    pub fn write_to_pty(&self, input: String) {
         self.pty_tx.notify(input.into_bytes());
     }
 
@@ -566,10 +562,11 @@ impl Terminal {
         self.events.push(InternalEvent::Clear)
     }
 
-    pub fn try_keystroke(&self, keystroke: &Keystroke) -> bool {
+    pub fn try_keystroke(&mut self, keystroke: &Keystroke) -> bool {
         let esc = to_esc_str(keystroke, &self.last_mode);
         if let Some(esc) = esc {
-            self.notify_pty(esc);
+            self.write_to_pty(esc);
+            self.scroll(Scroll::Bottom);
             true
         } else {
             false
@@ -579,11 +576,11 @@ impl Terminal {
     ///Paste text into the terminal
     pub fn paste(&self, text: &str) {
         if self.last_mode.contains(TermMode::BRACKETED_PASTE) {
-            self.notify_pty("\x1b[200~".to_string());
-            self.notify_pty(text.replace('\x1b', ""));
-            self.notify_pty("\x1b[201~".to_string());
+            self.write_to_pty("\x1b[200~".to_string());
+            self.write_to_pty(text.replace('\x1b', ""));
+            self.write_to_pty("\x1b[201~".to_string());
         } else {
-            self.notify_pty(text.replace("\r\n", "\r").replace('\n', "\r"));
+            self.write_to_pty(text.replace("\r\n", "\r").replace('\n', "\r"));
         }
     }
 
@@ -619,13 +616,13 @@ impl Terminal {
 
     pub fn focus_in(&self) {
         if self.last_mode.contains(TermMode::FOCUS_IN_OUT) {
-            self.notify_pty("\x1b[I".to_string());
+            self.write_to_pty("\x1b[I".to_string());
         }
     }
 
     pub fn focus_out(&self) {
         if self.last_mode.contains(TermMode::FOCUS_IN_OUT) {
-            self.notify_pty("\x1b[O".to_string());
+            self.write_to_pty("\x1b[O".to_string());
         }
     }
 

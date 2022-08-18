@@ -149,9 +149,9 @@ impl ConnectedView {
         {
             cx.show_character_palette();
         } else {
-            self.terminal
-                .read(cx)
-                .try_keystroke(&Keystroke::parse("ctrl-cmd-space").unwrap());
+            self.terminal.update(cx, |term, _| {
+                term.try_keystroke(&Keystroke::parse("ctrl-cmd-space").unwrap())
+            });
         }
     }
 
@@ -258,41 +258,41 @@ impl ConnectedView {
     ///Synthesize the keyboard event corresponding to 'up'
     fn up(&mut self, _: &Up, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("up").unwrap());
+        self.terminal.update(cx, |term, _| {
+            term.try_keystroke(&Keystroke::parse("up").unwrap())
+        });
     }
 
     ///Synthesize the keyboard event corresponding to 'down'
     fn down(&mut self, _: &Down, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("down").unwrap());
+        self.terminal.update(cx, |term, _| {
+            term.try_keystroke(&Keystroke::parse("down").unwrap())
+        });
     }
 
     ///Synthesize the keyboard event corresponding to 'ctrl-c'
     fn ctrl_c(&mut self, _: &CtrlC, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("ctrl-c").unwrap());
+        self.terminal.update(cx, |term, _| {
+            term.try_keystroke(&Keystroke::parse("ctrl-c").unwrap())
+        });
     }
 
     ///Synthesize the keyboard event corresponding to 'escape'
     fn escape(&mut self, _: &Escape, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("escape").unwrap());
+        self.terminal.update(cx, |term, _| {
+            term.try_keystroke(&Keystroke::parse("escape").unwrap())
+        });
     }
 
     ///Synthesize the keyboard event corresponding to 'enter'
     fn enter(&mut self, _: &Enter, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("enter").unwrap());
+        self.terminal.update(cx, |term, _| {
+            term.try_keystroke(&Keystroke::parse("enter").unwrap())
+        });
     }
 }
 
@@ -358,8 +358,10 @@ impl View for ConnectedView {
         text: &str,
         cx: &mut ViewContext<Self>,
     ) {
-        self.terminal
-            .update(cx, |terminal, _| terminal.write_to_pty(text.into()));
+        self.terminal.update(cx, |terminal, _| {
+            terminal.write_to_pty(text.into());
+            terminal.scroll(alacritty_terminal::grid::Scroll::Bottom);
+        });
     }
 
     fn keymap_context(&self, _: &gpui::AppContext) -> gpui::keymap::Context {
