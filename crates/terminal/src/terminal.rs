@@ -19,8 +19,6 @@ use alacritty_terminal::{
 };
 use anyhow::{bail, Result};
 
-//When you type a key, scroll does not happen in terminal !!!TODO
-
 use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
     FutureExt,
