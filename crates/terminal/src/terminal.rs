@@ -297,11 +297,8 @@ impl TerminalBuilder {
         let mut term = Term::new(&config, &initial_size, ZedListener(events_tx.clone()));
 
         //Start off blinking if we need to
-        match blink_settings {
-            None | Some(TerminalBlink::TerminalControlled) | Some(TerminalBlink::Always) => {
-                term.set_mode(alacritty_terminal::ansi::Mode::BlinkingCursor)
-            }
-            _ => {}
+        if let Some(TerminalBlink::On) = blink_settings {
+            term.set_mode(alacritty_terminal::ansi::Mode::BlinkingCursor)
         }
 
         let term = Arc::new(FairMutex::new(term));

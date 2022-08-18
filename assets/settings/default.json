@@ -105,12 +105,12 @@
         //Set the cursor blinking behavior in the terminal.
         //May take 4 values:
         // 1. Never blink the cursor, ignoring the terminal mode
-        //        "blinking": "never",
-        // 2. Default the cursor blink to on, but allow the terminal to 
-        //    turn blinking off
+        //        "blinking": "off",
+        // 2. Default the cursor blink to off, but allow the terminal to 
+        //    set blinking
         //        "blinking": "terminal_controlled",
         // 3. Always blink the cursor, ignoring the terminal mode
-        //        "blinking": "always",
+        //        "blinking": "on",
         "blinking": "terminal_controlled",
         //Any key-value pairs added to this list will be added to the terminal's
         //enviroment. Use `:` to seperate multiple values.

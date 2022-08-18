@@ -1159,7 +1159,6 @@ extern "C" fn first_rect_for_character_range(
         let window = get_window_state(this).borrow().native_window;
         NSView::frame(window)
     };
-
     with_input_handler(this, |input_handler| {
         input_handler.rect_for_range(range.to_range()?)
     })

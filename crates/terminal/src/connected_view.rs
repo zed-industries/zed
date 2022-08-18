@@ -141,13 +141,17 @@ impl ConnectedView {
     }
 
     fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
-        if self
+        if !self
             .terminal
             .read(cx)
             .last_mode
             .contains(TermMode::ALT_SCREEN)
         {
             cx.show_character_palette();
+        } else {
+            self.terminal
+                .read(cx)
+                .try_keystroke(&Keystroke::parse("ctrl-cmd-space").unwrap());
         }
     }
 
@@ -155,8 +159,6 @@ impl ConnectedView {
         self.terminal.update(cx, |term, _| term.clear());
         cx.notify();
     }
-
-    //2 -> Character palette shows up! But it's incorrectly positioned
 
     pub fn should_show_cursor(
         &self,
@@ -187,9 +189,9 @@ impl ConnectedView {
 
         match setting {
             //If the user requested to never blink, don't blink it.
-            TerminalBlink::Never => true,
+            TerminalBlink::Off => true,
             //If the terminal is controlling it, check terminal mode
-            TerminalBlink::TerminalControlled | TerminalBlink::Always => self.blink_state,
+            TerminalBlink::TerminalControlled | TerminalBlink::On => self.blink_state,
         }
     }
 

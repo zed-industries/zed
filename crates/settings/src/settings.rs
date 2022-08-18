@@ -89,9 +89,9 @@ pub struct TerminalSettings {
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalBlink {
-    Never,
+    Off,
     TerminalControlled,
-    Always,
+    On,
 }
 
 impl Default for TerminalBlink {

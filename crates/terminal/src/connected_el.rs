@@ -645,54 +645,59 @@ impl Element for TerminalEl {
             selection,
         );
 
-        //Layout cursor
-        let cursor = {
-            if self.cursor_visible {
-                let cursor_point = DisplayCursor::from(cursor.point, display_offset);
-                let cursor_text = {
-                    let str_trxt = cursor_text.to_string();
+        //Layout cursor. Rectangle is used for IME, so we should lay it out even
+        //if we don't end up showing it.
+        let cursor = if let alacritty_terminal::ansi::CursorShape::Hidden = cursor.shape {
+            None
+        } else {
+            let cursor_point = DisplayCursor::from(cursor.point, display_offset);
+            let cursor_text = {
+                let str_trxt = cursor_text.to_string();
 
-                    let color = if self.focused {
-                        terminal_theme.colors.background
-                    } else {
-                        terminal_theme.colors.foreground
-                    };
-
-                    cx.text_layout_cache.layout_str(
-                        &str_trxt,
-                        text_style.font_size,
-                        &[(
-                            str_trxt.len(),
-                            RunStyle {
-                                font_id: text_style.font_id,
-                                color,
-                                underline: Default::default(),
-                            },
-                        )],
-                    )
+                let color = if self.focused {
+                    terminal_theme.colors.background
+                } else {
+                    terminal_theme.colors.foreground
                 };
 
-                TerminalEl::shape_cursor(cursor_point, dimensions, &cursor_text).map(
-                    move |(cursor_position, block_width)| {
-                        let shape = if self.focused {
-                            CursorShape::Block
-                        } else {
-                            CursorShape::Hollow
-                        };
-
-                        Cursor::new(
-                            cursor_position,
-                            block_width,
-                            dimensions.line_height,
-                            terminal_theme.colors.cursor,
-                            shape,
-                            Some(cursor_text),
-                        )
-                    },
+                cx.text_layout_cache.layout_str(
+                    &str_trxt,
+                    text_style.font_size,
+                    &[(
+                        str_trxt.len(),
+                        RunStyle {
+                            font_id: text_style.font_id,
+                            color,
+                            underline: Default::default(),
+                        },
+                    )],
                 )
-            } else {
-                None
-            }
+            };
+
+            TerminalEl::shape_cursor(cursor_point, dimensions, &cursor_text).map(
+                move |(cursor_position, block_width)| {
+                    let shape = match cursor.shape {
+                        alacritty_terminal::ansi::CursorShape::Block if !self.focused => {
+                            CursorShape::Hollow
+                        }
+                        alacritty_terminal::ansi::CursorShape::Block => CursorShape::Block,
+                        alacritty_terminal::ansi::CursorShape::Underline => CursorShape::Underscore,
+                        alacritty_terminal::ansi::CursorShape::Beam => CursorShape::Bar,
+                        alacritty_terminal::ansi::CursorShape::HollowBlock => CursorShape::Hollow,
+                        //This case is handled in the wrapping if
+                        alacritty_terminal::ansi::CursorShape::Hidden => CursorShape::Block,
+                    };
+
+                    Cursor::new(
+                        cursor_position,
+                        block_width,
+                        dimensions.line_height,
+                        terminal_theme.colors.cursor,
+                        shape,
+                        Some(cursor_text),
+                    )
+                },
+            )
         };
 
         //Done!
@@ -783,10 +788,12 @@ impl Element for TerminalEl {
             });
 
             //Draw cursor
-            if let Some(cursor) = &layout.cursor {
-                cx.paint_layer(clip_bounds, |cx| {
-                    cursor.paint(origin, cx);
-                })
+            if self.cursor_visible {
+                if let Some(cursor) = &layout.cursor {
+                    cx.paint_layer(clip_bounds, |cx| {
+                        cursor.paint(origin, cx);
+                    })
+                }
             }
         });
     }
