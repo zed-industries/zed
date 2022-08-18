@@ -70,6 +70,8 @@ pub fn update_go_to_definition_link(
     }: &UpdateGoToDefinitionLink,
     cx: &mut ViewContext<Editor>,
 ) {
+    let pending_nonempty_selection = editor.has_pending_nonempty_selection();
+
     // Store new mouse point as an anchor
     let snapshot = editor.snapshot(cx);
     let point = point.map(|point| {
@@ -89,6 +91,12 @@ pub fn update_go_to_definition_link(
     }
 
     editor.link_go_to_definition_state.last_mouse_location = point.clone();
+
+    if pending_nonempty_selection {
+        hide_link_definition(editor, cx);
+        return;
+    }
+
     if cmd_held {
         if let Some(point) = point {
             let kind = if shift_held {
@@ -113,12 +121,14 @@ pub fn cmd_shift_changed(
     }: &CmdShiftChanged,
     cx: &mut ViewContext<Editor>,
 ) {
+    let pending_nonempty_selection = editor.has_pending_nonempty_selection();
+
     if let Some(point) = editor
         .link_go_to_definition_state
         .last_mouse_location
         .clone()
     {
-        if cmd_down {
+        if cmd_down && !pending_nonempty_selection {
             let snapshot = editor.snapshot(cx);
             let kind = if shift_down {
                 LinkDefinitionKind::Type
@@ -127,10 +137,11 @@ pub fn cmd_shift_changed(
             };
 
             show_link_definition(kind, editor, point, snapshot, cx);
-        } else {
-            hide_link_definition(editor, cx)
+            return;
         }
     }
+
+    hide_link_definition(editor, cx)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -243,28 +254,32 @@ pub fn show_link_definition(
                         this.link_go_to_definition_state.definitions = definitions.clone();
 
                         let buffer_snapshot = buffer.read(cx).snapshot();
+
                         // Only show highlight if there exists a definition to jump to that doesn't contain
                         // the current location.
-                        if definitions.iter().any(|definition| {
-                            let target = &definition.target;
-                            if target.buffer == buffer {
-                                let range = &target.range;
-                                // Expand range by one character as lsp definition ranges include positions adjacent
-                                // but not contained by the symbol range
-                                let start = buffer_snapshot.clip_offset(
-                                    range.start.to_offset(&buffer_snapshot).saturating_sub(1),
-                                    Bias::Left,
-                                );
-                                let end = buffer_snapshot.clip_offset(
-                                    range.end.to_offset(&buffer_snapshot) + 1,
-                                    Bias::Right,
-                                );
-                                let offset = buffer_position.to_offset(&buffer_snapshot);
-                                !(start <= offset && end >= offset)
-                            } else {
-                                true
-                            }
-                        }) {
+                        let any_definition_does_not_contain_current_location =
+                            definitions.iter().any(|definition| {
+                                let target = &definition.target;
+                                if target.buffer == buffer {
+                                    let range = &target.range;
+                                    // Expand range by one character as lsp definition ranges include positions adjacent
+                                    // but not contained by the symbol range
+                                    let start = buffer_snapshot.clip_offset(
+                                        range.start.to_offset(&buffer_snapshot).saturating_sub(1),
+                                        Bias::Left,
+                                    );
+                                    let end = buffer_snapshot.clip_offset(
+                                        range.end.to_offset(&buffer_snapshot) + 1,
+                                        Bias::Right,
+                                    );
+                                    let offset = buffer_position.to_offset(&buffer_snapshot);
+                                    !(start <= offset && end >= offset)
+                                } else {
+                                    true
+                                }
+                            });
+
+                        if any_definition_does_not_contain_current_location {
                             // If no symbol range returned from language server, use the surrounding word.
                             let highlight_range = symbol_range.unwrap_or_else(|| {
                                 let snapshot = &snapshot.buffer_snapshot;
@@ -280,7 +295,7 @@ pub fn show_link_definition(
                                 vec![highlight_range],
                                 style,
                                 cx,
-                            )
+                            );
                         } else {
                             hide_link_definition(this, cx);
                         }
