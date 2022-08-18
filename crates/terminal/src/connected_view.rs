@@ -11,6 +11,7 @@ use gpui::{
     AnyViewHandle, AppContext, Element, ElementBox, ModelHandle, MutableAppContext, View,
     ViewContext, ViewHandle,
 };
+use settings::{Settings, TerminalBlink};
 use smol::Timer;
 use workspace::pane;
 
@@ -29,7 +30,17 @@ pub struct DeployContextMenu {
 
 actions!(
     terminal,
-    [Up, Down, CtrlC, Escape, Enter, Clear, Copy, Paste,]
+    [
+        Up,
+        Down,
+        CtrlC,
+        Escape,
+        Enter,
+        Clear,
+        Copy,
+        Paste,
+        ShowCharacterPalette
+    ]
 );
 impl_internal_actions!(project_panel, [DeployContextMenu]);
 
@@ -45,6 +56,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ConnectedView::copy);
     cx.add_action(ConnectedView::paste);
     cx.add_action(ConnectedView::clear);
+    cx.add_action(ConnectedView::show_character_palette);
 }
 
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
@@ -56,7 +68,8 @@ pub struct ConnectedView {
     // Only for styling purposes. Doesn't effect behavior
     modal: bool,
     context_menu: ViewHandle<ContextMenu>,
-    show_cursor: bool,
+    blink_state: bool,
+    blinking_on: bool,
     blinking_paused: bool,
     blink_epoch: usize,
 }
@@ -80,7 +93,7 @@ impl ConnectedView {
                 this.has_bell = true;
                 cx.emit(Event::Wakeup);
             }
-
+            Event::BlinkChanged => this.blinking_on = !this.blinking_on,
             _ => cx.emit(*event),
         })
         .detach();
@@ -91,7 +104,8 @@ impl ConnectedView {
             has_bell: false,
             modal,
             context_menu: cx.add_view(ContextMenu::new),
-            show_cursor: true,
+            blink_state: true,
+            blinking_on: false,
             blinking_paused: false,
             blink_epoch: 0,
         }
@@ -126,19 +140,64 @@ impl ConnectedView {
         cx.notify();
     }
 
+    fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
+        if !self
+            .terminal
+            .read(cx)
+            .last_mode
+            .contains(TermMode::ALT_SCREEN)
+        {
+            cx.show_character_palette();
+        } else {
+            self.terminal.update(cx, |term, _| {
+                term.try_keystroke(&Keystroke::parse("ctrl-cmd-space").unwrap())
+            });
+        }
+    }
+
     fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
         self.terminal.update(cx, |term, _| term.clear());
         cx.notify();
     }
 
-    //Following code copied from editor cursor
-    pub fn blink_show(&self) -> bool {
-        self.blinking_paused || self.show_cursor
+    pub fn should_show_cursor(
+        &self,
+        focused: bool,
+        cx: &mut gpui::RenderContext<'_, Self>,
+    ) -> bool {
+        //Don't blink the cursor when not focused, blinking is disabled, or paused
+        if !focused
+            || !self.blinking_on
+            || self.blinking_paused
+            || self
+                .terminal
+                .read(cx)
+                .last_mode
+                .contains(TermMode::ALT_SCREEN)
+        {
+            return true;
+        }
+
+        let setting = {
+            let settings = cx.global::<Settings>();
+            settings
+                .terminal_overrides
+                .blinking
+                .clone()
+                .unwrap_or(TerminalBlink::TerminalControlled)
+        };
+
+        match setting {
+            //If the user requested to never blink, don't blink it.
+            TerminalBlink::Off => true,
+            //If the terminal is controlling it, check terminal mode
+            TerminalBlink::TerminalControlled | TerminalBlink::On => self.blink_state,
+        }
     }
 
     fn blink_cursors(&mut self, epoch: usize, cx: &mut ViewContext<Self>) {
         if epoch == self.blink_epoch && !self.blinking_paused {
-            self.show_cursor = !self.show_cursor;
+            self.blink_state = !self.blink_state;
             cx.notify();
 
             let epoch = self.next_blink_epoch();
@@ -156,7 +215,7 @@ impl ConnectedView {
     }
 
     pub fn pause_cursor_blinking(&mut self, cx: &mut ViewContext<Self>) {
-        self.show_cursor = true;
+        self.blink_state = true;
         cx.notify();
 
         let epoch = self.next_blink_epoch();
@@ -199,41 +258,41 @@ impl ConnectedView {
     ///Synthesize the keyboard event corresponding to 'up'
     fn up(&mut self, _: &Up, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("up").unwrap());
+        self.terminal.update(cx, |term, _| {
+            term.try_keystroke(&Keystroke::parse("up").unwrap())
+        });
     }
 
     ///Synthesize the keyboard event corresponding to 'down'
     fn down(&mut self, _: &Down, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("down").unwrap());
+        self.terminal.update(cx, |term, _| {
+            term.try_keystroke(&Keystroke::parse("down").unwrap())
+        });
     }
 
     ///Synthesize the keyboard event corresponding to 'ctrl-c'
     fn ctrl_c(&mut self, _: &CtrlC, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("ctrl-c").unwrap());
+        self.terminal.update(cx, |term, _| {
+            term.try_keystroke(&Keystroke::parse("ctrl-c").unwrap())
+        });
     }
 
     ///Synthesize the keyboard event corresponding to 'escape'
     fn escape(&mut self, _: &Escape, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("escape").unwrap());
+        self.terminal.update(cx, |term, _| {
+            term.try_keystroke(&Keystroke::parse("escape").unwrap())
+        });
     }
 
     ///Synthesize the keyboard event corresponding to 'enter'
     fn enter(&mut self, _: &Enter, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("enter").unwrap());
+        self.terminal.update(cx, |term, _| {
+            term.try_keystroke(&Keystroke::parse("enter").unwrap())
+        });
     }
 }
 
@@ -258,7 +317,7 @@ impl View for ConnectedView {
                     terminal_handle,
                     self.modal,
                     focused,
-                    self.blink_show(),
+                    self.should_show_cursor(focused, cx),
                 )
                 .contained()
                 .boxed(),
@@ -299,8 +358,10 @@ impl View for ConnectedView {
         text: &str,
         cx: &mut ViewContext<Self>,
     ) {
-        self.terminal
-            .update(cx, |terminal, _| terminal.write_to_pty(text.into()));
+        self.terminal.update(cx, |terminal, _| {
+            terminal.write_to_pty(text.into());
+            terminal.scroll(alacritty_terminal::grid::Scroll::Bottom);
+        });
     }
 
     fn keymap_context(&self, _: &gpui::AppContext) -> gpui::keymap::Context {

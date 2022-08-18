@@ -53,7 +53,6 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode) -> Option<String> {
     // Manual Bindings including modifiers
     let manual_esc_str = match (keystroke.key.as_ref(), &modifiers) {
         //Basic special keys
-        ("space", Modifiers::None) => Some(" ".to_string()),
         ("tab", Modifiers::None) => Some("\x09".to_string()),
         ("escape", Modifiers::None) => Some("\x1b".to_string()),
         ("enter", Modifiers::None) => Some("\x0d".to_string()),
