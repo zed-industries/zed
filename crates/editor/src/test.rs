@@ -183,7 +183,7 @@ impl<'a> EditorTestContext<'a> {
         }
     }
 
-    fn ranges(&self, marked_text: &str) -> Vec<Range<usize>> {
+    pub fn ranges(&self, marked_text: &str) -> Vec<Range<usize>> {
         let (unmarked_text, ranges) = marked_text_ranges(marked_text, false);
         assert_eq!(self.buffer_text(), unmarked_text);
         ranges

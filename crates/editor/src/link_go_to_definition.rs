@@ -821,5 +821,59 @@ mod tests {
             fn test() { do_work(); }
             fn «do_workˇ»() { test(); }
         "});
+
+        // 1. We have a pending selection, mouse point is over a symbol that we have a response for, hitting cmd and nothing happens
+        // 2. Selection is completed, hovering
+        let hover_point = cx.display_point(indoc! {"
+            fn test() { do_wˇork(); }
+            fn do_work() { test(); }
+        "});
+        let target_range = cx.lsp_range(indoc! {"
+            fn test() { do_work(); }
+            fn «do_work»() { test(); }
+        "});
+        let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
+            Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
+                lsp::LocationLink {
+                    origin_selection_range: None,
+                    target_uri: url,
+                    target_range,
+                    target_selection_range: target_range,
+                },
+            ])))
+        });
+
+        // create a pending selection
+        let selection_range = cx.ranges(indoc! {"
+            fn «test() { do_w»ork(); }
+            fn do_work() { test(); }
+        "})[0]
+            .clone();
+        cx.update_editor(|editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let anchor_range = snapshot.anchor_before(selection_range.start)
+                ..snapshot.anchor_after(selection_range.end);
+            editor.change_selections(Some(crate::Autoscroll::Fit), cx, |s| {
+                s.set_pending_anchor_range(anchor_range, crate::SelectMode::Character)
+            });
+        });
+        cx.update_editor(|editor, cx| {
+            update_go_to_definition_link(
+                editor,
+                &UpdateGoToDefinitionLink {
+                    point: Some(hover_point),
+                    cmd_held: true,
+                    shift_held: false,
+                },
+                cx,
+            );
+        });
+        cx.foreground().run_until_parked();
+        assert!(requests.try_next().is_err());
+        cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
+            fn test() { do_work(); }
+            fn do_work() { test(); }
+        "});
+        cx.foreground().run_until_parked();
     }
 }
