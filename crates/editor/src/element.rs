@@ -1832,6 +1832,10 @@ impl Cursor {
             block_text.paint(self.origin + origin, bounds, self.line_height, cx);
         }
     }
+
+    pub fn shape(&self) -> CursorShape {
+        self.shape
+    }
 }
 
 #[derive(Debug)]

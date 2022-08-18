@@ -1,5 +1,5 @@
 use alacritty_terminal::{
-    ansi::{Color as AnsiColor, Color::Named, NamedColor},
+    ansi::{Color as AnsiColor, Color::Named, CursorShape as AlacCursorShape, NamedColor},
     grid::{Dimensions, Scroll},
     index::{Column as GridCol, Line as GridLine, Point, Side},
     selection::SelectionRange,
@@ -647,7 +647,7 @@ impl Element for TerminalEl {
 
         //Layout cursor. Rectangle is used for IME, so we should lay it out even
         //if we don't end up showing it.
-        let cursor = if let alacritty_terminal::ansi::CursorShape::Hidden = cursor.shape {
+        let cursor = if let AlacCursorShape::Hidden = cursor.shape {
             None
         } else {
             let cursor_point = DisplayCursor::from(cursor.point, display_offset);
@@ -677,15 +677,13 @@ impl Element for TerminalEl {
             TerminalEl::shape_cursor(cursor_point, dimensions, &cursor_text).map(
                 move |(cursor_position, block_width)| {
                     let shape = match cursor.shape {
-                        alacritty_terminal::ansi::CursorShape::Block if !self.focused => {
-                            CursorShape::Hollow
-                        }
-                        alacritty_terminal::ansi::CursorShape::Block => CursorShape::Block,
-                        alacritty_terminal::ansi::CursorShape::Underline => CursorShape::Underscore,
-                        alacritty_terminal::ansi::CursorShape::Beam => CursorShape::Bar,
-                        alacritty_terminal::ansi::CursorShape::HollowBlock => CursorShape::Hollow,
-                        //This case is handled in the wrapping if
-                        alacritty_terminal::ansi::CursorShape::Hidden => CursorShape::Block,
+                        AlacCursorShape::Block if !self.focused => CursorShape::Hollow,
+                        AlacCursorShape::Block => CursorShape::Block,
+                        AlacCursorShape::Underline => CursorShape::Underscore,
+                        AlacCursorShape::Beam => CursorShape::Bar,
+                        AlacCursorShape::HollowBlock => CursorShape::Hollow,
+                        //This case is handled in the if wrapping the whole cursor layout
+                        AlacCursorShape::Hidden => unreachable!(),
                     };
 
                     Cursor::new(
