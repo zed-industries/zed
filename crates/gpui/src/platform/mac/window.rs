@@ -458,9 +458,15 @@ impl Window {
 
 impl Drop for Window {
     fn drop(&mut self) {
-        unsafe {
-            self.0.as_ref().borrow().native_window.close();
-        }
+        let this = self.0.borrow();
+        let window = this.native_window;
+        this.executor
+            .spawn(async move {
+                unsafe {
+                    window.close();
+                }
+            })
+            .detach();
     }
 }
 
