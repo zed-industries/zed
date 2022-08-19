@@ -121,14 +121,14 @@ pub fn cmd_shift_changed(
     }: &CmdShiftChanged,
     cx: &mut ViewContext<Editor>,
 ) {
-    let pending_nonempty_selection = editor.has_pending_nonempty_selection();
+    let pending_selection = editor.has_pending_selection();
 
     if let Some(point) = editor
         .link_go_to_definition_state
         .last_mouse_location
         .clone()
     {
-        if cmd_down && !pending_nonempty_selection {
+        if cmd_down && !pending_selection {
             let snapshot = editor.snapshot(cx);
             let kind = if shift_down {
                 LinkDefinitionKind::Type
