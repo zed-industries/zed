@@ -166,7 +166,6 @@ pub fn mouse_button_report(
 
 pub fn mouse_moved_report(point: Point, e: &MouseMovedEvent, mode: TermMode) -> Option<Vec<u8>> {
     let button = MouseButton::from_move(e);
-    dbg!(&button);
 
     if !button.is_other() && mode.intersects(TermMode::MOUSE_MOTION | TermMode::MOUSE_DRAG) {
         //Only drags are reported in drag mode, so block NoneMove.

@@ -627,7 +627,6 @@ impl Terminal {
     }
 
     pub fn mouse_move(&mut self, e: &MouseMovedEvent, origin: Vector2F) {
-        dbg!("term mouse_move");
         let position = e.position.sub(origin);
 
         let point = mouse_point(position, self.cur_size, self.last_offset);
