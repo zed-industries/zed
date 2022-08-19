@@ -293,6 +293,7 @@ impl Element for Flex {
                 position,
                 delta,
                 precise,
+                ..
             }) = event
             {
                 if *remaining_space < 0. && bounds.contains_point(position) {

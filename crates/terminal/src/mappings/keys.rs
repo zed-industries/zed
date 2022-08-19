@@ -1,3 +1,4 @@
+/// The mappings defined in this file where created from reading the alacritty source
 use alacritty_terminal::term::TermMode;
 use gpui::keymap::Keystroke;
 

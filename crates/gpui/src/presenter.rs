@@ -235,7 +235,9 @@ impl Presenter {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
             let mut invalidated_views = Vec::new();
             let mut mouse_down_out_handlers = Vec::new();
+            let mut mouse_moved_region = None;
             let mut mouse_down_region = None;
+            let mut mouse_up_region = None;
             let mut clicked_region = None;
             let mut dragged_region = None;
 
@@ -282,6 +284,15 @@ impl Presenter {
                         }
                     }
 
+                    for (region, _) in self.mouse_regions.iter().rev() {
+                        if region.bounds.contains_point(position) {
+                            invalidated_views.push(region.view_id);
+                            mouse_up_region =
+                                Some((region.clone(), MouseRegionEvent::Up(e.clone())));
+                            break;
+                        }
+                    }
+
                     if let Some(moved) = &mut self.last_mouse_moved_event {
                         if moved.pressed_button == Some(button) {
                             moved.pressed_button = None;
@@ -300,6 +311,15 @@ impl Presenter {
                             MouseRegionEvent::Drag(*prev_drag_position, *e),
                         ));
                         *prev_drag_position = *position;
+                    }
+
+                    for (region, _) in self.mouse_regions.iter().rev() {
+                        if region.bounds.contains_point(*position) {
+                            invalidated_views.push(region.view_id);
+                            mouse_moved_region =
+                                Some((region.clone(), MouseRegionEvent::Move(e.clone())));
+                            break;
+                        }
                     }
 
                     self.last_mouse_moved_event = Some(e.clone());
@@ -325,6 +345,28 @@ impl Presenter {
                 {
                     event_cx.with_current_view(mouse_down_region.view_id, |event_cx| {
                         mouse_down_callback(region_event, event_cx);
+                    })
+                }
+            }
+
+            if let Some((move_moved_region, region_event)) = mouse_moved_region {
+                handled = true;
+                if let Some(mouse_moved_callback) =
+                    move_moved_region.handlers.get(&region_event.handler_key())
+                {
+                    event_cx.with_current_view(move_moved_region.view_id, |event_cx| {
+                        mouse_moved_callback(region_event, event_cx);
+                    })
+                }
+            }
+
+            if let Some((mouse_up_region, region_event)) = mouse_up_region {
+                handled = true;
+                if let Some(mouse_up_callback) =
+                    mouse_up_region.handlers.get(&region_event.handler_key())
+                {
+                    event_cx.with_current_view(mouse_up_region.view_id, |event_cx| {
+                        mouse_up_callback(region_event, event_cx);
                     })
                 }
             }

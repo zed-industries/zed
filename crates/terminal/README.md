@@ -10,7 +10,7 @@ The TerminalView struct abstracts over failed and successful terminals, passing 
 
 #Input 
 
-There are currently 3 distinct paths for getting keystrokes to the terminal:
+There are currently many distinct paths for getting keystrokes to the terminal:
 
 1. Terminal specific characters and bindings. Things like ctrl-a mapping to ASCII control character 1, ANSI escape codes associated with the function keys, etc. These are caught with a raw key-down handler in the element and are processed immediately. This is done with the `try_keystroke()` method on Terminal
 
@@ -18,3 +18,6 @@ There are currently 3 distinct paths for getting keystrokes to the terminal:
 
 3. IME text. When the special character mappings fail, we pass the keystroke back to GPUI to hand it to the IME system. This comes back to us in the `View::replace_text_in_range()` method, and we then send that to the terminal directly, bypassing `try_keystroke()`.
 
+4. Pasted text has a seperate pathway. 
+
+Generally, there's a distinction between 'keystrokes that need to be mapped' and 'strings which need to be written'. I've attempted to unify these under the '.try_keystroke()' API and the `.input()` API (which try_keystroke uses) so we have consistent input handling across the terminal

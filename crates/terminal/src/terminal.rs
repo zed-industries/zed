@@ -24,15 +24,19 @@ use futures::{
     FutureExt,
 };
 
+use mappings::mouse::{
+    alt_scroll, mouse_button_report, mouse_moved_report, mouse_point, mouse_side, scroll_report,
+};
 use modal::deploy_modal;
-use settings::{Settings, Shell, TerminalBlink};
-use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc, time::Duration};
+use settings::{AlternateScroll, Settings, Shell, TerminalBlink};
+use std::{collections::HashMap, fmt::Display, ops::Sub, path::PathBuf, sync::Arc, time::Duration};
 use thiserror::Error;
 
 use gpui::{
     geometry::vector::{vec2f, Vector2F},
     keymap::Keystroke,
-    ClipboardItem, Entity, ModelContext, MutableAppContext,
+    ClipboardItem, Entity, ModelContext, MouseButton, MouseButtonEvent, MouseMovedEvent,
+    MutableAppContext, ScrollWheelEvent,
 };
 
 use crate::mappings::{
@@ -48,12 +52,15 @@ pub fn init(cx: &mut MutableAppContext) {
     connected_view::init(cx);
 }
 
+///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
+///Scroll multiplier that is set to 3 by default. This will be removed when I
+///Implement scroll bars.
+pub const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
+
 const DEBUG_TERMINAL_WIDTH: f32 = 500.;
-const DEBUG_TERMINAL_HEIGHT: f32 = 30.; //This needs to be wide enough that the CI & a local dev's prompt can fill the whole space.
+const DEBUG_TERMINAL_HEIGHT: f32 = 30.;
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
-// const MAX_FRAME_RATE: f32 = 60.;
-// const BACK_BUFFER_SIZE: usize = 5000;
 
 ///Upward flowing events, for changing the title and such
 #[derive(Clone, Copy, Debug)]
@@ -256,6 +263,7 @@ impl TerminalBuilder {
         env: Option<HashMap<String, String>>,
         initial_size: TerminalSize,
         blink_settings: Option<TerminalBlink>,
+        alternate_scroll: &AlternateScroll,
     ) -> Result<TerminalBuilder> {
         let pty_config = {
             let alac_shell = shell.clone().and_then(|shell| match shell {
@@ -297,6 +305,14 @@ impl TerminalBuilder {
         //Start off blinking if we need to
         if let Some(TerminalBlink::On) = blink_settings {
             term.set_mode(alacritty_terminal::ansi::Mode::BlinkingCursor)
+        }
+
+        //Start alternate_scroll if we need to
+        if let AlternateScroll::On = alternate_scroll {
+            term.set_mode(alacritty_terminal::ansi::Mode::AlternateScroll)
+        } else {
+            //Alacritty turns it on by default, so we need to turn it off.
+            term.unset_mode(alacritty_terminal::ansi::Mode::AlternateScroll)
         }
 
         let term = Arc::new(FairMutex::new(term));
@@ -348,7 +364,8 @@ impl TerminalBuilder {
             default_title: shell_txt,
             last_mode: TermMode::NONE,
             cur_size: initial_size,
-            // utilization: 0.,
+            last_mouse: None,
+            last_offset: 0,
         };
 
         Ok(TerminalBuilder {
@@ -406,27 +423,6 @@ impl TerminalBuilder {
         })
         .detach();
 
-        // //Render loop
-        // cx.spawn_weak(|this, mut cx| async move {
-        //     loop {
-        //         let utilization = match this.upgrade(&cx) {
-        //             Some(this) => this.update(&mut cx, |this, cx| {
-        //                 cx.notify();
-        //                 this.utilization()
-        //             }),
-        //             None => break,
-        //         };
-
-        //         let utilization = (1. - utilization).clamp(0.1, 1.);
-        //         let delay = cx.background().timer(Duration::from_secs_f32(
-        //             1.0 / (Terminal::default_fps() * utilization),
-        //         ));
-
-        //         delay.await;
-        //     }
-        // })
-        // .detach();
-
         self.terminal
     }
 }
@@ -439,19 +435,11 @@ pub struct Terminal {
     title: String,
     cur_size: TerminalSize,
     last_mode: TermMode,
-    //Percentage, between 0 and 1
-    // utilization: f32,
+    last_offset: usize,
+    last_mouse: Option<(Point, Direction)>,
 }
 
 impl Terminal {
-    // fn default_fps() -> f32 {
-    //     MAX_FRAME_RATE
-    // }
-
-    // fn utilization(&self) -> f32 {
-    //     self.utilization
-    // }
-
     fn process_event(&mut self, event: &AlacTermEvent, cx: &mut ModelContext<Self>) {
         match event {
             AlacTermEvent::Title(title) => {
@@ -494,12 +482,6 @@ impl Terminal {
         }
     }
 
-    // fn process_events(&mut self, events: Vec<AlacTermEvent>, cx: &mut ModelContext<Self>) {
-    //     for event in events.into_iter() {
-    //         self.process_event(&event, cx);
-    //     }
-    // }
-
     ///Takes events from Alacritty and translates them to behavior on this view
     fn process_terminal_event(
         &mut self,
@@ -507,7 +489,6 @@ impl Terminal {
         term: &mut Term<ZedListener>,
         cx: &mut ModelContext<Self>,
     ) {
-        // TODO: Handle is_self_focused in subscription on terminal view
         match event {
             InternalEvent::TermEvent(term_event) => {
                 if let AlacTermEvent::ColorRequest(index, format) = term_event {
@@ -546,8 +527,14 @@ impl Terminal {
         }
     }
 
+    pub fn input(&mut self, input: String) {
+        self.events.push(InternalEvent::Scroll(Scroll::Bottom));
+        self.events.push(InternalEvent::SetSelection(None));
+        self.write_to_pty(input);
+    }
+
     ///Write the Input payload to the tty.
-    pub fn write_to_pty(&self, input: String) {
+    fn write_to_pty(&self, input: String) {
         self.pty_tx.notify(input.into_bytes());
     }
 
@@ -563,8 +550,7 @@ impl Terminal {
     pub fn try_keystroke(&mut self, keystroke: &Keystroke) -> bool {
         let esc = to_esc_str(keystroke, &self.last_mode);
         if let Some(esc) = esc {
-            self.write_to_pty(esc);
-            self.scroll(Scroll::Bottom);
+            self.input(esc);
             true
         } else {
             false
@@ -572,14 +558,13 @@ impl Terminal {
     }
 
     ///Paste text into the terminal
-    pub fn paste(&self, text: &str) {
-        if self.last_mode.contains(TermMode::BRACKETED_PASTE) {
-            self.write_to_pty("\x1b[200~".to_string());
-            self.write_to_pty(text.replace('\x1b', ""));
-            self.write_to_pty("\x1b[201~".to_string());
+    pub fn paste(&mut self, text: &str) {
+        let paste_text = if self.last_mode.contains(TermMode::BRACKETED_PASTE) {
+            format!("{}{}{}", "\x1b[200~", text.replace('\x1b', ""), "\x1b[201~")
         } else {
-            self.write_to_pty(text.replace("\r\n", "\r").replace('\n', "\r"));
-        }
+            text.replace("\r\n", "\r").replace('\n', "\r")
+        };
+        self.input(paste_text)
     }
 
     pub fn copy(&mut self) {
@@ -597,19 +582,15 @@ impl Terminal {
             self.process_terminal_event(&e, &mut term, cx)
         }
 
-        // self.utilization = Self::estimate_utilization(term.take_last_processed_bytes());
         self.last_mode = *term.mode();
 
         let content = term.renderable_content();
 
+        self.last_offset = content.display_offset;
+
         let cursor_text = term.grid()[content.cursor.point].c;
 
         f(content, cursor_text)
-    }
-
-    ///Scroll the terminal
-    pub fn scroll(&mut self, scroll: Scroll) {
-        self.events.push(InternalEvent::Scroll(scroll));
     }
 
     pub fn focus_in(&self) {
@@ -624,34 +605,143 @@ impl Terminal {
         }
     }
 
-    pub fn click(&mut self, point: Point, side: Direction, clicks: usize) {
-        let selection_type = match clicks {
-            0 => return, //This is a release
-            1 => Some(SelectionType::Simple),
-            2 => Some(SelectionType::Semantic),
-            3 => Some(SelectionType::Lines),
-            _ => None,
-        };
-
-        let selection =
-            selection_type.map(|selection_type| Selection::new(selection_type, point, side));
-
-        self.events.push(InternalEvent::SetSelection(selection));
+    pub fn mouse_changed(&mut self, point: Point, side: Direction) -> bool {
+        match self.last_mouse {
+            Some((old_point, old_side)) => {
+                if old_point == point && old_side == side {
+                    false
+                } else {
+                    self.last_mouse = Some((point, side));
+                    true
+                }
+            }
+            None => {
+                self.last_mouse = Some((point, side));
+                true
+            }
+        }
     }
 
-    pub fn drag(&mut self, point: Point, side: Direction) {
-        self.events
-            .push(InternalEvent::UpdateSelection((point, side)));
+    pub fn mouse_mode(&self, shift: bool) -> bool {
+        self.last_mode.intersects(TermMode::MOUSE_MODE) && !shift
     }
 
-    ///TODO: Check if the mouse_down-then-click assumption holds, so this code works as expected
-    pub fn mouse_down(&mut self, point: Point, side: Direction) {
-        self.events
-            .push(InternalEvent::SetSelection(Some(Selection::new(
-                SelectionType::Simple,
-                point,
-                side,
-            ))));
+    pub fn mouse_move(&mut self, e: &MouseMovedEvent, origin: Vector2F) {
+        dbg!("term mouse_move");
+        let position = e.position.sub(origin);
+
+        let point = mouse_point(position, self.cur_size, self.last_offset);
+        let side = mouse_side(position, self.cur_size);
+
+        if self.mouse_changed(point, side) && self.mouse_mode(e.shift) {
+            if let Some(bytes) = mouse_moved_report(point, e, self.last_mode) {
+                self.pty_tx.notify(bytes);
+            }
+        }
+    }
+
+    pub fn mouse_drag(&mut self, e: MouseMovedEvent, origin: Vector2F) {
+        let position = e.position.sub(origin);
+
+        if !self.mouse_mode(e.shift) {
+            let point = mouse_point(position, self.cur_size, self.last_offset);
+            let side = mouse_side(position, self.cur_size);
+
+            self.events
+                .push(InternalEvent::UpdateSelection((point, side)));
+        }
+    }
+
+    pub fn mouse_down(&mut self, e: &MouseButtonEvent, origin: Vector2F) {
+        let position = e.position.sub(origin);
+        let point = mouse_point(position, self.cur_size, self.last_offset);
+        let side = mouse_side(position, self.cur_size);
+
+        if self.mouse_mode(e.shift) {
+            if let Some(bytes) = mouse_button_report(point, e, true, self.last_mode) {
+                self.pty_tx.notify(bytes);
+            }
+        } else if e.button == MouseButton::Left {
+            self.events
+                .push(InternalEvent::SetSelection(Some(Selection::new(
+                    SelectionType::Simple,
+                    point,
+                    side,
+                ))));
+        }
+    }
+
+    pub fn left_click(&mut self, e: &MouseButtonEvent, origin: Vector2F) {
+        let position = e.position.sub(origin);
+
+        if !self.mouse_mode(e.shift) {
+            let point = mouse_point(position, self.cur_size, self.last_offset);
+            let side = mouse_side(position, self.cur_size);
+
+            let selection_type = match e.click_count {
+                0 => return, //This is a release
+                1 => Some(SelectionType::Simple),
+                2 => Some(SelectionType::Semantic),
+                3 => Some(SelectionType::Lines),
+                _ => None,
+            };
+
+            let selection =
+                selection_type.map(|selection_type| Selection::new(selection_type, point, side));
+
+            self.events.push(InternalEvent::SetSelection(selection));
+        }
+    }
+
+    pub fn mouse_up(&mut self, e: &MouseButtonEvent, origin: Vector2F) {
+        let position = e.position.sub(origin);
+        if self.mouse_mode(e.shift) {
+            let point = mouse_point(position, self.cur_size, self.last_offset);
+
+            if let Some(bytes) = mouse_button_report(point, e, false, self.last_mode) {
+                self.pty_tx.notify(bytes);
+            }
+        } else if e.button == MouseButton::Left {
+            // Seems pretty standard to automatically copy on mouse_up for terminals,
+            // so let's do that here
+            self.copy();
+        }
+    }
+
+    ///Scroll the terminal
+    pub fn scroll(&mut self, scroll: &ScrollWheelEvent, origin: Vector2F) {
+        if self.mouse_mode(scroll.shift) {
+            //TODO: Currently this only sends the current scroll reports as they come in. Alacritty
+            //Sends the *entire* scroll delta on *every* scroll event, only resetting it when
+            //The scroll enters 'TouchPhase::Started'. Do I need to replicate this?
+            //This would be consistent with a scroll model based on 'distance from origin'...
+            let scroll_lines = (scroll.delta.y() / self.cur_size.line_height) as i32;
+            let point = mouse_point(scroll.position.sub(origin), self.cur_size, self.last_offset);
+
+            if let Some(scrolls) = scroll_report(point, scroll_lines as i32, scroll, self.last_mode)
+            {
+                for scroll in scrolls {
+                    self.pty_tx.notify(scroll);
+                }
+            };
+        } else if self
+            .last_mode
+            .contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
+            && !scroll.shift
+        {
+            //TODO: See above TODO, also applies here.
+            let scroll_lines = ((scroll.delta.y() * ALACRITTY_SCROLL_MULTIPLIER)
+                / self.cur_size.line_height) as i32;
+
+            self.pty_tx.notify(alt_scroll(scroll_lines))
+        } else {
+            let scroll_lines = ((scroll.delta.y() * ALACRITTY_SCROLL_MULTIPLIER)
+                / self.cur_size.line_height) as i32;
+            if scroll_lines != 0 {
+                let scroll = Scroll::Delta(scroll_lines);
+                self.events.push(InternalEvent::Scroll(scroll));
+            }
+        }
     }
 }
 

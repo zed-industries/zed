@@ -251,7 +251,8 @@ impl ConnectedView {
     ///Attempt to paste the clipboard into the terminal
     fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
         if let Some(item) = cx.read_from_clipboard() {
-            self.terminal.read(cx).paste(item.text());
+            self.terminal
+                .update(cx, |terminal, _cx| terminal.paste(item.text()));
         }
     }
 
@@ -359,8 +360,7 @@ impl View for ConnectedView {
         cx: &mut ViewContext<Self>,
     ) {
         self.terminal.update(cx, |terminal, _| {
-            terminal.write_to_pty(text.into());
-            terminal.scroll(alacritty_terminal::grid::Scroll::Bottom);
+            terminal.input(text.into());
         });
     }
 
