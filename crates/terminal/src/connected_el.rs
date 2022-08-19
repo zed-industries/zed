@@ -505,7 +505,6 @@ impl TerminalEl {
             //This cannot be done conditionally for unknown reasons. Pending drag and drop rework.
             //This also does not fire on right-mouse-down-move events wild.
             .on_move(move |event, cx| {
-                dbg!(event);
                 if cx.is_parent_view_focused() {
                     if let Some(conn_handle) = connection.upgrade(cx.app) {
                         conn_handle.update(cx.app, |terminal, cx| {

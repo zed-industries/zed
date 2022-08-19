@@ -39,7 +39,7 @@ actions!(
         Clear,
         Copy,
         Paste,
-        ShowCharacterPalette
+        ShowCharacterPalette,
     ]
 );
 impl_internal_actions!(project_panel, [DeployContextMenu]);
@@ -364,10 +364,85 @@ impl View for ConnectedView {
         });
     }
 
-    fn keymap_context(&self, _: &gpui::AppContext) -> gpui::keymap::Context {
+    fn keymap_context(&self, cx: &gpui::AppContext) -> gpui::keymap::Context {
         let mut context = Self::default_keymap_context();
         if self.modal {
             context.set.insert("ModalTerminal".into());
+        }
+        let mode = self.terminal.read(cx).last_mode;
+        context.map.insert(
+            "screen".to_string(),
+            (if mode.contains(TermMode::ALT_SCREEN) {
+                "alt"
+            } else {
+                "normal"
+            })
+            .to_string(),
+        );
+
+        if mode.contains(TermMode::APP_CURSOR) {
+            context.set.insert("DECCKM".to_string());
+        }
+        if mode.contains(TermMode::APP_KEYPAD) {
+            context.set.insert("DECPAM".to_string());
+        }
+        //Note the ! here
+        if !mode.contains(TermMode::APP_KEYPAD) {
+            context.set.insert("DECPNM".to_string());
+        }
+        if mode.contains(TermMode::SHOW_CURSOR) {
+            context.set.insert("DECTCEM".to_string());
+        }
+        if mode.contains(TermMode::LINE_WRAP) {
+            context.set.insert("DECAWM".to_string());
+        }
+        if mode.contains(TermMode::ORIGIN) {
+            context.set.insert("DECOM".to_string());
+        }
+        if mode.contains(TermMode::INSERT) {
+            context.set.insert("IRM".to_string());
+        }
+        //LNM is apparently the name for this. https://vt100.net/docs/vt510-rm/LNM.html
+        if mode.contains(TermMode::LINE_FEED_NEW_LINE) {
+            context.set.insert("LNM".to_string());
+        }
+        if mode.contains(TermMode::FOCUS_IN_OUT) {
+            context.set.insert("report_focus".to_string());
+        }
+        if mode.contains(TermMode::ALTERNATE_SCROLL) {
+            context.set.insert("alternate_scroll".to_string());
+        }
+        if mode.contains(TermMode::BRACKETED_PASTE) {
+            context.set.insert("bracketed_paste".to_string());
+        }
+        if mode.intersects(TermMode::MOUSE_MODE) {
+            context.set.insert("any_mouse_reporting".to_string());
+        }
+        {
+            let mouse_reporting = if mode.contains(TermMode::MOUSE_REPORT_CLICK) {
+                "click"
+            } else if mode.contains(TermMode::MOUSE_DRAG) {
+                "drag"
+            } else if mode.contains(TermMode::MOUSE_MOTION) {
+                "motion"
+            } else {
+                "off"
+            };
+            context
+                .map
+                .insert("mouse_reporting".to_string(), mouse_reporting.to_string());
+        }
+        {
+            let format = if mode.contains(TermMode::SGR_MOUSE) {
+                "sgr"
+            } else if mode.contains(TermMode::UTF8_MOUSE) {
+                "utf8"
+            } else {
+                "normal"
+            };
+            context
+                .map
+                .insert("mouse_format".to_string(), format.to_string());
         }
         context
     }
