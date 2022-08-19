@@ -68,7 +68,7 @@ impl Default for MouseButton {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct MouseButtonEvent {
     pub button: MouseButton,
     pub position: Vector2F,
