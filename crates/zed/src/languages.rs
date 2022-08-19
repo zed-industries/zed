@@ -5,6 +5,7 @@ use rust_embed::RustEmbed;
 use std::{borrow::Cow, str, sync::Arc};
 
 mod c;
+mod elixir;
 mod go;
 mod installation;
 mod json;
@@ -45,7 +46,11 @@ pub async fn init(languages: Arc<LanguageRegistry>, _executor: Arc<Background>) 
             tree_sitter_cpp::language(),
             Some(CachedLspAdapter::new(c::CLspAdapter).await),
         ),
-        ("elixir", tree_sitter_elixir::language(), None),
+        (
+            "elixir",
+            tree_sitter_elixir::language(),
+            Some(CachedLspAdapter::new(elixir::ElixirLspAdapter).await),
+        ),
         (
             "go",
             tree_sitter_go::language(),
