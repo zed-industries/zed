@@ -1,0 +1,11 @@
+name = "Elixir"
+path_suffixes = ["ex", "exs"]
+line_comment = "# "
+autoclose_before = ";:.,=}])>"
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false },
+    { start = "do", end = " end", close = true, newline = true },
+]

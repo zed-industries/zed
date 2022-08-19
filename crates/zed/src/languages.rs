@@ -45,6 +45,7 @@ pub async fn init(languages: Arc<LanguageRegistry>, _executor: Arc<Background>) 
             tree_sitter_cpp::language(),
             Some(CachedLspAdapter::new(c::CLspAdapter).await),
         ),
+        ("elixir", tree_sitter_elixir::language(), None),
         (
             "go",
             tree_sitter_go::language(),
