@@ -508,8 +508,14 @@ impl Terminal {
         }
     }
 
+    pub fn input(&mut self, input: String) {
+        self.scroll(Scroll::Bottom);
+        self.events.push(InternalEvent::SetSelection(None));
+        self.write_to_pty(input);
+    }
+
     ///Write the Input payload to the tty.
-    pub fn write_to_pty(&self, input: String) {
+    fn write_to_pty(&self, input: String) {
         self.pty_tx.notify(input.into_bytes());
     }
 
@@ -525,8 +531,7 @@ impl Terminal {
     pub fn try_keystroke(&mut self, keystroke: &Keystroke) -> bool {
         let esc = to_esc_str(keystroke, &self.last_mode);
         if let Some(esc) = esc {
-            self.write_to_pty(esc);
-            self.scroll(Scroll::Bottom);
+            self.input(esc);
             true
         } else {
             false
@@ -534,14 +539,13 @@ impl Terminal {
     }
 
     ///Paste text into the terminal
-    pub fn paste(&self, text: &str) {
-        if self.last_mode.contains(TermMode::BRACKETED_PASTE) {
-            self.write_to_pty("\x1b[200~".to_string());
-            self.write_to_pty(text.replace('\x1b', ""));
-            self.write_to_pty("\x1b[201~".to_string());
+    pub fn paste(&mut self, text: &str) {
+        let paste_text = if self.last_mode.contains(TermMode::BRACKETED_PASTE) {
+            format!("{}{}{}", "\x1b[200~", text.replace('\x1b', ""), "\x1b[201~")
         } else {
-            self.write_to_pty(text.replace("\r\n", "\r").replace('\n', "\r"));
-        }
+            text.replace("\r\n", "\r").replace('\n', "\r")
+        };
+        self.input(paste_text)
     }
 
     pub fn copy(&mut self) {
@@ -598,16 +602,18 @@ impl Terminal {
         }
     }
 
-    /// Handle a mouse move, this is mutually exclusive with drag.
+    /// Handle a mouse move
     pub fn mouse_move(&mut self, point: Point, side: Direction, e: &MouseMovedEvent) {
         if self.mouse_changed(point, side) {
             if let Some(bytes) = mouse_moved_report(point, e, self.last_mode) {
                 self.pty_tx.notify(bytes);
             }
-        } else if matches!(e.pressed_button, Some(gpui::MouseButton::Left)) {
-            self.events
-                .push(InternalEvent::UpdateSelection((point, side)));
         }
+    }
+
+    pub fn mouse_drag(&mut self, point: Point, side: Direction) {
+        self.events
+            .push(InternalEvent::UpdateSelection((point, side)));
     }
 
     pub fn mouse_down(&mut self, point: Point, side: Direction) {

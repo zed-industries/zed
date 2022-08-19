@@ -473,6 +473,22 @@ impl TerminalEl {
                         }
                     }
                 })
+                .on_drag(MouseButton::Left, move |_prev, event, cx| {
+                    if let Some(conn_handle) = connection.upgrade(cx.app) {
+                        conn_handle.update(cx.app, |terminal, cx| {
+                            let (point, side) = TerminalEl::mouse_to_cell_data(
+                                event.position,
+                                origin,
+                                cur_size,
+                                display_offset,
+                            );
+
+                            terminal.mouse_drag(point, side);
+
+                            cx.notify();
+                        })
+                    }
+                })
                 .on_down(
                     MouseButton::Left,
                     TerminalEl::generic_button_handler(
@@ -696,7 +712,7 @@ impl Element for TerminalEl {
 
                     (
                         cells,
-                        content.selection,
+                        dbg!(content.selection),
                         content.cursor,
                         content.display_offset,
                         cursor_text,
