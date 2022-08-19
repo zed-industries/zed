@@ -664,7 +664,6 @@ impl Terminal {
 
     pub fn left_click(&mut self, e: &MouseButtonEvent, origin: Vector2F) {
         let position = e.position.sub(origin);
-        //TODO: Alt-click cursor position
 
         if !self.mouse_mode(e.shift) {
             let point = mouse_point(position, self.cur_size, self.last_offset);
