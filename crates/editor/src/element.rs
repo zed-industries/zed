@@ -1582,6 +1582,7 @@ impl Element for EditorElement {
                 position,
                 delta,
                 precise,
+                ..
             }) => self.scroll(*position, *delta, *precise, layout, paint, cx),
 
             &Event::ModifiersChanged(event) => self.modifiers_changed(event, cx),

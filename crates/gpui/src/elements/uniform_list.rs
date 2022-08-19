@@ -315,6 +315,7 @@ impl Element for UniformList {
             position,
             delta,
             precise,
+            ..
         }) = event
         {
             if bounds.contains_point(*position)

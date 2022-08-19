@@ -316,6 +316,7 @@ impl Element for List {
             position,
             delta,
             precise,
+            ..
         }) = event
         {
             if bounds.contains_point(*position)

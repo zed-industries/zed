@@ -703,7 +703,7 @@ impl Terminal {
 
     ///Scroll the terminal
     pub fn scroll(&mut self, scroll: &ScrollWheelEvent, origin: Vector2F) {
-        if self.mouse_mode(false) {
+        if self.mouse_mode(scroll.shift) {
             //TODO: Currently this only sends the current scroll reports as they come in. Alacritty
             //Sends the *entire* scroll delta on *every* scroll event, only resetting it when
             //The scroll enters 'TouchPhase::Started'. Do I need to replicate this?
@@ -720,6 +720,7 @@ impl Terminal {
         } else if self
             .last_mode
             .contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
+            && !scroll.shift
         {
             //TODO: See above TODO, also applies here.
             let scroll_lines = ((scroll.delta.y() * ALACRITTY_SCROLL_MULTIPLIER)
