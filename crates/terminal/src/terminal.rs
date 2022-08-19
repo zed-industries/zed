@@ -24,6 +24,7 @@ use futures::{
     FutureExt,
 };
 
+use mappings::mouse::mouse_moved_report;
 use modal::deploy_modal;
 use settings::{Settings, Shell, TerminalBlink};
 use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc, time::Duration};
@@ -32,7 +33,7 @@ use thiserror::Error;
 use gpui::{
     geometry::vector::{vec2f, Vector2F},
     keymap::Keystroke,
-    ClipboardItem, Entity, ModelContext, MutableAppContext,
+    ClipboardItem, Entity, ModelContext, MouseMovedEvent, MutableAppContext,
 };
 
 use crate::mappings::{
@@ -49,11 +50,9 @@ pub fn init(cx: &mut MutableAppContext) {
 }
 
 const DEBUG_TERMINAL_WIDTH: f32 = 500.;
-const DEBUG_TERMINAL_HEIGHT: f32 = 30.; //This needs to be wide enough that the CI & a local dev's prompt can fill the whole space.
+const DEBUG_TERMINAL_HEIGHT: f32 = 30.;
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
-// const MAX_FRAME_RATE: f32 = 60.;
-// const BACK_BUFFER_SIZE: usize = 5000;
 
 ///Upward flowing events, for changing the title and such
 #[derive(Clone, Copy, Debug)]
@@ -348,7 +347,7 @@ impl TerminalBuilder {
             default_title: shell_txt,
             last_mode: TermMode::NONE,
             cur_size: initial_size,
-            // utilization: 0.,
+            last_mouse: None,
         };
 
         Ok(TerminalBuilder {
@@ -406,27 +405,6 @@ impl TerminalBuilder {
         })
         .detach();
 
-        // //Render loop
-        // cx.spawn_weak(|this, mut cx| async move {
-        //     loop {
-        //         let utilization = match this.upgrade(&cx) {
-        //             Some(this) => this.update(&mut cx, |this, cx| {
-        //                 cx.notify();
-        //                 this.utilization()
-        //             }),
-        //             None => break,
-        //         };
-
-        //         let utilization = (1. - utilization).clamp(0.1, 1.);
-        //         let delay = cx.background().timer(Duration::from_secs_f32(
-        //             1.0 / (Terminal::default_fps() * utilization),
-        //         ));
-
-        //         delay.await;
-        //     }
-        // })
-        // .detach();
-
         self.terminal
     }
 }
@@ -439,19 +417,10 @@ pub struct Terminal {
     title: String,
     cur_size: TerminalSize,
     last_mode: TermMode,
-    //Percentage, between 0 and 1
-    // utilization: f32,
+    last_mouse: Option<(Point, Direction)>,
 }
 
 impl Terminal {
-    // fn default_fps() -> f32 {
-    //     MAX_FRAME_RATE
-    // }
-
-    // fn utilization(&self) -> f32 {
-    //     self.utilization
-    // }
-
     fn process_event(&mut self, event: &AlacTermEvent, cx: &mut ModelContext<Self>) {
         match event {
             AlacTermEvent::Title(title) => {
@@ -494,12 +463,6 @@ impl Terminal {
         }
     }
 
-    // fn process_events(&mut self, events: Vec<AlacTermEvent>, cx: &mut ModelContext<Self>) {
-    //     for event in events.into_iter() {
-    //         self.process_event(&event, cx);
-    //     }
-    // }
-
     ///Takes events from Alacritty and translates them to behavior on this view
     fn process_terminal_event(
         &mut self,
@@ -507,7 +470,6 @@ impl Terminal {
         term: &mut Term<ZedListener>,
         cx: &mut ModelContext<Self>,
     ) {
-        // TODO: Handle is_self_focused in subscription on terminal view
         match event {
             InternalEvent::TermEvent(term_event) => {
                 if let AlacTermEvent::ColorRequest(index, format) = term_event {
@@ -619,13 +581,46 @@ impl Terminal {
         }
     }
 
-    ///Scroll the terminal
-    pub fn scroll(&mut self, scroll: Scroll) {
-        if self.last_mode.intersects(TermMode::MOUSE_MODE) {
-            //TODE: MOUSE MODE
+    pub fn mouse_changed(&mut self, point: Point, side: Direction) -> bool {
+        match self.last_mouse {
+            Some((old_point, old_side)) => {
+                if old_point == point && old_side == side {
+                    false
+                } else {
+                    self.last_mouse = Some((point, side));
+                    true
+                }
+            }
+            None => {
+                self.last_mouse = Some((point, side));
+                true
+            }
         }
+    }
 
-        self.events.push(InternalEvent::Scroll(scroll));
+    /// Handle a mouse move, this is mutually exclusive with drag.
+    pub fn mouse_move(&mut self, point: Point, side: Direction, e: &MouseMovedEvent) {
+        if self.mouse_changed(point, side) {
+            if let Some(bytes) = mouse_moved_report(point, e, self.last_mode) {
+                self.pty_tx.notify(bytes);
+            }
+        } else if matches!(e.pressed_button, Some(gpui::MouseButton::Left)) {
+            self.events
+                .push(InternalEvent::UpdateSelection((point, side)));
+        }
+    }
+
+    pub fn mouse_down(&mut self, point: Point, side: Direction) {
+        if self.last_mode.intersects(TermMode::MOUSE_REPORT_CLICK) {
+            //TODE: MOUSE MODE
+        } else {
+            self.events
+                .push(InternalEvent::SetSelection(Some(Selection::new(
+                    SelectionType::Simple,
+                    point,
+                    side,
+                ))));
+        }
     }
 
     pub fn click(&mut self, point: Point, side: Direction, clicks: usize) {
@@ -647,32 +642,13 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_move(&mut self, point: Point, side: Direction, clicks: usize) {
+    ///Scroll the terminal
+    pub fn scroll(&mut self, scroll: Scroll) {
         if self.last_mode.intersects(TermMode::MOUSE_MODE) {
             //TODE: MOUSE MODE
         }
-    }
 
-    pub fn drag(&mut self, point: Point, side: Direction) {
-        if self.last_mode.intersects(TermMode::MOUSE_MODE) {
-            //TODE: MOUSE MODE
-        } else {
-            self.events
-                .push(InternalEvent::UpdateSelection((point, side)));
-        }
-    }
-
-    pub fn mouse_down(&mut self, point: Point, side: Direction) {
-        if self.last_mode.intersects(TermMode::MOUSE_MODE) {
-            //TODE: MOUSE MODE
-        } else {
-            self.events
-                .push(InternalEvent::SetSelection(Some(Selection::new(
-                    SelectionType::Simple,
-                    point,
-                    side,
-                ))));
-        }
+        self.events.push(InternalEvent::Scroll(scroll));
     }
 }
 

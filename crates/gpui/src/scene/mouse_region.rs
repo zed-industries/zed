@@ -1,6 +1,7 @@
 use std::{any::TypeId, mem::Discriminant, rc::Rc};
 
 use collections::HashMap;
+
 use pathfinder_geometry::{rect::RectF, vector::Vector2F};
 
 use crate::{EventContext, MouseButton, MouseButtonEvent, MouseMovedEvent, ScrollWheelEvent};
@@ -95,6 +96,14 @@ impl MouseRegion {
         handler: impl Fn(bool, MouseMovedEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_hover(handler);
+        self
+    }
+
+    pub fn on_move(
+        mut self,
+        handler: impl Fn(MouseMovedEvent, &mut EventContext) + 'static,
+    ) -> Self {
+        self.handlers = self.handlers.on_move(handler);
         self
     }
 }
@@ -262,6 +271,23 @@ impl HandlerSet {
                 } else {
                     panic!(
                         "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Hover, found {:?}", 
+                        region_event);
+                }
+            }));
+        self
+    }
+
+    pub fn on_move(
+        mut self,
+        handler: impl Fn(MouseMovedEvent, &mut EventContext) + 'static,
+    ) -> Self {
+        self.set.insert((MouseRegionEvent::move_disc(), None),
+            Rc::new(move |region_event, cx| {
+                if let MouseRegionEvent::Move(move_event)= region_event {
+                    handler(move_event, cx);
+                }  else {
+                    panic!(
+                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Move, found {:?}", 
                         region_event);
                 }
             }));
