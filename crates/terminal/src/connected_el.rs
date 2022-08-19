@@ -1,26 +1,22 @@
 use alacritty_terminal::{
     ansi::{Color as AnsiColor, Color::Named, CursorShape as AlacCursorShape, NamedColor},
-    grid::{Dimensions, Scroll},
-    index::{Column as GridCol, Direction, Line as GridLine, Point, Side},
+    grid::Dimensions,
+    index::Point,
     selection::SelectionRange,
-    term::{
-        cell::{Cell, Flags},
-        TermMode,
-    },
+    term::cell::{Cell, Flags},
 };
 use editor::{Cursor, CursorShape, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     color::Color,
-    elements::*,
     fonts::{Properties, Style::Italic, TextStyle, Underline, Weight},
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    json::json,
+    serde_json::json,
     text_layout::{Line, RunStyle},
-    Event, EventContext, FontCache, KeyDownEvent, ModelContext, MouseButton, MouseButtonEvent,
-    MouseRegion, PaintContext, Quad, ScrollWheelEvent, TextLayoutCache, WeakModelHandle,
+    Element, Event, EventContext, FontCache, KeyDownEvent, ModelContext, MouseButton,
+    MouseButtonEvent, MouseRegion, PaintContext, Quad, TextLayoutCache, WeakModelHandle,
     WeakViewHandle,
 };
 use itertools::Itertools;
@@ -29,23 +25,17 @@ use settings::Settings;
 use theme::TerminalStyle;
 use util::ResultExt;
 
+use std::fmt::Debug;
 use std::{
-    cmp::min,
     mem,
     ops::{Deref, Range},
 };
-use std::{fmt::Debug, ops::Sub};
 
 use crate::{
     connected_view::{ConnectedView, DeployContextMenu},
     mappings::colors::convert_color,
     Terminal, TerminalSize,
 };
-
-///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
-///Scroll multiplier that is set to 3 by default. This will be removed when I
-///Implement scroll bars.
-pub const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
 
 ///The information generated during layout that is nescessary for painting
 pub struct LayoutState {
@@ -56,7 +46,6 @@ pub struct LayoutState {
     background_color: Color,
     selection_color: Color,
     size: TerminalSize,
-    display_offset: usize,
 }
 
 #[derive(Debug)]
@@ -420,22 +409,13 @@ impl TerminalEl {
     fn generic_button_handler(
         connection: WeakModelHandle<Terminal>,
         origin: Vector2F,
-        cur_size: TerminalSize,
-        display_offset: usize,
-        f: impl Fn(&mut Terminal, Point, Direction, MouseButtonEvent, &mut ModelContext<Terminal>),
+        f: impl Fn(&mut Terminal, Vector2F, MouseButtonEvent, &mut ModelContext<Terminal>),
     ) -> impl Fn(MouseButtonEvent, &mut EventContext) {
         move |event, cx| {
             cx.focus_parent_view();
             if let Some(conn_handle) = connection.upgrade(cx.app) {
                 conn_handle.update(cx.app, |terminal, cx| {
-                    let (point, side) = TerminalEl::mouse_to_cell_data(
-                        event.position,
-                        origin,
-                        cur_size,
-                        display_offset,
-                    );
-
-                    f(terminal, point, side, event, cx);
+                    f(terminal, origin, event, cx);
 
                     cx.notify();
                 })
@@ -448,8 +428,6 @@ impl TerminalEl {
         origin: Vector2F,
         view_id: usize,
         visible_bounds: RectF,
-        cur_size: TerminalSize,
-        display_offset: usize,
         cx: &mut PaintContext,
     ) {
         let connection = self.terminal;
@@ -459,34 +437,20 @@ impl TerminalEl {
                     if cx.is_parent_view_focused() {
                         if let Some(conn_handle) = connection.upgrade(cx.app) {
                             conn_handle.update(cx.app, |terminal, cx| {
-                                let (point, side) = TerminalEl::mouse_to_cell_data(
-                                    event.position,
-                                    origin,
-                                    cur_size,
-                                    display_offset,
-                                );
-
-                                terminal.mouse_move(point, side, &event);
-
+                                terminal.mouse_move(&event, origin);
                                 cx.notify();
                             })
                         }
                     }
                 })
                 .on_drag(MouseButton::Left, move |_prev, event, cx| {
-                    if let Some(conn_handle) = connection.upgrade(cx.app) {
-                        conn_handle.update(cx.app, |terminal, cx| {
-                            let (point, side) = TerminalEl::mouse_to_cell_data(
-                                event.position,
-                                origin,
-                                cur_size,
-                                display_offset,
-                            );
-
-                            terminal.mouse_drag(point, side);
-
-                            cx.notify();
-                        })
+                    if cx.is_parent_view_focused() {
+                        if let Some(conn_handle) = connection.upgrade(cx.app) {
+                            conn_handle.update(cx.app, |terminal, cx| {
+                                terminal.mouse_drag(event, origin);
+                                cx.notify();
+                            })
+                        }
                     }
                 })
                 .on_down(
@@ -494,10 +458,8 @@ impl TerminalEl {
                     TerminalEl::generic_button_handler(
                         connection,
                         origin,
-                        cur_size,
-                        display_offset,
-                        move |terminal, point, side, _e, _cx| {
-                            terminal.mouse_down(point, side);
+                        move |terminal, origin, e, _cx| {
+                            terminal.mouse_down(&e, origin);
                         },
                     ),
                 )
@@ -506,10 +468,8 @@ impl TerminalEl {
                     TerminalEl::generic_button_handler(
                         connection,
                         origin,
-                        cur_size,
-                        display_offset,
-                        move |terminal, point, side, _e, _cx| {
-                            terminal.mouse_down(point, side);
+                        move |terminal, origin, e, _cx| {
+                            terminal.mouse_down(&e, origin);
                         },
                     ),
                 )
@@ -518,65 +478,61 @@ impl TerminalEl {
                     TerminalEl::generic_button_handler(
                         connection,
                         origin,
-                        cur_size,
-                        display_offset,
-                        move |terminal, point, side, _e, _cx| {
-                            terminal.mouse_down(point, side);
+                        move |terminal, origin, e, _cx| {
+                            terminal.mouse_down(&e, origin);
                         },
                     ),
                 )
-                //TODO
+                .on_up(
+                    MouseButton::Left,
+                    TerminalEl::generic_button_handler(
+                        connection,
+                        origin,
+                        move |terminal, origin, e, _cx| {
+                            terminal.mouse_up(&e, origin);
+                        },
+                    ),
+                )
+                .on_up(
+                    MouseButton::Right,
+                    TerminalEl::generic_button_handler(
+                        connection,
+                        origin,
+                        move |terminal, origin, e, _cx| {
+                            terminal.mouse_up(&e, origin);
+                        },
+                    ),
+                )
+                .on_up(
+                    MouseButton::Middle,
+                    TerminalEl::generic_button_handler(
+                        connection,
+                        origin,
+                        move |terminal, origin, e, _cx| {
+                            terminal.mouse_up(&e, origin);
+                        },
+                    ),
+                )
                 .on_click(
                     MouseButton::Left,
                     TerminalEl::generic_button_handler(
                         connection,
                         origin,
-                        cur_size,
-                        display_offset,
-                        move |terminal, point, side, e, _cx| {
-                            terminal.click(point, side, e.click_count);
-                        },
-                    ),
-                )
-                .on_click(
-                    MouseButton::Middle,
-                    TerminalEl::generic_button_handler(
-                        connection,
-                        origin,
-                        cur_size,
-                        display_offset,
-                        move |terminal, point, side, e, _cx| {
-                            terminal.click(point, side, e.click_count);
+                        move |terminal, origin, e, _cx| {
+                            terminal.left_click(&e, origin);
                         },
                     ),
                 )
                 .on_click(
                     MouseButton::Right,
                     move |e @ MouseButtonEvent { position, .. }, cx| {
-                        //Attempt to check the mode
-                        if let Some(conn_handle) = connection.upgrade(cx.app) {
-                            let handled = conn_handle.update(cx.app, |terminal, _cx| {
-                                //Finally, we can check the mode!
-                                if terminal.last_mode.intersects(TermMode::MOUSE_MODE) {
-                                    let (point, side) = TerminalEl::mouse_to_cell_data(
-                                        position,
-                                        origin,
-                                        cur_size,
-                                        display_offset,
-                                    );
-
-                                    terminal.click(point, side, e.click_count);
-                                    true
-                                } else {
-                                    false
-                                }
-                            });
-
-                            //If I put this up by the true, then we're in the wrong 'cx'
-                            if !handled {
-                                cx.dispatch_action(DeployContextMenu { position });
-                            }
+                        let mouse_mode = if let Some(conn_handle) = connection.upgrade(cx.app) {
+                            conn_handle.update(cx.app, |terminal, _cx| terminal.mouse_mode(e.shift))
                         } else {
+                            //If we can't get the model handle, probably can't deploy the context menu
+                            true
+                        };
+                        if !mouse_mode {
                             cx.dispatch_action(DeployContextMenu { position });
                         }
                     },
@@ -614,47 +570,6 @@ impl TerminalEl {
             font_properties: Default::default(),
             underline: Default::default(),
         }
-    }
-
-    pub fn mouse_to_cell_data(
-        pos: Vector2F,
-        origin: Vector2F,
-        cur_size: TerminalSize,
-        display_offset: usize,
-    ) -> (Point, alacritty_terminal::index::Direction) {
-        let pos = pos.sub(origin);
-        let point = {
-            let col = pos.x() / cur_size.cell_width; //TODO: underflow...
-            let col = min(GridCol(col as usize), cur_size.last_column());
-
-            let line = pos.y() / cur_size.line_height;
-            let line = min(line as i32, cur_size.bottommost_line().0);
-
-            Point::new(GridLine(line - display_offset as i32), col)
-        };
-
-        //Copied (with modifications) from alacritty/src/input.rs > Processor::cell_side()
-        let side = {
-            let x = pos.0.x() as usize;
-            let cell_x =
-                x.saturating_sub(cur_size.cell_width as usize) % cur_size.cell_width as usize;
-            let half_cell_width = (cur_size.cell_width / 2.0) as usize;
-
-            let additional_padding =
-                (cur_size.width() - cur_size.cell_width * 2.) % cur_size.cell_width;
-            let end_of_grid = cur_size.width() - cur_size.cell_width - additional_padding;
-            //Width: Pixels or columns?
-            if cell_x > half_cell_width
-            // Edge case when mouse leaves the window.
-            || x as f32 >= end_of_grid
-            {
-                Side::Right
-            } else {
-                Side::Left
-            }
-        };
-
-        (point, side)
     }
 }
 
@@ -712,7 +627,7 @@ impl Element for TerminalEl {
 
                     (
                         cells,
-                        dbg!(content.selection),
+                        content.selection,
                         content.cursor,
                         content.display_offset,
                         cursor_text,
@@ -794,7 +709,6 @@ impl Element for TerminalEl {
                 size: dimensions,
                 rects,
                 highlights,
-                display_offset,
             },
         )
     }
@@ -813,14 +727,7 @@ impl Element for TerminalEl {
             let origin = bounds.origin() + vec2f(layout.size.cell_width, 0.);
 
             //Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
-            self.attach_mouse_handlers(
-                origin,
-                self.view.id(),
-                visible_bounds,
-                layout.size,
-                layout.display_offset,
-                cx,
-            );
+            self.attach_mouse_handlers(origin, self.view.id(), visible_bounds, cx);
 
             cx.paint_layer(clip_bounds, |cx| {
                 //Start with a background color
@@ -884,28 +791,22 @@ impl Element for TerminalEl {
     fn dispatch_event(
         &mut self,
         event: &gpui::Event,
-        _bounds: gpui::geometry::rect::RectF,
+        bounds: gpui::geometry::rect::RectF,
         visible_bounds: gpui::geometry::rect::RectF,
         layout: &mut Self::LayoutState,
         _paint: &mut Self::PaintState,
         cx: &mut gpui::EventContext,
     ) -> bool {
         match event {
-            Event::ScrollWheel(ScrollWheelEvent {
-                delta, position, ..
-            }) => visible_bounds
-                .contains_point(*position)
+            Event::ScrollWheel(e) => visible_bounds
+                .contains_point(e.position)
                 .then(|| {
-                    let scroll_lines =
-                        (delta.y() / layout.size.line_height) * ALACRITTY_SCROLL_MULTIPLIER;
+                    let origin = bounds.origin() + vec2f(layout.size.cell_width, 0.);
 
                     if let Some(terminal) = self.terminal.upgrade(cx.app) {
-                        terminal.update(cx.app, |term, _| {
-                            term.scroll(Scroll::Delta(scroll_lines.round() as i32))
-                        });
+                        terminal.update(cx.app, |term, _| term.scroll(e, origin));
+                        cx.notify();
                     }
-
-                    cx.notify();
                 })
                 .is_some(),
             Event::KeyDown(KeyDownEvent { keystroke, .. }) => {
@@ -913,7 +814,6 @@ impl Element for TerminalEl {
                     return false;
                 }
 
-                //TODO Talk to keith about how to catch events emitted from an element.
                 if let Some(view) = self.view.upgrade(cx.app) {
                     view.update(cx.app, |view, cx| {
                         view.clear_bel(cx);
@@ -967,38 +867,5 @@ impl Element for TerminalEl {
         origin += vec2f(0., layout.size.line_height);
 
         Some(layout.cursor.as_ref()?.bounding_rect(origin))
-    }
-}
-
-mod test {
-
-    #[test]
-    fn test_mouse_to_selection() {
-        let term_width = 100.;
-        let term_height = 200.;
-        let cell_width = 10.;
-        let line_height = 20.;
-        let mouse_pos_x = 100.; //Window relative
-        let mouse_pos_y = 100.; //Window relative
-        let origin_x = 10.;
-        let origin_y = 20.;
-
-        let cur_size = crate::connected_el::TerminalSize::new(
-            line_height,
-            cell_width,
-            gpui::geometry::vector::vec2f(term_width, term_height),
-        );
-
-        let mouse_pos = gpui::geometry::vector::vec2f(mouse_pos_x, mouse_pos_y);
-        let origin = gpui::geometry::vector::vec2f(origin_x, origin_y); //Position of terminal window, 1 'cell' in
-        let (point, _) =
-            crate::connected_el::TerminalEl::mouse_to_cell_data(mouse_pos, origin, cur_size, 0);
-        assert_eq!(
-            point,
-            alacritty_terminal::index::Point::new(
-                alacritty_terminal::index::Line(((mouse_pos_y - origin_y) / line_height) as i32),
-                alacritty_terminal::index::Column(((mouse_pos_x - origin_x) / cell_width) as usize),
-            )
-        );
     }
 }
