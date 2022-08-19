@@ -102,27 +102,37 @@
         //
         //
         "working_directory": "current_project_directory",
-        //Set the cursor blinking behavior in the terminal.
-        //May take 4 values:
-        // 1. Never blink the cursor, ignoring the terminal mode
-        //        "blinking": "off",
-        // 2. Default the cursor blink to off, but allow the terminal to 
-        //    set blinking
-        //        "blinking": "terminal_controlled",
-        // 3. Always blink the cursor, ignoring the terminal mode
-        //        "blinking": "on",
+        // Set the cursor blinking behavior in the terminal.
+        // May take 4 values:
+        //  1. Never blink the cursor, ignoring the terminal mode
+        //         "blinking": "off",
+        //  2. Default the cursor blink to off, but allow the terminal to 
+        //     set blinking
+        //         "blinking": "terminal_controlled",
+        //  3. Always blink the cursor, ignoring the terminal mode
+        //         "blinking": "on",
         "blinking": "terminal_controlled",
-        //Any key-value pairs added to this list will be added to the terminal's
-        //enviroment. Use `:` to seperate multiple values.
+        // Set whether Alternate Scroll mode (code: ?1007) is active by default.
+        // Alternate Scroll mode converts mouse scroll events into up / down key
+        // presses when in the alternate screen (e.g. when running applications 
+        // like vim or  less). The terminal can still set and unset this mode.
+        // May take 2 values:
+        //  1. Default alternate scroll mode to on
+        //         "alternate_scroll": "on",
+        //  2. Default alternate scroll mode to off
+        //         "alternate_scroll": "off",
+        "alternate_scroll": "off",
+        // Any key-value pairs added to this list will be added to the terminal's
+        // enviroment. Use `:` to seperate multiple values.
         "env": {
-            //"KEY": "value1:value2"
+            // "KEY": "value1:value2"
         }
-        //Set the terminal's font size. If this option is not included,
-        //the terminal will default to matching the buffer's font size.
-        //"font_size": "15"
-        //Set the terminal's font family. If this option is not included,
-        //the terminal will default to matching the buffer's font family.
-        //"font_family": "Zed Mono"
+        // Set the terminal's font size. If this option is not included,
+        // the terminal will default to matching the buffer's font size.
+        // "font_size": "15"
+        // Set the terminal's font family. If this option is not included,
+        // the terminal will default to matching the buffer's font family.
+        // "font_family": "Zed Mono"
     },
     // Different settings for specific languages.
     "languages": {
@@ -155,15 +165,15 @@
             "tab_size": 2
         }
     },
-    //LSP Specific settings.
+    // LSP Specific settings.
     "lsp": {
-        //Specify the LSP name as a key here.
-        //As of 8/10/22, supported LSPs are:
-        //pyright
-        //gopls
-        //rust-analyzer
-        //typescript-language-server
-        //vscode-json-languageserver
+        // Specify the LSP name as a key here.
+        // As of 8/10/22, supported LSPs are:
+        // pyright
+        // gopls
+        // rust-analyzer
+        // typescript-language-server
+        // vscode-json-languageserver
         // "rust_analyzer": {
         //     //These initialization options are merged into Zed's defaults
         //     "initialization_options": {

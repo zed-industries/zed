@@ -134,8 +134,8 @@ pub fn scroll_report(
 pub fn alt_scroll(scroll_lines: i32) -> Vec<u8> {
     let cmd = if scroll_lines > 0 { b'A' } else { b'B' };
 
-    let mut content = Vec::with_capacity(scroll_lines as usize * 3);
-    for _ in 0..scroll_lines {
+    let mut content = Vec::with_capacity(scroll_lines.abs() as usize * 3);
+    for _ in 0..scroll_lines.abs() {
         content.push(0x1b);
         content.push(b'O');
         content.push(cmd);

@@ -10,7 +10,7 @@ use workspace::{Item, Workspace};
 
 use crate::TerminalSize;
 use project::{LocalWorktree, Project, ProjectPath};
-use settings::{Settings, WorkingDirectory};
+use settings::{AlternateScroll, Settings, WorkingDirectory};
 use smallvec::SmallVec;
 use std::path::{Path, PathBuf};
 
@@ -94,12 +94,26 @@ impl TerminalView {
         let shell = settings.terminal_overrides.shell.clone();
         let envs = settings.terminal_overrides.env.clone(); //Should be short and cheap.
 
+        //TODO: move this pattern to settings
+        let scroll = settings
+            .terminal_overrides
+            .alternate_scroll
+            .as_ref()
+            .unwrap_or(
+                settings
+                    .terminal_defaults
+                    .alternate_scroll
+                    .as_ref()
+                    .unwrap_or_else(|| &AlternateScroll::On),
+            );
+
         let content = match TerminalBuilder::new(
             working_directory.clone(),
             shell,
             envs,
             size_info,
             settings.terminal_overrides.blinking.clone(),
+            scroll,
         ) {
             Ok(terminal) => {
                 let terminal = cx.add_model(|cx| terminal.subscribe(cx));

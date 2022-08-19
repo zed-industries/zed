@@ -84,6 +84,7 @@ pub struct TerminalSettings {
     pub font_family: Option<String>,
     pub env: Option<HashMap<String, String>>,
     pub blinking: Option<TerminalBlink>,
+    pub alternate_scroll: Option<AlternateScroll>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -111,6 +112,19 @@ pub enum Shell {
 impl Default for Shell {
     fn default() -> Self {
         Shell::System
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AlternateScroll {
+    On,
+    Off,
+}
+
+impl Default for AlternateScroll {
+    fn default() -> Self {
+        AlternateScroll::On
     }
 }
 

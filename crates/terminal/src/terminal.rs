@@ -28,7 +28,7 @@ use mappings::mouse::{
     alt_scroll, mouse_button_report, mouse_moved_report, mouse_point, mouse_side, scroll_report,
 };
 use modal::deploy_modal;
-use settings::{Settings, Shell, TerminalBlink};
+use settings::{AlternateScroll, Settings, Shell, TerminalBlink};
 use std::{collections::HashMap, fmt::Display, ops::Sub, path::PathBuf, sync::Arc, time::Duration};
 use thiserror::Error;
 
@@ -263,6 +263,7 @@ impl TerminalBuilder {
         env: Option<HashMap<String, String>>,
         initial_size: TerminalSize,
         blink_settings: Option<TerminalBlink>,
+        alternate_scroll: &AlternateScroll,
     ) -> Result<TerminalBuilder> {
         let pty_config = {
             let alac_shell = shell.clone().and_then(|shell| match shell {
@@ -304,6 +305,14 @@ impl TerminalBuilder {
         //Start off blinking if we need to
         if let Some(TerminalBlink::On) = blink_settings {
             term.set_mode(alacritty_terminal::ansi::Mode::BlinkingCursor)
+        }
+
+        //Start alternate_scroll if we need to
+        if let AlternateScroll::On = alternate_scroll {
+            term.set_mode(alacritty_terminal::ansi::Mode::AlternateScroll)
+        } else {
+            //Alacritty turns it on by default, so we need to turn it off.
+            term.unset_mode(alacritty_terminal::ansi::Mode::AlternateScroll)
         }
 
         let term = Arc::new(FairMutex::new(term));
