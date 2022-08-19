@@ -1870,33 +1870,41 @@ impl Workspace {
         };
 
         ConstrainedBox::new(
-            Container::new(
-                Stack::new()
-                    .with_child(
-                        Label::new(worktree_root_names, theme.workspace.titlebar.title.clone())
-                            .aligned()
-                            .left()
-                            .boxed(),
-                    )
-                    .with_child(
-                        Align::new(
-                            Flex::row()
-                                .with_children(self.render_collaborators(theme, cx))
-                                .with_children(self.render_current_user(
-                                    self.user_store.read(cx).current_user().as_ref(),
-                                    replica_id,
-                                    theme,
-                                    cx,
-                                ))
-                                .with_children(self.render_connection_status(cx))
+            MouseEventHandler::new::<Self, _, _>(0, cx, |_, cx| {
+                Container::new(
+                    Stack::new()
+                        .with_child(
+                            Label::new(worktree_root_names, theme.workspace.titlebar.title.clone())
+                                .aligned()
+                                .left()
                                 .boxed(),
                         )
-                        .right()
+                        .with_child(
+                            Align::new(
+                                Flex::row()
+                                    .with_children(self.render_collaborators(theme, cx))
+                                    .with_children(self.render_current_user(
+                                        self.user_store.read(cx).current_user().as_ref(),
+                                        replica_id,
+                                        theme,
+                                        cx,
+                                    ))
+                                    .with_children(self.render_connection_status(cx))
+                                    .boxed(),
+                            )
+                            .right()
+                            .boxed(),
+                        )
                         .boxed(),
-                    )
-                    .boxed(),
-            )
-            .with_style(container_theme)
+                )
+                .with_style(container_theme)
+                .boxed()
+            })
+            .on_click(MouseButton::Left, |event, cx| {
+                if event.click_count == 2 {
+                    cx.zoom_window(cx.window_id());
+                }
+            })
             .boxed(),
         )
         .with_height(theme.workspace.titlebar.height)
