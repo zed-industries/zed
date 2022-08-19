@@ -1,4 +1,4 @@
-use std::cmp::min;
+use std::cmp::{max, min};
 use std::iter::repeat;
 
 use alacritty_terminal::grid::Dimensions;
@@ -60,6 +60,7 @@ impl MouseFormat {
     }
 }
 
+#[derive(Debug)]
 enum MouseButton {
     LeftButton = 0,
     MiddleButton = 1,
@@ -117,7 +118,7 @@ pub fn scroll_report(
     e: &ScrollWheelEvent,
     mode: TermMode,
 ) -> Option<impl Iterator<Item = Vec<u8>>> {
-    if mode.intersects(TermMode::MOUSE_MODE) && scroll_lines >= 1 {
+    if mode.intersects(TermMode::MOUSE_MODE) {
         mouse_report(
             point,
             MouseButton::from_scroll(e),
@@ -125,7 +126,7 @@ pub fn scroll_report(
             Modifiers::from_scroll(),
             MouseFormat::from_mode(mode),
         )
-        .map(|report| repeat(report).take(scroll_lines as usize))
+        .map(|report| repeat(report).take(max(scroll_lines, 1) as usize))
     } else {
         None
     }
@@ -165,14 +166,21 @@ pub fn mouse_button_report(
 
 pub fn mouse_moved_report(point: Point, e: &MouseMovedEvent, mode: TermMode) -> Option<Vec<u8>> {
     let button = MouseButton::from_move(e);
+    dbg!(&button);
+
     if !button.is_other() && mode.intersects(TermMode::MOUSE_MOTION | TermMode::MOUSE_DRAG) {
-        mouse_report(
-            point,
-            button,
-            true,
-            Modifiers::from_moved(e),
-            MouseFormat::from_mode(mode),
-        )
+        //Only drags are reported in drag mode, so block NoneMove.
+        if mode.contains(TermMode::MOUSE_DRAG) && matches!(button, MouseButton::NoneMove) {
+            None
+        } else {
+            mouse_report(
+                point,
+                button,
+                true,
+                Modifiers::from_moved(e),
+                MouseFormat::from_mode(mode),
+            )
+        }
     } else {
         None
     }

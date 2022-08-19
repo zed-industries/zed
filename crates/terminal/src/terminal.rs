@@ -35,8 +35,8 @@ use thiserror::Error;
 use gpui::{
     geometry::vector::{vec2f, Vector2F},
     keymap::Keystroke,
-    ClipboardItem, Entity, ModelContext, MouseButtonEvent, MouseMovedEvent, MutableAppContext,
-    ScrollWheelEvent,
+    ClipboardItem, Entity, ModelContext, MouseButton, MouseButtonEvent, MouseMovedEvent,
+    MutableAppContext, ScrollWheelEvent,
 };
 
 use crate::mappings::{
@@ -627,6 +627,7 @@ impl Terminal {
     }
 
     pub fn mouse_move(&mut self, e: &MouseMovedEvent, origin: Vector2F) {
+        dbg!("term mouse_move");
         let position = e.position.sub(origin);
 
         let point = mouse_point(position, self.cur_size, self.last_offset);
@@ -653,7 +654,6 @@ impl Terminal {
 
     pub fn mouse_down(&mut self, e: &MouseButtonEvent, origin: Vector2F) {
         let position = e.position.sub(origin);
-
         let point = mouse_point(position, self.cur_size, self.last_offset);
         let side = mouse_side(position, self.cur_size);
 
@@ -661,7 +661,7 @@ impl Terminal {
             if let Some(bytes) = mouse_button_report(point, e, true, self.last_mode) {
                 self.pty_tx.notify(bytes);
             }
-        } else {
+        } else if e.button == MouseButton::Left {
             self.events
                 .push(InternalEvent::SetSelection(Some(Selection::new(
                     SelectionType::Simple,
@@ -695,14 +695,13 @@ impl Terminal {
 
     pub fn mouse_up(&mut self, e: &MouseButtonEvent, origin: Vector2F) {
         let position = e.position.sub(origin);
-
         if self.mouse_mode(e.shift) {
             let point = mouse_point(position, self.cur_size, self.last_offset);
 
             if let Some(bytes) = mouse_button_report(point, e, false, self.last_mode) {
                 self.pty_tx.notify(bytes);
             }
-        } else {
+        } else if e.button == MouseButton::Left {
             // Seems pretty standard to automatically copy on mouse_up for terminals,
             // so let's do that here
             self.copy();

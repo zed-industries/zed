@@ -237,6 +237,7 @@ impl Presenter {
             let mut mouse_down_out_handlers = Vec::new();
             let mut mouse_moved_region = None;
             let mut mouse_down_region = None;
+            let mut mouse_up_region = None;
             let mut clicked_region = None;
             let mut dragged_region = None;
 
@@ -280,6 +281,15 @@ impl Presenter {
                         invalidated_views.push(region.view_id);
                         if region.bounds.contains_point(position) {
                             clicked_region = Some((region, MouseRegionEvent::Click(e.clone())));
+                        }
+                    }
+
+                    for (region, _) in self.mouse_regions.iter().rev() {
+                        if region.bounds.contains_point(position) {
+                            invalidated_views.push(region.view_id);
+                            mouse_up_region =
+                                Some((region.clone(), MouseRegionEvent::Up(e.clone())));
+                            break;
                         }
                     }
 
@@ -346,6 +356,17 @@ impl Presenter {
                 {
                     event_cx.with_current_view(move_moved_region.view_id, |event_cx| {
                         mouse_moved_callback(region_event, event_cx);
+                    })
+                }
+            }
+
+            if let Some((mouse_up_region, region_event)) = mouse_up_region {
+                handled = true;
+                if let Some(mouse_up_callback) =
+                    mouse_up_region.handlers.get(&region_event.handler_key())
+                {
+                    event_cx.with_current_view(mouse_up_region.view_id, |event_cx| {
+                        mouse_up_callback(region_event, event_cx);
                     })
                 }
             }

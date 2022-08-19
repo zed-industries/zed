@@ -3,7 +3,10 @@ use alacritty_terminal::{
     grid::Dimensions,
     index::Point,
     selection::SelectionRange,
-    term::cell::{Cell, Flags},
+    term::{
+        cell::{Cell, Flags},
+        TermMode,
+    },
 };
 use editor::{Cursor, CursorShape, HighlightedRange, HighlightedRangeLine};
 use gpui::{
@@ -46,6 +49,7 @@ pub struct LayoutState {
     background_color: Color,
     selection_color: Color,
     size: TerminalSize,
+    mode: TermMode,
 }
 
 #[derive(Debug)]
@@ -428,116 +432,137 @@ impl TerminalEl {
         origin: Vector2F,
         view_id: usize,
         visible_bounds: RectF,
+        mode: TermMode,
         cx: &mut PaintContext,
     ) {
         let connection = self.terminal;
-        cx.scene.push_mouse_region(
-            MouseRegion::new(view_id, None, visible_bounds)
-                .on_move(move |event, cx| {
-                    if cx.is_parent_view_focused() {
-                        if let Some(conn_handle) = connection.upgrade(cx.app) {
-                            conn_handle.update(cx.app, |terminal, cx| {
-                                terminal.mouse_move(&event, origin);
-                                cx.notify();
-                            })
-                        }
-                    }
-                })
-                .on_drag(MouseButton::Left, move |_prev, event, cx| {
-                    if cx.is_parent_view_focused() {
-                        if let Some(conn_handle) = connection.upgrade(cx.app) {
-                            conn_handle.update(cx.app, |terminal, cx| {
-                                terminal.mouse_drag(event, origin);
-                                cx.notify();
-                            })
-                        }
-                    }
-                })
-                .on_down(
-                    MouseButton::Left,
-                    TerminalEl::generic_button_handler(
-                        connection,
-                        origin,
-                        move |terminal, origin, e, _cx| {
-                            terminal.mouse_down(&e, origin);
-                        },
-                    ),
-                )
-                .on_down(
-                    MouseButton::Right,
-                    TerminalEl::generic_button_handler(
-                        connection,
-                        origin,
-                        move |terminal, origin, e, _cx| {
-                            terminal.mouse_down(&e, origin);
-                        },
-                    ),
-                )
-                .on_down(
-                    MouseButton::Middle,
-                    TerminalEl::generic_button_handler(
-                        connection,
-                        origin,
-                        move |terminal, origin, e, _cx| {
-                            terminal.mouse_down(&e, origin);
-                        },
-                    ),
-                )
-                .on_up(
-                    MouseButton::Left,
-                    TerminalEl::generic_button_handler(
-                        connection,
-                        origin,
-                        move |terminal, origin, e, _cx| {
-                            terminal.mouse_up(&e, origin);
-                        },
-                    ),
-                )
-                .on_up(
-                    MouseButton::Right,
-                    TerminalEl::generic_button_handler(
-                        connection,
-                        origin,
-                        move |terminal, origin, e, _cx| {
-                            terminal.mouse_up(&e, origin);
-                        },
-                    ),
-                )
-                .on_up(
-                    MouseButton::Middle,
-                    TerminalEl::generic_button_handler(
-                        connection,
-                        origin,
-                        move |terminal, origin, e, _cx| {
-                            terminal.mouse_up(&e, origin);
-                        },
-                    ),
-                )
-                .on_click(
-                    MouseButton::Left,
-                    TerminalEl::generic_button_handler(
-                        connection,
-                        origin,
-                        move |terminal, origin, e, _cx| {
-                            terminal.left_click(&e, origin);
-                        },
-                    ),
-                )
-                .on_click(
-                    MouseButton::Right,
-                    move |e @ MouseButtonEvent { position, .. }, cx| {
-                        let mouse_mode = if let Some(conn_handle) = connection.upgrade(cx.app) {
-                            conn_handle.update(cx.app, |terminal, _cx| terminal.mouse_mode(e.shift))
-                        } else {
-                            //If we can't get the model handle, probably can't deploy the context menu
-                            true
-                        };
-                        if !mouse_mode {
-                            cx.dispatch_action(DeployContextMenu { position });
-                        }
+
+        let mut region = MouseRegion::new(view_id, None, visible_bounds);
+
+        //Terminal Emulator controlled behavior:
+        region = region
+            //Start selections
+            .on_down(
+                MouseButton::Left,
+                TerminalEl::generic_button_handler(
+                    connection,
+                    origin,
+                    move |terminal, origin, e, _cx| {
+                        terminal.mouse_down(&e, origin);
                     },
                 ),
-        );
+            )
+            //Update drag selections
+            .on_drag(MouseButton::Left, move |_prev, event, cx| {
+                if cx.is_parent_view_focused() {
+                    if let Some(conn_handle) = connection.upgrade(cx.app) {
+                        conn_handle.update(cx.app, |terminal, cx| {
+                            terminal.mouse_drag(event, origin);
+                            cx.notify();
+                        })
+                    }
+                }
+            })
+            //Copy on up behavior
+            .on_up(
+                MouseButton::Left,
+                TerminalEl::generic_button_handler(
+                    connection,
+                    origin,
+                    move |terminal, origin, e, _cx| {
+                        terminal.mouse_up(&e, origin);
+                    },
+                ),
+            )
+            //Handle click based selections
+            .on_click(
+                MouseButton::Left,
+                TerminalEl::generic_button_handler(
+                    connection,
+                    origin,
+                    move |terminal, origin, e, _cx| {
+                        terminal.left_click(&e, origin);
+                    },
+                ),
+            )
+            //Context menu
+            .on_click(
+                MouseButton::Right,
+                move |e @ MouseButtonEvent { position, .. }, cx| {
+                    let mouse_mode = if let Some(conn_handle) = connection.upgrade(cx.app) {
+                        conn_handle.update(cx.app, |terminal, _cx| terminal.mouse_mode(e.shift))
+                    } else {
+                        //If we can't get the model handle, probably can't deploy the context menu
+                        true
+                    };
+                    if !mouse_mode {
+                        cx.dispatch_action(DeployContextMenu { position });
+                    }
+                },
+            )
+            //This handles both drag mode and mouse motion mode
+            //Mouse Move TODO
+            //This cannot be done conditionally for unknown reasons. Pending drag and drop rework.
+            //This also does not fire on right-mouse-down-move events wild.
+            .on_move(move |event, cx| {
+                dbg!(event);
+                if cx.is_parent_view_focused() {
+                    if let Some(conn_handle) = connection.upgrade(cx.app) {
+                        conn_handle.update(cx.app, |terminal, cx| {
+                            terminal.mouse_move(&event, origin);
+                            cx.notify();
+                        })
+                    }
+                }
+            });
+
+        if mode.contains(TermMode::MOUSE_MODE) {
+            region = region
+                .on_down(
+                    MouseButton::Right,
+                    TerminalEl::generic_button_handler(
+                        connection,
+                        origin,
+                        move |terminal, origin, e, _cx| {
+                            terminal.mouse_down(&e, origin);
+                        },
+                    ),
+                )
+                .on_down(
+                    MouseButton::Middle,
+                    TerminalEl::generic_button_handler(
+                        connection,
+                        origin,
+                        move |terminal, origin, e, _cx| {
+                            terminal.mouse_down(&e, origin);
+                        },
+                    ),
+                )
+                .on_up(
+                    MouseButton::Right,
+                    TerminalEl::generic_button_handler(
+                        connection,
+                        origin,
+                        move |terminal, origin, e, _cx| {
+                            terminal.mouse_up(&e, origin);
+                        },
+                    ),
+                )
+                .on_up(
+                    MouseButton::Middle,
+                    TerminalEl::generic_button_handler(
+                        connection,
+                        origin,
+                        move |terminal, origin, e, _cx| {
+                            terminal.mouse_up(&e, origin);
+                        },
+                    ),
+                )
+        }
+
+        //TODO: Mouse drag isn't correct
+        //TODO: Nor is mouse motion. Move events aren't happening??
+        cx.scene.push_mouse_region(region);
     }
 
     ///Configures a text style from the current settings.
@@ -601,7 +626,7 @@ impl Element for TerminalEl {
             terminal_theme.colors.background
         };
 
-        let (cells, selection, cursor, display_offset, cursor_text) = self
+        let (cells, selection, cursor, display_offset, cursor_text, mode) = self
             .terminal
             .upgrade(cx)
             .unwrap()
@@ -624,13 +649,13 @@ impl Element for TerminalEl {
                                 cell: ic.cell.clone(),
                             }),
                     );
-
                     (
                         cells,
                         content.selection,
                         content.cursor,
                         content.display_offset,
                         cursor_text,
+                        content.mode,
                     )
                 })
             });
@@ -709,6 +734,7 @@ impl Element for TerminalEl {
                 size: dimensions,
                 rects,
                 highlights,
+                mode,
             },
         )
     }
@@ -727,7 +753,7 @@ impl Element for TerminalEl {
             let origin = bounds.origin() + vec2f(layout.size.cell_width, 0.);
 
             //Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
-            self.attach_mouse_handlers(origin, self.view.id(), visible_bounds, cx);
+            self.attach_mouse_handlers(origin, self.view.id(), visible_bounds, layout.mode, cx);
 
             cx.paint_layer(clip_bounds, |cx| {
                 //Start with a background color
