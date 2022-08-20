@@ -499,23 +499,10 @@ impl TerminalEl {
                         cx.dispatch_action(DeployContextMenu { position });
                     }
                 },
-            )
-            //This handles both drag mode and mouse motion mode
-            //Mouse Move TODO
-            //This cannot be done conditionally for unknown reasons. Pending drag and drop rework.
-            //This also does not fire on right-mouse-down-move events wild.
-            .on_move(move |event, cx| {
-                if cx.is_parent_view_focused() {
-                    if let Some(conn_handle) = connection.upgrade(cx.app) {
-                        conn_handle.update(cx.app, |terminal, cx| {
-                            terminal.mouse_move(&event, origin);
-                            cx.notify();
-                        })
-                    }
-                }
-            });
+            );
 
-        if mode.contains(TermMode::MOUSE_MODE) {
+        //All mouse modes need the extra click handlers
+        if mode.intersects(TermMode::MOUSE_MODE) {
             region = region
                 .on_down(
                     MouseButton::Right,
@@ -557,6 +544,21 @@ impl TerminalEl {
                         },
                     ),
                 )
+        }
+        //Mouse move manages both dragging and motion events
+        if mode.intersects(TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION) {
+            region = region
+                //This does not fire on right-mouse-down-move events wild.
+                .on_move(move |event, cx| {
+                    if cx.is_parent_view_focused() {
+                        if let Some(conn_handle) = connection.upgrade(cx.app) {
+                            conn_handle.update(cx.app, |terminal, cx| {
+                                terminal.mouse_move(&event, origin);
+                                cx.notify();
+                            })
+                        }
+                    }
+                })
         }
 
         //TODO: Mouse drag isn't correct
