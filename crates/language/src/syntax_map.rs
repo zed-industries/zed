@@ -7,7 +7,7 @@ use std::{
     borrow::Cow, cell::RefCell, cmp::Ordering, collections::BinaryHeap, ops::Range, sync::Arc,
 };
 use sum_tree::{Bias, SeekTarget, SumTree};
-use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset};
+use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
 use tree_sitter::{Parser, Tree};
 use util::post_inc;
 
@@ -128,7 +128,7 @@ impl SyntaxSnapshot {
         let mut cursor = self.layers.cursor::<SyntaxLayerSummary>();
         cursor.next(&text);
 
-        for depth in 0..max_depth {
+        for depth in 0..=max_depth {
             let mut edits = &edits[..];
             layers.push_tree(cursor.slice(&Depth(depth), Bias::Left, text), text);
 
@@ -410,11 +410,31 @@ impl SyntaxSnapshot {
         self.layers = layers;
     }
 
+    pub fn layers(&self, buffer: &BufferSnapshot) -> Vec<(&Grammar, &Tree, (usize, Point))> {
+        self.layers
+            .iter()
+            .filter_map(|layer| {
+                if let Some(grammar) = &layer.language.grammar {
+                    Some((
+                        grammar.as_ref(),
+                        &layer.tree,
+                        (
+                            layer.range.start.to_offset(buffer),
+                            layer.range.start.to_point(buffer),
+                        ),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     pub fn layers_for_range<'a, T: ToOffset>(
         &self,
         range: Range<T>,
         buffer: &BufferSnapshot,
-    ) -> Vec<(Tree, &Grammar)> {
+    ) -> Vec<(&Grammar, &Tree, (usize, Point))> {
         let start = buffer.anchor_before(range.start.to_offset(buffer));
         let end = buffer.anchor_after(range.end.to_offset(buffer));
 
@@ -426,9 +446,16 @@ impl SyntaxSnapshot {
 
         let mut result = Vec::new();
         cursor.next(buffer);
-        while let Some(item) = cursor.item() {
-            if let Some(grammar) = &item.language.grammar {
-                result.push((item.tree.clone(), grammar.as_ref()));
+        while let Some(layer) = cursor.item() {
+            if let Some(grammar) = &layer.language.grammar {
+                result.push((
+                    grammar.as_ref(),
+                    &layer.tree,
+                    (
+                        layer.range.start.to_offset(buffer),
+                        layer.range.start.to_point(buffer),
+                    ),
+                ));
             }
             cursor.next(buffer)
         }
@@ -698,7 +725,9 @@ mod tests {
     use super::*;
     use crate::LanguageConfig;
     use text::{Buffer, Point};
+    use tree_sitter::Query;
     use unindent::Unindent as _;
+    use util::test::marked_text_ranges;
 
     #[gpui::test]
     fn test_syntax_map_layers_for_range() {
@@ -797,6 +826,47 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn test_syntax_map_edits() {
+        let registry = Arc::new(LanguageRegistry::test());
+        let language = Arc::new(rust_lang());
+        let mut syntax_map = SyntaxMap::new();
+        syntax_map.set_language_registry(registry.clone());
+        registry.add(language.clone());
+
+        let mut buffer = Buffer::new(0, 0, "".into());
+        syntax_map.reparse(language.clone(), &buffer);
+
+        edit_buffer_n(
+            &mut buffer,
+            &[
+                "«fn a() { dbg }»",
+                "fn a() { dbg«!» }",
+                "fn a() { dbg!«()» }",
+                "fn a() { dbg!(«b») }",
+                "fn a() { dbg!(b«.») }",
+                "fn a() { dbg!(b.«c») }",
+                "fn a() { dbg!(b.c«()») }",
+                "fn a() { dbg!(b.c(«vec»)) }",
+                "fn a() { dbg!(b.c(vec«!»)) }",
+                "fn a() { dbg!(b.c(vec!«[]»)) }",
+                "fn a() { dbg!(b.c(vec![«d»])) }",
+                "fn a() { dbg!(b.c(vec![d«.»])) }",
+                "fn a() { dbg!(b.c(vec![d.«e»])) }",
+            ],
+        );
+
+        syntax_map.interpolate(&buffer);
+        syntax_map.reparse(language.clone(), &buffer);
+
+        assert_node_ranges(
+            &syntax_map,
+            &buffer,
+            "(field_identifier) @_",
+            "fn a() { dbg!(b.«c»(vec![d.«e»])) }",
+        );
+    }
+
     fn rust_lang() -> Language {
         Language::new(
             LanguageConfig {
@@ -833,8 +903,10 @@ mod tests {
             expected_layers.len(),
             "wrong number of layers"
         );
-        for (i, (layer, expected_s_exp)) in layers.iter().zip(expected_layers.iter()).enumerate() {
-            let actual_s_exp = layer.0.root_node().to_sexp();
+        for (i, ((_, tree, _), expected_s_exp)) in
+            layers.iter().zip(expected_layers.iter()).enumerate()
+        {
+            let actual_s_exp = tree.root_node().to_sexp();
             assert!(
                 string_contains_sequence(
                     &actual_s_exp,
@@ -843,6 +915,60 @@ mod tests {
                 "layer {i}:\n\nexpected: {expected_s_exp}\nactual:   {actual_s_exp}",
             );
         }
+    }
+
+    fn assert_node_ranges(
+        syntax_map: &SyntaxMap,
+        buffer: &BufferSnapshot,
+        query: &str,
+        marked_string: &str,
+    ) {
+        let mut cursor = QueryCursorHandle::new();
+        let mut actual_ranges = Vec::<Range<usize>>::new();
+        for (grammar, tree, (start_byte, _)) in syntax_map.layers(buffer) {
+            let query = Query::new(grammar.ts_language, query).unwrap();
+            for (mat, ix) in
+                cursor.captures(&query, tree.root_node(), TextProvider(buffer.as_rope()))
+            {
+                let range = mat.captures[ix].node.byte_range();
+                actual_ranges.push(start_byte + range.start..start_byte + range.end);
+            }
+        }
+
+        let (text, expected_ranges) = marked_text_ranges(marked_string, false);
+        assert_eq!(text, buffer.text());
+        assert_eq!(actual_ranges, expected_ranges);
+    }
+
+    fn edit_buffer_n(buffer: &mut Buffer, marked_strings: &[&str]) {
+        for marked_string in marked_strings {
+            edit_buffer(buffer, marked_string);
+        }
+    }
+
+    fn edit_buffer(buffer: &mut Buffer, marked_string: &str) {
+        let old_text = buffer.text();
+        let (new_text, mut ranges) = marked_text_ranges(marked_string, false);
+        assert_eq!(ranges.len(), 1);
+
+        let inserted_range = ranges.pop().unwrap();
+        let inserted_text = new_text[inserted_range.clone()].to_string();
+        let deleted_len = (inserted_range.len() as isize + old_text.len() as isize
+            - new_text.len() as isize) as usize;
+        let deleted_range = inserted_range.start..inserted_range.start + deleted_len;
+
+        assert_eq!(
+            old_text[..deleted_range.start],
+            new_text[..inserted_range.start],
+            "invalid edit",
+        );
+        assert_eq!(
+            old_text[deleted_range.end..],
+            new_text[inserted_range.end..],
+            "invalid edit",
+        );
+
+        buffer.edit([(deleted_range, inserted_text)]);
     }
 
     pub fn string_contains_sequence(text: &str, parts: &[&str]) -> bool {
