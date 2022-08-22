@@ -20,7 +20,7 @@ pub use keymap_file::{keymap_file_json_schema, KeymapFileContent};
 
 #[derive(Clone)]
 pub struct Settings {
-    pub nightly: FeatureFlags,
+    pub experiments: FeatureFlags,
     pub projects_online_by_default: bool,
     pub buffer_font_family: FamilyId,
     pub default_buffer_font_size: f32,
@@ -197,7 +197,7 @@ impl Settings {
         .unwrap();
 
         Self {
-            nightly: FeatureFlags::default(),
+            experiments: FeatureFlags::default(),
             buffer_font_family: font_cache
                 .load_family(&[defaults.buffer_font_family.as_ref().unwrap()])
                 .unwrap(),
@@ -256,7 +256,7 @@ impl Settings {
         );
         merge(&mut self.vim_mode, data.vim_mode);
         merge(&mut self.autosave, data.autosave);
-        merge(&mut self.nightly, data.nightly);
+        merge(&mut self.experiments, data.nightly);
         // Ensure terminal font is loaded, so we can request it in terminal_element layout
         if let Some(terminal_font) = &data.terminal.font_family {
             font_cache.load_family(&[terminal_font]).log_err();
@@ -317,7 +317,7 @@ impl Settings {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &gpui::AppContext) -> Settings {
         Settings {
-            nightly: FeatureFlags::default(),
+            experiments: FeatureFlags::default(),
             buffer_font_family: cx.font_cache().load_family(&["Monaco"]).unwrap(),
             buffer_font_size: 14.,
             default_buffer_font_size: 14.,

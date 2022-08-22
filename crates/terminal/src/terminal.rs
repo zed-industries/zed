@@ -47,7 +47,7 @@ use crate::mappings::{
 ///Initialize and register all of our action handlers
 pub fn init(cx: &mut MutableAppContext) {
     let settings = cx.global::<Settings>();
-    if settings.nightly.modal_terminal {
+    if settings.experiments.modal_terminal {
         cx.add_action(deploy_modal);
     }
 
