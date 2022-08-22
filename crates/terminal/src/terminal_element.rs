@@ -35,8 +35,8 @@ use std::{
 };
 
 use crate::{
-    connected_view::{ConnectedView, DeployContextMenu},
     mappings::colors::convert_color,
+    terminal_view::{DeployContextMenu, TerminalView},
     Terminal, TerminalSize,
 };
 
@@ -193,23 +193,23 @@ impl RelativeHighlightedRange {
 
 ///The GPUI element that paints the terminal.
 ///We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
-pub struct TerminalEl {
+pub struct TerminalElement {
     terminal: WeakModelHandle<Terminal>,
-    view: WeakViewHandle<ConnectedView>,
+    view: WeakViewHandle<TerminalView>,
     modal: bool,
     focused: bool,
     cursor_visible: bool,
 }
 
-impl TerminalEl {
+impl TerminalElement {
     pub fn new(
-        view: WeakViewHandle<ConnectedView>,
+        view: WeakViewHandle<TerminalView>,
         terminal: WeakModelHandle<Terminal>,
         modal: bool,
         focused: bool,
         cursor_visible: bool,
-    ) -> TerminalEl {
-        TerminalEl {
+    ) -> TerminalElement {
+        TerminalElement {
             view,
             terminal,
             modal,
@@ -302,7 +302,7 @@ impl TerminalEl {
                 {
                     let cell_text = &cell.c.to_string();
                     if cell_text != " " {
-                        let cell_style = TerminalEl::cell_style(
+                        let cell_style = TerminalElement::cell_style(
                             &cell,
                             fg,
                             terminal_theme,
@@ -444,7 +444,7 @@ impl TerminalEl {
             // Start selections
             .on_down(
                 MouseButton::Left,
-                TerminalEl::generic_button_handler(
+                TerminalElement::generic_button_handler(
                     connection,
                     origin,
                     move |terminal, origin, e, _cx| {
@@ -466,7 +466,7 @@ impl TerminalEl {
             // Copy on up behavior
             .on_up(
                 MouseButton::Left,
-                TerminalEl::generic_button_handler(
+                TerminalElement::generic_button_handler(
                     connection,
                     origin,
                     move |terminal, origin, e, _cx| {
@@ -477,7 +477,7 @@ impl TerminalEl {
             // Handle click based selections
             .on_click(
                 MouseButton::Left,
-                TerminalEl::generic_button_handler(
+                TerminalElement::generic_button_handler(
                     connection,
                     origin,
                     move |terminal, origin, e, _cx| {
@@ -507,7 +507,7 @@ impl TerminalEl {
             region = region
                 .on_down(
                     MouseButton::Right,
-                    TerminalEl::generic_button_handler(
+                    TerminalElement::generic_button_handler(
                         connection,
                         origin,
                         move |terminal, origin, e, _cx| {
@@ -517,7 +517,7 @@ impl TerminalEl {
                 )
                 .on_down(
                     MouseButton::Middle,
-                    TerminalEl::generic_button_handler(
+                    TerminalElement::generic_button_handler(
                         connection,
                         origin,
                         move |terminal, origin, e, _cx| {
@@ -527,7 +527,7 @@ impl TerminalEl {
                 )
                 .on_up(
                     MouseButton::Right,
-                    TerminalEl::generic_button_handler(
+                    TerminalElement::generic_button_handler(
                         connection,
                         origin,
                         move |terminal, origin, e, _cx| {
@@ -537,7 +537,7 @@ impl TerminalEl {
                 )
                 .on_up(
                     MouseButton::Middle,
-                    TerminalEl::generic_button_handler(
+                    TerminalElement::generic_button_handler(
                         connection,
                         origin,
                         move |terminal, origin, e, _cx| {
@@ -598,7 +598,7 @@ impl TerminalEl {
     }
 }
 
-impl Element for TerminalEl {
+impl Element for TerminalElement {
     type LayoutState = LayoutState;
     type PaintState = ();
 
@@ -612,7 +612,7 @@ impl Element for TerminalEl {
 
         //Setup layout information
         let terminal_theme = settings.theme.terminal.clone(); //TODO: Try to minimize this clone.
-        let text_style = TerminalEl::make_text_style(font_cache, settings);
+        let text_style = TerminalElement::make_text_style(font_cache, settings);
         let selection_color = settings.theme.editor.selection.selection;
         let dimensions = {
             let line_height = font_cache.line_height(text_style.font_size);
@@ -660,7 +660,7 @@ impl Element for TerminalEl {
                 })
             });
 
-        let (cells, rects, highlights) = TerminalEl::layout_grid(
+        let (cells, rects, highlights) = TerminalElement::layout_grid(
             cells,
             &text_style,
             &terminal_theme,
@@ -699,7 +699,7 @@ impl Element for TerminalEl {
                 )
             };
 
-            TerminalEl::shape_cursor(cursor_point, dimensions, &cursor_text).map(
+            TerminalElement::shape_cursor(cursor_point, dimensions, &cursor_text).map(
                 move |(cursor_position, block_width)| {
                     let shape = match cursor.shape {
                         AlacCursorShape::Block if !self.focused => CursorShape::Hollow,
