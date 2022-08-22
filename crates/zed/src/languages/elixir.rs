@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::StreamExt;
 pub use language::*;
+use lsp::CompletionItemKind;
 use smol::fs::{self, File};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
@@ -107,5 +108,58 @@ impl LspAdapter for ElixirLspAdapter {
         })()
         .await
         .log_err()
+    }
+
+    async fn label_for_completion(
+        &self,
+        completion: &lsp::CompletionItem,
+        language: &Language,
+    ) -> Option<CodeLabel> {
+        match completion.kind.zip(completion.detail.as_ref()) {
+            Some((_, detail)) if detail.starts_with("(function)") => {
+                let text = detail.strip_prefix("(function) ")?;
+                let filter_range = 0..text.find('(').unwrap_or(text.len());
+                let source = Rope::from(format!("def {text}").as_str());
+                let runs = language.highlight_text(&source, 4..4 + text.len());
+                return Some(CodeLabel {
+                    text: text.to_string(),
+                    runs,
+                    filter_range,
+                });
+            }
+            Some((_, detail)) if detail.starts_with("(macro)") => {
+                let text = detail.strip_prefix("(macro) ")?;
+                let filter_range = 0..text.find('(').unwrap_or(text.len());
+                let source = Rope::from(format!("defmacro {text}").as_str());
+                let runs = language.highlight_text(&source, 9..9 + text.len());
+                return Some(CodeLabel {
+                    text: text.to_string(),
+                    runs,
+                    filter_range,
+                });
+            }
+            Some((
+                CompletionItemKind::MODULE
+                | CompletionItemKind::INTERFACE
+                | CompletionItemKind::STRUCT,
+                _,
+            )) => {
+                let filter_range = 0..completion
+                    .label
+                    .find(" (")
+                    .unwrap_or(completion.label.len());
+                let text = &completion.label[filter_range.clone()];
+                let source = Rope::from(format!("defmodule {text}").as_str());
+                let runs = language.highlight_text(&source, 10..10 + text.len());
+                return Some(CodeLabel {
+                    text: completion.label.clone(),
+                    runs,
+                    filter_range,
+                });
+            }
+            _ => {}
+        }
+
+        None
     }
 }
