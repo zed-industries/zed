@@ -46,10 +46,7 @@ use crate::mappings::{
 
 ///Initialize and register all of our action handlers
 pub fn init(cx: &mut MutableAppContext) {
-    let settings = cx.global::<Settings>();
-    if settings.experiments.modal_terminal {
-        cx.add_action(deploy_modal);
-    }
+    cx.add_action(deploy_modal);
 
     terminal_view::init(cx);
     connected_view::init(cx);

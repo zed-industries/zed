@@ -425,5 +425,12 @@
             "cmd-v": "terminal::Paste",
             "cmd-k": "terminal::Clear"
         }
+    },
+    {
+        "context": "ModalTerminal",
+        "bindings": {
+            "ctrl-cmd-space": "terminal::ShowCharacterPalette",
+            "shift-escape": "terminal::DeployModal"
+        }
     }
 ]
