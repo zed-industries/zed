@@ -97,6 +97,7 @@ fn main() {
 
         let (settings_file, keymap_file) = cx.background().block(config_files).unwrap();
 
+        //Setup settings global before binding actions
         watch_settings_file(default_settings, settings_file, themes.clone(), cx);
         watch_keymap_file(keymap_file, cx);
 
