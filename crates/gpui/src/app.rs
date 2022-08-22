@@ -1926,6 +1926,29 @@ impl MutableAppContext {
         })
     }
 
+    // pub fn add_status_bar_item<I, M, F1, F2>(
+    //     &mut self,
+    //     build_item: F1,
+    //     build_menu: F2,
+    //     menu_bounds: Vector2F,
+    // ) where
+    //     I: View,
+    //     M: View,
+    //     F1: FnOnce(&mut ViewContext<I>) -> I,
+    //     F2: FnOnce(&mut ViewContext<M>) -> M,
+    // {
+    //     self.add_window(
+    //         WindowOptions {
+    //             bounds: menu_bounds,
+    //             titlebar: None,
+    //             title: None,
+    //             titlebar_appears_transparent: true,
+    //             traffic_light_position: (),
+    //         },
+    //         build_root_view,
+    //     )
+    // }
+
     pub fn replace_root_view<T, F>(&mut self, window_id: usize, build_root_view: F) -> ViewHandle<T>
     where
         T: View,
