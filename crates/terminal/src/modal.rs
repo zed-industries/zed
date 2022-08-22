@@ -3,7 +3,9 @@ use settings::{Settings, WorkingDirectory};
 use workspace::Workspace;
 
 use crate::{
-    terminal_view::{get_working_directory, DeployModal, TerminalContent, TerminalView},
+    terminal_container_view::{
+        get_working_directory, DeployModal, TerminalContainer, TerminalContent,
+    },
     Event, Terminal,
 };
 
@@ -20,7 +22,7 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
     if let Some(StoredTerminal(stored_terminal)) = possible_terminal {
         workspace.toggle_modal(cx, |_, cx| {
             // Create a view from the stored connection if the terminal modal is not already shown
-            cx.add_view(|cx| TerminalView::from_terminal(stored_terminal.clone(), true, cx))
+            cx.add_view(|cx| TerminalContainer::from_terminal(stored_terminal.clone(), true, cx))
         });
         // Toggle Modal will dismiss the terminal modal if it is currently shown, so we must
         // store the terminal back in the global
@@ -38,7 +40,7 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
 
             let working_directory = get_working_directory(workspace, cx, wd_strategy);
 
-            let this = cx.add_view(|cx| TerminalView::new(working_directory, true, cx));
+            let this = cx.add_view(|cx| TerminalContainer::new(working_directory, true, cx));
 
             if let TerminalContent::Connected(connected) = &this.read(cx).content {
                 let terminal_handle = connected.read(cx).handle();
@@ -73,7 +75,7 @@ pub fn on_event(
     // Dismiss the modal if the terminal quit
     if let Event::CloseTerminal = event {
         cx.set_global::<Option<StoredTerminal>>(None);
-        if workspace.modal::<TerminalView>().is_some() {
+        if workspace.modal::<TerminalContainer>().is_some() {
             workspace.dismiss_modal(cx)
         }
     }
