@@ -95,6 +95,12 @@ fn main() {
             .spawn(languages::init(languages.clone(), cx.background().clone()));
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
 
+        let (settings_file, keymap_file) = cx.background().block(config_files).unwrap();
+
+        //Make sure to load settings before initialization, so we know what features to toggle
+        watch_settings_file(default_settings, settings_file, themes.clone(), cx);
+        watch_keymap_file(keymap_file, cx);
+
         context_menu::init(cx);
         project::Project::init(&client);
         client::Channel::init(&client);
@@ -114,10 +120,7 @@ fn main() {
         terminal::init(cx);
 
         let db = cx.background().block(db);
-        let (settings_file, keymap_file) = cx.background().block(config_files).unwrap();
 
-        watch_settings_file(default_settings, settings_file, themes.clone(), cx);
-        watch_keymap_file(keymap_file, cx);
         cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
             .detach();
 
