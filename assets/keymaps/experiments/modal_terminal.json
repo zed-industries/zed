@@ -1,5 +1,11 @@
 [
     {
+        "context": "Workspace",
+        "bindings": {
+            "shift-escape": "terminal::DeployModal"
+        }
+    },
+    {
         "context": "ModalTerminal",
         "bindings": {
             "ctrl-cmd-space": "terminal::ShowCharacterPalette",
