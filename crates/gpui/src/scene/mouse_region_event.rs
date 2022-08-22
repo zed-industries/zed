@@ -163,10 +163,12 @@ impl MouseRegionEvent {
         }
     }
 
-    pub fn is_local(&self) -> bool {
+    /// When true, mouse event handlers must call cx.propagate_event() to bubble
+    /// the event to handlers they are painted on top of.
+    pub fn is_capturable(&self) -> bool {
         match self {
             MouseRegionEvent::Move(_) => true,
-            MouseRegionEvent::Drag(_) => true,
+            MouseRegionEvent::Drag(_) => false,
             MouseRegionEvent::Hover(_) => true,
             MouseRegionEvent::Down(_) => true,
             MouseRegionEvent::Up(_) => true,

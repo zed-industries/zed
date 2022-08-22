@@ -79,6 +79,7 @@ impl Presenter {
             self.rendered_views.remove(view_id);
         }
         for view_id in &invalidation.updated {
+            dbg!(view_id);
             self.rendered_views.insert(
                 *view_id,
                 cx.render_view(RenderParams {
@@ -151,6 +152,7 @@ impl Presenter {
 
             if cx.window_is_active(self.window_id) {
                 if let Some(event) = self.last_mouse_moved_event.clone() {
+                    println!("Redispatching mouse moved");
                     self.dispatch_event(event, true, cx);
                 }
             }
@@ -236,15 +238,15 @@ impl Presenter {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
             let mut events_to_send = Vec::new();
 
-            //1. Allocate the correct set of GPUI events generated from the platform events
-            // -> These are usually small: [Mouse Down] or [Mouse up, Click] or [Mouse Moved, Mouse Dragged?]
-            // -> Also moves around mouse related state
+            // 1. Allocate the correct set of GPUI events generated from the platform events
+            //  -> These are usually small: [Mouse Down] or [Mouse up, Click] or [Mouse Moved, Mouse Dragged?]
+            //  -> Also moves around mouse related state
             match &event {
                 Event::MouseDown(e) => {
-                    //Click events are weird because they can be fired after a drag event.
-                    //MDN says that browsers handle this by starting from 'the most
-                    //specific ancestor element that contained both [positions]'
-                    //So we need to store the overlapping regions on mouse down.
+                    // Click events are weird because they can be fired after a drag event.
+                    // MDN says that browsers handle this by starting from 'the most
+                    // specific ancestor element that contained both [positions]'
+                    // So we need to store the overlapping regions on mouse down.
                     self.clicked_regions = self
                         .mouse_regions
                         .iter()
@@ -267,9 +269,9 @@ impl Presenter {
                     }));
                 }
                 Event::MouseUp(e) => {
-                    //NOTE: The order of event pushes is important! MouseUp events MUST be fired
-                    //before click events, and so the UpRegionEvent events need to be pushed before
-                    //ClickRegionEvents
+                    // NOTE: The order of event pushes is important! MouseUp events MUST be fired
+                    // before click events, and so the UpRegionEvent events need to be pushed before
+                    // ClickRegionEvents
                     events_to_send.push(MouseRegionEvent::Up(UpRegionEvent {
                         region: Default::default(),
                         platform_event: e.clone(),
@@ -330,74 +332,87 @@ impl Presenter {
 
             let mut invalidated_views: HashSet<usize> = Default::default();
             let mut any_event_handled = false;
-            //2. Process the raw mouse events into region events
+            // 2. Process the raw mouse events into region events
             for mut region_event in events_to_send {
                 let mut valid_regions = Vec::new();
 
-                //GPUI elements are arranged by depth but sibling elements can register overlapping
-                //mouse regions. As such, hover events are only fired on overlapping elements which
-                //are at the same depth as the deepest element which overlaps with the mouse.
-                if let MouseRegionEvent::Hover(_) = region_event {
-                    let mut top_most_depth = None;
-                    let mouse_position = self.mouse_position.clone();
-                    for (region, depth) in self.mouse_regions.iter().rev() {
-                        let contains_mouse = region.bounds.contains_point(mouse_position);
+                // GPUI elements are arranged by depth but sibling elements can register overlapping
+                // mouse regions. As such, hover events are only fired on overlapping elements which
+                // are at the same depth as the deepest element which overlaps with the mouse.
 
-                        if contains_mouse && top_most_depth.is_none() {
-                            top_most_depth = Some(depth);
-                        }
+                match &region_event {
+                    MouseRegionEvent::Hover(_) => {
+                        let mut top_most_depth = None;
+                        let mouse_position = self.mouse_position.clone();
+                        for (region, depth) in self.mouse_regions.iter().rev() {
+                            let contains_mouse = region.bounds.contains_point(mouse_position);
 
-                        if let Some(region_id) = region.id() {
-                            //This unwrap relies on short circuiting boolean expressions
-                            //The right side of the && is only executed when contains_mouse
-                            //is true, and we know above that when contains_mouse is true
-                            //top_most_depth is set
-                            if contains_mouse && depth == top_most_depth.unwrap() {
-                                //Ensure that hover entrance events aren't sent twice
-                                if self.hovered_region_ids.insert(region_id) {
-                                    valid_regions.push(region.clone());
-                                }
-                            } else {
-                                //Ensure that hover exit events aren't sent twice
-                                if self.hovered_region_ids.remove(&region_id) {
-                                    valid_regions.push(region.clone());
+                            if contains_mouse && top_most_depth.is_none() {
+                                top_most_depth = Some(depth);
+                            }
+
+                            if let Some(region_id) = region.id() {
+                                // This unwrap relies on short circuiting boolean expressions
+                                // The right side of the && is only executed when contains_mouse
+                                // is true, and we know above that when contains_mouse is true
+                                // top_most_depth is set
+                                if contains_mouse && depth == top_most_depth.unwrap() {
+                                    //Ensure that hover entrance events aren't sent twice
+                                    if self.hovered_region_ids.insert(region_id) {
+                                        valid_regions.push(region.clone());
+                                    }
+                                } else {
+                                    // Ensure that hover exit events aren't sent twice
+                                    if self.hovered_region_ids.remove(&region_id) {
+                                        valid_regions.push(region.clone());
+                                    }
                                 }
                             }
                         }
                     }
-                } else if let MouseRegionEvent::Click(e) = &region_event {
-                    //Clear presenter state
-                    let clicked_regions = std::mem::replace(&mut self.clicked_regions, Vec::new());
-                    self.clicked_button = None;
+                    MouseRegionEvent::Click(e) => {
+                        // Clear presenter state
+                        let clicked_regions =
+                            std::mem::replace(&mut self.clicked_regions, Vec::new());
+                        self.clicked_button = None;
 
-                    //Find regions which still overlap with the mouse since the last MouseDown happened
-                    for clicked_region in clicked_regions.into_iter().rev() {
-                        if clicked_region.bounds.contains_point(e.position) {
-                            valid_regions.push(clicked_region);
+                        // Find regions which still overlap with the mouse since the last MouseDown happened
+                        for clicked_region in clicked_regions.into_iter().rev() {
+                            if clicked_region.bounds.contains_point(e.position) {
+                                valid_regions.push(clicked_region);
+                            }
                         }
                     }
-                } else if region_event.is_local() {
-                    for (mouse_region, _) in self.mouse_regions.iter().rev() {
-                        //Contains
-                        if mouse_region.bounds.contains_point(self.mouse_position) {
-                            valid_regions.push(mouse_region.clone());
+                    MouseRegionEvent::Drag(_) => {
+                        for clicked_region in self.clicked_regions.iter().rev() {
+                            valid_regions.push(clicked_region.clone());
                         }
                     }
-                } else {
-                    for (mouse_region, _) in self.mouse_regions.iter().rev() {
-                        //NOT contains
-                        if !mouse_region.bounds.contains_point(self.mouse_position) {
-                            valid_regions.push(mouse_region.clone());
+
+                    MouseRegionEvent::UpOut(_) | MouseRegionEvent::DownOut(_) => {
+                        for (mouse_region, _) in self.mouse_regions.iter().rev() {
+                            // NOT contains
+                            if !mouse_region.bounds.contains_point(self.mouse_position) {
+                                valid_regions.push(mouse_region.clone());
+                            }
+                        }
+                    }
+                    _ => {
+                        for (mouse_region, _) in self.mouse_regions.iter().rev() {
+                            // Contains
+                            if mouse_region.bounds.contains_point(self.mouse_position) {
+                                valid_regions.push(mouse_region.clone());
+                            }
                         }
                     }
                 }
 
                 //3. Fire region events
                 let hovered_region_ids = self.hovered_region_ids.clone();
-                let mut event_cx = self.build_event_context(&mut invalidated_views, cx);
                 for valid_region in valid_regions.into_iter() {
                     region_event.set_region(valid_region.bounds);
                     if let MouseRegionEvent::Hover(e) = &mut region_event {
+                        println!("Hover event selected");
                         e.started = valid_region
                             .id()
                             .map(|region_id| hovered_region_ids.contains(&region_id))
@@ -405,12 +420,11 @@ impl Presenter {
                     }
 
                     if let Some(callback) = valid_region.handlers.get(&region_event.handler_key()) {
-                        if !event_reused {
-                            invalidated_views.insert(valid_region.view_id);
-                        }
+                        dbg!(valid_region.view_id);
+                        invalidated_views.insert(valid_region.view_id);
 
+                        let mut event_cx = self.build_event_context(&mut invalidated_views, cx);
                         event_cx.handled = true;
-                        let local = region_event.is_local();
                         event_cx.with_current_view(valid_region.view_id, {
                             let region_event = region_event.clone();
                             |cx| {
@@ -418,18 +432,17 @@ impl Presenter {
                             }
                         });
 
+                        any_event_handled = any_event_handled || event_cx.handled;
                         // For bubbling events, if the event was handled, don't continue dispatching
                         // This only makes sense for local events.
-                        if event_cx.handled && local {
+                        if event_cx.handled && region_event.is_capturable() {
                             break;
                         }
                     }
                 }
-
-                any_event_handled = any_event_handled && event_cx.handled;
             }
 
-            if !any_event_handled {
+            if !any_event_handled && !event_reused {
                 let mut event_cx = self.build_event_context(&mut invalidated_views, cx);
                 any_event_handled = event_cx.dispatch_event(root_view_id, &event);
             }
