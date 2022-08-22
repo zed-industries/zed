@@ -202,6 +202,7 @@ pub enum Event {
 pub enum LanguageServerState {
     Starting(Task<Option<Arc<LanguageServer>>>),
     Running {
+        language: Arc<Language>,
         adapter: Arc<CachedLspAdapter>,
         server: Arc<LanguageServer>,
     },
@@ -1969,7 +1970,7 @@ impl Project {
                     uri: lsp::Url::from_file_path(abs_path).unwrap(),
                 };
 
-                for (_, server) in self.language_servers_for_worktree(worktree_id) {
+                for (_, _, server) in self.language_servers_for_worktree(worktree_id) {
                     server
                         .notify::<lsp::notification::DidSaveTextDocument>(
                             lsp::DidSaveTextDocumentParams {
@@ -2004,15 +2005,18 @@ impl Project {
     fn language_servers_for_worktree(
         &self,
         worktree_id: WorktreeId,
-    ) -> impl Iterator<Item = (&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> {
+    ) -> impl Iterator<Item = (&Arc<CachedLspAdapter>, &Arc<Language>, &Arc<LanguageServer>)> {
         self.language_server_ids
             .iter()
             .filter_map(move |((language_server_worktree_id, _), id)| {
                 if *language_server_worktree_id == worktree_id {
-                    if let Some(LanguageServerState::Running { adapter, server }) =
-                        self.language_servers.get(id)
+                    if let Some(LanguageServerState::Running {
+                        adapter,
+                        language,
+                        server,
+                    }) = self.language_servers.get(id)
                     {
-                        return Some((adapter, server));
+                        return Some((adapter, language, server));
                     }
                 }
                 None
@@ -2282,6 +2286,7 @@ impl Project {
                                 server_id,
                                 LanguageServerState::Running {
                                     adapter: adapter.clone(),
+                                    language,
                                     server: language_server.clone(),
                                 },
                             );
@@ -3314,10 +3319,14 @@ impl Project {
                     .worktree_for_id(worktree_id, cx)
                     .and_then(|worktree| worktree.read(cx).as_local())
                 {
-                    if let Some(LanguageServerState::Running { adapter, server }) =
-                        self.language_servers.get(server_id)
+                    if let Some(LanguageServerState::Running {
+                        adapter,
+                        language,
+                        server,
+                    }) = self.language_servers.get(server_id)
                     {
                         let adapter = adapter.clone();
+                        let language = language.clone();
                         let worktree_abs_path = worktree.abs_path().clone();
                         requests.push(
                             server
@@ -3331,6 +3340,7 @@ impl Project {
                                 .map(move |response| {
                                     (
                                         adapter,
+                                        language,
                                         worktree_id,
                                         worktree_abs_path,
                                         response.unwrap_or_default(),
@@ -3350,7 +3360,14 @@ impl Project {
                 };
                 let symbols = this.read_with(&cx, |this, cx| {
                     let mut symbols = Vec::new();
-                    for (adapter, source_worktree_id, worktree_abs_path, response) in responses {
+                    for (
+                        adapter,
+                        adapter_language,
+                        source_worktree_id,
+                        worktree_abs_path,
+                        response,
+                    ) in responses
+                    {
                         symbols.extend(response.into_iter().flatten().filter_map(|lsp_symbol| {
                             let abs_path = lsp_symbol.location.uri.to_file_path().ok()?;
                             let mut worktree_id = source_worktree_id;
@@ -3369,16 +3386,15 @@ impl Project {
                                 path: path.into(),
                             };
                             let signature = this.symbol_signature(&project_path);
-                            let language = this.languages.select_language(&project_path.path);
+                            let language = this
+                                .languages
+                                .select_language(&project_path.path)
+                                .unwrap_or(adapter_language.clone());
                             let language_server_name = adapter.name.clone();
                             Some(async move {
-                                let label = if let Some(language) = language {
-                                    language
-                                        .label_for_symbol(&lsp_symbol.name, lsp_symbol.kind)
-                                        .await
-                                } else {
-                                    None
-                                };
+                                let label = language
+                                    .label_for_symbol(&lsp_symbol.name, lsp_symbol.kind)
+                                    .await;
 
                                 Symbol {
                                     language_server_name,
@@ -5940,8 +5956,9 @@ impl Project {
             let key = (worktree_id, name);
 
             if let Some(server_id) = self.language_server_ids.get(&key) {
-                if let Some(LanguageServerState::Running { adapter, server }) =
-                    self.language_servers.get(server_id)
+                if let Some(LanguageServerState::Running {
+                    adapter, server, ..
+                }) = self.language_servers.get(server_id)
                 {
                     return Some((adapter, server));
                 }
