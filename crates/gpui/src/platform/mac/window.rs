@@ -339,13 +339,19 @@ impl Window {
                 WindowBounds::Fixed(rect) => rect,
             }
             .to_ns_rect();
-            let mut style_mask = NSWindowStyleMask::NSClosableWindowMask
-                | NSWindowStyleMask::NSMiniaturizableWindowMask
-                | NSWindowStyleMask::NSResizableWindowMask
-                | NSWindowStyleMask::NSTitledWindowMask;
 
-            if options.titlebar_appears_transparent {
-                style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
+            let mut style_mask;
+            if let Some(titlebar) = options.titlebar.as_ref() {
+                style_mask = NSWindowStyleMask::NSClosableWindowMask
+                    | NSWindowStyleMask::NSMiniaturizableWindowMask
+                    | NSWindowStyleMask::NSResizableWindowMask
+                    | NSWindowStyleMask::NSTitledWindowMask;
+
+                if titlebar.appears_transparent {
+                    style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
+                }
+            } else {
+                style_mask = NSWindowStyleMask::empty();
             }
 
             let native_window: id = msg_send![WINDOW_CLASS, alloc];
@@ -409,7 +415,10 @@ impl Window {
                 command_queue: device.new_command_queue(),
                 last_fresh_keydown: None,
                 layer,
-                traffic_light_position: options.traffic_light_position,
+                traffic_light_position: options
+                    .titlebar
+                    .as_ref()
+                    .and_then(|titlebar| titlebar.traffic_light_position),
                 previous_modifiers_changed_event: None,
                 ime_state: ImeState::None,
                 ime_text: None,
@@ -425,12 +434,15 @@ impl Window {
                 Rc::into_raw(window.0.clone()) as *const c_void,
             );
 
-            if let Some(title) = options.title.as_ref() {
-                native_window.setTitle_(NSString::alloc(nil).init_str(title));
+            if let Some(titlebar) = options.titlebar {
+                if let Some(title) = titlebar.title {
+                    native_window.setTitle_(NSString::alloc(nil).init_str(title));
+                }
+                if titlebar.appears_transparent {
+                    native_window.setTitlebarAppearsTransparent_(YES);
+                }
             }
-            if options.titlebar_appears_transparent {
-                native_window.setTitlebarAppearsTransparent_(YES);
-            }
+
             native_window.setAcceptsMouseMovedEvents_(YES);
 
             native_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);

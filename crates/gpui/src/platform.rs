@@ -136,8 +136,13 @@ pub trait WindowContext {
 #[derive(Debug)]
 pub struct WindowOptions<'a> {
     pub bounds: WindowBounds,
+    pub titlebar: Option<TitlebarOptions<'a>>,
+}
+
+#[derive(Debug)]
+pub struct TitlebarOptions<'a> {
     pub title: Option<&'a str>,
-    pub titlebar_appears_transparent: bool,
+    pub appears_transparent: bool,
     pub traffic_light_position: Option<Vector2F>,
 }
 
@@ -246,9 +251,11 @@ impl<'a> Default for WindowOptions<'a> {
     fn default() -> Self {
         Self {
             bounds: WindowBounds::Maximized,
-            title: Default::default(),
-            titlebar_appears_transparent: Default::default(),
-            traffic_light_position: Default::default(),
+            titlebar: Some(TitlebarOptions {
+                title: Default::default(),
+                appears_transparent: Default::default(),
+                traffic_light_position: Default::default(),
+            }),
         }
     }
 }

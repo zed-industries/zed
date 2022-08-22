@@ -20,7 +20,7 @@ use gpui::{
     geometry::vector::vec2f,
     impl_actions,
     platform::{WindowBounds, WindowOptions},
-    AssetSource, AsyncAppContext, ViewContext,
+    AssetSource, AsyncAppContext, TitlebarOptions, ViewContext,
 };
 use language::Rope;
 pub use lsp;
@@ -330,9 +330,11 @@ pub fn initialize_workspace(
 pub fn build_window_options() -> WindowOptions<'static> {
     WindowOptions {
         bounds: WindowBounds::Maximized,
-        title: None,
-        titlebar_appears_transparent: true,
-        traffic_light_position: Some(vec2f(8., 8.)),
+        titlebar: Some(TitlebarOptions {
+            title: None,
+            appears_transparent: true,
+            traffic_light_position: Some(vec2f(8., 8.)),
+        }),
     }
 }
 
