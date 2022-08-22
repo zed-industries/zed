@@ -2071,11 +2071,11 @@ impl Workspace {
         }
     }
 
-    fn render_disconnected_overlay(&self, cx: &AppContext) -> Option<ElementBox> {
+    fn render_disconnected_overlay(&self, cx: &mut RenderContext<Workspace>) -> Option<ElementBox> {
         if self.project.read(cx).is_read_only() {
-            let theme = &cx.global::<Settings>().theme;
             Some(
-                EventHandler::new(
+                MouseEventHandler::new::<Workspace, _, _>(0, cx, |_, cx| {
+                    let theme = &cx.global::<Settings>().theme;
                     Label::new(
                         "Your connection to the remote project has been lost.".to_string(),
                         theme.workspace.disconnected_overlay.text.clone(),
@@ -2083,9 +2083,9 @@ impl Workspace {
                     .aligned()
                     .contained()
                     .with_style(theme.workspace.disconnected_overlay.container)
-                    .boxed(),
-                )
-                .capture_all::<Self>(0)
+                    .boxed()
+                })
+                .capture_all()
                 .boxed(),
             )
         } else {

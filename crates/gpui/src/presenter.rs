@@ -79,7 +79,6 @@ impl Presenter {
             self.rendered_views.remove(view_id);
         }
         for view_id in &invalidation.updated {
-            dbg!(view_id);
             self.rendered_views.insert(
                 *view_id,
                 cx.render_view(RenderParams {
@@ -152,7 +151,6 @@ impl Presenter {
 
             if cx.window_is_active(self.window_id) {
                 if let Some(event) = self.last_mouse_moved_event.clone() {
-                    println!("Redispatching mouse moved");
                     self.dispatch_event(event, true, cx);
                 }
             }

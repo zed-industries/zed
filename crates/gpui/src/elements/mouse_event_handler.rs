@@ -44,6 +44,11 @@ impl MouseEventHandler {
         self
     }
 
+    pub fn capture_all(mut self) -> Self {
+        self.handlers = HandlerSet::capture_all();
+        self
+    }
+
     pub fn on_move(
         mut self,
         handler: impl Fn(MoveRegionEvent, &mut EventContext) + 'static,

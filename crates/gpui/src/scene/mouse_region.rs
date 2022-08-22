@@ -46,7 +46,7 @@ impl MouseRegion {
             view_id,
             discriminant,
             bounds,
-            handlers: HandlerSet::handle_all(),
+            handlers: HandlerSet::capture_all(),
         }
     }
 
@@ -129,7 +129,7 @@ pub struct HandlerSet {
 }
 
 impl HandlerSet {
-    pub fn handle_all() -> Self {
+    pub fn capture_all() -> Self {
         #[allow(clippy::type_complexity)]
         let mut set: HashMap<
             (Discriminant<MouseRegionEvent>, Option<MouseButton>),
