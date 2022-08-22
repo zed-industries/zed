@@ -20,7 +20,6 @@ pub use keymap_file::{keymap_file_json_schema, KeymapFileContent};
 
 #[derive(Clone)]
 pub struct Settings {
-    pub experiments: FeatureFlags,
     pub projects_online_by_default: bool,
     pub buffer_font_family: FamilyId,
     pub default_buffer_font_size: f32,
@@ -37,11 +36,6 @@ pub struct Settings {
     pub language_overrides: HashMap<Arc<str>, EditorSettings>,
     pub lsp: HashMap<Arc<str>, LspSettings>,
     pub theme: Arc<Theme>,
-}
-
-#[derive(Copy, Clone, Debug, Default, Deserialize, JsonSchema)]
-pub struct FeatureFlags {
-    pub modal_terminal: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
@@ -146,8 +140,6 @@ pub enum WorkingDirectory {
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct SettingsFileContent {
     #[serde(default)]
-    pub experiments: Option<FeatureFlags>,
-    #[serde(default)]
     pub projects_online_by_default: Option<bool>,
     #[serde(default)]
     pub buffer_font_family: Option<String>,
@@ -197,7 +189,6 @@ impl Settings {
         .unwrap();
 
         Self {
-            experiments: FeatureFlags::default(),
             buffer_font_family: font_cache
                 .load_family(&[defaults.buffer_font_family.as_ref().unwrap()])
                 .unwrap(),
@@ -256,7 +247,7 @@ impl Settings {
         );
         merge(&mut self.vim_mode, data.vim_mode);
         merge(&mut self.autosave, data.autosave);
-        merge(&mut self.experiments, data.experiments);
+
         // Ensure terminal font is loaded, so we can request it in terminal_element layout
         if let Some(terminal_font) = &data.terminal.font_family {
             font_cache.load_family(&[terminal_font]).log_err();
@@ -317,7 +308,6 @@ impl Settings {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &gpui::AppContext) -> Settings {
         Settings {
-            experiments: FeatureFlags::default(),
             buffer_font_family: cx.font_cache().load_family(&["Monaco"]).unwrap(),
             buffer_font_size: 14.,
             default_buffer_font_size: 14.,
