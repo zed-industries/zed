@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use client::http::HttpClient;
 use futures::StreamExt;
 pub use language::*;
-use lsp::CompletionItemKind;
+use lsp::{CompletionItemKind, SymbolKind};
 use smol::fs::{self, File};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::ResultExt;
@@ -139,7 +139,8 @@ impl LspAdapter for ElixirLspAdapter {
                 });
             }
             Some((
-                CompletionItemKind::MODULE
+                CompletionItemKind::CLASS
+                | CompletionItemKind::MODULE
                 | CompletionItemKind::INTERFACE
                 | CompletionItemKind::STRUCT,
                 _,
@@ -161,5 +162,34 @@ impl LspAdapter for ElixirLspAdapter {
         }
 
         None
+    }
+
+    async fn label_for_symbol(
+        &self,
+        name: &str,
+        kind: SymbolKind,
+        language: &Language,
+    ) -> Option<CodeLabel> {
+        let (text, filter_range, display_range) = match kind {
+            SymbolKind::METHOD | SymbolKind::FUNCTION => {
+                let text = format!("def {}", name);
+                let filter_range = 4..4 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            SymbolKind::CLASS | SymbolKind::MODULE | SymbolKind::INTERFACE | SymbolKind::STRUCT => {
+                let text = format!("defmodule {}", name);
+                let filter_range = 10..10 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            _ => return None,
+        };
+
+        Some(CodeLabel {
+            runs: language.highlight_text(&text.as_str().into(), display_range.clone()),
+            text: text[display_range].to_string(),
+            filter_range,
+        })
     }
 }
