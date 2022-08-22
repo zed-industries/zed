@@ -1,0 +1,9 @@
+[
+    {
+        "context": "ModalTerminal",
+        "bindings": {
+            "ctrl-cmd-space": "terminal::ShowCharacterPalette",
+            "shift-escape": "terminal::DeployModal"
+        }
+    }
+]

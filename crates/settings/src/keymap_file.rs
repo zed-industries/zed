@@ -1,4 +1,4 @@
-use crate::parse_json_with_comments;
+use crate::{parse_json_with_comments, Settings};
 use anyhow::{Context, Result};
 use assets::Assets;
 use collections::BTreeMap;
@@ -10,6 +10,7 @@ use schemars::{
 };
 use serde::Deserialize;
 use serde_json::{value::RawValue, Value};
+use util::ResultExt;
 
 #[derive(Deserialize, Default, Clone, JsonSchema)]
 #[serde(transparent)]
@@ -41,7 +42,9 @@ struct ActionWithData(Box<str>, Box<RawValue>);
 
 impl KeymapFileContent {
     pub fn load_defaults(cx: &mut MutableAppContext) {
-        for path in ["keymaps/default.json", "keymaps/vim.json"] {
+        let mut paths = vec!["keymaps/default.json", "keymaps/vim.json"];
+        paths.extend(cx.global::<Settings>().experiments.keymap_files());
+        for path in paths {
             Self::load(path, cx).unwrap();
         }
     }
@@ -56,26 +59,27 @@ impl KeymapFileContent {
         for KeymapBlock { context, bindings } in self.0 {
             let bindings = bindings
                 .into_iter()
-                .map(|(keystroke, action)| {
+                .filter_map(|(keystroke, action)| {
                     let action = action.0.get();
 
                     // This is a workaround for a limitation in serde: serde-rs/json#497
                     // We want to deserialize the action data as a `RawValue` so that we can
                     // deserialize the action itself dynamically directly from the JSON
                     // string. But `RawValue` currently does not work inside of an untagged enum.
-                    let action = if action.starts_with('[') {
-                        let ActionWithData(name, data) = serde_json::from_str(action)?;
+                    if action.starts_with('[') {
+                        let ActionWithData(name, data) = serde_json::from_str(action).log_err()?;
                         cx.deserialize_action(&name, Some(data.get()))
                     } else {
-                        let name = serde_json::from_str(action)?;
+                        let name = serde_json::from_str(action).log_err()?;
                         cx.deserialize_action(name, None)
                     }
                     .with_context(|| {
                         format!(
                             "invalid binding value for keystroke {keystroke}, context {context:?}"
                         )
-                    })?;
-                    Binding::load(&keystroke, action, context.as_deref())
+                    })
+                    .log_err()
+                    .map(|action| Binding::load(&keystroke, action, context.as_deref()))
                 })
                 .collect::<Result<Vec<_>>>()?;
 
