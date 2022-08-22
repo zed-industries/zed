@@ -7,7 +7,7 @@ use std::{
 };
 use sum_tree::{Bias, SeekTarget, SumTree};
 use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
-use tree_sitter::{Parser, Tree};
+use tree_sitter::{Node, Parser, Tree};
 
 thread_local! {
     static PARSER: RefCell<Parser> = RefCell::new(Parser::new());
@@ -15,7 +15,8 @@ thread_local! {
 
 #[derive(Default)]
 pub struct SyntaxMap {
-    version: clock::Global,
+    parsed_version: clock::Global,
+    interpolated_version: clock::Global,
     snapshot: SyntaxSnapshot,
     language_registry: Option<Arc<LanguageRegistry>>,
 }
@@ -40,14 +41,14 @@ struct SyntaxLayerSummary {
     last_layer_range: Range<Anchor>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct DepthAndRange(usize, Range<Anchor>);
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct DepthAndMaxPosition(usize, Anchor);
 
-#[derive(Debug)]
-struct DepthAndRangeOrMaxPosition(usize, Range<Anchor>, Anchor);
+#[derive(Clone, Debug)]
+struct DepthAndRangeOrMaxPosition(DepthAndRange, DepthAndMaxPosition);
 
 struct ReparseStep {
     depth: usize,
@@ -76,44 +77,29 @@ impl SyntaxMap {
     }
 
     pub fn interpolate(&mut self, text: &BufferSnapshot) {
-        self.snapshot.interpolate(&self.version, text);
-        self.version = text.version.clone();
+        self.snapshot.interpolate(&self.interpolated_version, text);
+        self.interpolated_version = text.version.clone();
     }
 
     pub fn reparse(&mut self, language: Arc<Language>, text: &BufferSnapshot) {
-        self.version = text.version.clone();
-        self.snapshot
-            .reparse(self.language_registry.clone(), language, text);
+        if !self.interpolated_version.observed_all(&text.version) {
+            self.interpolate(text);
+        }
+
+        self.snapshot.reparse(
+            &self.parsed_version,
+            text,
+            self.language_registry.clone(),
+            language,
+        );
+        self.parsed_version = text.version.clone();
     }
 }
 
-// Assumptions:
-// * The maximum depth is small (< 5)
-// * For a given depth, the number of layers that touch a given range
-//   is small (usually only 1)
-
-//                                  |change|
-// 0 (............................................................)
-// 1  (...............................................)
-// 1                         (................)
-// 1                                                    (.......)
-// 2      (....)
-// 2       (....)
-// 2              (.......)
-// 2                        (...)
-// 2                               (.........)
-// 2                                           (...)
-// 3       (.)
-// 3              (.)
-// 3                  (..)
-// 3                               (..)
-// 3                                   (..)
-// 3                                       (.)
-
 impl SyntaxSnapshot {
-    pub fn interpolate(&mut self, current_version: &clock::Global, text: &BufferSnapshot) {
+    pub fn interpolate(&mut self, from_version: &clock::Global, text: &BufferSnapshot) {
         let edits = text
-            .edits_since::<(usize, Point)>(&current_version)
+            .edits_since::<(usize, Point)>(&from_version)
             .collect::<Vec<_>>();
         if edits.is_empty() {
             return;
@@ -152,16 +138,9 @@ impl SyntaxSnapshot {
                 } else {
                     break;
                 };
-                if first_edit.new.start.0 > layer_range.end.0 {
-                    layers.push_tree(
-                        cursor.slice(
-                            &DepthAndMaxPosition(depth, text.anchor_before(first_edit.new.start.0)),
-                            Bias::Left,
-                            text,
-                        ),
-                        text,
-                    );
-                    continue;
+                let target = DepthAndMaxPosition(depth, text.anchor_before(first_edit.new.start.0));
+                if target.cmp(&cursor.start(), text).is_gt() {
+                    layers.push_tree(cursor.slice(&target, Bias::Left, text), text);
                 }
 
                 // Preserve any layers at this depth that follow the last edit.
@@ -226,10 +205,17 @@ impl SyntaxSnapshot {
 
     pub fn reparse(
         &mut self,
+        from_version: &clock::Global,
+        text: &BufferSnapshot,
         registry: Option<Arc<LanguageRegistry>>,
         language: Arc<Language>,
-        text: &BufferSnapshot,
     ) {
+        let edits = text.edits_since::<usize>(from_version).collect::<Vec<_>>();
+        if edits.is_empty() {
+            return;
+        }
+
+        let max_depth = self.layers.summary().max_depth;
         let mut cursor = self.layers.cursor::<SyntaxLayerSummary>();
         cursor.next(&text);
         let mut layers = SumTree::new();
@@ -248,44 +234,55 @@ impl SyntaxSnapshot {
             let (depth, range) = if let Some(step) = &step {
                 (step.depth, step.range.clone())
             } else {
-                (cursor.start().max_depth, Anchor::MAX..Anchor::MAX)
+                (max_depth + 1, Anchor::MAX..Anchor::MAX)
             };
 
             let target = DepthAndRange(depth, range.clone());
-            if target.cmp(cursor.start(), &text).is_gt() {
-                let change_start_anchor = changed_regions
-                    .first()
-                    .map_or(Anchor::MAX, |region| region.range.start);
-                let seek_target =
-                    DepthAndRangeOrMaxPosition(depth, range.clone(), change_start_anchor);
-                let slice = cursor.slice(&seek_target, Bias::Left, text);
-                layers.push_tree(slice, &text);
+            let mut done = cursor.item().is_none();
+            while !done && target.cmp(cursor.start(), &text).is_gt() {
+                let bounded_target = DepthAndRangeOrMaxPosition(
+                    target.clone(),
+                    changed_regions
+                        .first()
+                        .map_or(DepthAndMaxPosition(usize::MAX, Anchor::MAX), |region| {
+                            DepthAndMaxPosition(region.depth, region.range.start)
+                        }),
+                );
+                if bounded_target.cmp(&cursor.start(), &text).is_gt() {
+                    let slice = cursor.slice(&bounded_target, Bias::Left, text);
+                    layers.push_tree(slice, &text);
+                }
 
-                while let Some(layer) = cursor.item() {
-                    if target.cmp(&cursor.end(text), text).is_le() {
+                while target.cmp(&cursor.end(text), text).is_gt() {
+                    let layer = if let Some(layer) = cursor.item() {
+                        layer
+                    } else {
                         break;
-                    }
+                    };
+
                     if layer_is_changed(layer, text, &changed_regions) {
-                        let region = ChangedRegion {
+                        ChangedRegion {
                             depth: depth + 1,
                             range: layer.range.clone(),
-                        };
-                        if let Err(i) =
-                            changed_regions.binary_search_by(|probe| probe.cmp(&region, text))
-                        {
-                            changed_regions.insert(i, region);
                         }
+                        .insert(text, &mut changed_regions);
                     } else {
                         layers.push(layer.clone(), text);
                     }
-
                     cursor.next(text);
                 }
 
+                done = true;
                 changed_regions.retain(|region| {
-                    region.depth > depth
+                    if region.depth > depth
                         || (region.depth == depth
                             && region.range.end.cmp(&range.start, text).is_gt())
+                    {
+                        true
+                    } else {
+                        done = false;
+                        false
+                    }
                 });
             }
 
@@ -332,15 +329,19 @@ impl SyntaxSnapshot {
                     Some(old_layer.tree.clone()),
                     ranges,
                 );
-
-                changed_ranges = old_layer
-                    .tree
-                    .changed_ranges(&tree)
-                    .map(|r| r.start_byte..r.end_byte)
-                    .collect();
+                changed_ranges = join_ranges(
+                    edits
+                        .iter()
+                        .map(|e| e.new.clone())
+                        .filter(|range| range.start < end_byte && range.end > start_byte),
+                    old_layer
+                        .tree
+                        .changed_ranges(&tree)
+                        .map(|r| start_byte + r.start_byte..start_byte + r.end_byte),
+                );
             } else {
                 tree = parse_text(grammar, text.as_rope(), None, ranges);
-                changed_ranges = vec![0..end_byte - start_byte];
+                changed_ranges = vec![start_byte..end_byte];
             }
 
             layers.push(
@@ -358,27 +359,19 @@ impl SyntaxSnapshot {
                 changed_ranges.is_empty(),
             ) {
                 let depth = depth + 1;
-
                 for range in &changed_ranges {
-                    let region = ChangedRegion {
+                    ChangedRegion {
                         depth,
                         range: text.anchor_before(range.start)..text.anchor_after(range.end),
-                    };
-                    if let Err(i) =
-                        changed_regions.binary_search_by(|probe| probe.cmp(&region, text))
-                    {
-                        changed_regions.insert(i, region);
                     }
+                    .insert(text, &mut changed_regions);
                 }
-
                 get_injections(
                     config,
                     text,
-                    &tree,
+                    tree.root_node_with_offset(start_byte, start_point),
                     registry,
                     depth,
-                    start_byte,
-                    Point::from_ts_point(start_point),
                     &changed_ranges,
                     &mut queue,
                 );
@@ -389,17 +382,16 @@ impl SyntaxSnapshot {
         self.layers = layers;
     }
 
-    pub fn layers(&self, buffer: &BufferSnapshot) -> Vec<(&Grammar, &Tree, (usize, Point))> {
+    pub fn layers(&self, buffer: &BufferSnapshot) -> Vec<(&Grammar, Node)> {
         self.layers
             .iter()
             .filter_map(|layer| {
                 if let Some(grammar) = &layer.language.grammar {
                     Some((
                         grammar.as_ref(),
-                        &layer.tree,
-                        (
+                        layer.tree.root_node_with_offset(
                             layer.range.start.to_offset(buffer),
-                            layer.range.start.to_point(buffer),
+                            layer.range.start.to_point(buffer).to_ts_point(),
                         ),
                     ))
                 } else {
@@ -413,7 +405,7 @@ impl SyntaxSnapshot {
         &self,
         range: Range<T>,
         buffer: &BufferSnapshot,
-    ) -> Vec<(&Grammar, &Tree, (usize, Point))> {
+    ) -> Vec<(&Grammar, Node)> {
         let start = buffer.anchor_before(range.start.to_offset(buffer));
         let end = buffer.anchor_after(range.end.to_offset(buffer));
 
@@ -429,10 +421,9 @@ impl SyntaxSnapshot {
             if let Some(grammar) = &layer.language.grammar {
                 result.push((
                     grammar.as_ref(),
-                    &layer.tree,
-                    (
+                    layer.tree.root_node_with_offset(
                         layer.range.start.to_offset(buffer),
-                        layer.range.start.to_point(buffer),
+                        layer.range.start.to_point(buffer).to_ts_point(),
                     ),
                 ));
             }
@@ -441,6 +432,38 @@ impl SyntaxSnapshot {
 
         result
     }
+}
+
+fn join_ranges(
+    a: impl Iterator<Item = Range<usize>>,
+    b: impl Iterator<Item = Range<usize>>,
+) -> Vec<Range<usize>> {
+    let mut result = Vec::<Range<usize>>::new();
+    let mut a = a.peekable();
+    let mut b = b.peekable();
+    loop {
+        let range = match (a.peek(), b.peek()) {
+            (Some(range_a), Some(range_b)) => {
+                if range_a.start < range_b.start {
+                    a.next().unwrap()
+                } else {
+                    b.next().unwrap()
+                }
+            }
+            (None, Some(_)) => b.next().unwrap(),
+            (Some(_), None) => a.next().unwrap(),
+            (None, None) => break,
+        };
+
+        if let Some(last) = result.last_mut() {
+            if range.start <= last.end {
+                last.end = last.end.max(range.end);
+                continue;
+            }
+        }
+        result.push(range);
+    }
+    result
 }
 
 fn parse_text(
@@ -485,11 +508,9 @@ fn parse_text(
 fn get_injections(
     config: &InjectionConfig,
     text: &BufferSnapshot,
-    tree: &Tree,
+    node: Node,
     language_registry: &LanguageRegistry,
     depth: usize,
-    start_byte: usize,
-    start_point: Point,
     query_ranges: &[Range<usize>],
     queue: &mut BinaryHeap<ReparseStep>,
 ) -> bool {
@@ -498,21 +519,10 @@ fn get_injections(
     let mut prev_match = None;
     for query_range in query_ranges {
         query_cursor.set_byte_range(query_range.start..query_range.end);
-        for mat in query_cursor.matches(
-            &config.query,
-            tree.root_node(),
-            TextProvider(text.as_rope()),
-        ) {
+        for mat in query_cursor.matches(&config.query, node, TextProvider(text.as_rope())) {
             let content_ranges = mat
                 .nodes_for_capture_index(config.content_capture_ix)
-                .map(|node| tree_sitter::Range {
-                    start_byte: start_byte + node.start_byte(),
-                    end_byte: start_byte + node.end_byte(),
-                    start_point: (start_point + Point::from_ts_point(node.start_position()))
-                        .to_ts_point(),
-                    end_point: (start_point + Point::from_ts_point(node.end_position()))
-                        .to_ts_point(),
-                })
+                .map(|node| node.range())
                 .collect::<Vec<_>>();
             if content_ranges.is_empty() {
                 continue;
@@ -534,12 +544,7 @@ fn get_injections(
                 .or_else(|| {
                     let ix = config.language_capture_ix?;
                     let node = mat.nodes_for_capture_index(ix).next()?;
-                    Some(Cow::Owned(
-                        text.text_for_range(
-                            start_byte + node.start_byte()..start_byte + node.end_byte(),
-                        )
-                        .collect(),
-                    ))
+                    Some(Cow::Owned(text.text_for_range(node.byte_range()).collect()))
                 });
 
             if let Some(language_name) = language_name {
@@ -566,9 +571,10 @@ fn layer_is_changed(
     changed_regions: &[ChangedRegion],
 ) -> bool {
     changed_regions.iter().any(|region| {
+        let same_depth = region.depth == layer.depth;
         let is_before_layer = region.range.end.cmp(&layer.range.start, text).is_le();
         let is_after_layer = region.range.start.cmp(&layer.range.end, text).is_ge();
-        !is_before_layer && !is_after_layer
+        same_depth && !is_before_layer && !is_after_layer
     })
 }
 
@@ -613,6 +619,12 @@ impl ReparseStep {
 }
 
 impl ChangedRegion {
+    fn insert(self, text: &BufferSnapshot, set: &mut Vec<Self>) {
+        if let Err(ix) = set.binary_search_by(|probe| probe.cmp(&self, text)) {
+            set.insert(ix, self);
+        }
+    }
+
     fn cmp(&self, other: &Self, buffer: &BufferSnapshot) -> Ordering {
         let range_a = &self.range;
         let range_b = &other.range;
@@ -676,25 +688,11 @@ impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary> for DepthAndMaxP
 
 impl<'a> SeekTarget<'a, SyntaxLayerSummary, SyntaxLayerSummary> for DepthAndRangeOrMaxPosition {
     fn cmp(&self, cursor_location: &SyntaxLayerSummary, buffer: &BufferSnapshot) -> Ordering {
-        let cmp = Ord::cmp(&self.0, &cursor_location.max_depth);
-        if cmp.is_ne() {
-            return cmp;
+        if self.1.cmp(cursor_location, buffer).is_le() {
+            return Ordering::Less;
+        } else {
+            self.0.cmp(cursor_location, buffer)
         }
-
-        let cmp = self.2.cmp(&cursor_location.range.end, buffer);
-        if cmp.is_gt() {
-            return Ordering::Greater;
-        }
-
-        self.1
-            .start
-            .cmp(&cursor_location.last_layer_range.start, buffer)
-            .then_with(|| {
-                cursor_location
-                    .last_layer_range
-                    .end
-                    .cmp(&self.1.end, buffer)
-            })
     }
 }
 
@@ -827,37 +825,22 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_syntax_map_edits() {
-        let registry = Arc::new(LanguageRegistry::test());
-        let language = Arc::new(rust_lang());
-        let mut syntax_map = SyntaxMap::new();
-        syntax_map.set_language_registry(registry.clone());
-        registry.add(language.clone());
-
-        let mut buffer = Buffer::new(0, 0, "".into());
-        syntax_map.reparse(language.clone(), &buffer);
-
-        edit_buffer_n(
-            &mut buffer,
-            &[
-                "«fn a() { dbg }»",
-                "fn a() { dbg«!» }",
-                "fn a() { dbg!«()» }",
-                "fn a() { dbg!(«b») }",
-                "fn a() { dbg!(b«.») }",
-                "fn a() { dbg!(b.«c») }",
-                "fn a() { dbg!(b.c«()») }",
-                "fn a() { dbg!(b.c(«vec»)) }",
-                "fn a() { dbg!(b.c(vec«!»)) }",
-                "fn a() { dbg!(b.c(vec!«[]»)) }",
-                "fn a() { dbg!(b.c(vec![«d»])) }",
-                "fn a() { dbg!(b.c(vec![d«.»])) }",
-                "fn a() { dbg!(b.c(vec![d.«e»])) }",
-            ],
-        );
-
-        syntax_map.interpolate(&buffer);
-        syntax_map.reparse(language.clone(), &buffer);
+    fn test_typing_multiple_new_injections() {
+        let (buffer, syntax_map) = test_edit_sequence(&[
+            "fn a() { dbg }",
+            "fn a() { dbg«!» }",
+            "fn a() { dbg!«()» }",
+            "fn a() { dbg!(«b») }",
+            "fn a() { dbg!(b«.») }",
+            "fn a() { dbg!(b.«c») }",
+            "fn a() { dbg!(b.c«()») }",
+            "fn a() { dbg!(b.c(«vec»)) }",
+            "fn a() { dbg!(b.c(vec«!»)) }",
+            "fn a() { dbg!(b.c(vec!«[]»)) }",
+            "fn a() { dbg!(b.c(vec![«d»])) }",
+            "fn a() { dbg!(b.c(vec![d«.»])) }",
+            "fn a() { dbg!(b.c(vec![d.«e»])) }",
+        ]);
 
         assert_node_ranges(
             &syntax_map,
@@ -865,6 +848,163 @@ mod tests {
             "(field_identifier) @_",
             "fn a() { dbg!(b.«c»(vec![d.«e»])) }",
         );
+    }
+
+    #[gpui::test]
+    fn test_pasting_new_injection_line_between_others() {
+        let (buffer, syntax_map) = test_edit_sequence(&[
+            "
+                fn a() {
+                    b!(B {});
+                    c!(C {});
+                    d!(D {});
+                    e!(E {});
+                    f!(F {});
+                }
+            ",
+            "
+                fn a() {
+                    b!(B {});
+                    c!(C {});
+                    «g!(G {});
+                    »d!(D {});
+                    e!(E {});
+                    f!(F {});
+                }
+            ",
+        ]);
+
+        assert_node_ranges(
+            &syntax_map,
+            &buffer,
+            "(struct_expression) @_",
+            "
+            fn a() {
+                b!(«B {}»);
+                c!(«C {}»);
+                g!(«G {}»);
+                d!(«D {}»);
+                e!(«E {}»);
+                f!(«F {}»);
+            }
+            ",
+        );
+    }
+
+    #[gpui::test]
+    fn test_joining_injections_with_child_injections() {
+        let (buffer, syntax_map) = test_edit_sequence(&[
+            "
+                fn a() {
+                    b!(
+                        c![one.two.three],
+                        d![four.five.six],
+                    );
+                    e!(
+                        f![seven.eight],
+                    );
+                }
+            ",
+            "
+                fn a() {
+                    b!(
+                        c![one.two.three],
+                        d![four.five.six],
+                    ˇ    f![seven.eight],
+                    );
+                }
+            ",
+        ]);
+
+        assert_node_ranges(
+            &syntax_map,
+            &buffer,
+            "(field_identifier) @_",
+            "
+            fn a() {
+                b!(
+                    c![one.«two».«three»],
+                    d![four.«five».«six»],
+                    f![seven.«eight»],
+                );
+            }
+            ",
+        );
+    }
+
+    #[gpui::test]
+    fn test_editing_edges_of_injection() {
+        test_edit_sequence(&[
+            "
+                fn a() {
+                    b!(c!())
+                }
+            ",
+            "
+                fn a() {
+                    «d»!(c!())
+                }
+            ",
+            "
+                fn a() {
+                    «e»d!(c!())
+                }
+            ",
+            "
+                fn a() {
+                    ed!«[»c!()«]»
+                }
+            ",
+        ]);
+    }
+
+    fn test_edit_sequence(steps: &[&str]) -> (Buffer, SyntaxMap) {
+        let registry = Arc::new(LanguageRegistry::test());
+        let language = Arc::new(rust_lang());
+        registry.add(language.clone());
+        let mut buffer = Buffer::new(0, 0, Default::default());
+
+        let mut mutated_syntax_map = SyntaxMap::new();
+        mutated_syntax_map.set_language_registry(registry.clone());
+        mutated_syntax_map.reparse(language.clone(), &buffer);
+
+        for (i, marked_string) in steps.into_iter().enumerate() {
+            edit_buffer(&mut buffer, &marked_string.unindent());
+
+            // Reparse the syntax map
+            mutated_syntax_map.interpolate(&buffer);
+            mutated_syntax_map.reparse(language.clone(), &buffer);
+
+            // Create a second syntax map from scratch
+            let mut reference_syntax_map = SyntaxMap::new();
+            reference_syntax_map.set_language_registry(registry.clone());
+            reference_syntax_map.reparse(language.clone(), &buffer);
+
+            // Compare the mutated syntax map to the new syntax map
+            let mutated_layers = mutated_syntax_map.layers(&buffer);
+            let reference_layers = reference_syntax_map.layers(&buffer);
+            assert_eq!(
+                mutated_layers.len(),
+                reference_layers.len(),
+                "wrong number of layers at step {i}"
+            );
+            for (edited_layer, reference_layer) in
+                mutated_layers.into_iter().zip(reference_layers.into_iter())
+            {
+                assert_eq!(
+                    edited_layer.1.to_sexp(),
+                    reference_layer.1.to_sexp(),
+                    "different layer at step {i}"
+                );
+                assert_eq!(
+                    edited_layer.1.range(),
+                    reference_layer.1.range(),
+                    "different layer at step {i}"
+                );
+            }
+        }
+
+        (buffer, mutated_syntax_map)
     }
 
     fn rust_lang() -> Language {
@@ -903,10 +1043,10 @@ mod tests {
             expected_layers.len(),
             "wrong number of layers"
         );
-        for (i, ((_, tree, _), expected_s_exp)) in
+        for (i, ((_, node), expected_s_exp)) in
             layers.iter().zip(expected_layers.iter()).enumerate()
         {
-            let actual_s_exp = tree.root_node().to_sexp();
+            let actual_s_exp = node.to_sexp();
             assert!(
                 string_contains_sequence(
                     &actual_s_exp,
@@ -925,50 +1065,54 @@ mod tests {
     ) {
         let mut cursor = QueryCursorHandle::new();
         let mut actual_ranges = Vec::<Range<usize>>::new();
-        for (grammar, tree, (start_byte, _)) in syntax_map.layers(buffer) {
+        for (grammar, node) in syntax_map.layers(buffer) {
             let query = Query::new(grammar.ts_language, query).unwrap();
-            for (mat, ix) in
-                cursor.captures(&query, tree.root_node(), TextProvider(buffer.as_rope()))
-            {
-                let range = mat.captures[ix].node.byte_range();
-                actual_ranges.push(start_byte + range.start..start_byte + range.end);
+            for (mat, ix) in cursor.captures(&query, node, TextProvider(buffer.as_rope())) {
+                actual_ranges.push(mat.captures[ix].node.byte_range());
             }
         }
 
-        let (text, expected_ranges) = marked_text_ranges(marked_string, false);
+        let (text, expected_ranges) = marked_text_ranges(&marked_string.unindent(), false);
         assert_eq!(text, buffer.text());
         assert_eq!(actual_ranges, expected_ranges);
-    }
-
-    fn edit_buffer_n(buffer: &mut Buffer, marked_strings: &[&str]) {
-        for marked_string in marked_strings {
-            edit_buffer(buffer, marked_string);
-        }
     }
 
     fn edit_buffer(buffer: &mut Buffer, marked_string: &str) {
         let old_text = buffer.text();
         let (new_text, mut ranges) = marked_text_ranges(marked_string, false);
-        assert_eq!(ranges.len(), 1);
+        if ranges.is_empty() {
+            ranges.push(0..new_text.len());
+        }
 
-        let inserted_range = ranges.pop().unwrap();
-        let inserted_text = new_text[inserted_range.clone()].to_string();
-        let deleted_len = (inserted_range.len() as isize + old_text.len() as isize
-            - new_text.len() as isize) as usize;
-        let deleted_range = inserted_range.start..inserted_range.start + deleted_len;
+        let mut delta = 0;
+        let mut edits = Vec::new();
+        let mut ranges = ranges.into_iter().peekable();
+
+        while let Some(inserted_range) = ranges.next() {
+            let old_start = (inserted_range.start as isize - delta) as usize;
+            let following_text = if let Some(next_range) = ranges.peek() {
+                &new_text[inserted_range.end..next_range.start]
+            } else {
+                &new_text[inserted_range.end..]
+            };
+
+            let inserted_len = inserted_range.len();
+            let deleted_len = old_text[old_start..]
+                .find(following_text)
+                .expect("invalid edit");
+
+            let old_range = old_start..old_start + deleted_len;
+            edits.push((old_range, new_text[inserted_range].to_string()));
+            delta += inserted_len as isize - deleted_len as isize;
+        }
 
         assert_eq!(
-            old_text[..deleted_range.start],
-            new_text[..inserted_range.start],
-            "invalid edit",
-        );
-        assert_eq!(
-            old_text[deleted_range.end..],
-            new_text[inserted_range.end..],
-            "invalid edit",
+            old_text.len() as isize + delta,
+            new_text.len() as isize,
+            "invalid edit"
         );
 
-        buffer.edit([(deleted_range, inserted_text)]);
+        buffer.edit(edits);
     }
 
     pub fn string_contains_sequence(text: &str, parts: &[&str]) -> bool {
