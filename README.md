@@ -42,6 +42,24 @@ script/zed_with_local_servers --release
 
 If you trigger `cmd-alt-i`, Zed will copy a JSON representation of the current window contents to the clipboard. You can paste this in a tool like [DJSON](https://chrome.google.com/webstore/detail/djson-json-viewer-formatt/chaeijjekipecdajnijdldjjipaegdjc?hl=en) to navigate the state of on-screen elements in a structured way.
 
+### Experimental Features
+
+A feature flag can be added to Zed by:
+
+* Adding a setting to the crates/settings/src/settings.rs FeatureFlags struct. Use a boolean for a simple on/off, or use a struct to experiment with different configuration options. 
+* If the feature needs keybindings, add a file to the `assets/keymaps/experiments/` folder, then update the `FeatureFlags::keymap_files()` method to check for your feature's flag and add it's keybindings's path to the method's list. 
+
+The Settings global should be initialized with the user's feature flags by the time the feature's `init(cx)` equivalent is called.
+
+To promote an experimental feature to a full feature: 
+
+* Take the features settings (if any) and add them under a new variable in the Settings struct. Don't forget to add a `merge()` call in `set_user_settings()`!
+* Take the feature's keybindings and add them to the default.json (or equivalent) file
+* Remove the file from the `FeatureFlags::keymap_files()` method
+* Remove the conditional in the feature's `init(cx)` equivalent.
+
+That's it 😸
+
 ### Wasm Plugins
 
 Zed has a Wasm-based plugin runtime which it currently uses to embed plugins. To compile Zed, you'll need to have the `wasm32-wasi` toolchain installed on your system. To install this toolchain, run:
