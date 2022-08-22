@@ -110,13 +110,17 @@ impl EditorElement {
         self.update_view(cx, |view, cx| view.snapshot(cx))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn mouse_down(
         &self,
-        position: Vector2F,
-        alt: bool,
-        shift: bool,
-        mut click_count: usize,
+        MouseButtonEvent {
+            position,
+            ctrl,
+            alt,
+            shift,
+            cmd,
+            mut click_count,
+            ..
+        }: MouseButtonEvent,
         layout: &mut LayoutState,
         paint: &mut PaintState,
         cx: &mut EventContext,
@@ -135,7 +139,7 @@ impl EditorElement {
                 position,
                 goal_column: target_position.column(),
             }));
-        } else if shift {
+        } else if shift && !ctrl && !alt && !cmd {
             cx.dispatch_action(Select(SelectPhase::Extend {
                 position,
                 click_count,
@@ -1576,14 +1580,12 @@ impl Element for EditorElement {
         }
 
         match event {
-            &Event::MouseDown(MouseButtonEvent {
-                button: MouseButton::Left,
-                position,
-                alt,
-                shift,
-                click_count,
-                ..
-            }) => self.mouse_down(position, alt, shift, click_count, layout, paint, cx),
+            &Event::MouseDown(
+                event @ MouseButtonEvent {
+                    button: MouseButton::Left,
+                    ..
+                },
+            ) => self.mouse_down(event, layout, paint, cx),
 
             &Event::MouseDown(MouseButtonEvent {
                 button: MouseButton::Right,
