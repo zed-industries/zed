@@ -146,7 +146,7 @@ pub enum WorkingDirectory {
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct SettingsFileContent {
     #[serde(default)]
-    pub nightly: Option<FeatureFlags>,
+    pub experiments: Option<FeatureFlags>,
     #[serde(default)]
     pub projects_online_by_default: Option<bool>,
     #[serde(default)]
@@ -256,7 +256,7 @@ impl Settings {
         );
         merge(&mut self.vim_mode, data.vim_mode);
         merge(&mut self.autosave, data.autosave);
-        merge(&mut self.experiments, data.nightly);
+        merge(&mut self.experiments, data.experiments);
         // Ensure terminal font is loaded, so we can request it in terminal_element layout
         if let Some(terminal_font) = &data.terminal.font_family {
             font_cache.load_family(&[terminal_font]).log_err();
