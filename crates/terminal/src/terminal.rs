@@ -28,7 +28,14 @@ use mappings::mouse::{
 };
 use modal::deploy_modal;
 use settings::{AlternateScroll, Settings, Shell, TerminalBlink};
-use std::{collections::HashMap, fmt::Display, ops::Sub, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, VecDeque},
+    fmt::Display,
+    ops::Sub,
+    path::PathBuf,
+    sync::Arc,
+    time::Duration,
+};
 use thiserror::Error;
 
 use gpui::{
@@ -361,7 +368,7 @@ impl TerminalBuilder {
         let terminal = Terminal {
             pty_tx: Notifier(pty_tx),
             term,
-            events: vec![],
+            events: VecDeque::with_capacity(10), //Should never get this high.
             title: shell_txt.clone(),
             default_title: shell_txt,
             last_mode: TermMode::NONE,
@@ -433,7 +440,7 @@ impl TerminalBuilder {
 pub struct Terminal {
     pty_tx: Notifier,
     term: Arc<FairMutex<Term<ZedListener>>>,
-    events: Vec<InternalEvent>,
+    events: VecDeque<InternalEvent>,
     default_title: String,
     title: String,
     cur_size: TerminalSize,
@@ -480,9 +487,9 @@ impl Terminal {
                 cx.emit(Event::Wakeup);
                 cx.notify();
             }
-            AlacTermEvent::ColorRequest(_, _) => {
-                self.events.push(InternalEvent::TermEvent(event.clone()))
-            }
+            AlacTermEvent::ColorRequest(_, _) => self
+                .events
+                .push_back(InternalEvent::TermEvent(event.clone())),
         }
     }
 
@@ -538,33 +545,35 @@ impl Terminal {
 
     fn begin_select(&mut self, sel: Selection) {
         self.current_selection = true;
-        self.events.push(InternalEvent::SetSelection(Some(sel)));
+        self.events
+            .push_back(InternalEvent::SetSelection(Some(sel)));
     }
 
     fn continue_selection(&mut self, location: Vector2F) {
-        self.events.push(InternalEvent::UpdateSelection(location))
+        self.events
+            .push_back(InternalEvent::UpdateSelection(location))
     }
 
     fn end_select(&mut self) {
         self.current_selection = false;
-        self.events.push(InternalEvent::SetSelection(None));
+        self.events.push_back(InternalEvent::SetSelection(None));
     }
 
     fn scroll(&mut self, scroll: Scroll) {
-        self.events.push(InternalEvent::Scroll(scroll));
+        self.events.push_back(InternalEvent::Scroll(scroll));
     }
 
     pub fn copy(&mut self) {
-        self.events.push(InternalEvent::Copy);
+        self.events.push_back(InternalEvent::Copy);
     }
 
     pub fn clear(&mut self) {
-        self.events.push(InternalEvent::Clear)
+        self.events.push_back(InternalEvent::Clear)
     }
 
     ///Resize the terminal and the PTY.
     pub fn set_size(&mut self, new_size: TerminalSize) {
-        self.events.push(InternalEvent::Resize(new_size))
+        self.events.push_back(InternalEvent::Resize(new_size))
     }
 
     ///Write the Input payload to the tty.
@@ -605,7 +614,8 @@ impl Terminal {
         let m = self.term.clone(); //Arc clone
         let mut term = m.lock();
 
-        while let Some(e) = self.events.pop() {
+        //Note that this ordering matters for
+        while let Some(e) = self.events.pop_front() {
             self.process_terminal_event(&e, &mut term, cx)
         }
 
@@ -670,23 +680,20 @@ impl Terminal {
         let position = e.position.sub(origin);
 
         if !self.mouse_mode(e.shift) {
-            //TODO: Check that dragging still works as expected
-            // let point = mouse_point(position, self.cur_size, self.last_offset);
-            // let side = mouse_side(position, self.cur_size);
-
             // Alacritty has the same ordering, of first updating the selection
             // then scrolling 15ms later
             self.continue_selection(position);
 
             // Doesn't make sense to scroll the alt screen
             if !self.last_mode.contains(TermMode::ALT_SCREEN) {
-                let top = bounds.origin_y() + self.cur_size.line_height;
-                let bottom = bounds.lower_left().y() - self.cur_size.line_height;
+                //TODO: Why do these need to be doubled?
+                let top = bounds.origin_y() + (self.cur_size.line_height * 2.);
+                let bottom = bounds.lower_left().y() - (self.cur_size.line_height * 2.);
 
                 let scroll_delta = if e.position.y() < top {
-                    top - e.position.y()
+                    (top - e.position.y()).powf(1.1)
                 } else if e.position.y() > bottom {
-                    -(e.position.y() - bottom)
+                    -((e.position.y() - bottom).powf(1.1))
                 } else {
                     return; //Nothing to do
                 };
