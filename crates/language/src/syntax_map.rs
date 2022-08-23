@@ -106,96 +106,102 @@ impl SyntaxSnapshot {
         }
 
         let mut layers = SumTree::new();
-        let max_depth = self.layers.summary().max_depth;
+        let mut edits_for_depth = &edits[..];
         let mut cursor = self.layers.cursor::<SyntaxLayerSummary>();
-        cursor.next(&text);
+        cursor.next(text);
 
-        for depth in 0..=max_depth {
-            let mut edits = &edits[..];
-            if cursor.start().max_depth < depth {
+        'outer: loop {
+            let depth = cursor.end(text).max_depth;
+
+            // Preserve any layers at this depth that precede the first edit.
+            if let Some(first_edit) = edits_for_depth.first() {
+                let target = DepthAndMaxPosition(depth, text.anchor_before(first_edit.new.start.0));
+                if target.cmp(&cursor.start(), text).is_gt() {
+                    let slice = cursor.slice(&target, Bias::Left, text);
+                    layers.push_tree(slice, text);
+                }
+            }
+            // If this layer follows all of the edits, then preserve it and any
+            // subsequent layers at this same depth.
+            else {
                 layers.push_tree(
                     cursor.slice(
-                        &DepthAndRange(depth, Anchor::MIN..Anchor::MAX),
+                        &DepthAndRange(depth + 1, Anchor::MIN..Anchor::MAX),
                         Bias::Left,
                         text,
                     ),
                     text,
                 );
-            }
+                edits_for_depth = &edits[..];
+                continue;
+            };
 
-            while let Some(layer) = cursor.item() {
-                let mut endpoints = text.summaries_for_anchors::<(usize, Point), _>([
-                    &layer.range.start,
-                    &layer.range.end,
-                ]);
-                let layer_range = endpoints.next().unwrap()..endpoints.next().unwrap();
-                let start_byte = layer_range.start.0;
-                let start_point = layer_range.start.1;
+            let layer = if let Some(layer) = cursor.item() {
+                layer
+            } else {
+                break;
+            };
 
-                // Preserve any layers at this depth that precede the first edit.
-                let first_edit = if let Some(edit) = edits.first() {
-                    edit
-                } else {
-                    break;
-                };
-                let target = DepthAndMaxPosition(depth, text.anchor_before(first_edit.new.start.0));
-                if target.cmp(&cursor.start(), text).is_gt() {
-                    layers.push_tree(cursor.slice(&target, Bias::Left, text), text);
-                }
+            let mut endpoints = text
+                .summaries_for_anchors::<(usize, Point), _>([&layer.range.start, &layer.range.end]);
+            let layer_range = endpoints.next().unwrap()..endpoints.next().unwrap();
+            let start_byte = layer_range.start.0;
+            let start_point = layer_range.start.1;
+            let end_byte = layer_range.end.0;
 
-                // Preserve any layers at this depth that follow the last edit.
-                let last_edit = edits.last().unwrap();
-                if last_edit.new.end.0 < layer_range.start.0 {
-                    break;
-                }
-
-                let mut layer = layer.clone();
-                for (i, edit) in edits.iter().enumerate().rev() {
-                    // Ignore any edits that start after the end of this layer.
-                    if edit.new.start.0 > layer_range.end.0 {
-                        continue;
-                    }
-
-                    // Ignore edits that end before the start of this layer, and don't consider them
-                    // for any subsequent layers at this same depth.
-                    if edit.new.end.0 <= start_byte {
-                        edits = &edits[i + 1..];
-                        break;
-                    }
-
-                    // Apply any edits that intersect this layer to the layer's syntax tree.
-                    let tree_edit = if edit.new.start.0 >= start_byte {
-                        tree_sitter::InputEdit {
-                            start_byte: edit.new.start.0 - start_byte,
-                            old_end_byte: edit.new.start.0 - start_byte
-                                + (edit.old.end.0 - edit.old.start.0),
-                            new_end_byte: edit.new.end.0 - start_byte,
-                            start_position: (edit.new.start.1 - start_point).to_ts_point(),
-                            old_end_position: (edit.new.start.1 - start_point
-                                + (edit.old.end.1 - edit.old.start.1))
-                                .to_ts_point(),
-                            new_end_position: (edit.new.end.1 - start_point).to_ts_point(),
-                        }
+            // Ignore edits that end before the start of this layer, and don't consider them
+            // for any subsequent layers at this same depth.
+            loop {
+                if let Some(edit) = edits_for_depth.first() {
+                    if edit.new.end.0 < start_byte {
+                        edits_for_depth = &edits_for_depth[1..];
                     } else {
-                        tree_sitter::InputEdit {
-                            start_byte: 0,
-                            old_end_byte: edit.new.end.0 - start_byte,
-                            new_end_byte: 0,
-                            start_position: Default::default(),
-                            old_end_position: (edit.new.end.1 - start_point).to_ts_point(),
-                            new_end_position: Default::default(),
-                        }
-                    };
-
-                    layer.tree.edit(&tree_edit);
-                    if edit.new.start.0 < start_byte {
                         break;
                     }
+                } else {
+                    continue 'outer;
+                }
+            }
+
+            let mut layer = layer.clone();
+            for edit in edits_for_depth {
+                // Ignore any edits that follow this layer.
+                if edit.new.start.0 > end_byte {
+                    break;
                 }
 
-                layers.push(layer, text);
-                cursor.next(text);
+                // Apply any edits that intersect this layer to the layer's syntax tree.
+                let tree_edit = if edit.new.start.0 >= start_byte {
+                    tree_sitter::InputEdit {
+                        start_byte: edit.new.start.0 - start_byte,
+                        old_end_byte: edit.new.start.0 - start_byte
+                            + (edit.old.end.0 - edit.old.start.0),
+                        new_end_byte: edit.new.end.0 - start_byte,
+                        start_position: (edit.new.start.1 - start_point).to_ts_point(),
+                        old_end_position: (edit.new.start.1 - start_point
+                            + (edit.old.end.1 - edit.old.start.1))
+                            .to_ts_point(),
+                        new_end_position: (edit.new.end.1 - start_point).to_ts_point(),
+                    }
+                } else {
+                    tree_sitter::InputEdit {
+                        start_byte: 0,
+                        old_end_byte: edit.new.end.0 - start_byte,
+                        new_end_byte: 0,
+                        start_position: Default::default(),
+                        old_end_position: (edit.new.end.1 - start_point).to_ts_point(),
+                        new_end_position: Default::default(),
+                    }
+                };
+
+                layer.tree.edit(&tree_edit);
+                if edit.new.start.0 < start_byte {
+                    break;
+                }
             }
+
+            layers.push(layer, text);
+            cursor.next(text);
         }
 
         layers.push_tree(cursor.suffix(&text), &text);
@@ -958,6 +964,31 @@ mod tests {
         ]);
     }
 
+    #[gpui::test]
+    fn test_edits_preceding_and_intersecting_injection() {
+        test_edit_sequence(&[
+            //
+            "const aaaaaaaaaaaa: B = c!(d(e.f));",
+            "const aˇa: B = c!(d(eˇ));",
+        ]);
+    }
+
+    #[gpui::test]
+    fn test_non_local_changes_create_injections() {
+        test_edit_sequence(&[
+            "
+                // a! {
+                    static B: C = d;
+                // }
+            ",
+            "
+                ˇa! {
+                    static B: C = d;
+                ˇ}
+            ",
+        ]);
+    }
+
     fn test_edit_sequence(steps: &[&str]) -> (Buffer, SyntaxMap) {
         let registry = Arc::new(LanguageRegistry::test());
         let language = Arc::new(rust_lang());
@@ -1084,12 +1115,20 @@ mod tests {
             ranges.push(0..new_text.len());
         }
 
+        assert_eq!(
+            old_text[..ranges[0].start],
+            new_text[..ranges[0].start],
+            "invalid edit"
+        );
+
         let mut delta = 0;
         let mut edits = Vec::new();
         let mut ranges = ranges.into_iter().peekable();
 
         while let Some(inserted_range) = ranges.next() {
-            let old_start = (inserted_range.start as isize - delta) as usize;
+            let new_start = inserted_range.start;
+            let old_start = (new_start as isize - delta) as usize;
+
             let following_text = if let Some(next_range) = ranges.peek() {
                 &new_text[inserted_range.end..next_range.start]
             } else {
