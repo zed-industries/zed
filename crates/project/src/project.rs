@@ -5693,11 +5693,15 @@ impl Project {
         if let Some(project_id) = self.remote_id() {
             let shared_buffers = self.shared_buffers.entry(peer_id).or_default();
             if shared_buffers.insert(buffer_id) {
-                let (state, mut operations) = buffer.read(cx).to_proto();
+                let buffer = buffer.read(cx);
+                let state = buffer.to_proto();
+                let operations = buffer.serialize_ops(cx);
                 let client = self.client.clone();
                 cx.background()
                     .spawn(
                         async move {
+                            let mut operations = operations.await;
+
                             client.send(proto::CreateBufferForPeer {
                                 project_id,
                                 peer_id: peer_id.0,

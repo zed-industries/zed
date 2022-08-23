@@ -45,7 +45,7 @@ use std::{
 };
 pub use subscription::*;
 pub use sum_tree::Bias;
-use sum_tree::{FilterCursor, SumTree};
+use sum_tree::{FilterCursor, SumTree, TreeMap};
 
 lazy_static! {
     static ref CARRIAGE_RETURNS_REGEX: Regex = Regex::new("\r\n|\r").unwrap();
@@ -109,7 +109,7 @@ impl HistoryEntry {
 struct History {
     // TODO: Turn this into a String or Rope, maybe.
     base_text: Arc<str>,
-    operations: HashMap<clock::Local, Operation>,
+    operations: TreeMap<clock::Local, Operation>,
     insertion_slices: HashMap<clock::Local, Vec<InsertionSlice>>,
     undo_stack: Vec<HistoryEntry>,
     redo_stack: Vec<HistoryEntry>,
@@ -1213,8 +1213,8 @@ impl Buffer {
         &self.history.base_text
     }
 
-    pub fn history(&self) -> impl Iterator<Item = &Operation> {
-        self.history.operations.values()
+    pub fn operations(&self) -> &TreeMap<clock::Local, Operation> {
+        &self.history.operations
     }
 
     pub fn undo_history(&self) -> impl Iterator<Item = (&clock::Local, &[(clock::Local, u32)])> {

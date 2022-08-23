@@ -371,40 +371,46 @@ impl Buffer {
         Ok(this)
     }
 
-    pub fn to_proto(&self) -> (proto::BufferState, Vec<proto::Operation>) {
-        let mut operations = self
-            .text
-            .history()
-            .map(|op| proto::serialize_operation(&Operation::Buffer(op.clone())))
-            .chain(self.deferred_ops.iter().map(proto::serialize_operation))
-            .chain(self.remote_selections.iter().map(|(_, set)| {
-                proto::serialize_operation(&Operation::UpdateSelections {
-                    selections: set.selections.clone(),
-                    lamport_timestamp: set.lamport_timestamp,
-                    line_mode: set.line_mode,
-                })
-            }))
-            .chain(Some(proto::serialize_operation(
-                &Operation::UpdateDiagnostics {
-                    diagnostics: self.diagnostics.iter().cloned().collect(),
-                    lamport_timestamp: self.diagnostics_timestamp,
-                },
-            )))
-            .chain(Some(proto::serialize_operation(
-                &Operation::UpdateCompletionTriggers {
-                    triggers: self.completion_triggers.clone(),
-                    lamport_timestamp: self.completion_triggers_timestamp,
-                },
-            )))
-            .collect::<Vec<_>>();
-        operations.sort_unstable_by_key(proto::lamport_timestamp_for_operation);
-        let state = proto::BufferState {
+    pub fn to_proto(&self) -> proto::BufferState {
+        proto::BufferState {
             id: self.remote_id(),
             file: self.file.as_ref().map(|f| f.to_proto()),
             base_text: self.base_text().to_string(),
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
-        };
-        (state, operations)
+        }
+    }
+
+    pub fn serialize_ops(&self, cx: &AppContext) -> Task<Vec<proto::Operation>> {
+        let mut operations = Vec::new();
+        operations.extend(self.deferred_ops.iter().map(proto::serialize_operation));
+        operations.extend(self.remote_selections.iter().map(|(_, set)| {
+            proto::serialize_operation(&Operation::UpdateSelections {
+                selections: set.selections.clone(),
+                lamport_timestamp: set.lamport_timestamp,
+                line_mode: set.line_mode,
+            })
+        }));
+        operations.push(proto::serialize_operation(&Operation::UpdateDiagnostics {
+            diagnostics: self.diagnostics.iter().cloned().collect(),
+            lamport_timestamp: self.diagnostics_timestamp,
+        }));
+        operations.push(proto::serialize_operation(
+            &Operation::UpdateCompletionTriggers {
+                triggers: self.completion_triggers.clone(),
+                lamport_timestamp: self.completion_triggers_timestamp,
+            },
+        ));
+
+        let text_operations = self.text.operations().clone();
+        cx.background().spawn(async move {
+            operations.extend(
+                text_operations
+                    .iter()
+                    .map(|(_, op)| proto::serialize_operation(&Operation::Buffer(op.clone()))),
+            );
+            operations.sort_unstable_by_key(proto::lamport_timestamp_for_operation);
+            operations
+        })
     }
 
     pub fn with_language(mut self, language: Arc<Language>, cx: &mut ModelContext<Self>) -> Self {
