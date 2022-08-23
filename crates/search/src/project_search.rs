@@ -450,7 +450,6 @@ impl ProjectSearchView {
         search.update(cx, |search, cx| {
             if let Some(query) = query {
                 search.set_query(&query, cx);
-                search.search(cx);
             }
             search.focus_query_editor(cx)
         });

@@ -262,6 +262,7 @@ pub struct AppState {
 
 pub trait Item: View {
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
+    fn workspace_deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
         false
     }
@@ -434,6 +435,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
         cx: &mut ViewContext<Workspace>,
     );
     fn deactivated(&self, cx: &mut MutableAppContext);
+    fn workspace_deactivated(&self, cx: &mut MutableAppContext);
     fn navigate(&self, data: Box<dyn Any>, cx: &mut MutableAppContext) -> bool;
     fn id(&self) -> usize;
     fn to_any(&self) -> AnyViewHandle;
@@ -628,6 +630,10 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
 
     fn deactivated(&self, cx: &mut MutableAppContext) {
         self.update(cx, |this, cx| this.deactivated(cx));
+    }
+
+    fn workspace_deactivated(&self, cx: &mut MutableAppContext) {
+        self.update(cx, |this, cx| this.workspace_deactivated(cx));
     }
 
     fn navigate(&self, data: Box<dyn Any>, cx: &mut MutableAppContext) -> bool {
@@ -1868,33 +1874,41 @@ impl Workspace {
         };
 
         ConstrainedBox::new(
-            Container::new(
-                Stack::new()
-                    .with_child(
-                        Label::new(worktree_root_names, theme.workspace.titlebar.title.clone())
-                            .aligned()
-                            .left()
-                            .boxed(),
-                    )
-                    .with_child(
-                        Align::new(
-                            Flex::row()
-                                .with_children(self.render_collaborators(theme, cx))
-                                .with_children(self.render_current_user(
-                                    self.user_store.read(cx).current_user().as_ref(),
-                                    replica_id,
-                                    theme,
-                                    cx,
-                                ))
-                                .with_children(self.render_connection_status(cx))
+            MouseEventHandler::new::<Self, _, _>(0, cx, |_, cx| {
+                Container::new(
+                    Stack::new()
+                        .with_child(
+                            Label::new(worktree_root_names, theme.workspace.titlebar.title.clone())
+                                .aligned()
+                                .left()
                                 .boxed(),
                         )
-                        .right()
+                        .with_child(
+                            Align::new(
+                                Flex::row()
+                                    .with_children(self.render_collaborators(theme, cx))
+                                    .with_children(self.render_current_user(
+                                        self.user_store.read(cx).current_user().as_ref(),
+                                        replica_id,
+                                        theme,
+                                        cx,
+                                    ))
+                                    .with_children(self.render_connection_status(cx))
+                                    .boxed(),
+                            )
+                            .right()
+                            .boxed(),
+                        )
                         .boxed(),
-                    )
-                    .boxed(),
-            )
-            .with_style(container_theme)
+                )
+                .with_style(container_theme)
+                .boxed()
+            })
+            .on_click(MouseButton::Left, |event, cx| {
+                if event.click_count == 2 {
+                    cx.zoom_window(cx.window_id());
+                }
+            })
             .boxed(),
         )
         .with_height(theme.workspace.titlebar.height)
@@ -2387,18 +2401,21 @@ impl Workspace {
         None
     }
 
-    fn on_window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if !active
-            && matches!(
-                cx.global::<Settings>().autosave,
-                Autosave::OnWindowChange | Autosave::OnFocusChange
-            )
-        {
+    pub fn on_window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {
+        if !active {
             for pane in &self.panes {
                 pane.update(cx, |pane, cx| {
-                    for item in pane.items() {
-                        Pane::autosave_item(item.as_ref(), self.project.clone(), cx)
-                            .detach_and_log_err(cx);
+                    if let Some(item) = pane.active_item() {
+                        item.workspace_deactivated(cx);
+                    }
+                    if matches!(
+                        cx.global::<Settings>().autosave,
+                        Autosave::OnWindowChange | Autosave::OnFocusChange
+                    ) {
+                        for item in pane.items() {
+                            Pane::autosave_item(item.as_ref(), self.project.clone(), cx)
+                                .detach_and_log_err(cx);
+                        }
                     }
                 });
             }

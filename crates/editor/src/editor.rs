@@ -42,7 +42,7 @@ use language::{
     DiagnosticSeverity, IndentKind, IndentSize, Language, OffsetRangeExt, OffsetUtf16, Point,
     Selection, SelectionGoal, TransactionId,
 };
-use link_go_to_definition::LinkGoToDefinitionState;
+use link_go_to_definition::{hide_link_definition, LinkGoToDefinitionState};
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
     ToPoint,
@@ -1789,15 +1789,15 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn are_selections_empty(&self) -> bool {
-        let pending_empty = match self.selections.pending_anchor() {
-            Some(Selection { start, end, .. }) => start == end,
-            None => true,
+    pub fn has_pending_nonempty_selection(&self) -> bool {
+        let pending_nonempty_selection = match self.selections.pending_anchor() {
+            Some(Selection { start, end, .. }) => start != end,
+            None => false,
         };
-        pending_empty && self.columnar_selection_tail.is_none()
+        pending_nonempty_selection || self.columnar_selection_tail.is_some()
     }
 
-    pub fn is_selecting(&self) -> bool {
+    pub fn has_pending_selection(&self) -> bool {
         self.selections.pending_anchor().is_some() || self.columnar_selection_tail.is_some()
     }
 
@@ -6010,6 +6010,7 @@ impl View for Editor {
                 if let Some(editor) = handle.upgrade(cx) {
                     editor.update(cx, |editor, cx| {
                         hide_hover(editor, cx);
+                        hide_link_definition(editor, cx);
                     })
                 }
             });

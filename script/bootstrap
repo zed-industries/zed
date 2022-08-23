@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+
+echo "installing foreman..."
+which foreman > /dev/null || brew install foreman
+
+echo "creating database..."
+script/sqlx database create
+
+echo "migrating database..."
+script/sqlx migrate run
+
+echo "seeding database..."
+script/seed-db

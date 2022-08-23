@@ -522,11 +522,10 @@ async fn location_links_from_proto(
     for link in proto_links {
         let origin = match link.origin {
             Some(origin) => {
-                let buffer = origin
-                    .buffer
-                    .ok_or_else(|| anyhow!("missing origin buffer"))?;
                 let buffer = project
-                    .update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
+                    .update(&mut cx, |this, cx| {
+                        this.wait_for_buffer(origin.buffer_id, cx)
+                    })
                     .await?;
                 let start = origin
                     .start
@@ -548,9 +547,10 @@ async fn location_links_from_proto(
         };
 
         let target = link.target.ok_or_else(|| anyhow!("missing target"))?;
-        let buffer = target.buffer.ok_or_else(|| anyhow!("missing buffer"))?;
         let buffer = project
-            .update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
+            .update(&mut cx, |this, cx| {
+                this.wait_for_buffer(target.buffer_id, cx)
+            })
             .await?;
         let start = target
             .start
@@ -664,19 +664,19 @@ fn location_links_to_proto(
         .into_iter()
         .map(|definition| {
             let origin = definition.origin.map(|origin| {
-                let buffer = project.serialize_buffer_for_peer(&origin.buffer, peer_id, cx);
+                let buffer_id = project.create_buffer_for_peer(&origin.buffer, peer_id, cx);
                 proto::Location {
                     start: Some(serialize_anchor(&origin.range.start)),
                     end: Some(serialize_anchor(&origin.range.end)),
-                    buffer: Some(buffer),
+                    buffer_id,
                 }
             });
 
-            let buffer = project.serialize_buffer_for_peer(&definition.target.buffer, peer_id, cx);
+            let buffer_id = project.create_buffer_for_peer(&definition.target.buffer, peer_id, cx);
             let target = proto::Location {
                 start: Some(serialize_anchor(&definition.target.range.start)),
                 end: Some(serialize_anchor(&definition.target.range.end)),
-                buffer: Some(buffer),
+                buffer_id,
             };
 
             proto::LocationLink {
@@ -792,11 +792,11 @@ impl LspCommand for GetReferences {
         let locations = response
             .into_iter()
             .map(|definition| {
-                let buffer = project.serialize_buffer_for_peer(&definition.buffer, peer_id, cx);
+                let buffer_id = project.create_buffer_for_peer(&definition.buffer, peer_id, cx);
                 proto::Location {
                     start: Some(serialize_anchor(&definition.range.start)),
                     end: Some(serialize_anchor(&definition.range.end)),
-                    buffer: Some(buffer),
+                    buffer_id,
                 }
             })
             .collect();
@@ -812,9 +812,10 @@ impl LspCommand for GetReferences {
     ) -> Result<Vec<Location>> {
         let mut locations = Vec::new();
         for location in message.locations {
-            let buffer = location.buffer.ok_or_else(|| anyhow!("missing buffer"))?;
             let target_buffer = project
-                .update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
+                .update(&mut cx, |this, cx| {
+                    this.wait_for_buffer(location.buffer_id, cx)
+                })
                 .await?;
             let start = location
                 .start

@@ -110,13 +110,17 @@ impl EditorElement {
         self.update_view(cx, |view, cx| view.snapshot(cx))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn mouse_down(
         &self,
-        position: Vector2F,
-        alt: bool,
-        shift: bool,
-        mut click_count: usize,
+        MouseButtonEvent {
+            position,
+            ctrl,
+            alt,
+            shift,
+            cmd,
+            mut click_count,
+            ..
+        }: MouseButtonEvent,
         layout: &mut LayoutState,
         paint: &mut PaintState,
         cx: &mut EventContext,
@@ -135,7 +139,7 @@ impl EditorElement {
                 position,
                 goal_column: target_position.column(),
             }));
-        } else if shift {
+        } else if shift && !ctrl && !alt && !cmd {
             cx.dispatch_action(Select(SelectPhase::Extend {
                 position,
                 click_count,
@@ -179,14 +183,14 @@ impl EditorElement {
         cx: &mut EventContext,
     ) -> bool {
         let view = self.view(cx.app.as_ref());
-        let end_selection = view.is_selecting();
-        let selections_empty = view.are_selections_empty();
+        let end_selection = view.has_pending_selection();
+        let pending_nonempty_selections = view.has_pending_nonempty_selection();
 
         if end_selection {
             cx.dispatch_action(Select(SelectPhase::End));
         }
 
-        if selections_empty && cmd && paint.text_bounds.contains_point(position) {
+        if !pending_nonempty_selections && cmd && paint.text_bounds.contains_point(position) {
             let (point, target_point) =
                 paint.point_for_position(&self.snapshot(cx), layout, position);
 
@@ -206,14 +210,38 @@ impl EditorElement {
 
     fn mouse_dragged(
         &self,
-        position: Vector2F,
+        MouseMovedEvent {
+            cmd,
+            shift,
+            position,
+            ..
+        }: MouseMovedEvent,
         layout: &mut LayoutState,
         paint: &mut PaintState,
         cx: &mut EventContext,
     ) -> bool {
-        let view = self.view(cx.app.as_ref());
+        // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
+        // Don't trigger hover popover if mouse is hovering over context menu
+        let point = if paint.text_bounds.contains_point(position) {
+            let (point, target_point) =
+                paint.point_for_position(&self.snapshot(cx), layout, position);
+            if point == target_point {
+                Some(point)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
-        if view.is_selecting() {
+        cx.dispatch_action(UpdateGoToDefinitionLink {
+            point,
+            cmd_held: cmd,
+            shift_held: shift,
+        });
+
+        let view = self.view(cx.app);
+        if view.has_pending_selection() {
             let rect = paint.text_bounds;
             let mut scroll_delta = Vector2F::zero();
 
@@ -250,8 +278,11 @@ impl EditorElement {
                 scroll_position: (snapshot.scroll_position() + scroll_delta)
                     .clamp(Vector2F::zero(), layout.scroll_max),
             }));
+
+            cx.dispatch_action(HoverAt { point });
             true
         } else {
+            cx.dispatch_action(HoverAt { point });
             false
         }
     }
@@ -1549,14 +1580,12 @@ impl Element for EditorElement {
         }
 
         match event {
-            &Event::MouseDown(MouseButtonEvent {
-                button: MouseButton::Left,
-                position,
-                alt,
-                shift,
-                click_count,
-                ..
-            }) => self.mouse_down(position, alt, shift, click_count, layout, paint, cx),
+            &Event::MouseDown(
+                event @ MouseButtonEvent {
+                    button: MouseButton::Left,
+                    ..
+                },
+            ) => self.mouse_down(event, layout, paint, cx),
 
             &Event::MouseDown(MouseButtonEvent {
                 button: MouseButton::Right,
@@ -1572,16 +1601,18 @@ impl Element for EditorElement {
                 ..
             }) => self.mouse_up(position, cmd, shift, layout, paint, cx),
 
-            Event::MouseMoved(MouseMovedEvent {
-                pressed_button: Some(MouseButton::Left),
-                position,
-                ..
-            }) => self.mouse_dragged(*position, layout, paint, cx),
+            Event::MouseMoved(
+                event @ MouseMovedEvent {
+                    pressed_button: Some(MouseButton::Left),
+                    ..
+                },
+            ) => self.mouse_dragged(*event, layout, paint, cx),
 
             Event::ScrollWheel(ScrollWheelEvent {
                 position,
                 delta,
                 precise,
+                ..
             }) => self.scroll(*position, *delta, *precise, layout, paint, cx),
 
             &Event::ModifiersChanged(event) => self.modifiers_changed(event, cx),
@@ -1753,6 +1784,7 @@ pub enum CursorShape {
     Bar,
     Block,
     Underscore,
+    Hollow,
 }
 
 impl Default for CursorShape {
@@ -1800,7 +1832,7 @@ impl Cursor {
     pub fn paint(&self, origin: Vector2F, cx: &mut PaintContext) {
         let bounds = match self.shape {
             CursorShape::Bar => RectF::new(self.origin + origin, vec2f(2.0, self.line_height)),
-            CursorShape::Block => RectF::new(
+            CursorShape::Block | CursorShape::Hollow => RectF::new(
                 self.origin + origin,
                 vec2f(self.block_width, self.line_height),
             ),
@@ -1810,16 +1842,30 @@ impl Cursor {
             ),
         };
 
-        cx.scene.push_quad(Quad {
-            bounds,
-            background: Some(self.color),
-            border: Border::new(0., Color::black()),
-            corner_radius: 0.,
-        });
+        //Draw background or border quad
+        if matches!(self.shape, CursorShape::Hollow) {
+            cx.scene.push_quad(Quad {
+                bounds,
+                background: None,
+                border: Border::all(1., self.color),
+                corner_radius: 0.,
+            });
+        } else {
+            cx.scene.push_quad(Quad {
+                bounds,
+                background: Some(self.color),
+                border: Default::default(),
+                corner_radius: 0.,
+            });
+        }
 
         if let Some(block_text) = &self.block_text {
             block_text.paint(self.origin + origin, bounds, self.line_height, cx);
         }
+    }
+
+    pub fn shape(&self) -> CursorShape {
+        self.shape
     }
 }
 

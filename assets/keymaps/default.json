@@ -28,6 +28,7 @@
             "cmd-h": "zed::Hide",
             "alt-cmd-h": "zed::HideOthers",
             "cmd-m": "zed::Minimize",
+            "ctrl-cmd-f": "zed::ToggleFullScreen",
             "cmd-n": "workspace::NewFile",
             "cmd-shift-n": "workspace::NewWindow",
             "cmd-o": "workspace::Open",
@@ -307,7 +308,7 @@
             "cmd-p": "file_finder::Toggle",
             "cmd-shift-p": "command_palette::Toggle",
             "cmd-shift-m": "diagnostics::Deploy",
-            "cmd-shift-e": "project_panel::Toggle",
+            "cmd-shift-e": "project_panel::ToggleFocus",
             "cmd-alt-s": "workspace::SaveAll"
         }
     },
@@ -392,7 +393,7 @@
     {
         "context": "Workspace",
         "bindings": {
-            "cmd-shift-c": "contacts_panel::Toggle",
+            "cmd-shift-c": "contacts_panel::ToggleFocus",
             "cmd-shift-b": "workspace::ToggleRightSidebar"
         }
     },
@@ -419,15 +420,10 @@
             "enter": "terminal::Enter",
             "ctrl-c": "terminal::CtrlC",
             // Useful terminal actions:
+            "ctrl-cmd-space": "terminal::ShowCharacterPalette",
             "cmd-c": "terminal::Copy",
             "cmd-v": "terminal::Paste",
             "cmd-k": "terminal::Clear"
-        }
-    },
-    {
-        "context": "ModalTerminal",
-        "bindings": {
-            "shift-escape": "terminal::DeployModal"
         }
     }
 ]

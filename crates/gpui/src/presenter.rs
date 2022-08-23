@@ -321,6 +321,7 @@ impl Presenter {
 
                     self.last_mouse_moved_event = Some(event.clone());
                 }
+
                 _ => {}
             }
 

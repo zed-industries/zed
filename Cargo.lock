@@ -75,7 +75,7 @@ version = "0.17.0-dev"
 source = "git+https://github.com/zed-industries/alacritty?rev=4e1f0c6177975a040b37f942dfb0e723e46a9971#4e1f0c6177975a040b37f942dfb0e723e46a9971"
 dependencies = [
  "alacritty_config_derive",
- "base64 0.13.0",
+ "base64",
  "bitflags",
  "dirs 4.0.0",
  "libc",
@@ -430,7 +430,7 @@ checksum = "c2cc6e8e8c993cb61a005fab8c1e5093a29199b7253b05a6883999312935c1ff"
 dependencies = [
  "async-trait",
  "axum-core",
- "base64 0.13.0",
+ "base64",
  "bitflags",
  "bytes",
  "futures-util",
@@ -506,12 +506,6 @@ dependencies = [
  "object",
  "rustc-demangle",
 ]
-
-[[package]]
-name = "base64"
-version = "0.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3441f0f7b02788e948e47f457ca01f1d7e6d92c693bc132c22b087d3141c03ff"
 
 [[package]]
 name = "base64"
@@ -984,7 +978,7 @@ dependencies = [
  "async-tungstenite",
  "axum",
  "axum-extra",
- "base64 0.13.0",
+ "base64",
  "clap 3.2.8",
  "client",
  "collections",
@@ -2295,7 +2289,7 @@ version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4cff78e5788be1e0ab65b04d306b2ed5092c815ec97ec70f4ebd5aee158aa55d"
 dependencies = [
- "base64 0.13.0",
+ "base64",
  "bitflags",
  "bytes",
  "headers-core",
@@ -2393,15 +2387,6 @@ dependencies = [
  "bytes",
  "fnv",
  "itoa",
-]
-
-[[package]]
-name = "http-auth-basic"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df69b6a68474b935f436fb9c84139f32de4f7759810090d1a3a5e592553f7ee0"
-dependencies = [
- "base64 0.12.3",
 ]
 
 [[package]]
@@ -3596,7 +3581,7 @@ version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd56cbd21fea48d0c440b41cd69c589faacade08c992d9a54e471b79d0fd13eb"
 dependencies = [
- "base64 0.13.0",
+ "base64",
  "once_cell",
  "regex",
 ]
@@ -3698,7 +3683,7 @@ version = "1.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd39bc6cdc9355ad1dc5eeedefee696bb35c34caf21768741e81826c0bbd7225"
 dependencies = [
- "base64 0.13.0",
+ "base64",
  "indexmap",
  "line-wrap",
  "serde",
@@ -4259,7 +4244,7 @@ version = "0.11.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b75aa69a3f06bbcc66ede33af2af253c6f7a86b1ca0033f60c580a27074fbf92"
 dependencies = [
- "base64 0.13.0",
+ "base64",
  "bytes",
  "encoding_rs",
  "futures-core",
@@ -4355,7 +4340,7 @@ dependencies = [
  "anyhow",
  "async-lock",
  "async-tungstenite",
- "base64 0.13.0",
+ "base64",
  "clock",
  "collections",
  "ctor",
@@ -4474,7 +4459,7 @@ version = "0.19.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35edb675feee39aec9c99fa5ff985081995a06d594114ae14cbe797ad7b7a6d7"
 dependencies = [
- "base64 0.13.0",
+ "base64",
  "log",
  "ring",
  "sct 0.6.1",
@@ -4499,7 +4484,7 @@ version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7522c9de787ff061458fe9a829dc790a3f5b22dc571694fc5883f448b94d9a9"
 dependencies = [
- "base64 0.13.0",
+ "base64",
 ]
 
 [[package]]
@@ -5111,7 +5096,7 @@ checksum = "6b69bf218860335ddda60d6ce85ee39f6cf6e5630e300e19757d1de15886a093"
 dependencies = [
  "ahash",
  "atoi",
- "base64 0.13.0",
+ "base64",
  "bitflags",
  "byteorder",
  "bytes",
@@ -5702,7 +5687,7 @@ checksum = "ff08f4649d10a70ffa3522ca559031285d8e421d727ac85c60825761818f5d0a"
 dependencies = [
  "async-stream",
  "async-trait",
- "base64 0.13.0",
+ "base64",
  "bytes",
  "futures-core",
  "futures-util",
@@ -5892,6 +5877,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-elixir"
+version = "0.19.0"
+source = "git+https://github.com/elixir-lang/tree-sitter-elixir?rev=05e3631c6a0701c1fa518b0fee7be95a2ceef5e2#05e3631c6a0701c1fa518b0fee7be95a2ceef5e2"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-go"
 version = "0.19.1"
 source = "git+https://github.com/tree-sitter/tree-sitter-go?rev=aeb2f33b366fd78d5789ff104956ce23508b85db#aeb2f33b366fd78d5789ff104956ce23508b85db"
@@ -5991,7 +5985,7 @@ version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ad3713a14ae247f22a728a0456a545df14acf3867f905adff84be99e23b3ad1"
 dependencies = [
- "base64 0.13.0",
+ "base64",
  "byteorder",
  "bytes",
  "http",
@@ -6010,7 +6004,7 @@ version = "0.17.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d96a2dea40e7570482f28eb57afbe42d97551905da6a9400acc5c328d24004f5"
 dependencies = [
- "base64 0.13.0",
+ "base64",
  "byteorder",
  "bytes",
  "http",
@@ -6150,7 +6144,7 @@ version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef8352f317d8f9a918ba5154797fb2a93e2730244041cf7d5be35148266adfa5"
 dependencies = [
- "base64 0.13.0",
+ "base64",
  "data-url",
  "flate2",
  "fontdb",
@@ -6501,7 +6495,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "743a9f142d93318262d7e1fe329394ff2e8f86a1df45ae5e4f0eedba215ca5ce"
 dependencies = [
  "anyhow",
- "base64 0.13.0",
+ "base64",
  "bincode",
  "directories-next",
  "file-per-thread-logger",
@@ -7005,7 +6999,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.50.0"
+version = "0.52.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -7037,7 +7031,6 @@ dependencies = [
  "fuzzy",
  "go_to_line",
  "gpui",
- "http-auth-basic",
  "ignore",
  "image",
  "indexmap",
@@ -7081,6 +7074,7 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-c",
  "tree-sitter-cpp",
+ "tree-sitter-elixir",
  "tree-sitter-go",
  "tree-sitter-json 0.20.0",
  "tree-sitter-markdown",

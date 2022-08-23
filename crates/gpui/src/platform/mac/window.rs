@@ -278,6 +278,18 @@ unsafe fn build_classes() {
 
 pub struct Window(Rc<RefCell<WindowState>>);
 
+///Used to track what the IME does when we send it a keystroke.
+///This is only used to handle the case where the IME mysteriously
+///swallows certain keys.
+///
+///Basically a direct copy of the approach that WezTerm uses in:
+///github.com/wez/wezterm : d5755f3e : window/src/os/macos/window.rs
+enum ImeState {
+    Continue,
+    Acted,
+    None,
+}
+
 struct WindowState {
     id: usize,
     native_window: id,
@@ -299,6 +311,10 @@ struct WindowState {
     layer: id,
     traffic_light_position: Option<Vector2F>,
     previous_modifiers_changed_event: Option<Event>,
+    //State tracking what the IME did after the last request
+    ime_state: ImeState,
+    //Retains the last IME Text
+    ime_text: Option<String>,
 }
 
 struct InsertText {
@@ -395,6 +411,8 @@ impl Window {
                 layer,
                 traffic_light_position: options.traffic_light_position,
                 previous_modifiers_changed_event: None,
+                ime_state: ImeState::None,
+                ime_text: None,
             })));
 
             (*native_window).set_ivar(
@@ -458,9 +476,15 @@ impl Window {
 
 impl Drop for Window {
     fn drop(&mut self) {
-        unsafe {
-            self.0.as_ref().borrow().native_window.close();
-        }
+        let this = self.0.borrow();
+        let window = this.native_window;
+        this.executor
+            .spawn(async move {
+                unsafe {
+                    window.close();
+                }
+            })
+            .detach();
     }
 }
 
@@ -597,6 +621,18 @@ impl platform::Window for Window {
             .spawn(async move {
                 unsafe {
                     window.zoom_(nil);
+                }
+            })
+            .detach();
+    }
+
+    fn toggle_full_screen(&self) {
+        let this = self.0.borrow();
+        let window = this.native_window;
+        this.executor
+            .spawn(async move {
+                unsafe {
+                    window.toggleFullScreen_(nil);
                 }
             })
             .detach();
@@ -746,6 +782,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     let mut window_state_borrow = window_state.as_ref().borrow_mut();
 
     let event = unsafe { Event::from_native(native_event, Some(window_state_borrow.size().y())) };
+
     if let Some(event) = event {
         if key_equivalent {
             window_state_borrow.performed_key_equivalent = true;
@@ -766,12 +803,12 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 } else {
                     window_state_borrow.last_fresh_keydown = Some(keydown);
                 }
-
                 function_is_held = event.keystroke.function;
                 Some((event, None))
             }
             _ => return NO,
         };
+
         drop(window_state_borrow);
 
         if !function_is_held {
@@ -783,7 +820,9 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
         let mut handled = false;
         let mut window_state_borrow = window_state.borrow_mut();
+        let ime_text = window_state_borrow.ime_text.clone();
         if let Some((event, insert_text)) = window_state_borrow.pending_key_down.take() {
+            let is_held = event.is_held;
             if let Some(mut callback) = window_state_borrow.event_callback.take() {
                 drop(window_state_borrow);
 
@@ -802,6 +841,18 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                             input_handler
                                 .replace_text_in_range(insert.replacement_range, &insert.text)
                         });
+                    } else if !is_composing && is_held {
+                        if let Some(last_insert_text) = ime_text {
+                            //MacOS IME is a bit funky, and even when you've told it there's nothing to
+                            //inter it will still swallow certain keys (e.g. 'f', 'j') and not others
+                            //(e.g. 'n'). This is a problem for certain kinds of views, like the terminal
+                            with_input_handler(this, |input_handler| {
+                                if input_handler.selected_text_range().is_none() {
+                                    handled = true;
+                                    input_handler.replace_text_in_range(None, &last_insert_text)
+                                }
+                            });
+                        }
                     }
                 }
 
@@ -1114,7 +1165,6 @@ extern "C" fn first_rect_for_character_range(
         let window = get_window_state(this).borrow().native_window;
         NSView::frame(window)
     };
-
     with_input_handler(this, |input_handler| {
         input_handler.rect_for_range(range.to_range()?)
     })
@@ -1152,27 +1202,25 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
             .unwrap();
         let replacement_range = replacement_range.to_range();
 
+        window_state.borrow_mut().ime_text = Some(text.to_string());
+        window_state.borrow_mut().ime_state = ImeState::Acted;
+
         let is_composing =
             with_input_handler(this, |input_handler| input_handler.marked_text_range())
                 .flatten()
                 .is_some();
 
-        match pending_key_down {
-            None | Some(_) if is_composing || text.chars().count() > 1 => {
-                with_input_handler(this, |input_handler| {
-                    input_handler.replace_text_in_range(replacement_range, text)
-                });
-            }
-
-            Some(mut pending_key_down) => {
-                pending_key_down.1 = Some(InsertText {
-                    replacement_range,
-                    text: text.to_string(),
-                });
-                window_state.borrow_mut().pending_key_down = Some(pending_key_down);
-            }
-
-            _ => unreachable!(),
+        if is_composing || text.chars().count() > 1 || pending_key_down.is_none() {
+            with_input_handler(this, |input_handler| {
+                input_handler.replace_text_in_range(replacement_range, text)
+            });
+        } else {
+            let mut pending_key_down = pending_key_down.unwrap();
+            pending_key_down.1 = Some(InsertText {
+                replacement_range,
+                text: text.to_string(),
+            });
+            window_state.borrow_mut().pending_key_down = Some(pending_key_down);
         }
     }
 }
@@ -1185,7 +1233,8 @@ extern "C" fn set_marked_text(
     replacement_range: NSRange,
 ) {
     unsafe {
-        get_window_state(this).borrow_mut().pending_key_down.take();
+        let window_state = get_window_state(this);
+        window_state.borrow_mut().pending_key_down.take();
 
         let is_attributed_string: BOOL =
             msg_send![text, isKindOfClass: [class!(NSAttributedString)]];
@@ -1200,6 +1249,9 @@ extern "C" fn set_marked_text(
             .to_str()
             .unwrap();
 
+        window_state.borrow_mut().ime_state = ImeState::Acted;
+        window_state.borrow_mut().ime_text = Some(text.to_string());
+
         with_input_handler(this, |input_handler| {
             input_handler.replace_and_mark_text_in_range(replacement_range, text, selected_range);
         });
@@ -1207,6 +1259,13 @@ extern "C" fn set_marked_text(
 }
 
 extern "C" fn unmark_text(this: &Object, _: Sel) {
+    unsafe {
+        let state = get_window_state(this);
+        let mut borrow = state.borrow_mut();
+        borrow.ime_state = ImeState::Acted;
+        borrow.ime_text.take();
+    }
+
     with_input_handler(this, |input_handler| input_handler.unmark_text());
 }
 
@@ -1233,7 +1292,14 @@ extern "C" fn attributed_substring_for_proposed_range(
     .unwrap_or(nil)
 }
 
-extern "C" fn do_command_by_selector(_: &Object, _: Sel, _: Sel) {}
+extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
+    unsafe {
+        let state = get_window_state(this);
+        let mut borrow = state.borrow_mut();
+        borrow.ime_state = ImeState::Continue;
+        borrow.ime_text.take();
+    }
+}
 
 async fn synthetic_drag(
     window_state: Weak<RefCell<WindowState>>,

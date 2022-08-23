@@ -148,6 +148,8 @@ impl Event {
                 })
             }
             NSEventType::NSScrollWheel => window_height.map(|window_height| {
+                let modifiers = native_event.modifierFlags();
+
                 Self::ScrollWheel(ScrollWheelEvent {
                     position: vec2f(
                         native_event.locationInWindow().x as f32,
@@ -158,6 +160,10 @@ impl Event {
                         native_event.scrollingDeltaY() as f32,
                     ),
                     precise: native_event.hasPreciseScrollingDeltas() == YES,
+                    ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
+                    alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
+                    shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
+                    cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
                 })
             }),
             NSEventType::NSLeftMouseDragged

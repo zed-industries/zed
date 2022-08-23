@@ -1,6 +1,7 @@
 use std::{any::TypeId, mem::Discriminant, rc::Rc};
 
 use collections::HashMap;
+
 use pathfinder_geometry::rect::RectF;
 
 use crate::{EventContext, MouseButton};
@@ -109,6 +110,14 @@ impl MouseRegion {
         handler: impl Fn(HoverRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_hover(handler);
+        self
+    }
+
+    pub fn on_move(
+        mut self,
+        handler: impl Fn(MoveRegionEvent, &mut EventContext) + 'static,
+    ) -> Self {
+        self.handlers = self.handlers.on_move(handler);
         self
     }
 }

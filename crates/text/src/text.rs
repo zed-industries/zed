@@ -512,7 +512,6 @@ pub struct EditOperation {
 pub struct UndoOperation {
     pub id: clock::Local,
     pub counts: HashMap<clock::Local, u32>,
-    pub transaction_version: clock::Global,
     pub version: clock::Global,
 }
 
@@ -1109,14 +1108,8 @@ impl Buffer {
                 let mut fragment = fragment.clone();
                 let fragment_was_visible = fragment.visible;
 
-                if fragment.was_visible(&undo.transaction_version, &self.undo_map)
-                    || undo
-                        .counts
-                        .contains_key(&fragment.insertion_timestamp.local())
-                {
-                    fragment.visible = fragment.is_visible(&self.undo_map);
-                    fragment.max_undos.observe(undo.id);
-                }
+                fragment.visible = fragment.is_visible(&self.undo_map);
+                fragment.max_undos.observe(undo.id);
 
                 let old_start = old_fragments.start().1;
                 let new_start = new_fragments.summary().text.visible;
@@ -1297,7 +1290,6 @@ impl Buffer {
             id: self.local_clock.tick(),
             version: self.version(),
             counts,
-            transaction_version: transaction.start,
         };
         self.apply_undo(&undo)?;
         let operation = Operation::Undo {

@@ -26,7 +26,7 @@ use std::{ops::DerefMut, sync::Arc};
 use theme::IconButton;
 use workspace::{sidebar::SidebarItem, JoinProject, ToggleProjectOnline, Workspace};
 
-actions!(contacts_panel, [Toggle]);
+actions!(contacts_panel, [ToggleFocus]);
 
 impl_actions!(
     contacts_panel,

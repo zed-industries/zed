@@ -1,5 +1,6 @@
 use crate::{
-    Anchor, Autoscroll, Editor, Event, ExcerptId, MultiBuffer, NavigationData, ToPoint as _,
+    link_go_to_definition::hide_link_definition, Anchor, Autoscroll, Editor, Event, ExcerptId,
+    MultiBuffer, NavigationData, ToPoint as _,
 };
 use anyhow::{anyhow, Result};
 use futures::FutureExt;
@@ -376,6 +377,11 @@ impl Item for Editor {
         self.push_to_nav_history(selection.head(), None, cx);
     }
 
+    fn workspace_deactivated(&mut self, cx: &mut ViewContext<Self>) {
+        hide_link_definition(self, cx);
+        self.link_go_to_definition_state.last_mouse_location = None;
+    }
+
     fn is_dirty(&self, cx: &AppContext) -> bool {
         self.buffer().read(cx).read(cx).is_dirty()
     }
@@ -397,7 +403,7 @@ impl Item for Editor {
         let buffers = buffer.read(cx).all_buffers();
         let mut timeout = cx.background().timer(FORMAT_TIMEOUT).fuse();
         let format = project.update(cx, |project, cx| project.format(buffers, true, cx));
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|_, mut cx| async move {
             let transaction = futures::select_biased! {
                 _ = timeout => {
                     log::warn!("timed out waiting for formatting");
@@ -406,9 +412,6 @@ impl Item for Editor {
                 transaction = format.log_err().fuse() => transaction,
             };
 
-            this.update(&mut cx, |editor, cx| {
-                editor.request_autoscroll(Autoscroll::Fit, cx)
-            });
             buffer
                 .update(&mut cx, |buffer, cx| {
                     if let Some(transaction) = transaction {

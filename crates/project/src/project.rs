@@ -112,7 +112,7 @@ pub struct Project {
     collaborators: HashMap<PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
     _subscriptions: Vec<gpui::Subscription>,
-    opened_buffer: (Rc<RefCell<watch::Sender<()>>>, watch::Receiver<()>),
+    opened_buffer: (watch::Sender<()>, watch::Receiver<()>),
     shared_buffers: HashMap<PeerId, HashSet<u64>>,
     #[allow(clippy::type_complexity)]
     loading_buffers: HashMap<
@@ -202,6 +202,7 @@ pub enum Event {
 pub enum LanguageServerState {
     Starting(Task<Option<Arc<LanguageServer>>>),
     Running {
+        language: Arc<Language>,
         adapter: Arc<CachedLspAdapter>,
         server: Arc<LanguageServer>,
     },
@@ -375,6 +376,7 @@ impl Project {
         client.add_model_message_handler(Self::handle_update_project);
         client.add_model_message_handler(Self::handle_unregister_project);
         client.add_model_message_handler(Self::handle_project_unshared);
+        client.add_model_message_handler(Self::handle_create_buffer_for_peer);
         client.add_model_message_handler(Self::handle_update_buffer_file);
         client.add_model_message_handler(Self::handle_update_buffer);
         client.add_model_message_handler(Self::handle_update_diagnostic_summary);
@@ -454,7 +456,6 @@ impl Project {
             let handle = cx.weak_handle();
             project_store.update(cx, |store, cx| store.add_project(handle, cx));
 
-            let (opened_buffer_tx, opened_buffer_rx) = watch::channel();
             Self {
                 worktrees: Default::default(),
                 collaborators: Default::default(),
@@ -472,7 +473,7 @@ impl Project {
                     _maintain_remote_id,
                     _maintain_online_status,
                 },
-                opened_buffer: (Rc::new(RefCell::new(opened_buffer_tx)), opened_buffer_rx),
+                opened_buffer: watch::channel(),
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![cx.observe_global::<Settings, _>(Self::on_settings_changed)],
                 _maintain_buffer_languages: Self::maintain_buffer_languages(&languages, cx),
@@ -540,7 +541,6 @@ impl Project {
             worktrees.push(worktree);
         }
 
-        let (opened_buffer_tx, opened_buffer_rx) = watch::channel();
         let this = cx.add_model(|cx: &mut ModelContext<Self>| {
             let handle = cx.weak_handle();
             project_store.update(cx, |store, cx| store.add_project(handle, cx));
@@ -548,7 +548,7 @@ impl Project {
             let mut this = Self {
                 worktrees: Vec::new(),
                 loading_buffers: Default::default(),
-                opened_buffer: (Rc::new(RefCell::new(opened_buffer_tx)), opened_buffer_rx),
+                opened_buffer: watch::channel(),
                 shared_buffers: Default::default(),
                 loading_local_worktrees: Default::default(),
                 active_entry: None,
@@ -1624,9 +1624,10 @@ impl Project {
                     path: path_string,
                 })
                 .await?;
-            let buffer = response.buffer.ok_or_else(|| anyhow!("missing buffer"))?;
-            this.update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
-                .await
+            this.update(&mut cx, |this, cx| {
+                this.wait_for_buffer(response.buffer_id, cx)
+            })
+            .await
         })
     }
 
@@ -1684,11 +1685,8 @@ impl Project {
                 .client
                 .request(proto::OpenBufferById { project_id, id });
             cx.spawn(|this, mut cx| async move {
-                let buffer = request
-                    .await?
-                    .buffer
-                    .ok_or_else(|| anyhow!("invalid buffer"))?;
-                this.update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
+                let buffer_id = request.await?.buffer_id;
+                this.update(&mut cx, |this, cx| this.wait_for_buffer(buffer_id, cx))
                     .await
             })
         } else {
@@ -1800,6 +1798,7 @@ impl Project {
         })
         .detach();
 
+        *self.opened_buffer.0.borrow_mut() = ();
         Ok(())
     }
 
@@ -1971,7 +1970,7 @@ impl Project {
                     uri: lsp::Url::from_file_path(abs_path).unwrap(),
                 };
 
-                for (_, server) in self.language_servers_for_worktree(worktree_id) {
+                for (_, _, server) in self.language_servers_for_worktree(worktree_id) {
                     server
                         .notify::<lsp::notification::DidSaveTextDocument>(
                             lsp::DidSaveTextDocumentParams {
@@ -2006,15 +2005,18 @@ impl Project {
     fn language_servers_for_worktree(
         &self,
         worktree_id: WorktreeId,
-    ) -> impl Iterator<Item = (&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> {
+    ) -> impl Iterator<Item = (&Arc<CachedLspAdapter>, &Arc<Language>, &Arc<LanguageServer>)> {
         self.language_server_ids
             .iter()
             .filter_map(move |((language_server_worktree_id, _), id)| {
                 if *language_server_worktree_id == worktree_id {
-                    if let Some(LanguageServerState::Running { adapter, server }) =
-                        self.language_servers.get(id)
+                    if let Some(LanguageServerState::Running {
+                        adapter,
+                        language,
+                        server,
+                    }) = self.language_servers.get(id)
                     {
-                        return Some((adapter, server));
+                        return Some((adapter, language, server));
                     }
                 }
                 None
@@ -2284,6 +2286,7 @@ impl Project {
                                 server_id,
                                 LanguageServerState::Running {
                                     adapter: adapter.clone(),
+                                    language,
                                     server: language_server.clone(),
                                 },
                             );
@@ -3316,10 +3319,14 @@ impl Project {
                     .worktree_for_id(worktree_id, cx)
                     .and_then(|worktree| worktree.read(cx).as_local())
                 {
-                    if let Some(LanguageServerState::Running { adapter, server }) =
-                        self.language_servers.get(server_id)
+                    if let Some(LanguageServerState::Running {
+                        adapter,
+                        language,
+                        server,
+                    }) = self.language_servers.get(server_id)
                     {
                         let adapter = adapter.clone();
+                        let language = language.clone();
                         let worktree_abs_path = worktree.abs_path().clone();
                         requests.push(
                             server
@@ -3333,6 +3340,7 @@ impl Project {
                                 .map(move |response| {
                                     (
                                         adapter,
+                                        language,
                                         worktree_id,
                                         worktree_abs_path,
                                         response.unwrap_or_default(),
@@ -3352,7 +3360,14 @@ impl Project {
                 };
                 let symbols = this.read_with(&cx, |this, cx| {
                     let mut symbols = Vec::new();
-                    for (adapter, source_worktree_id, worktree_abs_path, response) in responses {
+                    for (
+                        adapter,
+                        adapter_language,
+                        source_worktree_id,
+                        worktree_abs_path,
+                        response,
+                    ) in responses
+                    {
                         symbols.extend(response.into_iter().flatten().filter_map(|lsp_symbol| {
                             let abs_path = lsp_symbol.location.uri.to_file_path().ok()?;
                             let mut worktree_id = source_worktree_id;
@@ -3371,16 +3386,15 @@ impl Project {
                                 path: path.into(),
                             };
                             let signature = this.symbol_signature(&project_path);
-                            let language = this.languages.select_language(&project_path.path);
+                            let language = this
+                                .languages
+                                .select_language(&project_path.path)
+                                .unwrap_or(adapter_language.clone());
                             let language_server_name = adapter.name.clone();
                             Some(async move {
-                                let label = if let Some(language) = language {
-                                    language
-                                        .label_for_symbol(&lsp_symbol.name, lsp_symbol.kind)
-                                        .await
-                                } else {
-                                    None
-                                };
+                                let label = language
+                                    .label_for_symbol(&lsp_symbol.name, lsp_symbol.kind)
+                                    .await;
 
                                 Symbol {
                                     language_server_name,
@@ -3476,9 +3490,10 @@ impl Project {
             });
             cx.spawn(|this, mut cx| async move {
                 let response = request.await?;
-                let buffer = response.buffer.ok_or_else(|| anyhow!("invalid buffer"))?;
-                this.update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
-                    .await
+                this.update(&mut cx, |this, cx| {
+                    this.wait_for_buffer(response.buffer_id, cx)
+                })
+                .await
             })
         } else {
             Task::ready(Err(anyhow!("project does not have a remote id")))
@@ -4294,9 +4309,10 @@ impl Project {
                 let response = request.await?;
                 let mut result = HashMap::default();
                 for location in response.locations {
-                    let buffer = location.buffer.ok_or_else(|| anyhow!("missing buffer"))?;
                     let target_buffer = this
-                        .update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
+                        .update(&mut cx, |this, cx| {
+                            this.wait_for_buffer(location.buffer_id, cx)
+                        })
                         .await?;
                     let start = location
                         .start
@@ -5107,6 +5123,36 @@ impl Project {
         })
     }
 
+    async fn handle_create_buffer_for_peer(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::CreateBufferForPeer>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            let mut buffer = envelope
+                .payload
+                .buffer
+                .ok_or_else(|| anyhow!("invalid buffer"))?;
+            let mut buffer_file = None;
+            if let Some(file) = buffer.file.take() {
+                let worktree_id = WorktreeId::from_proto(file.worktree_id);
+                let worktree = this
+                    .worktree_for_id(worktree_id, cx)
+                    .ok_or_else(|| anyhow!("no worktree found for id {}", file.worktree_id))?;
+                buffer_file = Some(Arc::new(File::from_proto(file, worktree.clone(), cx)?)
+                    as Arc<dyn language::File>);
+            }
+
+            let buffer = cx.add_model(|cx| {
+                Buffer::from_proto(this.replica_id(), buffer, buffer_file, cx).unwrap()
+            });
+            this.register_buffer(&buffer, cx)?;
+
+            Ok(())
+        })
+    }
+
     async fn handle_update_buffer_file(
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<proto::UpdateBufferFile>,
@@ -5448,9 +5494,9 @@ impl Project {
                 for range in ranges {
                     let start = serialize_anchor(&range.start);
                     let end = serialize_anchor(&range.end);
-                    let buffer = this.serialize_buffer_for_peer(&buffer, peer_id, cx);
+                    let buffer_id = this.create_buffer_for_peer(&buffer, peer_id, cx);
                     locations.push(proto::Location {
-                        buffer: Some(buffer),
+                        buffer_id,
                         start: Some(start),
                         end: Some(end),
                     });
@@ -5487,9 +5533,9 @@ impl Project {
             .await?;
 
         Ok(proto::OpenBufferForSymbolResponse {
-            buffer: Some(this.update(&mut cx, |this, cx| {
-                this.serialize_buffer_for_peer(&buffer, peer_id, cx)
-            })),
+            buffer_id: this.update(&mut cx, |this, cx| {
+                this.create_buffer_for_peer(&buffer, peer_id, cx)
+            }),
         })
     }
 
@@ -5515,7 +5561,7 @@ impl Project {
             .await?;
         this.update(&mut cx, |this, cx| {
             Ok(proto::OpenBufferResponse {
-                buffer: Some(this.serialize_buffer_for_peer(&buffer, peer_id, cx)),
+                buffer_id: this.create_buffer_for_peer(&buffer, peer_id, cx),
             })
         })
     }
@@ -5541,7 +5587,7 @@ impl Project {
         let buffer = open_buffer.await?;
         this.update(&mut cx, |this, cx| {
             Ok(proto::OpenBufferResponse {
-                buffer: Some(this.serialize_buffer_for_peer(&buffer, peer_id, cx)),
+                buffer_id: this.create_buffer_for_peer(&buffer, peer_id, cx),
             })
         })
     }
@@ -5553,13 +5599,13 @@ impl Project {
         cx: &AppContext,
     ) -> proto::ProjectTransaction {
         let mut serialized_transaction = proto::ProjectTransaction {
-            buffers: Default::default(),
+            buffer_ids: Default::default(),
             transactions: Default::default(),
         };
         for (buffer, transaction) in project_transaction.0 {
             serialized_transaction
-                .buffers
-                .push(self.serialize_buffer_for_peer(&buffer, peer_id, cx));
+                .buffer_ids
+                .push(self.create_buffer_for_peer(&buffer, peer_id, cx));
             serialized_transaction
                 .transactions
                 .push(language::proto::serialize_transaction(&transaction));
@@ -5575,9 +5621,10 @@ impl Project {
     ) -> Task<Result<ProjectTransaction>> {
         cx.spawn(|this, mut cx| async move {
             let mut project_transaction = ProjectTransaction::default();
-            for (buffer, transaction) in message.buffers.into_iter().zip(message.transactions) {
+            for (buffer_id, transaction) in message.buffer_ids.into_iter().zip(message.transactions)
+            {
                 let buffer = this
-                    .update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
+                    .update(&mut cx, |this, cx| this.wait_for_buffer(buffer_id, cx))
                     .await?;
                 let transaction = language::proto::deserialize_transaction(transaction)?;
                 project_transaction.0.insert(buffer, transaction);
@@ -5601,81 +5648,51 @@ impl Project {
         })
     }
 
-    fn serialize_buffer_for_peer(
+    fn create_buffer_for_peer(
         &mut self,
         buffer: &ModelHandle<Buffer>,
         peer_id: PeerId,
         cx: &AppContext,
-    ) -> proto::Buffer {
+    ) -> u64 {
         let buffer_id = buffer.read(cx).remote_id();
-        let shared_buffers = self.shared_buffers.entry(peer_id).or_default();
-        if shared_buffers.insert(buffer_id) {
-            proto::Buffer {
-                variant: Some(proto::buffer::Variant::State(buffer.read(cx).to_proto())),
-            }
-        } else {
-            proto::Buffer {
-                variant: Some(proto::buffer::Variant::Id(buffer_id)),
+        if let Some(project_id) = self.remote_id() {
+            let shared_buffers = self.shared_buffers.entry(peer_id).or_default();
+            if shared_buffers.insert(buffer_id) {
+                self.client
+                    .send(proto::CreateBufferForPeer {
+                        project_id,
+                        peer_id: peer_id.0,
+                        buffer: Some(buffer.read(cx).to_proto()),
+                    })
+                    .log_err();
             }
         }
+
+        buffer_id
     }
 
-    fn deserialize_buffer(
-        &mut self,
-        buffer: proto::Buffer,
+    fn wait_for_buffer(
+        &self,
+        id: u64,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
-        let replica_id = self.replica_id();
-
-        let opened_buffer_tx = self.opened_buffer.0.clone();
         let mut opened_buffer_rx = self.opened_buffer.1.clone();
-        cx.spawn(|this, mut cx| async move {
-            match buffer.variant.ok_or_else(|| anyhow!("missing buffer"))? {
-                proto::buffer::Variant::Id(id) => {
-                    let buffer = loop {
-                        let buffer = this.read_with(&cx, |this, cx| {
-                            this.opened_buffers
-                                .get(&id)
-                                .and_then(|buffer| buffer.upgrade(cx))
-                        });
-                        if let Some(buffer) = buffer {
-                            break buffer;
-                        }
-                        opened_buffer_rx
-                            .next()
-                            .await
-                            .ok_or_else(|| anyhow!("project dropped while waiting for buffer"))?;
-                    };
-                    Ok(buffer)
+        cx.spawn(|this, cx| async move {
+            let buffer = loop {
+                let buffer = this.read_with(&cx, |this, cx| {
+                    this.opened_buffers
+                        .get(&id)
+                        .and_then(|buffer| buffer.upgrade(cx))
+                });
+                if let Some(buffer) = buffer {
+                    break buffer;
                 }
-                proto::buffer::Variant::State(mut buffer) => {
-                    let mut buffer_worktree = None;
-                    let mut buffer_file = None;
-                    if let Some(file) = buffer.file.take() {
-                        this.read_with(&cx, |this, cx| {
-                            let worktree_id = WorktreeId::from_proto(file.worktree_id);
-                            let worktree =
-                                this.worktree_for_id(worktree_id, cx).ok_or_else(|| {
-                                    anyhow!("no worktree found for id {}", file.worktree_id)
-                                })?;
-                            buffer_file =
-                                Some(Arc::new(File::from_proto(file, worktree.clone(), cx)?)
-                                    as Arc<dyn language::File>);
-                            buffer_worktree = Some(worktree);
-                            Ok::<_, anyhow::Error>(())
-                        })?;
-                    }
-
-                    let buffer = cx.add_model(|cx| {
-                        Buffer::from_proto(replica_id, buffer, buffer_file, cx).unwrap()
-                    });
-
-                    this.update(&mut cx, |this, cx| this.register_buffer(&buffer, cx))?;
-
-                    *opened_buffer_tx.borrow_mut().borrow_mut() = ();
-                    Ok(buffer)
-                }
-            }
+                opened_buffer_rx
+                    .next()
+                    .await
+                    .ok_or_else(|| anyhow!("project dropped while waiting for buffer"))?;
+            };
+            Ok(buffer)
         })
     }
 
@@ -5939,8 +5956,9 @@ impl Project {
             let key = (worktree_id, name);
 
             if let Some(server_id) = self.language_server_ids.get(&key) {
-                if let Some(LanguageServerState::Running { adapter, server }) =
-                    self.language_servers.get(server_id)
+                if let Some(LanguageServerState::Running {
+                    adapter, server, ..
+                }) = self.language_servers.get(server_id)
                 {
                     return Some((adapter, server));
                 }

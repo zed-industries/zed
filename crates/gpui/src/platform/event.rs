@@ -24,6 +24,10 @@ pub struct ScrollWheelEvent {
     pub position: Vector2F,
     pub delta: Vector2F,
     pub precise: bool,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub cmd: bool,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
@@ -64,7 +68,7 @@ impl Default for MouseButton {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct MouseButtonEvent {
     pub button: MouseButton,
     pub position: Vector2F,

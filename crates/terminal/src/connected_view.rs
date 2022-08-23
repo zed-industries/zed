@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use alacritty_terminal::term::TermMode;
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
@@ -9,9 +11,13 @@ use gpui::{
     AnyViewHandle, AppContext, Element, ElementBox, ModelHandle, MutableAppContext, View,
     ViewContext, ViewHandle,
 };
+use settings::{Settings, TerminalBlink};
+use smol::Timer;
 use workspace::pane;
 
 use crate::{connected_el::TerminalEl, Event, Terminal};
+
+const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
 ///Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
@@ -24,7 +30,17 @@ pub struct DeployContextMenu {
 
 actions!(
     terminal,
-    [Up, Down, CtrlC, Escape, Enter, Clear, Copy, Paste,]
+    [
+        Up,
+        Down,
+        CtrlC,
+        Escape,
+        Enter,
+        Clear,
+        Copy,
+        Paste,
+        ShowCharacterPalette,
+    ]
 );
 impl_internal_actions!(project_panel, [DeployContextMenu]);
 
@@ -40,6 +56,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ConnectedView::copy);
     cx.add_action(ConnectedView::paste);
     cx.add_action(ConnectedView::clear);
+    cx.add_action(ConnectedView::show_character_palette);
 }
 
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
@@ -51,6 +68,10 @@ pub struct ConnectedView {
     // Only for styling purposes. Doesn't effect behavior
     modal: bool,
     context_menu: ViewHandle<ContextMenu>,
+    blink_state: bool,
+    blinking_on: bool,
+    blinking_paused: bool,
+    blink_epoch: usize,
 }
 
 impl ConnectedView {
@@ -72,7 +93,7 @@ impl ConnectedView {
                 this.has_bell = true;
                 cx.emit(Event::Wakeup);
             }
-
+            Event::BlinkChanged => this.blinking_on = !this.blinking_on,
             _ => cx.emit(*event),
         })
         .detach();
@@ -83,6 +104,10 @@ impl ConnectedView {
             has_bell: false,
             modal,
             context_menu: cx.add_view(ContextMenu::new),
+            blink_state: true,
+            blinking_on: false,
+            blinking_paused: false,
+            blink_epoch: 0,
         }
     }
 
@@ -115,9 +140,107 @@ impl ConnectedView {
         cx.notify();
     }
 
+    fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
+        if !self
+            .terminal
+            .read(cx)
+            .last_mode
+            .contains(TermMode::ALT_SCREEN)
+        {
+            cx.show_character_palette();
+        } else {
+            self.terminal.update(cx, |term, _| {
+                term.try_keystroke(&Keystroke::parse("ctrl-cmd-space").unwrap())
+            });
+        }
+    }
+
     fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
         self.terminal.update(cx, |term, _| term.clear());
         cx.notify();
+    }
+
+    pub fn should_show_cursor(
+        &self,
+        focused: bool,
+        cx: &mut gpui::RenderContext<'_, Self>,
+    ) -> bool {
+        //Don't blink the cursor when not focused, blinking is disabled, or paused
+        if !focused
+            || !self.blinking_on
+            || self.blinking_paused
+            || self
+                .terminal
+                .read(cx)
+                .last_mode
+                .contains(TermMode::ALT_SCREEN)
+        {
+            return true;
+        }
+
+        let setting = {
+            let settings = cx.global::<Settings>();
+            settings
+                .terminal_overrides
+                .blinking
+                .clone()
+                .unwrap_or(TerminalBlink::TerminalControlled)
+        };
+
+        match setting {
+            //If the user requested to never blink, don't blink it.
+            TerminalBlink::Off => true,
+            //If the terminal is controlling it, check terminal mode
+            TerminalBlink::TerminalControlled | TerminalBlink::On => self.blink_state,
+        }
+    }
+
+    fn blink_cursors(&mut self, epoch: usize, cx: &mut ViewContext<Self>) {
+        if epoch == self.blink_epoch && !self.blinking_paused {
+            self.blink_state = !self.blink_state;
+            cx.notify();
+
+            let epoch = self.next_blink_epoch();
+            cx.spawn(|this, mut cx| {
+                let this = this.downgrade();
+                async move {
+                    Timer::after(CURSOR_BLINK_INTERVAL).await;
+                    if let Some(this) = this.upgrade(&cx) {
+                        this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx));
+                    }
+                }
+            })
+            .detach();
+        }
+    }
+
+    pub fn pause_cursor_blinking(&mut self, cx: &mut ViewContext<Self>) {
+        self.blink_state = true;
+        cx.notify();
+
+        let epoch = self.next_blink_epoch();
+        cx.spawn(|this, mut cx| {
+            let this = this.downgrade();
+            async move {
+                Timer::after(CURSOR_BLINK_INTERVAL).await;
+                if let Some(this) = this.upgrade(&cx) {
+                    this.update(&mut cx, |this, cx| this.resume_cursor_blinking(epoch, cx))
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn next_blink_epoch(&mut self) -> usize {
+        self.blink_epoch += 1;
+        self.blink_epoch
+    }
+
+    fn resume_cursor_blinking(&mut self, epoch: usize, cx: &mut ViewContext<Self>) {
+        if epoch == self.blink_epoch {
+            self.blinking_paused = false;
+            self.blink_cursors(epoch, cx);
+        }
     }
 
     ///Attempt to paste the clipboard into the terminal
@@ -128,48 +251,49 @@ impl ConnectedView {
     ///Attempt to paste the clipboard into the terminal
     fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
         if let Some(item) = cx.read_from_clipboard() {
-            self.terminal.read(cx).paste(item.text());
+            self.terminal
+                .update(cx, |terminal, _cx| terminal.paste(item.text()));
         }
     }
 
     ///Synthesize the keyboard event corresponding to 'up'
     fn up(&mut self, _: &Up, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("up").unwrap());
+        self.terminal.update(cx, |term, _| {
+            term.try_keystroke(&Keystroke::parse("up").unwrap())
+        });
     }
 
     ///Synthesize the keyboard event corresponding to 'down'
     fn down(&mut self, _: &Down, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("down").unwrap());
+        self.terminal.update(cx, |term, _| {
+            term.try_keystroke(&Keystroke::parse("down").unwrap())
+        });
     }
 
     ///Synthesize the keyboard event corresponding to 'ctrl-c'
     fn ctrl_c(&mut self, _: &CtrlC, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("ctrl-c").unwrap());
+        self.terminal.update(cx, |term, _| {
+            term.try_keystroke(&Keystroke::parse("ctrl-c").unwrap())
+        });
     }
 
     ///Synthesize the keyboard event corresponding to 'escape'
     fn escape(&mut self, _: &Escape, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("escape").unwrap());
+        self.terminal.update(cx, |term, _| {
+            term.try_keystroke(&Keystroke::parse("escape").unwrap())
+        });
     }
 
     ///Synthesize the keyboard event corresponding to 'enter'
     fn enter(&mut self, _: &Enter, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
-        self.terminal
-            .read(cx)
-            .try_keystroke(&Keystroke::parse("enter").unwrap());
+        self.terminal.update(cx, |term, _| {
+            term.try_keystroke(&Keystroke::parse("enter").unwrap())
+        });
     }
 }
 
@@ -181,20 +305,41 @@ impl View for ConnectedView {
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
         let terminal_handle = self.terminal.clone().downgrade();
 
+        let self_id = cx.view_id();
+        let focused = cx
+            .focused_view_id(cx.window_id())
+            .filter(|view_id| *view_id == self_id)
+            .is_some();
+
         Stack::new()
             .with_child(
-                TerminalEl::new(cx.handle(), terminal_handle, self.modal)
-                    .contained()
-                    .boxed(),
+                TerminalEl::new(
+                    cx.handle(),
+                    terminal_handle,
+                    self.modal,
+                    focused,
+                    self.should_show_cursor(focused, cx),
+                )
+                .contained()
+                .boxed(),
             )
             .with_child(ChildView::new(&self.context_menu).boxed())
             .boxed()
     }
 
-    fn on_focus_in(&mut self, _: AnyViewHandle, _cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         self.has_new_content = false;
+        self.terminal.read(cx).focus_in();
+        self.blink_cursors(self.blink_epoch, cx);
+        cx.notify();
     }
 
+    fn on_focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        self.terminal.read(cx).focus_out();
+        cx.notify();
+    }
+
+    //IME stuff
     fn selected_text_range(&self, cx: &AppContext) -> Option<std::ops::Range<usize>> {
         if self
             .terminal
@@ -214,14 +359,90 @@ impl View for ConnectedView {
         text: &str,
         cx: &mut ViewContext<Self>,
     ) {
-        self.terminal
-            .update(cx, |terminal, _| terminal.write_to_pty(text.into()));
+        self.terminal.update(cx, |terminal, _| {
+            terminal.input(text.into());
+        });
     }
 
-    fn keymap_context(&self, _: &gpui::AppContext) -> gpui::keymap::Context {
+    fn keymap_context(&self, cx: &gpui::AppContext) -> gpui::keymap::Context {
         let mut context = Self::default_keymap_context();
         if self.modal {
             context.set.insert("ModalTerminal".into());
+        }
+        let mode = self.terminal.read(cx).last_mode;
+        context.map.insert(
+            "screen".to_string(),
+            (if mode.contains(TermMode::ALT_SCREEN) {
+                "alt"
+            } else {
+                "normal"
+            })
+            .to_string(),
+        );
+
+        if mode.contains(TermMode::APP_CURSOR) {
+            context.set.insert("DECCKM".to_string());
+        }
+        if mode.contains(TermMode::APP_KEYPAD) {
+            context.set.insert("DECPAM".to_string());
+        }
+        //Note the ! here
+        if !mode.contains(TermMode::APP_KEYPAD) {
+            context.set.insert("DECPNM".to_string());
+        }
+        if mode.contains(TermMode::SHOW_CURSOR) {
+            context.set.insert("DECTCEM".to_string());
+        }
+        if mode.contains(TermMode::LINE_WRAP) {
+            context.set.insert("DECAWM".to_string());
+        }
+        if mode.contains(TermMode::ORIGIN) {
+            context.set.insert("DECOM".to_string());
+        }
+        if mode.contains(TermMode::INSERT) {
+            context.set.insert("IRM".to_string());
+        }
+        //LNM is apparently the name for this. https://vt100.net/docs/vt510-rm/LNM.html
+        if mode.contains(TermMode::LINE_FEED_NEW_LINE) {
+            context.set.insert("LNM".to_string());
+        }
+        if mode.contains(TermMode::FOCUS_IN_OUT) {
+            context.set.insert("report_focus".to_string());
+        }
+        if mode.contains(TermMode::ALTERNATE_SCROLL) {
+            context.set.insert("alternate_scroll".to_string());
+        }
+        if mode.contains(TermMode::BRACKETED_PASTE) {
+            context.set.insert("bracketed_paste".to_string());
+        }
+        if mode.intersects(TermMode::MOUSE_MODE) {
+            context.set.insert("any_mouse_reporting".to_string());
+        }
+        {
+            let mouse_reporting = if mode.contains(TermMode::MOUSE_REPORT_CLICK) {
+                "click"
+            } else if mode.contains(TermMode::MOUSE_DRAG) {
+                "drag"
+            } else if mode.contains(TermMode::MOUSE_MOTION) {
+                "motion"
+            } else {
+                "off"
+            };
+            context
+                .map
+                .insert("mouse_reporting".to_string(), mouse_reporting.to_string());
+        }
+        {
+            let format = if mode.contains(TermMode::SGR_MOUSE) {
+                "sgr"
+            } else if mode.contains(TermMode::UTF8_MOUSE) {
+                "utf8"
+            } else {
+                "normal"
+            };
+            context
+                .map
+                .insert("mouse_format".to_string(), format.to_string());
         }
         context
     }

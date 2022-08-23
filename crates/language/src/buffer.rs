@@ -358,7 +358,7 @@ impl Buffer {
 
     pub fn from_proto(
         replica_id: ReplicaId,
-        message: proto::BufferState,
+        message: proto::Buffer,
         file: Option<Arc<dyn File>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<Self> {
@@ -406,7 +406,7 @@ impl Buffer {
         Ok(this)
     }
 
-    pub fn to_proto(&self) -> proto::BufferState {
+    pub fn to_proto(&self) -> proto::Buffer {
         let mut operations = self
             .text
             .history()
@@ -414,7 +414,7 @@ impl Buffer {
             .chain(self.deferred_ops.iter().map(proto::serialize_operation))
             .collect::<Vec<_>>();
         operations.sort_unstable_by_key(proto::lamport_timestamp_for_operation);
-        proto::BufferState {
+        proto::Buffer {
             id: self.remote_id(),
             file: self.file.as_ref().map(|f| f.to_proto()),
             base_text: self.base_text().to_string(),
