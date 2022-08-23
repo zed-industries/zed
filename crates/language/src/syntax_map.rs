@@ -63,6 +63,9 @@ struct ChangedRegion {
     range: Range<Anchor>,
 }
 
+#[derive(Default)]
+struct ChangeRegionSet(Vec<ChangedRegion>);
+
 impl SyntaxMap {
     pub fn new() -> Self {
         Self::default()
@@ -124,14 +127,12 @@ impl SyntaxSnapshot {
             // If this layer follows all of the edits, then preserve it and any
             // subsequent layers at this same depth.
             else {
-                layers.push_tree(
-                    cursor.slice(
-                        &DepthAndRange(depth + 1, Anchor::MIN..Anchor::MAX),
-                        Bias::Left,
-                        text,
-                    ),
+                let slice = cursor.slice(
+                    &DepthAndRange(depth + 1, Anchor::MIN..Anchor::MAX),
+                    Bias::Left,
                     text,
                 );
+                layers.push_tree(slice, text);
                 edits_for_depth = &edits[..];
                 continue;
             };
@@ -226,7 +227,7 @@ impl SyntaxSnapshot {
         cursor.next(&text);
         let mut layers = SumTree::new();
 
-        let mut changed_regions = Vec::<ChangedRegion>::new();
+        let mut changed_regions = ChangeRegionSet::default();
         let mut queue = BinaryHeap::new();
         queue.push(ReparseStep {
             depth: 0,
@@ -245,18 +246,19 @@ impl SyntaxSnapshot {
 
             let target = DepthAndRange(depth, range.clone());
             let mut done = cursor.item().is_none();
-            while !done && target.cmp(cursor.start(), &text).is_gt() {
-                let bounded_target = DepthAndRangeOrMaxPosition(
-                    target.clone(),
-                    changed_regions
-                        .first()
-                        .map_or(DepthAndMaxPosition(usize::MAX, Anchor::MAX), |region| {
-                            DepthAndMaxPosition(region.depth, region.range.start)
-                        }),
-                );
+            while !done && target.cmp(&cursor.end(text), &text).is_gt() {
+                done = true;
+
+                let bounded_target =
+                    DepthAndRangeOrMaxPosition(target.clone(), changed_regions.start_position());
                 if bounded_target.cmp(&cursor.start(), &text).is_gt() {
                     let slice = cursor.slice(&bounded_target, Bias::Left, text);
-                    layers.push_tree(slice, &text);
+                    if !slice.is_empty() {
+                        layers.push_tree(slice, &text);
+                        if changed_regions.prune(cursor.end(text), text) {
+                            done = false;
+                        }
+                    }
                 }
 
                 while target.cmp(&cursor.end(text), text).is_gt() {
@@ -266,30 +268,23 @@ impl SyntaxSnapshot {
                         break;
                     };
 
-                    if layer_is_changed(layer, text, &changed_regions) {
-                        ChangedRegion {
-                            depth: depth + 1,
-                            range: layer.range.clone(),
-                        }
-                        .insert(text, &mut changed_regions);
+                    if changed_regions.intersects(&layer, text) {
+                        changed_regions.insert(
+                            ChangedRegion {
+                                depth: depth + 1,
+                                range: layer.range.clone(),
+                            },
+                            text,
+                        );
                     } else {
                         layers.push(layer.clone(), text);
                     }
-                    cursor.next(text);
-                }
 
-                done = true;
-                changed_regions.retain(|region| {
-                    if region.depth > depth
-                        || (region.depth == depth
-                            && region.range.end.cmp(&range.start, text).is_gt())
-                    {
-                        true
-                    } else {
+                    cursor.next(text);
+                    if changed_regions.prune(cursor.end(text), text) {
                         done = false;
-                        false
                     }
-                });
+                }
             }
 
             let (ranges, language) = if let Some(step) = step {
@@ -366,11 +361,13 @@ impl SyntaxSnapshot {
             ) {
                 let depth = depth + 1;
                 for range in &changed_ranges {
-                    ChangedRegion {
-                        depth,
-                        range: text.anchor_before(range.start)..text.anchor_after(range.end),
-                    }
-                    .insert(text, &mut changed_regions);
+                    changed_regions.insert(
+                        ChangedRegion {
+                            depth,
+                            range: text.anchor_before(range.start)..text.anchor_after(range.end),
+                        },
+                        text,
+                    );
                 }
                 get_injections(
                     config,
@@ -571,19 +568,6 @@ fn get_injections(
     result
 }
 
-fn layer_is_changed(
-    layer: &SyntaxLayer,
-    text: &BufferSnapshot,
-    changed_regions: &[ChangedRegion],
-) -> bool {
-    changed_regions.iter().any(|region| {
-        let same_depth = region.depth == layer.depth;
-        let is_before_layer = region.range.end.cmp(&layer.range.start, text).is_le();
-        let is_after_layer = region.range.start.cmp(&layer.range.end, text).is_ge();
-        same_depth && !is_before_layer && !is_after_layer
-    })
-}
-
 impl std::ops::Deref for SyntaxMap {
     type Target = SyntaxSnapshot;
 
@@ -625,18 +609,61 @@ impl ReparseStep {
 }
 
 impl ChangedRegion {
-    fn insert(self, text: &BufferSnapshot, set: &mut Vec<Self>) {
-        if let Err(ix) = set.binary_search_by(|probe| probe.cmp(&self, text)) {
-            set.insert(ix, self);
-        }
-    }
-
     fn cmp(&self, other: &Self, buffer: &BufferSnapshot) -> Ordering {
         let range_a = &self.range;
         let range_b = &other.range;
         Ord::cmp(&self.depth, &other.depth)
             .then_with(|| range_a.start.cmp(&range_b.start, buffer))
             .then_with(|| range_b.end.cmp(&range_a.end, buffer))
+    }
+}
+
+impl ChangeRegionSet {
+    fn start_position(&self) -> DepthAndMaxPosition {
+        self.0
+            .first()
+            .map_or(DepthAndMaxPosition(usize::MAX, Anchor::MAX), |region| {
+                DepthAndMaxPosition(region.depth, region.range.start)
+            })
+    }
+
+    fn intersects(&self, layer: &SyntaxLayer, text: &BufferSnapshot) -> bool {
+        for region in &self.0 {
+            if region.depth < layer.depth {
+                continue;
+            }
+            if region.depth > layer.depth {
+                break;
+            }
+            if region.range.end.cmp(&layer.range.start, text).is_le() {
+                continue;
+            }
+            if region.range.start.cmp(&layer.range.end, text).is_ge() {
+                break;
+            }
+            return true;
+        }
+        false
+    }
+
+    fn insert(&mut self, region: ChangedRegion, text: &BufferSnapshot) {
+        if let Err(ix) = self.0.binary_search_by(|probe| probe.cmp(&region, text)) {
+            self.0.insert(ix, region);
+        }
+    }
+
+    fn prune(&mut self, summary: SyntaxLayerSummary, text: &BufferSnapshot) -> bool {
+        let prev_len = self.0.len();
+        self.0.retain(|region| {
+            region.depth > summary.max_depth
+                || (region.depth == summary.max_depth
+                    && region
+                        .range
+                        .end
+                        .cmp(&summary.last_layer_range.start, text)
+                        .is_gt())
+        });
+        self.0.len() < prev_len
     }
 }
 
@@ -866,16 +893,18 @@ mod tests {
                     d!(D {});
                     e!(E {});
                     f!(F {});
+                    g!(G {});
                 }
             ",
             "
                 fn a() {
                     b!(B {});
                     c!(C {});
-                    «g!(G {});
-                    »d!(D {});
-                    e!(E {});
+                    d!(D {});
+                «    h!(H {});
+                »    e!(E {});
                     f!(F {});
+                    g!(G {});
                 }
             ",
         ]);
@@ -888,10 +917,11 @@ mod tests {
             fn a() {
                 b!(«B {}»);
                 c!(«C {}»);
-                g!(«G {}»);
                 d!(«D {}»);
+                h!(«H {}»);
                 e!(«E {}»);
                 f!(«F {}»);
+                g!(«G {}»);
             }
             ",
         );
@@ -985,6 +1015,58 @@ mod tests {
                 ˇa! {
                     static B: C = d;
                 ˇ}
+            ",
+        ]);
+    }
+
+    #[gpui::test]
+    fn test_creating_many_injections_in_one_edit() {
+        test_edit_sequence(&[
+            "
+                fn a() {
+                    one(Two::three(3));
+                    four(Five::six(6));
+                    seven(Eight::nine(9));
+                }
+            ",
+            "
+                fn a() {
+                    one«!»(Two::three(3));
+                    four«!»(Five::six(6));
+                    seven«!»(Eight::nine(9));
+                }
+            ",
+            "
+                fn a() {
+                    one!(Two::three«!»(3));
+                    four!(Five::six«!»(6));
+                    seven!(Eight::nine«!»(9));
+                }
+            ",
+        ]);
+    }
+
+    #[gpui::test]
+    fn test_editing_across_injection_boundary() {
+        test_edit_sequence(&[
+            "
+                fn one() {
+                    two();
+                    three!(
+                        three.four,
+                        five.six,
+                    );
+                }
+            ",
+            "
+                fn one() {
+                    two();
+                    th«irty_five![»
+                        three.four,
+                        five.six,
+                    «   seven.eight,
+                    ];»
+                }
             ",
         ]);
     }
