@@ -2,7 +2,8 @@ use std::{any::Any, rc::Rc};
 
 use gpui::{
     elements::{Container, MouseEventHandler},
-    geometry::{rect::RectF, vector::Vector2F},
+    geometry::vector::Vector2F,
+    scene::DragRegionEvent,
     Element, ElementBox, EventContext, MouseButton, RenderContext, View, ViewContext,
     WeakViewHandle,
 };
@@ -61,8 +62,7 @@ impl<V: View> DragAndDrop<V> {
     }
 
     pub fn dragging<T: Any>(
-        relative_to: Option<RectF>,
-        position: Vector2F,
+        event: DragRegionEvent,
         payload: Rc<T>,
         cx: &mut EventContext,
         render: Rc<impl 'static + Fn(&T, &mut RenderContext<V>) -> ElementBox>,
@@ -71,16 +71,12 @@ impl<V: View> DragAndDrop<V> {
             let region_offset = if let Some(previous_state) = this.currently_dragged.as_ref() {
                 previous_state.region_offset
             } else {
-                if let Some(relative_to) = relative_to {
-                    relative_to.origin() - position
-                } else {
-                    Vector2F::zero()
-                }
+                event.region.origin() - event.prev_mouse_position
             };
 
             this.currently_dragged = Some(State {
                 region_offset,
-                position,
+                position: event.position,
                 payload,
                 render: Rc::new(move |payload, cx| {
                     render(payload.downcast_ref::<T>().unwrap(), cx)
@@ -150,7 +146,7 @@ impl Draggable for MouseEventHandler {
         self.on_drag(MouseButton::Left, move |e, cx| {
             let payload = payload.clone();
             let render = render.clone();
-            DragAndDrop::<V>::dragging(Some(e.region), e.position, payload, cx, render)
+            DragAndDrop::<V>::dragging(e, payload, cx, render)
         })
     }
 }

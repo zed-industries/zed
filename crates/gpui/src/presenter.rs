@@ -411,7 +411,6 @@ impl Presenter {
                 for valid_region in valid_regions.into_iter() {
                     region_event.set_region(valid_region.bounds);
                     if let MouseRegionEvent::Hover(e) = &mut region_event {
-                        println!("Hover event selected");
                         e.started = valid_region
                             .id()
                             .map(|region_id| hovered_region_ids.contains(&region_id))
@@ -419,7 +418,6 @@ impl Presenter {
                     }
 
                     if let Some(callback) = valid_region.handlers.get(&region_event.handler_key()) {
-                        dbg!(valid_region.view_id);
                         invalidated_views.insert(valid_region.view_id);
 
                         let mut event_cx = self.build_event_context(&mut invalidated_views, cx);

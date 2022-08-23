@@ -86,10 +86,10 @@ const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
-        pane.activate_item(action.0, true, true, false, cx);
+        pane.activate_item(action.0, true, true, ReorderBehavior::None, cx);
     });
     cx.add_action(|pane: &mut Pane, _: &ActivateLastItem, cx| {
-        pane.activate_item(pane.items.len() - 1, true, true, false, cx);
+        pane.activate_item(pane.items.len() - 1, true, true, ReorderBehavior::None, cx);
     });
     cx.add_action(|pane: &mut Pane, _: &ActivatePrevItem, cx| {
         pane.activate_prev_item(cx);
@@ -107,47 +107,32 @@ pub fn init(cx: &mut MutableAppContext) {
             Ok(())
         }))
     });
-    cx.add_action(|workspace: &mut Workspace, action: &MoveItem, cx| {
-        // Get item handle to move
-        let from = if let Some(from) = action.from.upgrade(cx) {
-            from
-        } else {
-            return;
-        };
+    cx.add_action(
+        |workspace,
+         MoveItem {
+             from,
+             to,
+             item_id,
+             destination_index,
+         },
+         cx| {
+            // Get item handle to move
+            let from = if let Some(from) = from.upgrade(cx) {
+                from
+            } else {
+                return;
+            };
 
-        let (item_ix, item_handle) = from
-            .read(cx)
-            .items()
-            .enumerate()
-            .find(|(_, item_handle)| item_handle.id() == action.item_id)
-            .expect("Tried to move item handle which was not in from pane");
+            // Add item to new pane at given index
+            let to = if let Some(to) = to.upgrade(cx) {
+                to
+            } else {
+                return;
+            };
 
-        // Add item to new pane at given index
-        let to = if let Some(to) = action.to.upgrade(cx) {
-            to
-        } else {
-            return;
-        };
-
-        // This automatically removes duplicate items in the pane
-        Pane::add_item_at(
-            workspace,
-            to,
-            item_handle.clone(),
-            true,
-            true,
-            Some(action.destination_index),
-            cx,
-        );
-
-        if action.from != action.to {
-            // Close item from previous pane
-            from.update(cx, |from, cx| {
-                from.remove_item(item_ix, cx);
-                dbg!(from.items().collect::<Vec<_>>());
-            });
-        }
-    });
+            Pane::move_item(workspace, from, to, *item_id, *destination_index, cx)
+        },
+    );
     cx.add_action(|pane: &mut Pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx));
     cx.add_action(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx));
     cx.add_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx));
@@ -234,6 +219,17 @@ impl Default for NavigationMode {
 pub struct NavigationEntry {
     pub item: Rc<dyn WeakItemHandle>,
     pub data: Option<Box<dyn Any>>,
+}
+
+struct DraggedItem {
+    item: Box<dyn ItemHandle>,
+    pane: WeakViewHandle<Pane>,
+}
+
+pub enum ReorderBehavior {
+    None,
+    MoveAfterActive,
+    MoveToIndex(usize),
 }
 
 impl Pane {
@@ -350,7 +346,7 @@ impl Pane {
                 {
                     let prev_active_item_index = pane.active_item_index;
                     pane.nav_history.borrow_mut().set_mode(mode);
-                    pane.activate_item(index, true, true, false, cx);
+                    pane.activate_item(index, true, true, ReorderBehavior::None, cx);
                     pane.nav_history
                         .borrow_mut()
                         .set_mode(NavigationMode::Normal);
@@ -442,7 +438,7 @@ impl Pane {
                     && item.project_entry_ids(cx).as_slice() == [project_entry_id]
                 {
                     let item = item.boxed_clone();
-                    pane.activate_item(ix, true, focus_item, true, cx);
+                    pane.activate_item(ix, true, focus_item, ReorderBehavior::MoveAfterActive, cx);
                     return Some(item);
                 }
             }
@@ -468,10 +464,18 @@ impl Pane {
     ) {
         // Prevent adding the same item to the pane more than once.
         // If there is already an active item, reorder the desired item to be after it
-        // and activate it.
-        if let Some(item_ix) = pane.read(cx).items.iter().position(|i| i.id() == item.id()) {
+        // (or at the desired destination_index) and activate it.
+        if let Some(item_ix) = pane.read(cx).items.iter().position(|i| {
+            i.id() == item.id() || i.project_entry_ids(cx) == item.project_entry_ids(cx)
+        }) {
             pane.update(cx, |pane, cx| {
-                pane.activate_item(item_ix, activate_pane, focus_item, true, cx)
+                pane.activate_item(
+                    item_ix,
+                    activate_pane,
+                    focus_item,
+                    ReorderBehavior::MoveAfterActive,
+                    cx,
+                )
             });
             return;
         }
@@ -496,7 +500,13 @@ impl Pane {
 
             cx.reparent(&item);
             pane.items.insert(item_ix, item);
-            pane.activate_item(item_ix, activate_pane, focus_item, false, cx);
+            pane.activate_item(
+                item_ix,
+                activate_pane,
+                focus_item,
+                ReorderBehavior::None,
+                cx,
+            );
             cx.notify();
         });
     }
@@ -549,20 +559,24 @@ impl Pane {
         mut index: usize,
         activate_pane: bool,
         focus_item: bool,
-        move_after_current_active: bool,
+        reorder: ReorderBehavior,
         cx: &mut ViewContext<Self>,
     ) {
         use NavigationMode::{GoingBack, GoingForward};
         if index < self.items.len() {
-            if move_after_current_active {
+            if let Some(destination_index) = match reorder {
+                ReorderBehavior::MoveAfterActive => Some(self.active_item_index + 1),
+                ReorderBehavior::MoveToIndex(destination_index) => Some(destination_index),
+                ReorderBehavior::None => None,
+            } {
                 // If there is already an active item, reorder the desired item to be after it
                 // and activate it.
-                if self.active_item_index != index && self.active_item_index < self.items.len() {
+                if destination_index - 1 != index && destination_index <= self.items.len() {
                     let pane_to_activate = self.items.remove(index);
-                    if self.active_item_index < index {
-                        index = self.active_item_index + 1;
-                    } else if self.active_item_index < self.items.len() + 1 {
-                        index = self.active_item_index;
+                    if destination_index - 1 < index {
+                        index = destination_index;
+                    } else if destination_index <= self.items.len() + 1 {
+                        index = destination_index - 1;
                         // Index is less than active_item_index. Reordering will decrement the
                         // active_item_index, so adjust it accordingly
                         self.active_item_index = index - 1;
@@ -601,7 +615,7 @@ impl Pane {
         } else if !self.items.is_empty() {
             index = self.items.len() - 1;
         }
-        self.activate_item(index, true, true, false, cx);
+        self.activate_item(index, true, true, ReorderBehavior::None, cx);
     }
 
     pub fn activate_next_item(&mut self, cx: &mut ViewContext<Self>) {
@@ -611,7 +625,7 @@ impl Pane {
         } else {
             index = 0;
         }
-        self.activate_item(index, true, true, false, cx);
+        self.activate_item(index, true, true, ReorderBehavior::None, cx);
     }
 
     pub fn close_active_item(
@@ -818,7 +832,7 @@ impl Pane {
 
         if has_conflict && can_save {
             let mut answer = pane.update(cx, |pane, cx| {
-                pane.activate_item(item_ix, true, true, false, cx);
+                pane.activate_item(item_ix, true, true, ReorderBehavior::None, cx);
                 cx.prompt(
                     PromptLevel::Warning,
                     CONFLICT_MESSAGE,
@@ -839,7 +853,7 @@ impl Pane {
             });
             let should_save = if should_prompt_for_save && !will_autosave {
                 let mut answer = pane.update(cx, |pane, cx| {
-                    pane.activate_item(item_ix, true, true, false, cx);
+                    pane.activate_item(item_ix, true, true, ReorderBehavior::None, cx);
                     cx.prompt(
                         PromptLevel::Warning,
                         DIRTY_MESSAGE,
@@ -901,6 +915,42 @@ impl Pane {
         }
     }
 
+    fn move_item(
+        workspace: &mut Workspace,
+        from: ViewHandle<Pane>,
+        to: ViewHandle<Pane>,
+        item_to_move: usize,
+        destination_index: usize,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let (item_ix, item_handle) = from
+            .read(cx)
+            .items()
+            .enumerate()
+            .find(|(_, item_handle)| item_handle.id() == item_to_move)
+            .expect("Tried to move item handle which was not in from pane");
+
+        // This automatically removes duplicate items in the pane
+        Pane::add_item_at(
+            workspace,
+            to.clone(),
+            item_handle.clone(),
+            true,
+            true,
+            Some(destination_index),
+            cx,
+        );
+
+        if from != to {
+            // Close item from previous pane
+            from.update(cx, |from, cx| {
+                from.remove_item(item_ix, cx);
+            });
+        }
+
+        cx.focus(to);
+    }
+
     pub fn split(&mut self, direction: SplitDirection, cx: &mut ViewContext<Self>) {
         cx.emit(Event::Split(direction));
     }
@@ -950,11 +1000,7 @@ impl Pane {
 
     fn render_tab_bar(&mut self, cx: &mut RenderContext<Self>) -> impl Element {
         let theme = cx.global::<Settings>().theme.clone();
-
-        struct DraggedItem {
-            item: Box<dyn ItemHandle>,
-            pane: WeakViewHandle<Pane>,
-        }
+        let filler_index = self.items.len();
 
         enum Tabs {}
         enum Tab {}
@@ -1018,20 +1064,7 @@ impl Pane {
                     })
                     .on_up(MouseButton::Left, {
                         let pane = pane.clone();
-                        move |_, cx: &mut EventContext| {
-                            if let Some((_, dragged_item)) = cx
-                                .global::<DragAndDrop<Workspace>>()
-                                .currently_dragged::<DraggedItem>()
-                            {
-                                cx.dispatch_action(MoveItem {
-                                    item_id: dragged_item.item.id(),
-                                    from: dragged_item.pane.clone(),
-                                    to: pane.clone(),
-                                    destination_index: ix,
-                                })
-                            }
-                            cx.propogate_event();
-                        }
+                        move |_, cx: &mut EventContext| Pane::handle_dropped_item(&pane, ix, cx)
                     })
                     .as_draggable(
                         DraggedItem {
@@ -1063,11 +1096,14 @@ impl Pane {
                     .contained()
                     .with_style(filler_style.container)
                     .with_border(filler_style.container.border)
-                    .flex(0., true)
+                    .flex(1., true)
                     .named("filler"),
             );
 
             row.boxed()
+        })
+        .on_up(MouseButton::Left, move |_, cx| {
+            Pane::handle_dropped_item(&pane, filler_index, cx)
         })
     }
 
@@ -1208,6 +1244,22 @@ impl Pane {
             .constrained()
             .with_height(tab_style.height)
             .boxed()
+    }
+
+    fn handle_dropped_item(pane: &WeakViewHandle<Pane>, index: usize, cx: &mut EventContext) {
+        if let Some((_, dragged_item)) = cx
+            .global::<DragAndDrop<Workspace>>()
+            .currently_dragged::<DraggedItem>()
+        {
+            cx.dispatch_action(MoveItem {
+                item_id: dragged_item.item.id(),
+                from: dragged_item.pane.clone(),
+                to: pane.clone(),
+                destination_index: index,
+            })
+        } else {
+            cx.propogate_event();
+        }
     }
 }
 
