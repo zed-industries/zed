@@ -370,7 +370,10 @@ message OpenBufferResponse {
 message CreateBufferForPeer {
     uint64 project_id = 1;
     uint32 peer_id = 2;
-    Buffer buffer = 3;
+    oneof variant {
+        BufferState state = 3;
+        BufferChunk chunk = 4;
+    }
 }
 
 message UpdateBuffer {
@@ -808,12 +811,17 @@ message Entry {
     bool is_ignored = 7;
 }
 
-message Buffer {
+message BufferState {
     uint64 id = 1;
     optional File file = 2;
     string base_text = 3;
-    repeated Operation operations = 4;
-    LineEnding line_ending = 5;
+    LineEnding line_ending = 4;
+}
+
+message BufferChunk {
+    uint64 buffer_id = 1;
+    repeated Operation operations = 2;
+    bool is_last = 3;
 }
 
 enum LineEnding {

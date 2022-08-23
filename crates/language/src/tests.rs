@@ -2,6 +2,7 @@ use super::*;
 use clock::ReplicaId;
 use collections::BTreeMap;
 use gpui::{ModelHandle, MutableAppContext};
+use proto::deserialize_operation;
 use rand::prelude::*;
 use settings::Settings;
 use std::{
@@ -1047,8 +1048,18 @@ fn test_serialization(cx: &mut gpui::MutableAppContext) {
     });
     assert_eq!(buffer1.read(cx).text(), "abcDF");
 
-    let message = buffer1.read(cx).to_proto();
-    let buffer2 = cx.add_model(|cx| Buffer::from_proto(1, message, None, cx).unwrap());
+    let (state, ops) = buffer1.read(cx).to_proto();
+    let buffer2 = cx.add_model(|cx| {
+        let mut buffer = Buffer::from_proto(1, state, None).unwrap();
+        buffer
+            .apply_ops(
+                ops.into_iter()
+                    .map(|op| proto::deserialize_operation(op).unwrap()),
+                cx,
+            )
+            .unwrap();
+        buffer
+    });
     assert_eq!(buffer2.read(cx).text(), "abcDF");
 }
 
@@ -1075,9 +1086,15 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
 
     for i in 0..rng.gen_range(min_peers..=max_peers) {
         let buffer = cx.add_model(|cx| {
-            let mut buffer =
-                Buffer::from_proto(i as ReplicaId, base_buffer.read(cx).to_proto(), None, cx)
-                    .unwrap();
+            let (state, ops) = base_buffer.read(cx).to_proto();
+            let mut buffer = Buffer::from_proto(i as ReplicaId, state, None).unwrap();
+            buffer
+                .apply_ops(
+                    ops.into_iter()
+                        .map(|op| proto::deserialize_operation(op).unwrap()),
+                    cx,
+                )
+                .unwrap();
             buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
             let network = network.clone();
             cx.subscribe(&cx.handle(), move |buffer, _, event, _| {
@@ -1164,7 +1181,7 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
                 mutation_count -= 1;
             }
             50..=59 if replica_ids.len() < max_peers => {
-                let old_buffer = buffer.read(cx).to_proto();
+                let (old_buffer_state, old_buffer_ops) = buffer.read(cx).to_proto();
                 let new_replica_id = (0..=replica_ids.len() as ReplicaId)
                     .filter(|replica_id| *replica_id != buffer.read(cx).replica_id())
                     .choose(&mut rng)
@@ -1176,7 +1193,15 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
                 );
                 new_buffer = Some(cx.add_model(|cx| {
                     let mut new_buffer =
-                        Buffer::from_proto(new_replica_id, old_buffer, None, cx).unwrap();
+                        Buffer::from_proto(new_replica_id, old_buffer_state, None).unwrap();
+                    new_buffer
+                        .apply_ops(
+                            old_buffer_ops
+                                .into_iter()
+                                .map(|op| deserialize_operation(op).unwrap()),
+                            cx,
+                        )
+                        .unwrap();
                     log::info!(
                         "New replica {} text: {:?}",
                         new_buffer.replica_id(),

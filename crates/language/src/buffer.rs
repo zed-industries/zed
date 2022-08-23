@@ -359,9 +359,8 @@ impl Buffer {
 
     pub fn from_proto(
         replica_id: ReplicaId,
-        message: proto::Buffer,
+        message: proto::BufferState,
         file: Option<Arc<dyn File>>,
-        cx: &mut ModelContext<Self>,
     ) -> Result<Self> {
         let buffer = TextBuffer::new(replica_id, message.id, message.base_text);
         let mut this = Self::build(buffer, file);
@@ -369,17 +368,10 @@ impl Buffer {
             proto::LineEnding::from_i32(message.line_ending)
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
         ));
-        let ops = message
-            .operations
-            .into_iter()
-            .map(proto::deserialize_operation)
-            .collect::<Result<Vec<_>>>()?;
-        this.apply_ops(ops, cx)?;
-
         Ok(this)
     }
 
-    pub fn to_proto(&self) -> proto::Buffer {
+    pub fn to_proto(&self) -> (proto::BufferState, Vec<proto::Operation>) {
         let mut operations = self
             .text
             .history()
@@ -406,13 +398,13 @@ impl Buffer {
             )))
             .collect::<Vec<_>>();
         operations.sort_unstable_by_key(proto::lamport_timestamp_for_operation);
-        proto::Buffer {
+        let state = proto::BufferState {
             id: self.remote_id(),
             file: self.file.as_ref().map(|f| f.to_proto()),
             base_text: self.base_text().to_string(),
-            operations,
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
-        }
+        };
+        (state, operations)
     }
 
     pub fn with_language(mut self, language: Arc<Language>, cx: &mut ModelContext<Self>) -> Self {
