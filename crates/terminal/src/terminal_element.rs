@@ -457,7 +457,7 @@ impl TerminalElement {
                 if cx.is_parent_view_focused() {
                     if let Some(conn_handle) = connection.upgrade(cx.app) {
                         conn_handle.update(cx.app, |terminal, cx| {
-                            terminal.mouse_drag(event, origin);
+                            terminal.mouse_drag(event, origin, visible_bounds);
                             cx.notify();
                         })
                     }

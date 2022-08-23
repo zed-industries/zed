@@ -18,7 +18,6 @@ use alacritty_terminal::{
     Term,
 };
 use anyhow::{bail, Result};
-
 use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
     FutureExt,
@@ -33,7 +32,10 @@ use std::{collections::HashMap, fmt::Display, ops::Sub, path::PathBuf, sync::Arc
 use thiserror::Error;
 
 use gpui::{
-    geometry::vector::{vec2f, Vector2F},
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
     keymap::Keystroke,
     ClipboardItem, Entity, ModelContext, MouseButton, MouseButtonEvent, MouseMovedEvent,
     MutableAppContext, ScrollWheelEvent,
@@ -310,11 +312,8 @@ impl TerminalBuilder {
             term.set_mode(alacritty_terminal::ansi::Mode::BlinkingCursor)
         }
 
-        //Start alternate_scroll if we need to
-        if let AlternateScroll::On = alternate_scroll {
-            term.set_mode(alacritty_terminal::ansi::Mode::AlternateScroll)
-        } else {
-            //Alacritty turns it on by default, so we need to turn it off.
+        //Alacritty defaults to alternate scrolling being on, so we just need to turn it off.
+        if let AlternateScroll::Off = alternate_scroll {
             term.unset_mode(alacritty_terminal::ansi::Mode::AlternateScroll)
         }
 
@@ -369,6 +368,7 @@ impl TerminalBuilder {
             cur_size: initial_size,
             last_mouse: None,
             last_offset: 0,
+            current_selection: false,
         };
 
         Ok(TerminalBuilder {
@@ -440,6 +440,7 @@ pub struct Terminal {
     last_mode: TermMode,
     last_offset: usize,
     last_mouse: Option<(Point, Direction)>,
+    current_selection: bool,
 }
 
 impl Terminal {
@@ -530,15 +531,30 @@ impl Terminal {
         }
     }
 
-    pub fn input(&mut self, input: String) {
-        self.events.push(InternalEvent::Scroll(Scroll::Bottom));
+    fn begin_select(&mut self, sel: Selection) {
+        self.current_selection = true;
+        self.events.push(InternalEvent::SetSelection(Some(sel)));
+    }
+
+    fn continue_selection(&mut self, point: Point, direction: Direction) {
+        self.events
+            .push(InternalEvent::UpdateSelection((point, direction)))
+    }
+
+    fn end_select(&mut self) {
+        self.current_selection = false;
         self.events.push(InternalEvent::SetSelection(None));
-        self.write_to_pty(input);
     }
 
     ///Write the Input payload to the tty.
     fn write_to_pty(&self, input: String) {
         self.pty_tx.notify(input.into_bytes());
+    }
+
+    pub fn input(&mut self, input: String) {
+        self.events.push(InternalEvent::Scroll(Scroll::Bottom));
+        self.end_select();
+        self.write_to_pty(input);
     }
 
     ///Resize the terminal and the PTY.
@@ -642,15 +658,34 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_drag(&mut self, e: MouseMovedEvent, origin: Vector2F) {
+    pub fn mouse_drag(&mut self, e: MouseMovedEvent, origin: Vector2F, bounds: RectF) {
         let position = e.position.sub(origin);
 
         if !self.mouse_mode(e.shift) {
             let point = mouse_point(position, self.cur_size, self.last_offset);
             let side = mouse_side(position, self.cur_size);
 
-            self.events
-                .push(InternalEvent::UpdateSelection((point, side)));
+            // Alacritty has the same ordering, of first updating the selection
+            // then scrolling 15ms later
+            self.continue_selection(point, side);
+
+            // Doesn't make sense to scroll the alt screen
+            if !self.last_mode.contains(TermMode::ALT_SCREEN) {
+                let top = bounds.origin_y() + self.cur_size.line_height;
+                let bottom = bounds.lower_left().y() - self.cur_size.line_height;
+
+                let scroll_delta = if e.position.y() < top {
+                    top - e.position.y()
+                } else if e.position.y() > bottom {
+                    -(e.position.y() - bottom)
+                } else {
+                    return; //Nothing to do
+                };
+
+                let scroll_lines = (dbg!(scroll_delta) / self.cur_size.line_height) as i32;
+                self.events
+                    .push(InternalEvent::Scroll(Scroll::Delta(dbg!(scroll_lines))))
+            }
         }
     }
 
@@ -664,12 +699,7 @@ impl Terminal {
                 self.pty_tx.notify(bytes);
             }
         } else if e.button == MouseButton::Left {
-            self.events
-                .push(InternalEvent::SetSelection(Some(Selection::new(
-                    SelectionType::Simple,
-                    point,
-                    side,
-                ))));
+            self.begin_select(Selection::new(SelectionType::Simple, point, side));
         }
     }
 
@@ -691,7 +721,9 @@ impl Terminal {
             let selection =
                 selection_type.map(|selection_type| Selection::new(selection_type, point, side));
 
-            self.events.push(InternalEvent::SetSelection(selection));
+            if let Some(sel) = selection {
+                self.begin_select(sel);
+            }
         }
     }
 
