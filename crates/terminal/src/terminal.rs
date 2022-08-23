@@ -84,7 +84,7 @@ enum InternalEvent {
     Clear,
     Scroll(Scroll),
     SetSelection(Option<Selection>),
-    UpdateSelection((Point, Direction)),
+    UpdateSelection(Vector2F),
     Copy,
 }
 
@@ -514,11 +514,16 @@ impl Terminal {
                 self.write_to_pty("\x0c".to_string());
                 term.clear_screen(ClearMode::Saved);
             }
-            InternalEvent::Scroll(scroll) => term.scroll_display(*scroll),
+            InternalEvent::Scroll(scroll) => {
+                term.scroll_display(*scroll);
+            }
             InternalEvent::SetSelection(sel) => term.selection = sel.clone(),
-            InternalEvent::UpdateSelection((point, side)) => {
+            InternalEvent::UpdateSelection(position) => {
                 if let Some(mut selection) = term.selection.take() {
-                    selection.update(*point, *side);
+                    let point = mouse_point(*position, self.cur_size, term.grid().display_offset());
+                    let side = mouse_side(*position, self.cur_size);
+
+                    selection.update(point, side);
                     term.selection = Some(selection);
                 }
             }
@@ -536,14 +541,30 @@ impl Terminal {
         self.events.push(InternalEvent::SetSelection(Some(sel)));
     }
 
-    fn continue_selection(&mut self, point: Point, direction: Direction) {
-        self.events
-            .push(InternalEvent::UpdateSelection((point, direction)))
+    fn continue_selection(&mut self, location: Vector2F) {
+        self.events.push(InternalEvent::UpdateSelection(location))
     }
 
     fn end_select(&mut self) {
         self.current_selection = false;
         self.events.push(InternalEvent::SetSelection(None));
+    }
+
+    fn scroll(&mut self, scroll: Scroll) {
+        self.events.push(InternalEvent::Scroll(scroll));
+    }
+
+    pub fn copy(&mut self) {
+        self.events.push(InternalEvent::Copy);
+    }
+
+    pub fn clear(&mut self) {
+        self.events.push(InternalEvent::Clear)
+    }
+
+    ///Resize the terminal and the PTY.
+    pub fn set_size(&mut self, new_size: TerminalSize) {
+        self.events.push(InternalEvent::Resize(new_size))
     }
 
     ///Write the Input payload to the tty.
@@ -552,18 +573,9 @@ impl Terminal {
     }
 
     pub fn input(&mut self, input: String) {
-        self.events.push(InternalEvent::Scroll(Scroll::Bottom));
+        self.scroll(Scroll::Bottom);
         self.end_select();
         self.write_to_pty(input);
-    }
-
-    ///Resize the terminal and the PTY.
-    pub fn set_size(&mut self, new_size: TerminalSize) {
-        self.events.push(InternalEvent::Resize(new_size))
-    }
-
-    pub fn clear(&mut self) {
-        self.events.push(InternalEvent::Clear)
     }
 
     pub fn try_keystroke(&mut self, keystroke: &Keystroke) -> bool {
@@ -584,10 +596,6 @@ impl Terminal {
             text.replace("\r\n", "\r").replace('\n', "\r")
         };
         self.input(paste_text)
-    }
-
-    pub fn copy(&mut self) {
-        self.events.push(InternalEvent::Copy);
     }
 
     pub fn render_lock<F, T>(&mut self, cx: &mut ModelContext<Self>, f: F) -> T
@@ -662,12 +670,13 @@ impl Terminal {
         let position = e.position.sub(origin);
 
         if !self.mouse_mode(e.shift) {
-            let point = mouse_point(position, self.cur_size, self.last_offset);
-            let side = mouse_side(position, self.cur_size);
+            //TODO: Check that dragging still works as expected
+            // let point = mouse_point(position, self.cur_size, self.last_offset);
+            // let side = mouse_side(position, self.cur_size);
 
             // Alacritty has the same ordering, of first updating the selection
             // then scrolling 15ms later
-            self.continue_selection(point, side);
+            self.continue_selection(position);
 
             // Doesn't make sense to scroll the alt screen
             if !self.last_mode.contains(TermMode::ALT_SCREEN) {
@@ -682,9 +691,9 @@ impl Terminal {
                     return; //Nothing to do
                 };
 
-                let scroll_lines = (dbg!(scroll_delta) / self.cur_size.line_height) as i32;
-                self.events
-                    .push(InternalEvent::Scroll(Scroll::Delta(dbg!(scroll_lines))))
+                let scroll_lines = (scroll_delta / self.cur_size.line_height) as i32;
+                self.scroll(Scroll::Delta(scroll_lines));
+                self.continue_selection(position)
             }
         }
     }
@@ -743,17 +752,16 @@ impl Terminal {
     }
 
     ///Scroll the terminal
-    pub fn scroll(&mut self, scroll: &ScrollWheelEvent, origin: Vector2F) {
-        if self.mouse_mode(scroll.shift) {
+    pub fn scroll_wheel(&mut self, e: &ScrollWheelEvent, origin: Vector2F) {
+        if self.mouse_mode(e.shift) {
             //TODO: Currently this only sends the current scroll reports as they come in. Alacritty
             //Sends the *entire* scroll delta on *every* scroll event, only resetting it when
             //The scroll enters 'TouchPhase::Started'. Do I need to replicate this?
             //This would be consistent with a scroll model based on 'distance from origin'...
-            let scroll_lines = (scroll.delta.y() / self.cur_size.line_height) as i32;
-            let point = mouse_point(scroll.position.sub(origin), self.cur_size, self.last_offset);
+            let scroll_lines = (e.delta.y() / self.cur_size.line_height) as i32;
+            let point = mouse_point(e.position.sub(origin), self.cur_size, self.last_offset);
 
-            if let Some(scrolls) = scroll_report(point, scroll_lines as i32, scroll, self.last_mode)
-            {
+            if let Some(scrolls) = scroll_report(point, scroll_lines as i32, e, self.last_mode) {
                 for scroll in scrolls {
                     self.pty_tx.notify(scroll);
                 }
@@ -761,19 +769,19 @@ impl Terminal {
         } else if self
             .last_mode
             .contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
-            && !scroll.shift
+            && !e.shift
         {
             //TODO: See above TODO, also applies here.
-            let scroll_lines = ((scroll.delta.y() * ALACRITTY_SCROLL_MULTIPLIER)
-                / self.cur_size.line_height) as i32;
+            let scroll_lines =
+                ((e.delta.y() * ALACRITTY_SCROLL_MULTIPLIER) / self.cur_size.line_height) as i32;
 
             self.pty_tx.notify(alt_scroll(scroll_lines))
         } else {
-            let scroll_lines = ((scroll.delta.y() * ALACRITTY_SCROLL_MULTIPLIER)
-                / self.cur_size.line_height) as i32;
+            let scroll_lines =
+                ((e.delta.y() * ALACRITTY_SCROLL_MULTIPLIER) / self.cur_size.line_height) as i32;
             if scroll_lines != 0 {
                 let scroll = Scroll::Delta(scroll_lines);
-                self.events.push(InternalEvent::Scroll(scroll));
+                self.scroll(scroll);
             }
         }
     }
