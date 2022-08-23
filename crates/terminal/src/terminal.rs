@@ -1,7 +1,7 @@
-pub mod connected_el;
-pub mod connected_view;
 pub mod mappings;
 pub mod modal;
+pub mod terminal_container_view;
+pub mod terminal_element;
 pub mod terminal_view;
 
 use alacritty_terminal::{
@@ -53,7 +53,7 @@ pub fn init(cx: &mut MutableAppContext) {
     }
 
     terminal_view::init(cx);
-    connected_view::init(cx);
+    terminal_container_view::init(cx);
 }
 
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
