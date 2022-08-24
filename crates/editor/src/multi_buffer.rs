@@ -3304,8 +3304,19 @@ mod tests {
     fn test_remote_multibuffer(cx: &mut MutableAppContext) {
         let host_buffer = cx.add_model(|cx| Buffer::new(0, "a", cx));
         let guest_buffer = cx.add_model(|cx| {
-            let message = host_buffer.read(cx).to_proto();
-            Buffer::from_proto(1, message, None, cx).unwrap()
+            let state = host_buffer.read(cx).to_proto();
+            let ops = cx
+                .background()
+                .block(host_buffer.read(cx).serialize_ops(cx));
+            let mut buffer = Buffer::from_proto(1, state, None).unwrap();
+            buffer
+                .apply_ops(
+                    ops.into_iter()
+                        .map(|op| language::proto::deserialize_operation(op).unwrap()),
+                    cx,
+                )
+                .unwrap();
+            buffer
         });
         let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(guest_buffer.clone(), cx));
         let snapshot = multibuffer.read(cx).snapshot(cx);
