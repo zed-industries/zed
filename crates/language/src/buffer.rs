@@ -72,7 +72,7 @@ pub struct Buffer {
 
 pub struct BufferSnapshot {
     text: text::BufferSnapshot,
-    syntax: SyntaxSnapshot,
+    pub(crate) syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: DiagnosticSet,
     diagnostics_update_count: usize,
@@ -461,9 +461,14 @@ impl Buffer {
     }
 
     pub fn snapshot(&self) -> BufferSnapshot {
+        let text = self.text.snapshot();
+        let mut syntax_map = self.syntax_map.lock();
+        syntax_map.interpolate(&text);
+        let syntax = syntax_map.snapshot();
+
         BufferSnapshot {
-            text: self.text.snapshot(),
-            syntax: self.syntax_map(),
+            text,
+            syntax,
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
@@ -674,12 +679,6 @@ impl Buffer {
         self.file_update_count
     }
 
-    pub(crate) fn syntax_map(&self) -> SyntaxSnapshot {
-        let mut syntax_map = self.syntax_map.lock();
-        syntax_map.interpolate(&self.text_snapshot());
-        syntax_map.snapshot()
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_parsing(&self) -> bool {
         self.parsing_in_background
@@ -690,73 +689,73 @@ impl Buffer {
         self.sync_parse_timeout = timeout;
     }
 
-    fn reparse(&mut self, cx: &mut ModelContext<Self>) -> bool {
+    fn reparse(&mut self, cx: &mut ModelContext<Self>) {
         if self.parsing_in_background {
-            return false;
+            return;
         }
+        let language = if let Some(language) = self.language.clone() {
+            language
+        } else {
+            return;
+        };
 
-        if let Some(language) = self.language.clone() {
-            let text = self.text_snapshot();
-            let parsed_version = self.version();
+        let text = self.text_snapshot();
+        let parsed_version = self.version();
 
-            let mut syntax_map;
-            let language_registry;
-            let syntax_map_version;
-            {
-                let mut map = self.syntax_map.lock();
-                map.interpolate(&text);
-                language_registry = map.language_registry();
-                syntax_map = map.snapshot();
-                syntax_map_version = map.parsed_version();
+        let mut syntax_map = self.syntax_map.lock();
+        syntax_map.interpolate(&text);
+        let language_registry = syntax_map.language_registry();
+        let mut syntax_snapshot = syntax_map.snapshot();
+        let syntax_map_version = syntax_map.parsed_version();
+        drop(syntax_map);
+
+        let parse_task = cx.background().spawn({
+            let language = language.clone();
+            async move {
+                syntax_snapshot.reparse(&syntax_map_version, &text, language_registry, language);
+                syntax_snapshot
             }
-            let parse_task = cx.background().spawn({
-                let language = language.clone();
-                async move {
-                    syntax_map.reparse(&syntax_map_version, &text, language_registry, language);
-                    syntax_map
-                }
-            });
+        });
 
-            match cx
-                .background()
-                .block_with_timeout(self.sync_parse_timeout, parse_task)
-            {
-                Ok(new_syntax_map) => {
-                    self.did_finish_parsing(new_syntax_map, parsed_version, cx);
-                    return true;
-                }
-                Err(parse_task) => {
-                    self.parsing_in_background = true;
-                    cx.spawn(move |this, mut cx| async move {
-                        let new_syntax_map = parse_task.await;
-                        this.update(&mut cx, move |this, cx| {
-                            let grammar_changed =
-                                this.language.as_ref().map_or(true, |current_language| {
-                                    !Arc::ptr_eq(&language, current_language)
-                                });
-                            let parse_again =
-                                this.version.changed_since(&parsed_version) || grammar_changed;
-                            this.parsing_in_background = false;
-                            this.did_finish_parsing(new_syntax_map, parsed_version, cx);
-
-                            if parse_again && this.reparse(cx) {}
-                        });
-                    })
-                    .detach();
-                }
+        match cx
+            .background()
+            .block_with_timeout(self.sync_parse_timeout, parse_task)
+        {
+            Ok(new_syntax_snapshot) => {
+                self.did_finish_parsing(new_syntax_snapshot, parsed_version, cx);
+                return;
+            }
+            Err(parse_task) => {
+                self.parsing_in_background = true;
+                cx.spawn(move |this, mut cx| async move {
+                    let new_syntax_map = parse_task.await;
+                    this.update(&mut cx, move |this, cx| {
+                        let grammar_changed =
+                            this.language.as_ref().map_or(true, |current_language| {
+                                !Arc::ptr_eq(&language, current_language)
+                            });
+                        let parse_again =
+                            this.version.changed_since(&parsed_version) || grammar_changed;
+                        this.did_finish_parsing(new_syntax_map, parsed_version, cx);
+                        this.parsing_in_background = false;
+                        if parse_again {
+                            this.reparse(cx);
+                        }
+                    });
+                })
+                .detach();
             }
         }
-        false
     }
 
     fn did_finish_parsing(
         &mut self,
-        syntax_map: SyntaxSnapshot,
+        syntax_snapshot: SyntaxSnapshot,
         version: clock::Global,
         cx: &mut ModelContext<Self>,
     ) {
         self.parse_count += 1;
-        self.syntax_map.lock().did_parse(syntax_map, version);
+        self.syntax_map.lock().did_parse(syntax_snapshot, version);
         self.request_autoindent(cx);
         cx.emit(Event::Reparsed);
         cx.notify();

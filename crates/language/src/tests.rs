@@ -1407,8 +1407,8 @@ fn json_lang() -> Language {
 
 fn get_tree_sexp(buffer: &ModelHandle<Buffer>, cx: &gpui::TestAppContext) -> String {
     buffer.read_with(cx, |buffer, _| {
-        let syntax_map = buffer.syntax_map();
-        let layers = syntax_map.layers(buffer.as_text_snapshot());
+        let snapshot = buffer.snapshot();
+        let layers = snapshot.syntax.layers(buffer.as_text_snapshot());
         layers[0].2.to_sexp()
     })
 }
