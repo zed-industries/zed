@@ -21,7 +21,7 @@ use gpui::{
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
 use settings::{Autosave, Settings};
-use std::{any::Any, cell::RefCell, mem, path::Path, rc::Rc};
+use std::{any::Any, cell::RefCell, cmp, mem, path::Path, rc::Rc};
 use util::ResultExt;
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -86,10 +86,10 @@ const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
-        pane.activate_item(action.0, true, true, ReorderBehavior::None, cx);
+        pane.activate_item(action.0, true, true, cx);
     });
     cx.add_action(|pane: &mut Pane, _: &ActivateLastItem, cx| {
-        pane.activate_item(pane.items.len() - 1, true, true, ReorderBehavior::None, cx);
+        pane.activate_item(pane.items.len() - 1, true, true, cx);
     });
     cx.add_action(|pane: &mut Pane, _: &ActivatePrevItem, cx| {
         pane.activate_prev_item(cx);
@@ -346,7 +346,7 @@ impl Pane {
                 {
                     let prev_active_item_index = pane.active_item_index;
                     pane.nav_history.borrow_mut().set_mode(mode);
-                    pane.activate_item(index, true, true, ReorderBehavior::None, cx);
+                    pane.activate_item(index, true, true, cx);
                     pane.nav_history
                         .borrow_mut()
                         .set_mode(NavigationMode::Normal);
@@ -433,24 +433,22 @@ impl Pane {
         build_item: impl FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
     ) -> Box<dyn ItemHandle> {
         let existing_item = pane.update(cx, |pane, cx| {
-            for (ix, item) in pane.items.iter().enumerate() {
+            for item in pane.items.iter() {
                 if item.project_path(cx).is_some()
                     && item.project_entry_ids(cx).as_slice() == [project_entry_id]
                 {
                     let item = item.boxed_clone();
-                    pane.activate_item(ix, true, focus_item, ReorderBehavior::MoveAfterActive, cx);
                     return Some(item);
                 }
             }
             None
         });
-        if let Some(existing_item) = existing_item {
-            existing_item
-        } else {
-            let item = pane.update(cx, |_, cx| build_item(cx));
-            Self::add_item(workspace, pane, item.boxed_clone(), true, focus_item, cx);
-            item
-        }
+
+        // Even if the item exists, we re-add it to reorder it after the active item.
+        // We may revisit this behavior after adding an "activation history" for pane items.
+        let item = existing_item.unwrap_or_else(|| pane.update(cx, |_, cx| build_item(cx)));
+        Pane::add_item(workspace, pane, item.clone(), true, focus_item, cx);
+        item
     }
 
     pub fn add_item_at(
@@ -462,53 +460,58 @@ impl Pane {
         destination_index: Option<usize>,
         cx: &mut ViewContext<Workspace>,
     ) {
-        // Prevent adding the same item to the pane more than once.
-        // If there is already an active item, reorder the desired item to be after it
-        // (or at the desired destination_index) and activate it.
-        if let Some(item_ix) = pane.read(cx).items.iter().position(|i| {
+        // If no destination index is specified, add or move the item after the active item.
+        let mut destination_index = if let Some(destination_index) = destination_index {
+            destination_index
+        } else {
+            let pane = pane.read(cx);
+            cmp::min(pane.active_item_index + 1, pane.items.len())
+        };
+
+        // Does the item already exist?
+        if let Some(existing_item_index) = pane.read(cx).items.iter().position(|i| {
             i.id() == item.id() || i.project_entry_ids(cx) == item.project_entry_ids(cx)
         }) {
+            // If the item already exists, move it to the desired destination and activate it
             pane.update(cx, |pane, cx| {
-                pane.activate_item(
-                    item_ix,
-                    activate_pane,
-                    focus_item,
-                    ReorderBehavior::MoveAfterActive,
-                    cx,
-                )
-            });
-            return;
-        }
+                if existing_item_index != destination_index {
+                    let existing_item_is_active = existing_item_index == pane.active_item_index;
 
-        item.added_to_pane(workspace, pane.clone(), cx);
-        pane.update(cx, |pane, cx| {
-            let item_ix = if let Some(destination_index) = destination_index {
-                destination_index
-            } else {
-                // If there is already an active item, then insert the new item
-                // right after it. Otherwise, adjust the `active_item_index` field
-                // before activating the new item, so that in the `activate_item`
-                // method, we can detect that the active item is changing.
-                if pane.active_item_index < pane.items.len() {
-                    pane.active_item_index + 1
-                } else {
-                    let ix = pane.items.len();
-                    pane.active_item_index = usize::MAX;
-                    ix
+                    pane.items.remove(existing_item_index);
+                    if existing_item_index < destination_index {
+                        destination_index -= 1;
+                    }
+                    if existing_item_index < pane.active_item_index {
+                        pane.active_item_index -= 1;
+                    }
+
+                    pane.items.insert(destination_index, item.clone());
+
+                    if existing_item_is_active {
+                        pane.active_item_index = destination_index;
+                    } else if destination_index <= pane.active_item_index {
+                        pane.active_item_index += 1;
+                    }
+
+                    cx.notify();
                 }
-            };
 
-            cx.reparent(&item);
-            pane.items.insert(item_ix, item);
-            pane.activate_item(
-                item_ix,
-                activate_pane,
-                focus_item,
-                ReorderBehavior::None,
-                cx,
-            );
-            cx.notify();
-        });
+                pane.activate_item(destination_index, activate_pane, focus_item, cx);
+            });
+        } else {
+            // If the item doesn't already exist, add it and activate it
+            item.added_to_pane(workspace, pane.clone(), cx);
+            pane.update(cx, |pane, cx| {
+                cx.reparent(&item);
+                pane.items.insert(destination_index, item);
+                if destination_index <= pane.active_item_index {
+                    pane.active_item_index += 1;
+                }
+
+                pane.activate_item(destination_index, activate_pane, focus_item, cx);
+                cx.notify();
+            });
+        }
     }
 
     pub(crate) fn add_item(
@@ -556,35 +559,13 @@ impl Pane {
 
     pub fn activate_item(
         &mut self,
-        mut index: usize,
+        index: usize,
         activate_pane: bool,
         focus_item: bool,
-        reorder: ReorderBehavior,
         cx: &mut ViewContext<Self>,
     ) {
         use NavigationMode::{GoingBack, GoingForward};
         if index < self.items.len() {
-            if let Some(destination_index) = match reorder {
-                ReorderBehavior::MoveAfterActive => Some(self.active_item_index + 1),
-                ReorderBehavior::MoveToIndex(destination_index) => Some(destination_index),
-                ReorderBehavior::None => None,
-            } {
-                // If there is already an active item, reorder the desired item to be after it
-                // and activate it.
-                if destination_index - 1 != index && destination_index <= self.items.len() {
-                    let pane_to_activate = self.items.remove(index);
-                    if destination_index - 1 < index {
-                        index = destination_index;
-                    } else if destination_index <= self.items.len() + 1 {
-                        index = destination_index - 1;
-                        // Index is less than active_item_index. Reordering will decrement the
-                        // active_item_index, so adjust it accordingly
-                        self.active_item_index = index - 1;
-                    }
-                    self.items.insert(index, pane_to_activate);
-                }
-            }
-
             let prev_active_item_ix = mem::replace(&mut self.active_item_index, index);
             if prev_active_item_ix != self.active_item_index
                 || matches!(self.nav_history.borrow().mode, GoingBack | GoingForward)
@@ -615,7 +596,7 @@ impl Pane {
         } else if !self.items.is_empty() {
             index = self.items.len() - 1;
         }
-        self.activate_item(index, true, true, ReorderBehavior::None, cx);
+        self.activate_item(index, true, true, cx);
     }
 
     pub fn activate_next_item(&mut self, cx: &mut ViewContext<Self>) {
@@ -625,7 +606,7 @@ impl Pane {
         } else {
             index = 0;
         }
-        self.activate_item(index, true, true, ReorderBehavior::None, cx);
+        self.activate_item(index, true, true, cx);
     }
 
     pub fn close_active_item(
@@ -832,7 +813,7 @@ impl Pane {
 
         if has_conflict && can_save {
             let mut answer = pane.update(cx, |pane, cx| {
-                pane.activate_item(item_ix, true, true, ReorderBehavior::None, cx);
+                pane.activate_item(item_ix, true, true, cx);
                 cx.prompt(
                     PromptLevel::Warning,
                     CONFLICT_MESSAGE,
@@ -853,7 +834,7 @@ impl Pane {
             });
             let should_save = if should_prompt_for_save && !will_autosave {
                 let mut answer = pane.update(cx, |pane, cx| {
-                    pane.activate_item(item_ix, true, true, ReorderBehavior::None, cx);
+                    pane.activate_item(item_ix, true, true, cx);
                     cx.prompt(
                         PromptLevel::Warning,
                         DIRTY_MESSAGE,

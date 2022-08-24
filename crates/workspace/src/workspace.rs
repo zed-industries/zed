@@ -1535,9 +1535,7 @@ impl Workspace {
                 .map(|ix| (pane.clone(), ix))
         });
         if let Some((pane, ix)) = result {
-            pane.update(cx, |pane, cx| {
-                pane.activate_item(ix, true, true, ReorderBehavior::None, cx)
-            });
+            pane.update(cx, |pane, cx| pane.activate_item(ix, true, true, cx));
             true
         } else {
             false
@@ -3006,7 +3004,7 @@ mod tests {
 
         let close_items = workspace.update(cx, |workspace, cx| {
             pane.update(cx, |pane, cx| {
-                pane.activate_item(1, true, true, ReorderBehavior::None, cx);
+                pane.activate_item(1, true, true, cx);
                 assert_eq!(pane.active_item().unwrap().id(), item2.id());
             });
 
@@ -3108,7 +3106,7 @@ mod tests {
                 workspace.add_item(Box::new(cx.add_view(|_| item.clone())), cx);
             }
             left_pane.update(cx, |pane, cx| {
-                pane.activate_item(2, true, true, ReorderBehavior::None, cx);
+                pane.activate_item(2, true, true, cx);
             });
 
             workspace
