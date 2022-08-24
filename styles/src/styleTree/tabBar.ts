@@ -1,5 +1,6 @@
 import Theme from "../themes/common/theme";
-import { iconColor, text, border, backgroundColor } from "./components";
+import { withOpacity } from "../utils/color";
+import { iconColor, text, border, backgroundColor, draggedShadow } from "./components";
 
 export default function tabBar(theme: Theme) {
   const height = 32;
@@ -55,6 +56,19 @@ export default function tabBar(theme: Theme) {
     },
   }
 
+  const draggedTab = {
+    ...activePaneActiveTab,
+    background: withOpacity(tab.background, 0.8),
+    border: {
+      ...tab.border,
+      top: false,
+      left: false,
+      right: false,
+      bottom: false,
+    },
+    shadow: draggedShadow(theme),
+  }
+
   return {
     height,
     background: backgroundColor(theme, 300),
@@ -71,6 +85,7 @@ export default function tabBar(theme: Theme) {
       activeTab: inactivePaneActiveTab,
       inactiveTab: inactivePaneInactiveTab,
     },
+    draggedTab,
     paneButton: {
       color: iconColor(theme, "secondary"),
       border: {

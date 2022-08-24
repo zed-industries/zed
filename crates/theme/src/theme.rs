@@ -75,6 +75,7 @@ pub struct TabBar {
     pub pane_button: Interactive<IconButton>,
     pub active_pane: TabStyles,
     pub inactive_pane: TabStyles,
+    pub dragged_tab: Tab,
     pub height: f32,
 }
 

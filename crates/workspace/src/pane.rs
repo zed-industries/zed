@@ -1013,16 +1013,12 @@ impl Pane {
                         let detail = detail.clone();
                         let hovered = mouse_state.hovered;
 
+                        let theme = cx.global::<Settings>().theme.clone();
+
                         move |_, cx| {
-                            Self::render_tab(
-                                &item,
-                                pane,
-                                detail,
-                                hovered,
-                                pane_active,
-                                tab_active,
-                                cx,
-                            )
+                            let tab_style =
+                                theme.workspace.tab_bar.tab_style(pane_active, tab_active);
+                            Self::render_tab(&item, pane, detail, hovered, tab_style, cx)
                         }
                     })
                     .with_cursor_style(if pane_active && tab_active {
@@ -1053,15 +1049,17 @@ impl Pane {
                             pane: pane.clone(),
                         },
                         {
+                            let theme = cx.global::<Settings>().theme.clone();
+
                             let detail = detail.clone();
                             move |dragged_item, cx: &mut RenderContext<Workspace>| {
+                                let tab_style = &theme.workspace.tab_bar.dragged_tab;
                                 Pane::render_tab(
                                     &dragged_item.item,
                                     dragged_item.pane.clone(),
                                     detail,
                                     false,
-                                    pane_active,
-                                    tab_active,
+                                    &tab_style,
                                     cx,
                                 )
                             }
@@ -1130,13 +1128,10 @@ impl Pane {
         pane: WeakViewHandle<Pane>,
         detail: Option<usize>,
         hovered: bool,
-        pane_active: bool,
-        tab_active: bool,
+        tab_style: &theme::Tab,
         cx: &mut RenderContext<V>,
     ) -> ElementBox {
-        let theme = cx.global::<Settings>().theme.clone();
-        let tab_style = theme.workspace.tab_bar.tab_style(pane_active, tab_active);
-        let title = item.tab_content(detail, tab_style, cx);
+        let title = item.tab_content(detail, &tab_style, cx);
 
         Flex::row()
             .with_child(

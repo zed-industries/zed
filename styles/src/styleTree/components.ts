@@ -94,3 +94,11 @@ export function popoverShadow(theme: Theme) {
     offset: [1, 2],
   };
 }
+
+export function draggedShadow(theme: Theme) {
+  return {
+    blur: 6,
+    color: theme.shadow,
+    offset: [1, 2],
+  };
+}
