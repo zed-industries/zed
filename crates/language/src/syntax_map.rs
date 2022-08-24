@@ -306,10 +306,6 @@ impl SyntaxSnapshot {
         language: Arc<Language>,
     ) {
         let edits = text.edits_since::<usize>(from_version).collect::<Vec<_>>();
-        if edits.is_empty() {
-            return;
-        }
-
         let max_depth = self.layers.summary().max_depth;
         let mut cursor = self.layers.cursor::<SyntaxLayerSummary>();
         cursor.next(&text);
