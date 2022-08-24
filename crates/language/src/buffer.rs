@@ -1627,9 +1627,7 @@ impl BufferSnapshot {
         &self,
         row_range: Range<u32>,
     ) -> Option<impl Iterator<Item = Option<IndentSuggestion>> + '_> {
-        let language = self.language.as_ref()?;
-        let grammar = language.grammar.as_ref()?;
-        let config = &language.config;
+        let config = &self.language.as_ref()?.config;
         let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
 
         // Find the suggested indentation ranges based on the syntax tree.
@@ -1639,20 +1637,24 @@ impl BufferSnapshot {
         let mut matches = self.syntax.matches(range, &self.text, |grammar| {
             Some(&grammar.indents_config.as_ref()?.query)
         });
+        let indent_configs = matches
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.indents_config.as_ref().unwrap())
+            .collect::<Vec<_>>();
 
         let mut indent_ranges = Vec::<Range<Point>>::new();
         while let Some(mat) = matches.peek() {
             let mut start: Option<Point> = None;
             let mut end: Option<Point> = None;
 
-            if let Some(config) = &grammar.indents_config {
-                for capture in mat.captures {
-                    if capture.index == config.indent_capture_ix {
-                        start.get_or_insert(Point::from_ts_point(capture.node.start_position()));
-                        end.get_or_insert(Point::from_ts_point(capture.node.end_position()));
-                    } else if Some(capture.index) == config.end_capture_ix {
-                        end = Some(Point::from_ts_point(capture.node.start_position()));
-                    }
+            let config = &indent_configs[mat.grammar_index];
+            for capture in mat.captures {
+                if capture.index == config.indent_capture_ix {
+                    start.get_or_insert(Point::from_ts_point(capture.node.start_position()));
+                    end.get_or_insert(Point::from_ts_point(capture.node.end_position()));
+                } else if Some(capture.index) == config.end_capture_ix {
+                    end = Some(Point::from_ts_point(capture.node.start_position()));
                 }
             }
 

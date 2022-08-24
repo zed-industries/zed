@@ -998,6 +998,7 @@ fn test_autoindent_language_without_indents_query(cx: &mut MutableAppContext) {
             Arc::new(Language::new(
                 LanguageConfig {
                     name: "Markdown".into(),
+                    auto_indent_using_last_non_empty_line: false,
                     ..Default::default()
                 },
                 Some(tree_sitter_json::language()),
