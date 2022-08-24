@@ -173,6 +173,7 @@ impl SyntaxMap {
     }
 
     pub fn did_parse(&mut self, snapshot: SyntaxSnapshot, version: clock::Global) {
+        self.interpolated_version = version.clone();
         self.parsed_version = version;
         self.snapshot = snapshot;
     }
