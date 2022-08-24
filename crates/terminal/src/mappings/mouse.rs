@@ -33,12 +33,11 @@ impl Modifiers {
         }
     }
 
-    //TODO: Determine if I should add modifiers into the ScrollWheelEvent type
-    fn from_scroll() -> Self {
+    fn from_scroll(scroll: &ScrollWheelEvent) -> Self {
         Modifiers {
-            ctrl: false,
-            shift: false,
-            alt: false,
+            ctrl: scroll.ctrl,
+            shift: scroll.shift,
+            alt: scroll.alt,
         }
     }
 }
@@ -123,7 +122,7 @@ pub fn scroll_report(
             point,
             MouseButton::from_scroll(e),
             true,
-            Modifiers::from_scroll(),
+            Modifiers::from_scroll(e),
             MouseFormat::from_mode(mode),
         )
         .map(|report| repeat(report).take(max(scroll_lines, 1) as usize))
