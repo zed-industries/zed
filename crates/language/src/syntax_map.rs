@@ -1,24 +1,26 @@
-use crate::{
-    Grammar, InjectionConfig, Language, LanguageRegistry, QueryCursorHandle, TextProvider,
-    ToTreeSitterPoint,
-};
+use crate::{Grammar, InjectionConfig, Language, LanguageRegistry};
+use lazy_static::lazy_static;
+use parking_lot::Mutex;
 use std::{
     borrow::Cow,
     cell::RefCell,
     cmp::{Ordering, Reverse},
     collections::BinaryHeap,
-    iter::Peekable,
-    ops::{DerefMut, Range},
+    ops::{Deref, DerefMut, Range},
     sync::Arc,
 };
 use sum_tree::{Bias, SeekTarget, SumTree};
-use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
+use text::{rope, Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
 use tree_sitter::{
-    Node, Parser, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatch, QueryMatches, Tree,
+    Node, Parser, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatches, Tree,
 };
 
 thread_local! {
     static PARSER: RefCell<Parser> = RefCell::new(Parser::new());
+}
+
+lazy_static! {
+    static ref QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Default::default();
 }
 
 #[derive(Default)]
@@ -34,39 +36,51 @@ pub struct SyntaxSnapshot {
     layers: SumTree<SyntaxLayer>,
 }
 
+#[derive(Default)]
 pub struct SyntaxMapCaptures<'a> {
     layers: Vec<SyntaxMapCapturesLayer<'a>>,
+    active_layer_count: usize,
+    grammars: Vec<&'a Grammar>,
 }
 
+#[derive(Default)]
 pub struct SyntaxMapMatches<'a> {
     layers: Vec<SyntaxMapMatchesLayer<'a>>,
+    active_layer_count: usize,
+    grammars: Vec<&'a Grammar>,
 }
 
+#[derive(Debug)]
 pub struct SyntaxMapCapture<'a> {
-    pub grammar: &'a Grammar,
     pub depth: usize,
     pub node: Node<'a>,
     pub index: u32,
+    pub grammar_index: usize,
 }
 
+#[derive(Debug)]
 pub struct SyntaxMapMatch<'a> {
-    pub grammar: &'a Grammar,
     pub depth: usize,
     pub pattern_index: usize,
     pub captures: &'a [QueryCapture<'a>],
+    pub grammar_index: usize,
 }
 
 struct SyntaxMapCapturesLayer<'a> {
     depth: usize,
-    captures: Peekable<QueryCaptures<'a, 'a, TextProvider<'a>>>,
-    grammar: &'a Grammar,
+    captures: QueryCaptures<'a, 'a, TextProvider<'a>>,
+    next_capture: Option<QueryCapture<'a>>,
+    grammar_index: usize,
     _query_cursor: QueryCursorHandle,
 }
 
 struct SyntaxMapMatchesLayer<'a> {
     depth: usize,
-    matches: Peekable<QueryMatches<'a, 'a, TextProvider<'a>>>,
-    grammar: &'a Grammar,
+    next_pattern_index: usize,
+    next_captures: Vec<QueryCapture<'a>>,
+    has_next: bool,
+    matches: QueryMatches<'a, 'a, TextProvider<'a>>,
+    grammar_index: usize,
     _query_cursor: QueryCursorHandle,
 }
 
@@ -80,6 +94,7 @@ struct SyntaxLayer {
 
 #[derive(Debug, Clone)]
 struct SyntaxLayerSummary {
+    min_depth: usize,
     max_depth: usize,
     range: Range<Anchor>,
     last_layer_range: Range<Anchor>,
@@ -110,6 +125,12 @@ struct ChangedRegion {
 #[derive(Default)]
 struct ChangeRegionSet(Vec<ChangedRegion>);
 
+struct TextProvider<'a>(&'a Rope);
+
+struct ByteChunks<'a>(rope::Chunks<'a>);
+
+struct QueryCursorHandle(Option<QueryCursor>);
+
 impl SyntaxMap {
     pub fn new() -> Self {
         Self::default()
@@ -123,11 +144,20 @@ impl SyntaxMap {
         self.snapshot.clone()
     }
 
+    pub fn language_registry(&self) -> Option<Arc<LanguageRegistry>> {
+        self.language_registry.clone()
+    }
+
+    pub fn parsed_version(&self) -> clock::Global {
+        self.parsed_version.clone()
+    }
+
     pub fn interpolate(&mut self, text: &BufferSnapshot) {
         self.snapshot.interpolate(&self.interpolated_version, text);
         self.interpolated_version = text.version.clone();
     }
 
+    #[cfg(test)]
     pub fn reparse(&mut self, language: Arc<Language>, text: &BufferSnapshot) {
         if !self.interpolated_version.observed_all(&text.version) {
             self.interpolate(text);
@@ -141,9 +171,22 @@ impl SyntaxMap {
         );
         self.parsed_version = text.version.clone();
     }
+
+    pub fn did_parse(&mut self, snapshot: SyntaxSnapshot, version: clock::Global) {
+        self.parsed_version = version;
+        self.snapshot = snapshot;
+    }
+
+    pub fn clear(&mut self) {
+        self.snapshot = SyntaxSnapshot::default();
+    }
 }
 
 impl SyntaxSnapshot {
+    pub fn is_empty(&self) -> bool {
+        self.layers.is_empty()
+    }
+
     pub fn interpolate(&mut self, from_version: &clock::Global, text: &BufferSnapshot) {
         let edits = text
             .edits_since::<(usize, Point)>(&from_version)
@@ -429,117 +472,52 @@ impl SyntaxSnapshot {
         self.layers = layers;
     }
 
+    pub fn single_tree_captures<'a>(
+        range: Range<usize>,
+        text: &'a Rope,
+        tree: &'a Tree,
+        grammar: &'a Grammar,
+        query: fn(&Grammar) -> Option<&Query>,
+    ) -> SyntaxMapCaptures<'a> {
+        SyntaxMapCaptures::new(
+            range.clone(),
+            text,
+            [(grammar, 0, tree.root_node())].into_iter(),
+            query,
+        )
+    }
+
     pub fn captures<'a>(
         &'a self,
         range: Range<usize>,
         buffer: &'a BufferSnapshot,
-        query: impl Fn(&Grammar) -> Option<&Query>,
+        query: fn(&Grammar) -> Option<&Query>,
     ) -> SyntaxMapCaptures {
-        let mut result = SyntaxMapCaptures { layers: Vec::new() };
-        for (grammar, depth, node) in self.layers_for_range(range.clone(), buffer) {
-            let query = if let Some(query) = query(grammar) {
-                query
-            } else {
-                continue;
-            };
-
-            let mut query_cursor = QueryCursorHandle::new();
-
-            // TODO - add a Tree-sitter API to remove the need for this.
-            let cursor = unsafe {
-                std::mem::transmute::<_, &'static mut QueryCursor>(query_cursor.deref_mut())
-            };
-
-            cursor.set_byte_range(range.clone());
-            let captures = cursor.captures(query, node, TextProvider(buffer.as_rope()));
-            let mut layer = SyntaxMapCapturesLayer {
-                depth,
-                grammar,
-                captures: captures.peekable(),
-                _query_cursor: query_cursor,
-            };
-
-            if let Some(key) = layer.sort_key() {
-                let mut ix = 0;
-                while let Some(next_layer) = result.layers.get_mut(ix) {
-                    if let Some(next_key) = next_layer.sort_key() {
-                        if key > next_key {
-                            ix += 1;
-                            continue;
-                        }
-                    }
-                    break;
-                }
-                result.layers.insert(ix, layer);
-            }
-        }
-        result
+        SyntaxMapCaptures::new(
+            range.clone(),
+            buffer.as_rope(),
+            self.layers_for_range(range, buffer).into_iter(),
+            query,
+        )
     }
 
     pub fn matches<'a>(
         &'a self,
         range: Range<usize>,
         buffer: &'a BufferSnapshot,
-        query: impl Fn(&Grammar) -> Option<&Query>,
+        query: fn(&Grammar) -> Option<&Query>,
     ) -> SyntaxMapMatches {
-        let mut result = SyntaxMapMatches { layers: Vec::new() };
-        for (grammar, depth, node) in self.layers_for_range(range.clone(), buffer) {
-            let query = if let Some(query) = query(grammar) {
-                query
-            } else {
-                continue;
-            };
-
-            let mut query_cursor = QueryCursorHandle::new();
-
-            // TODO - add a Tree-sitter API to remove the need for this.
-            let cursor = unsafe {
-                std::mem::transmute::<_, &'static mut QueryCursor>(query_cursor.deref_mut())
-            };
-
-            cursor.set_byte_range(range.clone());
-            let matches = cursor.matches(query, node, TextProvider(buffer.as_rope()));
-            let mut layer = SyntaxMapMatchesLayer {
-                depth,
-                grammar,
-                matches: matches.peekable(),
-                _query_cursor: query_cursor,
-            };
-
-            if let Some(key) = layer.sort_key() {
-                let mut ix = 0;
-                while let Some(next_layer) = result.layers.get_mut(ix) {
-                    if let Some(next_key) = next_layer.sort_key() {
-                        if key > next_key {
-                            ix += 1;
-                            continue;
-                        }
-                    }
-                    break;
-                }
-                result.layers.insert(ix, layer);
-            }
-        }
-        result
+        SyntaxMapMatches::new(
+            range.clone(),
+            buffer.as_rope(),
+            self.layers_for_range(range, buffer).into_iter(),
+            query,
+        )
     }
 
-    pub fn layers(&self, buffer: &BufferSnapshot) -> Vec<(&Grammar, Node)> {
-        self.layers
-            .iter()
-            .filter_map(|layer| {
-                if let Some(grammar) = &layer.language.grammar {
-                    Some((
-                        grammar.as_ref(),
-                        layer.tree.root_node_with_offset(
-                            layer.range.start.to_offset(buffer),
-                            layer.range.start.to_point(buffer).to_ts_point(),
-                        ),
-                    ))
-                } else {
-                    None
-                }
-            })
-            .collect()
+    #[cfg(test)]
+    pub fn layers(&self, buffer: &BufferSnapshot) -> Vec<(&Grammar, usize, Node)> {
+        self.layers_for_range(0..buffer.len(), buffer)
     }
 
     pub fn layers_for_range<'a, T: ToOffset>(
@@ -551,9 +529,13 @@ impl SyntaxSnapshot {
         let end = buffer.anchor_after(range.end.to_offset(buffer));
 
         let mut cursor = self.layers.filter::<_, ()>(|summary| {
-            let is_before_start = summary.range.end.cmp(&start, buffer).is_lt();
-            let is_after_end = summary.range.start.cmp(&end, buffer).is_gt();
-            !is_before_start && !is_after_end
+            if summary.max_depth > summary.min_depth {
+                true
+            } else {
+                let is_before_start = summary.range.end.cmp(&start, buffer).is_lt();
+                let is_after_end = summary.range.start.cmp(&end, buffer).is_gt();
+                !is_before_start && !is_after_end
+            }
         });
 
         let mut result = Vec::new();
@@ -576,57 +558,274 @@ impl SyntaxSnapshot {
     }
 }
 
-impl<'a> Iterator for SyntaxMapCaptures<'a> {
-    type Item = SyntaxMapCapture<'a>;
+impl<'a> SyntaxMapCaptures<'a> {
+    fn new(
+        range: Range<usize>,
+        text: &'a Rope,
+        layers: impl Iterator<Item = (&'a Grammar, usize, Node<'a>)>,
+        query: fn(&Grammar) -> Option<&Query>,
+    ) -> Self {
+        let mut result = Self {
+            layers: Vec::new(),
+            grammars: Vec::new(),
+            active_layer_count: 0,
+        };
+        for (grammar, depth, node) in layers {
+            let query = if let Some(query) = query(grammar) {
+                query
+            } else {
+                continue;
+            };
 
-    fn next(&mut self) -> Option<Self::Item> {
-        let layer = self.layers.first_mut()?;
-        let (mat, ix) = layer.captures.next()?;
+            let mut query_cursor = QueryCursorHandle::new();
 
-        let capture = mat.captures[ix as usize];
-        let grammar = layer.grammar;
-        let depth = layer.depth;
+            // TODO - add a Tree-sitter API to remove the need for this.
+            let cursor = unsafe {
+                std::mem::transmute::<_, &'static mut QueryCursor>(query_cursor.deref_mut())
+            };
 
-        if let Some(key) = layer.sort_key() {
-            let mut i = 1;
-            while let Some(later_layer) = self.layers.get_mut(i) {
-                if let Some(later_key) = later_layer.sort_key() {
-                    if key > later_key {
-                        i += 1;
-                        continue;
-                    }
-                }
-                break;
+            cursor.set_byte_range(range.clone());
+            let captures = cursor.captures(query, node, TextProvider(text));
+            let grammar_index = result
+                .grammars
+                .iter()
+                .position(|g| g.id == grammar.id())
+                .unwrap_or_else(|| {
+                    result.grammars.push(grammar);
+                    result.grammars.len() - 1
+                });
+            let mut layer = SyntaxMapCapturesLayer {
+                depth,
+                grammar_index,
+                next_capture: None,
+                captures,
+                _query_cursor: query_cursor,
+            };
+
+            layer.advance();
+            if layer.next_capture.is_some() {
+                let key = layer.sort_key();
+                let ix = match result.layers[..result.active_layer_count]
+                    .binary_search_by_key(&key, |layer| layer.sort_key())
+                {
+                    Ok(ix) | Err(ix) => ix,
+                };
+                result.layers.insert(ix, layer);
+                result.active_layer_count += 1;
+            } else {
+                result.layers.push(layer);
             }
-            if i > 1 {
-                self.layers[0..i].rotate_left(1);
-            }
-        } else {
-            self.layers.remove(0);
         }
 
+        result
+    }
+
+    pub fn grammars(&self) -> &[&'a Grammar] {
+        &self.grammars
+    }
+
+    pub fn peek(&self) -> Option<SyntaxMapCapture<'a>> {
+        let layer = self.layers[..self.active_layer_count].first()?;
+        let capture = layer.next_capture?;
         Some(SyntaxMapCapture {
-            grammar,
-            depth,
-            node: capture.node,
+            depth: layer.depth,
+            grammar_index: layer.grammar_index,
             index: capture.index,
+            node: capture.node,
         })
+    }
+
+    pub fn advance(&mut self) -> bool {
+        let layer = if let Some(layer) = self.layers[..self.active_layer_count].first_mut() {
+            layer
+        } else {
+            return false;
+        };
+
+        layer.advance();
+        if layer.next_capture.is_some() {
+            let key = layer.sort_key();
+            let i = 1 + self.layers[1..self.active_layer_count]
+                .iter()
+                .position(|later_layer| key < later_layer.sort_key())
+                .unwrap_or(self.active_layer_count - 1);
+            self.layers[0..i].rotate_left(1);
+        } else {
+            self.layers[0..self.active_layer_count].rotate_left(1);
+            self.active_layer_count -= 1;
+        }
+
+        true
+    }
+
+    pub fn set_byte_range(&mut self, range: Range<usize>) {
+        for layer in &mut self.layers {
+            layer.captures.set_byte_range(range.clone());
+            if let Some(capture) = &layer.next_capture {
+                if capture.node.end_byte() > range.start {
+                    continue;
+                }
+            }
+            layer.advance();
+        }
+        self.layers.sort_unstable_by_key(|layer| layer.sort_key());
+        self.active_layer_count = self
+            .layers
+            .iter()
+            .position(|layer| layer.next_capture.is_none())
+            .unwrap_or(self.layers.len());
+    }
+}
+
+impl<'a> SyntaxMapMatches<'a> {
+    fn new(
+        range: Range<usize>,
+        text: &'a Rope,
+        layers: impl Iterator<Item = (&'a Grammar, usize, Node<'a>)>,
+        query: fn(&Grammar) -> Option<&Query>,
+    ) -> Self {
+        let mut result = Self::default();
+        for (grammar, depth, node) in layers {
+            let query = if let Some(query) = query(grammar) {
+                query
+            } else {
+                continue;
+            };
+
+            let mut query_cursor = QueryCursorHandle::new();
+
+            // TODO - add a Tree-sitter API to remove the need for this.
+            let cursor = unsafe {
+                std::mem::transmute::<_, &'static mut QueryCursor>(query_cursor.deref_mut())
+            };
+
+            cursor.set_byte_range(range.clone());
+            let matches = cursor.matches(query, node, TextProvider(text));
+            let grammar_index = result
+                .grammars
+                .iter()
+                .position(|g| g.id == grammar.id())
+                .unwrap_or_else(|| {
+                    result.grammars.push(grammar);
+                    result.grammars.len() - 1
+                });
+            let mut layer = SyntaxMapMatchesLayer {
+                depth,
+                grammar_index,
+                matches,
+                next_pattern_index: 0,
+                next_captures: Vec::new(),
+                has_next: false,
+                _query_cursor: query_cursor,
+            };
+
+            layer.advance();
+            if layer.has_next {
+                let key = layer.sort_key();
+                let ix = match result.layers[..result.active_layer_count]
+                    .binary_search_by_key(&key, |layer| layer.sort_key())
+                {
+                    Ok(ix) | Err(ix) => ix,
+                };
+                result.layers.insert(ix, layer);
+                result.active_layer_count += 1;
+            } else {
+                result.layers.push(layer);
+            }
+        }
+        result
+    }
+
+    pub fn grammars(&self) -> &[&'a Grammar] {
+        &self.grammars
+    }
+
+    pub fn peek(&self) -> Option<SyntaxMapMatch> {
+        let layer = self.layers.first()?;
+        if !layer.has_next {
+            return None;
+        }
+        Some(SyntaxMapMatch {
+            depth: layer.depth,
+            grammar_index: layer.grammar_index,
+            pattern_index: layer.next_pattern_index,
+            captures: &layer.next_captures,
+        })
+    }
+
+    pub fn advance(&mut self) -> bool {
+        let layer = if let Some(layer) = self.layers.first_mut() {
+            layer
+        } else {
+            return false;
+        };
+
+        layer.advance();
+        if layer.has_next {
+            let key = layer.sort_key();
+            let i = 1 + self.layers[1..self.active_layer_count]
+                .iter()
+                .position(|later_layer| key < later_layer.sort_key())
+                .unwrap_or(self.active_layer_count - 1);
+            self.layers[0..i].rotate_left(1);
+        } else {
+            self.layers[0..self.active_layer_count].rotate_left(1);
+            self.active_layer_count -= 1;
+        }
+
+        true
     }
 }
 
 impl<'a> SyntaxMapCapturesLayer<'a> {
-    fn sort_key(&mut self) -> Option<(usize, Reverse<usize>, usize)> {
-        let (mat, ix) = self.captures.peek()?;
-        let range = &mat.captures[*ix].node.byte_range();
-        Some((range.start, Reverse(range.end), self.depth))
+    fn advance(&mut self) {
+        self.next_capture = self.captures.next().map(|(mat, ix)| mat.captures[ix]);
+    }
+
+    fn sort_key(&self) -> (usize, Reverse<usize>, usize) {
+        if let Some(capture) = &self.next_capture {
+            let range = capture.node.byte_range();
+            (range.start, Reverse(range.end), self.depth)
+        } else {
+            (usize::MAX, Reverse(0), usize::MAX)
+        }
     }
 }
 
 impl<'a> SyntaxMapMatchesLayer<'a> {
-    fn sort_key(&mut self) -> Option<(usize, Reverse<usize>, usize)> {
-        let mat = self.matches.peek()?;
-        let range = mat.captures.first()?.node.start_byte()..mat.captures.last()?.node.end_byte();
-        Some((range.start, Reverse(range.end), self.depth))
+    fn advance(&mut self) {
+        if let Some(mat) = self.matches.next() {
+            self.next_captures.clear();
+            self.next_captures.extend_from_slice(&mat.captures);
+            self.next_pattern_index = mat.pattern_index;
+            self.has_next = true;
+        } else {
+            self.has_next = false;
+        }
+    }
+
+    fn sort_key(&self) -> (usize, Reverse<usize>, usize) {
+        if self.has_next {
+            let captures = &self.next_captures;
+            if let Some((first, last)) = captures.first().zip(captures.last()) {
+                return (
+                    first.node.start_byte(),
+                    Reverse(last.node.end_byte()),
+                    self.depth,
+                );
+            }
+        }
+        (usize::MAX, Reverse(0), usize::MAX)
+    }
+}
+
+impl<'a> Iterator for SyntaxMapCaptures<'a> {
+    type Item = SyntaxMapCapture<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let result = self.peek();
+        self.advance();
+        result
     }
 }
 
@@ -864,6 +1063,7 @@ impl Default for SyntaxLayerSummary {
     fn default() -> Self {
         Self {
             max_depth: 0,
+            min_depth: 0,
             range: Anchor::MAX..Anchor::MIN,
             last_layer_range: Anchor::MIN..Anchor::MAX,
         }
@@ -875,7 +1075,8 @@ impl sum_tree::Summary for SyntaxLayerSummary {
 
     fn add_summary(&mut self, other: &Self, buffer: &Self::Context) {
         if other.max_depth > self.max_depth {
-            *self = other.clone();
+            self.max_depth = other.max_depth;
+            self.range = other.range.clone();
         } else {
             if other.range.start.cmp(&self.range.start, buffer).is_lt() {
                 self.range.start = other.range.start;
@@ -883,8 +1084,8 @@ impl sum_tree::Summary for SyntaxLayerSummary {
             if other.range.end.cmp(&self.range.end, buffer).is_gt() {
                 self.range.end = other.range.end;
             }
-            self.last_layer_range = other.last_layer_range.clone();
         }
+        self.last_layer_range = other.last_layer_range.clone();
     }
 }
 
@@ -927,6 +1128,7 @@ impl sum_tree::Item for SyntaxLayer {
 
     fn summary(&self) -> Self::Summary {
         SyntaxLayerSummary {
+            min_depth: self.depth,
             max_depth: self.depth,
             range: self.range.clone(),
             last_layer_range: self.range.clone(),
@@ -944,12 +1146,73 @@ impl std::fmt::Debug for SyntaxLayer {
     }
 }
 
+impl<'a> tree_sitter::TextProvider<'a> for TextProvider<'a> {
+    type I = ByteChunks<'a>;
+
+    fn text(&mut self, node: tree_sitter::Node) -> Self::I {
+        ByteChunks(self.0.chunks_in_range(node.byte_range()))
+    }
+}
+
+impl<'a> Iterator for ByteChunks<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(str::as_bytes)
+    }
+}
+
+impl QueryCursorHandle {
+    pub(crate) fn new() -> Self {
+        let mut cursor = QUERY_CURSORS.lock().pop().unwrap_or_else(QueryCursor::new);
+        cursor.set_match_limit(64);
+        QueryCursorHandle(Some(cursor))
+    }
+}
+
+impl Deref for QueryCursorHandle {
+    type Target = QueryCursor;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().unwrap()
+    }
+}
+
+impl DerefMut for QueryCursorHandle {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_mut().unwrap()
+    }
+}
+
+impl Drop for QueryCursorHandle {
+    fn drop(&mut self) {
+        let mut cursor = self.0.take().unwrap();
+        cursor.set_byte_range(0..usize::MAX);
+        cursor.set_point_range(Point::zero().to_ts_point()..Point::MAX.to_ts_point());
+        QUERY_CURSORS.lock().push(cursor)
+    }
+}
+
+pub(crate) trait ToTreeSitterPoint {
+    fn to_ts_point(self) -> tree_sitter::Point;
+    fn from_ts_point(point: tree_sitter::Point) -> Self;
+}
+
+impl ToTreeSitterPoint for Point {
+    fn to_ts_point(self) -> tree_sitter::Point {
+        tree_sitter::Point::new(self.row as usize, self.column as usize)
+    }
+
+    fn from_ts_point(point: tree_sitter::Point) -> Self {
+        Point::new(point.row as u32, point.column as u32)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::LanguageConfig;
     use text::{Buffer, Point};
-    use tree_sitter::Query;
     use unindent::Unindent as _;
     use util::test::marked_text_ranges;
 
@@ -1298,13 +1561,13 @@ mod tests {
                 mutated_layers.into_iter().zip(reference_layers.into_iter())
             {
                 assert_eq!(
-                    edited_layer.1.to_sexp(),
-                    reference_layer.1.to_sexp(),
+                    edited_layer.2.to_sexp(),
+                    reference_layer.2.to_sexp(),
                     "different layer at step {i}"
                 );
                 assert_eq!(
-                    edited_layer.1.range(),
-                    reference_layer.1.range(),
+                    edited_layer.2.range(),
+                    reference_layer.2.range(),
                     "different layer at step {i}"
                 );
             }
@@ -1377,16 +1640,16 @@ mod tests {
         marked_string: &str,
     ) {
         let mut actual_ranges = Vec::<Range<usize>>::new();
-        for capture in syntax_map.captures(0..buffer.len(), buffer, |grammar| {
+        let captures = syntax_map.captures(0..buffer.len(), buffer, |grammar| {
             grammar.highlights_query.as_ref()
-        }) {
-            let name = &capture
-                .grammar
-                .highlights_query
-                .as_ref()
-                .unwrap()
-                .capture_names()[capture.index as usize];
-            dbg!(capture.node, capture.index, name);
+        });
+        let queries = captures
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.highlights_query.as_ref().unwrap())
+            .collect::<Vec<_>>();
+        for capture in captures {
+            let name = &queries[capture.grammar_index].capture_names()[capture.index as usize];
             if highlight_query_capture_names.contains(&name.as_str()) {
                 actual_ranges.push(capture.node.byte_range());
             }

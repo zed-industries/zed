@@ -6,13 +6,15 @@ pub use crate::{
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
     outline::OutlineItem,
+    syntax_map::{
+        SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxSnapshot, ToTreeSitterPoint,
+    },
     CodeLabel, Outline,
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use futures::FutureExt as _;
 use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, MutableAppContext, Task};
-use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use settings::Settings;
 use similar::{ChangeTag, TextDiff};
@@ -25,7 +27,7 @@ use std::{
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
-    ops::{Deref, DerefMut, Range},
+    ops::{Deref, Range},
     path::{Path, PathBuf},
     str,
     sync::Arc,
@@ -36,17 +38,12 @@ use sum_tree::TreeMap;
 use text::operation_queue::OperationQueue;
 pub use text::{Buffer as TextBuffer, BufferSnapshot as TextBufferSnapshot, Operation as _, *};
 use theme::SyntaxTheme;
-use tree_sitter::{InputEdit, QueryCursor, Tree};
 use util::TryFutureExt as _;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_rust, tree_sitter_typescript};
 
 pub use lsp::DiagnosticSeverity;
-
-lazy_static! {
-    static ref QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Default::default();
-}
 
 pub struct Buffer {
     text: TextBuffer,
@@ -60,7 +57,7 @@ pub struct Buffer {
     autoindent_requests: Vec<Arc<AutoindentRequest>>,
     pending_autoindent: Option<Task<()>>,
     sync_parse_timeout: Duration,
-    syntax_tree: Mutex<Option<SyntaxTree>>,
+    syntax_map: Mutex<SyntaxMap>,
     parsing_in_background: bool,
     parse_count: usize,
     diagnostics: DiagnosticSet,
@@ -75,7 +72,7 @@ pub struct Buffer {
 
 pub struct BufferSnapshot {
     text: text::BufferSnapshot,
-    tree: Option<Tree>,
+    syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: DiagnosticSet,
     diagnostics_update_count: usize,
@@ -221,14 +218,6 @@ pub trait LocalFile: File {
     );
 }
 
-pub(crate) struct QueryCursorHandle(Option<QueryCursor>);
-
-#[derive(Clone)]
-struct SyntaxTree {
-    tree: Tree,
-    version: clock::Global,
-}
-
 #[derive(Clone, Debug)]
 pub enum AutoindentMode {
     /// Indent each line of inserted text.
@@ -268,14 +257,11 @@ struct IndentSuggestion {
     delta: Ordering,
 }
 
-pub(crate) struct TextProvider<'a>(pub(crate) &'a Rope);
-
 struct BufferChunkHighlights<'a> {
-    captures: tree_sitter::QueryCaptures<'a, 'a, TextProvider<'a>>,
-    next_capture: Option<(tree_sitter::QueryMatch<'a, 'a>, usize)>,
+    captures: SyntaxMapCaptures<'a>,
+    next_capture: Option<SyntaxMapCapture<'a>>,
     stack: Vec<(usize, HighlightId)>,
-    highlight_map: HighlightMap,
-    _query_cursor: QueryCursorHandle,
+    highlight_maps: Vec<HighlightMap>,
 }
 
 pub struct BufferChunks<'a> {
@@ -456,7 +442,7 @@ impl Buffer {
             was_dirty_before_starting_transaction: None,
             text: buffer,
             file,
-            syntax_tree: Mutex::new(None),
+            syntax_map: Mutex::new(SyntaxMap::new()),
             parsing_in_background: false,
             parse_count: 0,
             sync_parse_timeout: Duration::from_millis(1),
@@ -477,7 +463,7 @@ impl Buffer {
     pub fn snapshot(&self) -> BufferSnapshot {
         BufferSnapshot {
             text: self.text.snapshot(),
-            tree: self.syntax_tree(),
+            syntax: self.syntax_map(),
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
@@ -533,9 +519,15 @@ impl Buffer {
     }
 
     pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
-        *self.syntax_tree.lock() = None;
+        self.syntax_map.lock().clear();
         self.language = language;
         self.reparse(cx);
+    }
+
+    pub fn set_language_registry(&mut self, language_registry: Arc<LanguageRegistry>) {
+        self.syntax_map
+            .lock()
+            .set_language_registry(language_registry);
     }
 
     pub fn did_save(
@@ -682,13 +674,10 @@ impl Buffer {
         self.file_update_count
     }
 
-    pub(crate) fn syntax_tree(&self) -> Option<Tree> {
-        if let Some(syntax_tree) = self.syntax_tree.lock().as_mut() {
-            self.interpolate_tree(syntax_tree);
-            Some(syntax_tree.tree.clone())
-        } else {
-            None
-        }
+    pub(crate) fn syntax_map(&self) -> SyntaxSnapshot {
+        let mut syntax_map = self.syntax_map.lock();
+        syntax_map.interpolate(&self.text_snapshot());
+        syntax_map.snapshot()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -706,35 +695,49 @@ impl Buffer {
             return false;
         }
 
-        if let Some(grammar) = self.grammar().cloned() {
-            let old_tree = self.syntax_tree();
-            let text = self.as_rope().clone();
+        if let Some(language) = self.language.clone() {
+            let text = self.text_snapshot();
             let parsed_version = self.version();
+
+            let mut syntax_map;
+            let language_registry;
+            let syntax_map_version;
+            {
+                let mut map = self.syntax_map.lock();
+                map.interpolate(&text);
+                language_registry = map.language_registry();
+                syntax_map = map.snapshot();
+                syntax_map_version = map.parsed_version();
+            }
             let parse_task = cx.background().spawn({
-                let grammar = grammar.clone();
-                async move { grammar.parse_text(&text, old_tree) }
+                let language = language.clone();
+                async move {
+                    syntax_map.reparse(&syntax_map_version, &text, language_registry, language);
+                    syntax_map
+                }
             });
 
             match cx
                 .background()
                 .block_with_timeout(self.sync_parse_timeout, parse_task)
             {
-                Ok(new_tree) => {
-                    self.did_finish_parsing(new_tree, parsed_version, cx);
+                Ok(new_syntax_map) => {
+                    self.did_finish_parsing(new_syntax_map, parsed_version, cx);
                     return true;
                 }
                 Err(parse_task) => {
                     self.parsing_in_background = true;
                     cx.spawn(move |this, mut cx| async move {
-                        let new_tree = parse_task.await;
+                        let new_syntax_map = parse_task.await;
                         this.update(&mut cx, move |this, cx| {
-                            let grammar_changed = this
-                                .grammar()
-                                .map_or(true, |curr_grammar| !Arc::ptr_eq(&grammar, curr_grammar));
+                            let grammar_changed =
+                                this.language.as_ref().map_or(true, |current_language| {
+                                    !Arc::ptr_eq(&language, current_language)
+                                });
                             let parse_again =
                                 this.version.changed_since(&parsed_version) || grammar_changed;
                             this.parsing_in_background = false;
-                            this.did_finish_parsing(new_tree, parsed_version, cx);
+                            this.did_finish_parsing(new_syntax_map, parsed_version, cx);
 
                             if parse_again && this.reparse(cx) {}
                         });
@@ -746,30 +749,14 @@ impl Buffer {
         false
     }
 
-    fn interpolate_tree(&self, tree: &mut SyntaxTree) {
-        for edit in self.edits_since::<(usize, Point)>(&tree.version) {
-            let (bytes, lines) = edit.flatten();
-            tree.tree.edit(&InputEdit {
-                start_byte: bytes.new.start,
-                old_end_byte: bytes.new.start + bytes.old.len(),
-                new_end_byte: bytes.new.end,
-                start_position: lines.new.start.to_ts_point(),
-                old_end_position: (lines.new.start + (lines.old.end - lines.old.start))
-                    .to_ts_point(),
-                new_end_position: lines.new.end.to_ts_point(),
-            });
-        }
-        tree.version = self.version();
-    }
-
     fn did_finish_parsing(
         &mut self,
-        tree: Tree,
+        syntax_map: SyntaxSnapshot,
         version: clock::Global,
         cx: &mut ModelContext<Self>,
     ) {
         self.parse_count += 1;
-        *self.syntax_tree.lock() = Some(SyntaxTree { tree, version });
+        self.syntax_map.lock().did_parse(syntax_map, version);
         self.request_autoindent(cx);
         cx.emit(Event::Reparsed);
         cx.notify();
@@ -808,10 +795,7 @@ impl Buffer {
     fn compute_autoindents(&self) -> Option<impl Future<Output = BTreeMap<u32, IndentSize>>> {
         let max_rows_between_yields = 100;
         let snapshot = self.snapshot();
-        if snapshot.language.is_none()
-            || snapshot.tree.is_none()
-            || self.autoindent_requests.is_empty()
-        {
+        if snapshot.syntax.is_empty() || self.autoindent_requests.is_empty() {
             return None;
         }
 
@@ -1310,10 +1294,6 @@ impl Buffer {
         cx.notify();
     }
 
-    fn grammar(&self) -> Option<&Arc<Grammar>> {
-        self.language.as_ref().and_then(|l| l.grammar.as_ref())
-    }
-
     pub fn apply_ops<I: IntoIterator<Item = Operation>>(
         &mut self,
         ops: I,
@@ -1654,32 +1634,30 @@ impl BufferSnapshot {
         let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
 
         // Find the suggested indentation ranges based on the syntax tree.
-        let indents_query = grammar.indents_query.as_ref()?;
-        let mut query_cursor = QueryCursorHandle::new();
-        let indent_capture_ix = indents_query.capture_index_for_name("indent");
-        let end_capture_ix = indents_query.capture_index_for_name("end");
-        query_cursor.set_point_range(
-            Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0).to_ts_point()
-                ..Point::new(row_range.end, 0).to_ts_point(),
-        );
+        let start = Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0);
+        let end = Point::new(row_range.end, 0);
+        let range = (start..end).to_offset(&self.text);
+        let mut matches = self.syntax.matches(range, &self.text, |grammar| {
+            Some(&grammar.indents_config.as_ref()?.query)
+        });
 
         let mut indent_ranges = Vec::<Range<Point>>::new();
-        for mat in query_cursor.matches(
-            indents_query,
-            self.tree.as_ref()?.root_node(),
-            TextProvider(self.as_rope()),
-        ) {
+        while let Some(mat) = matches.peek() {
             let mut start: Option<Point> = None;
             let mut end: Option<Point> = None;
-            for capture in mat.captures {
-                if Some(capture.index) == indent_capture_ix {
-                    start.get_or_insert(Point::from_ts_point(capture.node.start_position()));
-                    end.get_or_insert(Point::from_ts_point(capture.node.end_position()));
-                } else if Some(capture.index) == end_capture_ix {
-                    end = Some(Point::from_ts_point(capture.node.start_position()));
+
+            if let Some(config) = &grammar.indents_config {
+                for capture in mat.captures {
+                    if capture.index == config.indent_capture_ix {
+                        start.get_or_insert(Point::from_ts_point(capture.node.start_position()));
+                        end.get_or_insert(Point::from_ts_point(capture.node.end_position()));
+                    } else if Some(capture.index) == config.end_capture_ix {
+                        end = Some(Point::from_ts_point(capture.node.start_position()));
+                    }
                 }
             }
 
+            matches.advance();
             if let Some((start, end)) = start.zip(end) {
                 if start.row == end.row {
                     continue;
@@ -1811,10 +1789,18 @@ impl BufferSnapshot {
     pub fn chunks<T: ToOffset>(&self, range: Range<T>, language_aware: bool) -> BufferChunks {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
-        let mut tree = None;
+        let mut syntax = None;
         let mut diagnostic_endpoints = Vec::new();
         if language_aware {
-            tree = self.tree.as_ref();
+            let captures = self.syntax.captures(range.clone(), &self.text, |grammar| {
+                grammar.highlights_query.as_ref()
+            });
+            let highlight_maps = captures
+                .grammars()
+                .into_iter()
+                .map(|grammar| grammar.highlight_map())
+                .collect();
+            syntax = Some((captures, highlight_maps));
             for entry in self.diagnostics_in_range::<_, usize>(range.clone(), false) {
                 diagnostic_endpoints.push(DiagnosticEndpoint {
                     offset: entry.range.start,
@@ -1833,13 +1819,7 @@ impl BufferSnapshot {
                 .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
         }
 
-        BufferChunks::new(
-            self.text.as_rope(),
-            range,
-            tree,
-            self.grammar(),
-            diagnostic_endpoints,
-        )
+        BufferChunks::new(self.text.as_rope(), range, syntax, diagnostic_endpoints)
     }
 
     pub fn for_each_line(&self, range: Range<Point>, mut callback: impl FnMut(u32, &str)) {
@@ -1863,12 +1843,6 @@ impl BufferSnapshot {
 
     pub fn language(&self) -> Option<&Arc<Language>> {
         self.language.as_ref()
-    }
-
-    fn grammar(&self) -> Option<&Arc<Grammar>> {
-        self.language
-            .as_ref()
-            .and_then(|language| language.grammar.as_ref())
     }
 
     pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {
@@ -1901,61 +1875,71 @@ impl BufferSnapshot {
     }
 
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
-        let tree = self.tree.as_ref()?;
         let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let mut cursor = tree.root_node().walk();
+        let mut result: Option<Range<usize>> = None;
+        'outer: for (_, _, node) in self.syntax.layers_for_range(range.clone(), &self.text) {
+            let mut cursor = node.walk();
 
-        // Descend to the first leaf that touches the start of the range,
-        // and if the range is non-empty, extends beyond the start.
-        while cursor.goto_first_child_for_byte(range.start).is_some() {
-            if !range.is_empty() && cursor.node().end_byte() == range.start {
-                cursor.goto_next_sibling();
+            // Descend to the first leaf that touches the start of the range,
+            // and if the range is non-empty, extends beyond the start.
+            while cursor.goto_first_child_for_byte(range.start).is_some() {
+                if !range.is_empty() && cursor.node().end_byte() == range.start {
+                    cursor.goto_next_sibling();
+                }
             }
-        }
 
-        // Ascend to the smallest ancestor that strictly contains the range.
-        loop {
-            let node_range = cursor.node().byte_range();
-            if node_range.start <= range.start
-                && node_range.end >= range.end
-                && node_range.len() > range.len()
-            {
-                break;
-            }
-            if !cursor.goto_parent() {
-                break;
-            }
-        }
-
-        let left_node = cursor.node();
-
-        // For an empty range, try to find another node immediately to the right of the range.
-        if left_node.end_byte() == range.start {
-            let mut right_node = None;
-            while !cursor.goto_next_sibling() {
+            // Ascend to the smallest ancestor that strictly contains the range.
+            loop {
+                let node_range = cursor.node().byte_range();
+                if node_range.start <= range.start
+                    && node_range.end >= range.end
+                    && node_range.len() > range.len()
+                {
+                    break;
+                }
                 if !cursor.goto_parent() {
-                    break;
+                    continue 'outer;
                 }
             }
 
-            while cursor.node().start_byte() == range.start {
-                right_node = Some(cursor.node());
-                if !cursor.goto_first_child() {
-                    break;
+            let left_node = cursor.node();
+            let mut layer_result = left_node.byte_range();
+
+            // For an empty range, try to find another node immediately to the right of the range.
+            if left_node.end_byte() == range.start {
+                let mut right_node = None;
+                while !cursor.goto_next_sibling() {
+                    if !cursor.goto_parent() {
+                        break;
+                    }
+                }
+
+                while cursor.node().start_byte() == range.start {
+                    right_node = Some(cursor.node());
+                    if !cursor.goto_first_child() {
+                        break;
+                    }
+                }
+
+                // If there is a candidate node on both sides of the (empty) range, then
+                // decide between the two by favoring a named node over an anonymous token.
+                // If both nodes are the same in that regard, favor the right one.
+                if let Some(right_node) = right_node {
+                    if right_node.is_named() || !left_node.is_named() {
+                        layer_result = right_node.byte_range();
+                    }
                 }
             }
 
-            // If there is a candidate node on both sides of the (empty) range, then
-            // decide between the two by favoring a named node over an anonymous token.
-            // If both nodes are the same in that regard, favor the right one.
-            if let Some(right_node) = right_node {
-                if right_node.is_named() || !left_node.is_named() {
-                    return Some(right_node.byte_range());
+            if let Some(previous_result) = &result {
+                if previous_result.len() < layer_result.len() {
+                    continue;
                 }
             }
+            result = Some(layer_result);
         }
 
-        Some(left_node.byte_range())
+        result
     }
 
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
@@ -1985,109 +1969,107 @@ impl BufferSnapshot {
         range: Range<usize>,
         theme: Option<&SyntaxTheme>,
     ) -> Option<Vec<OutlineItem<Anchor>>> {
-        let tree = self.tree.as_ref()?;
-        let grammar = self
-            .language
-            .as_ref()
-            .and_then(|language| language.grammar.as_ref())?;
-
-        let outline_query = grammar.outline_query.as_ref()?;
-        let mut cursor = QueryCursorHandle::new();
-        cursor.set_byte_range(range.clone());
-        let matches = cursor.matches(
-            outline_query,
-            tree.root_node(),
-            TextProvider(self.as_rope()),
-        );
+        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
+            grammar.outline_config.as_ref().map(|c| &c.query)
+        });
+        let configs = matches
+            .grammars()
+            .iter()
+            .map(|g| g.outline_config.as_ref().unwrap())
+            .collect::<Vec<_>>();
 
         let mut chunks = self.chunks(0..self.len(), true);
-
-        let item_capture_ix = outline_query.capture_index_for_name("item")?;
-        let name_capture_ix = outline_query.capture_index_for_name("name")?;
-        let context_capture_ix = outline_query
-            .capture_index_for_name("context")
-            .unwrap_or(u32::MAX);
-
         let mut stack = Vec::<Range<usize>>::new();
-        let items = matches
-            .filter_map(|mat| {
-                let item_node = mat.nodes_for_capture_index(item_capture_ix).next()?;
-                let item_range = item_node.start_byte()..item_node.end_byte();
-                if item_range.end < range.start || item_range.start > range.end {
-                    return None;
+        let mut items = Vec::new();
+        while let Some(mat) = matches.peek() {
+            let config = &configs[mat.grammar_index];
+            let item_node = mat.captures.iter().find_map(|cap| {
+                if cap.index == config.item_capture_ix {
+                    Some(cap.node)
+                } else {
+                    None
                 }
-                let mut text = String::new();
-                let mut name_ranges = Vec::new();
-                let mut highlight_ranges = Vec::new();
+            })?;
 
-                for capture in mat.captures {
-                    let node_is_name;
-                    if capture.index == name_capture_ix {
-                        node_is_name = true;
-                    } else if capture.index == context_capture_ix {
-                        node_is_name = false;
+            let item_range = item_node.byte_range();
+            if item_range.end < range.start || item_range.start > range.end {
+                matches.advance();
+                continue;
+            }
+
+            // TODO - move later, after processing captures
+
+            let mut text = String::new();
+            let mut name_ranges = Vec::new();
+            let mut highlight_ranges = Vec::new();
+            for capture in mat.captures {
+                let node_is_name;
+                if capture.index == config.name_capture_ix {
+                    node_is_name = true;
+                } else if Some(capture.index) == config.context_capture_ix {
+                    node_is_name = false;
+                } else {
+                    continue;
+                }
+
+                let range = capture.node.start_byte()..capture.node.end_byte();
+                if !text.is_empty() {
+                    text.push(' ');
+                }
+                if node_is_name {
+                    let mut start = text.len();
+                    let end = start + range.len();
+
+                    // When multiple names are captured, then the matcheable text
+                    // includes the whitespace in between the names.
+                    if !name_ranges.is_empty() {
+                        start -= 1;
+                    }
+
+                    name_ranges.push(start..end);
+                }
+
+                let mut offset = range.start;
+                chunks.seek(offset);
+                for mut chunk in chunks.by_ref() {
+                    if chunk.text.len() > range.end - offset {
+                        chunk.text = &chunk.text[0..(range.end - offset)];
+                        offset = range.end;
                     } else {
-                        continue;
+                        offset += chunk.text.len();
                     }
-
-                    let range = capture.node.start_byte()..capture.node.end_byte();
-                    if !text.is_empty() {
-                        text.push(' ');
+                    let style = chunk
+                        .syntax_highlight_id
+                        .zip(theme)
+                        .and_then(|(highlight, theme)| highlight.style(theme));
+                    if let Some(style) = style {
+                        let start = text.len();
+                        let end = start + chunk.text.len();
+                        highlight_ranges.push((start..end, style));
                     }
-                    if node_is_name {
-                        let mut start = text.len();
-                        let end = start + range.len();
-
-                        // When multiple names are captured, then the matcheable text
-                        // includes the whitespace in between the names.
-                        if !name_ranges.is_empty() {
-                            start -= 1;
-                        }
-
-                        name_ranges.push(start..end);
-                    }
-
-                    let mut offset = range.start;
-                    chunks.seek(offset);
-                    for mut chunk in chunks.by_ref() {
-                        if chunk.text.len() > range.end - offset {
-                            chunk.text = &chunk.text[0..(range.end - offset)];
-                            offset = range.end;
-                        } else {
-                            offset += chunk.text.len();
-                        }
-                        let style = chunk
-                            .syntax_highlight_id
-                            .zip(theme)
-                            .and_then(|(highlight, theme)| highlight.style(theme));
-                        if let Some(style) = style {
-                            let start = text.len();
-                            let end = start + chunk.text.len();
-                            highlight_ranges.push((start..end, style));
-                        }
-                        text.push_str(chunk.text);
-                        if offset >= range.end {
-                            break;
-                        }
+                    text.push_str(chunk.text);
+                    if offset >= range.end {
+                        break;
                     }
                 }
+            }
 
-                while stack.last().map_or(false, |prev_range| {
-                    prev_range.start > item_range.start || prev_range.end < item_range.end
-                }) {
-                    stack.pop();
-                }
-                stack.push(item_range.clone());
+            matches.advance();
+            while stack.last().map_or(false, |prev_range| {
+                prev_range.start > item_range.start || prev_range.end < item_range.end
+            }) {
+                stack.pop();
+            }
+            stack.push(item_range.clone());
 
-                Some(OutlineItem {
-                    depth: stack.len() - 1,
-                    range: self.anchor_after(item_range.start)..self.anchor_before(item_range.end),
-                    text,
-                    highlight_ranges,
-                    name_ranges,
-                })
+            items.push(OutlineItem {
+                depth: stack.len() - 1,
+                range: self.anchor_after(item_range.start)..self.anchor_before(item_range.end),
+                text,
+                highlight_ranges,
+                name_ranges,
             })
-            .collect::<Vec<_>>();
+        }
         Some(items)
     }
 
@@ -2095,28 +2077,48 @@ impl BufferSnapshot {
         &self,
         range: Range<T>,
     ) -> Option<(Range<usize>, Range<usize>)> {
-        let (grammar, tree) = self.grammar().zip(self.tree.as_ref())?;
-        let brackets_query = grammar.brackets_query.as_ref()?;
-        let open_capture_ix = brackets_query.capture_index_for_name("open")?;
-        let close_capture_ix = brackets_query.capture_index_for_name("close")?;
-
         // Find bracket pairs that *inclusively* contain the given range.
         let range = range.start.to_offset(self).saturating_sub(1)..range.end.to_offset(self) + 1;
-        let mut cursor = QueryCursorHandle::new();
-        let matches = cursor.set_byte_range(range).matches(
-            brackets_query,
-            tree.root_node(),
-            TextProvider(self.as_rope()),
-        );
+        let mut matches = self.syntax.matches(range, &self.text, |grammar| {
+            grammar.brackets_config.as_ref().map(|c| &c.query)
+        });
+        let configs = matches
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.brackets_config.as_ref().unwrap())
+            .collect::<Vec<_>>();
 
         // Get the ranges of the innermost pair of brackets.
-        matches
-            .filter_map(|mat| {
-                let open = mat.nodes_for_capture_index(open_capture_ix).next()?;
-                let close = mat.nodes_for_capture_index(close_capture_ix).next()?;
-                Some((open.byte_range(), close.byte_range()))
-            })
-            .min_by_key(|(open_range, close_range)| close_range.end - open_range.start)
+        let mut result: Option<(Range<usize>, Range<usize>)> = None;
+        while let Some(mat) = matches.peek() {
+            let mut open = None;
+            let mut close = None;
+            let config = &configs[mat.grammar_index];
+            for capture in mat.captures {
+                if capture.index == config.open_capture_ix {
+                    open = Some(capture.node.byte_range());
+                } else if capture.index == config.close_capture_ix {
+                    close = Some(capture.node.byte_range());
+                }
+            }
+
+            matches.advance();
+
+            if let Some((open, close)) = open.zip(close) {
+                let len = close.end - open.start;
+
+                if let Some((existing_open, existing_close)) = &result {
+                    let existing_len = existing_close.end - existing_open.start;
+                    if len > existing_len {
+                        continue;
+                    }
+                }
+
+                result = Some((open, close));
+            }
+        }
+
+        result
     }
 
     #[allow(clippy::type_complexity)]
@@ -2228,7 +2230,7 @@ impl Clone for BufferSnapshot {
     fn clone(&self) -> Self {
         Self {
             text: self.text.clone(),
-            tree: self.tree.clone(),
+            syntax: self.syntax.clone(),
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
@@ -2249,56 +2251,23 @@ impl Deref for BufferSnapshot {
     }
 }
 
-impl<'a> tree_sitter::TextProvider<'a> for TextProvider<'a> {
-    type I = ByteChunks<'a>;
-
-    fn text(&mut self, node: tree_sitter::Node) -> Self::I {
-        ByteChunks(self.0.chunks_in_range(node.byte_range()))
-    }
-}
-
-pub(crate) struct ByteChunks<'a>(rope::Chunks<'a>);
-
-impl<'a> Iterator for ByteChunks<'a> {
-    type Item = &'a [u8];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(str::as_bytes)
-    }
-}
-
 unsafe impl<'a> Send for BufferChunks<'a> {}
 
 impl<'a> BufferChunks<'a> {
     pub(crate) fn new(
         text: &'a Rope,
         range: Range<usize>,
-        tree: Option<&'a Tree>,
-        grammar: Option<&'a Arc<Grammar>>,
+        syntax: Option<(SyntaxMapCaptures<'a>, Vec<HighlightMap>)>,
         diagnostic_endpoints: Vec<DiagnosticEndpoint>,
     ) -> Self {
         let mut highlights = None;
-        if let Some((grammar, tree)) = grammar.zip(tree) {
-            if let Some(highlights_query) = grammar.highlights_query.as_ref() {
-                let mut query_cursor = QueryCursorHandle::new();
-
-                // TODO - add a Tree-sitter API to remove the need for this.
-                let cursor = unsafe {
-                    std::mem::transmute::<_, &'static mut QueryCursor>(query_cursor.deref_mut())
-                };
-                let captures = cursor.set_byte_range(range.clone()).captures(
-                    highlights_query,
-                    tree.root_node(),
-                    TextProvider(text),
-                );
-                highlights = Some(BufferChunkHighlights {
-                    captures,
-                    next_capture: None,
-                    stack: Default::default(),
-                    highlight_map: grammar.highlight_map(),
-                    _query_cursor: query_cursor,
-                })
-            }
+        if let Some((captures, highlight_maps)) = syntax {
+            highlights = Some(BufferChunkHighlights {
+                captures,
+                next_capture: None,
+                stack: Default::default(),
+                highlight_maps,
+            })
         }
 
         let diagnostic_endpoints = diagnostic_endpoints.into_iter().peekable();
@@ -2324,14 +2293,13 @@ impl<'a> BufferChunks<'a> {
             highlights
                 .stack
                 .retain(|(end_offset, _)| *end_offset > offset);
-            if let Some((mat, capture_ix)) = &highlights.next_capture {
-                let capture = mat.captures[*capture_ix as usize];
+            if let Some(capture) = &highlights.next_capture {
                 if offset >= capture.node.start_byte() {
                     let next_capture_end = capture.node.end_byte();
                     if offset < next_capture_end {
                         highlights.stack.push((
                             next_capture_end,
-                            highlights.highlight_map.get(capture.index),
+                            highlights.highlight_maps[capture.grammar_index].get(capture.index),
                         ));
                     }
                     highlights.next_capture.take();
@@ -2407,13 +2375,13 @@ impl<'a> Iterator for BufferChunks<'a> {
                 highlights.next_capture = highlights.captures.next();
             }
 
-            while let Some((mat, capture_ix)) = highlights.next_capture.as_ref() {
-                let capture = mat.captures[*capture_ix as usize];
+            while let Some(capture) = highlights.next_capture.as_ref() {
                 if self.range.start < capture.node.start_byte() {
                     next_capture_start = capture.node.start_byte();
                     break;
                 } else {
-                    let highlight_id = highlights.highlight_map.get(capture.index);
+                    let highlight_id =
+                        highlights.highlight_maps[capture.grammar_index].get(capture.index);
                     highlights
                         .stack
                         .push((capture.node.end_byte(), highlight_id));
@@ -2462,52 +2430,6 @@ impl<'a> Iterator for BufferChunks<'a> {
         } else {
             None
         }
-    }
-}
-
-impl QueryCursorHandle {
-    pub(crate) fn new() -> Self {
-        let mut cursor = QUERY_CURSORS.lock().pop().unwrap_or_else(QueryCursor::new);
-        cursor.set_match_limit(64);
-        QueryCursorHandle(Some(cursor))
-    }
-}
-
-impl Deref for QueryCursorHandle {
-    type Target = QueryCursor;
-
-    fn deref(&self) -> &Self::Target {
-        self.0.as_ref().unwrap()
-    }
-}
-
-impl DerefMut for QueryCursorHandle {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.0.as_mut().unwrap()
-    }
-}
-
-impl Drop for QueryCursorHandle {
-    fn drop(&mut self) {
-        let mut cursor = self.0.take().unwrap();
-        cursor.set_byte_range(0..usize::MAX);
-        cursor.set_point_range(Point::zero().to_ts_point()..Point::MAX.to_ts_point());
-        QUERY_CURSORS.lock().push(cursor)
-    }
-}
-
-pub(crate) trait ToTreeSitterPoint {
-    fn to_ts_point(self) -> tree_sitter::Point;
-    fn from_ts_point(point: tree_sitter::Point) -> Self;
-}
-
-impl ToTreeSitterPoint for Point {
-    fn to_ts_point(self) -> tree_sitter::Point {
-        tree_sitter::Point::new(self.row as usize, self.column as usize)
-    }
-
-    fn from_ts_point(point: tree_sitter::Point) -> Self {
-        Point::new(point.row as u32, point.column as u32)
     }
 }
 

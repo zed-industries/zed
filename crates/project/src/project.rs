@@ -2056,6 +2056,7 @@ impl Project {
         let full_path = buffer.read(cx).file()?.full_path(cx);
         let language = self.languages.select_language(&full_path)?;
         buffer.update(cx, |buffer, cx| {
+            buffer.set_language_registry(self.languages.clone());
             buffer.set_language(Some(language.clone()), cx);
         });
 
