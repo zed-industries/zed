@@ -1448,8 +1448,8 @@ impl Workspace {
     }
 
     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
-        let pane = self.active_pane().clone();
-        Pane::add_item(self, pane, item, true, true, cx);
+        let active_pane = self.active_pane().clone();
+        Pane::add_item(self, &active_pane, item, true, true, None, cx);
     }
 
     pub fn open_path(
@@ -1649,7 +1649,7 @@ impl Workspace {
         pane.read(cx).active_item().map(|item| {
             let new_pane = self.add_pane(cx);
             if let Some(clone) = item.clone_on_split(cx.as_mut()) {
-                Pane::add_item(self, new_pane.clone(), clone, true, true, cx);
+                Pane::add_item(self, &new_pane, clone, true, true, None, cx);
             }
             self.center.split(&pane, &new_pane, direction).unwrap();
             cx.notify();
@@ -2392,7 +2392,7 @@ impl Workspace {
         }
 
         for (pane, item) in items_to_add {
-            Pane::add_item(self, pane.clone(), item.boxed_clone(), false, false, cx);
+            Pane::add_item(self, &pane, item.boxed_clone(), false, false, None, cx);
             if pane == self.active_pane {
                 pane.update(cx, |pane, cx| pane.focus_active_item(cx));
             }
@@ -3330,8 +3330,9 @@ mod tests {
         });
     }
 
-    struct TestItem {
+    pub struct TestItem {
         state: String,
+        pub label: String,
         save_count: usize,
         save_as_count: usize,
         reload_count: usize,
@@ -3345,7 +3346,7 @@ mod tests {
         tab_detail: Cell<Option<usize>>,
     }
 
-    enum TestItemEvent {
+    pub enum TestItemEvent {
         Edit,
     }
 
@@ -3353,6 +3354,7 @@ mod tests {
         fn clone(&self) -> Self {
             Self {
                 state: self.state.clone(),
+                label: self.label.clone(),
                 save_count: self.save_count,
                 save_as_count: self.save_as_count,
                 reload_count: self.reload_count,
@@ -3369,9 +3371,10 @@ mod tests {
     }
 
     impl TestItem {
-        fn new() -> Self {
+        pub fn new() -> Self {
             Self {
                 state: String::new(),
+                label: String::new(),
                 save_count: 0,
                 save_as_count: 0,
                 reload_count: 0,
@@ -3384,6 +3387,11 @@ mod tests {
                 tab_descriptions: None,
                 tab_detail: Default::default(),
             }
+        }
+
+        pub fn with_label(mut self, state: &str) -> Self {
+            self.label = state.to_string();
+            self
         }
 
         fn set_state(&mut self, state: String, cx: &mut ViewContext<Self>) {

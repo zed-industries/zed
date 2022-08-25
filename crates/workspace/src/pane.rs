@@ -449,13 +449,13 @@ impl Pane {
         // Even if the item exists, we re-add it to reorder it after the active item.
         // We may revisit this behavior after adding an "activation history" for pane items.
         let item = existing_item.unwrap_or_else(|| pane.update(cx, |_, cx| build_item(cx)));
-        Pane::add_item(workspace, pane, item.clone(), true, focus_item, cx);
+        Pane::add_item(workspace, &pane, item.clone(), true, focus_item, None, cx);
         item
     }
 
-    pub fn add_item_at(
+    pub fn add_item(
         workspace: &mut Workspace,
-        pane: ViewHandle<Pane>,
+        pane: &ViewHandle<Pane>,
         item: Box<dyn ItemHandle>,
         activate_pane: bool,
         focus_item: bool,
@@ -463,67 +463,72 @@ impl Pane {
         cx: &mut ViewContext<Workspace>,
     ) {
         // If no destination index is specified, add or move the item after the active item.
-        let mut destination_index = if let Some(destination_index) = destination_index {
-            destination_index
-        } else {
+        let mut insertion_index = {
             let pane = pane.read(cx);
-            cmp::min(pane.active_item_index + 1, pane.items.len())
+            cmp::min(
+                if let Some(destination_index) = destination_index {
+                    destination_index
+                } else {
+                    pane.active_item_index + 1
+                },
+                pane.items.len(),
+            )
         };
 
         // Does the item already exist?
-        if let Some(existing_item_index) = pane.read(cx).items.iter().position(|i| {
-            i.id() == item.id() || i.project_entry_ids(cx) == item.project_entry_ids(cx)
+        if let Some(existing_item_index) = pane.read(cx).items.iter().position(|existing_item| {
+            let existing_item_entry_ids = existing_item.project_entry_ids(cx);
+            let added_item_entry_ids = item.project_entry_ids(cx);
+            let entries_match = !existing_item_entry_ids.is_empty()
+                && existing_item_entry_ids == added_item_entry_ids;
+
+            existing_item.id() == item.id() || entries_match
         }) {
             // If the item already exists, move it to the desired destination and activate it
             pane.update(cx, |pane, cx| {
-                if existing_item_index != destination_index {
+                if existing_item_index != insertion_index {
                     cx.reparent(&item);
                     let existing_item_is_active = existing_item_index == pane.active_item_index;
 
-                    pane.items.remove(existing_item_index);
-                    if existing_item_index < pane.active_item_index {
-                        pane.active_item_index -= 1;
-                    }
-                    destination_index = destination_index.min(pane.items.len());
+                    // If the caller didn't specify a destination and the added item is already
+                    // the active one, don't move it
+                    if existing_item_is_active && destination_index.is_none() {
+                        insertion_index = existing_item_index;
+                    } else {
+                        pane.items.remove(existing_item_index);
+                        if existing_item_index < pane.active_item_index {
+                            pane.active_item_index -= 1;
+                        }
+                        insertion_index = insertion_index.min(pane.items.len());
 
-                    pane.items.insert(destination_index, item.clone());
+                        pane.items.insert(insertion_index, item.clone());
 
-                    if existing_item_is_active {
-                        pane.active_item_index = destination_index;
-                    } else if destination_index <= pane.active_item_index {
-                        pane.active_item_index += 1;
+                        if existing_item_is_active {
+                            pane.active_item_index = insertion_index;
+                        } else if insertion_index <= pane.active_item_index {
+                            pane.active_item_index += 1;
+                        }
                     }
 
                     cx.notify();
                 }
 
-                pane.activate_item(destination_index, activate_pane, focus_item, cx);
+                pane.activate_item(insertion_index, activate_pane, focus_item, cx);
             });
         } else {
             // If the item doesn't already exist, add it and activate it
             item.added_to_pane(workspace, pane.clone(), cx);
             pane.update(cx, |pane, cx| {
                 cx.reparent(&item);
-                pane.items.insert(destination_index, item);
-                if destination_index <= pane.active_item_index {
+                pane.items.insert(insertion_index, item);
+                if insertion_index <= pane.active_item_index {
                     pane.active_item_index += 1;
                 }
 
-                pane.activate_item(destination_index, activate_pane, focus_item, cx);
+                pane.activate_item(insertion_index, activate_pane, focus_item, cx);
                 cx.notify();
             });
         }
-    }
-
-    pub(crate) fn add_item(
-        workspace: &mut Workspace,
-        pane: ViewHandle<Pane>,
-        item: Box<dyn ItemHandle>,
-        activate_pane: bool,
-        focus_item: bool,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        Self::add_item_at(workspace, pane, item, activate_pane, focus_item, None, cx)
     }
 
     pub fn items(&self) -> impl Iterator<Item = &Box<dyn ItemHandle>> {
@@ -913,9 +918,9 @@ impl Pane {
             .expect("Tried to move item handle which was not in from pane");
 
         // This automatically removes duplicate items in the pane
-        Pane::add_item_at(
+        Pane::add_item(
             workspace,
-            to.clone(),
+            &to,
             item_handle.clone(),
             true,
             true,
@@ -1525,5 +1530,254 @@ impl NavHistory {
         if let Some(pane) = self.pane.upgrade(cx) {
             cx.defer(move |cx| pane.update(cx, |pane, cx| pane.history_updated(cx)));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::TestAppContext;
+    use project::FakeFs;
+
+    use crate::tests::TestItem;
+
+    use super::*;
+
+    #[gpui::test]
+    async fn test_add_item_with_new_item(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, None, cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // 1. Add with a destination index
+        //   a. Add before the active item
+        set_labeled_items(&workspace, &pane, ["A", "B*", "C"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(
+                workspace,
+                &pane,
+                Box::new(cx.add_view(|_| TestItem::new().with_label("D"))),
+                false,
+                false,
+                Some(0),
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["D*", "A", "B", "C"], cx);
+
+        //   b. Add after the active item
+        set_labeled_items(&workspace, &pane, ["A", "B*", "C"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(
+                workspace,
+                &pane,
+                Box::new(cx.add_view(|_| TestItem::new().with_label("D"))),
+                false,
+                false,
+                Some(2),
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["A", "B", "D*", "C"], cx);
+
+        //   c. Add at the end of the item list (including off the length)
+        set_labeled_items(&workspace, &pane, ["A", "B*", "C"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(
+                workspace,
+                &pane,
+                Box::new(cx.add_view(|_| TestItem::new().with_label("D"))),
+                false,
+                false,
+                Some(5),
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+
+        // 2. Add without a destination index
+        //   a. Add with active item at the start of the item list
+        set_labeled_items(&workspace, &pane, ["A*", "B", "C"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(
+                workspace,
+                &pane,
+                Box::new(cx.add_view(|_| TestItem::new().with_label("D"))),
+                false,
+                false,
+                None,
+                cx,
+            );
+        });
+        set_labeled_items(&workspace, &pane, ["A", "D*", "B", "C"], cx);
+
+        //   b. Add with active item at the end of the item list
+        set_labeled_items(&workspace, &pane, ["A", "B", "C*"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(
+                workspace,
+                &pane,
+                Box::new(cx.add_view(|_| TestItem::new().with_label("D"))),
+                false,
+                false,
+                None,
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_add_item_with_existing_item(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, None, cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // 1. Add with a destination index
+        //   1a. Add before the active item
+        let [_, _, _, d] = set_labeled_items(&workspace, &pane, ["A", "B*", "C", "D"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(workspace, &pane, d, false, false, Some(0), cx);
+        });
+        assert_item_labels(&pane, ["D*", "A", "B", "C"], cx);
+
+        //   1b. Add after the active item
+        let [_, _, _, d] = set_labeled_items(&workspace, &pane, ["A", "B*", "C", "D"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(workspace, &pane, d, false, false, Some(2), cx);
+        });
+        assert_item_labels(&pane, ["A", "B", "D*", "C"], cx);
+
+        //   1c. Add at the end of the item list (including off the length)
+        let [a, _, _, _] = set_labeled_items(&workspace, &pane, ["A", "B*", "C", "D"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(workspace, &pane, a, false, false, Some(5), cx);
+        });
+        assert_item_labels(&pane, ["B", "C", "D", "A*"], cx);
+
+        //   1d. Add same item to active index
+        let [_, b, _] = set_labeled_items(&workspace, &pane, ["A", "B*", "C"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(workspace, &pane, b, false, false, Some(1), cx);
+        });
+        assert_item_labels(&pane, ["A", "B*", "C"], cx);
+
+        //   1e. Add item to index after same item in last position
+        let [_, _, c] = set_labeled_items(&workspace, &pane, ["A", "B*", "C"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(workspace, &pane, c, false, false, Some(2), cx);
+        });
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        // 2. Add without a destination index
+        //   2a. Add with active item at the start of the item list
+        let [_, _, _, d] = set_labeled_items(&workspace, &pane, ["A*", "B", "C", "D"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(workspace, &pane, d, false, false, None, cx);
+        });
+        assert_item_labels(&pane, ["A", "D*", "B", "C"], cx);
+
+        //   2b. Add with active item at the end of the item list
+        let [a, _, _, _] = set_labeled_items(&workspace, &pane, ["A", "B", "C", "D*"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(workspace, &pane, a, false, false, None, cx);
+        });
+        assert_item_labels(&pane, ["B", "C", "D", "A*"], cx);
+
+        //   2c. Add active item to active item at end of list
+        let [_, _, c] = set_labeled_items(&workspace, &pane, ["A", "B", "C*"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(workspace, &pane, c, false, false, None, cx);
+        });
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        //   2d. Add active item to active item at start of list
+        let [a, _, _] = set_labeled_items(&workspace, &pane, ["A*", "B", "C"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(workspace, &pane, a, false, false, None, cx);
+        });
+        assert_item_labels(&pane, ["A*", "B", "C"], cx);
+    }
+
+    fn set_labeled_items<const COUNT: usize>(
+        workspace: &ViewHandle<Workspace>,
+        pane: &ViewHandle<Pane>,
+        labels: [&str; COUNT],
+        cx: &mut TestAppContext,
+    ) -> [Box<ViewHandle<TestItem>>; COUNT] {
+        pane.update(cx, |pane, _| {
+            pane.items.clear();
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            let mut active_item_index = 0;
+
+            let mut index = 0;
+            let items = labels.map(|mut label| {
+                if label.ends_with("*") {
+                    label = label.trim_end_matches("*");
+                    active_item_index = index;
+                }
+
+                let labeled_item = Box::new(cx.add_view(|_| TestItem::new().with_label(label)));
+                Pane::add_item(
+                    workspace,
+                    pane,
+                    labeled_item.clone(),
+                    false,
+                    false,
+                    None,
+                    cx,
+                );
+                index += 1;
+                labeled_item
+            });
+
+            pane.update(cx, |pane, cx| {
+                pane.activate_item(active_item_index, false, false, cx)
+            });
+
+            items
+        })
+    }
+
+    // Assert the item label, with the active item label suffixed with a '*'
+    fn assert_item_labels<const COUNT: usize>(
+        pane: &ViewHandle<Pane>,
+        expected_states: [&str; COUNT],
+        cx: &mut TestAppContext,
+    ) {
+        pane.read_with(cx, |pane, cx| {
+            let actual_states = pane
+                .items
+                .iter()
+                .enumerate()
+                .map(|(ix, item)| {
+                    let mut state = item
+                        .to_any()
+                        .downcast::<TestItem>()
+                        .unwrap()
+                        .read(cx)
+                        .label
+                        .clone();
+                    if ix == pane.active_item_index {
+                        state.push('*');
+                    }
+                    state
+                })
+                .collect::<Vec<_>>();
+
+            assert_eq!(
+                actual_states, expected_states,
+                "pane items do not match expectation"
+            );
+        })
     }
 }
