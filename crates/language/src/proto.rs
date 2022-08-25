@@ -1,6 +1,5 @@
 use crate::{
     diagnostic_set::DiagnosticEntry, CodeAction, CodeLabel, Completion, Diagnostic, Language,
-    Operation,
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
@@ -9,7 +8,7 @@ use rpc::proto;
 use std::{ops::Range, sync::Arc};
 use text::*;
 
-pub use proto::{Buffer, LineEnding, SelectionSet};
+pub use proto::{BufferState, LineEnding, Operation, SelectionSet};
 
 pub fn deserialize_line_ending(message: proto::LineEnding) -> text::LineEnding {
     match message {
@@ -25,13 +24,13 @@ pub fn serialize_line_ending(message: text::LineEnding) -> proto::LineEnding {
     }
 }
 
-pub fn serialize_operation(operation: &Operation) -> proto::Operation {
+pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
     proto::Operation {
         variant: Some(match operation {
-            Operation::Buffer(text::Operation::Edit(edit)) => {
+            crate::Operation::Buffer(text::Operation::Edit(edit)) => {
                 proto::operation::Variant::Edit(serialize_edit_operation(edit))
             }
-            Operation::Buffer(text::Operation::Undo {
+            crate::Operation::Buffer(text::Operation::Undo {
                 undo,
                 lamport_timestamp,
             }) => proto::operation::Variant::Undo(proto::operation::Undo {
@@ -49,7 +48,7 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                     })
                     .collect(),
             }),
-            Operation::UpdateSelections {
+            crate::Operation::UpdateSelections {
                 selections,
                 line_mode,
                 lamport_timestamp,
@@ -59,7 +58,7 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                 selections: serialize_selections(selections),
                 line_mode: *line_mode,
             }),
-            Operation::UpdateDiagnostics {
+            crate::Operation::UpdateDiagnostics {
                 diagnostics,
                 lamport_timestamp,
             } => proto::operation::Variant::UpdateDiagnostics(proto::UpdateDiagnostics {
@@ -67,7 +66,7 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                 lamport_timestamp: lamport_timestamp.value,
                 diagnostics: serialize_diagnostics(diagnostics.iter()),
             }),
-            Operation::UpdateCompletionTriggers {
+            crate::Operation::UpdateCompletionTriggers {
                 triggers,
                 lamport_timestamp,
             } => proto::operation::Variant::UpdateCompletionTriggers(
@@ -165,41 +164,43 @@ pub fn serialize_anchor(anchor: &Anchor) -> proto::Anchor {
     }
 }
 
-pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
+pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operation> {
     Ok(
         match message
             .variant
             .ok_or_else(|| anyhow!("missing operation variant"))?
         {
             proto::operation::Variant::Edit(edit) => {
-                Operation::Buffer(text::Operation::Edit(deserialize_edit_operation(edit)))
+                crate::Operation::Buffer(text::Operation::Edit(deserialize_edit_operation(edit)))
             }
-            proto::operation::Variant::Undo(undo) => Operation::Buffer(text::Operation::Undo {
-                lamport_timestamp: clock::Lamport {
-                    replica_id: undo.replica_id as ReplicaId,
-                    value: undo.lamport_timestamp,
-                },
-                undo: UndoOperation {
-                    id: clock::Local {
+            proto::operation::Variant::Undo(undo) => {
+                crate::Operation::Buffer(text::Operation::Undo {
+                    lamport_timestamp: clock::Lamport {
                         replica_id: undo.replica_id as ReplicaId,
-                        value: undo.local_timestamp,
+                        value: undo.lamport_timestamp,
                     },
-                    version: deserialize_version(undo.version),
-                    counts: undo
-                        .counts
-                        .into_iter()
-                        .map(|c| {
-                            (
-                                clock::Local {
-                                    replica_id: c.replica_id as ReplicaId,
-                                    value: c.local_timestamp,
-                                },
-                                c.count,
-                            )
-                        })
-                        .collect(),
-                },
-            }),
+                    undo: UndoOperation {
+                        id: clock::Local {
+                            replica_id: undo.replica_id as ReplicaId,
+                            value: undo.local_timestamp,
+                        },
+                        version: deserialize_version(undo.version),
+                        counts: undo
+                            .counts
+                            .into_iter()
+                            .map(|c| {
+                                (
+                                    clock::Local {
+                                        replica_id: c.replica_id as ReplicaId,
+                                        value: c.local_timestamp,
+                                    },
+                                    c.count,
+                                )
+                            })
+                            .collect(),
+                    },
+                })
+            }
             proto::operation::Variant::UpdateSelections(message) => {
                 let selections = message
                     .selections
@@ -215,7 +216,7 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                     })
                     .collect::<Vec<_>>();
 
-                Operation::UpdateSelections {
+                crate::Operation::UpdateSelections {
                     lamport_timestamp: clock::Lamport {
                         replica_id: message.replica_id as ReplicaId,
                         value: message.lamport_timestamp,
@@ -224,15 +225,17 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                     line_mode: message.line_mode,
                 }
             }
-            proto::operation::Variant::UpdateDiagnostics(message) => Operation::UpdateDiagnostics {
-                diagnostics: deserialize_diagnostics(message.diagnostics),
-                lamport_timestamp: clock::Lamport {
-                    replica_id: message.replica_id as ReplicaId,
-                    value: message.lamport_timestamp,
-                },
-            },
+            proto::operation::Variant::UpdateDiagnostics(message) => {
+                crate::Operation::UpdateDiagnostics {
+                    diagnostics: deserialize_diagnostics(message.diagnostics),
+                    lamport_timestamp: clock::Lamport {
+                        replica_id: message.replica_id as ReplicaId,
+                        value: message.lamport_timestamp,
+                    },
+                }
+            }
             proto::operation::Variant::UpdateCompletionTriggers(message) => {
-                Operation::UpdateCompletionTriggers {
+                crate::Operation::UpdateCompletionTriggers {
                     triggers: message.triggers,
                     lamport_timestamp: clock::Lamport {
                         replica_id: message.replica_id as ReplicaId,

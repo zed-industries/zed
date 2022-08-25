@@ -2006,7 +2006,7 @@ impl HighlightedRange {
     }
 }
 
-fn scale_vertical_mouse_autoscroll_delta(delta: f32) -> f32 {
+pub fn scale_vertical_mouse_autoscroll_delta(delta: f32) -> f32 {
     delta.powf(1.5) / 100.0
 }
 

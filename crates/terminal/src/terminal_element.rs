@@ -828,7 +828,7 @@ impl Element for TerminalElement {
                     let origin = bounds.origin() + vec2f(layout.size.cell_width, 0.);
 
                     if let Some(terminal) = self.terminal.upgrade(cx.app) {
-                        terminal.update(cx.app, |term, _| term.scroll(e, origin));
+                        terminal.update(cx.app, |term, _| term.scroll_wheel(e, origin));
                         cx.notify();
                     }
                 })

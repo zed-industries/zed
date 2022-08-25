@@ -70,6 +70,7 @@ pub struct Buffer {
     diagnostics_timestamp: clock::Lamport,
     file_update_count: usize,
     completion_triggers: Vec<String>,
+    completion_triggers_timestamp: clock::Lamport,
     deferred_ops: OperationQueue<Operation>,
 }
 
@@ -358,9 +359,8 @@ impl Buffer {
 
     pub fn from_proto(
         replica_id: ReplicaId,
-        message: proto::Buffer,
+        message: proto::BufferState,
         file: Option<Arc<dyn File>>,
-        cx: &mut ModelContext<Self>,
     ) -> Result<Self> {
         let buffer = TextBuffer::new(replica_id, message.id, message.base_text);
         let mut this = Self::build(buffer, file);
@@ -368,72 +368,49 @@ impl Buffer {
             proto::LineEnding::from_i32(message.line_ending)
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
         ));
-        let ops = message
-            .operations
-            .into_iter()
-            .map(proto::deserialize_operation)
-            .collect::<Result<Vec<_>>>()?;
-        this.apply_ops(ops, cx)?;
-
-        for selection_set in message.selections {
-            let lamport_timestamp = clock::Lamport {
-                replica_id: selection_set.replica_id as ReplicaId,
-                value: selection_set.lamport_timestamp,
-            };
-            this.remote_selections.insert(
-                selection_set.replica_id as ReplicaId,
-                SelectionSet {
-                    line_mode: selection_set.line_mode,
-                    selections: proto::deserialize_selections(selection_set.selections),
-                    lamport_timestamp,
-                },
-            );
-            this.text.lamport_clock.observe(lamport_timestamp);
-        }
-        let snapshot = this.snapshot();
-        let entries = proto::deserialize_diagnostics(message.diagnostics);
-        this.apply_diagnostic_update(
-            DiagnosticSet::from_sorted_entries(entries.iter().cloned(), &snapshot),
-            clock::Lamport {
-                replica_id: 0,
-                value: message.diagnostics_timestamp,
-            },
-            cx,
-        );
-
-        this.completion_triggers = message.completion_triggers;
-
         Ok(this)
     }
 
-    pub fn to_proto(&self) -> proto::Buffer {
-        let mut operations = self
-            .text
-            .history()
-            .map(|op| proto::serialize_operation(&Operation::Buffer(op.clone())))
-            .chain(self.deferred_ops.iter().map(proto::serialize_operation))
-            .collect::<Vec<_>>();
-        operations.sort_unstable_by_key(proto::lamport_timestamp_for_operation);
-        proto::Buffer {
+    pub fn to_proto(&self) -> proto::BufferState {
+        proto::BufferState {
             id: self.remote_id(),
             file: self.file.as_ref().map(|f| f.to_proto()),
             base_text: self.base_text().to_string(),
-            operations,
-            selections: self
-                .remote_selections
-                .iter()
-                .map(|(replica_id, set)| proto::SelectionSet {
-                    replica_id: *replica_id as u32,
-                    selections: proto::serialize_selections(&set.selections),
-                    lamport_timestamp: set.lamport_timestamp.value,
-                    line_mode: set.line_mode,
-                })
-                .collect(),
-            diagnostics: proto::serialize_diagnostics(self.diagnostics.iter()),
-            diagnostics_timestamp: self.diagnostics_timestamp.value,
-            completion_triggers: self.completion_triggers.clone(),
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
         }
+    }
+
+    pub fn serialize_ops(&self, cx: &AppContext) -> Task<Vec<proto::Operation>> {
+        let mut operations = Vec::new();
+        operations.extend(self.deferred_ops.iter().map(proto::serialize_operation));
+        operations.extend(self.remote_selections.iter().map(|(_, set)| {
+            proto::serialize_operation(&Operation::UpdateSelections {
+                selections: set.selections.clone(),
+                lamport_timestamp: set.lamport_timestamp,
+                line_mode: set.line_mode,
+            })
+        }));
+        operations.push(proto::serialize_operation(&Operation::UpdateDiagnostics {
+            diagnostics: self.diagnostics.iter().cloned().collect(),
+            lamport_timestamp: self.diagnostics_timestamp,
+        }));
+        operations.push(proto::serialize_operation(
+            &Operation::UpdateCompletionTriggers {
+                triggers: self.completion_triggers.clone(),
+                lamport_timestamp: self.completion_triggers_timestamp,
+            },
+        ));
+
+        let text_operations = self.text.operations().clone();
+        cx.background().spawn(async move {
+            operations.extend(
+                text_operations
+                    .iter()
+                    .map(|(_, op)| proto::serialize_operation(&Operation::Buffer(op.clone()))),
+            );
+            operations.sort_unstable_by_key(proto::lamport_timestamp_for_operation);
+            operations
+        })
     }
 
     pub fn with_language(mut self, language: Arc<Language>, cx: &mut ModelContext<Self>) -> Self {
@@ -470,6 +447,7 @@ impl Buffer {
             diagnostics_timestamp: Default::default(),
             file_update_count: 0,
             completion_triggers: Default::default(),
+            completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
         }
     }
@@ -1517,11 +1495,11 @@ impl Buffer {
 
     pub fn set_completion_triggers(&mut self, triggers: Vec<String>, cx: &mut ModelContext<Self>) {
         self.completion_triggers = triggers.clone();
-        let lamport_timestamp = self.text.lamport_clock.tick();
+        self.completion_triggers_timestamp = self.text.lamport_clock.tick();
         self.send_operation(
             Operation::UpdateCompletionTriggers {
                 triggers,
-                lamport_timestamp,
+                lamport_timestamp: self.completion_triggers_timestamp,
             },
             cx,
         );
