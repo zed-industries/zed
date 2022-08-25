@@ -18,9 +18,8 @@ use gpui::{
     },
     serde_json::json,
     text_layout::{Line, RunStyle},
-    Element, Event, EventContext, FontCache, KeyDownEvent, ModelContext, MouseButton,
-    MouseButtonEvent, MouseRegion, PaintContext, Quad, TextLayoutCache, WeakModelHandle,
-    WeakViewHandle,
+    Element, Event, EventContext, FontCache, KeyDownEvent, ModelContext, MouseButton, MouseRegion,
+    PaintContext, Quad, TextLayoutCache, WeakModelHandle, WeakViewHandle,
 };
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
@@ -410,11 +409,11 @@ impl TerminalElement {
         }
     }
 
-    fn generic_button_handler(
+    fn generic_button_handler<E>(
         connection: WeakModelHandle<Terminal>,
         origin: Vector2F,
-        f: impl Fn(&mut Terminal, Vector2F, MouseButtonEvent, &mut ModelContext<Terminal>),
-    ) -> impl Fn(MouseButtonEvent, &mut EventContext) {
+        f: impl Fn(&mut Terminal, Vector2F, E, &mut ModelContext<Terminal>),
+    ) -> impl Fn(E, &mut EventContext) {
         move |event, cx| {
             cx.focus_parent_view();
             if let Some(conn_handle) = connection.upgrade(cx.app) {
@@ -453,11 +452,11 @@ impl TerminalElement {
                 ),
             )
             // Update drag selections
-            .on_drag(MouseButton::Left, move |_prev, event, cx| {
+            .on_drag(MouseButton::Left, move |event, cx| {
                 if cx.is_parent_view_focused() {
                     if let Some(conn_handle) = connection.upgrade(cx.app) {
                         conn_handle.update(cx.app, |terminal, cx| {
-                            terminal.mouse_drag(event, origin, visible_bounds);
+                            terminal.mouse_drag(event, origin);
                             cx.notify();
                         })
                     }
@@ -486,20 +485,19 @@ impl TerminalElement {
                 ),
             )
             // Context menu
-            .on_click(
-                MouseButton::Right,
-                move |e @ MouseButtonEvent { position, .. }, cx| {
-                    let mouse_mode = if let Some(conn_handle) = connection.upgrade(cx.app) {
-                        conn_handle.update(cx.app, |terminal, _cx| terminal.mouse_mode(e.shift))
-                    } else {
-                        // If we can't get the model handle, probably can't deploy the context menu
-                        true
-                    };
-                    if !mouse_mode {
-                        cx.dispatch_action(DeployContextMenu { position });
-                    }
-                },
-            );
+            .on_click(MouseButton::Right, move |e, cx| {
+                let mouse_mode = if let Some(conn_handle) = connection.upgrade(cx.app) {
+                    conn_handle.update(cx.app, |terminal, _cx| terminal.mouse_mode(e.shift))
+                } else {
+                    // If we can't get the model handle, probably can't deploy the context menu
+                    true
+                };
+                if !mouse_mode {
+                    cx.dispatch_action(DeployContextMenu {
+                        position: e.position,
+                    });
+                }
+            });
 
         // Mouse mode handlers:
         // All mouse modes need the extra click handlers

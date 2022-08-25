@@ -2,9 +2,14 @@ use std::{any::TypeId, mem::Discriminant, rc::Rc};
 
 use collections::HashMap;
 
-use pathfinder_geometry::{rect::RectF, vector::Vector2F};
+use pathfinder_geometry::rect::RectF;
 
-use crate::{EventContext, MouseButton, MouseButtonEvent, MouseMovedEvent, ScrollWheelEvent};
+use crate::{EventContext, MouseButton};
+
+use super::mouse_region_event::{
+    ClickRegionEvent, DownOutRegionEvent, DownRegionEvent, DragRegionEvent, HoverRegionEvent,
+    MouseRegionEvent, MoveRegionEvent, UpOutRegionEvent, UpRegionEvent,
+};
 
 #[derive(Clone, Default)]
 pub struct MouseRegion {
@@ -12,6 +17,7 @@ pub struct MouseRegion {
     pub discriminant: Option<(TypeId, usize)>,
     pub bounds: RectF,
     pub handlers: HandlerSet,
+    pub hoverable: bool,
 }
 
 impl MouseRegion {
@@ -30,6 +36,7 @@ impl MouseRegion {
             discriminant,
             bounds,
             handlers,
+            hoverable: true,
         }
     }
 
@@ -42,14 +49,15 @@ impl MouseRegion {
             view_id,
             discriminant,
             bounds,
-            handlers: HandlerSet::handle_all(),
+            handlers: HandlerSet::capture_all(),
+            hoverable: true,
         }
     }
 
     pub fn on_down(
         mut self,
         button: MouseButton,
-        handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
+        handler: impl Fn(DownRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_down(button, handler);
         self
@@ -58,7 +66,7 @@ impl MouseRegion {
     pub fn on_up(
         mut self,
         button: MouseButton,
-        handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
+        handler: impl Fn(UpRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_up(button, handler);
         self
@@ -67,7 +75,7 @@ impl MouseRegion {
     pub fn on_click(
         mut self,
         button: MouseButton,
-        handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
+        handler: impl Fn(ClickRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_click(button, handler);
         self
@@ -76,16 +84,25 @@ impl MouseRegion {
     pub fn on_down_out(
         mut self,
         button: MouseButton,
-        handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
+        handler: impl Fn(DownOutRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_down_out(button, handler);
+        self
+    }
+
+    pub fn on_up_out(
+        mut self,
+        button: MouseButton,
+        handler: impl Fn(UpOutRegionEvent, &mut EventContext) + 'static,
+    ) -> Self {
+        self.handlers = self.handlers.on_up_out(button, handler);
         self
     }
 
     pub fn on_drag(
         mut self,
         button: MouseButton,
-        handler: impl Fn(Vector2F, MouseMovedEvent, &mut EventContext) + 'static,
+        handler: impl Fn(DragRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_drag(button, handler);
         self
@@ -93,7 +110,7 @@ impl MouseRegion {
 
     pub fn on_hover(
         mut self,
-        handler: impl Fn(bool, MouseMovedEvent, &mut EventContext) + 'static,
+        handler: impl Fn(HoverRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_hover(handler);
         self
@@ -101,14 +118,19 @@ impl MouseRegion {
 
     pub fn on_move(
         mut self,
-        handler: impl Fn(MouseMovedEvent, &mut EventContext) + 'static,
+        handler: impl Fn(MoveRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_move(handler);
         self
     }
+
+    pub fn with_hoverable(mut self, is_hoverable: bool) -> Self {
+        self.hoverable = is_hoverable;
+        self
+    }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct MouseRegionId {
     pub view_id: usize,
     pub discriminant: (TypeId, usize),
@@ -124,7 +146,7 @@ pub struct HandlerSet {
 }
 
 impl HandlerSet {
-    pub fn handle_all() -> Self {
+    pub fn capture_all() -> Self {
         #[allow(clippy::type_complexity)]
         let mut set: HashMap<
             (Discriminant<MouseRegionEvent>, Option<MouseButton>),
@@ -154,6 +176,10 @@ impl HandlerSet {
                 (MouseRegionEvent::down_out_disc(), Some(button)),
                 Rc::new(|_, _| {}),
             );
+            set.insert(
+                (MouseRegionEvent::up_out_disc(), Some(button)),
+                Rc::new(|_, _| {}),
+            );
         }
         set.insert(
             (MouseRegionEvent::scroll_wheel_disc(), None),
@@ -170,15 +196,32 @@ impl HandlerSet {
         self.set.get(key).cloned()
     }
 
+    pub fn on_move(
+        mut self,
+        handler: impl Fn(MoveRegionEvent, &mut EventContext) + 'static,
+    ) -> Self {
+        self.set.insert((MouseRegionEvent::move_disc(), None),
+            Rc::new(move |region_event, cx| {
+                if let MouseRegionEvent::Move(e) = region_event {
+                    handler(e, cx);
+                } else {
+                    panic!(
+                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Move, found {:?}", 
+                        region_event);
+                }
+            }));
+        self
+    }
+
     pub fn on_down(
         mut self,
         button: MouseButton,
-        handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
+        handler: impl Fn(DownRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.set.insert((MouseRegionEvent::down_disc(), Some(button)),
             Rc::new(move |region_event, cx| {
-                if let MouseRegionEvent::Down(mouse_button_event) = region_event {
-                    handler(mouse_button_event, cx);
+                if let MouseRegionEvent::Down(e) = region_event {
+                    handler(e, cx);
                 } else {
                     panic!(
                         "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Down, found {:?}", 
@@ -191,12 +234,12 @@ impl HandlerSet {
     pub fn on_up(
         mut self,
         button: MouseButton,
-        handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
+        handler: impl Fn(UpRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.set.insert((MouseRegionEvent::up_disc(), Some(button)),
             Rc::new(move |region_event, cx| {
-                if let MouseRegionEvent::Up(mouse_button_event) = region_event {
-                    handler(mouse_button_event, cx);
+                if let MouseRegionEvent::Up(e) = region_event {
+                    handler(e, cx);
                 } else {
                     panic!(
                         "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Up, found {:?}", 
@@ -209,12 +252,12 @@ impl HandlerSet {
     pub fn on_click(
         mut self,
         button: MouseButton,
-        handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
+        handler: impl Fn(ClickRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.set.insert((MouseRegionEvent::click_disc(), Some(button)),
             Rc::new(move |region_event, cx| {
-                if let MouseRegionEvent::Click(mouse_button_event) = region_event {
-                    handler(mouse_button_event, cx);
+                if let MouseRegionEvent::Click(e) = region_event {
+                    handler(e, cx);
                 } else {
                     panic!(
                         "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Click, found {:?}", 
@@ -227,12 +270,12 @@ impl HandlerSet {
     pub fn on_down_out(
         mut self,
         button: MouseButton,
-        handler: impl Fn(MouseButtonEvent, &mut EventContext) + 'static,
+        handler: impl Fn(DownOutRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.set.insert((MouseRegionEvent::down_out_disc(), Some(button)),
             Rc::new(move |region_event, cx| {
-                if let MouseRegionEvent::DownOut(mouse_button_event) = region_event {
-                    handler(mouse_button_event, cx);
+                if let MouseRegionEvent::DownOut(e) = region_event {
+                    handler(e, cx);
                 } else {
                     panic!(
                         "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::DownOut, found {:?}", 
@@ -242,15 +285,33 @@ impl HandlerSet {
         self
     }
 
+    pub fn on_up_out(
+        mut self,
+        button: MouseButton,
+        handler: impl Fn(UpOutRegionEvent, &mut EventContext) + 'static,
+    ) -> Self {
+        self.set.insert((MouseRegionEvent::up_out_disc(), Some(button)),
+            Rc::new(move |region_event, cx| {
+                if let MouseRegionEvent::UpOut(e) = region_event {
+                    handler(e, cx);
+                } else {
+                    panic!(
+                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::UpOut, found {:?}", 
+                        region_event);
+                }
+            }));
+        self
+    }
+
     pub fn on_drag(
         mut self,
         button: MouseButton,
-        handler: impl Fn(Vector2F, MouseMovedEvent, &mut EventContext) + 'static,
+        handler: impl Fn(DragRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.set.insert((MouseRegionEvent::drag_disc(), Some(button)),
             Rc::new(move |region_event, cx| {
-                if let MouseRegionEvent::Drag(prev_drag_position, mouse_moved_event) = region_event {
-                    handler(prev_drag_position, mouse_moved_event, cx);
+                if let MouseRegionEvent::Drag(e) = region_event {
+                    handler(e, cx);
                 } else {
                     panic!(
                         "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Drag, found {:?}", 
@@ -262,12 +323,12 @@ impl HandlerSet {
 
     pub fn on_hover(
         mut self,
-        handler: impl Fn(bool, MouseMovedEvent, &mut EventContext) + 'static,
+        handler: impl Fn(HoverRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.set.insert((MouseRegionEvent::hover_disc(), None),
             Rc::new(move |region_event, cx| {
-                if let MouseRegionEvent::Hover(hover, mouse_moved_event) = region_event {
-                    handler(hover, mouse_moved_event, cx);
+                if let MouseRegionEvent::Hover(e) = region_event {
+                    handler(e, cx);
                 } else {
                     panic!(
                         "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Hover, found {:?}", 
@@ -275,90 +336,5 @@ impl HandlerSet {
                 }
             }));
         self
-    }
-
-    pub fn on_move(
-        mut self,
-        handler: impl Fn(MouseMovedEvent, &mut EventContext) + 'static,
-    ) -> Self {
-        self.set.insert((MouseRegionEvent::move_disc(), None),
-            Rc::new(move |region_event, cx| {
-                if let MouseRegionEvent::Move(move_event)= region_event {
-                    handler(move_event, cx);
-                }  else {
-                    panic!(
-                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Move, found {:?}", 
-                        region_event);
-                }
-            }));
-        self
-    }
-}
-
-#[derive(Debug)]
-pub enum MouseRegionEvent {
-    Move(MouseMovedEvent),
-    Drag(Vector2F, MouseMovedEvent),
-    Hover(bool, MouseMovedEvent),
-    Down(MouseButtonEvent),
-    Up(MouseButtonEvent),
-    Click(MouseButtonEvent),
-    DownOut(MouseButtonEvent),
-    ScrollWheel(ScrollWheelEvent),
-}
-
-impl MouseRegionEvent {
-    pub fn move_disc() -> Discriminant<MouseRegionEvent> {
-        std::mem::discriminant(&MouseRegionEvent::Move(Default::default()))
-    }
-    pub fn drag_disc() -> Discriminant<MouseRegionEvent> {
-        std::mem::discriminant(&MouseRegionEvent::Drag(
-            Default::default(),
-            Default::default(),
-        ))
-    }
-    pub fn hover_disc() -> Discriminant<MouseRegionEvent> {
-        std::mem::discriminant(&MouseRegionEvent::Hover(
-            Default::default(),
-            Default::default(),
-        ))
-    }
-    pub fn down_disc() -> Discriminant<MouseRegionEvent> {
-        std::mem::discriminant(&MouseRegionEvent::Down(Default::default()))
-    }
-    pub fn up_disc() -> Discriminant<MouseRegionEvent> {
-        std::mem::discriminant(&MouseRegionEvent::Up(Default::default()))
-    }
-    pub fn click_disc() -> Discriminant<MouseRegionEvent> {
-        std::mem::discriminant(&MouseRegionEvent::Click(Default::default()))
-    }
-    pub fn down_out_disc() -> Discriminant<MouseRegionEvent> {
-        std::mem::discriminant(&MouseRegionEvent::DownOut(Default::default()))
-    }
-    pub fn scroll_wheel_disc() -> Discriminant<MouseRegionEvent> {
-        std::mem::discriminant(&MouseRegionEvent::ScrollWheel(Default::default()))
-    }
-
-    pub fn handler_key(&self) -> (Discriminant<MouseRegionEvent>, Option<MouseButton>) {
-        match self {
-            MouseRegionEvent::Move(_) => (Self::move_disc(), None),
-            MouseRegionEvent::Drag(_, MouseMovedEvent { pressed_button, .. }) => {
-                (Self::drag_disc(), *pressed_button)
-            }
-            MouseRegionEvent::Hover(_, _) => (Self::hover_disc(), None),
-            MouseRegionEvent::Down(MouseButtonEvent { button, .. }) => {
-                (Self::down_disc(), Some(*button))
-            }
-            MouseRegionEvent::Up(MouseButtonEvent { button, .. }) => {
-                (Self::up_disc(), Some(*button))
-            }
-            MouseRegionEvent::Click(MouseButtonEvent { button, .. }) => {
-                (Self::click_disc(), Some(*button))
-            }
-            MouseRegionEvent::DownOut(MouseButtonEvent { button, .. }) => {
-                (Self::down_out_disc(), Some(*button))
-            }
-            MouseRegionEvent::ScrollWheel(_) => (Self::scroll_wheel_disc(), None),
-        }
     }
 }

@@ -6,12 +6,15 @@ use crate::{
     json::{self, ToJson},
     keymap::Keystroke,
     platform::{CursorStyle, Event},
-    scene::{CursorRegion, MouseRegionEvent},
+    scene::{
+        ClickRegionEvent, CursorRegion, DownOutRegionEvent, DownRegionEvent, DragRegionEvent,
+        HoverRegionEvent, MouseRegionEvent, MoveRegionEvent, UpOutRegionEvent, UpRegionEvent,
+    },
     text_layout::TextLayoutCache,
     Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox, Entity,
-    FontSystem, ModelHandle, MouseButtonEvent, MouseMovedEvent, MouseRegion, MouseRegionId,
-    ParentId, ReadModel, ReadView, RenderContext, RenderParams, Scene, UpgradeModelHandle,
-    UpgradeViewHandle, View, ViewHandle, WeakModelHandle, WeakViewHandle,
+    FontSystem, ModelHandle, MouseButton, MouseMovedEvent, MouseRegion, MouseRegionId, ParentId,
+    ReadModel, ReadView, RenderContext, RenderParams, Scene, UpgradeModelHandle, UpgradeViewHandle,
+    View, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use collections::{HashMap, HashSet};
 use pathfinder_geometry::vector::{vec2f, Vector2F};
@@ -31,11 +34,11 @@ pub struct Presenter {
     font_cache: Arc<FontCache>,
     text_layout_cache: TextLayoutCache,
     asset_cache: Arc<AssetCache>,
-    last_mouse_moved_event: Option<MouseMovedEvent>,
+    last_mouse_moved_event: Option<Event>,
     hovered_region_ids: HashSet<MouseRegionId>,
-    clicked_region: Option<MouseRegion>,
-    right_clicked_region: Option<MouseRegion>,
-    prev_drag_position: Option<Vector2F>,
+    clicked_regions: Vec<MouseRegion>,
+    clicked_button: Option<MouseButton>,
+    mouse_position: Vector2F,
     titlebar_height: f32,
 }
 
@@ -58,29 +61,12 @@ impl Presenter {
             asset_cache,
             last_mouse_moved_event: None,
             hovered_region_ids: Default::default(),
-            clicked_region: None,
-            right_clicked_region: None,
-            prev_drag_position: None,
+            clicked_regions: Vec::new(),
+            clicked_button: None,
+            mouse_position: vec2f(0., 0.),
             titlebar_height,
         }
     }
-
-    // pub fn dispatch_path(&self, app: &AppContext) -> Vec<usize> {
-    //     let mut path = Vec::new();
-    //     if let Some(view_id) = app.focused_view_id(self.window_id) {
-    //         self.compute_dispatch_path_from(view_id, &mut path)
-    //     }
-    //     path
-    // }
-
-    // pub(crate) fn compute_dispatch_path_from(&self, mut view_id: usize, path: &mut Vec<usize>) {
-    //     path.push(view_id);
-    //     while let Some(parent_id) = self.parents.get(&view_id).copied() {
-    //         path.push(parent_id);
-    //         view_id = parent_id;
-    //     }
-    //     path.reverse();
-    // }
 
     pub fn invalidate(
         &mut self,
@@ -100,11 +86,15 @@ impl Presenter {
                     view_id: *view_id,
                     titlebar_height: self.titlebar_height,
                     hovered_region_ids: self.hovered_region_ids.clone(),
-                    clicked_region_id: self.clicked_region.as_ref().and_then(MouseRegion::id),
-                    right_clicked_region_id: self
-                        .right_clicked_region
-                        .as_ref()
-                        .and_then(MouseRegion::id),
+                    clicked_region_ids: self.clicked_button.map(|button| {
+                        (
+                            self.clicked_regions
+                                .iter()
+                                .filter_map(MouseRegion::id)
+                                .collect(),
+                            button,
+                        )
+                    }),
                     refreshing: false,
                 })
                 .unwrap(),
@@ -122,11 +112,15 @@ impl Presenter {
                         view_id: *view_id,
                         titlebar_height: self.titlebar_height,
                         hovered_region_ids: self.hovered_region_ids.clone(),
-                        clicked_region_id: self.clicked_region.as_ref().and_then(MouseRegion::id),
-                        right_clicked_region_id: self
-                            .right_clicked_region
-                            .as_ref()
-                            .and_then(MouseRegion::id),
+                        clicked_region_ids: self.clicked_button.map(|button| {
+                            (
+                                self.clicked_regions
+                                    .iter()
+                                    .filter_map(MouseRegion::id)
+                                    .collect(),
+                                button,
+                            )
+                        }),
                         refreshing: true,
                     })
                     .unwrap();
@@ -157,12 +151,7 @@ impl Presenter {
 
             if cx.window_is_active(self.window_id) {
                 if let Some(event) = self.last_mouse_moved_event.clone() {
-                    let mut invalidated_views = Vec::new();
-                    self.handle_hover_events(&event, &mut invalidated_views, cx);
-
-                    for view_id in invalidated_views {
-                        cx.notify_view(self.window_id, view_id);
-                    }
+                    self.dispatch_event(event, true, cx);
                 }
             }
         } else {
@@ -195,8 +184,15 @@ impl Presenter {
             view_stack: Vec::new(),
             refreshing,
             hovered_region_ids: self.hovered_region_ids.clone(),
-            clicked_region_id: self.clicked_region.as_ref().and_then(MouseRegion::id),
-            right_clicked_region_id: self.right_clicked_region.as_ref().and_then(MouseRegion::id),
+            clicked_region_ids: self.clicked_button.map(|button| {
+                (
+                    self.clicked_regions
+                        .iter()
+                        .filter_map(MouseRegion::id)
+                        .collect(),
+                    button,
+                )
+            }),
             titlebar_height: self.titlebar_height,
             window_size,
             app: cx,
@@ -231,246 +227,249 @@ impl Presenter {
         })
     }
 
-    pub fn dispatch_event(&mut self, event: Event, cx: &mut MutableAppContext) -> bool {
+    pub fn dispatch_event(
+        &mut self,
+        event: Event,
+        event_reused: bool,
+        cx: &mut MutableAppContext,
+    ) -> bool {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
-            let mut invalidated_views = Vec::new();
-            let mut mouse_down_out_handlers = Vec::new();
-            let mut mouse_moved_region = None;
-            let mut mouse_down_region = None;
-            let mut mouse_up_region = None;
-            let mut clicked_region = None;
-            let mut dragged_region = None;
+            let mut events_to_send = Vec::new();
 
+            // 1. Allocate the correct set of GPUI events generated from the platform events
+            //  -> These are usually small: [Mouse Down] or [Mouse up, Click] or [Mouse Moved, Mouse Dragged?]
+            //  -> Also moves around mouse related state
             match &event {
-                Event::MouseDown(
-                    e @ MouseButtonEvent {
-                        position, button, ..
-                    },
-                ) => {
-                    let mut hit = false;
-                    for (region, _) in self.mouse_regions.iter().rev() {
-                        if region.bounds.contains_point(*position) {
-                            if !hit {
-                                hit = true;
-                                invalidated_views.push(region.view_id);
-                                mouse_down_region =
-                                    Some((region.clone(), MouseRegionEvent::Down(e.clone())));
-                                self.clicked_region = Some(region.clone());
-                                self.prev_drag_position = Some(*position);
-                            }
-                        } else if let Some(handler) = region
-                            .handlers
-                            .get(&(MouseRegionEvent::down_out_disc(), Some(*button)))
-                        {
-                            mouse_down_out_handlers.push((
-                                handler,
-                                region.view_id,
-                                MouseRegionEvent::DownOut(e.clone()),
-                            ));
-                        }
+                Event::MouseDown(e) => {
+                    // Click events are weird because they can be fired after a drag event.
+                    // MDN says that browsers handle this by starting from 'the most
+                    // specific ancestor element that contained both [positions]'
+                    // So we need to store the overlapping regions on mouse down.
+
+                    // If there is already clicked_button stored, don't replace it.
+                    if self.clicked_button.is_none() {
+                        self.clicked_regions = self
+                            .mouse_regions
+                            .iter()
+                            .filter_map(|(region, _)| {
+                                region
+                                    .bounds
+                                    .contains_point(e.position)
+                                    .then(|| region.clone())
+                            })
+                            .collect();
+                        self.clicked_button = Some(e.button);
                     }
+
+                    events_to_send.push(MouseRegionEvent::Down(DownRegionEvent {
+                        region: Default::default(),
+                        platform_event: e.clone(),
+                    }));
+                    events_to_send.push(MouseRegionEvent::DownOut(DownOutRegionEvent {
+                        region: Default::default(),
+                        platform_event: e.clone(),
+                    }));
                 }
-
-                &Event::MouseUp(
-                    e @ MouseButtonEvent {
-                        position, button, ..
+                Event::MouseUp(e) => {
+                    // NOTE: The order of event pushes is important! MouseUp events MUST be fired
+                    // before click events, and so the UpRegionEvent events need to be pushed before
+                    // ClickRegionEvents
+                    events_to_send.push(MouseRegionEvent::Up(UpRegionEvent {
+                        region: Default::default(),
+                        platform_event: e.clone(),
+                    }));
+                    events_to_send.push(MouseRegionEvent::UpOut(UpOutRegionEvent {
+                        region: Default::default(),
+                        platform_event: e.clone(),
+                    }));
+                    events_to_send.push(MouseRegionEvent::Click(ClickRegionEvent {
+                        region: Default::default(),
+                        platform_event: e.clone(),
+                    }));
+                }
+                Event::MouseMoved(
+                    e @ MouseMovedEvent {
+                        position,
+                        pressed_button,
+                        ..
                     },
                 ) => {
-                    self.prev_drag_position.take();
-                    if let Some(region) = self.clicked_region.take() {
-                        invalidated_views.push(region.view_id);
-                        if region.bounds.contains_point(position) {
-                            clicked_region = Some((region, MouseRegionEvent::Click(e.clone())));
-                        }
-                    }
-
-                    for (region, _) in self.mouse_regions.iter().rev() {
-                        if region.bounds.contains_point(position) {
-                            invalidated_views.push(region.view_id);
-                            mouse_up_region =
-                                Some((region.clone(), MouseRegionEvent::Up(e.clone())));
+                    let mut style_to_assign = CursorStyle::Arrow;
+                    for region in self.cursor_regions.iter().rev() {
+                        if region.bounds.contains_point(*position) {
+                            style_to_assign = region.style;
                             break;
                         }
                     }
+                    cx.platform().set_cursor_style(style_to_assign);
 
-                    if let Some(moved) = &mut self.last_mouse_moved_event {
-                        if moved.pressed_button == Some(button) {
-                            moved.pressed_button = None;
+                    if !event_reused {
+                        if pressed_button.is_some() {
+                            events_to_send.push(MouseRegionEvent::Drag(DragRegionEvent {
+                                region: Default::default(),
+                                prev_mouse_position: self.mouse_position,
+                                platform_event: e.clone(),
+                            }));
                         }
-                    }
-                }
-
-                Event::MouseMoved(e @ MouseMovedEvent { position, .. }) => {
-                    if let Some((clicked_region, prev_drag_position)) = self
-                        .clicked_region
-                        .as_ref()
-                        .zip(self.prev_drag_position.as_mut())
-                    {
-                        dragged_region = Some((
-                            clicked_region.clone(),
-                            MouseRegionEvent::Drag(*prev_drag_position, *e),
-                        ));
-                        *prev_drag_position = *position;
+                        events_to_send.push(MouseRegionEvent::Move(MoveRegionEvent {
+                            region: Default::default(),
+                            platform_event: e.clone(),
+                        }));
                     }
 
-                    for (region, _) in self.mouse_regions.iter().rev() {
-                        if region.bounds.contains_point(*position) {
-                            invalidated_views.push(region.view_id);
-                            mouse_moved_region =
-                                Some((region.clone(), MouseRegionEvent::Move(e.clone())));
-                            break;
-                        }
-                    }
+                    events_to_send.push(MouseRegionEvent::Hover(HoverRegionEvent {
+                        region: Default::default(),
+                        platform_event: e.clone(),
+                        started: false,
+                    }));
 
-                    self.last_mouse_moved_event = Some(e.clone());
+                    self.last_mouse_moved_event = Some(event.clone());
                 }
 
                 _ => {}
             }
 
-            let (mut handled, mut event_cx) = if let Event::MouseMoved(e) = &event {
-                self.handle_hover_events(e, &mut invalidated_views, cx)
-            } else {
-                (false, self.build_event_context(cx))
-            };
-
-            for (handler, view_id, region_event) in mouse_down_out_handlers {
-                event_cx.with_current_view(view_id, |event_cx| handler(region_event, event_cx))
+            if let Some(position) = event.position() {
+                self.mouse_position = position;
             }
 
-            if let Some((mouse_down_region, region_event)) = mouse_down_region {
-                handled = true;
-                if let Some(mouse_down_callback) =
-                    mouse_down_region.handlers.get(&region_event.handler_key())
-                {
-                    event_cx.with_current_view(mouse_down_region.view_id, |event_cx| {
-                        mouse_down_callback(region_event, event_cx);
-                    })
+            let mut invalidated_views: HashSet<usize> = Default::default();
+            let mut any_event_handled = false;
+            // 2. Process the raw mouse events into region events
+            for mut region_event in events_to_send {
+                let mut valid_regions = Vec::new();
+
+                // GPUI elements are arranged by depth but sibling elements can register overlapping
+                // mouse regions. As such, hover events are only fired on overlapping elements which
+                // are at the same depth as the topmost element which overlaps with the mouse.
+
+                match &region_event {
+                    MouseRegionEvent::Hover(_) => {
+                        let mut top_most_depth = None;
+                        let mouse_position = self.mouse_position.clone();
+                        for (region, depth) in self.mouse_regions.iter().rev() {
+                            // Allow mouse regions to appear transparent to hovers
+                            if !region.hoverable {
+                                continue;
+                            }
+
+                            let contains_mouse = region.bounds.contains_point(mouse_position);
+
+                            if contains_mouse && top_most_depth.is_none() {
+                                top_most_depth = Some(depth);
+                            }
+
+                            if let Some(region_id) = region.id() {
+                                // This unwrap relies on short circuiting boolean expressions
+                                // The right side of the && is only executed when contains_mouse
+                                // is true, and we know above that when contains_mouse is true
+                                // top_most_depth is set
+                                if contains_mouse && depth == top_most_depth.unwrap() {
+                                    //Ensure that hover entrance events aren't sent twice
+                                    if self.hovered_region_ids.insert(region_id) {
+                                        valid_regions.push(region.clone());
+                                        invalidated_views.insert(region.view_id);
+                                    }
+                                } else {
+                                    // Ensure that hover exit events aren't sent twice
+                                    if self.hovered_region_ids.remove(&region_id) {
+                                        valid_regions.push(region.clone());
+                                        invalidated_views.insert(region.view_id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    MouseRegionEvent::Click(e) => {
+                        if e.button == self.clicked_button.unwrap() {
+                            // Clear clicked regions and clicked button
+                            let clicked_regions =
+                                std::mem::replace(&mut self.clicked_regions, Vec::new());
+                            self.clicked_button = None;
+
+                            // Find regions which still overlap with the mouse since the last MouseDown happened
+                            for clicked_region in clicked_regions.into_iter().rev() {
+                                if clicked_region.bounds.contains_point(e.position) {
+                                    valid_regions.push(clicked_region);
+                                }
+                            }
+                        }
+                    }
+                    MouseRegionEvent::Drag(_) => {
+                        for clicked_region in self.clicked_regions.iter().rev() {
+                            valid_regions.push(clicked_region.clone());
+                        }
+                    }
+
+                    MouseRegionEvent::UpOut(_) | MouseRegionEvent::DownOut(_) => {
+                        for (mouse_region, _) in self.mouse_regions.iter().rev() {
+                            // NOT contains
+                            if !mouse_region.bounds.contains_point(self.mouse_position) {
+                                valid_regions.push(mouse_region.clone());
+                            }
+                        }
+                    }
+                    _ => {
+                        for (mouse_region, _) in self.mouse_regions.iter().rev() {
+                            // Contains
+                            if mouse_region.bounds.contains_point(self.mouse_position) {
+                                valid_regions.push(mouse_region.clone());
+                            }
+                        }
+                    }
+                }
+
+                //3. Fire region events
+                let hovered_region_ids = self.hovered_region_ids.clone();
+                for valid_region in valid_regions.into_iter() {
+                    region_event.set_region(valid_region.bounds);
+                    if let MouseRegionEvent::Hover(e) = &mut region_event {
+                        e.started = valid_region
+                            .id()
+                            .map(|region_id| hovered_region_ids.contains(&region_id))
+                            .unwrap_or(false)
+                    }
+
+                    if let Some(callback) = valid_region.handlers.get(&region_event.handler_key()) {
+                        invalidated_views.insert(valid_region.view_id);
+
+                        let mut event_cx = self.build_event_context(&mut invalidated_views, cx);
+                        event_cx.handled = true;
+                        event_cx.with_current_view(valid_region.view_id, {
+                            let region_event = region_event.clone();
+                            |cx| {
+                                callback(region_event, cx);
+                            }
+                        });
+
+                        any_event_handled = any_event_handled || event_cx.handled;
+                        // For bubbling events, if the event was handled, don't continue dispatching
+                        // This only makes sense for local events.
+                        if event_cx.handled && region_event.is_capturable() {
+                            break;
+                        }
+                    }
                 }
             }
 
-            if let Some((move_moved_region, region_event)) = mouse_moved_region {
-                handled = true;
-                if let Some(mouse_moved_callback) =
-                    move_moved_region.handlers.get(&region_event.handler_key())
-                {
-                    event_cx.with_current_view(move_moved_region.view_id, |event_cx| {
-                        mouse_moved_callback(region_event, event_cx);
-                    })
-                }
+            if !any_event_handled && !event_reused {
+                let mut event_cx = self.build_event_context(&mut invalidated_views, cx);
+                any_event_handled = event_cx.dispatch_event(root_view_id, &event);
             }
-
-            if let Some((mouse_up_region, region_event)) = mouse_up_region {
-                handled = true;
-                if let Some(mouse_up_callback) =
-                    mouse_up_region.handlers.get(&region_event.handler_key())
-                {
-                    event_cx.with_current_view(mouse_up_region.view_id, |event_cx| {
-                        mouse_up_callback(region_event, event_cx);
-                    })
-                }
-            }
-
-            if let Some((clicked_region, region_event)) = clicked_region {
-                handled = true;
-                if let Some(click_callback) =
-                    clicked_region.handlers.get(&region_event.handler_key())
-                {
-                    event_cx.with_current_view(clicked_region.view_id, |event_cx| {
-                        click_callback(region_event, event_cx);
-                    })
-                }
-            }
-
-            if let Some((dragged_region, region_event)) = dragged_region {
-                handled = true;
-                if let Some(drag_callback) =
-                    dragged_region.handlers.get(&region_event.handler_key())
-                {
-                    event_cx.with_current_view(dragged_region.view_id, |event_cx| {
-                        drag_callback(region_event, event_cx);
-                    })
-                }
-            }
-
-            if !handled {
-                handled = event_cx.dispatch_event(root_view_id, &event);
-            }
-
-            invalidated_views.extend(event_cx.invalidated_views);
 
             for view_id in invalidated_views {
                 cx.notify_view(self.window_id, view_id);
             }
 
-            handled
+            any_event_handled
         } else {
             false
         }
     }
 
-    fn handle_hover_events<'a>(
-        &'a mut self,
-        e @ MouseMovedEvent {
-            position,
-            pressed_button,
-            ..
-        }: &MouseMovedEvent,
-        invalidated_views: &mut Vec<usize>,
-        cx: &'a mut MutableAppContext,
-    ) -> (bool, EventContext<'a>) {
-        let mut hover_regions = Vec::new();
-
-        if pressed_button.is_none() {
-            let mut style_to_assign = CursorStyle::Arrow;
-            for region in self.cursor_regions.iter().rev() {
-                if region.bounds.contains_point(*position) {
-                    style_to_assign = region.style;
-                    break;
-                }
-            }
-            cx.platform().set_cursor_style(style_to_assign);
-
-            let mut hover_depth = None;
-            for (region, depth) in self.mouse_regions.iter().rev() {
-                if region.bounds.contains_point(*position)
-                    && hover_depth.map_or(true, |hover_depth| hover_depth == *depth)
-                {
-                    hover_depth = Some(*depth);
-                    if let Some(region_id) = region.id() {
-                        if !self.hovered_region_ids.contains(&region_id) {
-                            invalidated_views.push(region.view_id);
-                            hover_regions.push((region.clone(), MouseRegionEvent::Hover(true, *e)));
-                            self.hovered_region_ids.insert(region_id);
-                        }
-                    }
-                } else if let Some(region_id) = region.id() {
-                    if self.hovered_region_ids.contains(&region_id) {
-                        invalidated_views.push(region.view_id);
-                        hover_regions.push((region.clone(), MouseRegionEvent::Hover(false, *e)));
-                        self.hovered_region_ids.remove(&region_id);
-                    }
-                }
-            }
-        }
-
-        let mut event_cx = self.build_event_context(cx);
-        let mut handled = false;
-
-        for (hover_region, region_event) in hover_regions {
-            handled = true;
-            if let Some(hover_callback) = hover_region.handlers.get(&region_event.handler_key()) {
-                event_cx.with_current_view(hover_region.view_id, |event_cx| {
-                    hover_callback(region_event, event_cx);
-                })
-            }
-        }
-
-        (handled, event_cx)
-    }
-
     pub fn build_event_context<'a>(
         &'a mut self,
+        invalidated_views: &'a mut HashSet<usize>,
         cx: &'a mut MutableAppContext,
     ) -> EventContext<'a> {
         EventContext {
@@ -478,8 +477,9 @@ impl Presenter {
             font_cache: &self.font_cache,
             text_layout_cache: &self.text_layout_cache,
             view_stack: Default::default(),
-            invalidated_views: Default::default(),
+            invalidated_views,
             notify_count: 0,
+            handled: false,
             window_id: self.window_id,
             app: cx,
         }
@@ -514,8 +514,7 @@ pub struct LayoutContext<'a> {
     pub window_size: Vector2F,
     titlebar_height: f32,
     hovered_region_ids: HashSet<MouseRegionId>,
-    clicked_region_id: Option<MouseRegionId>,
-    right_clicked_region_id: Option<MouseRegionId>,
+    clicked_region_ids: Option<(Vec<MouseRegionId>, MouseButton)>,
 }
 
 impl<'a> LayoutContext<'a> {
@@ -586,8 +585,7 @@ impl<'a> LayoutContext<'a> {
                 view_type: PhantomData,
                 titlebar_height: self.titlebar_height,
                 hovered_region_ids: self.hovered_region_ids.clone(),
-                clicked_region_id: self.clicked_region_id,
-                right_clicked_region_id: self.right_clicked_region_id,
+                clicked_region_ids: self.clicked_region_ids.clone(),
                 refreshing: self.refreshing,
             };
             f(view, &mut render_cx)
@@ -699,7 +697,8 @@ pub struct EventContext<'a> {
     pub window_id: usize,
     pub notify_count: usize,
     view_stack: Vec<usize>,
-    invalidated_views: HashSet<usize>,
+    handled: bool,
+    invalidated_views: &'a mut HashSet<usize>,
 }
 
 impl<'a> EventContext<'a> {
@@ -764,6 +763,10 @@ impl<'a> EventContext<'a> {
 
     pub fn notify_count(&self) -> usize {
         self.notify_count
+    }
+
+    pub fn propogate_event(&mut self) {
+        self.handled = false;
     }
 }
 

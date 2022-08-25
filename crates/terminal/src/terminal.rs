@@ -39,13 +39,11 @@ use std::{
 use thiserror::Error;
 
 use gpui::{
-    geometry::{
-        rect::RectF,
-        vector::{vec2f, Vector2F},
-    },
+    geometry::vector::{vec2f, Vector2F},
     keymap::Keystroke,
-    ClipboardItem, Entity, ModelContext, MouseButton, MouseButtonEvent, MouseMovedEvent,
-    MutableAppContext, ScrollWheelEvent,
+    scene::{ClickRegionEvent, DownRegionEvent, DragRegionEvent, UpRegionEvent},
+    ClipboardItem, Entity, ModelContext, MouseButton, MouseMovedEvent, MutableAppContext,
+    ScrollWheelEvent,
 };
 
 use crate::mappings::{
@@ -676,7 +674,7 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_drag(&mut self, e: MouseMovedEvent, origin: Vector2F, bounds: RectF) {
+    pub fn mouse_drag(&mut self, e: DragRegionEvent, origin: Vector2F) {
         let position = e.position.sub(origin);
 
         if !self.mouse_mode(e.shift) {
@@ -687,8 +685,8 @@ impl Terminal {
             // Doesn't make sense to scroll the alt screen
             if !self.last_mode.contains(TermMode::ALT_SCREEN) {
                 //TODO: Why do these need to be doubled?
-                let top = bounds.origin_y() + (self.cur_size.line_height * 2.);
-                let bottom = bounds.lower_left().y() - (self.cur_size.line_height * 2.);
+                let top = e.region.origin_y() + (self.cur_size.line_height * 2.);
+                let bottom = e.region.lower_left().y() - (self.cur_size.line_height * 2.);
 
                 let scroll_delta = if e.position.y() < top {
                     (top - e.position.y()).powf(1.1)
@@ -705,7 +703,7 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_down(&mut self, e: &MouseButtonEvent, origin: Vector2F) {
+    pub fn mouse_down(&mut self, e: &DownRegionEvent, origin: Vector2F) {
         let position = e.position.sub(origin);
         let point = mouse_point(position, self.cur_size, self.last_offset);
         let side = mouse_side(position, self.cur_size);
@@ -719,7 +717,7 @@ impl Terminal {
         }
     }
 
-    pub fn left_click(&mut self, e: &MouseButtonEvent, origin: Vector2F) {
+    pub fn left_click(&mut self, e: &ClickRegionEvent, origin: Vector2F) {
         let position = e.position.sub(origin);
 
         if !self.mouse_mode(e.shift) {
@@ -743,7 +741,7 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_up(&mut self, e: &MouseButtonEvent, origin: Vector2F) {
+    pub fn mouse_up(&mut self, e: &UpRegionEvent, origin: Vector2F) {
         let position = e.position.sub(origin);
         if self.mouse_mode(e.shift) {
             let point = mouse_point(position, self.cur_size, self.last_offset);

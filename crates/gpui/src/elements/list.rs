@@ -699,7 +699,7 @@ mod tests {
             40.,
             vec2f(0., -54.),
             true,
-            &mut presenter.build_event_context(cx),
+            &mut presenter.build_event_context(&mut Default::default(), cx),
         );
         let (_, logical_scroll_top) = list.layout(
             constraint,
@@ -808,7 +808,7 @@ mod tests {
                         height,
                         delta,
                         true,
-                        &mut presenter.build_event_context(cx),
+                        &mut presenter.build_event_context(&mut Default::default(), cx),
                     );
                 }
                 30..=34 => {

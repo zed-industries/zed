@@ -75,7 +75,25 @@ pub struct TabBar {
     pub pane_button: Interactive<IconButton>,
     pub active_pane: TabStyles,
     pub inactive_pane: TabStyles,
+    pub dragged_tab: Tab,
     pub height: f32,
+    pub drop_target_overlay_color: Color,
+}
+
+impl TabBar {
+    pub fn tab_style(&self, pane_active: bool, tab_active: bool) -> &Tab {
+        let tabs = if pane_active {
+            &self.active_pane
+        } else {
+            &self.inactive_pane
+        };
+
+        if tab_active {
+            &tabs.active_tab
+        } else {
+            &tabs.inactive_tab
+        }
+    }
 }
 
 #[derive(Clone, Deserialize, Default)]

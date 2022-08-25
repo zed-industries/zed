@@ -1,7 +1,7 @@
 use crate::StatusItemView;
 use gpui::{
     elements::*, impl_actions, platform::CursorStyle, AnyViewHandle, AppContext, Entity,
-    MouseButton, MouseMovedEvent, RenderContext, Subscription, View, ViewContext, ViewHandle,
+    MouseButton, RenderContext, Subscription, View, ViewContext, ViewHandle,
 };
 use serde::Deserialize;
 use settings::Settings;
@@ -189,26 +189,18 @@ impl Sidebar {
         })
         .with_cursor_style(CursorStyle::ResizeLeftRight)
         .on_down(MouseButton::Left, |_, _| {}) // This prevents the mouse down event from being propagated elsewhere
-        .on_drag(
-            MouseButton::Left,
-            move |old_position,
-                  MouseMovedEvent {
-                      position: new_position,
-                      ..
-                  },
-                  cx| {
-                let delta = new_position.x() - old_position.x();
-                let prev_width = *actual_width.borrow();
-                *custom_width.borrow_mut() = 0f32
-                    .max(match side {
-                        Side::Left => prev_width + delta,
-                        Side::Right => prev_width - delta,
-                    })
-                    .round();
+        .on_drag(MouseButton::Left, move |e, cx| {
+            let delta = e.position.x() - e.prev_mouse_position.x();
+            let prev_width = *actual_width.borrow();
+            *custom_width.borrow_mut() = 0f32
+                .max(match side {
+                    Side::Left => prev_width + delta,
+                    Side::Right => prev_width - delta,
+                })
+                .round();
 
-                cx.notify();
-            },
-        )
+            cx.notify();
+        })
         .boxed()
     }
 }

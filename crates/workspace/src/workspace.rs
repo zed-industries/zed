@@ -16,6 +16,7 @@ use client::{
 };
 use clock::ReplicaId;
 use collections::{hash_map, HashMap, HashSet};
+use drag_and_drop::DragAndDrop;
 use futures::{channel::oneshot, FutureExt};
 use gpui::{
     actions,
@@ -901,6 +902,9 @@ impl Workspace {
             status_bar
         });
 
+        let drag_and_drop = DragAndDrop::new(cx.weak_handle(), cx);
+        cx.set_global(drag_and_drop);
+
         let mut this = Workspace {
             modal: None,
             weak_self,
@@ -1444,8 +1448,8 @@ impl Workspace {
     }
 
     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
-        let pane = self.active_pane().clone();
-        Pane::add_item(self, pane, item, true, true, cx);
+        let active_pane = self.active_pane().clone();
+        Pane::add_item(self, &active_pane, item, true, true, None, cx);
     }
 
     pub fn open_path(
@@ -1531,7 +1535,7 @@ impl Workspace {
                 .map(|ix| (pane.clone(), ix))
         });
         if let Some((pane, ix)) = result {
-            pane.update(cx, |pane, cx| pane.activate_item(ix, true, true, false, cx));
+            pane.update(cx, |pane, cx| pane.activate_item(ix, true, true, cx));
             true
         } else {
             false
@@ -1645,7 +1649,7 @@ impl Workspace {
         pane.read(cx).active_item().map(|item| {
             let new_pane = self.add_pane(cx);
             if let Some(clone) = item.clone_on_split(cx.as_mut()) {
-                Pane::add_item(self, new_pane.clone(), clone, true, true, cx);
+                Pane::add_item(self, &new_pane, clone, true, true, None, cx);
             }
             self.center.split(&pane, &new_pane, direction).unwrap();
             cx.notify();
@@ -2081,11 +2085,11 @@ impl Workspace {
         }
     }
 
-    fn render_disconnected_overlay(&self, cx: &AppContext) -> Option<ElementBox> {
+    fn render_disconnected_overlay(&self, cx: &mut RenderContext<Workspace>) -> Option<ElementBox> {
         if self.project.read(cx).is_read_only() {
-            let theme = &cx.global::<Settings>().theme;
             Some(
-                EventHandler::new(
+                MouseEventHandler::new::<Workspace, _, _>(0, cx, |_, cx| {
+                    let theme = &cx.global::<Settings>().theme;
                     Label::new(
                         "Your connection to the remote project has been lost.".to_string(),
                         theme.workspace.disconnected_overlay.text.clone(),
@@ -2093,9 +2097,9 @@ impl Workspace {
                     .aligned()
                     .contained()
                     .with_style(theme.workspace.disconnected_overlay.container)
-                    .boxed(),
-                )
-                .capture_all::<Self>(0)
+                    .boxed()
+                })
+                .capture_all()
                 .boxed(),
             )
         } else {
@@ -2388,7 +2392,7 @@ impl Workspace {
         }
 
         for (pane, item) in items_to_add {
-            Pane::add_item(self, pane.clone(), item.boxed_clone(), false, false, cx);
+            Pane::add_item(self, &pane, item.boxed_clone(), false, false, None, cx);
             if pane == self.active_pane {
                 pane.update(cx, |pane, cx| pane.focus_active_item(cx));
             }
@@ -2488,6 +2492,7 @@ impl View for Workspace {
                     .with_background_color(theme.workspace.background)
                     .boxed(),
             )
+            .with_children(DragAndDrop::render(cx))
             .with_children(self.render_disconnected_overlay(cx))
             .named("workspace")
     }
@@ -2999,7 +3004,7 @@ mod tests {
 
         let close_items = workspace.update(cx, |workspace, cx| {
             pane.update(cx, |pane, cx| {
-                pane.activate_item(1, true, true, false, cx);
+                pane.activate_item(1, true, true, cx);
                 assert_eq!(pane.active_item().unwrap().id(), item2.id());
             });
 
@@ -3101,7 +3106,7 @@ mod tests {
                 workspace.add_item(Box::new(cx.add_view(|_| item.clone())), cx);
             }
             left_pane.update(cx, |pane, cx| {
-                pane.activate_item(2, true, true, false, cx);
+                pane.activate_item(2, true, true, cx);
             });
 
             workspace
@@ -3325,8 +3330,9 @@ mod tests {
         });
     }
 
-    struct TestItem {
+    pub struct TestItem {
         state: String,
+        pub label: String,
         save_count: usize,
         save_as_count: usize,
         reload_count: usize,
@@ -3340,7 +3346,7 @@ mod tests {
         tab_detail: Cell<Option<usize>>,
     }
 
-    enum TestItemEvent {
+    pub enum TestItemEvent {
         Edit,
     }
 
@@ -3348,6 +3354,7 @@ mod tests {
         fn clone(&self) -> Self {
             Self {
                 state: self.state.clone(),
+                label: self.label.clone(),
                 save_count: self.save_count,
                 save_as_count: self.save_as_count,
                 reload_count: self.reload_count,
@@ -3364,9 +3371,10 @@ mod tests {
     }
 
     impl TestItem {
-        fn new() -> Self {
+        pub fn new() -> Self {
             Self {
                 state: String::new(),
+                label: String::new(),
                 save_count: 0,
                 save_as_count: 0,
                 reload_count: 0,
@@ -3379,6 +3387,11 @@ mod tests {
                 tab_descriptions: None,
                 tab_detail: Default::default(),
             }
+        }
+
+        pub fn with_label(mut self, state: &str) -> Self {
+            self.label = state.to_string();
+            self
         }
 
         fn set_state(&mut self, state: String, cx: &mut ViewContext<Self>) {

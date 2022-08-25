@@ -1,4 +1,5 @@
 mod mouse_region;
+mod mouse_region_event;
 
 use serde::Deserialize;
 use serde_json::json;
@@ -13,6 +14,7 @@ use crate::{
     ImageData,
 };
 pub use mouse_region::*;
+pub use mouse_region_event::*;
 
 pub struct Scene {
     scale_factor: f32,

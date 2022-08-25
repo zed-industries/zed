@@ -3,9 +3,11 @@ use crate::{toolbar::Toolbar, Item, NewFile, NewSearch, NewTerminal, WeakItemHan
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use context_menu::{ContextMenu, ContextMenuItem};
+use drag_and_drop::{DragAndDrop, Draggable};
 use futures::StreamExt;
 use gpui::{
     actions,
+    color::Color,
     elements::*,
     geometry::{
         rect::RectF,
@@ -14,13 +16,14 @@ use gpui::{
     impl_actions, impl_internal_actions,
     platform::{CursorStyle, NavigationDirection},
     AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, EventContext,
-    ModelHandle, MouseButton, MouseButtonEvent, MutableAppContext, PromptLevel, Quad,
-    RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    ModelHandle, MouseButton, MutableAppContext, PromptLevel, Quad, RenderContext, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
 use settings::{Autosave, Settings};
-use std::{any::Any, cell::RefCell, mem, path::Path, rc::Rc};
+use std::{any::Any, cell::RefCell, cmp, mem, path::Path, rc::Rc};
+use theme::Theme;
 use util::ResultExt;
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -48,6 +51,14 @@ pub struct CloseItem {
     pub pane: WeakViewHandle<Pane>,
 }
 
+#[derive(Clone, PartialEq)]
+pub struct MoveItem {
+    pub item_id: usize,
+    pub from: WeakViewHandle<Pane>,
+    pub to: WeakViewHandle<Pane>,
+    pub destination_index: usize,
+}
+
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct GoBack {
     #[serde(skip_deserializing)]
@@ -71,16 +82,16 @@ pub struct DeployNewMenu {
 }
 
 impl_actions!(pane, [GoBack, GoForward, ActivateItem]);
-impl_internal_actions!(pane, [CloseItem, DeploySplitMenu, DeployNewMenu]);
+impl_internal_actions!(pane, [CloseItem, DeploySplitMenu, DeployNewMenu, MoveItem]);
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
-        pane.activate_item(action.0, true, true, false, cx);
+        pane.activate_item(action.0, true, true, cx);
     });
     cx.add_action(|pane: &mut Pane, _: &ActivateLastItem, cx| {
-        pane.activate_item(pane.items.len() - 1, true, true, false, cx);
+        pane.activate_item(pane.items.len() - 1, true, true, cx);
     });
     cx.add_action(|pane: &mut Pane, _: &ActivatePrevItem, cx| {
         pane.activate_prev_item(cx);
@@ -98,6 +109,32 @@ pub fn init(cx: &mut MutableAppContext) {
             Ok(())
         }))
     });
+    cx.add_action(
+        |workspace,
+         MoveItem {
+             from,
+             to,
+             item_id,
+             destination_index,
+         },
+         cx| {
+            // Get item handle to move
+            let from = if let Some(from) = from.upgrade(cx) {
+                from
+            } else {
+                return;
+            };
+
+            // Add item to new pane at given index
+            let to = if let Some(to) = to.upgrade(cx) {
+                to
+            } else {
+                return;
+            };
+
+            Pane::move_item(workspace, from, to, *item_id, *destination_index, cx)
+        },
+    );
     cx.add_action(|pane: &mut Pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx));
     cx.add_action(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx));
     cx.add_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx));
@@ -184,6 +221,17 @@ impl Default for NavigationMode {
 pub struct NavigationEntry {
     pub item: Rc<dyn WeakItemHandle>,
     pub data: Option<Box<dyn Any>>,
+}
+
+struct DraggedItem {
+    item: Box<dyn ItemHandle>,
+    pane: WeakViewHandle<Pane>,
+}
+
+pub enum ReorderBehavior {
+    None,
+    MoveAfterActive,
+    MoveToIndex(usize),
 }
 
 impl Pane {
@@ -300,7 +348,7 @@ impl Pane {
                 {
                     let prev_active_item_index = pane.active_item_index;
                     pane.nav_history.borrow_mut().set_mode(mode);
-                    pane.activate_item(index, true, true, false, cx);
+                    pane.activate_item(index, true, true, cx);
                     pane.nav_history
                         .borrow_mut()
                         .set_mode(NavigationMode::Normal);
@@ -387,63 +435,100 @@ impl Pane {
         build_item: impl FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
     ) -> Box<dyn ItemHandle> {
         let existing_item = pane.update(cx, |pane, cx| {
-            for (ix, item) in pane.items.iter().enumerate() {
+            for item in pane.items.iter() {
                 if item.project_path(cx).is_some()
                     && item.project_entry_ids(cx).as_slice() == [project_entry_id]
                 {
                     let item = item.boxed_clone();
-                    pane.activate_item(ix, true, focus_item, true, cx);
                     return Some(item);
                 }
             }
             None
         });
-        if let Some(existing_item) = existing_item {
-            existing_item
-        } else {
-            let item = pane.update(cx, |_, cx| build_item(cx));
-            Self::add_item(workspace, pane, item.boxed_clone(), true, focus_item, cx);
-            item
-        }
+
+        // Even if the item exists, we re-add it to reorder it after the active item.
+        // We may revisit this behavior after adding an "activation history" for pane items.
+        let item = existing_item.unwrap_or_else(|| pane.update(cx, |_, cx| build_item(cx)));
+        Pane::add_item(workspace, &pane, item.clone(), true, focus_item, None, cx);
+        item
     }
 
-    pub(crate) fn add_item(
+    pub fn add_item(
         workspace: &mut Workspace,
-        pane: ViewHandle<Pane>,
+        pane: &ViewHandle<Pane>,
         item: Box<dyn ItemHandle>,
         activate_pane: bool,
         focus_item: bool,
+        destination_index: Option<usize>,
         cx: &mut ViewContext<Workspace>,
     ) {
-        // Prevent adding the same item to the pane more than once.
-        // If there is already an active item, reorder the desired item to be after it
-        // and activate it.
-        if let Some(item_ix) = pane.read(cx).items.iter().position(|i| i.id() == item.id()) {
+        // If no destination index is specified, add or move the item after the active item.
+        let mut insertion_index = {
+            let pane = pane.read(cx);
+            cmp::min(
+                if let Some(destination_index) = destination_index {
+                    destination_index
+                } else {
+                    pane.active_item_index + 1
+                },
+                pane.items.len(),
+            )
+        };
+
+        // Does the item already exist?
+        if let Some(existing_item_index) = pane.read(cx).items.iter().position(|existing_item| {
+            let existing_item_entry_ids = existing_item.project_entry_ids(cx);
+            let added_item_entry_ids = item.project_entry_ids(cx);
+            let entries_match = !existing_item_entry_ids.is_empty()
+                && existing_item_entry_ids == added_item_entry_ids;
+
+            existing_item.id() == item.id() || entries_match
+        }) {
+            // If the item already exists, move it to the desired destination and activate it
             pane.update(cx, |pane, cx| {
-                pane.activate_item(item_ix, activate_pane, focus_item, true, cx)
+                if existing_item_index != insertion_index {
+                    cx.reparent(&item);
+                    let existing_item_is_active = existing_item_index == pane.active_item_index;
+
+                    // If the caller didn't specify a destination and the added item is already
+                    // the active one, don't move it
+                    if existing_item_is_active && destination_index.is_none() {
+                        insertion_index = existing_item_index;
+                    } else {
+                        pane.items.remove(existing_item_index);
+                        if existing_item_index < pane.active_item_index {
+                            pane.active_item_index -= 1;
+                        }
+                        insertion_index = insertion_index.min(pane.items.len());
+
+                        pane.items.insert(insertion_index, item.clone());
+
+                        if existing_item_is_active {
+                            pane.active_item_index = insertion_index;
+                        } else if insertion_index <= pane.active_item_index {
+                            pane.active_item_index += 1;
+                        }
+                    }
+
+                    cx.notify();
+                }
+
+                pane.activate_item(insertion_index, activate_pane, focus_item, cx);
             });
-            return;
+        } else {
+            // If the item doesn't already exist, add it and activate it
+            item.added_to_pane(workspace, pane.clone(), cx);
+            pane.update(cx, |pane, cx| {
+                cx.reparent(&item);
+                pane.items.insert(insertion_index, item);
+                if insertion_index <= pane.active_item_index {
+                    pane.active_item_index += 1;
+                }
+
+                pane.activate_item(insertion_index, activate_pane, focus_item, cx);
+                cx.notify();
+            });
         }
-
-        item.added_to_pane(workspace, pane.clone(), cx);
-        pane.update(cx, |pane, cx| {
-            // If there is already an active item, then insert the new item
-            // right after it. Otherwise, adjust the `active_item_index` field
-            // before activating the new item, so that in the `activate_item`
-            // method, we can detect that the active item is changing.
-            let item_ix;
-            if pane.active_item_index < pane.items.len() {
-                item_ix = pane.active_item_index + 1
-            } else {
-                item_ix = pane.items.len();
-                pane.active_item_index = usize::MAX;
-            };
-
-            cx.reparent(&item);
-            pane.items.insert(item_ix, item);
-            pane.activate_item(item_ix, activate_pane, focus_item, false, cx);
-            cx.notify();
-        });
     }
 
     pub fn items(&self) -> impl Iterator<Item = &Box<dyn ItemHandle>> {
@@ -480,31 +565,13 @@ impl Pane {
 
     pub fn activate_item(
         &mut self,
-        mut index: usize,
+        index: usize,
         activate_pane: bool,
         focus_item: bool,
-        move_after_current_active: bool,
         cx: &mut ViewContext<Self>,
     ) {
         use NavigationMode::{GoingBack, GoingForward};
         if index < self.items.len() {
-            if move_after_current_active {
-                // If there is already an active item, reorder the desired item to be after it
-                // and activate it.
-                if self.active_item_index != index && self.active_item_index < self.items.len() {
-                    let pane_to_activate = self.items.remove(index);
-                    if self.active_item_index < index {
-                        index = self.active_item_index + 1;
-                    } else if self.active_item_index < self.items.len() + 1 {
-                        index = self.active_item_index;
-                        // Index is less than active_item_index. Reordering will decrement the
-                        // active_item_index, so adjust it accordingly
-                        self.active_item_index = index - 1;
-                    }
-                    self.items.insert(index, pane_to_activate);
-                }
-            }
-
             let prev_active_item_ix = mem::replace(&mut self.active_item_index, index);
             if prev_active_item_ix != self.active_item_index
                 || matches!(self.nav_history.borrow().mode, GoingBack | GoingForward)
@@ -535,7 +602,7 @@ impl Pane {
         } else if !self.items.is_empty() {
             index = self.items.len() - 1;
         }
-        self.activate_item(index, true, true, false, cx);
+        self.activate_item(index, true, true, cx);
     }
 
     pub fn activate_next_item(&mut self, cx: &mut ViewContext<Self>) {
@@ -545,7 +612,7 @@ impl Pane {
         } else {
             index = 0;
         }
-        self.activate_item(index, true, true, false, cx);
+        self.activate_item(index, true, true, cx);
     }
 
     pub fn close_active_item(
@@ -672,48 +739,7 @@ impl Pane {
                 // Remove the item from the pane.
                 pane.update(&mut cx, |pane, cx| {
                     if let Some(item_ix) = pane.items.iter().position(|i| i.id() == item.id()) {
-                        if item_ix == pane.active_item_index {
-                            // Activate the previous item if possible.
-                            // This returns the user to the previously opened tab if they closed
-                            // a ne item they just navigated to.
-                            if item_ix > 0 {
-                                pane.activate_prev_item(cx);
-                            } else if item_ix + 1 < pane.items.len() {
-                                pane.activate_next_item(cx);
-                            }
-                        }
-
-                        let item = pane.items.remove(item_ix);
-                        cx.emit(Event::RemoveItem);
-                        if pane.items.is_empty() {
-                            item.deactivated(cx);
-                            pane.update_toolbar(cx);
-                            cx.emit(Event::Remove);
-                        }
-
-                        if item_ix < pane.active_item_index {
-                            pane.active_item_index -= 1;
-                        }
-
-                        pane.nav_history
-                            .borrow_mut()
-                            .set_mode(NavigationMode::ClosingItem);
-                        item.deactivated(cx);
-                        pane.nav_history
-                            .borrow_mut()
-                            .set_mode(NavigationMode::Normal);
-
-                        if let Some(path) = item.project_path(cx) {
-                            pane.nav_history
-                                .borrow_mut()
-                                .paths_by_item
-                                .insert(item.id(), path);
-                        } else {
-                            pane.nav_history
-                                .borrow_mut()
-                                .paths_by_item
-                                .remove(&item.id());
-                        }
+                        pane.remove_item(item_ix, cx);
                     }
                 });
             }
@@ -721,6 +747,53 @@ impl Pane {
             pane.update(&mut cx, |_, cx| cx.notify());
             Ok(true)
         })
+    }
+
+    fn remove_item(&mut self, item_ix: usize, cx: &mut ViewContext<Self>) {
+        if item_ix == self.active_item_index {
+            // Activate the previous item if possible.
+            // This returns the user to the previously opened tab if they closed
+            // a new item they just navigated to.
+            if item_ix > 0 {
+                self.activate_prev_item(cx);
+            } else if item_ix + 1 < self.items.len() {
+                self.activate_next_item(cx);
+            }
+        }
+
+        let item = self.items.remove(item_ix);
+        cx.emit(Event::RemoveItem);
+        if self.items.is_empty() {
+            item.deactivated(cx);
+            self.update_toolbar(cx);
+            cx.emit(Event::Remove);
+        }
+
+        if item_ix < self.active_item_index {
+            self.active_item_index -= 1;
+        }
+
+        self.nav_history
+            .borrow_mut()
+            .set_mode(NavigationMode::ClosingItem);
+        item.deactivated(cx);
+        self.nav_history
+            .borrow_mut()
+            .set_mode(NavigationMode::Normal);
+
+        if let Some(path) = item.project_path(cx) {
+            self.nav_history
+                .borrow_mut()
+                .paths_by_item
+                .insert(item.id(), path);
+        } else {
+            self.nav_history
+                .borrow_mut()
+                .paths_by_item
+                .remove(&item.id());
+        }
+
+        cx.notify();
     }
 
     pub async fn save_item(
@@ -746,7 +819,7 @@ impl Pane {
 
         if has_conflict && can_save {
             let mut answer = pane.update(cx, |pane, cx| {
-                pane.activate_item(item_ix, true, true, false, cx);
+                pane.activate_item(item_ix, true, true, cx);
                 cx.prompt(
                     PromptLevel::Warning,
                     CONFLICT_MESSAGE,
@@ -767,7 +840,7 @@ impl Pane {
             });
             let should_save = if should_prompt_for_save && !will_autosave {
                 let mut answer = pane.update(cx, |pane, cx| {
-                    pane.activate_item(item_ix, true, true, false, cx);
+                    pane.activate_item(item_ix, true, true, cx);
                     cx.prompt(
                         PromptLevel::Warning,
                         DIRTY_MESSAGE,
@@ -829,6 +902,42 @@ impl Pane {
         }
     }
 
+    fn move_item(
+        workspace: &mut Workspace,
+        from: ViewHandle<Pane>,
+        to: ViewHandle<Pane>,
+        item_to_move: usize,
+        destination_index: usize,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let (item_ix, item_handle) = from
+            .read(cx)
+            .items()
+            .enumerate()
+            .find(|(_, item_handle)| item_handle.id() == item_to_move)
+            .expect("Tried to move item handle which was not in from pane");
+
+        // This automatically removes duplicate items in the pane
+        Pane::add_item(
+            workspace,
+            &to,
+            item_handle.clone(),
+            true,
+            true,
+            Some(destination_index),
+            cx,
+        );
+
+        if from != to {
+            // Close item from previous pane
+            from.update(cx, |from, cx| {
+                from.remove_item(item_ix, cx);
+            });
+        }
+
+        cx.focus(to);
+    }
+
     pub fn split(&mut self, direction: SplitDirection, cx: &mut ViewContext<Self>) {
         cx.emit(Event::Split(direction));
     }
@@ -876,144 +985,58 @@ impl Pane {
         });
     }
 
-    fn render_tabs(&mut self, cx: &mut RenderContext<Self>) -> impl Element {
+    fn render_tab_bar(&mut self, cx: &mut RenderContext<Self>) -> impl Element {
         let theme = cx.global::<Settings>().theme.clone();
+        let filler_index = self.items.len();
 
         enum Tabs {}
         enum Tab {}
+        enum Filler {}
         let pane = cx.handle();
-        MouseEventHandler::new::<Tabs, _, _>(0, cx, |mouse_state, cx| {
+        MouseEventHandler::new::<Tabs, _, _>(0, cx, |_, cx| {
             let autoscroll = if mem::take(&mut self.autoscroll) {
                 Some(self.active_item_index)
             } else {
                 None
             };
 
-            let is_pane_active = self.is_active;
-
-            let tab_styles = match is_pane_active {
-                true => theme.workspace.tab_bar.active_pane.clone(),
-                false => theme.workspace.tab_bar.inactive_pane.clone(),
-            };
-            let filler_style = tab_styles.inactive_tab.clone();
+            let pane_active = self.is_active;
 
             let mut row = Flex::row().scrollable::<Tabs, _>(1, autoscroll, cx);
-            for (ix, (item, detail)) in self.items.iter().zip(self.tab_details(cx)).enumerate() {
-                let item_id = item.id();
+            for (ix, (item, detail)) in self
+                .items
+                .iter()
+                .cloned()
+                .zip(self.tab_details(cx))
+                .enumerate()
+            {
                 let detail = if detail == 0 { None } else { Some(detail) };
-                let is_tab_active = ix == self.active_item_index;
-
-                let close_tab_callback = {
-                    let pane = pane.clone();
-                    move |_, cx: &mut EventContext| {
-                        cx.dispatch_action(CloseItem {
-                            item_id,
-                            pane: pane.clone(),
-                        })
-                    }
-                };
+                let tab_active = ix == self.active_item_index;
 
                 row.add_child({
-                    let mut tab_style = match is_tab_active {
-                        true => tab_styles.active_tab.clone(),
-                        false => tab_styles.inactive_tab.clone(),
-                    };
+                    MouseEventHandler::new::<Tab, _, _>(ix, cx, {
+                        let item = item.clone();
+                        let pane = pane.clone();
+                        let detail = detail.clone();
 
-                    let title = item.tab_content(detail, &tab_style, cx);
+                        let theme = cx.global::<Settings>().theme.clone();
 
-                    if ix == 0 {
-                        tab_style.container.border.left = false;
-                    }
-
-                    MouseEventHandler::new::<Tab, _, _>(ix, cx, |_, cx| {
-                        Container::new(
-                            Flex::row()
-                                .with_child(
-                                    Align::new({
-                                        let diameter = 7.0;
-                                        let icon_color = if item.has_conflict(cx) {
-                                            Some(tab_style.icon_conflict)
-                                        } else if item.is_dirty(cx) {
-                                            Some(tab_style.icon_dirty)
-                                        } else {
-                                            None
-                                        };
-
-                                        ConstrainedBox::new(
-                                            Canvas::new(move |bounds, _, cx| {
-                                                if let Some(color) = icon_color {
-                                                    let square = RectF::new(
-                                                        bounds.origin(),
-                                                        vec2f(diameter, diameter),
-                                                    );
-                                                    cx.scene.push_quad(Quad {
-                                                        bounds: square,
-                                                        background: Some(color),
-                                                        border: Default::default(),
-                                                        corner_radius: diameter / 2.,
-                                                    });
-                                                }
-                                            })
-                                            .boxed(),
-                                        )
-                                        .with_width(diameter)
-                                        .with_height(diameter)
-                                        .boxed()
-                                    })
-                                    .boxed(),
-                                )
-                                .with_child(
-                                    Container::new(Align::new(title).boxed())
-                                        .with_style(ContainerStyle {
-                                            margin: Margin {
-                                                left: tab_style.spacing,
-                                                right: tab_style.spacing,
-                                                ..Default::default()
-                                            },
-                                            ..Default::default()
-                                        })
-                                        .boxed(),
-                                )
-                                .with_child(
-                                    Align::new(
-                                        ConstrainedBox::new(if mouse_state.hovered {
-                                            enum TabCloseButton {}
-                                            let icon = Svg::new("icons/x_mark_thin_8.svg");
-                                            MouseEventHandler::new::<TabCloseButton, _, _>(
-                                                item_id,
-                                                cx,
-                                                |mouse_state, _| {
-                                                    if mouse_state.hovered {
-                                                        icon.with_color(tab_style.icon_close_active)
-                                                            .boxed()
-                                                    } else {
-                                                        icon.with_color(tab_style.icon_close)
-                                                            .boxed()
-                                                    }
-                                                },
-                                            )
-                                            .with_padding(Padding::uniform(4.))
-                                            .with_cursor_style(CursorStyle::PointingHand)
-                                            .on_click(MouseButton::Left, close_tab_callback.clone())
-                                            .on_click(
-                                                MouseButton::Middle,
-                                                close_tab_callback.clone(),
-                                            )
-                                            .named("close-tab-icon")
-                                        } else {
-                                            Empty::new().boxed()
-                                        })
-                                        .with_width(tab_style.icon_width)
-                                        .boxed(),
-                                    )
-                                    .boxed(),
-                                )
-                                .boxed(),
-                        )
-                        .with_style(tab_style.container)
-                        .boxed()
+                        move |mouse_state, cx| {
+                            let tab_style =
+                                theme.workspace.tab_bar.tab_style(pane_active, tab_active);
+                            let hovered = mouse_state.hovered;
+                            Self::render_tab(
+                                &item,
+                                pane,
+                                detail,
+                                hovered,
+                                Self::tab_overlay_color(hovered, theme.as_ref(), cx),
+                                tab_style,
+                                cx,
+                            )
+                        }
                     })
-                    .with_cursor_style(if is_tab_active && is_pane_active {
+                    .with_cursor_style(if pane_active && tab_active {
                         CursorStyle::Arrow
                     } else {
                         CursorStyle::PointingHand
@@ -1021,21 +1044,72 @@ impl Pane {
                     .on_down(MouseButton::Left, move |_, cx| {
                         cx.dispatch_action(ActivateItem(ix));
                     })
-                    .on_click(MouseButton::Middle, close_tab_callback)
+                    .on_click(MouseButton::Middle, {
+                        let item = item.clone();
+                        let pane = pane.clone();
+                        move |_, cx: &mut EventContext| {
+                            cx.dispatch_action(CloseItem {
+                                item_id: item.id(),
+                                pane: pane.clone(),
+                            })
+                        }
+                    })
+                    .on_up(MouseButton::Left, {
+                        let pane = pane.clone();
+                        move |_, cx: &mut EventContext| Pane::handle_dropped_item(&pane, ix, cx)
+                    })
+                    .as_draggable(
+                        DraggedItem {
+                            item,
+                            pane: pane.clone(),
+                        },
+                        {
+                            let theme = cx.global::<Settings>().theme.clone();
+
+                            let detail = detail.clone();
+                            move |dragged_item, cx: &mut RenderContext<Workspace>| {
+                                let tab_style = &theme.workspace.tab_bar.dragged_tab;
+                                Pane::render_tab(
+                                    &dragged_item.item,
+                                    dragged_item.pane.clone(),
+                                    detail,
+                                    false,
+                                    None,
+                                    &tab_style,
+                                    cx,
+                                )
+                            }
+                        },
+                    )
                     .boxed()
                 })
             }
 
+            // Use the inactive tab style along with the current pane's active status to decide how to render
+            // the filler
+            let filler_style = theme.workspace.tab_bar.tab_style(pane_active, false);
             row.add_child(
-                Empty::new()
-                    .contained()
-                    .with_style(filler_style.container)
-                    .with_border(filler_style.container.border)
-                    .flex(0., true)
-                    .named("filler"),
+                MouseEventHandler::new::<Filler, _, _>(0, cx, |mouse_state, cx| {
+                    let mut filler = Empty::new()
+                        .contained()
+                        .with_style(filler_style.container)
+                        .with_border(filler_style.container.border);
+
+                    if let Some(overlay) = Self::tab_overlay_color(mouse_state.hovered, &theme, cx)
+                    {
+                        filler = filler.with_overlay_color(overlay);
+                    }
+
+                    filler.boxed()
+                })
+                .flex(1., true)
+                .named("filler"),
             );
 
             row.boxed()
+        })
+        .on_up(MouseButton::Left, move |_, cx| {
+            Pane::handle_dropped_item(&pane, filler_index, cx)
         })
     }
 
@@ -1075,6 +1149,142 @@ impl Pane {
 
         tab_details
     }
+
+    fn render_tab<V: View>(
+        item: &Box<dyn ItemHandle>,
+        pane: WeakViewHandle<Pane>,
+        detail: Option<usize>,
+        hovered: bool,
+        overlay: Option<Color>,
+        tab_style: &theme::Tab,
+        cx: &mut RenderContext<V>,
+    ) -> ElementBox {
+        let title = item.tab_content(detail, &tab_style, cx);
+
+        let mut tab = Flex::row()
+            .with_child(
+                Align::new({
+                    let diameter = 7.0;
+                    let icon_color = if item.has_conflict(cx) {
+                        Some(tab_style.icon_conflict)
+                    } else if item.is_dirty(cx) {
+                        Some(tab_style.icon_dirty)
+                    } else {
+                        None
+                    };
+
+                    ConstrainedBox::new(
+                        Canvas::new(move |bounds, _, cx| {
+                            if let Some(color) = icon_color {
+                                let square = RectF::new(bounds.origin(), vec2f(diameter, diameter));
+                                cx.scene.push_quad(Quad {
+                                    bounds: square,
+                                    background: Some(color),
+                                    border: Default::default(),
+                                    corner_radius: diameter / 2.,
+                                });
+                            }
+                        })
+                        .boxed(),
+                    )
+                    .with_width(diameter)
+                    .with_height(diameter)
+                    .boxed()
+                })
+                .boxed(),
+            )
+            .with_child(
+                Container::new(Align::new(title).boxed())
+                    .with_style(ContainerStyle {
+                        margin: Margin {
+                            left: tab_style.spacing,
+                            right: tab_style.spacing,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    })
+                    .boxed(),
+            )
+            .with_child(
+                Align::new(
+                    ConstrainedBox::new(if hovered {
+                        let item_id = item.id();
+                        enum TabCloseButton {}
+                        let icon = Svg::new("icons/x_mark_thin_8.svg");
+                        MouseEventHandler::new::<TabCloseButton, _, _>(
+                            item_id,
+                            cx,
+                            |mouse_state, _| {
+                                if mouse_state.hovered {
+                                    icon.with_color(tab_style.icon_close_active).boxed()
+                                } else {
+                                    icon.with_color(tab_style.icon_close).boxed()
+                                }
+                            },
+                        )
+                        .with_padding(Padding::uniform(4.))
+                        .with_cursor_style(CursorStyle::PointingHand)
+                        .on_click(MouseButton::Left, {
+                            let pane = pane.clone();
+                            move |_, cx| {
+                                cx.dispatch_action(CloseItem {
+                                    item_id,
+                                    pane: pane.clone(),
+                                })
+                            }
+                        })
+                        .on_click(MouseButton::Middle, |_, cx| cx.propogate_event())
+                        .named("close-tab-icon")
+                    } else {
+                        Empty::new().boxed()
+                    })
+                    .with_width(tab_style.icon_width)
+                    .boxed(),
+                )
+                .boxed(),
+            )
+            .contained()
+            .with_style(tab_style.container);
+
+        if let Some(overlay) = overlay {
+            tab = tab.with_overlay_color(overlay);
+        }
+
+        tab.constrained().with_height(tab_style.height).boxed()
+    }
+
+    fn handle_dropped_item(pane: &WeakViewHandle<Pane>, index: usize, cx: &mut EventContext) {
+        if let Some((_, dragged_item)) = cx
+            .global::<DragAndDrop<Workspace>>()
+            .currently_dragged::<DraggedItem>()
+        {
+            cx.dispatch_action(MoveItem {
+                item_id: dragged_item.item.id(),
+                from: dragged_item.pane.clone(),
+                to: pane.clone(),
+                destination_index: index,
+            })
+        } else {
+            cx.propogate_event();
+        }
+    }
+
+    fn tab_overlay_color(
+        hovered: bool,
+        theme: &Theme,
+        cx: &mut RenderContext<Self>,
+    ) -> Option<Color> {
+        if hovered
+            && cx
+                .global::<DragAndDrop<Workspace>>()
+                .currently_dragged::<DraggedItem>()
+                .is_some()
+        {
+            Some(theme.workspace.tab_bar.drop_target_overlay_color)
+        } else {
+            None
+        }
+    }
 }
 
 impl Entity for Pane {
@@ -1097,7 +1307,7 @@ impl View for Pane {
                     Flex::column()
                         .with_child({
                             let mut tab_row = Flex::row()
-                                .with_child(self.render_tabs(cx).flex(1., true).named("tabs"));
+                                .with_child(self.render_tab_bar(cx).flex(1., true).named("tabs"));
 
                             if self.is_active {
                                 tab_row.add_children([
@@ -1124,12 +1334,11 @@ impl View for Pane {
                                         },
                                     )
                                     .with_cursor_style(CursorStyle::PointingHand)
-                                    .on_down(
-                                        MouseButton::Left,
-                                        |MouseButtonEvent { position, .. }, cx| {
-                                            cx.dispatch_action(DeployNewMenu { position });
-                                        },
-                                    )
+                                    .on_down(MouseButton::Left, |e, cx| {
+                                        cx.dispatch_action(DeployNewMenu {
+                                            position: e.position,
+                                        });
+                                    })
                                     .boxed(),
                                     MouseEventHandler::new::<SplitIcon, _, _>(
                                         1,
@@ -1154,12 +1363,11 @@ impl View for Pane {
                                         },
                                     )
                                     .with_cursor_style(CursorStyle::PointingHand)
-                                    .on_down(
-                                        MouseButton::Left,
-                                        |MouseButtonEvent { position, .. }, cx| {
-                                            cx.dispatch_action(DeploySplitMenu { position });
-                                        },
-                                    )
+                                    .on_down(MouseButton::Left, |e, cx| {
+                                        cx.dispatch_action(DeploySplitMenu {
+                                            position: e.position,
+                                        });
+                                    })
                                     .boxed(),
                                 ])
                             }
@@ -1167,7 +1375,7 @@ impl View for Pane {
                             tab_row
                                 .constrained()
                                 .with_height(cx.global::<Settings>().theme.workspace.tab_bar.height)
-                                .boxed()
+                                .named("tab bar")
                         })
                         .with_child(ChildView::new(&self.toolbar).boxed())
                         .with_child(ChildView::new(active_item).flex(1., true).boxed())
@@ -1322,5 +1530,254 @@ impl NavHistory {
         if let Some(pane) = self.pane.upgrade(cx) {
             cx.defer(move |cx| pane.update(cx, |pane, cx| pane.history_updated(cx)));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::TestAppContext;
+    use project::FakeFs;
+
+    use crate::tests::TestItem;
+
+    use super::*;
+
+    #[gpui::test]
+    async fn test_add_item_with_new_item(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, None, cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // 1. Add with a destination index
+        //   a. Add before the active item
+        set_labeled_items(&workspace, &pane, ["A", "B*", "C"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(
+                workspace,
+                &pane,
+                Box::new(cx.add_view(|_| TestItem::new().with_label("D"))),
+                false,
+                false,
+                Some(0),
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["D*", "A", "B", "C"], cx);
+
+        //   b. Add after the active item
+        set_labeled_items(&workspace, &pane, ["A", "B*", "C"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(
+                workspace,
+                &pane,
+                Box::new(cx.add_view(|_| TestItem::new().with_label("D"))),
+                false,
+                false,
+                Some(2),
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["A", "B", "D*", "C"], cx);
+
+        //   c. Add at the end of the item list (including off the length)
+        set_labeled_items(&workspace, &pane, ["A", "B*", "C"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(
+                workspace,
+                &pane,
+                Box::new(cx.add_view(|_| TestItem::new().with_label("D"))),
+                false,
+                false,
+                Some(5),
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+
+        // 2. Add without a destination index
+        //   a. Add with active item at the start of the item list
+        set_labeled_items(&workspace, &pane, ["A*", "B", "C"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(
+                workspace,
+                &pane,
+                Box::new(cx.add_view(|_| TestItem::new().with_label("D"))),
+                false,
+                false,
+                None,
+                cx,
+            );
+        });
+        set_labeled_items(&workspace, &pane, ["A", "D*", "B", "C"], cx);
+
+        //   b. Add with active item at the end of the item list
+        set_labeled_items(&workspace, &pane, ["A", "B", "C*"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(
+                workspace,
+                &pane,
+                Box::new(cx.add_view(|_| TestItem::new().with_label("D"))),
+                false,
+                false,
+                None,
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_add_item_with_existing_item(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, None, cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // 1. Add with a destination index
+        //   1a. Add before the active item
+        let [_, _, _, d] = set_labeled_items(&workspace, &pane, ["A", "B*", "C", "D"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(workspace, &pane, d, false, false, Some(0), cx);
+        });
+        assert_item_labels(&pane, ["D*", "A", "B", "C"], cx);
+
+        //   1b. Add after the active item
+        let [_, _, _, d] = set_labeled_items(&workspace, &pane, ["A", "B*", "C", "D"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(workspace, &pane, d, false, false, Some(2), cx);
+        });
+        assert_item_labels(&pane, ["A", "B", "D*", "C"], cx);
+
+        //   1c. Add at the end of the item list (including off the length)
+        let [a, _, _, _] = set_labeled_items(&workspace, &pane, ["A", "B*", "C", "D"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(workspace, &pane, a, false, false, Some(5), cx);
+        });
+        assert_item_labels(&pane, ["B", "C", "D", "A*"], cx);
+
+        //   1d. Add same item to active index
+        let [_, b, _] = set_labeled_items(&workspace, &pane, ["A", "B*", "C"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(workspace, &pane, b, false, false, Some(1), cx);
+        });
+        assert_item_labels(&pane, ["A", "B*", "C"], cx);
+
+        //   1e. Add item to index after same item in last position
+        let [_, _, c] = set_labeled_items(&workspace, &pane, ["A", "B*", "C"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(workspace, &pane, c, false, false, Some(2), cx);
+        });
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        // 2. Add without a destination index
+        //   2a. Add with active item at the start of the item list
+        let [_, _, _, d] = set_labeled_items(&workspace, &pane, ["A*", "B", "C", "D"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(workspace, &pane, d, false, false, None, cx);
+        });
+        assert_item_labels(&pane, ["A", "D*", "B", "C"], cx);
+
+        //   2b. Add with active item at the end of the item list
+        let [a, _, _, _] = set_labeled_items(&workspace, &pane, ["A", "B", "C", "D*"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(workspace, &pane, a, false, false, None, cx);
+        });
+        assert_item_labels(&pane, ["B", "C", "D", "A*"], cx);
+
+        //   2c. Add active item to active item at end of list
+        let [_, _, c] = set_labeled_items(&workspace, &pane, ["A", "B", "C*"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(workspace, &pane, c, false, false, None, cx);
+        });
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        //   2d. Add active item to active item at start of list
+        let [a, _, _] = set_labeled_items(&workspace, &pane, ["A*", "B", "C"], cx);
+        workspace.update(cx, |workspace, cx| {
+            Pane::add_item(workspace, &pane, a, false, false, None, cx);
+        });
+        assert_item_labels(&pane, ["A*", "B", "C"], cx);
+    }
+
+    fn set_labeled_items<const COUNT: usize>(
+        workspace: &ViewHandle<Workspace>,
+        pane: &ViewHandle<Pane>,
+        labels: [&str; COUNT],
+        cx: &mut TestAppContext,
+    ) -> [Box<ViewHandle<TestItem>>; COUNT] {
+        pane.update(cx, |pane, _| {
+            pane.items.clear();
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            let mut active_item_index = 0;
+
+            let mut index = 0;
+            let items = labels.map(|mut label| {
+                if label.ends_with("*") {
+                    label = label.trim_end_matches("*");
+                    active_item_index = index;
+                }
+
+                let labeled_item = Box::new(cx.add_view(|_| TestItem::new().with_label(label)));
+                Pane::add_item(
+                    workspace,
+                    pane,
+                    labeled_item.clone(),
+                    false,
+                    false,
+                    None,
+                    cx,
+                );
+                index += 1;
+                labeled_item
+            });
+
+            pane.update(cx, |pane, cx| {
+                pane.activate_item(active_item_index, false, false, cx)
+            });
+
+            items
+        })
+    }
+
+    // Assert the item label, with the active item label suffixed with a '*'
+    fn assert_item_labels<const COUNT: usize>(
+        pane: &ViewHandle<Pane>,
+        expected_states: [&str; COUNT],
+        cx: &mut TestAppContext,
+    ) {
+        pane.read_with(cx, |pane, cx| {
+            let actual_states = pane
+                .items
+                .iter()
+                .enumerate()
+                .map(|(ix, item)| {
+                    let mut state = item
+                        .to_any()
+                        .downcast::<TestItem>()
+                        .unwrap()
+                        .read(cx)
+                        .label
+                        .clone();
+                    if ix == pane.active_item_index {
+                        state.push('*');
+                    }
+                    state
+                })
+                .collect::<Vec<_>>();
+
+            assert_eq!(
+                actual_states, expected_states,
+                "pane items do not match expectation"
+            );
+        })
     }
 }
