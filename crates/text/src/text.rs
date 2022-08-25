@@ -2435,7 +2435,7 @@ impl ToOffset for PointUtf16 {
 
 impl ToOffset for usize {
     fn to_offset<'a>(&self, snapshot: &BufferSnapshot) -> usize {
-        assert!(*self <= snapshot.len(), "offset is out of range");
+        assert!(*self <= snapshot.len(), "offset {self} is out of range");
         *self
     }
 }

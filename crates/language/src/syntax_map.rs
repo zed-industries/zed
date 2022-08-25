@@ -284,10 +284,18 @@ impl SyntaxSnapshot {
                 };
 
                 layer.tree.edit(&tree_edit);
+
                 if edit.new.start.0 < start_byte {
                     break;
                 }
             }
+
+            debug_assert!(
+                layer.tree.root_node().end_byte() <= text.len(),
+                "tree's size {}, is larger than text size {}",
+                layer.tree.root_node().end_byte(),
+                text.len(),
+            );
 
             layers.push(layer, text);
             cursor.next(text);
