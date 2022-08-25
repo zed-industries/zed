@@ -197,7 +197,7 @@ impl SyntaxSnapshot {
         }
 
         let mut layers = SumTree::new();
-        let mut edits_for_depth = &edits[..];
+        let mut first_edit_ix_for_depth = 0;
         let mut cursor = self.layers.cursor::<SyntaxLayerSummary>();
         cursor.next(text);
 
@@ -205,7 +205,7 @@ impl SyntaxSnapshot {
             let depth = cursor.end(text).max_depth;
 
             // Preserve any layers at this depth that precede the first edit.
-            if let Some(first_edit) = edits_for_depth.first() {
+            if let Some(first_edit) = edits.get(first_edit_ix_for_depth) {
                 let target = DepthAndMaxPosition(depth, text.anchor_before(first_edit.new.start.0));
                 if target.cmp(&cursor.start(), text).is_gt() {
                     let slice = cursor.slice(&target, Bias::Left, text);
@@ -221,7 +221,7 @@ impl SyntaxSnapshot {
                     text,
                 );
                 layers.push_tree(slice, text);
-                edits_for_depth = &edits[..];
+                first_edit_ix_for_depth = 0;
                 continue;
             };
 
@@ -241,9 +241,9 @@ impl SyntaxSnapshot {
             // Ignore edits that end before the start of this layer, and don't consider them
             // for any subsequent layers at this same depth.
             loop {
-                if let Some(edit) = edits_for_depth.first() {
+                if let Some(edit) = edits.get(first_edit_ix_for_depth) {
                     if edit.new.end.0 < start_byte {
-                        edits_for_depth = &edits_for_depth[1..];
+                        first_edit_ix_for_depth += 1;
                     } else {
                         break;
                     }
@@ -252,15 +252,21 @@ impl SyntaxSnapshot {
                 }
             }
 
+            let mut old_start_byte = start_byte;
+            if first_edit_ix_for_depth > 0 {
+                let edit = &edits[first_edit_ix_for_depth - 1];
+                old_start_byte = edit.old.end.0 + (start_byte - edit.new.end.0);
+            }
+
             let mut layer = layer.clone();
-            for edit in edits_for_depth {
+            for edit in &edits[first_edit_ix_for_depth..] {
                 // Ignore any edits that follow this layer.
                 if edit.new.start.0 > end_byte {
                     break;
                 }
 
                 // Apply any edits that intersect this layer to the layer's syntax tree.
-                let tree_edit = if edit.new.start.0 >= start_byte {
+                let tree_edit = if edit.old.start.0 >= old_start_byte {
                     tree_sitter::InputEdit {
                         start_byte: edit.new.start.0 - start_byte,
                         old_end_byte: edit.new.start.0 - start_byte
@@ -273,21 +279,18 @@ impl SyntaxSnapshot {
                         new_end_position: (edit.new.end.1 - start_point).to_ts_point(),
                     }
                 } else {
+                    let node = layer.tree.root_node();
                     tree_sitter::InputEdit {
                         start_byte: 0,
-                        old_end_byte: edit.new.end.0 - start_byte,
+                        old_end_byte: node.end_byte(),
                         new_end_byte: 0,
                         start_position: Default::default(),
-                        old_end_position: (edit.new.end.1 - start_point).to_ts_point(),
+                        old_end_position: node.end_position(),
                         new_end_position: Default::default(),
                     }
                 };
 
                 layer.tree.edit(&tree_edit);
-
-                if edit.new.start.0 < start_byte {
-                    break;
-                }
             }
 
             debug_assert!(
@@ -363,7 +366,7 @@ impl SyntaxSnapshot {
                     if changed_regions.intersects(&layer, text) {
                         changed_regions.insert(
                             ChangedRegion {
-                                depth: depth + 1,
+                                depth: layer.depth + 1,
                                 range: layer.range.clone(),
                             },
                             text,
@@ -918,7 +921,7 @@ fn get_injections(
     let mut query_cursor = QueryCursorHandle::new();
     let mut prev_match = None;
     for query_range in query_ranges {
-        query_cursor.set_byte_range(query_range.start..query_range.end);
+        query_cursor.set_byte_range(query_range.start.saturating_sub(1)..query_range.end);
         for mat in query_cursor.matches(&config.query, node, TextProvider(text.as_rope())) {
             let content_ranges = mat
                 .nodes_for_capture_index(config.content_capture_ix)
@@ -1217,6 +1220,8 @@ impl ToTreeSitterPoint for Point {
 mod tests {
     use super::*;
     use crate::LanguageConfig;
+    use rand::rngs::StdRng;
+    use std::env;
     use text::{Buffer, Point};
     use unindent::Unindent as _;
     use util::test::marked_text_ranges;
@@ -1530,6 +1535,104 @@ mod tests {
                 }
             ",
         ]);
+    }
+
+    #[gpui::test]
+    fn test_removing_injection_by_replacing_across_boundary() {
+        test_edit_sequence(&[
+            "
+                fn one() {
+                    two!(
+                        three.four,
+                    );
+                }
+            ",
+            "
+                fn one() {
+                    t«en
+                        .eleven(
+                        twelve,
+                    »
+                        three.four,
+                    );
+                }
+            ",
+        ]);
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_random_syntax_map_edits(mut rng: StdRng) {
+        let operations = env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(10);
+
+        let text = r#"
+            fn test_something() {
+                let vec = vec![5, 1, 3, 8];
+                assert_eq!(
+                    vec
+                        .into_iter()
+                        .map(|i| i * 2)
+                        .collect::<Vec<usize>>(),
+                    vec![
+                        5 * 2, 1 * 2, 3 * 2, 8 * 2
+                    ],
+                );
+            }
+        "#
+        .unindent();
+
+        let registry = Arc::new(LanguageRegistry::test());
+        let language = Arc::new(rust_lang());
+        registry.add(language.clone());
+        let mut buffer = Buffer::new(0, 0, text);
+
+        let mut syntax_map = SyntaxMap::new();
+        syntax_map.set_language_registry(registry.clone());
+        syntax_map.reparse(language.clone(), &buffer);
+
+        let mut reference_syntax_map = SyntaxMap::new();
+        reference_syntax_map.set_language_registry(registry.clone());
+
+        for i in 0..operations {
+            buffer.randomly_edit(&mut rng, 2);
+            log::info!("text:\n{}", buffer.text());
+
+            syntax_map.reparse(language.clone(), &buffer);
+
+            reference_syntax_map.clear();
+            reference_syntax_map.reparse(language.clone(), &buffer);
+            assert_eq!(
+                syntax_map.layers(&buffer).len(),
+                reference_syntax_map.layers(&buffer).len(),
+                "wrong number of layers after performing edit {i}"
+            );
+        }
+
+        for i in 0..operations {
+            let i = operations - i - 1;
+            buffer.undo();
+            log::info!("undoing operation {}", i);
+            log::info!("text:\n{}", buffer.text());
+
+            syntax_map.reparse(language.clone(), &buffer);
+
+            reference_syntax_map.clear();
+            reference_syntax_map.reparse(language.clone(), &buffer);
+            assert_eq!(
+                syntax_map.layers(&buffer).len(),
+                reference_syntax_map.layers(&buffer).len(),
+                "wrong number of layers after undoing edit {i}"
+            );
+        }
+
+        let layers = syntax_map.layers(&buffer);
+        let reference_layers = reference_syntax_map.layers(&buffer);
+        for (edited_layer, reference_layer) in layers.into_iter().zip(reference_layers.into_iter())
+        {
+            assert_eq!(edited_layer.2.to_sexp(), reference_layer.2.to_sexp());
+            assert_eq!(edited_layer.2.range(), reference_layer.2.range());
+        }
     }
 
     fn test_edit_sequence(steps: &[&str]) -> (Buffer, SyntaxMap) {
