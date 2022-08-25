@@ -3,6 +3,7 @@ authors = ["Nathan Sobo <nathansobo@gmail.com>"]
 edition = "2021"
 name = "gpui"
 version = "0.1.0"
+description = "A GPU-accelerated UI framework"
 
 [lib]
 path = "src/gpui.rs"
@@ -10,6 +11,11 @@ doctest = false
 
 [features]
 test-support = ["backtrace", "dhat", "env_logger", "collections/test-support"]
+
+[package.metadata.bundle.example.capture]
+name = "Capture"
+identifier = "rs.gpui.examples.Capture"
+description = "An example of screen capture"
 
 [dependencies]
 collections = { path = "../collections" }

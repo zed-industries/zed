@@ -1,0 +1,4 @@
+#!/bin/bash
+
+cargo bundle --example capture
+open ../../target/debug/examples/bundle/osx/Capture.app
