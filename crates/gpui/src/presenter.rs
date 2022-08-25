@@ -245,17 +245,21 @@ impl Presenter {
                     // MDN says that browsers handle this by starting from 'the most
                     // specific ancestor element that contained both [positions]'
                     // So we need to store the overlapping regions on mouse down.
-                    self.clicked_regions = self
-                        .mouse_regions
-                        .iter()
-                        .filter_map(|(region, _)| {
-                            region
-                                .bounds
-                                .contains_point(e.position)
-                                .then(|| region.clone())
-                        })
-                        .collect();
-                    self.clicked_button = Some(e.button);
+
+                    // If there is already clicked_button stored, don't replace it.
+                    if self.clicked_button.is_none() {
+                        self.clicked_regions = self
+                            .mouse_regions
+                            .iter()
+                            .filter_map(|(region, _)| {
+                                region
+                                    .bounds
+                                    .contains_point(e.position)
+                                    .then(|| region.clone())
+                            })
+                            .collect();
+                        self.clicked_button = Some(e.button);
+                    }
 
                     events_to_send.push(MouseRegionEvent::Down(DownRegionEvent {
                         region: Default::default(),
@@ -337,13 +341,18 @@ impl Presenter {
 
                 // GPUI elements are arranged by depth but sibling elements can register overlapping
                 // mouse regions. As such, hover events are only fired on overlapping elements which
-                // are at the same depth as the deepest element which overlaps with the mouse.
+                // are at the same depth as the topmost element which overlaps with the mouse.
 
                 match &region_event {
                     MouseRegionEvent::Hover(_) => {
                         let mut top_most_depth = None;
                         let mouse_position = self.mouse_position.clone();
                         for (region, depth) in self.mouse_regions.iter().rev() {
+                            // Allow mouse regions to appear transparent to hovers
+                            if !region.hoverable {
+                                continue;
+                            }
+
                             let contains_mouse = region.bounds.contains_point(mouse_position);
 
                             if contains_mouse && top_most_depth.is_none() {
@@ -359,26 +368,30 @@ impl Presenter {
                                     //Ensure that hover entrance events aren't sent twice
                                     if self.hovered_region_ids.insert(region_id) {
                                         valid_regions.push(region.clone());
+                                        invalidated_views.insert(region.view_id);
                                     }
                                 } else {
                                     // Ensure that hover exit events aren't sent twice
                                     if self.hovered_region_ids.remove(&region_id) {
                                         valid_regions.push(region.clone());
+                                        invalidated_views.insert(region.view_id);
                                     }
                                 }
                             }
                         }
                     }
                     MouseRegionEvent::Click(e) => {
-                        // Clear presenter state
-                        let clicked_regions =
-                            std::mem::replace(&mut self.clicked_regions, Vec::new());
-                        self.clicked_button = None;
+                        if e.button == self.clicked_button.unwrap() {
+                            // Clear clicked regions and clicked button
+                            let clicked_regions =
+                                std::mem::replace(&mut self.clicked_regions, Vec::new());
+                            self.clicked_button = None;
 
-                        // Find regions which still overlap with the mouse since the last MouseDown happened
-                        for clicked_region in clicked_regions.into_iter().rev() {
-                            if clicked_region.bounds.contains_point(e.position) {
-                                valid_regions.push(clicked_region);
+                            // Find regions which still overlap with the mouse since the last MouseDown happened
+                            for clicked_region in clicked_regions.into_iter().rev() {
+                                if clicked_region.bounds.contains_point(e.position) {
+                                    valid_regions.push(clicked_region);
+                                }
                             }
                         }
                     }

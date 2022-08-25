@@ -24,6 +24,8 @@ pub struct ContainerStyle {
     pub padding: Padding,
     #[serde(rename = "background")]
     pub background_color: Option<Color>,
+    #[serde(rename = "overlay")]
+    pub overlay_color: Option<Color>,
     #[serde(default)]
     pub border: Border,
     #[serde(default)]
@@ -116,6 +118,11 @@ impl Container {
 
     pub fn with_background_color(mut self, color: Color) -> Self {
         self.style.background_color = Some(color);
+        self
+    }
+
+    pub fn with_overlay_color(mut self, color: Color) -> Self {
+        self.style.overlay_color = Some(color);
         self
     }
 
@@ -245,7 +252,7 @@ impl Element for Container {
             cx.scene.push_layer(None);
             cx.scene.push_quad(Quad {
                 bounds: quad_bounds,
-                background: Default::default(),
+                background: self.style.overlay_color,
                 border: self.style.border,
                 corner_radius: self.style.corner_radius,
             });
@@ -264,6 +271,17 @@ impl Element for Container {
                     self.style.border.top_width(),
                 );
             self.child.paint(child_origin, visible_bounds, cx);
+
+            if self.style.overlay_color.is_some() {
+                cx.scene.push_layer(None);
+                cx.scene.push_quad(Quad {
+                    bounds: quad_bounds,
+                    background: self.style.overlay_color,
+                    border: Default::default(),
+                    corner_radius: 0.,
+                });
+                cx.scene.pop_layer();
+            }
         }
     }
 

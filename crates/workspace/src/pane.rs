@@ -7,6 +7,7 @@ use drag_and_drop::{DragAndDrop, Draggable};
 use futures::StreamExt;
 use gpui::{
     actions,
+    color::Color,
     elements::*,
     geometry::{
         rect::RectF,
@@ -22,6 +23,7 @@ use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
 use settings::{Autosave, Settings};
 use std::{any::Any, cell::RefCell, cmp, mem, path::Path, rc::Rc};
+use theme::Theme;
 use util::ResultExt;
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -475,15 +477,14 @@ impl Pane {
             // If the item already exists, move it to the desired destination and activate it
             pane.update(cx, |pane, cx| {
                 if existing_item_index != destination_index {
+                    cx.reparent(&item);
                     let existing_item_is_active = existing_item_index == pane.active_item_index;
 
                     pane.items.remove(existing_item_index);
-                    if existing_item_index < destination_index {
-                        destination_index -= 1;
-                    }
                     if existing_item_index < pane.active_item_index {
                         pane.active_item_index -= 1;
                     }
+                    destination_index = destination_index.min(pane.items.len());
 
                     pane.items.insert(destination_index, item.clone());
 
@@ -985,8 +986,9 @@ impl Pane {
 
         enum Tabs {}
         enum Tab {}
+        enum Filler {}
         let pane = cx.handle();
-        MouseEventHandler::new::<Tabs, _, _>(0, cx, |mouse_state, cx| {
+        MouseEventHandler::new::<Tabs, _, _>(0, cx, |_, cx| {
             let autoscroll = if mem::take(&mut self.autoscroll) {
                 Some(self.active_item_index)
             } else {
@@ -1011,14 +1013,22 @@ impl Pane {
                         let item = item.clone();
                         let pane = pane.clone();
                         let detail = detail.clone();
-                        let hovered = mouse_state.hovered;
 
                         let theme = cx.global::<Settings>().theme.clone();
 
-                        move |_, cx| {
+                        move |mouse_state, cx| {
                             let tab_style =
                                 theme.workspace.tab_bar.tab_style(pane_active, tab_active);
-                            Self::render_tab(&item, pane, detail, hovered, tab_style, cx)
+                            let hovered = mouse_state.hovered;
+                            Self::render_tab(
+                                &item,
+                                pane,
+                                detail,
+                                hovered,
+                                Self::tab_overlay_color(hovered, theme.as_ref(), cx),
+                                tab_style,
+                                cx,
+                            )
                         }
                     })
                     .with_cursor_style(if pane_active && tab_active {
@@ -1059,6 +1069,7 @@ impl Pane {
                                     dragged_item.pane.clone(),
                                     detail,
                                     false,
+                                    None,
                                     &tab_style,
                                     cx,
                                 )
@@ -1069,14 +1080,25 @@ impl Pane {
                 })
             }
 
+            // Use the inactive tab style along with the current pane's active status to decide how to render
+            // the filler
             let filler_style = theme.workspace.tab_bar.tab_style(pane_active, false);
             row.add_child(
-                Empty::new()
-                    .contained()
-                    .with_style(filler_style.container)
-                    .with_border(filler_style.container.border)
-                    .flex(1., true)
-                    .named("filler"),
+                MouseEventHandler::new::<Filler, _, _>(0, cx, |mouse_state, cx| {
+                    let mut filler = Empty::new()
+                        .contained()
+                        .with_style(filler_style.container)
+                        .with_border(filler_style.container.border);
+
+                    if let Some(overlay) = Self::tab_overlay_color(mouse_state.hovered, &theme, cx)
+                    {
+                        filler = filler.with_overlay_color(overlay);
+                    }
+
+                    filler.boxed()
+                })
+                .flex(1., true)
+                .named("filler"),
             );
 
             row.boxed()
@@ -1128,12 +1150,13 @@ impl Pane {
         pane: WeakViewHandle<Pane>,
         detail: Option<usize>,
         hovered: bool,
+        overlay: Option<Color>,
         tab_style: &theme::Tab,
         cx: &mut RenderContext<V>,
     ) -> ElementBox {
         let title = item.tab_content(detail, &tab_style, cx);
 
-        Flex::row()
+        let mut tab = Flex::row()
             .with_child(
                 Align::new({
                     let diameter = 7.0;
@@ -1216,10 +1239,13 @@ impl Pane {
                 .boxed(),
             )
             .contained()
-            .with_style(tab_style.container)
-            .constrained()
-            .with_height(tab_style.height)
-            .boxed()
+            .with_style(tab_style.container);
+
+        if let Some(overlay) = overlay {
+            tab = tab.with_overlay_color(overlay);
+        }
+
+        tab.constrained().with_height(tab_style.height).boxed()
     }
 
     fn handle_dropped_item(pane: &WeakViewHandle<Pane>, index: usize, cx: &mut EventContext) {
@@ -1235,6 +1261,23 @@ impl Pane {
             })
         } else {
             cx.propogate_event();
+        }
+    }
+
+    fn tab_overlay_color(
+        hovered: bool,
+        theme: &Theme,
+        cx: &mut RenderContext<Self>,
+    ) -> Option<Color> {
+        if hovered
+            && cx
+                .global::<DragAndDrop<Workspace>>()
+                .currently_dragged::<DraggedItem>()
+                .is_some()
+        {
+            Some(theme.workspace.tab_bar.drop_target_overlay_color)
+        } else {
+            None
         }
     }
 }
@@ -1327,7 +1370,7 @@ impl View for Pane {
                             tab_row
                                 .constrained()
                                 .with_height(cx.global::<Settings>().theme.workspace.tab_bar.height)
-                                .boxed()
+                                .named("tab bar")
                         })
                         .with_child(ChildView::new(&self.toolbar).boxed())
                         .with_child(ChildView::new(active_item).flex(1., true).boxed())

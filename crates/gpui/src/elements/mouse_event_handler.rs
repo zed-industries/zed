@@ -20,6 +20,7 @@ pub struct MouseEventHandler {
     discriminant: (TypeId, usize),
     cursor_style: Option<CursorStyle>,
     handlers: HandlerSet,
+    hoverable: bool,
     padding: Padding,
 }
 
@@ -35,6 +36,7 @@ impl MouseEventHandler {
             cursor_style: None,
             discriminant: (TypeId::of::<Tag>(), id),
             handlers: Default::default(),
+            hoverable: true,
             padding: Default::default(),
         }
     }
@@ -119,6 +121,11 @@ impl MouseEventHandler {
         self
     }
 
+    pub fn with_hoverable(mut self, is_hoverable: bool) -> Self {
+        self.hoverable = is_hoverable;
+        self
+    }
+
     pub fn with_padding(mut self, padding: Padding) -> Self {
         self.padding = padding;
         self
@@ -160,12 +167,15 @@ impl Element for MouseEventHandler {
             });
         }
 
-        cx.scene.push_mouse_region(MouseRegion::from_handlers(
-            cx.current_view_id(),
-            Some(self.discriminant),
-            hit_bounds,
-            self.handlers.clone(),
-        ));
+        cx.scene.push_mouse_region(
+            MouseRegion::from_handlers(
+                cx.current_view_id(),
+                Some(self.discriminant),
+                hit_bounds,
+                self.handlers.clone(),
+            )
+            .with_hoverable(self.hoverable),
+        );
 
         self.child.paint(bounds.origin(), visible_bounds, cx);
     }

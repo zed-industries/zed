@@ -116,6 +116,8 @@ impl<V: View> DragAndDrop<V> {
                     });
                     cx.propogate_event();
                 })
+                // Don't block hover events or invalidations
+                .with_hoverable(false)
                 .boxed()
             },
         )

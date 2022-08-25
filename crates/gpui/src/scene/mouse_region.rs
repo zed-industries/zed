@@ -17,6 +17,7 @@ pub struct MouseRegion {
     pub discriminant: Option<(TypeId, usize)>,
     pub bounds: RectF,
     pub handlers: HandlerSet,
+    pub hoverable: bool,
 }
 
 impl MouseRegion {
@@ -35,6 +36,7 @@ impl MouseRegion {
             discriminant,
             bounds,
             handlers,
+            hoverable: true,
         }
     }
 
@@ -48,6 +50,7 @@ impl MouseRegion {
             discriminant,
             bounds,
             handlers: HandlerSet::capture_all(),
+            hoverable: true,
         }
     }
 
@@ -118,6 +121,11 @@ impl MouseRegion {
         handler: impl Fn(MoveRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_move(handler);
+        self
+    }
+
+    pub fn with_hoverable(mut self, is_hoverable: bool) -> Self {
+        self.hoverable = is_hoverable;
         self
     }
 }

@@ -77,6 +77,7 @@ pub struct TabBar {
     pub inactive_pane: TabStyles,
     pub dragged_tab: Tab,
     pub height: f32,
+    pub drop_target_overlay_color: Color,
 }
 
 impl TabBar {
