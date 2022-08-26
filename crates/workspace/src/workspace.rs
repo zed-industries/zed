@@ -535,97 +535,123 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
             }
         }
 
-        let mut pending_autosave = None;
-        let mut cancel_pending_autosave = oneshot::channel::<()>().0;
-        let pending_update = Rc::new(RefCell::new(None));
-        let pending_update_scheduled = Rc::new(AtomicBool::new(false));
-        let pane = pane.downgrade();
-        cx.subscribe(self, move |workspace, item, event, cx| {
-            let pane = if let Some(pane) = pane.upgrade(cx) {
-                pane
-            } else {
-                log::error!("unexpected item event after pane was dropped");
-                return;
-            };
+        if workspace
+            .panes_by_item
+            .insert(self.id(), pane.downgrade())
+            .is_none()
+        {
+            let mut pending_autosave = None;
+            let mut cancel_pending_autosave = oneshot::channel::<()>().0;
+            let pending_update = Rc::new(RefCell::new(None));
+            let pending_update_scheduled = Rc::new(AtomicBool::new(false));
 
-            if let Some(item) = item.to_followable_item_handle(cx) {
-                let leader_id = workspace.leader_for_pane(&pane);
+            let mut event_subscription =
+                Some(cx.subscribe(self, move |workspace, item, event, cx| {
+                    let pane = if let Some(pane) = workspace
+                        .panes_by_item
+                        .get(&item.id())
+                        .and_then(|pane| pane.upgrade(cx))
+                    {
+                        pane
+                    } else {
+                        log::error!("unexpected item event after pane was dropped");
+                        return;
+                    };
 
-                if leader_id.is_some() && item.should_unfollow_on_event(event, cx) {
-                    workspace.unfollow(&pane, cx);
-                }
+                    if let Some(item) = item.to_followable_item_handle(cx) {
+                        let leader_id = workspace.leader_for_pane(&pane);
 
-                if item.add_event_to_update_proto(event, &mut *pending_update.borrow_mut(), cx)
-                    && !pending_update_scheduled.load(SeqCst)
-                {
-                    pending_update_scheduled.store(true, SeqCst);
-                    cx.after_window_update({
-                        let pending_update = pending_update.clone();
-                        let pending_update_scheduled = pending_update_scheduled.clone();
-                        move |this, cx| {
-                            pending_update_scheduled.store(false, SeqCst);
-                            this.update_followers(
-                                proto::update_followers::Variant::UpdateView(proto::UpdateView {
-                                    id: item.id() as u64,
-                                    variant: pending_update.borrow_mut().take(),
-                                    leader_id: leader_id.map(|id| id.0),
-                                }),
-                                cx,
-                            );
-                        }
-                    });
-                }
-            }
-
-            if T::should_close_item_on_event(event) {
-                Pane::close_item(workspace, pane, item.id(), cx).detach_and_log_err(cx);
-                return;
-            }
-
-            if T::should_update_tab_on_event(event) {
-                pane.update(cx, |_, cx| {
-                    cx.emit(pane::Event::ChangeItemTitle);
-                    cx.notify();
-                });
-            }
-
-            if T::is_edit_event(event) {
-                if let Autosave::AfterDelay { milliseconds } = cx.global::<Settings>().autosave {
-                    let prev_autosave = pending_autosave
-                        .take()
-                        .unwrap_or_else(|| Task::ready(Some(())));
-                    let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
-                    let prev_cancel_tx = mem::replace(&mut cancel_pending_autosave, cancel_tx);
-                    let project = workspace.project.downgrade();
-                    let _ = prev_cancel_tx.send(());
-                    pending_autosave = Some(cx.spawn_weak(|_, mut cx| async move {
-                        let mut timer = cx
-                            .background()
-                            .timer(Duration::from_millis(milliseconds))
-                            .fuse();
-                        prev_autosave.await;
-                        futures::select_biased! {
-                            _ = cancel_rx => return None,
-                            _ = timer => {}
+                        if leader_id.is_some() && item.should_unfollow_on_event(event, cx) {
+                            workspace.unfollow(&pane, cx);
                         }
 
-                        let project = project.upgrade(&cx)?;
-                        cx.update(|cx| Pane::autosave_item(&item, project, cx))
-                            .await
-                            .log_err();
-                        None
-                    }));
-                }
-            }
-        })
-        .detach();
+                        if item.add_event_to_update_proto(
+                            event,
+                            &mut *pending_update.borrow_mut(),
+                            cx,
+                        ) && !pending_update_scheduled.load(SeqCst)
+                        {
+                            pending_update_scheduled.store(true, SeqCst);
+                            cx.after_window_update({
+                                let pending_update = pending_update.clone();
+                                let pending_update_scheduled = pending_update_scheduled.clone();
+                                move |this, cx| {
+                                    pending_update_scheduled.store(false, SeqCst);
+                                    this.update_followers(
+                                        proto::update_followers::Variant::UpdateView(
+                                            proto::UpdateView {
+                                                id: item.id() as u64,
+                                                variant: pending_update.borrow_mut().take(),
+                                                leader_id: leader_id.map(|id| id.0),
+                                            },
+                                        ),
+                                        cx,
+                                    );
+                                }
+                            });
+                        }
+                    }
 
-        cx.observe_focus(self, move |workspace, item, focused, cx| {
-            if !focused && cx.global::<Settings>().autosave == Autosave::OnFocusChange {
-                Pane::autosave_item(&item, workspace.project.clone(), cx).detach_and_log_err(cx);
-            }
-        })
-        .detach();
+                    if T::should_close_item_on_event(event) {
+                        Pane::close_item(workspace, pane, item.id(), cx).detach_and_log_err(cx);
+                        return;
+                    }
+
+                    if T::should_update_tab_on_event(event) {
+                        pane.update(cx, |_, cx| {
+                            cx.emit(pane::Event::ChangeItemTitle);
+                            cx.notify();
+                        });
+                    }
+
+                    if T::is_edit_event(event) {
+                        if let Autosave::AfterDelay { milliseconds } =
+                            cx.global::<Settings>().autosave
+                        {
+                            let prev_autosave = pending_autosave
+                                .take()
+                                .unwrap_or_else(|| Task::ready(Some(())));
+                            let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
+                            let prev_cancel_tx =
+                                mem::replace(&mut cancel_pending_autosave, cancel_tx);
+                            let project = workspace.project.downgrade();
+                            let _ = prev_cancel_tx.send(());
+                            pending_autosave = Some(cx.spawn_weak(|_, mut cx| async move {
+                                let mut timer = cx
+                                    .background()
+                                    .timer(Duration::from_millis(milliseconds))
+                                    .fuse();
+                                prev_autosave.await;
+                                futures::select_biased! {
+                                    _ = cancel_rx => return None,
+                                    _ = timer => {}
+                                }
+
+                                let project = project.upgrade(&cx)?;
+                                cx.update(|cx| Pane::autosave_item(&item, project, cx))
+                                    .await
+                                    .log_err();
+                                None
+                            }));
+                        }
+                    }
+                }));
+
+            cx.observe_focus(self, move |workspace, item, focused, cx| {
+                if !focused && cx.global::<Settings>().autosave == Autosave::OnFocusChange {
+                    Pane::autosave_item(&item, workspace.project.clone(), cx)
+                        .detach_and_log_err(cx);
+                }
+            })
+            .detach();
+
+            let item_id = self.id();
+            cx.observe_release(self, move |workspace, _, _| {
+                workspace.panes_by_item.remove(&item_id);
+                event_subscription.take();
+            })
+            .detach();
+        }
     }
 
     fn deactivated(&self, cx: &mut MutableAppContext) {
@@ -799,6 +825,7 @@ pub struct Workspace {
     left_sidebar: ViewHandle<Sidebar>,
     right_sidebar: ViewHandle<Sidebar>,
     panes: Vec<ViewHandle<Pane>>,
+    panes_by_item: HashMap<usize, WeakViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
     status_bar: ViewHandle<StatusBar>,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
@@ -910,6 +937,7 @@ impl Workspace {
             weak_self,
             center: PaneGroup::new(pane.clone()),
             panes: vec![pane.clone()],
+            panes_by_item: Default::default(),
             active_pane: pane.clone(),
             status_bar,
             notifications: Default::default(),
@@ -1631,8 +1659,13 @@ impl Workspace {
                     }
                     self.update_window_edited(cx);
                 }
-                pane::Event::RemoveItem => {
+                pane::Event::RemoveItem { item_id } => {
                     self.update_window_edited(cx);
+                    if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(*item_id) {
+                        if entry.get().id() == pane.id() {
+                            entry.remove();
+                        }
+                    }
                 }
             }
         } else {
@@ -1663,6 +1696,9 @@ impl Workspace {
             cx.focus(self.panes.last().unwrap().clone());
             self.unfollow(&pane, cx);
             self.last_leaders_by_pane.remove(&pane.downgrade());
+            for removed_item in pane.read(cx).items() {
+                self.panes_by_item.remove(&removed_item.id());
+            }
             cx.notify();
         } else {
             self.active_item_path_changed(cx);

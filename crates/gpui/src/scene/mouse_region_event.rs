@@ -169,7 +169,7 @@ impl MouseRegionEvent {
         match self {
             MouseRegionEvent::Move(_) => true,
             MouseRegionEvent::Drag(_) => false,
-            MouseRegionEvent::Hover(_) => true,
+            MouseRegionEvent::Hover(_) => false,
             MouseRegionEvent::Down(_) => true,
             MouseRegionEvent::Up(_) => true,
             MouseRegionEvent::Click(_) => true,

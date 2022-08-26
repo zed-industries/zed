@@ -4,7 +4,7 @@ use gpui::{
     elements::{Container, MouseEventHandler},
     geometry::vector::Vector2F,
     scene::DragRegionEvent,
-    Element, ElementBox, EventContext, MouseButton, RenderContext, View, ViewContext,
+    CursorStyle, Element, ElementBox, EventContext, MouseButton, RenderContext, View, ViewContext,
     WeakViewHandle,
 };
 
@@ -33,7 +33,6 @@ pub struct DragAndDrop<V: View> {
 
 impl<V: View> DragAndDrop<V> {
     pub fn new(parent: WeakViewHandle<V>, cx: &mut ViewContext<V>) -> Self {
-        // TODO: Figure out if detaching here would result in a memory leak
         cx.observe_global::<Self, _>(|cx| {
             if let Some(parent) = cx.global::<Self>().parent.upgrade(cx) {
                 parent.update(cx, |_, cx| cx.notify())
@@ -110,6 +109,7 @@ impl<V: View> DragAndDrop<V> {
                         .left()
                         .boxed()
                 })
+                .with_cursor_style(CursorStyle::Arrow)
                 .on_up(MouseButton::Left, |_, cx| {
                     cx.defer(|cx| {
                         cx.update_global::<Self, _, _>(|this, _| this.currently_dragged.take());

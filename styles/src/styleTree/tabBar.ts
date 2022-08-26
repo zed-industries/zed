@@ -72,7 +72,7 @@ export default function tabBar(theme: Theme) {
   return {
     height,
     background: backgroundColor(theme, 300),
-    dropTargetOverlayColor: withOpacity(theme.textColor.muted, 0.8),
+    dropTargetOverlayColor: withOpacity(theme.textColor.muted, 0.6),
     border: border(theme, "primary", {
       left: true,
       bottom: true,
