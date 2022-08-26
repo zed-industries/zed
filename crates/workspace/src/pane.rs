@@ -172,7 +172,7 @@ pub enum Event {
     Focused,
     ActivateItem { local: bool },
     Remove,
-    RemoveItem,
+    RemoveItem { item_id: usize },
     Split(SplitDirection),
     ChangeItemTitle,
 }
@@ -453,7 +453,7 @@ impl Pane {
         item
     }
 
-    pub fn add_item(
+    pub(crate) fn add_item(
         workspace: &mut Workspace,
         pane: &ViewHandle<Pane>,
         item: Box<dyn ItemHandle>,
@@ -474,6 +474,8 @@ impl Pane {
                 pane.items.len(),
             )
         };
+
+        item.added_to_pane(workspace, pane.clone(), cx);
 
         // Does the item already exist?
         if let Some(existing_item_index) = pane.read(cx).items.iter().position(|existing_item| {
@@ -516,8 +518,6 @@ impl Pane {
                 pane.activate_item(insertion_index, activate_pane, focus_item, cx);
             });
         } else {
-            // If the item doesn't already exist, add it and activate it
-            item.added_to_pane(workspace, pane.clone(), cx);
             pane.update(cx, |pane, cx| {
                 cx.reparent(&item);
                 pane.items.insert(insertion_index, item);
@@ -762,7 +762,7 @@ impl Pane {
         }
 
         let item = self.items.remove(item_ix);
-        cx.emit(Event::RemoveItem);
+        cx.emit(Event::RemoveItem { item_id: item.id() });
         if self.items.is_empty() {
             item.deactivated(cx);
             self.update_toolbar(cx);
@@ -1069,7 +1069,7 @@ impl Pane {
                             let detail = detail.clone();
                             move |dragged_item, cx: &mut RenderContext<Workspace>| {
                                 let tab_style = &theme.workspace.tab_bar.dragged_tab;
-                                Pane::render_tab(
+                                Self::render_tab(
                                     &dragged_item.item,
                                     dragged_item.pane.clone(),
                                     detail,

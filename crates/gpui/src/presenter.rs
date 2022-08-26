@@ -381,7 +381,12 @@ impl Presenter {
                         }
                     }
                     MouseRegionEvent::Click(e) => {
-                        if e.button == self.clicked_button.unwrap() {
+                        // Only raise click events if the released button is the same as the one stored
+                        if self
+                            .clicked_button
+                            .map(|clicked_button| clicked_button == e.button)
+                            .unwrap_or(false)
+                        {
                             // Clear clicked regions and clicked button
                             let clicked_regions =
                                 std::mem::replace(&mut self.clicked_regions, Vec::new());
