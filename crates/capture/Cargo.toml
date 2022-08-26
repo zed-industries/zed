@@ -1,0 +1,21 @@
+[package]
+name = "capture"
+version = "0.1.0"
+edition = "2021"
+description = "An example of screen capture"
+
+[package.metadata.bundle]
+name = "Capture"
+identifier = "dev.zed.Capture"
+
+[dependencies]
+gpui = { path = "../gpui" }
+
+block = "0.1"
+cocoa = "0.24"
+core-foundation = "0.9.3"
+core-graphics = "0.22.3"
+foreign-types = "0.3"
+log = { version = "0.4.16", features = ["kv_unstable_serde"] }
+objc = "0.2"
+simplelog = "0.9"

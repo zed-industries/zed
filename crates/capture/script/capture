@@ -1,0 +1,5 @@
+#!/bin/bash
+
+cargo bundle
+TTY=`tty`
+open ../../target/debug/bundle/osx/Capture.app --stdout $TTY --stderr $TTY

@@ -751,6 +751,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "capture"
+version = "0.1.0"
+dependencies = [
+ "block",
+ "cocoa",
+ "core-foundation",
+ "core-graphics",
+ "foreign-types",
+ "gpui",
+ "log",
+ "objc",
+ "simplelog",
+]
+
+[[package]]
 name = "castaway"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

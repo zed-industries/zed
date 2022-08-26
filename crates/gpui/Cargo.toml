@@ -12,11 +12,6 @@ doctest = false
 [features]
 test-support = ["backtrace", "dhat", "env_logger", "collections/test-support"]
 
-[package.metadata.bundle.example.capture]
-name = "Capture"
-identifier = "rs.gpui.examples.Capture"
-description = "An example of screen capture"
-
 [dependencies]
 collections = { path = "../collections" }
 gpui_macros = { path = "../gpui_macros" }

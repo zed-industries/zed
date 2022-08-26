@@ -33,10 +33,12 @@ fn main() {
 
         unsafe {
             let block = ConcreteBlock::new(move |content: id, error: id| {
-                println!("got response with shareable content");
-                dbg!(content);
-                dbg!(error);
-                dbg!(string_from_objc(msg_send![error, localizedDescription]));
+                println!(
+                    "got response with shareable content {:?} {:?} {:?}",
+                    content,
+                    error,
+                    string_from_objc(msg_send![error, localizedDescription]),
+                )
             });
 
             let _: id = msg_send![

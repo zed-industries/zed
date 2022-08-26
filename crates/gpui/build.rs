@@ -9,9 +9,6 @@ fn main() {
     compile_context_predicate_parser();
     compile_metal_shaders();
     generate_shader_bindings();
-
-    // Support screen capture
-    println!("cargo:rustc-link-lib=framework=ScreenCaptureKit");
 }
 
 fn generate_dispatch_bindings() {
