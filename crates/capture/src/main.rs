@@ -72,8 +72,6 @@ fn main() {
                     let stream: id = msg_send![stream, initWithFilter: filter configuration: config delegate: nil];
                     let error: id = nil;
                     let _: () = msg_send![stream, addStreamOutput: output type: 0 sampleHandlerQueue: dispatch_get_main_queue() error: &error];
-                    println!("Added stream output... error? {}", string_from_objc(msg_send![error, localizedDescription]));
-                    
                     
                     let start_capture_completion = ConcreteBlock::new(move |error: id| {
                         if !error.is_null() {
@@ -81,7 +79,7 @@ fn main() {
                             return;
                         }
                         
-                        
+                        println!("starting capture");
                     });
                     
                     assert!(!stream.is_null());
