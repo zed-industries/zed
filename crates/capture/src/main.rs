@@ -1,4 +1,4 @@
-use std::{ffi::CStr, slice, str};
+use std::{ffi::CStr, slice, str, ptr};
 
 use block::ConcreteBlock;
 use cocoa::{
@@ -6,7 +6,7 @@ use cocoa::{
     foundation::{NSArray, NSString, NSUInteger, NSInteger},
 };
 use core_graphics::display::CGDirectDisplayID;
-use gpui::{actions, elements::*, keymap::Binding, Menu, MenuItem, mac::dispatcher::dispatch_get_main_queue};
+use gpui::{actions, elements::*, keymap::Binding, Menu, MenuItem, mac::dispatcher::{dispatch_get_main_queue, dispatch_queue_create}};
 use log::LevelFilter;
 use objc::{class, msg_send, sel, sel_impl, declare::ClassDecl, runtime::{Protocol, Object, Sel}};
 use simplelog::SimpleLogger;
@@ -71,7 +71,8 @@ fn main() {
                     let stream: id = msg_send![class!(SCStream), alloc];
                     let stream: id = msg_send![stream, initWithFilter: filter configuration: config delegate: nil];
                     let error: id = nil;
-                    let _: () = msg_send![stream, addStreamOutput: output type: 0 sampleHandlerQueue: dispatch_get_main_queue() error: &error];
+                    let queue = dispatch_queue_create(ptr::null(), ptr::null_mut());
+                    let _: () = msg_send![stream, addStreamOutput: output type: 0 sampleHandlerQueue: queue error: &error];
                     
                     let start_capture_completion = ConcreteBlock::new(move |error: id| {
                         if !error.is_null() {

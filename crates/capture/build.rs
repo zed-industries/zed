@@ -6,7 +6,6 @@ fn main() {
 
     cc::Build::new()
         .file("src/dummy.m")
-        .define("MACOSX_DEPLOYMENT_TARGET", "12.3")
-        .flag("-ObjC")
+        .flag("-mmacosx-version-min=12.3")
         .compile("dummy");
 }
