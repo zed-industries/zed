@@ -187,7 +187,7 @@ impl SyntaxSnapshot {
 
     pub fn interpolate(&mut self, from_version: &clock::Global, text: &BufferSnapshot) {
         let edits = text
-            .edits_since::<(usize, Point)>(&from_version)
+            .anchored_edits_since::<(usize, Point)>(&from_version)
             .collect::<Vec<_>>();
         if edits.is_empty() {
             return;
@@ -195,15 +195,20 @@ impl SyntaxSnapshot {
 
         let mut layers = SumTree::new();
         let mut first_edit_ix_for_depth = 0;
+        let mut prev_depth = 0;
         let mut cursor = self.layers.cursor::<SyntaxLayerSummary>();
         cursor.next(text);
 
         'outer: loop {
             let depth = cursor.end(text).max_depth;
+            if depth > prev_depth {
+                first_edit_ix_for_depth = 0;
+                prev_depth = depth;
+            }
 
             // Preserve any layers at this depth that precede the first edit.
-            if let Some(first_edit) = edits.get(first_edit_ix_for_depth) {
-                let target = DepthAndMaxPosition(depth, text.anchor_before(first_edit.new.start.0));
+            if let Some((_, edit_range)) = edits.get(first_edit_ix_for_depth) {
+                let target = DepthAndMaxPosition(depth, edit_range.start);
                 if target.cmp(&cursor.start(), text).is_gt() {
                     let slice = cursor.slice(&target, Bias::Left, text);
                     layers.push_tree(slice, text);
@@ -211,14 +216,13 @@ impl SyntaxSnapshot {
             }
             // If this layer follows all of the edits, then preserve it and any
             // subsequent layers at this same depth.
-            else {
+            else if cursor.item().is_some() {
                 let slice = cursor.slice(
                     &DepthAndRange(depth + 1, Anchor::MIN..Anchor::MAX),
                     Bias::Left,
                     text,
                 );
                 layers.push_tree(slice, text);
-                first_edit_ix_for_depth = 0;
                 continue;
             };
 
@@ -227,19 +231,14 @@ impl SyntaxSnapshot {
             } else {
                 break;
             };
+            let (start_byte, start_point) = layer.range.start.summary::<(usize, Point)>(text);
 
-            let mut endpoints = text
-                .summaries_for_anchors::<(usize, Point), _>([&layer.range.start, &layer.range.end]);
-            let layer_range = endpoints.next().unwrap()..endpoints.next().unwrap();
-            let start_byte = layer_range.start.0;
-            let start_point = layer_range.start.1;
-            let end_byte = layer_range.end.0;
 
             // Ignore edits that end before the start of this layer, and don't consider them
             // for any subsequent layers at this same depth.
             loop {
-                if let Some(edit) = edits.get(first_edit_ix_for_depth) {
-                    if edit.new.end.0 < start_byte {
+                if let Some((_, edit_range)) = edits.get(first_edit_ix_for_depth) {
+                    if edit_range.end.cmp(&layer.range.start, text).is_le() {
                         first_edit_ix_for_depth += 1;
                     } else {
                         break;
@@ -249,21 +248,15 @@ impl SyntaxSnapshot {
                 }
             }
 
-            let mut old_start_byte = start_byte;
-            if first_edit_ix_for_depth > 0 {
-                let edit = &edits[first_edit_ix_for_depth - 1];
-                old_start_byte = edit.old.end.0 + (start_byte - edit.new.end.0);
-            }
-
             let mut layer = layer.clone();
-            for edit in &edits[first_edit_ix_for_depth..] {
+            for (edit, edit_range) in &edits[first_edit_ix_for_depth..] {
                 // Ignore any edits that follow this layer.
-                if edit.new.start.0 > end_byte {
+                if edit_range.start.cmp(&layer.range.end, text).is_ge() {
                     break;
                 }
 
                 // Apply any edits that intersect this layer to the layer's syntax tree.
-                let tree_edit = if edit.old.start.0 >= old_start_byte {
+                let tree_edit = if edit_range.start.cmp(&layer.range.start, text).is_ge() {
                     tree_sitter::InputEdit {
                         start_byte: edit.new.start.0 - start_byte,
                         old_end_byte: edit.new.start.0 - start_byte
@@ -1594,11 +1587,11 @@ mod tests {
 
         log::info!("initial text:\n{}", buffer.text());
 
-        for i in 0..operations {
+        for _ in 0..operations {
             let prev_buffer = buffer.snapshot();
             let prev_syntax_map = syntax_map.snapshot();
 
-            buffer.randomly_edit(&mut rng, 2);
+            buffer.randomly_edit(&mut rng, 3);
             log::info!("text:\n{}", buffer.text());
 
             syntax_map.interpolate(&buffer);
@@ -1608,11 +1601,6 @@ mod tests {
 
             reference_syntax_map.clear();
             reference_syntax_map.reparse(language.clone(), &buffer);
-            assert_eq!(
-                syntax_map.layers(&buffer).len(),
-                reference_syntax_map.layers(&buffer).len(),
-                "wrong number of layers after performing edit {i}"
-            );
         }
 
         for i in 0..operations {
