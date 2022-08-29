@@ -1,4 +1,4 @@
-use std::{env, path::PathBuf};
+use std::{env, path::PathBuf, process::Command};
 
 fn main() {
     println!("cargo:rustc-link-lib=framework=CoreMedia");
@@ -7,9 +7,19 @@ fn main() {
     println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=12.3");
     println!("cargo:rustc-link-arg=-ObjC");
 
+    let sdk_path = String::from_utf8(
+        Command::new("xcrun")
+            .args(&["--sdk", "macosx", "--show-sdk-path"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let sdk_path = sdk_path.trim_end();
+
     let bindings = bindgen::Builder::default()
         .header("src/bindings.h")
-        .clang_arg("-isysroot/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX12.3.sdk")
+        .clang_arg(format!("-isysroot{}", sdk_path))
         .allowlist_function("CMTimeMake")
         .allowlist_type("CMSampleBufferRef")
         .allowlist_var("_dispatch_main_q")
