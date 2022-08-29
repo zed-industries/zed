@@ -33,16 +33,7 @@ fn main() {
         }]);
 
         unsafe {
-            
-            
             let block = ConcreteBlock::new(move |content: id, error: id| {
-                println!(
-                    "got response with shareable content {:?} {:?} {:?}",
-                    content,
-                    error,
-                    string_from_objc(msg_send![error, localizedDescription]),
-                );
-
                 let displays: id = msg_send![content, displays];
                 if let Some(display) = (0..displays.count())
                     .map(|ix| displays.objectAtIndex(ix))
