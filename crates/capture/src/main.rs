@@ -34,11 +34,21 @@ fn main() {
 
         unsafe {
             let block = ConcreteBlock::new(move |content: id, error: id| {
+                if !error.is_null() {
+                    println!("ERROR {}", string_from_objc(msg_send![error, localizedDescription]));
+                    return;
+                }
+                
                 let displays: id = msg_send![content, displays];
+                
                 if let Some(display) = (0..displays.count())
                     .map(|ix| displays.objectAtIndex(ix))
                     .next()
                 {
+                    
+                    let display_id: u32 = msg_send![display, displayID];
+                    println!("display id {:?}", display_id);
+                    
                     let mut decl = ClassDecl::new("CaptureOutput", class!(NSObject)).unwrap();
                     decl.add_protocol(Protocol::get("SCStreamOutput").unwrap());
                     decl.add_method(sel!(stream:didOutputSampleBuffer:ofType:), sample_output as extern "C" fn(&Object, Sel, id, id, NSInteger));
@@ -51,6 +61,7 @@ fn main() {
                     let filter: id = msg_send![class!(SCContentFilter), alloc];
                     let filter: id = msg_send![filter, initWithDisplay: display excludingWindows: excluded_windows];
                     let config: id = msg_send![class!(SCStreamConfiguration), alloc];
+                    let config: id = msg_send![config, init];
                     // Configure the display content width and height.
                     let _: () = msg_send![config, setWidth: 800];
                     let _: () = msg_send![config, setHeight: 600];
@@ -65,9 +76,10 @@ fn main() {
                     
                     
                     let start_capture_completion = ConcreteBlock::new(move |error: id| {
-                        println!("Started capturing... error? {}", string_from_objc(msg_send![error, localizedDescription]));
-                        println!("recovery suggestion {}", string_from_objc(msg_send![error, localizedRecoverySuggestion]));
-                        println!("failure reason {}", string_from_objc(msg_send![error, localizedFailureReason]));
+                        if !error.is_null() {
+                            println!("error starting capture... error? {}", string_from_objc(msg_send![error, localizedDescription]));
+                            return;
+                        }
                         
                         
                     });
