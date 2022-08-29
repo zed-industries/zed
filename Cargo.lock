@@ -754,6 +754,7 @@ dependencies = [
 name = "capture"
 version = "0.1.0"
 dependencies = [
+ "bindgen",
  "block",
  "cc",
  "cocoa",

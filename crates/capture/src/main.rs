@@ -1,15 +1,18 @@
-use std::{ffi::CStr, slice, str, ptr};
+mod bindings;
+
+use std::{slice, str};
 
 use block::ConcreteBlock;
 use cocoa::{
     base::{id, nil},
     foundation::{NSArray, NSString, NSUInteger, NSInteger},
 };
-use core_graphics::display::CGDirectDisplayID;
-use gpui::{actions, elements::*, keymap::Binding, Menu, MenuItem, mac::dispatcher::{dispatch_get_main_queue, dispatch_queue_create}};
+use gpui::{actions, elements::*, keymap::Binding, Menu, MenuItem};
 use log::LevelFilter;
 use objc::{class, msg_send, sel, sel_impl, declare::ClassDecl, runtime::{Protocol, Object, Sel}};
 use simplelog::SimpleLogger;
+
+use crate::bindings::dispatch_get_main_queue;
 
 #[allow(non_upper_case_globals)]
 const NSUTF8StringEncoding: NSUInteger = 4;
@@ -57,6 +60,10 @@ fn main() {
                     let output: id = msg_send![capture_output_class, alloc];
                     let output: id = msg_send![output, init];
                     
+                    let conforms: bool = msg_send![output, conformsToProtocol: Protocol::get("SCStreamOutput").unwrap()];
+                    dbg!(conforms);
+                    assert!(conforms, "expect CaptureOutput instance to conform to SCStreamOutput protocol");
+                    
                     let excluded_windows: id = msg_send![class!(NSArray), array];
                     let filter: id = msg_send![class!(SCContentFilter), alloc];
                     let filter: id = msg_send![filter, initWithDisplay: display excludingWindows: excluded_windows];
@@ -65,14 +72,15 @@ fn main() {
                     // Configure the display content width and height.
                     let _: () = msg_send![config, setWidth: 800];
                     let _: () = msg_send![config, setHeight: 600];
-                    let _: () = msg_send![config, setMinimumFrameInterval: CMTimeMake(1, 60)];
+                    let _: () = msg_send![config, setMinimumFrameInterval: bindings::CMTimeMake(1, 60)];
                     let _: () = msg_send![config, setQueueDepth: 5];
                     
                     let stream: id = msg_send![class!(SCStream), alloc];
                     let stream: id = msg_send![stream, initWithFilter: filter configuration: config delegate: nil];
                     let error: id = nil;
-                    let queue = dispatch_queue_create(ptr::null(), ptr::null_mut());
-                    let _: () = msg_send![stream, addStreamOutput: output type: 0 sampleHandlerQueue: queue error: &error];
+                    // let queue = dispatch_queue_create(ptr::null(), ptr::null_mut());
+                    
+                    let _: () = msg_send![stream, addStreamOutput: output type: 0 sampleHandlerQueue: dispatch_get_main_queue() error: &error];
                     
                     let start_capture_completion = ConcreteBlock::new(move |error: id| {
                         if !error.is_null() {
@@ -125,20 +133,6 @@ pub unsafe fn string_from_objc(string: id) -> String {
 extern "C" fn sample_output(this: &Object, _: Sel, stream: id, buffer: id, kind: NSInteger) {
     println!("sample_output");
 }
-
-
-extern "C" {
-    fn CMTimeMake(value: u64, timescale: i32) -> CMTime;
-}
-
-#[repr(C)]
-struct CMTime {
-	value: i64,
-	timescale: i32,
-	flags: u32,
-	epoch: i64,
-}
-
 
 fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
     cx.platform().quit();

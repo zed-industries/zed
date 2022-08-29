@@ -21,4 +21,5 @@ objc = "0.2"
 simplelog = "0.9"
 
 [build-dependencies]
+bindgen = "0.59.2"
 cc = "1.0"
