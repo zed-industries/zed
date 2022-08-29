@@ -755,6 +755,7 @@ name = "capture"
 version = "0.1.0"
 dependencies = [
  "block",
+ "cc",
  "cocoa",
  "core-foundation",
  "core-graphics",

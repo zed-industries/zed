@@ -19,3 +19,6 @@ foreign-types = "0.3"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 objc = "0.2"
 simplelog = "0.9"
+
+[build-dependencies]
+cc = "1.0"

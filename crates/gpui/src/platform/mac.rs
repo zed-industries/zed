@@ -1,5 +1,5 @@
 mod atlas;
-mod dispatcher;
+pub mod dispatcher;
 mod event;
 mod fonts;
 mod geometry;
