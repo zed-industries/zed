@@ -382,6 +382,7 @@ struct Edits<'a, D: TextDimension, F: FnMut(&FragmentSummary) -> bool> {
     old_end: D,
     new_end: D,
     range: Range<(&'a Locator, usize)>,
+    buffer_id: u64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -1917,11 +1918,33 @@ impl BufferSnapshot {
         self.edits_since_in_range(since, Anchor::MIN..Anchor::MAX)
     }
 
+    pub fn anchored_edits_since<'a, D>(
+        &'a self,
+        since: &'a clock::Global,
+    ) -> impl 'a + Iterator<Item = (Edit<D>, Range<Anchor>)>
+    where
+        D: TextDimension + Ord,
+    {
+        self.anchored_edits_since_in_range(since, Anchor::MIN..Anchor::MAX)
+    }
+
     pub fn edits_since_in_range<'a, D>(
         &'a self,
         since: &'a clock::Global,
         range: Range<Anchor>,
     ) -> impl 'a + Iterator<Item = Edit<D>>
+    where
+        D: TextDimension + Ord,
+    {
+        self.anchored_edits_since_in_range(since, range)
+            .map(|item| item.0)
+    }
+
+    pub fn anchored_edits_since_in_range<'a, D>(
+        &'a self,
+        since: &'a clock::Global,
+        range: Range<Anchor>,
+    ) -> impl 'a + Iterator<Item = (Edit<D>, Range<Anchor>)>
     where
         D: TextDimension + Ord,
     {
@@ -1961,6 +1984,7 @@ impl BufferSnapshot {
             old_end: Default::default(),
             new_end: Default::default(),
             range: (start_fragment_id, range.start.offset)..(end_fragment_id, range.end.offset),
+            buffer_id: self.remote_id,
         }
     }
 }
@@ -2019,10 +2043,10 @@ impl<'a> RopeBuilder<'a> {
 }
 
 impl<'a, D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator for Edits<'a, D, F> {
-    type Item = Edit<D>;
+    type Item = (Edit<D>, Range<Anchor>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut pending_edit: Option<Edit<D>> = None;
+        let mut pending_edit: Option<Self::Item> = None;
         let cursor = self.fragments_cursor.as_mut()?;
 
         while let Some(fragment) = cursor.item() {
@@ -2041,10 +2065,24 @@ impl<'a, D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator fo
 
             if pending_edit
                 .as_ref()
-                .map_or(false, |change| change.new.end < self.new_end)
+                .map_or(false, |(change, _)| change.new.end < self.new_end)
             {
                 break;
             }
+
+            let timestamp = fragment.insertion_timestamp.local();
+            let start_anchor = Anchor {
+                timestamp,
+                offset: fragment.insertion_offset,
+                bias: Bias::Right,
+                buffer_id: Some(self.buffer_id),
+            };
+            let end_anchor = Anchor {
+                timestamp,
+                offset: fragment.insertion_offset + fragment.len,
+                bias: Bias::Left,
+                buffer_id: Some(self.buffer_id),
+            };
 
             if !fragment.was_visible(self.since, self.undos) && fragment.visible {
                 let mut visible_end = cursor.end(&None).visible;
@@ -2058,13 +2096,17 @@ impl<'a, D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator fo
                 let fragment_summary = self.visible_cursor.summary(visible_end);
                 let mut new_end = self.new_end.clone();
                 new_end.add_assign(&fragment_summary);
-                if let Some(pending_edit) = pending_edit.as_mut() {
-                    pending_edit.new.end = new_end.clone();
+                if let Some((edit, range)) = pending_edit.as_mut() {
+                    edit.new.end = new_end.clone();
+                    range.end = end_anchor;
                 } else {
-                    pending_edit = Some(Edit {
-                        old: self.old_end.clone()..self.old_end.clone(),
-                        new: self.new_end.clone()..new_end.clone(),
-                    });
+                    pending_edit = Some((
+                        Edit {
+                            old: self.old_end.clone()..self.old_end.clone(),
+                            new: self.new_end.clone()..new_end.clone(),
+                        },
+                        start_anchor..end_anchor,
+                    ));
                 }
 
                 self.new_end = new_end;
@@ -2083,13 +2125,17 @@ impl<'a, D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator fo
                 let fragment_summary = self.deleted_cursor.summary(deleted_end);
                 let mut old_end = self.old_end.clone();
                 old_end.add_assign(&fragment_summary);
-                if let Some(pending_edit) = pending_edit.as_mut() {
-                    pending_edit.old.end = old_end.clone();
+                if let Some((edit, range)) = pending_edit.as_mut() {
+                    edit.old.end = old_end.clone();
+                    range.end = end_anchor;
                 } else {
-                    pending_edit = Some(Edit {
-                        old: self.old_end.clone()..old_end.clone(),
-                        new: self.new_end.clone()..self.new_end.clone(),
-                    });
+                    pending_edit = Some((
+                        Edit {
+                            old: self.old_end.clone()..old_end.clone(),
+                            new: self.new_end.clone()..self.new_end.clone(),
+                        },
+                        start_anchor..end_anchor,
+                    ));
                 }
 
                 self.old_end = old_end;
