@@ -159,10 +159,6 @@ impl SyntaxMap {
 
     #[cfg(test)]
     pub fn reparse(&mut self, language: Arc<Language>, text: &BufferSnapshot) {
-        if !self.interpolated_version.observed_all(&text.version) {
-            self.interpolate(text);
-        }
-
         self.snapshot.reparse(
             &self.parsed_version,
             text,
@@ -170,6 +166,7 @@ impl SyntaxMap {
             language,
         );
         self.parsed_version = text.version.clone();
+        self.interpolated_version = text.version.clone();
     }
 
     pub fn did_parse(&mut self, snapshot: SyntaxSnapshot, version: clock::Global) {
@@ -1580,7 +1577,8 @@ mod tests {
                 );
             }
         "#
-        .unindent();
+        .unindent()
+        .repeat(2);
 
         let registry = Arc::new(LanguageRegistry::test());
         let language = Arc::new(rust_lang());
@@ -1594,9 +1592,17 @@ mod tests {
         let mut reference_syntax_map = SyntaxMap::new();
         reference_syntax_map.set_language_registry(registry.clone());
 
+        log::info!("initial text:\n{}", buffer.text());
+
         for i in 0..operations {
+            let prev_buffer = buffer.snapshot();
+            let prev_syntax_map = syntax_map.snapshot();
+
             buffer.randomly_edit(&mut rng, 2);
             log::info!("text:\n{}", buffer.text());
+
+            syntax_map.interpolate(&buffer);
+            check_interpolation(&prev_syntax_map, &syntax_map, &prev_buffer, &buffer);
 
             syntax_map.reparse(language.clone(), &buffer);
 
@@ -1615,6 +1621,7 @@ mod tests {
             log::info!("undoing operation {}", i);
             log::info!("text:\n{}", buffer.text());
 
+            syntax_map.interpolate(&buffer);
             syntax_map.reparse(language.clone(), &buffer);
 
             reference_syntax_map.clear();
@@ -1632,6 +1639,113 @@ mod tests {
         {
             assert_eq!(edited_layer.2.to_sexp(), reference_layer.2.to_sexp());
             assert_eq!(edited_layer.2.range(), reference_layer.2.range());
+        }
+    }
+
+    fn check_interpolation(
+        old_syntax_map: &SyntaxSnapshot,
+        new_syntax_map: &SyntaxSnapshot,
+        old_buffer: &BufferSnapshot,
+        new_buffer: &BufferSnapshot,
+    ) {
+        let edits = new_buffer
+            .edits_since::<usize>(&old_buffer.version())
+            .collect::<Vec<_>>();
+
+        for (old_layer, new_layer) in old_syntax_map
+            .layers
+            .iter()
+            .zip(new_syntax_map.layers.iter())
+        {
+            assert_eq!(old_layer.range, new_layer.range);
+            let old_start_byte = old_layer.range.start.to_offset(old_buffer);
+            let new_start_byte = new_layer.range.start.to_offset(new_buffer);
+            let old_start_point = old_layer.range.start.to_point(old_buffer).to_ts_point();
+            let new_start_point = new_layer.range.start.to_point(new_buffer).to_ts_point();
+            let old_node = old_layer
+                .tree
+                .root_node_with_offset(old_start_byte, old_start_point);
+            let new_node = new_layer
+                .tree
+                .root_node_with_offset(new_start_byte, new_start_point);
+            check_node_edits(
+                old_layer.depth,
+                &old_layer.range,
+                old_node,
+                new_node,
+                old_buffer,
+                new_buffer,
+                &edits,
+            );
+        }
+
+        fn check_node_edits(
+            depth: usize,
+            range: &Range<Anchor>,
+            old_node: Node,
+            new_node: Node,
+            old_buffer: &BufferSnapshot,
+            new_buffer: &BufferSnapshot,
+            edits: &[text::Edit<usize>],
+        ) {
+            assert_eq!(old_node.kind(), new_node.kind());
+
+            let old_range = old_node.byte_range();
+            let new_range = new_node.byte_range();
+
+            let is_edited = edits
+                .iter()
+                .any(|edit| edit.new.start < new_range.end && edit.new.end > new_range.start);
+            if is_edited {
+                assert!(
+                    new_node.has_changes(),
+                    concat!(
+                        "failed to mark node as edited.\n",
+                        "layer depth: {}, old layer range: {:?}, new layer range: {:?},\n",
+                        "node kind: {}, old node range: {:?}, new node range: {:?}",
+                    ),
+                    depth,
+                    range.to_offset(old_buffer),
+                    range.to_offset(new_buffer),
+                    new_node.kind(),
+                    old_range,
+                    new_range,
+                );
+            }
+
+            if !new_node.has_changes() {
+                assert_eq!(
+                    old_buffer
+                        .text_for_range(old_range.clone())
+                        .collect::<String>(),
+                    new_buffer
+                        .text_for_range(new_range.clone())
+                        .collect::<String>(),
+                    concat!(
+                        "mismatched text for node\n",
+                        "layer depth: {}, old layer range: {:?}, new layer range: {:?},\n",
+                        "node kind: {}, old node range:{:?}, new node range:{:?}",
+                    ),
+                    depth,
+                    range.to_offset(old_buffer),
+                    range.to_offset(new_buffer),
+                    new_node.kind(),
+                    old_range,
+                    new_range,
+                );
+            }
+
+            for i in 0..new_node.child_count() {
+                check_node_edits(
+                    depth,
+                    range,
+                    old_node.child(i).unwrap(),
+                    new_node.child(i).unwrap(),
+                    old_buffer,
+                    new_buffer,
+                    edits,
+                )
+            }
         }
     }
 
