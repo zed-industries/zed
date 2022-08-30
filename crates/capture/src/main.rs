@@ -8,8 +8,15 @@ use cocoa::{
 };
 use core_foundation::{base::TCFType, number::CFNumberRef, string::CFStringRef};
 use core_media::{CMSampleBuffer, CMSampleBufferRef};
-use gpui::elements::Canvas;
-use gpui::{actions, elements::*, keymap::Binding, Menu, MenuItem};
+use futures::StreamExt;
+use gpui::{
+    actions,
+    elements::{Canvas, *},
+    keymap::Binding,
+    platform::current::Surface,
+    Menu, MenuItem, ViewContext,
+};
+use io_surface::IOSurface;
 use log::LevelFilter;
 use objc::{
     class,
@@ -18,8 +25,9 @@ use objc::{
     runtime::{Object, Sel},
     sel, sel_impl,
 };
+use parking_lot::Mutex;
 use simplelog::SimpleLogger;
-use std::{ffi::c_void, slice, str};
+use std::{cell::RefCell, ffi::c_void, slice, str};
 
 #[allow(non_upper_case_globals)]
 const NSUTF8StringEncoding: NSUInteger = 4;
@@ -42,10 +50,29 @@ fn main() {
             }],
         }]);
 
+        cx.add_window(Default::default(), |cx| ScreenCaptureView::new(cx));
+    });
+}
+
+struct ScreenCaptureView {
+    surface: Option<io_surface::IOSurface>,
+}
+
+impl gpui::Entity for ScreenCaptureView {
+    type Event = ();
+}
+
+impl ScreenCaptureView {
+    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+        let (surface_tx, mut surface_rx) = postage::watch::channel::<Option<IOSurface>>();
+        let surface_tx = RefCell::new(surface_tx);
         unsafe {
             let block = ConcreteBlock::new(move |content: id, error: id| {
                 if !error.is_null() {
-                    println!("ERROR {}", string_from_objc(msg_send![error, localizedDescription]));
+                    println!(
+                        "ERROR {}",
+                        string_from_objc(msg_send![error, localizedDescription])
+                    );
                     return;
                 }
 
@@ -57,11 +84,16 @@ fn main() {
 
                 let mut decl = ClassDecl::new("CaptureOutput", class!(NSObject)).unwrap();
                 decl.add_ivar::<*mut c_void>("callback");
-                decl.add_method(sel!(stream:didOutputSampleBuffer:ofType:), sample_output as extern "C" fn(&Object, Sel, id, id, SCStreamOutputType));
+                decl.add_method(
+                    sel!(stream:didOutputSampleBuffer:ofType:),
+                    sample_output as extern "C" fn(&Object, Sel, id, id, SCStreamOutputType),
+                );
                 let capture_output_class = decl.register();
 
                 let output: id = msg_send![capture_output_class, alloc];
                 let output: id = msg_send![output, init];
+
+                // TODO: we could probably move this into a background queue.
                 let callback = Box::new(|buffer: CMSampleBufferRef| {
                     let buffer = CMSampleBuffer::wrap_under_get_rule(buffer);
                     let attachments = buffer.attachments();
@@ -79,8 +111,11 @@ fn main() {
                     }
 
                     let image_buffer = buffer.image_buffer();
-                    dbg!(image_buffer.width(), image_buffer.height());
                     let io_surface = image_buffer.io_surface();
+                    println!("before segfault");
+                    *surface_tx.borrow_mut().borrow_mut() = Some(io_surface);
+
+                    println!("!!!!!!!!!!!!!!!!!");
                 }) as Box<dyn FnMut(CMSampleBufferRef)>;
                 let callback = Box::into_raw(Box::new(callback));
                 (*output).set_ivar("callback", callback as *mut c_void);
@@ -109,7 +144,10 @@ fn main() {
 
                 let start_capture_completion = ConcreteBlock::new(move |error: id| {
                     if !error.is_null() {
-                        println!("error starting capture... error? {}", string_from_objc(msg_send![error, localizedDescription]));
+                        println!(
+                            "error starting capture... error? {}",
+                            string_from_objc(msg_send![error, localizedDescription])
+                        );
                         return;
                     }
 
@@ -117,8 +155,10 @@ fn main() {
                 });
 
                 assert!(!stream.is_null());
-                let _: () = msg_send![stream, startCaptureWithCompletionHandler: start_capture_completion];
-
+                let _: () = msg_send![
+                    stream,
+                    startCaptureWithCompletionHandler: start_capture_completion
+                ];
             });
 
             let _: id = msg_send![
@@ -127,21 +167,23 @@ fn main() {
             ];
         }
 
-        // cx.add_window(Default::default(), |_| ScreenCaptureView);
-    });
-}
+        cx.spawn_weak(|this, mut cx| async move {
+            while let Some(surface) = surface_rx.next().await {
+                if let Some(this) = this.upgrade(&cx) {
+                    this.update(&mut cx, |this, cx| {
+                        this.surface = surface;
+                        cx.notify();
+                    })
+                } else {
+                    break;
+                }
+            }
+        })
+        .detach();
 
-struct ScreenCaptureView {
-    surface: io_surface::IOSurface,
+        Self { surface: None }
+    }
 }
-
-impl gpui::Entity for ScreenCaptureView {
-    type Event = ();
-}
-
-// impl ScreenCaptureView {
-//     pub fn new() -> Self {}
-// }
 
 impl gpui::View for ScreenCaptureView {
     fn ui_name() -> &'static str {
@@ -149,9 +191,15 @@ impl gpui::View for ScreenCaptureView {
     }
 
     fn render(&mut self, _: &mut gpui::RenderContext<Self>) -> gpui::ElementBox {
-        Canvas::new(|bounds, _, cx| {
-
-            // cx.scene.push_surface(surface)
+        let surface = self.surface.clone();
+        Canvas::new(move |bounds, _, cx| {
+            if let Some(native_surface) = surface.clone() {
+                dbg!("!!!!");
+                cx.scene.push_surface(Surface {
+                    bounds,
+                    native_surface,
+                });
+            }
         })
         .boxed()
     }

@@ -761,10 +761,13 @@ dependencies = [
  "core-foundation",
  "core-graphics",
  "foreign-types",
+ "futures",
  "gpui",
  "io_surface",
  "log",
  "objc",
+ "parking_lot 0.11.2",
+ "postage",
  "simplelog",
 ]
 
