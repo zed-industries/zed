@@ -24,6 +24,8 @@ fn main() {
         .clang_arg("-xobjective-c")
         .allowlist_function("CMTimeMake")
         .allowlist_type("SCStreamOutputType")
+        .allowlist_type("SCFrameStatus")
+        .allowlist_var("SCStreamFrameInfo.*")
         .allowlist_function("dispatch_queue_create")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .layout_tests(false)
