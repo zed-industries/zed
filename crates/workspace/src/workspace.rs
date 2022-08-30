@@ -52,7 +52,6 @@ use std::{
     cell::RefCell,
     fmt,
     future::Future,
-    mem,
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
@@ -318,7 +317,23 @@ pub trait Item: View {
         project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>>;
+    fn update_git(
+        &mut self,
+        _project: ModelHandle<Project>,
+        _cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
     fn to_item_events(event: &Self::Event) -> Vec<ItemEvent>;
+    fn should_close_item_on_event(_: &Self::Event) -> bool {
+        false
+    }
+    fn should_update_tab_on_event(_: &Self::Event) -> bool {
+        false
+    }
+    fn is_edit_event(_: &Self::Event) -> bool {
+        false
+    }
     fn act_as_type(
         &self,
         type_id: TypeId,
@@ -435,6 +450,57 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
     }
 }
 
+struct DelayedDebouncedEditAction {
+    task: Option<Task<()>>,
+    cancel_channel: Option<oneshot::Sender<()>>,
+}
+
+impl DelayedDebouncedEditAction {
+    fn new() -> DelayedDebouncedEditAction {
+        DelayedDebouncedEditAction {
+            task: None,
+            cancel_channel: None,
+        }
+    }
+
+    fn fire_new<F, Fut>(
+        &mut self,
+        delay: Duration,
+        workspace: &Workspace,
+        cx: &mut ViewContext<Workspace>,
+        f: F,
+    ) where
+        F: FnOnce(ModelHandle<Project>, AsyncAppContext) -> Fut + 'static,
+        Fut: 'static + Future<Output = ()>,
+    {
+        if let Some(channel) = self.cancel_channel.take() {
+            _ = channel.send(());
+        }
+
+        let project = workspace.project().downgrade();
+
+        let (sender, mut receiver) = oneshot::channel::<()>();
+        self.cancel_channel = Some(sender);
+
+        let previous_task = self.task.take();
+        self.task = Some(cx.spawn_weak(|_, cx| async move {
+            let mut timer = cx.background().timer(delay).fuse();
+            if let Some(previous_task) = previous_task {
+                previous_task.await;
+            }
+
+            futures::select_biased! {
+                _ = receiver => return,
+                _ = timer => {}
+            }
+
+            if let Some(project) = project.upgrade(&cx) {
+                (f)(project, cx).await;
+            }
+        }));
+    }
+}
+
 pub trait ItemHandle: 'static + fmt::Debug {
     fn subscribe_to_item_events(
         &self,
@@ -473,6 +539,11 @@ pub trait ItemHandle: 'static + fmt::Debug {
     ) -> Task<Result<()>>;
     fn reload(&self, project: ModelHandle<Project>, cx: &mut MutableAppContext)
         -> Task<Result<()>>;
+    fn update_git(
+        &self,
+        project: ModelHandle<Project>,
+        cx: &mut MutableAppContext,
+    ) -> Task<Result<()>>;
     fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle>;
     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>>;
     fn on_release(
@@ -578,8 +649,8 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
             .insert(self.id(), pane.downgrade())
             .is_none()
         {
-            let mut pending_autosave = None;
-            let mut cancel_pending_autosave = oneshot::channel::<()>().0;
+            let mut pending_autosave = DelayedDebouncedEditAction::new();
+            let mut pending_git_update = DelayedDebouncedEditAction::new();
             let pending_update = Rc::new(RefCell::new(None));
             let pending_update_scheduled = Rc::new(AtomicBool::new(false));
 
@@ -637,45 +708,46 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                                     .detach_and_log_err(cx);
                                 return;
                             }
+
                             ItemEvent::UpdateTab => {
                                 pane.update(cx, |_, cx| {
                                     cx.emit(pane::Event::ChangeItemTitle);
                                     cx.notify();
                                 });
                             }
+
                             ItemEvent::Edit => {
                                 if let Autosave::AfterDelay { milliseconds } =
                                     cx.global::<Settings>().autosave
                                 {
-                                    let prev_autosave = pending_autosave
-                                        .take()
-                                        .unwrap_or_else(|| Task::ready(Some(())));
-                                    let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
-                                    let prev_cancel_tx =
-                                        mem::replace(&mut cancel_pending_autosave, cancel_tx);
-                                    let project = workspace.project.downgrade();
-                                    let _ = prev_cancel_tx.send(());
+                                    let delay = Duration::from_millis(milliseconds);
                                     let item = item.clone();
-                                    pending_autosave =
-                                        Some(cx.spawn_weak(|_, mut cx| async move {
-                                            let mut timer = cx
-                                                .background()
-                                                .timer(Duration::from_millis(milliseconds))
-                                                .fuse();
-                                            prev_autosave.await;
-                                            futures::select_biased! {
-                                                _ = cancel_rx => return None,
-                                                    _ = timer => {}
-                                            }
-
-                                            let project = project.upgrade(&cx)?;
+                                    pending_autosave.fire_new(
+                                        delay,
+                                        workspace,
+                                        cx,
+                                        |project, mut cx| async move {
                                             cx.update(|cx| Pane::autosave_item(&item, project, cx))
                                                 .await
                                                 .log_err();
-                                            None
-                                        }));
+                                        },
+                                    );
                                 }
+
+                                const GIT_DELAY: Duration = Duration::from_millis(800);
+                                let item = item.clone();
+                                pending_git_update.fire_new(
+                                    GIT_DELAY,
+                                    workspace,
+                                    cx,
+                                    |project, mut cx| async move {
+                                        cx.update(|cx| item.update_git(project, cx))
+                                            .await
+                                            .log_err();
+                                    },
+                                );
                             }
+
                             _ => {}
                         }
                     }
@@ -753,6 +825,14 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         cx: &mut MutableAppContext,
     ) -> Task<Result<()>> {
         self.update(cx, |item, cx| item.reload(project, cx))
+    }
+
+    fn update_git(
+        &self,
+        project: ModelHandle<Project>,
+        cx: &mut MutableAppContext,
+    ) -> Task<Result<()>> {
+        self.update(cx, |item, cx| item.update_git(project, cx))
     }
 
     fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle> {
