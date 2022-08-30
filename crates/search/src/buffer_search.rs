@@ -1,21 +1,22 @@
 use crate::{
-    active_match_index, match_index_for_direction, query_suggestion_for_editor, Direction,
     SearchOption, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
     ToggleWholeWord,
 };
 use collections::HashMap;
-use editor::{Anchor, Autoscroll, Editor};
+use editor::Editor;
 use gpui::{
     actions, elements::*, impl_actions, platform::CursorStyle, Action, AnyViewHandle, AppContext,
     Entity, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    ViewHandle,
 };
-use language::OffsetRangeExt;
 use project::search::SearchQuery;
 use serde::Deserialize;
 use settings::Settings;
-use std::ops::Range;
-use workspace::{ItemHandle, Pane, ToolbarItemLocation, ToolbarItemView};
+use std::any::Any;
+use workspace::{
+    searchable::{Direction, SearchEvent, SearchableItemHandle, WeakSearchableItemHandle},
+    ItemHandle, Pane, ToolbarItemLocation, ToolbarItemView,
+};
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct Deploy {
@@ -59,10 +60,11 @@ fn add_toggle_option_action<A: Action>(option: SearchOption, cx: &mut MutableApp
 
 pub struct BufferSearchBar {
     pub query_editor: ViewHandle<Editor>,
-    active_editor: Option<ViewHandle<Editor>>,
+    active_searchable_item: Option<Box<dyn SearchableItemHandle>>,
     active_match_index: Option<usize>,
-    active_editor_subscription: Option<Subscription>,
-    editors_with_matches: HashMap<WeakViewHandle<Editor>, Vec<Range<Anchor>>>,
+    active_searchable_item_subscription: Option<Subscription>,
+    seachable_items_with_matches:
+        HashMap<Box<dyn WeakSearchableItemHandle>, Vec<Box<dyn Any + Send>>>,
     pending_search: Option<Task<()>>,
     case_sensitive: bool,
     whole_word: bool,
@@ -103,22 +105,26 @@ impl View for BufferSearchBar {
                             .flex(1., true)
                             .boxed(),
                     )
-                    .with_children(self.active_editor.as_ref().and_then(|editor| {
-                        let matches = self.editors_with_matches.get(&editor.downgrade())?;
-                        let message = if let Some(match_ix) = self.active_match_index {
-                            format!("{}/{}", match_ix + 1, matches.len())
-                        } else {
-                            "No matches".to_string()
-                        };
+                    .with_children(self.active_searchable_item.as_ref().and_then(
+                        |searchable_item| {
+                            let matches = self
+                                .seachable_items_with_matches
+                                .get(&searchable_item.downgrade())?;
+                            let message = if let Some(match_ix) = self.active_match_index {
+                                format!("{}/{}", match_ix + 1, matches.len())
+                            } else {
+                                "No matches".to_string()
+                            };
 
-                        Some(
-                            Label::new(message, theme.search.match_index.text.clone())
-                                .contained()
-                                .with_style(theme.search.match_index.container)
-                                .aligned()
-                                .boxed(),
-                        )
-                    }))
+                            Some(
+                                Label::new(message, theme.search.match_index.text.clone())
+                                    .contained()
+                                    .with_style(theme.search.match_index.container)
+                                    .aligned()
+                                    .boxed(),
+                            )
+                        },
+                    ))
                     .contained()
                     .with_style(editor_container)
                     .aligned()
@@ -158,19 +164,25 @@ impl ToolbarItemView for BufferSearchBar {
         cx: &mut ViewContext<Self>,
     ) -> ToolbarItemLocation {
         cx.notify();
-        self.active_editor_subscription.take();
-        self.active_editor.take();
+        self.active_searchable_item_subscription.take();
+        self.active_searchable_item.take();
         self.pending_search.take();
 
-        if let Some(editor) = item.and_then(|item| item.act_as::<Editor>(cx)) {
-            if editor.read(cx).searchable() {
-                self.active_editor_subscription =
-                    Some(cx.subscribe(&editor, Self::on_active_editor_event));
-                self.active_editor = Some(editor);
-                self.update_matches(false, cx);
-                if !self.dismissed {
-                    return ToolbarItemLocation::Secondary;
-                }
+        if let Some(searchable_item_handle) = item.and_then(|item| item.as_searchable(cx)) {
+            let handle = cx.weak_handle();
+            self.active_searchable_item_subscription = Some(searchable_item_handle.subscribe(
+                cx,
+                Box::new(move |search_event, cx| {
+                    if let Some(this) = handle.upgrade(cx) {
+                        this.update(cx, |this, cx| this.on_active_editor_event(search_event, cx));
+                    }
+                }),
+            ));
+
+            self.active_searchable_item = Some(searchable_item_handle);
+            self.update_matches(false, cx);
+            if !self.dismissed {
+                return ToolbarItemLocation::Secondary;
             }
         }
 
@@ -183,7 +195,7 @@ impl ToolbarItemView for BufferSearchBar {
         _: ToolbarItemLocation,
         _: &AppContext,
     ) -> ToolbarItemLocation {
-        if self.active_editor.is_some() && !self.dismissed {
+        if self.active_searchable_item.is_some() && !self.dismissed {
             ToolbarItemLocation::Secondary
         } else {
             ToolbarItemLocation::Hidden
@@ -201,10 +213,10 @@ impl BufferSearchBar {
 
         Self {
             query_editor,
-            active_editor: None,
-            active_editor_subscription: None,
+            active_searchable_item: None,
+            active_searchable_item_subscription: None,
             active_match_index: None,
-            editors_with_matches: Default::default(),
+            seachable_items_with_matches: Default::default(),
             case_sensitive: false,
             whole_word: false,
             regex: false,
@@ -216,14 +228,14 @@ impl BufferSearchBar {
 
     fn dismiss(&mut self, _: &Dismiss, cx: &mut ViewContext<Self>) {
         self.dismissed = true;
-        for editor in self.editors_with_matches.keys() {
-            if let Some(editor) = editor.upgrade(cx) {
-                editor.update(cx, |editor, cx| {
-                    editor.clear_background_highlights::<Self>(cx)
-                });
+        for searchable_item in self.seachable_items_with_matches.keys() {
+            if let Some(searchable_item) =
+                WeakSearchableItemHandle::upgrade(searchable_item.as_ref(), cx)
+            {
+                searchable_item.clear_highlights(cx);
             }
         }
-        if let Some(active_editor) = self.active_editor.as_ref() {
+        if let Some(active_editor) = self.active_searchable_item.as_ref() {
             cx.focus(active_editor);
         }
         cx.emit(Event::UpdateLocation);
@@ -231,14 +243,14 @@ impl BufferSearchBar {
     }
 
     fn show(&mut self, focus: bool, suggest_query: bool, cx: &mut ViewContext<Self>) -> bool {
-        let editor = if let Some(editor) = self.active_editor.clone() {
-            editor
+        let searchable_item = if let Some(searchable_item) = &self.active_searchable_item {
+            SearchableItemHandle::boxed_clone(searchable_item.as_ref())
         } else {
             return false;
         };
 
         if suggest_query {
-            let text = query_suggestion_for_editor(&editor, cx);
+            let text = searchable_item.query_suggestion(cx);
             if !text.is_empty() {
                 self.set_query(&text, cx);
             }
@@ -369,7 +381,7 @@ impl BufferSearchBar {
     }
 
     fn focus_editor(&mut self, _: &FocusEditor, cx: &mut ViewContext<Self>) {
-        if let Some(active_editor) = self.active_editor.as_ref() {
+        if let Some(active_editor) = self.active_searchable_item.as_ref() {
             cx.focus(active_editor);
         }
     }
@@ -403,23 +415,13 @@ impl BufferSearchBar {
 
     fn select_match(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
         if let Some(index) = self.active_match_index {
-            if let Some(editor) = self.active_editor.as_ref() {
-                editor.update(cx, |editor, cx| {
-                    if let Some(ranges) = self.editors_with_matches.get(&cx.weak_handle()) {
-                        let new_index = match_index_for_direction(
-                            ranges,
-                            &editor.selections.newest_anchor().head(),
-                            index,
-                            direction,
-                            &editor.buffer().read(cx).snapshot(cx),
-                        );
-                        let range_to_select = ranges[new_index].clone();
-                        editor.unfold_ranges([range_to_select.clone()], false, cx);
-                        editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                            s.select_ranges([range_to_select])
-                        });
-                    }
-                });
+            if let Some(searchable_item) = self.active_searchable_item.as_ref() {
+                if let Some(matches) = self
+                    .seachable_items_with_matches
+                    .get(&searchable_item.downgrade())
+                {
+                    searchable_item.select_next_match_in_direction(index, direction, matches, cx);
+                }
             }
         }
     }
@@ -458,46 +460,44 @@ impl BufferSearchBar {
         }
     }
 
-    fn on_active_editor_event(
-        &mut self,
-        _: ViewHandle<Editor>,
-        event: &editor::Event,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn on_active_editor_event(&mut self, event: SearchEvent, cx: &mut ViewContext<Self>) {
         match event {
-            editor::Event::BufferEdited { .. } => self.update_matches(false, cx),
-            editor::Event::SelectionsChanged { .. } => self.update_match_index(cx),
-            _ => {}
+            SearchEvent::ContentsUpdated => self.update_matches(false, cx),
+            SearchEvent::SelectionsChanged => self.update_match_index(cx),
         }
     }
 
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
         let mut active_editor_matches = None;
-        for (editor, ranges) in self.editors_with_matches.drain() {
-            if let Some(editor) = editor.upgrade(cx) {
-                if Some(&editor) == self.active_editor.as_ref() {
-                    active_editor_matches = Some((editor.downgrade(), ranges));
+        for (searchable_item, matches) in self.seachable_items_with_matches.drain() {
+            if let Some(searchable_item) =
+                WeakSearchableItemHandle::upgrade(searchable_item.as_ref(), cx)
+            {
+                if self
+                    .active_searchable_item
+                    .as_ref()
+                    .map(|active_item| active_item == &searchable_item)
+                    .unwrap_or(false)
+                {
+                    active_editor_matches = Some((searchable_item.downgrade(), matches));
                 } else {
-                    editor.update(cx, |editor, cx| {
-                        editor.clear_background_highlights::<Self>(cx)
-                    });
+                    searchable_item.clear_highlights(cx);
                 }
             }
         }
-        self.editors_with_matches.extend(active_editor_matches);
+
+        self.seachable_items_with_matches
+            .extend(active_editor_matches);
     }
 
     fn update_matches(&mut self, select_closest_match: bool, cx: &mut ViewContext<Self>) {
         let query = self.query_editor.read(cx).text(cx);
         self.pending_search.take();
-        if let Some(editor) = self.active_editor.as_ref() {
+        if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
             if query.is_empty() {
                 self.active_match_index.take();
-                editor.update(cx, |editor, cx| {
-                    editor.clear_background_highlights::<Self>(cx)
-                });
+                active_searchable_item.clear_highlights(cx);
             } else {
-                let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
                 let query = if self.regex {
                     match SearchQuery::regex(query, self.whole_word, self.case_sensitive) {
                         Ok(query) => query,
@@ -511,66 +511,36 @@ impl BufferSearchBar {
                     SearchQuery::text(query, self.whole_word, self.case_sensitive)
                 };
 
-                let ranges = cx.background().spawn(async move {
-                    let mut ranges = Vec::new();
-                    if let Some((_, _, excerpt_buffer)) = buffer.as_singleton() {
-                        ranges.extend(
-                            query
-                                .search(excerpt_buffer.as_rope())
-                                .await
-                                .into_iter()
-                                .map(|range| {
-                                    buffer.anchor_after(range.start)
-                                        ..buffer.anchor_before(range.end)
-                                }),
-                        );
-                    } else {
-                        for excerpt in buffer.excerpt_boundaries_in_range(0..buffer.len()) {
-                            let excerpt_range = excerpt.range.context.to_offset(&excerpt.buffer);
-                            let rope = excerpt.buffer.as_rope().slice(excerpt_range.clone());
-                            ranges.extend(query.search(&rope).await.into_iter().map(|range| {
-                                let start = excerpt
-                                    .buffer
-                                    .anchor_after(excerpt_range.start + range.start);
-                                let end = excerpt
-                                    .buffer
-                                    .anchor_before(excerpt_range.start + range.end);
-                                buffer.anchor_in_excerpt(excerpt.id.clone(), start)
-                                    ..buffer.anchor_in_excerpt(excerpt.id.clone(), end)
-                            }));
-                        }
-                    }
-                    ranges
-                });
+                let matches = active_searchable_item.matches(query, cx);
 
-                let editor = editor.downgrade();
+                let active_searchable_item = active_searchable_item.downgrade();
                 self.pending_search = Some(cx.spawn_weak(|this, mut cx| async move {
-                    let ranges = ranges.await;
-                    if let Some((this, editor)) = this.upgrade(&cx).zip(editor.upgrade(&cx)) {
+                    let matches = matches.await;
+                    if let Some(this) = this.upgrade(&cx) {
                         this.update(&mut cx, |this, cx| {
-                            this.editors_with_matches
-                                .insert(editor.downgrade(), ranges.clone());
-                            this.update_match_index(cx);
-                            if !this.dismissed {
-                                editor.update(cx, |editor, cx| {
+                            if let Some(active_searchable_item) = WeakSearchableItemHandle::upgrade(
+                                active_searchable_item.as_ref(),
+                                cx,
+                            ) {
+                                this.seachable_items_with_matches
+                                    .insert(active_searchable_item.downgrade(), matches);
+
+                                this.update_match_index(cx);
+                                if !this.dismissed {
                                     if select_closest_match {
                                         if let Some(match_ix) = this.active_match_index {
-                                            editor.change_selections(
-                                                Some(Autoscroll::Fit),
+                                            active_searchable_item.select_match_by_index(
+                                                match_ix,
+                                                this.seachable_items_with_matches
+                                                    .get(&active_searchable_item.downgrade())
+                                                    .unwrap(),
                                                 cx,
-                                                |s| s.select_ranges([ranges[match_ix].clone()]),
                                             );
                                         }
                                     }
-
-                                    editor.highlight_background::<Self>(
-                                        ranges,
-                                        |theme| theme.search.match_background,
-                                        cx,
-                                    );
-                                });
+                                }
+                                cx.notify();
                             }
-                            cx.notify();
                         });
                     }
                 }));
@@ -579,15 +549,15 @@ impl BufferSearchBar {
     }
 
     fn update_match_index(&mut self, cx: &mut ViewContext<Self>) {
-        let new_index = self.active_editor.as_ref().and_then(|editor| {
-            let ranges = self.editors_with_matches.get(&editor.downgrade())?;
-            let editor = editor.read(cx);
-            active_match_index(
-                ranges,
-                &editor.selections.newest_anchor().head(),
-                &editor.buffer().read(cx).snapshot(cx),
-            )
-        });
+        let new_index = self
+            .active_searchable_item
+            .as_ref()
+            .and_then(|searchable_item| {
+                let matches = self
+                    .seachable_items_with_matches
+                    .get(&searchable_item.downgrade())?;
+                searchable_item.active_match_index(matches, cx)
+            });
         if new_index != self.active_match_index {
             self.active_match_index = new_index;
             cx.notify();

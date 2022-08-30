@@ -1,10 +1,12 @@
 use crate::{
-    active_match_index, match_index_for_direction, query_suggestion_for_editor, Direction,
     SearchOption, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
     ToggleWholeWord,
 };
 use collections::HashMap;
-use editor::{Anchor, Autoscroll, Editor, MultiBuffer, SelectAll, MAX_TAB_TITLE_LEN};
+use editor::{
+    items::{active_match_index, match_index_for_direction},
+    Anchor, Autoscroll, Editor, MultiBuffer, SelectAll, MAX_TAB_TITLE_LEN,
+};
 use gpui::{
     actions, elements::*, platform::CursorStyle, Action, AnyViewHandle, AppContext, ElementBox,
     Entity, ModelContext, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription,
@@ -21,6 +23,7 @@ use std::{
 };
 use util::ResultExt as _;
 use workspace::{
+    searchable::{Direction, SearchableItemHandle},
     Item, ItemHandle, ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
@@ -429,7 +432,7 @@ impl ProjectSearchView {
 
         let query = workspace.active_item(cx).and_then(|item| {
             let editor = item.act_as::<Editor>(cx)?;
-            let query = query_suggestion_for_editor(&editor, cx);
+            let query = editor.query_suggestion(cx);
             if query.is_empty() {
                 None
             } else {

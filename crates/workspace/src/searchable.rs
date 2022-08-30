@@ -1,0 +1,198 @@
+use std::any::Any;
+
+use gpui::{
+    AnyViewHandle, AnyWeakViewHandle, AppContext, MutableAppContext, Subscription, Task,
+    ViewContext, ViewHandle, WeakViewHandle,
+};
+use project::search::SearchQuery;
+
+use crate::{Item, ItemHandle, WeakItemHandle};
+
+pub enum SearchEvent {
+    ContentsUpdated,
+    SelectionsChanged,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    Prev,
+    Next,
+}
+
+pub trait SearchableItem: Item {
+    fn to_search_event(event: &Self::Event) -> Option<SearchEvent>;
+    fn clear_highlights(&mut self, cx: &mut ViewContext<Self>);
+    fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String;
+    fn select_next_match_in_direction(
+        &mut self,
+        index: usize,
+        direction: Direction,
+        matches: &Vec<Box<dyn Any + Send>>,
+        cx: &mut ViewContext<Self>,
+    );
+    fn select_match_by_index(
+        &mut self,
+        index: usize,
+        matches: &Vec<Box<dyn Any + Send>>,
+        cx: &mut ViewContext<Self>,
+    );
+    fn matches(
+        &mut self,
+        query: SearchQuery,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Vec<Box<dyn Any + Send>>>;
+    fn active_match_index(
+        &mut self,
+        matches: &Vec<Box<dyn Any + Send>>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<usize>;
+}
+
+pub trait SearchableItemHandle: ItemHandle {
+    fn downgrade(&self) -> Box<dyn WeakSearchableItemHandle>;
+    fn boxed_clone(&self) -> Box<dyn SearchableItemHandle>;
+    fn subscribe(
+        &self,
+        cx: &mut MutableAppContext,
+        handler: Box<dyn Fn(SearchEvent, &mut MutableAppContext)>,
+    ) -> Subscription;
+    fn clear_highlights(&self, cx: &mut MutableAppContext);
+    fn query_suggestion(&self, cx: &mut MutableAppContext) -> String;
+    fn select_next_match_in_direction(
+        &self,
+        index: usize,
+        direction: Direction,
+        matches: &Vec<Box<dyn Any + Send>>,
+        cx: &mut MutableAppContext,
+    );
+    fn select_match_by_index(
+        &self,
+        index: usize,
+        matches: &Vec<Box<dyn Any + Send>>,
+        cx: &mut MutableAppContext,
+    );
+    fn matches(
+        &self,
+        query: SearchQuery,
+        cx: &mut MutableAppContext,
+    ) -> Task<Vec<Box<dyn Any + Send>>>;
+    fn active_match_index(
+        &self,
+        matches: &Vec<Box<dyn Any + Send>>,
+        cx: &mut MutableAppContext,
+    ) -> Option<usize>;
+}
+
+impl<T: SearchableItem> SearchableItemHandle for ViewHandle<T> {
+    fn downgrade(&self) -> Box<dyn WeakSearchableItemHandle> {
+        Box::new(self.downgrade())
+    }
+
+    fn boxed_clone(&self) -> Box<dyn SearchableItemHandle> {
+        Box::new(self.clone())
+    }
+
+    fn subscribe(
+        &self,
+        cx: &mut MutableAppContext,
+        handler: Box<dyn Fn(SearchEvent, &mut MutableAppContext)>,
+    ) -> Subscription {
+        cx.subscribe(self, move |_, event, cx| {
+            if let Some(search_event) = T::to_search_event(event) {
+                handler(search_event, cx)
+            }
+        })
+    }
+
+    fn clear_highlights(&self, cx: &mut MutableAppContext) {
+        self.update(cx, |this, cx| this.clear_highlights(cx));
+    }
+    fn query_suggestion(&self, cx: &mut MutableAppContext) -> String {
+        self.update(cx, |this, cx| this.query_suggestion(cx))
+    }
+    fn select_next_match_in_direction(
+        &self,
+        index: usize,
+        direction: Direction,
+        matches: &Vec<Box<dyn Any + Send>>,
+        cx: &mut MutableAppContext,
+    ) {
+        self.update(cx, |this, cx| {
+            this.select_next_match_in_direction(index, direction, matches, cx)
+        });
+    }
+    fn select_match_by_index(
+        &self,
+        index: usize,
+        matches: &Vec<Box<dyn Any + Send>>,
+        cx: &mut MutableAppContext,
+    ) {
+        self.update(cx, |this, cx| {
+            this.select_match_by_index(index, matches, cx)
+        });
+    }
+    fn matches(
+        &self,
+        query: SearchQuery,
+        cx: &mut MutableAppContext,
+    ) -> Task<Vec<Box<dyn Any + Send>>> {
+        self.update(cx, |this, cx| this.matches(query, cx))
+    }
+    fn active_match_index(
+        &self,
+        matches: &Vec<Box<dyn Any + Send>>,
+        cx: &mut MutableAppContext,
+    ) -> Option<usize> {
+        self.update(cx, |this, cx| this.active_match_index(matches, cx))
+    }
+}
+
+impl From<Box<dyn SearchableItemHandle>> for AnyViewHandle {
+    fn from(this: Box<dyn SearchableItemHandle>) -> Self {
+        this.to_any()
+    }
+}
+
+impl From<&Box<dyn SearchableItemHandle>> for AnyViewHandle {
+    fn from(this: &Box<dyn SearchableItemHandle>) -> Self {
+        this.to_any()
+    }
+}
+
+impl PartialEq for Box<dyn SearchableItemHandle> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id() && self.window_id() == other.window_id()
+    }
+}
+
+impl Eq for Box<dyn SearchableItemHandle> {}
+
+pub trait WeakSearchableItemHandle: WeakItemHandle {
+    fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
+
+    fn to_any(self) -> AnyWeakViewHandle;
+}
+
+impl<T: SearchableItem> WeakSearchableItemHandle for WeakViewHandle<T> {
+    fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(self.upgrade(cx)?))
+    }
+
+    fn to_any(self) -> AnyWeakViewHandle {
+        self.into()
+    }
+}
+
+impl PartialEq for Box<dyn WeakSearchableItemHandle> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id() && self.window_id() == other.window_id()
+    }
+}
+
+impl Eq for Box<dyn WeakSearchableItemHandle> {}
+
+impl std::hash::Hash for Box<dyn WeakSearchableItemHandle> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (self.id(), self.window_id()).hash(state)
+    }
+}

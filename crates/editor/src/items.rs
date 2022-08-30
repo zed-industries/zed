@@ -1,6 +1,7 @@
 use crate::{
-    link_go_to_definition::hide_link_definition, Anchor, Autoscroll, Editor, Event, ExcerptId,
-    MultiBuffer, NavigationData, ToPoint as _,
+    display_map::ToDisplayPoint, link_go_to_definition::hide_link_definition,
+    movement::surrounding_word, Anchor, Autoscroll, Editor, Event, ExcerptId, MultiBuffer,
+    MultiBufferSnapshot, NavigationData, ToPoint as _,
 };
 use anyhow::{anyhow, Result};
 use futures::FutureExt;
@@ -8,20 +9,26 @@ use gpui::{
     elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, MutableAppContext,
     RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
 };
-use language::{Bias, Buffer, File as _, SelectionGoal};
+use language::{Bias, Buffer, File as _, OffsetRangeExt, SelectionGoal};
 use project::{File, Project, ProjectEntryId, ProjectPath};
 use rpc::proto::{self, update_view};
 use settings::Settings;
 use smallvec::SmallVec;
 use std::{
+    any::Any,
     borrow::Cow,
+    cmp::{self, Ordering},
     fmt::Write,
+    ops::Range,
     path::{Path, PathBuf},
     time::Duration,
 };
 use text::{Point, Selection};
 use util::TryFutureExt;
-use workspace::{FollowableItem, Item, ItemHandle, ItemNavHistory, ProjectItem, StatusItemView};
+use workspace::{
+    searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
+    FollowableItem, Item, ItemHandle, ItemNavHistory, ProjectItem, StatusItemView,
+};
 
 pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 pub const MAX_TAB_TITLE_LEN: usize = 24;
@@ -483,6 +490,10 @@ impl Item for Editor {
     fn is_edit_event(event: &Self::Event) -> bool {
         matches!(event, Event::BufferEdited)
     }
+
+    fn as_searchable(&self, handle: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(handle.clone()))
+    }
 }
 
 impl ProjectItem for Editor {
@@ -494,6 +505,215 @@ impl ProjectItem for Editor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         Self::for_buffer(buffer, Some(project), cx)
+    }
+}
+
+enum BufferSearchHighlights {}
+impl SearchableItem for Editor {
+    fn to_search_event(event: &Self::Event) -> Option<SearchEvent> {
+        match event {
+            Event::BufferEdited => Some(SearchEvent::ContentsUpdated),
+            Event::SelectionsChanged { .. } => Some(SearchEvent::SelectionsChanged),
+            _ => None,
+        }
+    }
+
+    fn clear_highlights(&mut self, cx: &mut ViewContext<Self>) {
+        self.clear_background_highlights::<BufferSearchHighlights>(cx);
+    }
+
+    fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
+        let display_map = self.snapshot(cx).display_snapshot;
+        let selection = self.selections.newest::<usize>(cx);
+        if selection.start == selection.end {
+            let point = selection.start.to_display_point(&display_map);
+            let range = surrounding_word(&display_map, point);
+            let range = range.start.to_offset(&display_map, Bias::Left)
+                ..range.end.to_offset(&display_map, Bias::Right);
+            let text: String = display_map.buffer_snapshot.text_for_range(range).collect();
+            if text.trim().is_empty() {
+                String::new()
+            } else {
+                text
+            }
+        } else {
+            display_map
+                .buffer_snapshot
+                .text_for_range(selection.start..selection.end)
+                .collect()
+        }
+    }
+
+    fn select_next_match_in_direction(
+        &mut self,
+        index: usize,
+        direction: Direction,
+        matches: &Vec<Box<dyn Any + Send>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(matches) = matches
+            .iter()
+            .map(|range| range.downcast_ref::<Range<Anchor>>().cloned())
+            .collect::<Option<Vec<_>>>()
+        {
+            let new_index: usize = match_index_for_direction(
+                matches.as_slice(),
+                &self.selections.newest_anchor().head(),
+                index,
+                direction,
+                &self.buffer().read(cx).snapshot(cx),
+            );
+
+            let range_to_select = matches[new_index].clone();
+            self.unfold_ranges([range_to_select.clone()], false, cx);
+            self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.select_ranges([range_to_select])
+            });
+        } else {
+            log::error!("Select next match in direction called with unexpected type matches");
+        }
+    }
+
+    fn select_match_by_index(
+        &mut self,
+        index: usize,
+        matches: &Vec<Box<dyn Any + Send>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(matches) = matches
+            .iter()
+            .map(|range| range.downcast_ref::<Range<Anchor>>().cloned())
+            .collect::<Option<Vec<_>>>()
+        {
+            self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.select_ranges([matches[index].clone()])
+            });
+            self.highlight_background::<BufferSearchHighlights>(
+                matches,
+                |theme| theme.search.match_background,
+                cx,
+            );
+        } else {
+            log::error!("Select next match in direction called with unexpected type matches");
+        }
+    }
+
+    fn matches(
+        &mut self,
+        query: project::search::SearchQuery,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Vec<Box<dyn Any + Send>>> {
+        let buffer = self.buffer().read(cx).snapshot(cx);
+        cx.background().spawn(async move {
+            let mut ranges = Vec::new();
+            if let Some((_, _, excerpt_buffer)) = buffer.as_singleton() {
+                ranges.extend(
+                    query
+                        .search(excerpt_buffer.as_rope())
+                        .await
+                        .into_iter()
+                        .map(|range| {
+                            buffer.anchor_after(range.start)..buffer.anchor_before(range.end)
+                        }),
+                );
+            } else {
+                for excerpt in buffer.excerpt_boundaries_in_range(0..buffer.len()) {
+                    let excerpt_range = excerpt.range.context.to_offset(&excerpt.buffer);
+                    let rope = excerpt.buffer.as_rope().slice(excerpt_range.clone());
+                    ranges.extend(query.search(&rope).await.into_iter().map(|range| {
+                        let start = excerpt
+                            .buffer
+                            .anchor_after(excerpt_range.start + range.start);
+                        let end = excerpt
+                            .buffer
+                            .anchor_before(excerpt_range.start + range.end);
+                        buffer.anchor_in_excerpt(excerpt.id.clone(), start)
+                            ..buffer.anchor_in_excerpt(excerpt.id.clone(), end)
+                    }));
+                }
+            }
+            ranges
+                .into_iter()
+                .map::<Box<dyn Any + Send>, _>(|range| Box::new(range))
+                .collect()
+        })
+    }
+
+    fn active_match_index(
+        &mut self,
+        matches: &Vec<Box<dyn Any + Send>>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<usize> {
+        if let Some(matches) = matches
+            .iter()
+            .map(|range| range.downcast_ref::<Range<Anchor>>().cloned())
+            .collect::<Option<Vec<_>>>()
+        {
+            active_match_index(
+                &matches,
+                &self.selections.newest_anchor().head(),
+                &self.buffer().read(cx).snapshot(cx),
+            )
+        } else {
+            None
+        }
+    }
+}
+
+pub fn match_index_for_direction(
+    ranges: &[Range<Anchor>],
+    cursor: &Anchor,
+    mut index: usize,
+    direction: Direction,
+    buffer: &MultiBufferSnapshot,
+) -> usize {
+    if ranges[index].start.cmp(cursor, buffer).is_gt() {
+        if direction == Direction::Prev {
+            if index == 0 {
+                index = ranges.len() - 1;
+            } else {
+                index -= 1;
+            }
+        }
+    } else if ranges[index].end.cmp(cursor, buffer).is_lt() {
+        if direction == Direction::Next {
+            index = 0;
+        }
+    } else if direction == Direction::Prev {
+        if index == 0 {
+            index = ranges.len() - 1;
+        } else {
+            index -= 1;
+        }
+    } else if direction == Direction::Next {
+        if index == ranges.len() - 1 {
+            index = 0
+        } else {
+            index += 1;
+        }
+    };
+    index
+}
+
+pub fn active_match_index(
+    ranges: &[Range<Anchor>],
+    cursor: &Anchor,
+    buffer: &MultiBufferSnapshot,
+) -> Option<usize> {
+    if ranges.is_empty() {
+        None
+    } else {
+        match ranges.binary_search_by(|probe| {
+            if probe.end.cmp(cursor, &*buffer).is_lt() {
+                Ordering::Less
+            } else if probe.start.cmp(cursor, &*buffer).is_gt() {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
+            }
+        }) {
+            Ok(i) | Err(i) => Some(cmp::min(i, ranges.len() - 1)),
+        }
     }
 }
 

@@ -4938,6 +4938,14 @@ impl Clone for AnyViewHandle {
     }
 }
 
+impl PartialEq for AnyViewHandle {
+    fn eq(&self, other: &Self) -> bool {
+        self.window_id == other.window_id
+            && self.view_id == other.view_id
+            && self.view_type == other.view_type
+    }
+}
+
 impl From<&AnyViewHandle> for AnyViewHandle {
     fn from(handle: &AnyViewHandle) -> Self {
         handle.clone()
@@ -5163,6 +5171,7 @@ impl<T> Hash for WeakViewHandle<T> {
     }
 }
 
+#[derive(Eq, PartialEq, Hash)]
 pub struct AnyWeakViewHandle {
     window_id: usize,
     view_id: usize,
