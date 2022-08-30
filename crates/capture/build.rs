@@ -20,8 +20,10 @@ fn main() {
     let bindings = bindgen::Builder::default()
         .header("src/bindings.h")
         .clang_arg(format!("-isysroot{}", sdk_path))
+        .clang_arg("-xobjective-c")
         .allowlist_function("CMTimeMake")
         .allowlist_type("CMSampleBufferRef")
+        .allowlist_type("SCStreamOutputType")
         .allowlist_var("_dispatch_main_q")
         .allowlist_function("dispatch_async_f")
         .allowlist_function("dispatch_queue_create")
@@ -35,6 +37,7 @@ fn main() {
         .write_to_file(out_path.join("bindings.rs"))
         .expect("couldn't write dispatch bindings");
 
+    println!("cargo:rerun-if-changed=src/dummy.m");
     cc::Build::new()
         .file("src/dummy.m")
         .flag("-mmacosx-version-min=12.3")

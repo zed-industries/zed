@@ -1,6 +1,6 @@
 mod bindings;
 
-use std::{slice, str};
+use std::{slice, str, ptr::{self}};
 
 use block::ConcreteBlock;
 use cocoa::{
@@ -12,7 +12,7 @@ use log::LevelFilter;
 use objc::{class, msg_send, sel, sel_impl, declare::ClassDecl, runtime::{Protocol, Object, Sel}};
 use simplelog::SimpleLogger;
 
-use crate::bindings::dispatch_get_main_queue;
+use crate::bindings::{dispatch_get_main_queue, dispatch_queue_create, NSObject, CMSampleBufferRef};
 
 #[allow(non_upper_case_globals)]
 const NSUTF8StringEncoding: NSUInteger = 4;
@@ -52,17 +52,26 @@ fn main() {
                     let display_id: u32 = msg_send![display, displayID];
                     println!("display id {:?}", display_id);
                     
-                    let mut decl = ClassDecl::new("CaptureOutput", class!(NSObject)).unwrap();
-                    decl.add_protocol(Protocol::get("SCStreamOutput").unwrap());
-                    decl.add_method(sel!(stream:didOutputSampleBuffer:ofType:), sample_output as extern "C" fn(&Object, Sel, id, id, NSInteger));
-                    let capture_output_class = decl.register();
+                    // let mut decl = ClassDecl::new("CaptureOutput", class!(NSObject)).unwrap();
+                    // decl.add_protocol(Protocol::get("SCStreamOutput").unwrap());
+                    // decl.add_protocol(Protocol::get("SCStreamDelegate").unwrap());
+                    // decl.add_method(sel!(stream:didOutputSampleBuffer:ofType:), sample_output as extern "C" fn(&Object, Sel, id, id, NSInteger));
+                    // decl.add_method(sel!(stream:didStopWithError:), did_stop_with_error as extern "C" fn(&Object, Sel, id, id));
+                    // let capture_output_class = decl.register();
                     
-                    let output: id = msg_send![capture_output_class, alloc];
+                    // let output: id = msg_send![capture_output_class, alloc];
+                    // let output: id = msg_send![output, init];
+                    
+                    let output: id = msg_send![class!(MyClass), alloc];
                     let output: id = msg_send![output, init];
                     
+                    // Do we conform to the protocol?
                     let conforms: bool = msg_send![output, conformsToProtocol: Protocol::get("SCStreamOutput").unwrap()];
                     dbg!(conforms);
                     assert!(conforms, "expect CaptureOutput instance to conform to SCStreamOutput protocol");
+                    
+                    // Confirm we can send the protocol message to the object
+                    let _: () = msg_send![output, stream:NSObject(ptr::null_mut()) didOutputSampleBuffer:NSObject(ptr::null_mut()) ofType:0];
                     
                     let excluded_windows: id = msg_send![class!(NSArray), array];
                     let filter: id = msg_send![class!(SCContentFilter), alloc];
@@ -76,11 +85,15 @@ fn main() {
                     let _: () = msg_send![config, setQueueDepth: 5];
                     
                     let stream: id = msg_send![class!(SCStream), alloc];
-                    let stream: id = msg_send![stream, initWithFilter: filter configuration: config delegate: nil];
+                    let stream: id = msg_send![stream, initWithFilter: filter configuration: config delegate: output];
                     let error: id = nil;
-                    // let queue = dispatch_queue_create(ptr::null(), ptr::null_mut());
+                    let queue = dispatch_queue_create(ptr::null(), NSObject(ptr::null_mut()));
                     
-                    let _: () = msg_send![stream, addStreamOutput: output type: 0 sampleHandlerQueue: dispatch_get_main_queue() error: &error];
+                    let _: () = msg_send![stream,
+                        addStreamOutput: output type: bindings::SCStreamOutputType_SCStreamOutputTypeScreen
+                        sampleHandlerQueue: queue
+                        error: &error
+                    ];
                     
                     let start_capture_completion = ConcreteBlock::new(move |error: id| {
                         if !error.is_null() {
@@ -130,8 +143,12 @@ pub unsafe fn string_from_objc(string: id) -> String {
         .to_string()
 }
 
+extern "C" fn did_stop_with_error(this: &Object, _: Sel, stream: id, error: id) {
+    println!("did_stop_with_error");
+}
+
 extern "C" fn sample_output(this: &Object, _: Sel, stream: id, buffer: id, kind: NSInteger) {
-    println!("sample_output");
+    println!("sample output");
 }
 
 fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
