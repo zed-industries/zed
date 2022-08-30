@@ -478,6 +478,15 @@ impl Item for Editor {
         })
     }
 
+    fn update_git(
+        &mut self,
+        _project: ModelHandle<Project>,
+        _cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        println!("Editor::update_git");
+        Task::ready(Ok(()))
+    }
+
     fn to_item_events(event: &Self::Event) -> Vec<workspace::ItemEvent> {
         let mut result = Vec::new();
         match event {
