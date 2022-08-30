@@ -14,7 +14,7 @@ use objc::{
     class,
     declare::ClassDecl,
     msg_send,
-    runtime::{Object, Protocol, Sel},
+    runtime::{Object, Sel},
     sel, sel_impl,
 };
 use simplelog::SimpleLogger;
@@ -55,7 +55,6 @@ fn main() {
                 let display_height: usize = msg_send![display, height];
 
                 let mut decl = ClassDecl::new("CaptureOutput", class!(NSObject)).unwrap();
-                decl.add_protocol(Protocol::get("SCStreamOutput").unwrap());
                 decl.add_method(sel!(stream:didOutputSampleBuffer:ofType:), sample_output as extern "C" fn(&Object, Sel, id, id, SCStreamOutputType));
                 let capture_output_class = decl.register();
 
