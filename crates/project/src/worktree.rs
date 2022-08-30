@@ -807,15 +807,10 @@ impl LocalWorktree {
             next_entry_id = snapshot.next_entry_id.clone();
         }
         cx.spawn_weak(|this, mut cx| async move {
-            let mut entry = Entry::new(
-                path.clone(),
-                &fs.metadata(&abs_path)
-                    .await?
-                    .ok_or_else(|| anyhow!("could not read saved file metadata"))?,
-                &next_entry_id,
-                root_char_bag,
-            );
-
+            let metadata = fs
+                .metadata(&abs_path)
+                .await?
+                .ok_or_else(|| anyhow!("could not read saved file metadata"))?;
             let this = this
                 .upgrade(&cx)
                 .ok_or_else(|| anyhow!("worktree was dropped"))?;
@@ -824,6 +819,7 @@ impl LocalWorktree {
                 let inserted_entry;
                 {
                     let mut snapshot = this.background_snapshot.lock();
+                    let mut entry = Entry::new(path, &metadata, &next_entry_id, root_char_bag);
                     entry.is_ignored = snapshot
                         .ignore_stack_for_abs_path(&abs_path, entry.is_dir())
                         .is_abs_path_ignored(&abs_path, entry.is_dir());
@@ -1354,6 +1350,15 @@ impl LocalSnapshot {
         }
 
         self.reuse_entry_id(&mut entry);
+
+        if entry.kind == EntryKind::PendingDir {
+            if let Some(existing_entry) =
+                self.entries_by_path.get(&PathKey(entry.path.clone()), &())
+            {
+                entry.kind = existing_entry.kind;
+            }
+        }
+
         self.entries_by_path.insert_or_replace(entry.clone(), &());
         let scan_id = self.scan_id;
         let removed_entry = self.entries_by_id.insert_or_replace(
@@ -3054,6 +3059,49 @@ mod tests {
             let ignored = tree.entry_for_path("ignored-dir/file.txt").unwrap();
             assert!(!tracked.is_ignored);
             assert!(ignored.is_ignored);
+        });
+    }
+
+    #[gpui::test(iterations = 30)]
+    async fn test_create_directory(cx: &mut TestAppContext) {
+        let http_client = FakeHttpClient::with_404_response();
+        let client = Client::new(http_client.clone());
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/a",
+            json!({
+                "b": {},
+                "c": {},
+                "d": {},
+            }),
+        )
+        .await;
+
+        let tree = Worktree::local(
+            client,
+            "/a".as_ref(),
+            true,
+            fs,
+            Default::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+
+        let entry = tree
+            .update(cx, |tree, cx| {
+                tree.as_local_mut()
+                    .unwrap()
+                    .create_entry("a/e".as_ref(), true, cx)
+            })
+            .await
+            .unwrap();
+        assert!(entry.is_dir());
+
+        cx.foreground().run_until_parked();
+        tree.read_with(cx, |tree, _| {
+            assert_eq!(tree.entry_for_path("a/e").unwrap().kind, EntryKind::Dir);
         });
     }
 
