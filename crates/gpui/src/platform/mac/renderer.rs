@@ -773,6 +773,79 @@ impl Renderer {
         }
     }
 
+    fn render_surfaces(
+        &mut self,
+        surfaces: &[Surface],
+        scale_factor: f32,
+        offset: &mut usize,
+        drawable_size: Vector2F,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) {
+        if surfaces.is_empty() {
+            return;
+        }
+
+        for surface in surfaces {
+            let origin = surface.bounds.origin() * scale_factor;
+            let target_size = surface.bounds.size() * scale_factor;
+            // let corner_radius = surface.corner_radius * scale_factor;
+            // let border_width = surface.border.width * scale_factor;
+            // let (alloc_id, atlas_bounds) = self.image_cache.render(&surface.native_surface);
+        }
+
+        // command_encoder.set_render_pipeline_state(&self.image_pipeline_state);
+        // command_encoder.set_vertex_buffer(
+        //     shaders::GPUIImageVertexInputIndex_GPUIImageVertexInputIndexVertices as u64,
+        //     Some(&self.unit_vertices),
+        //     0,
+        // );
+        // command_encoder.set_vertex_bytes(
+        //     shaders::GPUIImageVertexInputIndex_GPUIImageVertexInputIndexViewportSize as u64,
+        //     mem::size_of::<shaders::vector_float2>() as u64,
+        //     [drawable_size.to_float2()].as_ptr() as *const c_void,
+        // );
+
+        // for (atlas_id, images) in images_by_atlas {
+        //     align_offset(offset);
+        //     let next_offset = *offset + images.len() * mem::size_of::<shaders::GPUIImage>();
+        //     assert!(
+        //         next_offset <= INSTANCE_BUFFER_SIZE,
+        //         "instance buffer exhausted"
+        //     );
+
+        //     let texture = self.image_cache.atlas_texture(atlas_id).unwrap();
+        //     command_encoder.set_vertex_buffer(
+        //         shaders::GPUIImageVertexInputIndex_GPUIImageVertexInputIndexImages as u64,
+        //         Some(&self.instances),
+        //         *offset as u64,
+        //     );
+        //     command_encoder.set_vertex_bytes(
+        //         shaders::GPUIImageVertexInputIndex_GPUIImageVertexInputIndexAtlasSize as u64,
+        //         mem::size_of::<shaders::vector_float2>() as u64,
+        //         [vec2i(texture.width() as i32, texture.height() as i32).to_float2()].as_ptr()
+        //             as *const c_void,
+        //     );
+        //     command_encoder.set_fragment_texture(
+        //         shaders::GPUIImageFragmentInputIndex_GPUIImageFragmentInputIndexAtlas as u64,
+        //         Some(texture),
+        //     );
+
+        //     unsafe {
+        //         let buffer_contents =
+        //             (self.instances.contents() as *mut u8).add(*offset) as *mut shaders::GPUIImage;
+        //         std::ptr::copy_nonoverlapping(images.as_ptr(), buffer_contents, images.len());
+        //     }
+
+        //     command_encoder.draw_primitives_instanced(
+        //         metal::MTLPrimitiveType::Triangle,
+        //         0,
+        //         6,
+        //         images.len() as u64,
+        //     );
+        //     *offset = next_offset;
+        // }
+    }
+
     fn render_path_sprites(
         &mut self,
         layer_id: usize,
