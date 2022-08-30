@@ -63,7 +63,24 @@ fn main() {
                 let output: id = msg_send![capture_output_class, alloc];
                 let output: id = msg_send![output, init];
                 let callback = Box::new(|buffer: CMSampleBufferRef| {
-                    dbg!("HEY!");
+                    let buffer = CMSampleBuffer::wrap_under_get_rule(buffer);
+                    let attachments = buffer.attachments();
+                    let attachments = attachments.first().expect("no attachments for sample");
+                    let string = bindings::SCStreamFrameInfoStatus.0 as CFStringRef;
+                    let status = core_foundation::number::CFNumber::wrap_under_get_rule(
+                        *attachments.get(string) as CFNumberRef,
+                    )
+                    .to_i64()
+                    .expect("invalid frame info status");
+
+                    if status != bindings::SCFrameStatus_SCFrameStatusComplete {
+                        println!("received incomplete frame");
+                        return;
+                    }
+
+                    let image_buffer = buffer.image_buffer();
+                    dbg!(image_buffer.width(), image_buffer.height());
+                    let io_surface = image_buffer.io_surface();
                 }) as Box<dyn FnMut(CMSampleBufferRef)>;
                 let callback = Box::into_raw(Box::new(callback));
                 (*output).set_ivar("callback", callback as *mut c_void);
@@ -159,32 +176,11 @@ extern "C" fn sample_output(
     buffer: id,
     _kind: SCStreamOutputType,
 ) {
-    let buffer = unsafe { CMSampleBuffer::wrap_under_get_rule(buffer as CMSampleBufferRef) };
-    let callback = unsafe { *this.get_ivar::<*mut c_void>("callback") };
-    let callback = callback as *mut Box<dyn FnMut(CMSampleBufferRef)>;
-    let x = unsafe { callback.as_mut().unwrap() };
-    (*x)(buffer.as_concrete_TypeRef());
-
-    let attachments = buffer.attachments();
-    let attachments = attachments.first().expect("no attachments for sample");
-
     unsafe {
-        let string = bindings::SCStreamFrameInfoStatus.0 as CFStringRef;
-        let status = core_foundation::number::CFNumber::wrap_under_get_rule(
-            *attachments.get(string) as CFNumberRef,
-        )
-        .to_i64()
-        .expect("invalid frame info status");
-
-        if status != bindings::SCFrameStatus_SCFrameStatusComplete {
-            println!("received incomplete frame");
-            return;
-        }
+        let callback = *this.get_ivar::<*mut c_void>("callback");
+        let callback = &mut *(callback as *mut Box<dyn FnMut(CMSampleBufferRef)>);
+        (*callback)(buffer as CMSampleBufferRef);
     }
-
-    let image_buffer = buffer.image_buffer();
-    dbg!(image_buffer.width(), image_buffer.height());
-    let io_surface = image_buffer.io_surface();
 }
 
 fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
