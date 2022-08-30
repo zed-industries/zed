@@ -1,6 +1,6 @@
 (type_identifier) @type
 (primitive_type) @type.builtin
-
+(self) @variable.builtin
 (field_identifier) @property
 
 (call_expression
@@ -14,6 +14,16 @@
 
 (function_item name: (identifier) @function.definition)
 (function_signature_item name: (identifier) @function.definition)
+
+(macro_invocation
+  macro: [
+    (identifier) @function.special
+    (scoped_identifier
+      name: (identifier) @function.special)
+  ])
+
+(macro_definition
+  name: (identifier) @function.special.definition)
 
 ; Identifier conventions
 
@@ -71,6 +81,7 @@
   "mod"
   "move"
   "pub"
+  "ref"
   "return"
   "static"
   "struct"
@@ -90,6 +101,13 @@
   (raw_string_literal)
   (char_literal)
 ] @string
+
+[
+  (integer_literal)
+  (float_literal)
+] @number
+
+(boolean_literal) @constant
 
 [
   (line_comment)

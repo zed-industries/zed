@@ -168,6 +168,8 @@ impl<T: Item> SumTree<T> {
         Cursor::new(self)
     }
 
+    /// Note: If the summary type requires a non `()` context, then the filter cursor
+    /// that is returned cannot be used with Rust's iterators.
     pub fn filter<'a, F, U>(&'a self, filter_node: F) -> FilterCursor<F, T, U>
     where
         F: FnMut(&T::Summary) -> bool,

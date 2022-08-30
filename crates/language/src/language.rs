@@ -3,6 +3,7 @@ mod diagnostic_set;
 mod highlight_map;
 mod outline;
 pub mod proto;
+mod syntax_map;
 #[cfg(test)]
 mod tests;
 
@@ -29,8 +30,12 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     str,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc,
+    },
 };
+use syntax_map::SyntaxSnapshot;
 use theme::{SyntaxTheme, Theme};
 use tree_sitter::{self, Query};
 use util::ResultExt;
@@ -49,6 +54,7 @@ thread_local! {
 }
 
 lazy_static! {
+    pub static ref NEXT_GRAMMAR_ID: AtomicUsize = Default::default();
     pub static ref PLAIN_TEXT: Arc<Language> = Arc::new(Language::new(
         LanguageConfig {
             name: "Plain Text".into(),
@@ -285,12 +291,40 @@ pub struct Language {
 }
 
 pub struct Grammar {
+    id: usize,
     pub(crate) ts_language: tree_sitter::Language,
     pub(crate) highlights_query: Option<Query>,
-    pub(crate) brackets_query: Option<Query>,
-    pub(crate) indents_query: Option<Query>,
-    pub(crate) outline_query: Option<Query>,
+    pub(crate) brackets_config: Option<BracketConfig>,
+    pub(crate) indents_config: Option<IndentConfig>,
+    pub(crate) outline_config: Option<OutlineConfig>,
+    pub(crate) injection_config: Option<InjectionConfig>,
     pub(crate) highlight_map: Mutex<HighlightMap>,
+}
+
+struct IndentConfig {
+    query: Query,
+    indent_capture_ix: u32,
+    end_capture_ix: Option<u32>,
+}
+
+struct OutlineConfig {
+    query: Query,
+    item_capture_ix: u32,
+    name_capture_ix: u32,
+    context_capture_ix: Option<u32>,
+}
+
+struct InjectionConfig {
+    query: Query,
+    content_capture_ix: u32,
+    language_capture_ix: Option<u32>,
+    languages_by_pattern_ix: Vec<Option<Box<str>>>,
+}
+
+struct BracketConfig {
+    query: Query,
+    open_capture_ix: u32,
+    close_capture_ix: u32,
 }
 
 #[derive(Clone)]
@@ -490,6 +524,13 @@ impl LanguageRegistry {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl Default for LanguageRegistry {
+    fn default() -> Self {
+        Self::test()
+    }
+}
+
 async fn get_server_binary_path(
     adapter: Arc<CachedLspAdapter>,
     language: Arc<Language>,
@@ -567,10 +608,12 @@ impl Language {
             config,
             grammar: ts_language.map(|ts_language| {
                 Arc::new(Grammar {
+                    id: NEXT_GRAMMAR_ID.fetch_add(1, SeqCst),
                     highlights_query: None,
-                    brackets_query: None,
-                    indents_query: None,
-                    outline_query: None,
+                    brackets_config: None,
+                    outline_config: None,
+                    indents_config: None,
+                    injection_config: None,
                     ts_language,
                     highlight_map: Default::default(),
                 })
@@ -594,19 +637,104 @@ impl Language {
 
     pub fn with_brackets_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
-        grammar.brackets_query = Some(Query::new(grammar.ts_language, source)?);
+        let query = Query::new(grammar.ts_language, source)?;
+        let mut open_capture_ix = None;
+        let mut close_capture_ix = None;
+        get_capture_indices(
+            &query,
+            &mut [
+                ("open", &mut open_capture_ix),
+                ("close", &mut close_capture_ix),
+            ],
+        );
+        if let Some((open_capture_ix, close_capture_ix)) = open_capture_ix.zip(close_capture_ix) {
+            grammar.brackets_config = Some(BracketConfig {
+                query,
+                open_capture_ix,
+                close_capture_ix,
+            });
+        }
         Ok(self)
     }
 
     pub fn with_indents_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
-        grammar.indents_query = Some(Query::new(grammar.ts_language, source)?);
+        let query = Query::new(grammar.ts_language, source)?;
+        let mut indent_capture_ix = None;
+        let mut end_capture_ix = None;
+        get_capture_indices(
+            &query,
+            &mut [
+                ("indent", &mut indent_capture_ix),
+                ("end", &mut end_capture_ix),
+            ],
+        );
+        if let Some(indent_capture_ix) = indent_capture_ix {
+            grammar.indents_config = Some(IndentConfig {
+                query,
+                indent_capture_ix,
+                end_capture_ix,
+            });
+        }
         Ok(self)
     }
 
     pub fn with_outline_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut();
-        grammar.outline_query = Some(Query::new(grammar.ts_language, source)?);
+        let query = Query::new(grammar.ts_language, source)?;
+        let mut item_capture_ix = None;
+        let mut name_capture_ix = None;
+        let mut context_capture_ix = None;
+        get_capture_indices(
+            &query,
+            &mut [
+                ("item", &mut item_capture_ix),
+                ("name", &mut name_capture_ix),
+                ("context", &mut context_capture_ix),
+            ],
+        );
+        if let Some((item_capture_ix, name_capture_ix)) = item_capture_ix.zip(name_capture_ix) {
+            grammar.outline_config = Some(OutlineConfig {
+                query,
+                item_capture_ix,
+                name_capture_ix,
+                context_capture_ix,
+            });
+        }
+        Ok(self)
+    }
+
+    pub fn with_injection_query(mut self, source: &str) -> Result<Self> {
+        let grammar = self.grammar_mut();
+        let query = Query::new(grammar.ts_language, source)?;
+        let mut language_capture_ix = None;
+        let mut content_capture_ix = None;
+        get_capture_indices(
+            &query,
+            &mut [
+                ("language", &mut language_capture_ix),
+                ("content", &mut content_capture_ix),
+            ],
+        );
+        let languages_by_pattern_ix = (0..query.pattern_count())
+            .map(|ix| {
+                query.property_settings(ix).iter().find_map(|setting| {
+                    if setting.key.as_ref() == "language" {
+                        return setting.value.clone();
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+        if let Some(content_capture_ix) = content_capture_ix {
+            grammar.injection_config = Some(InjectionConfig {
+                query,
+                language_capture_ix,
+                content_capture_ix,
+                languages_by_pattern_ix,
+            });
+        }
         Ok(self)
     }
 
@@ -685,9 +813,16 @@ impl Language {
         let mut result = Vec::new();
         if let Some(grammar) = &self.grammar {
             let tree = grammar.parse_text(text, None);
+            let captures = SyntaxSnapshot::single_tree_captures(
+                range.clone(),
+                text,
+                &tree,
+                grammar,
+                |grammar| grammar.highlights_query.as_ref(),
+            );
+            let highlight_maps = vec![grammar.highlight_map()];
             let mut offset = 0;
-            for chunk in BufferChunks::new(text, range, Some(&tree), self.grammar.as_ref(), vec![])
-            {
+            for chunk in BufferChunks::new(text, range, Some((captures, highlight_maps)), vec![]) {
                 let end_offset = offset + chunk.text.len();
                 if let Some(highlight_id) = chunk.syntax_highlight_id {
                     if !highlight_id.is_default() {
@@ -727,6 +862,10 @@ impl Language {
 }
 
 impl Grammar {
+    pub fn id(&self) -> usize {
+        self.id
+    }
+
     fn parse_text(&self, text: &Rope, old_tree: Option<Tree>) -> Tree {
         PARSER.with(|parser| {
             let mut parser = parser.borrow_mut();
@@ -823,6 +962,17 @@ impl LspAdapter for Arc<FakeLspAdapter> {
 
     async fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
         self.disk_based_diagnostics_progress_token.clone()
+    }
+}
+
+fn get_capture_indices(query: &Query, captures: &mut [(&str, &mut Option<u32>)]) {
+    for (ix, name) in query.capture_names().iter().enumerate() {
+        for (capture_name, index) in captures.iter_mut() {
+            if capture_name == name {
+                **index = Some(ix as u32);
+                break;
+            }
+        }
     }
 }
 

@@ -1,3 +1,5 @@
+(identifier) @variable
+
 (call_expression
   function: (qualified_identifier
     name: (identifier) @function))
@@ -33,8 +35,6 @@
 
 (auto) @type
 (type_identifier) @type
-
-(identifier) @variable
 
 ((identifier) @constant
  (#match? @constant "^[A-Z][A-Z\\d_]*$"))
