@@ -47,6 +47,7 @@ pub use lsp::DiagnosticSeverity;
 
 pub struct Buffer {
     text: TextBuffer,
+    head_text: Option<String>,
     file: Option<Arc<dyn File>>,
     saved_version: clock::Global,
     saved_version_fingerprint: String,
@@ -328,17 +329,20 @@ impl Buffer {
         Self::build(
             TextBuffer::new(replica_id, cx.model_id() as u64, base_text.into()),
             None,
+            None,
         )
     }
 
     pub fn from_file<T: Into<String>>(
         replica_id: ReplicaId,
         base_text: T,
+        head_text: Option<T>,
         file: Arc<dyn File>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         Self::build(
             TextBuffer::new(replica_id, cx.model_id() as u64, base_text.into()),
+            head_text.map(|h| h.into()),
             Some(file),
         )
     }
@@ -349,7 +353,7 @@ impl Buffer {
         file: Option<Arc<dyn File>>,
     ) -> Result<Self> {
         let buffer = TextBuffer::new(replica_id, message.id, message.base_text);
-        let mut this = Self::build(buffer, file);
+        let mut this = Self::build(buffer, message.head_text, file);
         this.text.set_line_ending(proto::deserialize_line_ending(
             proto::LineEnding::from_i32(message.line_ending)
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
@@ -362,6 +366,7 @@ impl Buffer {
             id: self.remote_id(),
             file: self.file.as_ref().map(|f| f.to_proto()),
             base_text: self.base_text().to_string(),
+            head_text: self.head_text.clone(),
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
         }
     }
@@ -404,7 +409,7 @@ impl Buffer {
         self
     }
 
-    fn build(buffer: TextBuffer, file: Option<Arc<dyn File>>) -> Self {
+    fn build(buffer: TextBuffer, head_text: Option<String>, file: Option<Arc<dyn File>>) -> Self {
         let saved_mtime = if let Some(file) = file.as_ref() {
             file.mtime()
         } else {
@@ -418,6 +423,7 @@ impl Buffer {
             transaction_depth: 0,
             was_dirty_before_starting_transaction: None,
             text: buffer,
+            head_text,
             file,
             syntax_map: Mutex::new(SyntaxMap::new()),
             parsing_in_background: false,

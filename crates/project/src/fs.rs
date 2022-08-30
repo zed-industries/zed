@@ -1,9 +1,11 @@
 use anyhow::{anyhow, Result};
 use fsevent::EventStream;
 use futures::{future::BoxFuture, Stream, StreamExt};
+use git2::{Repository, RepositoryOpenFlags};
 use language::LineEnding;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::{
+    ffi::OsStr,
     io,
     os::unix::fs::MetadataExt,
     path::{Component, Path, PathBuf},
@@ -29,6 +31,7 @@ pub trait Fs: Send + Sync {
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>>;
     async fn load(&self, path: &Path) -> Result<String>;
+    async fn load_head_text(&self, path: &Path) -> Option<String>;
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
     async fn is_file(&self, path: &Path) -> bool;
@@ -159,6 +162,38 @@ impl Fs for RealFs {
         let mut text = String::new();
         file.read_to_string(&mut text).await?;
         Ok(text)
+    }
+
+    async fn load_head_text(&self, path: &Path) -> Option<String> {
+        fn logic(path: &Path) -> Result<Option<String>> {
+            let repo = Repository::open_ext(path, RepositoryOpenFlags::empty(), &[OsStr::new("")])?;
+            assert!(repo.path().ends_with(".git"));
+            let repo_root_path = match repo.path().parent() {
+                Some(root) => root,
+                None => return Ok(None),
+            };
+
+            let relative_path = path.strip_prefix(repo_root_path)?;
+            let object = repo
+                .head()?
+                .peel_to_tree()?
+                .get_path(relative_path)?
+                .to_object(&repo)?;
+
+            let content = match object.as_blob() {
+                Some(blob) => blob.content().to_owned(),
+                None => return Ok(None),
+            };
+
+            let head_text = String::from_utf8(content.to_owned())?;
+            Ok(Some(head_text))
+        }
+
+        match logic(path) {
+            Ok(value) => return value,
+            Err(err) => log::error!("Error loading head text: {:?}", err),
+        }
+        None
     }
 
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
@@ -746,6 +781,10 @@ impl Fs for FakeFs {
         let entry = state.read_path(&path).await?;
         let entry = entry.lock().await;
         entry.file_content(&path).cloned()
+    }
+
+    async fn load_head_text(&self, _: &Path) -> Option<String> {
+        None
     }
 
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
