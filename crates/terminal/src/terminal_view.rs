@@ -40,6 +40,7 @@ actions!(
         Copy,
         Paste,
         ShowCharacterPalette,
+        SearchTest
     ]
 );
 impl_internal_actions!(project_panel, [DeployContextMenu]);
@@ -57,6 +58,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(TerminalView::paste);
     cx.add_action(TerminalView::clear);
     cx.add_action(TerminalView::show_character_palette);
+
+    cx.add_action(TerminalView::test_search);
 }
 
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
@@ -157,6 +160,14 @@ impl TerminalView {
                 term.try_keystroke(&Keystroke::parse("ctrl-cmd-space").unwrap())
             });
         }
+    }
+
+    fn test_search(&mut self, _: &SearchTest, cx: &mut ViewContext<Self>) {
+        let search_string = "ttys";
+        self.terminal.update(cx, |term, _| {
+            term.search(search_string);
+        });
+        cx.notify();
     }
 
     fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {

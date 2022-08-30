@@ -9,11 +9,11 @@ use alacritty_terminal::{
     config::{Config, Program, PtyConfig, Scrolling},
     event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
     event_loop::{EventLoop, Msg, Notifier},
-    grid::{Dimensions, Scroll},
+    grid::{Dimensions, Scroll as AlacScroll},
     index::{Direction, Point},
     selection::{Selection, SelectionType},
     sync::FairMutex,
-    term::{RenderableContent, TermMode},
+    term::{search::RegexSearch, RenderableContent, TermMode},
     tty::{self, setup_env},
     Term,
 };
@@ -62,7 +62,9 @@ pub fn init(cx: &mut MutableAppContext) {
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
 ///Implement scroll bars.
-pub const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
+const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
+// const ALACRITTY_SEARCH_LINE_LIMIT: usize = 1000;
+const SEARCH_FORWARD: Direction = Direction::Left;
 
 const DEBUG_TERMINAL_WIDTH: f32 = 500.;
 const DEBUG_TERMINAL_HEIGHT: f32 = 30.;
@@ -77,6 +79,12 @@ pub enum Event {
     Bell,
     Wakeup,
     BlinkChanged,
+}
+
+#[derive(Clone, Debug)]
+enum Scroll {
+    AlacScroll(AlacScroll),
+    ToNextSearch,
 }
 
 #[derive(Clone, Debug)]
@@ -370,7 +378,8 @@ impl TerminalBuilder {
             cur_size: initial_size,
             last_mouse: None,
             last_offset: 0,
-            current_selection: false,
+            has_selection: false,
+            searcher: None,
         };
 
         Ok(TerminalBuilder {
@@ -442,7 +451,8 @@ pub struct Terminal {
     last_mode: TermMode,
     last_offset: usize,
     last_mouse: Option<(Point, Direction)>,
-    current_selection: bool,
+    has_selection: bool,
+    searcher: Option<(Option<RegexSearch>, Point)>,
 }
 
 impl Terminal {
@@ -516,8 +526,19 @@ impl Terminal {
                 self.write_to_pty("\x0c".to_string());
                 term.clear_screen(ClearMode::Saved);
             }
-            InternalEvent::Scroll(scroll) => {
+            InternalEvent::Scroll(Scroll::AlacScroll(scroll)) => {
                 term.scroll_display(*scroll);
+            }
+            InternalEvent::Scroll(Scroll::ToNextSearch) => {
+                if let Some((Some(searcher), origin)) = &self.searcher {
+                    match term.search_next(searcher, *origin, SEARCH_FORWARD, Direction::Left, None)
+                    {
+                        Some(regex_match) => {
+                            //Jump to spot
+                        }
+                        None => { /*reset state*/ }
+                    }
+                }
             }
             InternalEvent::SetSelection(sel) => term.selection = sel.clone(),
             InternalEvent::UpdateSelection(position) => {
@@ -539,7 +560,7 @@ impl Terminal {
     }
 
     fn begin_select(&mut self, sel: Selection) {
-        self.current_selection = true;
+        self.has_selection = true;
         self.events
             .push_back(InternalEvent::SetSelection(Some(sel)));
     }
@@ -550,12 +571,45 @@ impl Terminal {
     }
 
     fn end_select(&mut self) {
-        self.current_selection = false;
+        self.has_selection = false;
         self.events.push_back(InternalEvent::SetSelection(None));
     }
 
-    fn scroll(&mut self, scroll: Scroll) {
-        self.events.push_back(InternalEvent::Scroll(scroll));
+    fn scroll(&mut self, scroll: AlacScroll) {
+        self.events
+            .push_back(InternalEvent::Scroll(Scroll::AlacScroll(scroll)));
+    }
+
+    fn scroll_to_next_search(&mut self) {
+        self.events
+            .push_back(InternalEvent::Scroll(Scroll::ToNextSearch));
+    }
+
+    pub fn search(&mut self, search: &str) {
+        let new_searcher = RegexSearch::new(search).ok();
+        self.searcher = match (new_searcher, &self.searcher) {
+            //Existing search, carry over origin
+            (Some(new_searcher), Some((_, origin))) => Some((Some(new_searcher), *origin)),
+            //No existing search, start a new one
+            (Some(new_searcher), None) => Some((Some(new_searcher), self.viewport_origin())),
+            //Error creating a new search, carry over origin
+            (None, Some((_, origin))) => Some((None, *origin)),
+            //Nothing to do :(
+            (None, None) => None,
+        };
+
+        if let Some((Some(_), _)) = self.searcher {
+            self.scroll_to_next_search();
+        }
+    }
+
+    fn viewport_origin(&mut self) -> Point {
+        let viewport_top = alacritty_terminal::index::Line(-(self.last_offset as i32)) - 1;
+        Point::new(viewport_top, alacritty_terminal::index::Column(0))
+    }
+
+    pub fn end_search(&mut self) {
+        self.searcher = None;
     }
 
     pub fn copy(&mut self) {
@@ -577,7 +631,7 @@ impl Terminal {
     }
 
     pub fn input(&mut self, input: String) {
-        self.scroll(Scroll::Bottom);
+        self.scroll(AlacScroll::Bottom);
         self.end_select();
         self.write_to_pty(input);
     }
@@ -617,6 +671,9 @@ impl Terminal {
         self.last_mode = *term.mode();
 
         let content = term.renderable_content();
+
+        // term.line_search_right(point)
+        // term.search_next(dfas, origin, direction, side, max_lines)
 
         self.last_offset = content.display_offset;
 
@@ -681,23 +738,30 @@ impl Terminal {
 
             // Doesn't make sense to scroll the alt screen
             if !self.last_mode.contains(TermMode::ALT_SCREEN) {
-                //TODO: Why do these need to be doubled?
-                let top = e.region.origin_y() + (self.cur_size.line_height * 2.);
-                let bottom = e.region.lower_left().y() - (self.cur_size.line_height * 2.);
-
-                let scroll_delta = if e.position.y() < top {
-                    (top - e.position.y()).powf(1.1)
-                } else if e.position.y() > bottom {
-                    -((e.position.y() - bottom).powf(1.1))
-                } else {
-                    return; //Nothing to do
+                let scroll_delta = match self.drag_line_delta(e) {
+                    Some(value) => value,
+                    None => return,
                 };
 
                 let scroll_lines = (scroll_delta / self.cur_size.line_height) as i32;
-                self.scroll(Scroll::Delta(scroll_lines));
+                self.scroll(AlacScroll::Delta(scroll_lines));
                 self.continue_selection(position)
             }
         }
+    }
+
+    fn drag_line_delta(&mut self, e: DragRegionEvent) -> Option<f32> {
+        //TODO: Why do these need to be doubled? Probably the same problem that the IME has
+        let top = e.region.origin_y() + (self.cur_size.line_height * 2.);
+        let bottom = e.region.lower_left().y() - (self.cur_size.line_height * 2.);
+        let scroll_delta = if e.position.y() < top {
+            (top - e.position.y()).powf(1.1)
+        } else if e.position.y() > bottom {
+            -((e.position.y() - bottom).powf(1.1))
+        } else {
+            return None; //Nothing to do
+        };
+        Some(scroll_delta)
     }
 
     pub fn mouse_down(&mut self, e: &DownRegionEvent, origin: Vector2F) {
@@ -751,6 +815,7 @@ impl Terminal {
             // so let's do that here
             self.copy();
         }
+        self.last_mouse = None;
     }
 
     ///Scroll the terminal
@@ -782,7 +847,7 @@ impl Terminal {
             let scroll_lines =
                 ((e.delta.y() * ALACRITTY_SCROLL_MULTIPLIER) / self.cur_size.line_height) as i32;
             if scroll_lines != 0 {
-                let scroll = Scroll::Delta(scroll_lines);
+                let scroll = AlacScroll::Delta(scroll_lines);
                 self.scroll(scroll);
             }
         }

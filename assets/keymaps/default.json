@@ -424,7 +424,8 @@
             "ctrl-cmd-space": "terminal::ShowCharacterPalette",
             "cmd-c": "terminal::Copy",
             "cmd-v": "terminal::Paste",
-            "cmd-k": "terminal::Clear"
+            "cmd-k": "terminal::Clear",
+            "cmd-s": "terminal::SearchTest"
         }
     },
     {
