@@ -19,7 +19,6 @@ fn generate_dispatch_bindings() {
         .header("src/platform/mac/dispatch.h")
         .allowlist_var("_dispatch_main_q")
         .allowlist_function("dispatch_async_f")
-        .allowlist_function("dispatch_queue_create")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .layout_tests(false)
         .generate()

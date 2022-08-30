@@ -762,6 +762,7 @@ dependencies = [
  "core-graphics",
  "foreign-types",
  "gpui",
+ "io_surface",
  "log",
  "objc",
  "simplelog",
@@ -2228,6 +2229,7 @@ dependencies = [
  "futures",
  "gpui_macros",
  "image",
+ "io_surface",
  "lazy_static",
  "log",
  "metal",
@@ -2594,6 +2596,15 @@ checksum = "ec58677acfea8a15352d42fc87d11d63596ade9239e0a7c9352914417515dbe6"
 dependencies = [
  "libc",
  "winapi 0.3.9",
+]
+
+[[package]]
+name = "io_surface"
+version = "0.1.0"
+dependencies = [
+ "block",
+ "core-foundation",
+ "objc",
 ]
 
 [[package]]

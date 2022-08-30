@@ -1,6 +1,6 @@
 mod bindings;
 
-use crate::bindings::{dispatch_queue_create, NSObject, SCStreamOutputType};
+use crate::bindings::{dispatch_get_main_queue, SCStreamOutputType};
 use block::ConcreteBlock;
 use cocoa::{
     base::{id, nil, YES},
@@ -8,6 +8,7 @@ use cocoa::{
 };
 use core_foundation::{base::TCFType, number::CFNumberRef, string::CFStringRef};
 use core_media::{CMSampleBuffer, CMSampleBufferRef};
+use gpui::elements::Canvas;
 use gpui::{actions, elements::*, keymap::Binding, Menu, MenuItem};
 use log::LevelFilter;
 use objc::{
@@ -18,7 +19,7 @@ use objc::{
     sel, sel_impl,
 };
 use simplelog::SimpleLogger;
-use std::{ptr, slice, str};
+use std::{ffi::c_void, slice, str};
 
 #[allow(non_upper_case_globals)]
 const NSUTF8StringEncoding: NSUInteger = 4;
@@ -55,11 +56,17 @@ fn main() {
                 let display_height: usize = msg_send![display, height];
 
                 let mut decl = ClassDecl::new("CaptureOutput", class!(NSObject)).unwrap();
+                decl.add_ivar::<*mut c_void>("callback");
                 decl.add_method(sel!(stream:didOutputSampleBuffer:ofType:), sample_output as extern "C" fn(&Object, Sel, id, id, SCStreamOutputType));
                 let capture_output_class = decl.register();
 
                 let output: id = msg_send![capture_output_class, alloc];
                 let output: id = msg_send![output, init];
+                let callback = Box::new(|buffer: CMSampleBufferRef| {
+                    dbg!("HEY!");
+                }) as Box<dyn FnMut(CMSampleBufferRef)>;
+                let callback = Box::into_raw(Box::new(callback));
+                (*output).set_ivar("callback", callback as *mut c_void);
 
                 let filter: id = msg_send![class!(SCContentFilter), alloc];
                 let filter: id = msg_send![filter, initWithDisplay: display includingApplications: applications exceptingWindows: nil];
@@ -75,7 +82,7 @@ fn main() {
                 let stream: id = msg_send![class!(SCStream), alloc];
                 let stream: id = msg_send![stream, initWithFilter: filter configuration: config delegate: output];
                 let error: id = nil;
-                let queue = dispatch_queue_create(ptr::null(), NSObject(ptr::null_mut()));
+                let queue = dispatch_get_main_queue();
 
                 let _: () = msg_send![stream,
                     addStreamOutput: output type: bindings::SCStreamOutputType_SCStreamOutputTypeScreen
@@ -107,11 +114,17 @@ fn main() {
     });
 }
 
-struct ScreenCaptureView;
+struct ScreenCaptureView {
+    surface: io_surface::IOSurface,
+}
 
 impl gpui::Entity for ScreenCaptureView {
     type Event = ();
 }
+
+// impl ScreenCaptureView {
+//     pub fn new() -> Self {}
+// }
 
 impl gpui::View for ScreenCaptureView {
     fn ui_name() -> &'static str {
@@ -119,7 +132,11 @@ impl gpui::View for ScreenCaptureView {
     }
 
     fn render(&mut self, _: &mut gpui::RenderContext<Self>) -> gpui::ElementBox {
-        Empty::new().boxed()
+        Canvas::new(|bounds, _, cx| {
+
+            // cx.scene.push_surface(surface)
+        })
+        .boxed()
     }
 }
 
@@ -136,13 +153,18 @@ pub unsafe fn string_from_objc(string: id) -> String {
 }
 
 extern "C" fn sample_output(
-    _: &Object,
+    this: &Object,
     _: Sel,
     _stream: id,
     buffer: id,
     _kind: SCStreamOutputType,
 ) {
     let buffer = unsafe { CMSampleBuffer::wrap_under_get_rule(buffer as CMSampleBufferRef) };
+    let callback = unsafe { *this.get_ivar::<*mut c_void>("callback") };
+    let callback = callback as *mut Box<dyn FnMut(CMSampleBufferRef)>;
+    let x = unsafe { callback.as_mut().unwrap() };
+    (*x)(buffer.as_concrete_TypeRef());
+
     let attachments = buffer.attachments();
     let attachments = attachments.first().expect("no attachments for sample");
 
@@ -228,11 +250,11 @@ mod core_media {
 mod core_video {
     #![allow(non_snake_case)]
 
-    use crate::io_surface::{IOSurface, IOSurfaceRef};
     use core_foundation::{
         base::{CFTypeID, TCFType},
         declare_TCFType, impl_CFTypeDescription, impl_TCFType,
     };
+    use io_surface::{IOSurface, IOSurfaceRef};
     use std::ffi::c_void;
 
     #[repr(C)]
@@ -267,28 +289,5 @@ mod core_video {
         fn CVPixelBufferGetIOSurface(buffer: CVImageBufferRef) -> IOSurfaceRef;
         fn CVPixelBufferGetWidth(buffer: CVImageBufferRef) -> usize;
         fn CVPixelBufferGetHeight(buffer: CVImageBufferRef) -> usize;
-    }
-}
-
-mod io_surface {
-    #![allow(non_snake_case)]
-
-    use core_foundation::{
-        base::{CFTypeID, TCFType},
-        declare_TCFType, impl_CFTypeDescription, impl_TCFType,
-    };
-    use std::ffi::c_void;
-
-    #[repr(C)]
-    pub struct __IOSurface(c_void);
-    // The ref type must be a pointer to the underlying struct.
-    pub type IOSurfaceRef = *const __IOSurface;
-
-    declare_TCFType!(IOSurface, IOSurfaceRef);
-    impl_TCFType!(IOSurface, IOSurfaceRef, IOSurfaceGetTypeID);
-    impl_CFTypeDescription!(IOSurface);
-
-    extern "C" {
-        fn IOSurfaceGetTypeID() -> CFTypeID;
     }
 }

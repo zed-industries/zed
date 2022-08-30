@@ -39,6 +39,7 @@ struct PathSprite {
 
 pub struct Surface {
     pub bounds: RectF,
+    pub native_surface: io_surface::IOSurface,
 }
 
 impl Renderer {
