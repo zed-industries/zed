@@ -446,10 +446,10 @@ impl LocalWorktree {
     ) -> Task<Result<ModelHandle<Buffer>>> {
         let path = Arc::from(path);
         cx.spawn(move |this, mut cx| async move {
-            let (file, contents) = this
+            let (file, contents, head_text) = this
                 .update(&mut cx, |t, cx| t.as_local().unwrap().load(&path, cx))
                 .await?;
-            Ok(cx.add_model(|cx| Buffer::from_file(0, contents, Arc::new(file), cx)))
+            Ok(cx.add_model(|cx| Buffer::from_file(0, contents, head_text, Arc::new(file), cx)))
         })
     }
 
@@ -558,13 +558,19 @@ impl LocalWorktree {
         }
     }
 
-    fn load(&self, path: &Path, cx: &mut ModelContext<Worktree>) -> Task<Result<(File, String)>> {
+    fn load(
+        &self,
+        path: &Path,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<Result<(File, String, Option<String>)>> {
         let handle = cx.handle();
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
         cx.spawn(|this, mut cx| async move {
             let text = fs.load(&abs_path).await?;
+            let head_text = fs.load_head_text(&abs_path).await;
+
             // Eagerly populate the snapshot with an updated entry for the loaded file
             let entry = this
                 .update(&mut cx, |this, cx| {
@@ -573,6 +579,7 @@ impl LocalWorktree {
                         .refresh_entry(path, abs_path, None, cx)
                 })
                 .await?;
+
             Ok((
                 File {
                     entry_id: Some(entry.id),
@@ -582,6 +589,7 @@ impl LocalWorktree {
                     is_local: true,
                 },
                 text,
+                head_text,
             ))
         })
     }

@@ -821,7 +821,8 @@ message BufferState {
     uint64 id = 1;
     optional File file = 2;
     string base_text = 3;
-    LineEnding line_ending = 4;
+    optional string head_text = 4;
+    LineEnding line_ending = 5;
 }
 
 message BufferChunk {
