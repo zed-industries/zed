@@ -1,6 +1,6 @@
 mod bindings;
 
-use crate::bindings::{dispatch_get_main_queue, SCStreamOutputType};
+use crate::bindings::SCStreamOutputType;
 use block::ConcreteBlock;
 use cocoa::{
     base::{id, nil, YES},
@@ -27,7 +27,7 @@ use objc::{
 };
 use parking_lot::Mutex;
 use simplelog::SimpleLogger;
-use std::{cell::RefCell, ffi::c_void, slice, str};
+use std::{ffi::c_void, ptr, slice, str, sync::Arc};
 
 #[allow(non_upper_case_globals)]
 const NSUTF8StringEncoding: NSUInteger = 4;
@@ -65,7 +65,8 @@ impl gpui::Entity for ScreenCaptureView {
 impl ScreenCaptureView {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let (surface_tx, mut surface_rx) = postage::watch::channel::<Option<IOSurface>>();
-        let surface_tx = RefCell::new(surface_tx);
+        let surface_tx = Arc::new(Mutex::new(surface_tx));
+
         unsafe {
             let block = ConcreteBlock::new(move |content: id, error: id| {
                 if !error.is_null() {
@@ -92,9 +93,9 @@ impl ScreenCaptureView {
 
                 let output: id = msg_send![capture_output_class, alloc];
                 let output: id = msg_send![output, init];
+                let surface_tx = surface_tx.clone();
 
-                // TODO: we could probably move this into a background queue.
-                let callback = Box::new(|buffer: CMSampleBufferRef| {
+                let callback = Box::new(move |buffer: CMSampleBufferRef| {
                     let buffer = CMSampleBuffer::wrap_under_get_rule(buffer);
                     let attachments = buffer.attachments();
                     let attachments = attachments.first().expect("no attachments for sample");
@@ -112,10 +113,7 @@ impl ScreenCaptureView {
 
                     let image_buffer = buffer.image_buffer();
                     let io_surface = image_buffer.io_surface();
-                    println!("before segfault");
-                    *surface_tx.borrow_mut().borrow_mut() = Some(io_surface);
-
-                    println!("!!!!!!!!!!!!!!!!!");
+                    *surface_tx.lock().borrow_mut() = Some(io_surface);
                 }) as Box<dyn FnMut(CMSampleBufferRef)>;
                 let callback = Box::into_raw(Box::new(callback));
                 (*output).set_ivar("callback", callback as *mut c_void);
@@ -134,7 +132,10 @@ impl ScreenCaptureView {
                 let stream: id = msg_send![class!(SCStream), alloc];
                 let stream: id = msg_send![stream, initWithFilter: filter configuration: config delegate: output];
                 let error: id = nil;
-                let queue = dispatch_get_main_queue();
+                let queue = bindings::dispatch_queue_create(
+                    ptr::null(),
+                    bindings::NSObject(ptr::null_mut()),
+                );
 
                 let _: () = msg_send![stream,
                     addStreamOutput: output type: bindings::SCStreamOutputType_SCStreamOutputTypeScreen
@@ -172,6 +173,7 @@ impl ScreenCaptureView {
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {
                         this.surface = surface;
+                        println!("NEW SURFACE!");
                         cx.notify();
                     })
                 } else {
@@ -194,7 +196,6 @@ impl gpui::View for ScreenCaptureView {
         let surface = self.surface.clone();
         Canvas::new(move |bounds, _, cx| {
             if let Some(native_surface) = surface.clone() {
-                dbg!("!!!!");
                 cx.scene.push_surface(Surface {
                     bounds,
                     native_surface,
