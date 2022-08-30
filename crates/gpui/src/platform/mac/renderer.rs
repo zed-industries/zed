@@ -37,6 +37,10 @@ struct PathSprite {
     shader_data: shaders::GPUISprite,
 }
 
+pub struct Surface {
+    pub bounds: RectF,
+}
+
 impl Renderer {
     pub fn new(
         device: metal::Device,

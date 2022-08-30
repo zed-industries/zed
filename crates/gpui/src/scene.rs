@@ -10,7 +10,7 @@ use crate::{
     fonts::{FontId, GlyphId},
     geometry::{rect::RectF, vector::Vector2F},
     json::ToJson,
-    platform::CursorStyle,
+    platform::{current::Surface, CursorStyle},
     ImageData,
 };
 pub use mouse_region::*;
@@ -34,6 +34,7 @@ pub struct Layer {
     quads: Vec<Quad>,
     underlines: Vec<Underline>,
     images: Vec<Image>,
+    surfaces: Vec<Surface>,
     shadows: Vec<Shadow>,
     glyphs: Vec<Glyph>,
     image_glyphs: Vec<ImageGlyph>,
@@ -249,6 +250,10 @@ impl Scene {
         self.active_layer().push_image(image)
     }
 
+    pub fn push_surface(&mut self, surface: Surface) {
+        self.active_layer().push_surface(surface)
+    }
+
     pub fn push_underline(&mut self, underline: Underline) {
         self.active_layer().push_underline(underline)
     }
@@ -329,6 +334,7 @@ impl Layer {
             quads: Default::default(),
             underlines: Default::default(),
             images: Default::default(),
+            surfaces: Default::default(),
             shadows: Default::default(),
             image_glyphs: Default::default(),
             glyphs: Default::default(),
@@ -388,6 +394,12 @@ impl Layer {
     fn push_image(&mut self, image: Image) {
         if can_draw(image.bounds) {
             self.images.push(image);
+        }
+    }
+
+    fn push_surface(&mut self, surface: Surface) {
+        if can_draw(surface.bounds) {
+            self.surfaces.push(surface);
         }
     }
 

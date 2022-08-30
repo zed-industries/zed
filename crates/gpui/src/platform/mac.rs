@@ -13,6 +13,7 @@ use cocoa::base::{BOOL, NO, YES};
 pub use dispatcher::Dispatcher;
 pub use fonts::FontSystem;
 use platform::{MacForegroundPlatform, MacPlatform};
+pub use renderer::Surface;
 use std::{rc::Rc, sync::Arc};
 use window::Window;
 
