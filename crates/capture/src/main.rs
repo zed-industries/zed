@@ -7,7 +7,6 @@ use cocoa::{
     foundation::{NSArray, NSString, NSUInteger},
 };
 use core_foundation::{base::TCFType, number::CFNumberRef, string::CFStringRef};
-use core_media::{CMSampleBuffer, CMSampleBufferRef};
 use futures::StreamExt;
 use gpui::{
     actions,
@@ -17,7 +16,10 @@ use gpui::{
     Menu, MenuItem, ViewContext,
 };
 use log::LevelFilter;
-use media::core_video::{self, CVImageBuffer};
+use media::{
+    core_media::{CMSampleBuffer, CMSampleBufferRef, CMTimeMake},
+    core_video::{self, CVImageBuffer},
+};
 use objc::{
     class,
     declare::ClassDecl,
@@ -125,7 +127,7 @@ impl ScreenCaptureView {
                 let config: id = msg_send![config, init];
                 let _: () = msg_send![config, setWidth: display_width * 2];
                 let _: () = msg_send![config, setHeight: display_height * 2];
-                let _: () = msg_send![config, setMinimumFrameInterval: bindings::CMTimeMake(1, 60)];
+                let _: () = msg_send![config, setMinimumFrameInterval: CMTimeMake(1, 60)];
                 let _: () = msg_send![config, setQueueDepth: 6];
                 let _: () = msg_send![config, setShowsCursor: YES];
                 let _: () = msg_send![
@@ -237,60 +239,4 @@ extern "C" fn sample_output(
 
 fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
     cx.platform().quit();
-}
-
-mod core_media {
-    #![allow(non_snake_case)]
-
-    use crate::core_video::{CVImageBuffer, CVImageBufferRef};
-    use core_foundation::{
-        array::{CFArray, CFArrayRef},
-        base::{CFTypeID, TCFType},
-        declare_TCFType,
-        dictionary::CFDictionary,
-        impl_CFTypeDescription, impl_TCFType,
-        string::CFString,
-    };
-    use std::ffi::c_void;
-
-    #[repr(C)]
-    pub struct __CMSampleBuffer(c_void);
-    // The ref type must be a pointer to the underlying struct.
-    pub type CMSampleBufferRef = *const __CMSampleBuffer;
-
-    declare_TCFType!(CMSampleBuffer, CMSampleBufferRef);
-    impl_TCFType!(CMSampleBuffer, CMSampleBufferRef, CMSampleBufferGetTypeID);
-    impl_CFTypeDescription!(CMSampleBuffer);
-
-    impl CMSampleBuffer {
-        pub fn attachments(&self) -> Vec<CFDictionary<CFString>> {
-            unsafe {
-                let attachments =
-                    CMSampleBufferGetSampleAttachmentsArray(self.as_concrete_TypeRef(), true);
-                CFArray::<CFDictionary>::wrap_under_get_rule(attachments)
-                    .into_iter()
-                    .map(|attachments| {
-                        CFDictionary::wrap_under_get_rule(attachments.as_concrete_TypeRef())
-                    })
-                    .collect()
-            }
-        }
-
-        pub fn image_buffer(&self) -> CVImageBuffer {
-            unsafe {
-                CVImageBuffer::wrap_under_get_rule(CMSampleBufferGetImageBuffer(
-                    self.as_concrete_TypeRef(),
-                ))
-            }
-        }
-    }
-
-    extern "C" {
-        fn CMSampleBufferGetTypeID() -> CFTypeID;
-        fn CMSampleBufferGetSampleAttachmentsArray(
-            buffer: CMSampleBufferRef,
-            create_if_necessary: bool,
-        ) -> CFArrayRef;
-        fn CMSampleBufferGetImageBuffer(buffer: CMSampleBufferRef) -> CVImageBufferRef;
-    }
 }

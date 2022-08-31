@@ -16,6 +16,7 @@ fn main() {
         .header("src/bindings.h")
         .clang_arg(format!("-isysroot{}", sdk_path))
         .clang_arg("-xobjective-c")
+        .allowlist_function("CMTimeMake")
         .allowlist_var("kCVPixelFormatType_.*")
         .allowlist_var("kCVReturn.*")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))

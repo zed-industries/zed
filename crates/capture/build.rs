@@ -1,9 +1,7 @@
 use std::{env, path::PathBuf, process::Command};
 
 fn main() {
-    println!("cargo:rustc-link-lib=framework=CoreMedia");
     println!("cargo:rustc-link-lib=framework=ScreenCaptureKit");
-    println!("cargo:rustc-link-lib=framework=System");
     println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=12.3");
 
     let sdk_path = String::from_utf8(
@@ -21,7 +19,6 @@ fn main() {
         .header("src/bindings.h")
         .clang_arg(format!("-isysroot{}", sdk_path))
         .clang_arg("-xobjective-c")
-        .allowlist_function("CMTimeMake")
         .allowlist_function("dispatch_queue_create")
         .allowlist_type("SCStreamOutputType")
         .allowlist_type("SCFrameStatus")

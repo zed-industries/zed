@@ -31,7 +31,8 @@ pub mod core_video {
     #![allow(non_snake_case)]
 
     use super::*;
-    pub use crate::bindings::*;
+    pub use crate::bindings::kCVPixelFormatType_32BGRA;
+    use crate::bindings::{kCVReturnSuccess, CVReturn, OSType};
     use anyhow::{anyhow, Result};
     use core_foundation::{
         base::kCFAllocatorDefault, dictionary::CFDictionaryRef, mach_port::CFAllocatorRef,
@@ -187,5 +188,63 @@ pub mod core_video {
     extern "C" {
         fn CVMetalTextureGetTypeID() -> CFTypeID;
         fn CVMetalTextureGetTexture(texture: CVMetalTextureRef) -> *mut c_void;
+    }
+}
+
+pub mod core_media {
+    #![allow(non_snake_case)]
+
+    pub use crate::bindings::CMTimeMake;
+    use crate::core_video::{CVImageBuffer, CVImageBufferRef};
+    use core_foundation::{
+        array::{CFArray, CFArrayRef},
+        base::{CFTypeID, TCFType},
+        declare_TCFType,
+        dictionary::CFDictionary,
+        impl_CFTypeDescription, impl_TCFType,
+        string::CFString,
+    };
+    use std::ffi::c_void;
+
+    #[repr(C)]
+    pub struct __CMSampleBuffer(c_void);
+    // The ref type must be a pointer to the underlying struct.
+    pub type CMSampleBufferRef = *const __CMSampleBuffer;
+
+    declare_TCFType!(CMSampleBuffer, CMSampleBufferRef);
+    impl_TCFType!(CMSampleBuffer, CMSampleBufferRef, CMSampleBufferGetTypeID);
+    impl_CFTypeDescription!(CMSampleBuffer);
+
+    impl CMSampleBuffer {
+        pub fn attachments(&self) -> Vec<CFDictionary<CFString>> {
+            unsafe {
+                let attachments =
+                    CMSampleBufferGetSampleAttachmentsArray(self.as_concrete_TypeRef(), true);
+                CFArray::<CFDictionary>::wrap_under_get_rule(attachments)
+                    .into_iter()
+                    .map(|attachments| {
+                        CFDictionary::wrap_under_get_rule(attachments.as_concrete_TypeRef())
+                    })
+                    .collect()
+            }
+        }
+
+        pub fn image_buffer(&self) -> CVImageBuffer {
+            unsafe {
+                CVImageBuffer::wrap_under_get_rule(CMSampleBufferGetImageBuffer(
+                    self.as_concrete_TypeRef(),
+                ))
+            }
+        }
+    }
+
+    #[link(name = "CoreMedia", kind = "framework")]
+    extern "C" {
+        fn CMSampleBufferGetTypeID() -> CFTypeID;
+        fn CMSampleBufferGetSampleAttachmentsArray(
+            buffer: CMSampleBufferRef,
+            create_if_necessary: bool,
+        ) -> CFArrayRef;
+        fn CMSampleBufferGetImageBuffer(buffer: CMSampleBufferRef) -> CVImageBufferRef;
     }
 }
