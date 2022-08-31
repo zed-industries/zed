@@ -89,6 +89,20 @@ pub struct MouseMovedEvent {
     pub shift: bool,
 }
 
+impl MouseMovedEvent {
+    pub fn to_button_event(&self, button: MouseButton) -> MouseButtonEvent {
+        MouseButtonEvent {
+            position: self.position,
+            button: self.pressed_button.unwrap_or(button),
+            ctrl: self.ctrl,
+            alt: self.alt,
+            shift: self.shift,
+            cmd: self.cmd,
+            click_count: 0,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Event {
     KeyDown(KeyDownEvent),

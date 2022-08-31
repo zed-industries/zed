@@ -1256,7 +1256,7 @@ impl Pane {
     fn handle_dropped_item(pane: &WeakViewHandle<Pane>, index: usize, cx: &mut EventContext) {
         if let Some((_, dragged_item)) = cx
             .global::<DragAndDrop<Workspace>>()
-            .currently_dragged::<DraggedItem>()
+            .currently_dragged::<DraggedItem>(cx.window_id)
         {
             cx.dispatch_action(MoveItem {
                 item_id: dragged_item.item.id(),
@@ -1277,7 +1277,7 @@ impl Pane {
         if hovered
             && cx
                 .global::<DragAndDrop<Workspace>>()
-                .currently_dragged::<DraggedItem>()
+                .currently_dragged::<DraggedItem>(cx.window_id())
                 .is_some()
         {
             Some(theme.workspace.tab_bar.drop_target_overlay_color)

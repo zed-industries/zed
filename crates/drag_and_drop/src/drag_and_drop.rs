@@ -9,6 +9,7 @@ use gpui::{
 };
 
 struct State<V: View> {
+    window_id: usize,
     position: Vector2F,
     region_offset: Vector2F,
     payload: Rc<dyn Any + 'static>,
@@ -18,6 +19,7 @@ struct State<V: View> {
 impl<V: View> Clone for State<V> {
     fn clone(&self) -> Self {
         Self {
+            window_id: self.window_id.clone(),
             position: self.position.clone(),
             region_offset: self.region_offset.clone(),
             payload: self.payload.clone(),
@@ -46,11 +48,18 @@ impl<V: View> DragAndDrop<V> {
         }
     }
 
-    pub fn currently_dragged<T: Any>(&self) -> Option<(Vector2F, Rc<T>)> {
+    pub fn currently_dragged<T: Any>(&self, window_id: usize) -> Option<(Vector2F, Rc<T>)> {
         self.currently_dragged.as_ref().and_then(
             |State {
-                 position, payload, ..
+                 position,
+                 payload,
+                 window_id: window_dragged_from,
+                 ..
              }| {
+                if &window_id != window_dragged_from {
+                    return None;
+                }
+
                 payload
                     .clone()
                     .downcast::<T>()
@@ -66,6 +75,7 @@ impl<V: View> DragAndDrop<V> {
         cx: &mut EventContext,
         render: Rc<impl 'static + Fn(&T, &mut RenderContext<V>) -> ElementBox>,
     ) {
+        let window_id = cx.window_id();
         cx.update_global::<Self, _, _>(|this, cx| {
             let region_offset = if let Some(previous_state) = this.currently_dragged.as_ref() {
                 previous_state.region_offset
@@ -74,6 +84,7 @@ impl<V: View> DragAndDrop<V> {
             };
 
             this.currently_dragged = Some(State {
+                window_id,
                 region_offset,
                 position: event.position,
                 payload,
@@ -91,34 +102,46 @@ impl<V: View> DragAndDrop<V> {
     pub fn render(cx: &mut RenderContext<V>) -> Option<ElementBox> {
         let currently_dragged = cx.global::<Self>().currently_dragged.clone();
 
-        currently_dragged.map(
+        currently_dragged.and_then(
             |State {
+                 window_id,
                  region_offset,
                  position,
                  payload,
                  render,
              }| {
+                if cx.window_id() != window_id {
+                    return None;
+                }
+
                 let position = position + region_offset;
 
-                MouseEventHandler::new::<Self, _, _>(0, cx, |_, cx| {
-                    Container::new(render(payload, cx))
-                        .with_margin_left(position.x())
-                        .with_margin_top(position.y())
-                        .aligned()
-                        .top()
-                        .left()
-                        .boxed()
-                })
-                .with_cursor_style(CursorStyle::Arrow)
-                .on_up(MouseButton::Left, |_, cx| {
-                    cx.defer(|cx| {
-                        cx.update_global::<Self, _, _>(|this, _| this.currently_dragged.take());
-                    });
-                    cx.propogate_event();
-                })
-                // Don't block hover events or invalidations
-                .with_hoverable(false)
-                .boxed()
+                Some(
+                    MouseEventHandler::new::<Self, _, _>(0, cx, |_, cx| {
+                        Container::new(render(payload, cx))
+                            .with_margin_left(position.x())
+                            .with_margin_top(position.y())
+                            .aligned()
+                            .top()
+                            .left()
+                            .boxed()
+                    })
+                    .with_cursor_style(CursorStyle::Arrow)
+                    .on_up(MouseButton::Left, |_, cx| {
+                        cx.defer(|cx| {
+                            cx.update_global::<Self, _, _>(|this, _| this.currently_dragged.take());
+                        });
+                        cx.propogate_event();
+                    })
+                    .on_up_out(MouseButton::Left, |_, cx| {
+                        cx.defer(|cx| {
+                            cx.update_global::<Self, _, _>(|this, _| this.currently_dragged.take());
+                        });
+                    })
+                    // Don't block hover events or invalidations
+                    .with_hoverable(false)
+                    .boxed(),
+                )
             },
         )
     }
