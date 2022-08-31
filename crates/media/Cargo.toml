@@ -8,6 +8,7 @@ path = "src/media.rs"
 doctest = false
 
 [dependencies]
+anyhow = "1.0"
 block = "0.1"
 core-foundation = "0.9.3"
 foreign-types = "0.3"

@@ -3033,6 +3033,7 @@ dependencies = [
 name = "media"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bindgen",
  "block",
  "core-foundation",

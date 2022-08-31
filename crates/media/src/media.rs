@@ -33,16 +33,16 @@ pub mod io_surface {
 pub mod core_video {
     #![allow(non_snake_case)]
 
-    use std::ptr;
-
     use super::*;
     pub use crate::bindings::*;
+    use anyhow::{anyhow, Result};
     use core_foundation::{
         base::kCFAllocatorDefault, dictionary::CFDictionaryRef, mach_port::CFAllocatorRef,
     };
     use foreign_types::ForeignTypeRef;
     use io_surface::{IOSurface, IOSurfaceRef};
-    use metal::{MTLDevice, MTLPixelFormat, MTLTexture};
+    use metal::{MTLDevice, MTLPixelFormat};
+    use std::ptr;
 
     #[repr(C)]
     pub struct __CVImageBuffer(c_void);
@@ -97,7 +97,7 @@ pub mod core_video {
     impl_CFTypeDescription!(CVMetalTextureCache);
 
     impl CVMetalTextureCache {
-        pub fn new(metal_device: *mut MTLDevice) -> Self {
+        pub fn new(metal_device: *mut MTLDevice) -> Result<Self> {
             unsafe {
                 let mut this = ptr::null();
                 let result = CVMetalTextureCacheCreate(
@@ -107,8 +107,11 @@ pub mod core_video {
                     ptr::null_mut(),
                     &mut this,
                 );
-                // TODO: Check result
-                CVMetalTextureCache::wrap_under_create_rule(this)
+                if result == kCVReturnSuccess {
+                    Ok(CVMetalTextureCache::wrap_under_create_rule(this))
+                } else {
+                    Err(anyhow!("could not create texture cache, code: {}", result))
+                }
             }
         }
 
@@ -120,7 +123,7 @@ pub mod core_video {
             width: usize,
             height: usize,
             plane_index: usize,
-        ) -> CVMetalTexture {
+        ) -> Result<CVMetalTexture> {
             unsafe {
                 let mut this = ptr::null();
                 let result = CVMetalTextureCacheCreateTextureFromImage(
@@ -134,8 +137,11 @@ pub mod core_video {
                     plane_index,
                     &mut this,
                 );
-                // TODO: Check result
-                CVMetalTexture::wrap_under_create_rule(this)
+                if result == kCVReturnSuccess {
+                    Ok(CVMetalTexture::wrap_under_create_rule(this))
+                } else {
+                    Err(anyhow!("could not create texture, code: {}", result))
+                }
             }
         }
     }
@@ -149,7 +155,7 @@ pub mod core_video {
             metal_device: *const MTLDevice,
             texture_attributes: CFDictionaryRef,
             cache_out: *mut CVMetalTextureCacheRef,
-        ) -> i32; // TODO: This should be a CVReturn enum
+        ) -> CVReturn;
         fn CVMetalTextureCacheCreateTextureFromImage(
             allocator: CFAllocatorRef,
             texture_cache: CVMetalTextureCacheRef,
@@ -160,7 +166,7 @@ pub mod core_video {
             height: usize,
             plane_index: usize,
             texture_out: *mut CVMetalTextureRef,
-        ) -> i32;
+        ) -> CVReturn;
     }
 
     #[repr(C)]

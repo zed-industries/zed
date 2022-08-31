@@ -132,7 +132,7 @@ impl Renderer {
             "underline_fragment",
             pixel_format,
         );
-        let cv_texture_cache = CVMetalTextureCache::new(device.as_ptr());
+        let cv_texture_cache = CVMetalTextureCache::new(device.as_ptr()).unwrap();
         Self {
             sprite_cache,
             image_cache,
@@ -825,14 +825,17 @@ impl Renderer {
                 panic!("unsupported pixel format")
             };
 
-            let texture = self.cv_texture_cache.create_texture_from_image(
-                surface.image_buffer.as_concrete_TypeRef(),
-                ptr::null(),
-                pixel_format,
-                source_size.x() as usize,
-                source_size.y() as usize,
-                0,
-            );
+            let texture = self
+                .cv_texture_cache
+                .create_texture_from_image(
+                    surface.image_buffer.as_concrete_TypeRef(),
+                    ptr::null(),
+                    pixel_format,
+                    source_size.x() as usize,
+                    source_size.y() as usize,
+                    0,
+                )
+                .unwrap();
 
             align_offset(offset);
             let next_offset = *offset + mem::size_of::<shaders::GPUIImage>();

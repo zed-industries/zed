@@ -17,6 +17,7 @@ fn main() {
         .clang_arg(format!("-isysroot{}", sdk_path))
         .clang_arg("-xobjective-c")
         .allowlist_var("kCVPixelFormatType_.*")
+        .allowlist_var("kCVReturn.*")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .layout_tests(false)
         .generate()
