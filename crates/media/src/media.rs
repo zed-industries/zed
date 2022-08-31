@@ -7,10 +7,7 @@ use core_foundation::{
     base::{CFTypeID, TCFType},
     declare_TCFType, impl_CFTypeDescription, impl_TCFType,
 };
-use objc::runtime;
 use std::ffi::c_void;
-
-pub type id = *mut runtime::Object;
 
 pub mod io_surface {
     use super::*;
