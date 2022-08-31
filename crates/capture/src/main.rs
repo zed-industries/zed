@@ -128,6 +128,10 @@ impl ScreenCaptureView {
                 let _: () = msg_send![config, setMinimumFrameInterval: bindings::CMTimeMake(1, 60)];
                 let _: () = msg_send![config, setQueueDepth: 6];
                 let _: () = msg_send![config, setShowsCursor: YES];
+                let _: () = msg_send![
+                    config,
+                    setPixelFormat: media::core_video::kCVPixelFormatType_32BGRA
+                ];
 
                 let stream: id = msg_send![class!(SCStream), alloc];
                 let stream: id = msg_send![stream, initWithFilter: filter configuration: config delegate: output];
@@ -173,7 +177,6 @@ impl ScreenCaptureView {
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {
                         this.image_buffer = image_buffer;
-                        println!("NEW SURFACE!");
                         cx.notify();
                     })
                 } else {

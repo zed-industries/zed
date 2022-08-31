@@ -397,14 +397,18 @@ impl Layer {
         }
     }
 
+    pub fn images(&self) -> &[Image] {
+        self.images.as_slice()
+    }
+
     fn push_surface(&mut self, surface: Surface) {
         if can_draw(surface.bounds) {
             self.surfaces.push(surface);
         }
     }
 
-    pub fn images(&self) -> &[Image] {
-        self.images.as_slice()
+    pub fn surfaces(&self) -> &[Surface] {
+        self.surfaces.as_slice()
     }
 
     fn push_shadow(&mut self, shadow: Shadow) {

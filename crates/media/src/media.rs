@@ -1,6 +1,8 @@
 #![allow(non_snake_case)]
 #![allow(non_camel_case_types)]
 
+mod bindings;
+
 use core_foundation::{
     base::{CFTypeID, TCFType},
     declare_TCFType, impl_CFTypeDescription, impl_TCFType,
@@ -34,11 +36,13 @@ pub mod core_video {
     use std::ptr;
 
     use super::*;
+    pub use crate::bindings::*;
     use core_foundation::{
         base::kCFAllocatorDefault, dictionary::CFDictionaryRef, mach_port::CFAllocatorRef,
     };
+    use foreign_types::ForeignTypeRef;
     use io_surface::{IOSurface, IOSurfaceRef};
-    use metal::{MTLDevice, MTLPixelFormat};
+    use metal::{MTLDevice, MTLPixelFormat, MTLTexture};
 
     #[repr(C)]
     pub struct __CVImageBuffer(c_void);
@@ -65,13 +69,19 @@ pub mod core_video {
         pub fn height(&self) -> usize {
             unsafe { CVPixelBufferGetHeight(self.as_concrete_TypeRef()) }
         }
+
+        pub fn pixel_format_type(&self) -> OSType {
+            unsafe { CVPixelBufferGetPixelFormatType(self.as_concrete_TypeRef()) }
+        }
     }
 
+    #[link(name = "CoreVideo", kind = "framework")]
     extern "C" {
         fn CVImageBufferGetTypeID() -> CFTypeID;
         fn CVPixelBufferGetIOSurface(buffer: CVImageBufferRef) -> IOSurfaceRef;
         fn CVPixelBufferGetWidth(buffer: CVImageBufferRef) -> usize;
         fn CVPixelBufferGetHeight(buffer: CVImageBufferRef) -> usize;
+        fn CVPixelBufferGetPixelFormatType(buffer: CVImageBufferRef) -> OSType;
     }
 
     #[repr(C)]
@@ -130,6 +140,7 @@ pub mod core_video {
         }
     }
 
+    #[link(name = "CoreVideo", kind = "framework")]
     extern "C" {
         fn CVMetalTextureCacheGetTypeID() -> CFTypeID;
         fn CVMetalTextureCacheCreate(
@@ -160,7 +171,18 @@ pub mod core_video {
     impl_TCFType!(CVMetalTexture, CVMetalTextureRef, CVMetalTextureGetTypeID);
     impl_CFTypeDescription!(CVMetalTexture);
 
+    impl CVMetalTexture {
+        pub fn as_texture_ref(&self) -> &metal::TextureRef {
+            unsafe {
+                let texture = CVMetalTextureGetTexture(self.as_concrete_TypeRef());
+                &metal::TextureRef::from_ptr(texture as *mut _)
+            }
+        }
+    }
+
+    #[link(name = "CoreVideo", kind = "framework")]
     extern "C" {
         fn CVMetalTextureGetTypeID() -> CFTypeID;
+        fn CVMetalTextureGetTexture(texture: CVMetalTextureRef) -> *mut c_void;
     }
 }

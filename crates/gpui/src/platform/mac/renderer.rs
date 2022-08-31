@@ -383,6 +383,13 @@ impl Renderer {
                 drawable_size,
                 command_encoder,
             );
+            self.render_surfaces(
+                layer.surfaces(),
+                scale_factor,
+                offset,
+                drawable_size,
+                command_encoder,
+            );
         }
 
         command_encoder.end_encoding();
@@ -791,80 +798,87 @@ impl Renderer {
             return;
         }
 
+        command_encoder.set_render_pipeline_state(&self.image_pipeline_state);
+        command_encoder.set_vertex_buffer(
+            shaders::GPUIImageVertexInputIndex_GPUIImageVertexInputIndexVertices as u64,
+            Some(&self.unit_vertices),
+            0,
+        );
+        command_encoder.set_vertex_bytes(
+            shaders::GPUIImageVertexInputIndex_GPUIImageVertexInputIndexViewportSize as u64,
+            mem::size_of::<shaders::vector_float2>() as u64,
+            [drawable_size.to_float2()].as_ptr() as *const c_void,
+        );
+
         for surface in surfaces {
-            // let origin = surface.bounds.origin() * scale_factor;
-            // let target_size = surface.bounds.size() * scale_factor;
-            // let corner_radius = surface.corner_radius * scale_factor;
-            // let border_width = surface.border.width * scale_factor;
-
-            let width = surface.image_buffer.width();
-            let height = surface.image_buffer.height();
-
-            // We should add this method, but this return CVPixelFormatType and we need MTLPixelFormat
-            // I found at least one code example that manually maps them. Not sure what other options we have.
-            let pixel_format = surface.image_buffer.pixel_format_type();
+            let origin = surface.bounds.origin() * scale_factor;
+            let source_size = vec2i(
+                surface.image_buffer.width() as i32,
+                surface.image_buffer.height() as i32,
+            );
+            let target_size = surface.bounds.size();
+            let pixel_format = if surface.image_buffer.pixel_format_type()
+                == core_video::kCVPixelFormatType_32BGRA
+            {
+                MTLPixelFormat::BGRA8Unorm
+            } else {
+                panic!("unsupported pixel format")
+            };
 
             let texture = self.cv_texture_cache.create_texture_from_image(
                 surface.image_buffer.as_concrete_TypeRef(),
                 ptr::null(),
                 pixel_format,
-                width,
-                height,
+                source_size.x() as usize,
+                source_size.y() as usize,
                 0,
             );
+
+            align_offset(offset);
+            let next_offset = *offset + mem::size_of::<shaders::GPUIImage>();
+            assert!(
+                next_offset <= INSTANCE_BUFFER_SIZE,
+                "instance buffer exhausted"
+            );
+
+            command_encoder.set_vertex_buffer(
+                shaders::GPUIImageVertexInputIndex_GPUIImageVertexInputIndexImages as u64,
+                Some(&self.instances),
+                *offset as u64,
+            );
+            command_encoder.set_vertex_bytes(
+                shaders::GPUIImageVertexInputIndex_GPUIImageVertexInputIndexAtlasSize as u64,
+                mem::size_of::<shaders::vector_float2>() as u64,
+                [source_size.to_float2()].as_ptr() as *const c_void,
+            );
+            command_encoder.set_fragment_texture(
+                shaders::GPUIImageFragmentInputIndex_GPUIImageFragmentInputIndexAtlas as u64,
+                Some(texture.as_texture_ref()),
+            );
+
+            unsafe {
+                let buffer_contents =
+                    (self.instances.contents() as *mut u8).add(*offset) as *mut shaders::GPUIImage;
+                std::ptr::write(
+                    buffer_contents,
+                    shaders::GPUIImage {
+                        origin: origin.to_float2(),
+                        target_size: target_size.to_float2(),
+                        source_size: source_size.to_float2(),
+                        atlas_origin: Default::default(),
+                        border_top: Default::default(),
+                        border_right: Default::default(),
+                        border_bottom: Default::default(),
+                        border_left: Default::default(),
+                        border_color: Default::default(),
+                        corner_radius: Default::default(),
+                    },
+                );
+            }
+
+            command_encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, 6);
+            *offset = next_offset;
         }
-
-        // command_encoder.set_render_pipeline_state(&self.image_pipeline_state);
-        // command_encoder.set_vertex_buffer(
-        //     shaders::GPUIImageVertexInputIndex_GPUIImageVertexInputIndexVertices as u64,
-        //     Some(&self.unit_vertices),
-        //     0,
-        // );
-        // command_encoder.set_vertex_bytes(
-        //     shaders::GPUIImageVertexInputIndex_GPUIImageVertexInputIndexViewportSize as u64,
-        //     mem::size_of::<shaders::vector_float2>() as u64,
-        //     [drawable_size.to_float2()].as_ptr() as *const c_void,
-        // );
-
-        // for (atlas_id, images) in images_by_atlas {
-        //     align_offset(offset);
-        //     let next_offset = *offset + images.len() * mem::size_of::<shaders::GPUIImage>();
-        //     assert!(
-        //         next_offset <= INSTANCE_BUFFER_SIZE,
-        //         "instance buffer exhausted"
-        //     );
-
-        //     let texture = self.image_cache.atlas_texture(atlas_id).unwrap();
-        //     command_encoder.set_vertex_buffer(
-        //         shaders::GPUIImageVertexInputIndex_GPUIImageVertexInputIndexImages as u64,
-        //         Some(&self.instances),
-        //         *offset as u64,
-        //     );
-        //     command_encoder.set_vertex_bytes(
-        //         shaders::GPUIImageVertexInputIndex_GPUIImageVertexInputIndexAtlasSize as u64,
-        //         mem::size_of::<shaders::vector_float2>() as u64,
-        //         [vec2i(texture.width() as i32, texture.height() as i32).to_float2()].as_ptr()
-        //             as *const c_void,
-        //     );
-        //     command_encoder.set_fragment_texture(
-        //         shaders::GPUIImageFragmentInputIndex_GPUIImageFragmentInputIndexAtlas as u64,
-        //         Some(texture),
-        //     );
-
-        //     unsafe {
-        //         let buffer_contents =
-        //             (self.instances.contents() as *mut u8).add(*offset) as *mut shaders::GPUIImage;
-        //         std::ptr::copy_nonoverlapping(images.as_ptr(), buffer_contents, images.len());
-        //     }
-
-        //     command_encoder.draw_primitives_instanced(
-        //         metal::MTLPrimitiveType::Triangle,
-        //         0,
-        //         6,
-        //         images.len() as u64,
-        //     );
-        //     *offset = next_offset;
-        // }
     }
 
     fn render_path_sprites(
