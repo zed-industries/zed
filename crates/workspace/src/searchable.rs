@@ -8,6 +8,7 @@ use project::search::SearchQuery;
 
 use crate::{Item, ItemHandle, WeakItemHandle};
 
+#[derive(Debug)]
 pub enum SearchEvent {
     ContentsUpdated,
     SelectionsChanged,
@@ -20,30 +21,30 @@ pub enum Direction {
 }
 
 pub trait SearchableItem: Item {
+    type Match: Any + Sync + Send + Clone;
+
     fn to_search_event(event: &Self::Event) -> Option<SearchEvent>;
     fn clear_highlights(&mut self, cx: &mut ViewContext<Self>);
+    fn highlight_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>);
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String;
     fn select_next_match_in_direction(
         &mut self,
         index: usize,
         direction: Direction,
-        matches: &Vec<Box<dyn Any + Send>>,
+        matches: Vec<Self::Match>,
         cx: &mut ViewContext<Self>,
     );
     fn select_match_by_index(
         &mut self,
         index: usize,
-        matches: &Vec<Box<dyn Any + Send>>,
+        matches: Vec<Self::Match>,
         cx: &mut ViewContext<Self>,
     );
-    fn matches(
-        &mut self,
-        query: SearchQuery,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Vec<Box<dyn Any + Send>>>;
+    fn matches(&mut self, query: SearchQuery, cx: &mut ViewContext<Self>)
+        -> Task<Vec<Self::Match>>;
     fn active_match_index(
         &mut self,
-        matches: &Vec<Box<dyn Any + Send>>,
+        matches: Vec<Self::Match>,
         cx: &mut ViewContext<Self>,
     ) -> Option<usize>;
 }
@@ -57,6 +58,7 @@ pub trait SearchableItemHandle: ItemHandle {
         handler: Box<dyn Fn(SearchEvent, &mut MutableAppContext)>,
     ) -> Subscription;
     fn clear_highlights(&self, cx: &mut MutableAppContext);
+    fn highlight_matches(&self, matches: &Vec<Box<dyn Any + Send>>, cx: &mut MutableAppContext);
     fn query_suggestion(&self, cx: &mut MutableAppContext) -> String;
     fn select_next_match_in_direction(
         &self,
@@ -107,6 +109,10 @@ impl<T: SearchableItem> SearchableItemHandle for ViewHandle<T> {
     fn clear_highlights(&self, cx: &mut MutableAppContext) {
         self.update(cx, |this, cx| this.clear_highlights(cx));
     }
+    fn highlight_matches(&self, matches: &Vec<Box<dyn Any + Send>>, cx: &mut MutableAppContext) {
+        let matches = downcast_matches(matches);
+        self.update(cx, |this, cx| this.highlight_matches(matches, cx));
+    }
     fn query_suggestion(&self, cx: &mut MutableAppContext) -> String {
         self.update(cx, |this, cx| this.query_suggestion(cx))
     }
@@ -117,6 +123,7 @@ impl<T: SearchableItem> SearchableItemHandle for ViewHandle<T> {
         matches: &Vec<Box<dyn Any + Send>>,
         cx: &mut MutableAppContext,
     ) {
+        let matches = downcast_matches(matches);
         self.update(cx, |this, cx| {
             this.select_next_match_in_direction(index, direction, matches, cx)
         });
@@ -127,6 +134,7 @@ impl<T: SearchableItem> SearchableItemHandle for ViewHandle<T> {
         matches: &Vec<Box<dyn Any + Send>>,
         cx: &mut MutableAppContext,
     ) {
+        let matches = downcast_matches(matches);
         self.update(cx, |this, cx| {
             this.select_match_by_index(index, matches, cx)
         });
@@ -136,15 +144,33 @@ impl<T: SearchableItem> SearchableItemHandle for ViewHandle<T> {
         query: SearchQuery,
         cx: &mut MutableAppContext,
     ) -> Task<Vec<Box<dyn Any + Send>>> {
-        self.update(cx, |this, cx| this.matches(query, cx))
+        let matches = self.update(cx, |this, cx| this.matches(query, cx));
+        cx.foreground().spawn(async {
+            let matches = matches.await;
+            matches
+                .into_iter()
+                .map::<Box<dyn Any + Send>, _>(|range| Box::new(range))
+                .collect()
+        })
     }
     fn active_match_index(
         &self,
         matches: &Vec<Box<dyn Any + Send>>,
         cx: &mut MutableAppContext,
     ) -> Option<usize> {
+        let matches = downcast_matches(matches);
         self.update(cx, |this, cx| this.active_match_index(matches, cx))
     }
+}
+
+fn downcast_matches<T: Any + Clone>(matches: &Vec<Box<dyn Any + Send>>) -> Vec<T> {
+    matches
+        .iter()
+        .map(|range| range.downcast_ref::<T>().cloned())
+        .collect::<Option<Vec<_>>>()
+        .expect(
+            "SearchableItemHandle function called with vec of matches of a different type than expected",
+        )
 }
 
 impl From<Box<dyn SearchableItemHandle>> for AnyViewHandle {

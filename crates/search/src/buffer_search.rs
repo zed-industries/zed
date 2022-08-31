@@ -421,6 +421,7 @@ impl BufferSearchBar {
                     .get(&searchable_item.downgrade())
                 {
                     searchable_item.select_next_match_in_direction(index, direction, matches, cx);
+                    searchable_item.highlight_matches(matches, cx);
                 }
             }
         }
@@ -468,18 +469,13 @@ impl BufferSearchBar {
     }
 
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
-        let mut active_editor_matches = None;
+        let mut active_item_matches = None;
         for (searchable_item, matches) in self.seachable_items_with_matches.drain() {
             if let Some(searchable_item) =
                 WeakSearchableItemHandle::upgrade(searchable_item.as_ref(), cx)
             {
-                if self
-                    .active_searchable_item
-                    .as_ref()
-                    .map(|active_item| active_item == &searchable_item)
-                    .unwrap_or(false)
-                {
-                    active_editor_matches = Some((searchable_item.downgrade(), matches));
+                if Some(&searchable_item) == self.active_searchable_item.as_ref() {
+                    active_item_matches = Some((searchable_item.downgrade(), matches));
                 } else {
                     searchable_item.clear_highlights(cx);
                 }
@@ -487,7 +483,7 @@ impl BufferSearchBar {
         }
 
         self.seachable_items_with_matches
-            .extend(active_editor_matches);
+            .extend(active_item_matches);
     }
 
     fn update_matches(&mut self, select_closest_match: bool, cx: &mut ViewContext<Self>) {
@@ -527,17 +523,17 @@ impl BufferSearchBar {
 
                                 this.update_match_index(cx);
                                 if !this.dismissed {
+                                    let matches = this
+                                        .seachable_items_with_matches
+                                        .get(&active_searchable_item.downgrade())
+                                        .unwrap();
                                     if select_closest_match {
                                         if let Some(match_ix) = this.active_match_index {
-                                            active_searchable_item.select_match_by_index(
-                                                match_ix,
-                                                this.seachable_items_with_matches
-                                                    .get(&active_searchable_item.downgrade())
-                                                    .unwrap(),
-                                                cx,
-                                            );
+                                            active_searchable_item
+                                                .select_match_by_index(match_ix, matches, cx);
                                         }
                                     }
+                                    active_searchable_item.highlight_matches(matches, cx);
                                 }
                                 cx.notify();
                             }

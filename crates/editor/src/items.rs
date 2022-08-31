@@ -15,7 +15,6 @@ use rpc::proto::{self, update_view};
 use settings::Settings;
 use smallvec::SmallVec;
 use std::{
-    any::Any,
     borrow::Cow,
     cmp::{self, Ordering},
     fmt::Write,
@@ -510,6 +509,8 @@ impl ProjectItem for Editor {
 
 enum BufferSearchHighlights {}
 impl SearchableItem for Editor {
+    type Match = Range<Anchor>;
+
     fn to_search_event(event: &Self::Event) -> Option<SearchEvent> {
         match event {
             Event::BufferEdited => Some(SearchEvent::ContentsUpdated),
@@ -520,6 +521,14 @@ impl SearchableItem for Editor {
 
     fn clear_highlights(&mut self, cx: &mut ViewContext<Self>) {
         self.clear_background_highlights::<BufferSearchHighlights>(cx);
+    }
+
+    fn highlight_matches(&mut self, matches: Vec<Range<Anchor>>, cx: &mut ViewContext<Self>) {
+        self.highlight_background::<BufferSearchHighlights>(
+            matches,
+            |theme| theme.search.match_background,
+            cx,
+        );
     }
 
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
@@ -548,61 +557,40 @@ impl SearchableItem for Editor {
         &mut self,
         index: usize,
         direction: Direction,
-        matches: &Vec<Box<dyn Any + Send>>,
+        matches: Vec<Range<Anchor>>,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(matches) = matches
-            .iter()
-            .map(|range| range.downcast_ref::<Range<Anchor>>().cloned())
-            .collect::<Option<Vec<_>>>()
-        {
-            let new_index: usize = match_index_for_direction(
-                matches.as_slice(),
-                &self.selections.newest_anchor().head(),
-                index,
-                direction,
-                &self.buffer().read(cx).snapshot(cx),
-            );
+        let new_index: usize = match_index_for_direction(
+            matches.as_slice(),
+            &self.selections.newest_anchor().head(),
+            index,
+            direction,
+            &self.buffer().read(cx).snapshot(cx),
+        );
 
-            let range_to_select = matches[new_index].clone();
-            self.unfold_ranges([range_to_select.clone()], false, cx);
-            self.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                s.select_ranges([range_to_select])
-            });
-        } else {
-            log::error!("Select next match in direction called with unexpected type matches");
-        }
+        let range_to_select = matches[new_index].clone();
+        self.unfold_ranges([range_to_select.clone()], false, cx);
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.select_ranges([range_to_select])
+        });
     }
 
     fn select_match_by_index(
         &mut self,
         index: usize,
-        matches: &Vec<Box<dyn Any + Send>>,
+        matches: Vec<Range<Anchor>>,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(matches) = matches
-            .iter()
-            .map(|range| range.downcast_ref::<Range<Anchor>>().cloned())
-            .collect::<Option<Vec<_>>>()
-        {
-            self.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                s.select_ranges([matches[index].clone()])
-            });
-            self.highlight_background::<BufferSearchHighlights>(
-                matches,
-                |theme| theme.search.match_background,
-                cx,
-            );
-        } else {
-            log::error!("Select next match in direction called with unexpected type matches");
-        }
+        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
+            s.select_ranges([matches[index].clone()])
+        });
     }
 
     fn matches(
         &mut self,
         query: project::search::SearchQuery,
         cx: &mut ViewContext<Self>,
-    ) -> Task<Vec<Box<dyn Any + Send>>> {
+    ) -> Task<Vec<Range<Anchor>>> {
         let buffer = self.buffer().read(cx).snapshot(cx);
         cx.background().spawn(async move {
             let mut ranges = Vec::new();
@@ -633,30 +621,19 @@ impl SearchableItem for Editor {
                 }
             }
             ranges
-                .into_iter()
-                .map::<Box<dyn Any + Send>, _>(|range| Box::new(range))
-                .collect()
         })
     }
 
     fn active_match_index(
         &mut self,
-        matches: &Vec<Box<dyn Any + Send>>,
+        matches: Vec<Range<Anchor>>,
         cx: &mut ViewContext<Self>,
     ) -> Option<usize> {
-        if let Some(matches) = matches
-            .iter()
-            .map(|range| range.downcast_ref::<Range<Anchor>>().cloned())
-            .collect::<Option<Vec<_>>>()
-        {
-            active_match_index(
-                &matches,
-                &self.selections.newest_anchor().head(),
-                &self.buffer().read(cx).snapshot(cx),
-            )
-        } else {
-            None
-        }
+        active_match_index(
+            &matches,
+            &self.selections.newest_anchor().head(),
+            &self.buffer().read(cx).snapshot(cx),
+        )
     }
 }
 
