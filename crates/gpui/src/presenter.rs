@@ -310,7 +310,23 @@ impl Presenter {
                                 prev_mouse_position: self.mouse_position,
                                 platform_event: e.clone(),
                             }));
+                        } else if let Some(clicked_button) = self.clicked_button {
+                            // Mouse up event happened outside the current window. Simulate mouse up button event
+                            let button_event = e.to_button_event(clicked_button);
+                            events_to_send.push(MouseRegionEvent::Up(UpRegionEvent {
+                                region: Default::default(),
+                                platform_event: button_event.clone(),
+                            }));
+                            events_to_send.push(MouseRegionEvent::UpOut(UpOutRegionEvent {
+                                region: Default::default(),
+                                platform_event: button_event.clone(),
+                            }));
+                            events_to_send.push(MouseRegionEvent::Click(ClickRegionEvent {
+                                region: Default::default(),
+                                platform_event: button_event.clone(),
+                            }));
                         }
+
                         events_to_send.push(MouseRegionEvent::Move(MoveRegionEvent {
                             region: Default::default(),
                             platform_event: e.clone(),
