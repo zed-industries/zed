@@ -194,11 +194,15 @@ pub mod core_video {
 pub mod core_media {
     #![allow(non_snake_case)]
 
-    pub use crate::bindings::CMTimeMake;
+    pub use crate::bindings::{
+        kCMTimeInvalid, kCMVideoCodecType_H264, CMItemIndex, CMSampleTimingInfo, CMTime,
+        CMTimeMake, CMVideoCodecType,
+    };
     use crate::core_video::{CVImageBuffer, CVImageBufferRef};
+    use anyhow::{anyhow, Result};
     use core_foundation::{
         array::{CFArray, CFArrayRef},
-        base::{CFTypeID, TCFType},
+        base::{CFTypeID, OSStatus, TCFType},
         declare_TCFType,
         dictionary::CFDictionary,
         impl_CFTypeDescription, impl_TCFType,
@@ -236,6 +240,27 @@ pub mod core_media {
                 ))
             }
         }
+
+        pub fn sample_timing_info(&self, index: usize) -> Result<CMSampleTimingInfo> {
+            unsafe {
+                let mut timing_info = CMSampleTimingInfo {
+                    duration: kCMTimeInvalid,
+                    presentationTimeStamp: kCMTimeInvalid,
+                    decodeTimeStamp: kCMTimeInvalid,
+                };
+                let result = CMSampleBufferGetSampleTimingInfo(
+                    self.as_concrete_TypeRef(),
+                    index as CMItemIndex,
+                    &mut timing_info,
+                );
+
+                if result == 0 {
+                    Ok(timing_info)
+                } else {
+                    Err(anyhow!("error getting sample timing info, code {}", result))
+                }
+            }
+        }
     }
 
     #[link(name = "CoreMedia", kind = "framework")]
@@ -246,5 +271,146 @@ pub mod core_media {
             create_if_necessary: bool,
         ) -> CFArrayRef;
         fn CMSampleBufferGetImageBuffer(buffer: CMSampleBufferRef) -> CVImageBufferRef;
+        fn CMSampleBufferGetSampleTimingInfo(
+            buffer: CMSampleBufferRef,
+            index: CMItemIndex,
+            timing_info_out: *mut CMSampleTimingInfo,
+        ) -> OSStatus;
+    }
+}
+
+pub mod video_toolbox {
+    #![allow(non_snake_case)]
+
+    use super::*;
+    use crate::{
+        core_media::{CMSampleBufferRef, CMTime, CMVideoCodecType},
+        core_video::CVImageBufferRef,
+    };
+    use anyhow::{anyhow, Result};
+    use bindings::VTEncodeInfoFlags;
+    use core_foundation::{
+        base::OSStatus,
+        dictionary::{CFDictionary, CFDictionaryRef, CFMutableDictionary},
+        mach_port::CFAllocatorRef,
+    };
+    use std::ptr;
+
+    #[repr(C)]
+    pub struct __VTCompressionSession(c_void);
+    // The ref type must be a pointer to the underlying struct.
+    pub type VTCompressionSessionRef = *const __VTCompressionSession;
+
+    declare_TCFType!(VTCompressionSession, VTCompressionSessionRef);
+    impl_TCFType!(
+        VTCompressionSession,
+        VTCompressionSessionRef,
+        VTCompressionSessionGetTypeID
+    );
+    impl_CFTypeDescription!(VTCompressionSession);
+
+    impl VTCompressionSession {
+        pub fn new(
+            width: usize,
+            height: usize,
+            codec: CMVideoCodecType,
+            callback: VTCompressionOutputCallback,
+            callback_data: *const c_void,
+        ) -> Result<Self> {
+            unsafe {
+                let mut this = ptr::null();
+                let result = VTCompressionSessionCreate(
+                    ptr::null(),
+                    width as i32,
+                    height as i32,
+                    codec,
+                    ptr::null(),
+                    ptr::null(),
+                    ptr::null(),
+                    Some(Self::output),
+                    callback_data,
+                    &mut this,
+                );
+
+                if result == 0 {
+                    Ok(Self::wrap_under_create_rule(this))
+                } else {
+                    Err(anyhow!(
+                        "error creating compression session, code {}",
+                        result
+                    ))
+                }
+            }
+        }
+
+        extern "C" fn output(
+            outputCallbackRefCon: *mut c_void,
+            sourceFrameRefCon: *mut c_void,
+            status: OSStatus,
+            infoFlags: VTEncodeInfoFlags,
+            sampleBuffer: CMSampleBufferRef,
+        ) {
+            println!("YO!");
+        }
+
+        pub fn encode_frame(
+            &self,
+            buffer: CVImageBufferRef,
+            presentation_timestamp: CMTime,
+            duration: CMTime,
+        ) -> Result<()> {
+            unsafe {
+                let result = VTCompressionSessionEncodeFrame(
+                    self.as_concrete_TypeRef(),
+                    buffer,
+                    presentation_timestamp,
+                    duration,
+                    ptr::null(),
+                    ptr::null(),
+                    ptr::null_mut(),
+                );
+                if result == 0 {
+                    Ok(())
+                } else {
+                    Err(anyhow!("error encoding frame, code {}", result))
+                }
+            }
+        }
+    }
+
+    type VTCompressionOutputCallback = Option<
+        unsafe extern "C" fn(
+            outputCallbackRefCon: *mut c_void,
+            sourceFrameRefCon: *mut c_void,
+            status: OSStatus,
+            infoFlags: VTEncodeInfoFlags,
+            sampleBuffer: CMSampleBufferRef,
+        ),
+    >;
+
+    #[link(name = "VideoToolbox", kind = "framework")]
+    extern "C" {
+        fn VTCompressionSessionGetTypeID() -> CFTypeID;
+        fn VTCompressionSessionCreate(
+            allocator: CFAllocatorRef,
+            width: i32,
+            height: i32,
+            codec_type: CMVideoCodecType,
+            encoder_specification: CFDictionaryRef,
+            source_image_buffer_attributes: CFDictionaryRef,
+            compressed_data_allocator: CFAllocatorRef,
+            output_callback: VTCompressionOutputCallback,
+            output_callback_ref_con: *const c_void,
+            compression_session_out: *mut VTCompressionSessionRef,
+        ) -> OSStatus;
+        fn VTCompressionSessionEncodeFrame(
+            session: VTCompressionSessionRef,
+            image_buffer: CVImageBufferRef,
+            presentation_timestamp: CMTime,
+            duration: CMTime,
+            frame_properties: CFDictionaryRef,
+            source_frame_ref_con: *const c_void,
+            output_flags: *mut VTEncodeInfoFlags,
+        ) -> OSStatus;
     }
 }

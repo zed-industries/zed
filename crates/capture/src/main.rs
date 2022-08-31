@@ -17,8 +17,9 @@ use gpui::{
 };
 use log::LevelFilter;
 use media::{
-    core_media::{CMSampleBuffer, CMSampleBufferRef, CMTimeMake},
+    core_media::{kCMVideoCodecType_H264, CMSampleBuffer, CMSampleBufferRef, CMTimeMake},
     core_video::{self, CVImageBuffer},
+    video_toolbox::VTCompressionSession,
 };
 use objc::{
     class,
@@ -85,6 +86,14 @@ impl ScreenCaptureView {
                 let display: id = displays.objectAtIndex(0);
                 let display_width: usize = msg_send![display, width];
                 let display_height: usize = msg_send![display, height];
+                let compression_session = VTCompressionSession::new(
+                    display_width,
+                    display_height,
+                    kCMVideoCodecType_H264,
+                    None,
+                    ptr::null(),
+                )
+                .unwrap();
 
                 let mut decl = ClassDecl::new("CaptureOutput", class!(NSObject)).unwrap();
                 decl.add_ivar::<*mut c_void>("callback");
@@ -114,7 +123,15 @@ impl ScreenCaptureView {
                         return;
                     }
 
+                    let timing_info = buffer.sample_timing_info(0).unwrap();
                     let image_buffer = buffer.image_buffer();
+                    compression_session
+                        .encode_frame(
+                            image_buffer.as_concrete_TypeRef(),
+                            timing_info.presentationTimeStamp,
+                            timing_info.duration,
+                        )
+                        .unwrap();
                     *surface_tx.lock().borrow_mut() = Some(image_buffer);
                 }) as Box<dyn FnMut(CMSampleBufferRef)>;
                 let callback = Box::into_raw(Box::new(callback));
