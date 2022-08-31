@@ -26,6 +26,7 @@ fn main() {
         .allowlist_var("VTEncodeInfoFlags_.*")
         .allowlist_var("kCMVideoCodecType_.*")
         .allowlist_var("kCMTime.*")
+        .allowlist_var("kCMSampleAttachmentKey_.*")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .layout_tests(false)
         .generate()
