@@ -135,7 +135,7 @@ impl CachedLspAdapter {
     pub async fn label_for_completion(
         &self,
         completion_item: &lsp::CompletionItem,
-        language: &Language,
+        language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         self.adapter
             .label_for_completion(completion_item, language)
@@ -146,7 +146,7 @@ impl CachedLspAdapter {
         &self,
         name: &str,
         kind: lsp::SymbolKind,
-        language: &Language,
+        language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         self.adapter.label_for_symbol(name, kind, language).await
     }
@@ -175,7 +175,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn label_for_completion(
         &self,
         _: &lsp::CompletionItem,
-        _: &Language,
+        _: &Arc<Language>,
     ) -> Option<CodeLabel> {
         None
     }
@@ -184,7 +184,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         &self,
         _: &str,
         _: lsp::SymbolKind,
-        _: &Language,
+        _: &Arc<Language>,
     ) -> Option<CodeLabel> {
         None
     }
@@ -793,7 +793,7 @@ impl Language {
     }
 
     pub async fn label_for_completion(
-        &self,
+        self: &Arc<Self>,
         completion: &lsp::CompletionItem,
     ) -> Option<CodeLabel> {
         self.adapter
@@ -802,7 +802,11 @@ impl Language {
             .await
     }
 
-    pub async fn label_for_symbol(&self, name: &str, kind: lsp::SymbolKind) -> Option<CodeLabel> {
+    pub async fn label_for_symbol(
+        self: &Arc<Self>,
+        name: &str,
+        kind: lsp::SymbolKind,
+    ) -> Option<CodeLabel> {
         self.adapter
             .as_ref()?
             .label_for_symbol(name, kind, self)
@@ -810,20 +814,17 @@ impl Language {
     }
 
     pub fn highlight_text<'a>(
-        &'a self,
+        self: &'a Arc<Self>,
         text: &'a Rope,
         range: Range<usize>,
     ) -> Vec<(Range<usize>, HighlightId)> {
         let mut result = Vec::new();
         if let Some(grammar) = &self.grammar {
             let tree = grammar.parse_text(text, None);
-            let captures = SyntaxSnapshot::single_tree_captures(
-                range.clone(),
-                text,
-                &tree,
-                grammar,
-                |grammar| grammar.highlights_query.as_ref(),
-            );
+            let captures =
+                SyntaxSnapshot::single_tree_captures(range.clone(), text, &tree, self, |grammar| {
+                    grammar.highlights_query.as_ref()
+                });
             let highlight_maps = vec![grammar.highlight_map()];
             let mut offset = 0;
             for chunk in BufferChunks::new(text, range, Some((captures, highlight_maps)), vec![]) {

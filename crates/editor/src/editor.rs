@@ -1116,7 +1116,7 @@ impl Editor {
         &self,
         point: T,
         cx: &'a AppContext,
-    ) -> Option<&'a Arc<Language>> {
+    ) -> Option<Arc<Language>> {
         self.buffer.read(cx).language_at(point, cx)
     }
 
@@ -4501,9 +4501,9 @@ impl Editor {
                     // as that portion won't be used for detecting if a line is a comment.
                     let full_comment_prefix: Arc<str> = if let Some(prefix) = buffer
                         .language_at(selection.start, cx)
-                        .and_then(|l| l.line_comment_prefix())
+                        .and_then(|l| l.line_comment_prefix().map(|p| p.into()))
                     {
-                        prefix.into()
+                        prefix
                     } else {
                         return;
                     };
@@ -6713,7 +6713,7 @@ mod tests {
         platform::{WindowBounds, WindowOptions},
     };
     use indoc::indoc;
-    use language::{FakeLspAdapter, LanguageConfig};
+    use language::{FakeLspAdapter, LanguageConfig, LanguageRegistry};
     use project::FakeFs;
     use settings::EditorSettings;
     use std::{cell::RefCell, rc::Rc, time::Instant};
@@ -9788,6 +9788,92 @@ mod tests {
             assert_eq!(
                 view.selections.display_ranges(cx),
                 [DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2)]
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx).await;
+
+        let html_language = Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "HTML".into(),
+                    brackets: vec![BracketPair {
+                        start: "<".to_string(),
+                        end: ">".to_string(),
+                        close: true,
+                        newline: true,
+                    }],
+                    autoclose_before: "})]".to_string(),
+                    ..Default::default()
+                },
+                Some(tree_sitter_html::language()),
+            )
+            .with_injection_query(
+                r#"
+                (script_element
+                    (raw_text) @content
+                    (#set! "language" "javascript"))
+                "#,
+            )
+            .unwrap(),
+        );
+
+        let javascript_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "JavaScript".into(),
+                brackets: vec![BracketPair {
+                    start: "/*".to_string(),
+                    end: "*/".to_string(),
+                    close: true,
+                    newline: true,
+                }],
+                autoclose_before: "})]".to_string(),
+                ..Default::default()
+            },
+            Some(tree_sitter_javascript::language()),
+        ));
+
+        let registry = Arc::new(LanguageRegistry::test());
+        registry.add(html_language.clone());
+        registry.add(javascript_language.clone());
+
+        cx.update_buffer(|buffer, cx| {
+            buffer.set_language_registry(registry);
+            buffer.set_language(Some(html_language), cx);
+        });
+
+        cx.set_state(
+            &r#"
+                <body>ˇ
+                    <script>
+                        var x = 1;ˇ
+                    </script>
+                </body>
+            "#
+            .unindent(),
+        );
+
+        let cursors = cx.update_editor(|editor, cx| editor.selections.ranges::<usize>(cx));
+        cx.update_buffer(|buffer, _| {
+            let snapshot = buffer.snapshot();
+            assert_eq!(
+                snapshot
+                    .language_at(cursors[0].start)
+                    .unwrap()
+                    .name()
+                    .as_ref(),
+                "HTML"
+            );
+            assert_eq!(
+                snapshot
+                    .language_at(cursors[1].start)
+                    .unwrap()
+                    .name()
+                    .as_ref(),
+                "JavaScript"
             );
         });
     }

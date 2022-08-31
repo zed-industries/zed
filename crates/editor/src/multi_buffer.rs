@@ -1212,9 +1212,9 @@ impl MultiBuffer {
         &self,
         point: T,
         cx: &'a AppContext,
-    ) -> Option<&'a Arc<Language>> {
+    ) -> Option<Arc<Language>> {
         self.point_to_buffer_offset(point, cx)
-            .and_then(|(buffer, _)| buffer.read(cx).language())
+            .and_then(|(buffer, offset)| buffer.read(cx).language_at(offset))
     }
 
     pub fn files<'a>(&'a self, cx: &'a AppContext) -> SmallVec<[&'a dyn File; 2]> {
@@ -1940,6 +1940,24 @@ impl MultiBufferSnapshot {
         }
     }
 
+    pub fn point_to_buffer_offset<T: ToOffset>(
+        &self,
+        point: T,
+    ) -> Option<(&BufferSnapshot, usize)> {
+        let offset = point.to_offset(&self);
+        let mut cursor = self.excerpts.cursor::<usize>();
+        cursor.seek(&offset, Bias::Right, &());
+        if cursor.item().is_none() {
+            cursor.prev(&());
+        }
+
+        cursor.item().map(|excerpt| {
+            let excerpt_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
+            let buffer_point = excerpt_start + offset - *cursor.start();
+            (&excerpt.buffer, buffer_point)
+        })
+    }
+
     pub fn suggested_indents(
         &self,
         rows: impl IntoIterator<Item = u32>,
@@ -2488,6 +2506,11 @@ impl MultiBufferSnapshot {
             .iter()
             .next()
             .and_then(|excerpt| excerpt.buffer.language())
+    }
+
+    pub fn language_at<'a, T: ToOffset>(&'a self, point: T) -> Option<&'a Arc<Language>> {
+        self.point_to_buffer_offset(point)
+            .and_then(|(buffer, offset)| buffer.language_at(offset))
     }
 
     pub fn is_dirty(&self) -> bool {

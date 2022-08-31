@@ -108,7 +108,7 @@ pub async fn init(languages: Arc<LanguageRegistry>, _executor: Arc<Background>) 
             Some(CachedLspAdapter::new(html::HtmlLspAdapter).await),
         ),
     ] {
-        languages.add(Arc::new(language(name, grammar, lsp_adapter)));
+        languages.add(language(name, grammar, lsp_adapter));
     }
 }
 
@@ -116,7 +116,7 @@ pub(crate) fn language(
     name: &str,
     grammar: tree_sitter::Language,
     lsp_adapter: Option<Arc<CachedLspAdapter>>,
-) -> Language {
+) -> Arc<Language> {
     let config = toml::from_slice(
         &LanguageDir::get(&format!("{}/config.toml", name))
             .unwrap()
@@ -153,7 +153,7 @@ pub(crate) fn language(
     if let Some(lsp_adapter) = lsp_adapter {
         language = language.with_lsp_adapter(lsp_adapter)
     }
-    language
+    Arc::new(language)
 }
 
 fn load_query(name: &str, filename_prefix: &str) -> Option<Cow<'static, str>> {

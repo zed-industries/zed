@@ -51,6 +51,8 @@ serde = { version = "1.0", features = ["derive", "rc"] }
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
 tree-sitter-rust = { version = "*", optional = true }
+tree-sitter-html = { version = "*", optional = true }
+tree-sitter-javascript = { version = "*", optional = true }
 
 [dev-dependencies]
 text = { path = "../text", features = ["test-support"] }
@@ -67,3 +69,5 @@ rand = "0.8"
 unindent = "0.1.7"
 tree-sitter = "0.20"
 tree-sitter-rust = "0.20"
+tree-sitter-html = "0.19"
+tree-sitter-javascript = "0.20"

@@ -1133,7 +1133,7 @@ mod tests {
             assert!(!editor.is_dirty(cx));
             assert_eq!(editor.title(cx), "untitled");
             assert!(Arc::ptr_eq(
-                editor.language_at(0, cx).unwrap(),
+                &editor.language_at(0, cx).unwrap(),
                 &languages::PLAIN_TEXT
             ));
             editor.handle_input("hi", cx);
@@ -1220,7 +1220,7 @@ mod tests {
 
         editor.update(cx, |editor, cx| {
             assert!(Arc::ptr_eq(
-                editor.language_at(0, cx).unwrap(),
+                &editor.language_at(0, cx).unwrap(),
                 &languages::PLAIN_TEXT
             ));
             editor.handle_input("hi", cx);

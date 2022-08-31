@@ -92,6 +92,12 @@ struct SyntaxLayer {
     language: Arc<Language>,
 }
 
+pub struct SyntaxLayerInfo<'a> {
+    pub depth: usize,
+    pub node: Node<'a>,
+    pub language: &'a Arc<Language>,
+}
+
 #[derive(Debug, Clone)]
 struct SyntaxLayerSummary {
     min_depth: usize,
@@ -473,13 +479,18 @@ impl SyntaxSnapshot {
         range: Range<usize>,
         text: &'a Rope,
         tree: &'a Tree,
-        grammar: &'a Grammar,
+        language: &'a Arc<Language>,
         query: fn(&Grammar) -> Option<&Query>,
     ) -> SyntaxMapCaptures<'a> {
         SyntaxMapCaptures::new(
             range.clone(),
             text,
-            [(grammar, 0, tree.root_node())].into_iter(),
+            [SyntaxLayerInfo {
+                language,
+                depth: 0,
+                node: tree.root_node(),
+            }]
+            .into_iter(),
             query,
         )
     }
@@ -513,7 +524,7 @@ impl SyntaxSnapshot {
     }
 
     #[cfg(test)]
-    pub fn layers(&self, buffer: &BufferSnapshot) -> Vec<(&Grammar, usize, Node)> {
+    pub fn layers(&self, buffer: &BufferSnapshot) -> Vec<SyntaxLayerInfo> {
         self.layers_for_range(0..buffer.len(), buffer)
     }
 
@@ -521,7 +532,7 @@ impl SyntaxSnapshot {
         &self,
         range: Range<T>,
         buffer: &BufferSnapshot,
-    ) -> Vec<(&Grammar, usize, Node)> {
+    ) -> Vec<SyntaxLayerInfo> {
         let start = buffer.anchor_before(range.start.to_offset(buffer));
         let end = buffer.anchor_after(range.end.to_offset(buffer));
 
@@ -538,16 +549,14 @@ impl SyntaxSnapshot {
         let mut result = Vec::new();
         cursor.next(buffer);
         while let Some(layer) = cursor.item() {
-            if let Some(grammar) = &layer.language.grammar {
-                result.push((
-                    grammar.as_ref(),
-                    layer.depth,
-                    layer.tree.root_node_with_offset(
-                        layer.range.start.to_offset(buffer),
-                        layer.range.start.to_point(buffer).to_ts_point(),
-                    ),
-                ));
-            }
+            result.push(SyntaxLayerInfo {
+                language: &layer.language,
+                depth: layer.depth,
+                node: layer.tree.root_node_with_offset(
+                    layer.range.start.to_offset(buffer),
+                    layer.range.start.to_point(buffer).to_ts_point(),
+                ),
+            });
             cursor.next(buffer)
         }
 
@@ -559,7 +568,7 @@ impl<'a> SyntaxMapCaptures<'a> {
     fn new(
         range: Range<usize>,
         text: &'a Rope,
-        layers: impl Iterator<Item = (&'a Grammar, usize, Node<'a>)>,
+        layers: impl Iterator<Item = SyntaxLayerInfo<'a>>,
         query: fn(&Grammar) -> Option<&Query>,
     ) -> Self {
         let mut result = Self {
@@ -567,11 +576,19 @@ impl<'a> SyntaxMapCaptures<'a> {
             grammars: Vec::new(),
             active_layer_count: 0,
         };
-        for (grammar, depth, node) in layers {
-            let query = if let Some(query) = query(grammar) {
-                query
-            } else {
-                continue;
+        for SyntaxLayerInfo {
+            language,
+            depth,
+            node,
+        } in layers
+        {
+            let grammar = match &language.grammar {
+                Some(grammer) => grammer,
+                None => continue,
+            };
+            let query = match query(&grammar) {
+                Some(query) => query,
+                None => continue,
             };
 
             let mut query_cursor = QueryCursorHandle::new();
@@ -678,15 +695,23 @@ impl<'a> SyntaxMapMatches<'a> {
     fn new(
         range: Range<usize>,
         text: &'a Rope,
-        layers: impl Iterator<Item = (&'a Grammar, usize, Node<'a>)>,
+        layers: impl Iterator<Item = SyntaxLayerInfo<'a>>,
         query: fn(&Grammar) -> Option<&Query>,
     ) -> Self {
         let mut result = Self::default();
-        for (grammar, depth, node) in layers {
-            let query = if let Some(query) = query(grammar) {
-                query
-            } else {
-                continue;
+        for SyntaxLayerInfo {
+            language,
+            depth,
+            node,
+        } in layers
+        {
+            let grammar = match &language.grammar {
+                Some(grammer) => grammer,
+                None => continue,
+            };
+            let query = match query(&grammar) {
+                Some(query) => query,
+                None => continue,
             };
 
             let mut query_cursor = QueryCursorHandle::new();
@@ -1624,8 +1649,8 @@ mod tests {
         let reference_layers = reference_syntax_map.layers(&buffer);
         for (edited_layer, reference_layer) in layers.into_iter().zip(reference_layers.into_iter())
         {
-            assert_eq!(edited_layer.2.to_sexp(), reference_layer.2.to_sexp());
-            assert_eq!(edited_layer.2.range(), reference_layer.2.range());
+            assert_eq!(edited_layer.node.to_sexp(), reference_layer.node.to_sexp());
+            assert_eq!(edited_layer.node.range(), reference_layer.node.range());
         }
     }
 
@@ -1770,13 +1795,13 @@ mod tests {
                 mutated_layers.into_iter().zip(reference_layers.into_iter())
             {
                 assert_eq!(
-                    edited_layer.2.to_sexp(),
-                    reference_layer.2.to_sexp(),
+                    edited_layer.node.to_sexp(),
+                    reference_layer.node.to_sexp(),
                     "different layer at step {i}"
                 );
                 assert_eq!(
-                    edited_layer.2.range(),
-                    reference_layer.2.range(),
+                    edited_layer.node.range(),
+                    reference_layer.node.range(),
                     "different layer at step {i}"
                 );
             }
@@ -1828,7 +1853,7 @@ mod tests {
             expected_layers.len(),
             "wrong number of layers"
         );
-        for (i, ((_, _, node), expected_s_exp)) in
+        for (i, (SyntaxLayerInfo { node, .. }, expected_s_exp)) in
             layers.iter().zip(expected_layers.iter()).enumerate()
         {
             let actual_s_exp = node.to_sexp();

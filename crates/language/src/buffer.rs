@@ -641,6 +641,15 @@ impl Buffer {
         self.language.as_ref()
     }
 
+    pub fn language_at<D: ToOffset>(&self, position: D) -> Option<Arc<Language>> {
+        let offset = position.to_offset(self);
+        self.syntax_map
+            .lock()
+            .layers_for_range(offset..offset, &self.text)
+            .last()
+            .map(|info| info.language.clone())
+    }
+
     pub fn parse_count(&self) -> usize {
         self.parse_count
     }
@@ -1826,6 +1835,14 @@ impl BufferSnapshot {
         self.language.as_ref()
     }
 
+    pub fn language_at<D: ToOffset>(&self, position: D) -> Option<&Arc<Language>> {
+        let offset = position.to_offset(self);
+        self.syntax
+            .layers_for_range(offset..offset, &self.text)
+            .last()
+            .map(|info| info.language)
+    }
+
     pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {
         let mut start = start.to_offset(self);
         let mut end = start;
@@ -1858,8 +1875,8 @@ impl BufferSnapshot {
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut result: Option<Range<usize>> = None;
-        'outer: for (_, _, node) in self.syntax.layers_for_range(range.clone(), &self.text) {
-            let mut cursor = node.walk();
+        'outer: for layer in self.syntax.layers_for_range(range.clone(), &self.text) {
+            let mut cursor = layer.node.walk();
 
             // Descend to the first leaf that touches the start of the range,
             // and if the range is non-empty, extends beyond the start.
