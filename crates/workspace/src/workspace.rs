@@ -5,6 +5,7 @@
 /// specific locations.
 pub mod pane;
 pub mod pane_group;
+pub mod searchable;
 pub mod sidebar;
 mod status_bar;
 mod toolbar;
@@ -36,6 +37,7 @@ pub use pane::*;
 pub use pane_group::*;
 use postage::prelude::Stream;
 use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, ProjectStore, Worktree, WorktreeId};
+use searchable::SearchableItemHandle;
 use serde::Deserialize;
 use settings::{Autosave, Settings};
 use sidebar::{Side, Sidebar, SidebarButtons, ToggleSidebarItem};
@@ -325,6 +327,9 @@ pub trait Item: View {
             None
         }
     }
+    fn as_searchable(&self, _: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+        None
+    }
 }
 
 pub trait ProjectItem: Item {
@@ -438,6 +443,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
     fn workspace_deactivated(&self, cx: &mut MutableAppContext);
     fn navigate(&self, data: Box<dyn Any>, cx: &mut MutableAppContext) -> bool;
     fn id(&self) -> usize;
+    fn window_id(&self) -> usize;
     fn to_any(&self) -> AnyViewHandle;
     fn is_dirty(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
@@ -458,10 +464,12 @@ pub trait ItemHandle: 'static + fmt::Debug {
         cx: &mut MutableAppContext,
         callback: Box<dyn FnOnce(&mut MutableAppContext)>,
     ) -> gpui::Subscription;
+    fn as_searchable(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
 }
 
 pub trait WeakItemHandle {
     fn id(&self) -> usize;
+    fn window_id(&self) -> usize;
     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>>;
 }
 
@@ -670,6 +678,10 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.id()
     }
 
+    fn window_id(&self) -> usize {
+        self.window_id()
+    }
+
     fn to_any(&self) -> AnyViewHandle {
         self.into()
     }
@@ -728,6 +740,10 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
     ) -> gpui::Subscription {
         cx.observe_release(self, move |_, cx| callback(cx))
     }
+
+    fn as_searchable(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>> {
+        self.read(cx).as_searchable(self)
+    }
 }
 
 impl From<Box<dyn ItemHandle>> for AnyViewHandle {
@@ -751,6 +767,10 @@ impl Clone for Box<dyn ItemHandle> {
 impl<T: Item> WeakItemHandle for WeakViewHandle<T> {
     fn id(&self) -> usize {
         self.id()
+    }
+
+    fn window_id(&self) -> usize {
+        self.window_id()
     }
 
     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
