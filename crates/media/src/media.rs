@@ -195,8 +195,8 @@ pub mod core_media {
     #![allow(non_snake_case)]
 
     pub use crate::bindings::{
-        kCMTimeInvalid, kCMVideoCodecType_H264, CMItemIndex, CMSampleTimingInfo, CMTime,
-        CMTimeMake, CMVideoCodecType,
+        kCMSampleAttachmentKey_NotSync, kCMTimeInvalid, kCMVideoCodecType_H264, CMItemIndex,
+        CMSampleTimingInfo, CMTime, CMTimeMake, CMVideoCodecType,
     };
     use crate::core_video::{CVImageBuffer, CVImageBufferRef};
     use anyhow::{anyhow, Result};
@@ -357,18 +357,12 @@ pub mod video_toolbox {
 
     use super::*;
     use crate::{
-        core_media::{CMSampleBuffer, CMSampleBufferRef, CMTime, CMVideoCodecType},
+        core_media::{CMSampleBufferRef, CMTime, CMVideoCodecType},
         core_video::CVImageBufferRef,
     };
     use anyhow::{anyhow, Result};
-    use bindings::VTEncodeInfoFlags;
-    use core_foundation::{
-        base::OSStatus,
-        dictionary::CFDictionaryRef,
-        mach_port::CFAllocatorRef,
-        number::{CFBooleanGetValue, CFBooleanRef},
-        string::CFStringRef,
-    };
+    pub use bindings::VTEncodeInfoFlags;
+    use core_foundation::{base::OSStatus, dictionary::CFDictionaryRef, mach_port::CFAllocatorRef};
     use std::ptr;
 
     #[repr(C)]
@@ -402,7 +396,7 @@ pub mod video_toolbox {
                     ptr::null(),
                     ptr::null(),
                     ptr::null(),
-                    Some(Self::output),
+                    callback,
                     callback_data,
                     &mut this,
                 );
@@ -416,42 +410,6 @@ pub mod video_toolbox {
                     ))
                 }
             }
-        }
-
-        unsafe extern "C" fn output(
-            output_callback_ref_con: *mut c_void,
-            source_frame_ref_con: *mut c_void,
-            status: OSStatus,
-            info_flags: VTEncodeInfoFlags,
-            sample_buffer: CMSampleBufferRef,
-        ) {
-            if status != 0 {
-                println!("error encoding frame, code: {}", status);
-                return;
-            }
-            let sample_buffer = CMSampleBuffer::wrap_under_get_rule(sample_buffer);
-
-            let mut is_iframe = false;
-            let attachments = sample_buffer.attachments();
-            if let Some(attachments) = attachments.first() {
-                is_iframe = attachments
-                    .find(bindings::kCMSampleAttachmentKey_NotSync as CFStringRef)
-                    .map_or(true, |not_sync| {
-                        CFBooleanGetValue(*not_sync as CFBooleanRef)
-                    });
-            }
-
-            const START_CODE: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
-            if is_iframe {
-                let format_description = sample_buffer.format_description();
-                for ix in 0..format_description.h264_parameter_set_count() {
-                    let parameter_set = format_description.h264_parameter_set_at_index(ix);
-                    stream.extend(START_CODE);
-                    stream.extend(parameter_set);
-                }
-            }
-
-            println!("YO!");
         }
 
         pub fn encode_frame(

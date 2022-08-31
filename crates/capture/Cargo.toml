@@ -12,7 +12,9 @@ identifier = "dev.zed.Capture"
 gpui = { path = "../gpui" }
 media = { path = "../media" }
 
+anyhow = "1.0.38"
 block = "0.1"
+bytes = "1.2"
 cocoa = "0.24"
 core-foundation = "0.9.3"
 core-graphics = "0.22.3"

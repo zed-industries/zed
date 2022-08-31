@@ -1,12 +1,18 @@
 mod bindings;
+mod compression_session;
 
-use crate::bindings::SCStreamOutputType;
+use crate::{bindings::SCStreamOutputType, compression_session::CompressionSession};
 use block::ConcreteBlock;
+use bytes::BytesMut;
 use cocoa::{
     base::{id, nil, YES},
     foundation::{NSArray, NSString, NSUInteger},
 };
-use core_foundation::{base::TCFType, number::CFNumberRef, string::CFStringRef};
+use core_foundation::{
+    base::TCFType,
+    number::{CFBooleanGetValue, CFBooleanRef, CFNumberRef},
+    string::CFStringRef,
+};
 use futures::StreamExt;
 use gpui::{
     actions,
@@ -17,7 +23,10 @@ use gpui::{
 };
 use log::LevelFilter;
 use media::{
-    core_media::{kCMVideoCodecType_H264, CMSampleBuffer, CMSampleBufferRef, CMTimeMake},
+    core_media::{
+        kCMSampleAttachmentKey_NotSync, kCMVideoCodecType_H264, CMSampleBuffer, CMSampleBufferRef,
+        CMTimeMake,
+    },
     core_video::{self, CVImageBuffer},
     video_toolbox::VTCompressionSession,
 };
@@ -86,12 +95,40 @@ impl ScreenCaptureView {
                 let display: id = displays.objectAtIndex(0);
                 let display_width: usize = msg_send![display, width];
                 let display_height: usize = msg_send![display, height];
-                let compression_session = VTCompressionSession::new(
+                let mut compression_buffer = BytesMut::new();
+                let compression_session = CompressionSession::new(
                     display_width,
                     display_height,
                     kCMVideoCodecType_H264,
-                    None,
-                    ptr::null(),
+                    move |status, flags, sample_buffer| {
+                        if status != 0 {
+                            println!("error encoding frame, code: {}", status);
+                            return;
+                        }
+                        let sample_buffer = CMSampleBuffer::wrap_under_get_rule(sample_buffer);
+
+                        let mut is_iframe = false;
+                        let attachments = sample_buffer.attachments();
+                        if let Some(attachments) = attachments.first() {
+                            is_iframe = attachments
+                                .find(kCMSampleAttachmentKey_NotSync as CFStringRef)
+                                .map_or(true, |not_sync| {
+                                    CFBooleanGetValue(*not_sync as CFBooleanRef)
+                                });
+                        }
+
+                        const START_CODE: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
+                        if is_iframe {
+                            let format_description = sample_buffer.format_description();
+                            for ix in 0..format_description.h264_parameter_set_count() {
+                                let parameter_set =
+                                    format_description.h264_parameter_set_at_index(ix).unwrap();
+                                compression_buffer.extend_from_slice(&START_CODE);
+                                compression_buffer.extend_from_slice(parameter_set);
+                                let nal_unit = compression_buffer.split();
+                            }
+                        }
+                    },
                 )
                 .unwrap();
 
@@ -126,11 +163,7 @@ impl ScreenCaptureView {
                     let timing_info = buffer.sample_timing_info(0).unwrap();
                     let image_buffer = buffer.image_buffer();
                     compression_session
-                        .encode_frame(
-                            image_buffer.as_concrete_TypeRef(),
-                            timing_info.presentationTimeStamp,
-                            timing_info.duration,
-                        )
+                        .encode_frame(&image_buffer, timing_info)
                         .unwrap();
                     *surface_tx.lock().borrow_mut() = Some(image_buffer);
                 }) as Box<dyn FnMut(CMSampleBufferRef)>;

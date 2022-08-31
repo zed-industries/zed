@@ -10,6 +10,7 @@ doctest = false
 [dependencies]
 anyhow = "1.0"
 block = "0.1"
+bytes = "1.2"
 core-foundation = "0.9.3"
 foreign-types = "0.3"
 metal = "0.21.0"
