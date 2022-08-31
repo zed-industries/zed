@@ -1631,6 +1631,8 @@ impl BufferSnapshot {
                 if capture.index == config.indent_capture_ix {
                     start.get_or_insert(Point::from_ts_point(capture.node.start_position()));
                     end.get_or_insert(Point::from_ts_point(capture.node.end_position()));
+                } else if Some(capture.index) == config.start_capture_ix {
+                    start = Some(Point::from_ts_point(capture.node.end_position()));
                 } else if Some(capture.index) == config.end_capture_ix {
                     end = Some(Point::from_ts_point(capture.node.start_position()));
                 }

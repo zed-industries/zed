@@ -304,6 +304,7 @@ pub struct Grammar {
 struct IndentConfig {
     query: Query,
     indent_capture_ix: u32,
+    start_capture_ix: Option<u32>,
     end_capture_ix: Option<u32>,
 }
 
@@ -661,11 +662,13 @@ impl Language {
         let grammar = self.grammar_mut();
         let query = Query::new(grammar.ts_language, source)?;
         let mut indent_capture_ix = None;
+        let mut start_capture_ix = None;
         let mut end_capture_ix = None;
         get_capture_indices(
             &query,
             &mut [
                 ("indent", &mut indent_capture_ix),
+                ("start", &mut start_capture_ix),
                 ("end", &mut end_capture_ix),
             ],
         );
@@ -673,6 +676,7 @@ impl Language {
             grammar.indents_config = Some(IndentConfig {
                 query,
                 indent_capture_ix,
+                start_capture_ix,
                 end_capture_ix,
             });
         }
