@@ -1,6 +1,5 @@
 pub mod mappings;
 pub mod modal;
-pub mod search;
 pub mod terminal_container_view;
 pub mod terminal_element;
 pub mod terminal_view;
@@ -11,10 +10,14 @@ use alacritty_terminal::{
     event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
     event_loop::{EventLoop, Msg, Notifier},
     grid::{Dimensions, Scroll as AlacScroll},
-    index::{Direction, Point},
+    index::{Column, Direction, Line, Point},
     selection::{Selection, SelectionType},
     sync::FairMutex,
-    term::{color::Rgb, search::RegexSearch, RenderableContent, TermMode},
+    term::{
+        color::Rgb,
+        search::{Match, RegexIter, RegexSearch},
+        RenderableContent, TermMode,
+    },
     tty::{self, setup_env},
     Term,
 };
@@ -28,6 +31,7 @@ use mappings::mouse::{
     alt_scroll, mouse_button_report, mouse_moved_report, mouse_point, mouse_side, scroll_report,
 };
 use modal::deploy_modal;
+
 use settings::{AlternateScroll, Settings, Shell, TerminalBlink};
 use std::{
     collections::{HashMap, VecDeque},
@@ -66,7 +70,7 @@ pub fn init(cx: &mut MutableAppContext) {
 const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
 // const ALACRITTY_SEARCH_LINE_LIMIT: usize = 1000;
 const SEARCH_FORWARD: Direction = Direction::Left;
-
+const MAX_SEARCH_LINES: usize = 100;
 const DEBUG_TERMINAL_WIDTH: f32 = 500.;
 const DEBUG_TERMINAL_HEIGHT: f32 = 30.;
 const DEBUG_CELL_WIDTH: f32 = 5.;
@@ -528,9 +532,17 @@ impl Terminal {
                 term.scroll_display(*scroll);
             }
             InternalEvent::FocusNextMatch => {
-                if let Some((Some(searcher), origin)) = &self.searcher {
-                    match term.search_next(searcher, *origin, SEARCH_FORWARD, Direction::Left, None)
-                    {
+                if let Some((Some(searcher), _origin)) = &self.searcher {
+                    match term.search_next(
+                        searcher,
+                        Point {
+                            line: Line(0),
+                            column: Column(0),
+                        },
+                        SEARCH_FORWARD,
+                        Direction::Left,
+                        None,
+                    ) {
                         Some(regex_match) => {
                             term.scroll_to_point(*regex_match.start());
 
@@ -657,7 +669,7 @@ impl Terminal {
 
     pub fn render_lock<F, T>(&mut self, cx: &mut ModelContext<Self>, f: F) -> T
     where
-        F: FnOnce(RenderableContent, char, Option<RegexSearch>) -> T,
+        F: FnOnce(RenderableContent, char, Vec<Match>) -> T,
     {
         let m = self.term.clone(); //Arc clone
         let mut term = m.lock();
@@ -675,11 +687,12 @@ impl Terminal {
 
         let cursor_text = term.grid()[content.cursor.point].c;
 
-        f(
-            content,
-            cursor_text,
-            self.searcher.as_ref().and_then(|s| s.0.clone()),
-        )
+        let mut matches = vec![];
+        if let Some((Some(r), _)) = &self.searcher {
+            matches.extend(make_search_matches(&term, &r));
+        }
+
+        f(content, cursor_text, matches)
     }
 
     pub fn focus_in(&self) {
@@ -854,12 +867,6 @@ impl Terminal {
     }
 }
 
-fn make_selection(from: Point, to: Point) -> Selection {
-    let mut focus = Selection::new(SelectionType::Simple, from, Direction::Left);
-    focus.update(to, Direction::Right);
-    focus
-}
-
 impl Drop for Terminal {
     fn drop(&mut self) {
         self.pty_tx.0.send(Msg::Shutdown).ok();
@@ -868,6 +875,30 @@ impl Drop for Terminal {
 
 impl Entity for Terminal {
     type Event = Event;
+}
+
+fn make_selection(from: Point, to: Point) -> Selection {
+    let mut focus = Selection::new(SelectionType::Simple, from, Direction::Left);
+    focus.update(to, Direction::Right);
+    focus
+}
+
+/// Copied from alacritty/src/display/hint.rs HintMatches::visible_regex_matches()
+/// Iterate over all visible regex matches.
+fn make_search_matches<'a, T>(
+    term: &'a Term<T>,
+    regex: &'a RegexSearch,
+) -> impl Iterator<Item = Match> + 'a {
+    let viewport_start = Line(-(term.grid().display_offset() as i32));
+    let viewport_end = viewport_start + term.bottommost_line();
+    let mut start = term.line_search_left(Point::new(viewport_start, Column(0)));
+    let mut end = term.line_search_right(Point::new(viewport_end, Column(0)));
+    start.line = start.line.max(viewport_start - MAX_SEARCH_LINES);
+    end.line = end.line.min(viewport_end + MAX_SEARCH_LINES);
+
+    RegexIter::new(start, end, Direction::Right, term, regex)
+        .skip_while(move |rm| rm.end().line < viewport_start)
+        .take_while(move |rm| rm.start().line <= viewport_end)
 }
 
 #[cfg(test)]
