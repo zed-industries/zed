@@ -10,7 +10,7 @@ identifier = "dev.zed.Capture"
 
 [dependencies]
 gpui = { path = "../gpui" }
-io_surface = { path = "../io_surface" }
+media = { path = "../media" }
 
 block = "0.1"
 cocoa = "0.24"

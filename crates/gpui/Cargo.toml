@@ -60,7 +60,7 @@ png = "0.16"
 simplelog = "0.9"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-io_surface = { path = "../io_surface" }
+media = { path = "../media" }
 anyhow = "1"
 block = "0.1"
 cocoa = "0.24"

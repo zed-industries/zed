@@ -16,8 +16,8 @@ use gpui::{
     platform::current::Surface,
     Menu, MenuItem, ViewContext,
 };
-use io_surface::IOSurface;
 use log::LevelFilter;
+use media::core_video::{self, CVImageBuffer};
 use objc::{
     class,
     declare::ClassDecl,
@@ -55,7 +55,7 @@ fn main() {
 }
 
 struct ScreenCaptureView {
-    surface: Option<io_surface::IOSurface>,
+    image_buffer: Option<core_video::CVImageBuffer>,
 }
 
 impl gpui::Entity for ScreenCaptureView {
@@ -64,8 +64,9 @@ impl gpui::Entity for ScreenCaptureView {
 
 impl ScreenCaptureView {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let (surface_tx, mut surface_rx) = postage::watch::channel::<Option<IOSurface>>();
-        let surface_tx = Arc::new(Mutex::new(surface_tx));
+        let (image_buffer_tx, mut image_buffer_rx) =
+            postage::watch::channel::<Option<CVImageBuffer>>();
+        let image_buffer_tx = Arc::new(Mutex::new(image_buffer_tx));
 
         unsafe {
             let block = ConcreteBlock::new(move |content: id, error: id| {
@@ -93,7 +94,7 @@ impl ScreenCaptureView {
 
                 let output: id = msg_send![capture_output_class, alloc];
                 let output: id = msg_send![output, init];
-                let surface_tx = surface_tx.clone();
+                let surface_tx = image_buffer_tx.clone();
 
                 let callback = Box::new(move |buffer: CMSampleBufferRef| {
                     let buffer = CMSampleBuffer::wrap_under_get_rule(buffer);
@@ -112,8 +113,7 @@ impl ScreenCaptureView {
                     }
 
                     let image_buffer = buffer.image_buffer();
-                    let io_surface = image_buffer.io_surface();
-                    *surface_tx.lock().borrow_mut() = Some(io_surface);
+                    *surface_tx.lock().borrow_mut() = Some(image_buffer);
                 }) as Box<dyn FnMut(CMSampleBufferRef)>;
                 let callback = Box::into_raw(Box::new(callback));
                 (*output).set_ivar("callback", callback as *mut c_void);
@@ -169,10 +169,10 @@ impl ScreenCaptureView {
         }
 
         cx.spawn_weak(|this, mut cx| async move {
-            while let Some(surface) = surface_rx.next().await {
+            while let Some(image_buffer) = image_buffer_rx.next().await {
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {
-                        this.surface = surface;
+                        this.image_buffer = image_buffer;
                         println!("NEW SURFACE!");
                         cx.notify();
                     })
@@ -183,7 +183,7 @@ impl ScreenCaptureView {
         })
         .detach();
 
-        Self { surface: None }
+        Self { image_buffer: None }
     }
 }
 
@@ -193,12 +193,12 @@ impl gpui::View for ScreenCaptureView {
     }
 
     fn render(&mut self, _: &mut gpui::RenderContext<Self>) -> gpui::ElementBox {
-        let surface = self.surface.clone();
+        let image_buffer = self.image_buffer.clone();
         Canvas::new(move |bounds, _, cx| {
-            if let Some(native_surface) = surface.clone() {
+            if let Some(image_buffer) = image_buffer.clone() {
                 cx.scene.push_surface(Surface {
                     bounds,
-                    native_surface,
+                    image_buffer,
                 });
             }
         })
@@ -289,50 +289,5 @@ mod core_media {
             create_if_necessary: bool,
         ) -> CFArrayRef;
         fn CMSampleBufferGetImageBuffer(buffer: CMSampleBufferRef) -> CVImageBufferRef;
-    }
-}
-
-mod core_video {
-    #![allow(non_snake_case)]
-
-    use core_foundation::{
-        base::{CFTypeID, TCFType},
-        declare_TCFType, impl_CFTypeDescription, impl_TCFType,
-    };
-    use io_surface::{IOSurface, IOSurfaceRef};
-    use std::ffi::c_void;
-
-    #[repr(C)]
-    pub struct __CVImageBuffer(c_void);
-    // The ref type must be a pointer to the underlying struct.
-    pub type CVImageBufferRef = *const __CVImageBuffer;
-
-    declare_TCFType!(CVImageBuffer, CVImageBufferRef);
-    impl_TCFType!(CVImageBuffer, CVImageBufferRef, CVImageBufferGetTypeID);
-    impl_CFTypeDescription!(CVImageBuffer);
-
-    impl CVImageBuffer {
-        pub fn io_surface(&self) -> IOSurface {
-            unsafe {
-                IOSurface::wrap_under_get_rule(CVPixelBufferGetIOSurface(
-                    self.as_concrete_TypeRef(),
-                ))
-            }
-        }
-
-        pub fn width(&self) -> usize {
-            unsafe { CVPixelBufferGetWidth(self.as_concrete_TypeRef()) }
-        }
-
-        pub fn height(&self) -> usize {
-            unsafe { CVPixelBufferGetHeight(self.as_concrete_TypeRef()) }
-        }
-    }
-
-    extern "C" {
-        fn CVImageBufferGetTypeID() -> CFTypeID;
-        fn CVPixelBufferGetIOSurface(buffer: CVImageBufferRef) -> IOSurfaceRef;
-        fn CVPixelBufferGetWidth(buffer: CVImageBufferRef) -> usize;
-        fn CVPixelBufferGetHeight(buffer: CVImageBufferRef) -> usize;
     }
 }

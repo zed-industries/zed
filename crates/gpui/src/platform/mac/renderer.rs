@@ -39,7 +39,7 @@ struct PathSprite {
 
 pub struct Surface {
     pub bounds: RectF,
-    pub native_surface: io_surface::IOSurface,
+    pub image_buffer: media::core_video::CVImageBuffer,
 }
 
 impl Renderer {
@@ -790,7 +790,6 @@ impl Renderer {
             let target_size = surface.bounds.size() * scale_factor;
             // let corner_radius = surface.corner_radius * scale_factor;
             // let border_width = surface.border.width * scale_factor;
-            // let (alloc_id, atlas_bounds) = self.image_cache.render(&surface.native_surface);
         }
 
         // command_encoder.set_render_pipeline_state(&self.image_pipeline_state);

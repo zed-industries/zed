@@ -763,8 +763,8 @@ dependencies = [
  "foreign-types",
  "futures",
  "gpui",
- "io_surface",
  "log",
+ "media",
  "objc",
  "parking_lot 0.11.2",
  "postage",
@@ -2232,9 +2232,9 @@ dependencies = [
  "futures",
  "gpui_macros",
  "image",
- "io_surface",
  "lazy_static",
  "log",
+ "media",
  "metal",
  "num_cpus",
  "objc",
@@ -2599,15 +2599,6 @@ checksum = "ec58677acfea8a15352d42fc87d11d63596ade9239e0a7c9352914417515dbe6"
 dependencies = [
  "libc",
  "winapi 0.3.9",
-]
-
-[[package]]
-name = "io_surface"
-version = "0.1.0"
-dependencies = [
- "block",
- "core-foundation",
- "objc",
 ]
 
 [[package]]
@@ -3037,6 +3028,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "658646b21e0b72f7866c7038ab086d3d5e1cd6271f060fd37defb241949d0582"
 dependencies = [
  "digest 0.10.3",
+]
+
+[[package]]
+name = "media"
+version = "0.1.0"
+dependencies = [
+ "block",
+ "core-foundation",
+ "objc",
 ]
 
 [[package]]
