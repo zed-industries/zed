@@ -1,10 +1,14 @@
 #![allow(non_snake_case)]
+#![allow(non_camel_case_types)]
 
 use core_foundation::{
     base::{CFTypeID, TCFType},
     declare_TCFType, impl_CFTypeDescription, impl_TCFType,
 };
+use objc::runtime;
 use std::ffi::c_void;
+
+pub type id = *mut runtime::Object;
 
 pub mod io_surface {
     use super::*;
@@ -27,8 +31,14 @@ pub mod io_surface {
 pub mod core_video {
     #![allow(non_snake_case)]
 
+    use std::ptr;
+
     use super::*;
+    use core_foundation::{
+        base::kCFAllocatorDefault, dictionary::CFDictionaryRef, mach_port::CFAllocatorRef,
+    };
     use io_surface::{IOSurface, IOSurfaceRef};
+    use metal::{MTLDevice, MTLPixelFormat};
 
     #[repr(C)]
     pub struct __CVImageBuffer(c_void);
@@ -62,5 +72,95 @@ pub mod core_video {
         fn CVPixelBufferGetIOSurface(buffer: CVImageBufferRef) -> IOSurfaceRef;
         fn CVPixelBufferGetWidth(buffer: CVImageBufferRef) -> usize;
         fn CVPixelBufferGetHeight(buffer: CVImageBufferRef) -> usize;
+    }
+
+    #[repr(C)]
+    pub struct __CVMetalTextureCache(c_void);
+    pub type CVMetalTextureCacheRef = *const __CVMetalTextureCache;
+
+    declare_TCFType!(CVMetalTextureCache, CVMetalTextureCacheRef);
+    impl_TCFType!(
+        CVMetalTextureCache,
+        CVMetalTextureCacheRef,
+        CVMetalTextureCacheGetTypeID
+    );
+    impl_CFTypeDescription!(CVMetalTextureCache);
+
+    impl CVMetalTextureCache {
+        pub fn new(metal_device: *mut MTLDevice) -> Self {
+            unsafe {
+                let mut this = ptr::null();
+                let result = CVMetalTextureCacheCreate(
+                    kCFAllocatorDefault,
+                    ptr::null_mut(),
+                    metal_device,
+                    ptr::null_mut(),
+                    &mut this,
+                );
+                // TODO: Check result
+                CVMetalTextureCache::wrap_under_create_rule(this)
+            }
+        }
+
+        pub fn create_texture_from_image(
+            &self,
+            source: CVImageBufferRef,
+            texture_attributes: CFDictionaryRef,
+            pixel_format: MTLPixelFormat,
+            width: usize,
+            height: usize,
+            plane_index: usize,
+        ) -> CVMetalTexture {
+            unsafe {
+                let mut this = ptr::null();
+                let result = CVMetalTextureCacheCreateTextureFromImage(
+                    kCFAllocatorDefault,
+                    self.as_concrete_TypeRef(),
+                    source,
+                    texture_attributes,
+                    pixel_format,
+                    width,
+                    height,
+                    plane_index,
+                    &mut this,
+                );
+                // TODO: Check result
+                CVMetalTexture::wrap_under_create_rule(this)
+            }
+        }
+    }
+
+    extern "C" {
+        fn CVMetalTextureCacheGetTypeID() -> CFTypeID;
+        fn CVMetalTextureCacheCreate(
+            allocator: CFAllocatorRef,
+            cache_attributes: CFDictionaryRef,
+            metal_device: *const MTLDevice,
+            texture_attributes: CFDictionaryRef,
+            cache_out: *mut CVMetalTextureCacheRef,
+        ) -> i32; // TODO: This should be a CVReturn enum
+        fn CVMetalTextureCacheCreateTextureFromImage(
+            allocator: CFAllocatorRef,
+            texture_cache: CVMetalTextureCacheRef,
+            source_image: CVImageBufferRef,
+            texture_attributes: CFDictionaryRef,
+            pixel_format: MTLPixelFormat,
+            width: usize,
+            height: usize,
+            plane_index: usize,
+            texture_out: *mut CVMetalTextureRef,
+        ) -> i32;
+    }
+
+    #[repr(C)]
+    pub struct __CVMetalTexture(c_void);
+    pub type CVMetalTextureRef = *const __CVMetalTexture;
+
+    declare_TCFType!(CVMetalTexture, CVMetalTextureRef);
+    impl_TCFType!(CVMetalTexture, CVMetalTextureRef, CVMetalTextureGetTypeID);
+    impl_CFTypeDescription!(CVMetalTexture);
+
+    extern "C" {
+        fn CVMetalTextureGetTypeID() -> CFTypeID;
     }
 }

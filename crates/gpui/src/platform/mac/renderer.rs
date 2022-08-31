@@ -9,10 +9,13 @@ use crate::{
     scene::{Glyph, Icon, Image, ImageGlyph, Layer, Quad, Scene, Shadow, Underline},
 };
 use cocoa::foundation::NSUInteger;
+use core_foundation::base::TCFType;
+use foreign_types::ForeignTypeRef;
 use log::warn;
+use media::core_video::{self, CVMetalTextureCache};
 use metal::{MTLPixelFormat, MTLResourceOptions, NSRange};
 use shaders::ToFloat2 as _;
-use std::{collections::HashMap, ffi::c_void, iter::Peekable, mem, sync::Arc, vec};
+use std::{collections::HashMap, ffi::c_void, iter::Peekable, mem, ptr, sync::Arc, vec};
 
 const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
 const INSTANCE_BUFFER_SIZE: usize = 8192 * 1024; // This is an arbitrary decision. There's probably a more optimal value.
@@ -29,6 +32,7 @@ pub struct Renderer {
     underline_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     instances: metal::Buffer,
+    cv_texture_cache: core_video::CVMetalTextureCache,
 }
 
 struct PathSprite {
@@ -39,7 +43,7 @@ struct PathSprite {
 
 pub struct Surface {
     pub bounds: RectF,
-    pub image_buffer: media::core_video::CVImageBuffer,
+    pub image_buffer: core_video::CVImageBuffer,
 }
 
 impl Renderer {
@@ -128,6 +132,7 @@ impl Renderer {
             "underline_fragment",
             pixel_format,
         );
+        let cv_texture_cache = CVMetalTextureCache::new(device.as_ptr());
         Self {
             sprite_cache,
             image_cache,
@@ -140,6 +145,7 @@ impl Renderer {
             underline_pipeline_state,
             unit_vertices,
             instances,
+            cv_texture_cache,
         }
     }
 
@@ -786,10 +792,26 @@ impl Renderer {
         }
 
         for surface in surfaces {
-            let origin = surface.bounds.origin() * scale_factor;
-            let target_size = surface.bounds.size() * scale_factor;
+            // let origin = surface.bounds.origin() * scale_factor;
+            // let target_size = surface.bounds.size() * scale_factor;
             // let corner_radius = surface.corner_radius * scale_factor;
             // let border_width = surface.border.width * scale_factor;
+
+            let width = surface.image_buffer.width();
+            let height = surface.image_buffer.height();
+
+            // We should add this method, but this return CVPixelFormatType and we need MTLPixelFormat
+            // I found at least one code example that manually maps them. Not sure what other options we have.
+            let pixel_format = surface.image_buffer.pixel_format_type();
+
+            let texture = self.cv_texture_cache.create_texture_from_image(
+                surface.image_buffer.as_concrete_TypeRef(),
+                ptr::null(),
+                pixel_format,
+                width,
+                height,
+                0,
+            );
         }
 
         // command_encoder.set_render_pipeline_state(&self.image_pipeline_state);

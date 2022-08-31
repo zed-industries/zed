@@ -10,4 +10,5 @@ doctest = false
 [dependencies]
 block = "0.1"
 core-foundation = "0.9.3"
+metal = "0.21.0"
 objc = "0.2"

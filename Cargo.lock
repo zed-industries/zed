@@ -3036,6 +3036,7 @@ version = "0.1.0"
 dependencies = [
  "block",
  "core-foundation",
+ "metal",
  "objc",
 ]
 
