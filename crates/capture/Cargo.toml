@@ -4,10 +4,6 @@ version = "0.1.0"
 edition = "2021"
 description = "An example of screen capture"
 
-[package.metadata.bundle]
-name = "Capture"
-identifier = "dev.zed.Capture"
-
 [dependencies]
 gpui = { path = "../gpui" }
 media = { path = "../media" }
@@ -15,6 +11,7 @@ media = { path = "../media" }
 anyhow = "1.0.38"
 block = "0.1"
 bytes = "1.2"
+byteorder = "1.4"
 cocoa = "0.24"
 core-foundation = "0.9.3"
 core-graphics = "0.22.3"

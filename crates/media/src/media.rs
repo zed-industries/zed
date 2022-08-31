@@ -269,6 +269,14 @@ pub mod core_media {
                 ))
             }
         }
+
+        pub fn data(&self) -> CMBlockBuffer {
+            unsafe {
+                CMBlockBuffer::wrap_under_get_rule(CMSampleBufferGetDataBuffer(
+                    self.as_concrete_TypeRef(),
+                ))
+            }
+        }
     }
 
     #[link(name = "CoreMedia", kind = "framework")]
@@ -285,11 +293,11 @@ pub mod core_media {
             timing_info_out: *mut CMSampleTimingInfo,
         ) -> OSStatus;
         fn CMSampleBufferGetFormatDescription(buffer: CMSampleBufferRef) -> CMFormatDescriptionRef;
+        fn CMSampleBufferGetDataBuffer(sample_buffer: CMSampleBufferRef) -> CMBlockBufferRef;
     }
 
     #[repr(C)]
     pub struct __CMFormatDescription(c_void);
-    // The ref type must be a pointer to the underlying struct.
     pub type CMFormatDescriptionRef = *const __CMFormatDescription;
 
     declare_TCFType!(CMFormatDescription, CMFormatDescriptionRef);
@@ -348,6 +356,44 @@ pub mod core_media {
             parameter_set_size_out: *mut usize,
             parameter_set_count_out: *mut usize,
             NALUnitHeaderLengthOut: *mut isize,
+        ) -> OSStatus;
+    }
+
+    #[repr(C)]
+    pub struct __CMBlockBuffer(c_void);
+    pub type CMBlockBufferRef = *const __CMBlockBuffer;
+
+    declare_TCFType!(CMBlockBuffer, CMBlockBufferRef);
+    impl_TCFType!(CMBlockBuffer, CMBlockBufferRef, CMBlockBufferGetTypeID);
+    impl_CFTypeDescription!(CMBlockBuffer);
+
+    impl CMBlockBuffer {
+        pub fn bytes(&self) -> &[u8] {
+            unsafe {
+                let mut bytes = ptr::null();
+                let mut len = 0;
+                let result = CMBlockBufferGetDataPointer(
+                    self.as_concrete_TypeRef(),
+                    0,
+                    &mut 0,
+                    &mut len,
+                    &mut bytes,
+                );
+                assert!(result == 0, "could not get block buffer data");
+                std::slice::from_raw_parts(bytes, len)
+            }
+        }
+    }
+
+    #[link(name = "CoreMedia", kind = "framework")]
+    extern "C" {
+        fn CMBlockBufferGetTypeID() -> CFTypeID;
+        fn CMBlockBufferGetDataPointer(
+            buffer: CMBlockBufferRef,
+            offset: usize,
+            length_at_offset_out: *mut usize,
+            total_length_out: *mut usize,
+            data_pointer_out: *mut *const u8,
         ) -> OSStatus;
     }
 }

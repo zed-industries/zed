@@ -757,6 +757,7 @@ dependencies = [
  "anyhow",
  "bindgen",
  "block",
+ "byteorder",
  "bytes",
  "cocoa",
  "core-foundation",

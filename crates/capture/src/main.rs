@@ -3,6 +3,7 @@ mod compression_session;
 
 use crate::{bindings::SCStreamOutputType, compression_session::CompressionSession};
 use block::ConcreteBlock;
+use byteorder::{BigEndian, ReadBytesExt};
 use bytes::BytesMut;
 use cocoa::{
     base::{id, nil, YES},
@@ -127,6 +128,25 @@ impl ScreenCaptureView {
                                 compression_buffer.extend_from_slice(parameter_set);
                                 let nal_unit = compression_buffer.split();
                             }
+                        }
+
+                        let data = sample_buffer.data();
+                        let mut data = data.bytes();
+
+                        const AVCC_HEADER_LENGTH: usize = 4;
+                        while data.len() - AVCC_HEADER_LENGTH > 0 {
+                            let nal_unit_len = match data.read_u32::<BigEndian>() {
+                                Ok(len) => len as usize,
+                                Err(error) => {
+                                    log::error!("error decoding nal unit length: {}", error);
+                                    return;
+                                }
+                            };
+                            compression_buffer.extend_from_slice(&START_CODE);
+                            compression_buffer.extend_from_slice(&data[..nal_unit_len as usize]);
+                            data = &data[nal_unit_len..];
+
+                            let nal_unit = compression_buffer.split();
                         }
                     },
                 )
