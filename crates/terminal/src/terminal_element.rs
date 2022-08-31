@@ -43,7 +43,7 @@ use crate::{
 pub struct LayoutState {
     cells: Vec<LayoutCell>,
     rects: Vec<LayoutRect>,
-    highlights: Vec<RelativeHighlightedRange>,
+    selections: Vec<RelativeHighlightedRange>,
     cursor: Option<Cursor>,
     background_color: Color,
     selection_color: Color,
@@ -624,13 +624,13 @@ impl Element for TerminalElement {
             terminal_theme.colors.background
         };
 
-        let (cells, selection, cursor, display_offset, cursor_text, mode) = self
+        let (cells, selection, cursor, display_offset, cursor_text, searcher, mode) = self
             .terminal
             .upgrade(cx)
             .unwrap()
             .update(cx.app, |terminal, mcx| {
                 terminal.set_size(dimensions);
-                terminal.render_lock(mcx, |content, cursor_text| {
+                terminal.render_lock(mcx, |content, cursor_text, searcher| {
                     let mut cells = vec![];
                     cells.extend(
                         content
@@ -653,12 +653,13 @@ impl Element for TerminalElement {
                         content.cursor,
                         content.display_offset,
                         cursor_text,
+                        searcher,
                         content.mode,
                     )
                 })
             });
 
-        let (cells, rects, highlights) = TerminalElement::layout_grid(
+        let (cells, rects, selections) = TerminalElement::layout_grid(
             cells,
             &text_style,
             &terminal_theme,
@@ -731,7 +732,7 @@ impl Element for TerminalElement {
                 selection_color,
                 size: dimensions,
                 rects,
-                highlights,
+                selections,
                 mode,
             },
         )
@@ -769,13 +770,13 @@ impl Element for TerminalElement {
 
             //Draw Selection
             cx.paint_layer(clip_bounds, |cx| {
-                let start_y = layout.highlights.get(0).map(|highlight| {
+                let start_y = layout.selections.get(0).map(|highlight| {
                     origin.y() + highlight.line_index as f32 * layout.size.line_height
                 });
 
                 if let Some(y) = start_y {
                     let range_lines = layout
-                        .highlights
+                        .selections
                         .iter()
                         .map(|relative_highlight| {
                             relative_highlight.to_highlighted_range_line(origin, layout)

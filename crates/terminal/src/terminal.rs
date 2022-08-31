@@ -1,5 +1,6 @@
 pub mod mappings;
 pub mod modal;
+pub mod search;
 pub mod terminal_container_view;
 pub mod terminal_element;
 pub mod terminal_view;
@@ -13,7 +14,7 @@ use alacritty_terminal::{
     index::{Direction, Point},
     selection::{Selection, SelectionType},
     sync::FairMutex,
-    term::{search::RegexSearch, RenderableContent, TermMode},
+    term::{color::Rgb, search::RegexSearch, RenderableContent, TermMode},
     tty::{self, setup_env},
     Term,
 };
@@ -81,18 +82,13 @@ pub enum Event {
     BlinkChanged,
 }
 
-#[derive(Clone, Debug)]
-enum Scroll {
-    AlacScroll(AlacScroll),
-    ToNextSearch,
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 enum InternalEvent {
-    TermEvent(AlacTermEvent),
+    ColorRequest(usize, Arc<dyn Fn(Rgb) -> String + Sync + Send + 'static>),
     Resize(TerminalSize),
     Clear,
-    Scroll(Scroll),
+    FocusNextMatch,
+    Scroll(AlacScroll),
     SetSelection(Option<Selection>),
     UpdateSelection(Vector2F),
     Copy,
@@ -172,8 +168,12 @@ impl From<TerminalSize> for WindowSize {
 }
 
 impl Dimensions for TerminalSize {
+    /// Note: this is supposed to be for the back buffer's length,
+    /// but we exclusively use it to resize the terminal, which does not
+    /// use this method. We still have to implement it for the trait though,
+    /// hence, this comment.
     fn total_lines(&self) -> usize {
-        self.screen_lines() //TODO: Check that this is fine. This is supposed to be for the back buffer...
+        self.screen_lines()
     }
 
     fn screen_lines(&self) -> usize {
@@ -378,7 +378,6 @@ impl TerminalBuilder {
             cur_size: initial_size,
             last_mouse: None,
             last_offset: 0,
-            has_selection: false,
             searcher: None,
         };
 
@@ -451,7 +450,6 @@ pub struct Terminal {
     last_mode: TermMode,
     last_offset: usize,
     last_mouse: Option<(Point, Direction)>,
-    has_selection: bool,
     searcher: Option<(Option<RegexSearch>, Point)>,
 }
 
@@ -492,9 +490,11 @@ impl Terminal {
                 cx.emit(Event::Wakeup);
                 cx.notify();
             }
-            AlacTermEvent::ColorRequest(_, _) => self
-                .events
-                .push_back(InternalEvent::TermEvent(event.clone())),
+            AlacTermEvent::ColorRequest(idx, fun_ptr) => {
+                self.events
+                    .push_back(InternalEvent::ColorRequest(*idx, fun_ptr.clone()));
+                cx.notify(); //Immediately schedule a render to respond to the color request
+            }
         }
     }
 
@@ -506,14 +506,12 @@ impl Terminal {
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            InternalEvent::TermEvent(term_event) => {
-                if let AlacTermEvent::ColorRequest(index, format) = term_event {
-                    let color = term.colors()[*index].unwrap_or_else(|| {
-                        let term_style = &cx.global::<Settings>().theme.terminal;
-                        to_alac_rgb(get_color_at_index(index, &term_style.colors))
-                    });
-                    self.write_to_pty(format(color))
-                }
+            InternalEvent::ColorRequest(index, format) => {
+                let color = term.colors()[*index].unwrap_or_else(|| {
+                    let term_style = &cx.global::<Settings>().theme.terminal;
+                    to_alac_rgb(get_color_at_index(index, &term_style.colors))
+                });
+                self.write_to_pty(format(color))
             }
             InternalEvent::Resize(new_size) => {
                 self.cur_size = *new_size;
@@ -526,17 +524,24 @@ impl Terminal {
                 self.write_to_pty("\x0c".to_string());
                 term.clear_screen(ClearMode::Saved);
             }
-            InternalEvent::Scroll(Scroll::AlacScroll(scroll)) => {
+            InternalEvent::Scroll(scroll) => {
                 term.scroll_display(*scroll);
             }
-            InternalEvent::Scroll(Scroll::ToNextSearch) => {
+            InternalEvent::FocusNextMatch => {
                 if let Some((Some(searcher), origin)) = &self.searcher {
                     match term.search_next(searcher, *origin, SEARCH_FORWARD, Direction::Left, None)
                     {
                         Some(regex_match) => {
-                            //Jump to spot
+                            term.scroll_to_point(*regex_match.start());
+
+                            //Focus is done with selections in zed
+                            let focus = make_selection(*regex_match.start(), *regex_match.end());
+                            term.selection = Some(focus);
                         }
-                        None => { /*reset state*/ }
+                        None => {
+                            //Clear focused match
+                            term.selection = None;
+                        }
                     }
                 }
             }
@@ -560,7 +565,6 @@ impl Terminal {
     }
 
     fn begin_select(&mut self, sel: Selection) {
-        self.has_selection = true;
         self.events
             .push_back(InternalEvent::SetSelection(Some(sel)));
     }
@@ -571,35 +575,30 @@ impl Terminal {
     }
 
     fn end_select(&mut self) {
-        self.has_selection = false;
         self.events.push_back(InternalEvent::SetSelection(None));
     }
 
     fn scroll(&mut self, scroll: AlacScroll) {
-        self.events
-            .push_back(InternalEvent::Scroll(Scroll::AlacScroll(scroll)));
+        self.events.push_back(InternalEvent::Scroll(scroll));
     }
 
-    fn scroll_to_next_search(&mut self) {
-        self.events
-            .push_back(InternalEvent::Scroll(Scroll::ToNextSearch));
+    fn focus_next_match(&mut self) {
+        self.events.push_back(InternalEvent::FocusNextMatch);
     }
 
     pub fn search(&mut self, search: &str) {
         let new_searcher = RegexSearch::new(search).ok();
         self.searcher = match (new_searcher, &self.searcher) {
-            //Existing search, carry over origin
-            (Some(new_searcher), Some((_, origin))) => Some((Some(new_searcher), *origin)),
-            //No existing search, start a new one
-            (Some(new_searcher), None) => Some((Some(new_searcher), self.viewport_origin())),
-            //Error creating a new search, carry over origin
-            (None, Some((_, origin))) => Some((None, *origin)),
             //Nothing to do :(
             (None, None) => None,
+            //No existing search, start a new one
+            (Some(new_searcher), None) => Some((Some(new_searcher), self.viewport_origin())),
+            //Existing search, carry over origin
+            (new_searcher, Some((_, origin))) => Some((new_searcher, *origin)),
         };
 
         if let Some((Some(_), _)) = self.searcher {
-            self.scroll_to_next_search();
+            self.focus_next_match();
         }
     }
 
@@ -658,7 +657,7 @@ impl Terminal {
 
     pub fn render_lock<F, T>(&mut self, cx: &mut ModelContext<Self>, f: F) -> T
     where
-        F: FnOnce(RenderableContent, char) -> T,
+        F: FnOnce(RenderableContent, char, Option<RegexSearch>) -> T,
     {
         let m = self.term.clone(); //Arc clone
         let mut term = m.lock();
@@ -672,14 +671,15 @@ impl Terminal {
 
         let content = term.renderable_content();
 
-        // term.line_search_right(point)
-        // term.search_next(dfas, origin, direction, side, max_lines)
-
         self.last_offset = content.display_offset;
 
         let cursor_text = term.grid()[content.cursor.point].c;
 
-        f(content, cursor_text)
+        f(
+            content,
+            cursor_text,
+            self.searcher.as_ref().and_then(|s| s.0.clone()),
+        )
     }
 
     pub fn focus_in(&self) {
@@ -852,6 +852,12 @@ impl Terminal {
             }
         }
     }
+}
+
+fn make_selection(from: Point, to: Point) -> Selection {
+    let mut focus = Selection::new(SelectionType::Simple, from, Direction::Left);
+    focus.update(to, Direction::Right);
+    focus
 }
 
 impl Drop for Terminal {

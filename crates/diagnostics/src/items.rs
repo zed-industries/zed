@@ -179,7 +179,7 @@ impl View for DiagnosticIndicator {
         if in_progress {
             element.add_child(
                 Label::new(
-                    "checking…".into(),
+                    "Checking…".into(),
                     style.diagnostic_message.default.text.clone(),
                 )
                 .aligned()
