@@ -816,7 +816,7 @@ impl Renderer {
                 surface.image_buffer.width() as i32,
                 surface.image_buffer.height() as i32,
             );
-            let target_size = surface.bounds.size();
+            let target_size = surface.bounds.size() * scale_factor;
             let pixel_format = if surface.image_buffer.pixel_format_type()
                 == core_video::kCVPixelFormatType_32BGRA
             {

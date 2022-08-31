@@ -123,8 +123,8 @@ impl ScreenCaptureView {
                 // let filter: id = msg_send![filter, initWithDesktopIndependentWindow: window];
                 let config: id = msg_send![class!(SCStreamConfiguration), alloc];
                 let config: id = msg_send![config, init];
-                let _: () = msg_send![config, setWidth: display_width];
-                let _: () = msg_send![config, setHeight: display_height];
+                let _: () = msg_send![config, setWidth: display_width * 2];
+                let _: () = msg_send![config, setHeight: display_height * 2];
                 let _: () = msg_send![config, setMinimumFrameInterval: bindings::CMTimeMake(1, 60)];
                 let _: () = msg_send![config, setQueueDepth: 6];
                 let _: () = msg_send![config, setShowsCursor: YES];
