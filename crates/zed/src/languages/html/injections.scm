@@ -1,3 +1,7 @@
 (script_element
-    (raw_text) @content
-    (#set! "language" "javascript"))
+  (raw_text) @content
+  (#set! "language" "javascript"))
+
+(style_element
+  (raw_text) @content
+  (#set! "language" "css"))

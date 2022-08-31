@@ -48,6 +48,11 @@ pub async fn init(languages: Arc<LanguageRegistry>, _executor: Arc<Background>) 
             Some(CachedLspAdapter::new(c::CLspAdapter).await),
         ),
         (
+            "css",
+            tree_sitter_css::language(),
+            None, //
+        ),
+        (
             "elixir",
             tree_sitter_elixir::language(),
             Some(CachedLspAdapter::new(elixir::ElixirLspAdapter).await),
