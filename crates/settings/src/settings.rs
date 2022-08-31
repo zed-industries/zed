@@ -40,21 +40,11 @@ pub struct Settings {
 }
 
 #[derive(Copy, Clone, Debug, Default, Deserialize, JsonSchema)]
-pub struct FeatureFlags {
-    modal_terminal: Option<bool>,
-}
+pub struct FeatureFlags {}
 
 impl FeatureFlags {
     pub fn keymap_files(&self) -> Vec<&'static str> {
-        let mut res = vec![];
-        if self.modal_terminal() {
-            res.push("keymaps/experiments/modal_terminal.json")
-        }
-        res
-    }
-
-    pub fn modal_terminal(&self) -> bool {
-        self.modal_terminal.unwrap_or_default()
+        vec![]
     }
 }
 
