@@ -1,5 +1,6 @@
 mod buffer;
 mod diagnostic_set;
+pub mod git;
 mod highlight_map;
 mod outline;
 pub mod proto;

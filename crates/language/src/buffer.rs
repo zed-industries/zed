@@ -1,3 +1,4 @@
+use crate::git::{BufferDiff, DiffHunk};
 pub use crate::{
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
@@ -48,6 +49,7 @@ pub use lsp::DiagnosticSeverity;
 pub struct Buffer {
     text: TextBuffer,
     head_text: Option<String>,
+    diff: BufferDiff,
     file: Option<Arc<dyn File>>,
     saved_version: clock::Global,
     saved_version_fingerprint: String,
@@ -74,6 +76,7 @@ pub struct Buffer {
 
 pub struct BufferSnapshot {
     text: text::BufferSnapshot,
+    git_hunks: Arc<[DiffHunk<Anchor>]>,
     pub(crate) syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: DiagnosticSet,
@@ -416,6 +419,11 @@ impl Buffer {
             UNIX_EPOCH
         };
 
+        let mut diff = BufferDiff::new();
+        if let Some(head_text) = &head_text {
+            diff.update(head_text, &buffer);
+        }
+
         Self {
             saved_mtime,
             saved_version: buffer.version(),
@@ -424,6 +432,7 @@ impl Buffer {
             was_dirty_before_starting_transaction: None,
             text: buffer,
             head_text,
+            diff,
             file,
             syntax_map: Mutex::new(SyntaxMap::new()),
             parsing_in_background: false,
@@ -453,6 +462,7 @@ impl Buffer {
         BufferSnapshot {
             text,
             syntax,
+            git_hunks: self.diff.hunks(),
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
@@ -2145,6 +2155,30 @@ impl BufferSnapshot {
             })
     }
 
+    pub fn diff_hunks_in_range<'a>(
+        &'a self,
+        query_row_range: Range<u32>,
+    ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
+        self.git_hunks.iter().filter_map(move |hunk| {
+            let range = hunk.buffer_range.to_point(&self.text);
+
+            if range.start.row < query_row_range.end && query_row_range.start < range.end.row {
+                let end_row = if range.end.column > 0 {
+                    range.end.row + 1
+                } else {
+                    range.end.row
+                };
+
+                Some(DiffHunk {
+                    buffer_range: range.start.row..end_row,
+                    head_range: hunk.head_range.clone(),
+                })
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn diagnostics_in_range<'a, T, O>(
         &'a self,
         search_range: Range<T>,
@@ -2218,6 +2252,7 @@ impl Clone for BufferSnapshot {
     fn clone(&self) -> Self {
         Self {
             text: self.text.clone(),
+            git_hunks: self.git_hunks.clone(),
             syntax: self.syntax.clone(),
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),

@@ -34,6 +34,7 @@ use gpui::{
     WeakViewHandle,
 };
 use json::json;
+use language::git::{DiffHunk, DiffHunkStatus};
 use language::{Bias, DiagnosticSeverity, OffsetUtf16, Selection};
 use project::ProjectPath;
 use settings::Settings;
@@ -541,6 +542,33 @@ impl EditorElement {
                     cx,
                 );
             }
+        }
+
+        println!("painting from hunks: {:#?}\n", &layout.diff_hunks);
+        for hunk in &layout.diff_hunks {
+            let color = match hunk.status() {
+                DiffHunkStatus::Added => Color::green(),
+                DiffHunkStatus::Modified => Color::blue(),
+                _ => continue,
+            };
+
+            let start_row = hunk.buffer_range.start;
+            let end_row = hunk.buffer_range.end;
+
+            let start_y = start_row as f32 * layout.line_height - (scroll_top % layout.line_height);
+            let end_y = end_row as f32 * layout.line_height - (scroll_top % layout.line_height)
+                + layout.line_height;
+
+            let highlight_origin = bounds.origin() + vec2f(0., start_y);
+            let highlight_size = vec2f(6., end_y - start_y);
+            let highlight_bounds = RectF::new(highlight_origin, highlight_size);
+
+            cx.scene.push_quad(Quad {
+                bounds: highlight_bounds,
+                background: Some(color),
+                border: Border::new(0., Color::transparent_black()),
+                corner_radius: 0.,
+            });
         }
 
         if let Some((row, indicator)) = layout.code_actions_indicator.as_mut() {
@@ -1425,6 +1453,11 @@ impl Element for EditorElement {
         let line_number_layouts =
             self.layout_line_numbers(start_row..end_row, &active_rows, &snapshot, cx);
 
+        let diff_hunks = snapshot
+            .buffer_snapshot
+            .diff_hunks_in_range(start_row..end_row)
+            .collect();
+
         let mut max_visible_line_width = 0.0;
         let line_layouts = self.layout_lines(start_row..end_row, &snapshot, cx);
         for line in &line_layouts {
@@ -1573,6 +1606,7 @@ impl Element for EditorElement {
                 highlighted_rows,
                 highlighted_ranges,
                 line_number_layouts,
+                diff_hunks,
                 blocks,
                 selections,
                 context_menu,
@@ -1710,6 +1744,7 @@ pub struct LayoutState {
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
     selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
     context_menu: Option<(DisplayPoint, ElementBox)>,
+    diff_hunks: Vec<DiffHunk<u32>>,
     code_actions_indicator: Option<(u32, ElementBox)>,
     hover_popovers: Option<(DisplayPoint, Vec<ElementBox>)>,
 }
