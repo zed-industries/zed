@@ -682,6 +682,11 @@ impl Element for TerminalElement {
             //Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
             self.attach_mouse_handlers(origin, self.view.id(), visible_bounds, layout.mode, cx);
 
+            cx.scene.push_cursor_region(gpui::CursorRegion {
+                bounds,
+                style: gpui::CursorStyle::IBeam,
+            });
+
             cx.paint_layer(clip_bounds, |cx| {
                 //Start with a background color
                 cx.scene.push_quad(Quad {
