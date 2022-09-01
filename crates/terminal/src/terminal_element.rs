@@ -579,11 +579,11 @@ impl Element for TerminalElement {
 
         // searches, highlights to a single range representations
         let mut relative_highlighted_ranges = Vec::new();
-        if let Some(selection) = selection {
-            relative_highlighted_ranges.push((selection.start..=selection.end, selection_color));
-        }
         for search_match in search_matches {
             relative_highlighted_ranges.push((search_match, match_color))
+        }
+        if let Some(selection) = selection {
+            relative_highlighted_ranges.push((selection.start..=selection.end, selection_color));
         }
 
         // then have that representation be converted to the appropriate highlight data structure

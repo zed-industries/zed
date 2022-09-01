@@ -7,7 +7,7 @@ use gpui::{
     actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MutableAppContext, Task,
     View, ViewContext, ViewHandle,
 };
-use workspace::searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle};
+use workspace::searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle};
 use workspace::{Item, Workspace};
 
 use crate::TerminalSize;
@@ -340,11 +340,19 @@ impl Item for TerminalContainer {
 impl SearchableItem for TerminalContainer {
     type Match = RangeInclusive<Point>;
 
+    fn supported_options() -> SearchOptions {
+        SearchOptions {
+            case: false,
+            word: false,
+            regex: false,
+        }
+    }
+
     /// Convert events raised by this item into search-relevant events (if applicable)
     fn to_search_event(event: &Self::Event) -> Option<SearchEvent> {
         match event {
             Event::Wakeup => Some(SearchEvent::MatchesInvalidated),
-            //TODO selection changed
+            Event::SelectionsChanged => Some(SearchEvent::ActiveMatchChanged),
             _ => None,
         }
     }
@@ -380,25 +388,13 @@ impl SearchableItem for TerminalContainer {
         }
     }
 
-    /// Given an index, a set of matches for this index, and a direction,
-    /// get the next match (clicking the arrow)
-    fn activate_next_match(
-        &mut self,
-        _index: usize,
-        _direction: Direction,
-        _matches: Vec<Self::Match>,
-        _cx: &mut ViewContext<Self>,
-    ) {
-        // TODO:
-    }
-
     /// Focus match at given index into the Vec of matches
-    fn activate_match_at_index(
-        &mut self,
-        _index: usize,
-        _matches: Vec<Self::Match>,
-        _cx: &mut ViewContext<Self>,
-    ) {
+    fn activate_match(&mut self, index: usize, _: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
+        if let TerminalContainerContent::Connected(connected) = &self.content {
+            let terminal = connected.read(cx).terminal().clone();
+            terminal.update(cx, |term, _| term.activate_match(index));
+            cx.notify();
+        }
     }
 
     /// Get all of the matches for this query, should be done on the background
@@ -419,10 +415,27 @@ impl SearchableItem for TerminalContainer {
     fn active_match_index(
         &mut self,
         matches: Vec<Self::Match>,
-        _cx: &mut ViewContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<usize> {
-        if matches.len() > 0 {
-            Some(0)
+        if let TerminalContainerContent::Connected(connected) = &self.content {
+            if let Some(selection_head) = connected.read(cx).terminal().read(cx).selection_head {
+                // If selection head is contained in a match. Return that match
+                for (ix, search_match) in matches.iter().enumerate() {
+                    if search_match.contains(&selection_head) {
+                        return Some(ix);
+                    }
+
+                    // If not contained, return the next match after the selection head
+                    if search_match.start() > &selection_head {
+                        return Some(ix);
+                    }
+                }
+
+                // If no selection after selection head, return the last match
+                return Some(matches.len() - 1);
+            } else {
+                Some(0)
+            }
         } else {
             None
         }

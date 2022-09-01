@@ -10,7 +10,7 @@ use alacritty_terminal::{
     event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
     event_loop::{EventLoop, Msg, Notifier},
     grid::{Dimensions, Scroll as AlacScroll},
-    index::{Column, Direction, Line, Point},
+    index::{Column, Direction as AlacDirection, Line, Point},
     selection::{Selection, SelectionRange, SelectionType},
     sync::FairMutex,
     term::{
@@ -84,6 +84,7 @@ pub enum Event {
     Bell,
     Wakeup,
     BlinkChanged,
+    SelectionsChanged,
 }
 
 #[derive(Clone)]
@@ -93,7 +94,8 @@ enum InternalEvent {
     Clear,
     // FocusNextMatch,
     Scroll(AlacScroll),
-    SetSelection(Option<Selection>),
+    ScrollToPoint(Point),
+    SetSelection(Option<(Selection, Point)>),
     UpdateSelection(Vector2F),
     Copy,
 }
@@ -384,6 +386,7 @@ impl TerminalBuilder {
             matches: Vec::new(),
             last_synced: Instant::now(),
             sync_task: None,
+            selection_head: None,
         };
 
         Ok(TerminalBuilder {
@@ -494,12 +497,13 @@ pub struct Terminal {
     events: VecDeque<InternalEvent>,
     default_title: String,
     title: String,
-    last_mouse: Option<(Point, Direction)>,
+    last_mouse: Option<(Point, AlacDirection)>,
     pub matches: Vec<RangeInclusive<Point>>,
     cur_size: TerminalSize,
     last_content: TerminalContent,
     last_synced: Instant,
     sync_task: Option<Task<()>>,
+    selection_head: Option<Point>,
 }
 
 impl Terminal {
@@ -576,33 +580,14 @@ impl Terminal {
             InternalEvent::Scroll(scroll) => {
                 term.scroll_display(*scroll);
             }
-            // InternalEvent::FocusNextMatch => {
-            //     if let Some((Some(searcher), _origin)) = &self.searcher {
-            //         match term.search_next(
-            //             searcher,
-            //             Point {
-            //                 line: Line(0),
-            //                 column: Column(0),
-            //             },
-            //             SEARCH_FORWARD,
-            //             Direction::Left,
-            //             None,
-            //         ) {
-            //             Some(regex_match) => {
-            //                 term.scroll_to_point(*regex_match.start());
+            InternalEvent::SetSelection(selection) => {
+                term.selection = selection.as_ref().map(|(sel, _)| sel.clone());
 
-            //                 //Focus is done with selections in zed
-            //                 let focus = make_selection(*regex_match.start(), *regex_match.end());
-            //                 term.selection = Some(focus);
-            //             }
-            //             None => {
-            //                 //Clear focused match
-            //                 term.selection = None;
-            //             }
-            //         }
-            //     }
-            // }
-            InternalEvent::SetSelection(sel) => term.selection = sel.clone(),
+                if let Some((_, head)) = selection {
+                    self.selection_head = Some(*head);
+                }
+                cx.emit(Event::SelectionsChanged)
+            }
             InternalEvent::UpdateSelection(position) => {
                 if let Some(mut selection) = term.selection.take() {
                     let point = mouse_point(*position, self.cur_size, term.grid().display_offset());
@@ -610,6 +595,9 @@ impl Terminal {
 
                     selection.update(point, side);
                     term.selection = Some(selection);
+
+                    self.selection_head = Some(point);
+                    cx.emit(Event::SelectionsChanged)
                 }
             }
 
@@ -618,6 +606,7 @@ impl Terminal {
                     cx.write_to_clipboard(ClipboardItem::new(txt))
                 }
             }
+            InternalEvent::ScrollToPoint(point) => term.scroll_to_point(*point),
         }
     }
 
@@ -625,52 +614,23 @@ impl Terminal {
         &self.last_content
     }
 
-    fn begin_select(&mut self, sel: Selection) {
+    //To test:
+    //- Activate match on terminal (scrolling and selection)
+    //- Editor search snapping behavior
+
+    pub fn activate_match(&mut self, index: usize) {
+        if let Some(search_match) = self.matches.get(index).cloned() {
+            self.set_selection(Some((make_selection(&search_match), *search_match.end())));
+
+            self.events
+                .push_back(InternalEvent::ScrollToPoint(*search_match.start()));
+        }
+    }
+
+    fn set_selection(&mut self, selection: Option<(Selection, Point)>) {
         self.events
-            .push_back(InternalEvent::SetSelection(Some(sel)));
+            .push_back(InternalEvent::SetSelection(selection));
     }
-
-    fn continue_selection(&mut self, location: Vector2F) {
-        self.events
-            .push_back(InternalEvent::UpdateSelection(location))
-    }
-
-    fn end_select(&mut self) {
-        self.events.push_back(InternalEvent::SetSelection(None));
-    }
-
-    fn scroll(&mut self, scroll: AlacScroll) {
-        self.events.push_back(InternalEvent::Scroll(scroll));
-    }
-
-    // fn focus_next_match(&mut self) {
-    //     self.events.push_back(InternalEvent::FocusNextMatch);
-    // }
-
-    // pub fn search(&mut self, search: &str) {
-    //     let new_searcher = RegexSearch::new(search).ok();
-    //     self.searcher = match (new_searcher, &self.searcher) {
-    //         //Nothing to do :(
-    //         (None, None) => None,
-    //         //No existing search, start a new one
-    //         (Some(new_searcher), None) => Some((Some(new_searcher), self.viewport_origin())),
-    //         //Existing search, carry over origin
-    //         (new_searcher, Some((_, origin))) => Some((new_searcher, *origin)),
-    //     };
-
-    //     if let Some((Some(_), _)) = self.searcher {
-    //         self.focus_next_match();
-    //     }
-    // }
-
-    // fn viewport_origin(&mut self) -> Point {
-    //     let viewport_top = alacritty_terminal::index::Line(-(self.last_offset as i32)) - 1;
-    //     Point::new(viewport_top, alacritty_terminal::index::Column(0))
-    // }
-
-    // pub fn end_search(&mut self) {
-    //     self.searcher = None;
-    // }
 
     pub fn copy(&mut self) {
         self.events.push_back(InternalEvent::Copy);
@@ -691,8 +651,10 @@ impl Terminal {
     }
 
     pub fn input(&mut self, input: String) {
-        self.scroll(AlacScroll::Bottom);
-        self.end_select();
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
+        self.events.push_back(InternalEvent::SetSelection(None));
+
         self.write_to_pty(input);
     }
 
@@ -790,7 +752,7 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_changed(&mut self, point: Point, side: Direction) -> bool {
+    pub fn mouse_changed(&mut self, point: Point, side: AlacDirection) -> bool {
         match self.last_mouse {
             Some((old_point, old_side)) => {
                 if old_point == point && old_side == side {
@@ -830,7 +792,8 @@ impl Terminal {
         if !self.mouse_mode(e.shift) {
             // Alacritty has the same ordering, of first updating the selection
             // then scrolling 15ms later
-            self.continue_selection(position);
+            self.events
+                .push_back(InternalEvent::UpdateSelection(position));
 
             // Doesn't make sense to scroll the alt screen
             if !self.last_content.mode.contains(TermMode::ALT_SCREEN) {
@@ -840,8 +803,11 @@ impl Terminal {
                 };
 
                 let scroll_lines = (scroll_delta / self.cur_size.line_height) as i32;
-                self.scroll(AlacScroll::Delta(scroll_lines));
-                self.continue_selection(position)
+
+                self.events
+                    .push_back(InternalEvent::Scroll(AlacScroll::Delta(scroll_lines)));
+                self.events
+                    .push_back(InternalEvent::UpdateSelection(position))
             }
         }
     }
@@ -870,7 +836,10 @@ impl Terminal {
                 self.pty_tx.notify(bytes);
             }
         } else if e.button == MouseButton::Left {
-            self.begin_select(Selection::new(SelectionType::Simple, point, side));
+            self.events.push_back(InternalEvent::SetSelection(Some((
+                Selection::new(SelectionType::Simple, point, side),
+                point,
+            ))));
         }
     }
 
@@ -893,7 +862,8 @@ impl Terminal {
                 selection_type.map(|selection_type| Selection::new(selection_type, point, side));
 
             if let Some(sel) = selection {
-                self.begin_select(sel);
+                self.events
+                    .push_back(InternalEvent::SetSelection(Some((sel, point))));
             }
         }
     }
@@ -951,7 +921,8 @@ impl Terminal {
                 ((e.delta.y() * ALACRITTY_SCROLL_MULTIPLIER) / self.cur_size.line_height) as i32;
             if scroll_lines != 0 {
                 let scroll = AlacScroll::Delta(scroll_lines);
-                self.scroll(scroll);
+
+                self.events.push_back(InternalEvent::Scroll(scroll));
             }
         }
     }
@@ -994,11 +965,11 @@ impl Entity for Terminal {
     type Event = Event;
 }
 
-// fn make_selection(from: Point, to: Point) -> Selection {
-//     let mut focus = Selection::new(SelectionType::Simple, from, Direction::Left);
-//     focus.update(to, Direction::Right);
-//     focus
-// }
+fn make_selection(range: &RangeInclusive<Point>) -> Selection {
+    let mut selection = Selection::new(SelectionType::Simple, *range.start(), AlacDirection::Left);
+    selection.update(*range.end(), AlacDirection::Right);
+    selection
+}
 
 /// Copied from alacritty/src/display/hint.rs HintMatches::visible_regex_matches()
 /// Iterate over all visible regex matches.
@@ -1013,7 +984,7 @@ fn make_search_matches<'a, T>(
     start.line = start.line.max(viewport_start - MAX_SEARCH_LINES);
     end.line = end.line.min(viewport_end + MAX_SEARCH_LINES);
 
-    RegexIter::new(start, end, Direction::Right, term, regex)
+    RegexIter::new(start, end, AlacDirection::Right, term, regex)
         .skip_while(move |rm| rm.end().line < viewport_start)
         .take_while(move |rm| rm.start().line <= viewport_end)
 }

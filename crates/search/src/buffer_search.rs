@@ -95,6 +95,12 @@ impl View for BufferSearchBar {
         } else {
             theme.search.editor.input.container
         };
+        let supported_options = self
+            .active_searchable_item
+            .as_ref()
+            .map(|active_searchable_item| active_searchable_item.supported_options())
+            .unwrap_or_default();
+
         Flex::row()
             .with_child(
                 Flex::row()
@@ -143,9 +149,24 @@ impl View for BufferSearchBar {
             )
             .with_child(
                 Flex::row()
-                    .with_child(self.render_search_option("Case", SearchOption::CaseSensitive, cx))
-                    .with_child(self.render_search_option("Word", SearchOption::WholeWord, cx))
-                    .with_child(self.render_search_option("Regex", SearchOption::Regex, cx))
+                    .with_children(self.render_search_option(
+                        supported_options.case,
+                        "Case",
+                        SearchOption::CaseSensitive,
+                        cx,
+                    ))
+                    .with_children(self.render_search_option(
+                        supported_options.word,
+                        "Word",
+                        SearchOption::WholeWord,
+                        cx,
+                    ))
+                    .with_children(self.render_search_option(
+                        supported_options.regex,
+                        "Regex",
+                        SearchOption::Regex,
+                        cx,
+                    ))
                     .contained()
                     .with_style(theme.search.option_button_group)
                     .aligned()
@@ -234,7 +255,7 @@ impl BufferSearchBar {
             if let Some(searchable_item) =
                 WeakSearchableItemHandle::upgrade(searchable_item.as_ref(), cx)
             {
-                searchable_item.clear_highlights(cx);
+                searchable_item.clear_matches(cx);
             }
         }
         if let Some(active_editor) = self.active_searchable_item.as_ref() {
@@ -283,36 +304,43 @@ impl BufferSearchBar {
 
     fn render_search_option(
         &self,
+        option_supported: bool,
         icon: &str,
         option: SearchOption,
         cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
+    ) -> Option<ElementBox> {
+        if !option_supported {
+            return None;
+        }
+
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
         let is_active = self.is_search_option_enabled(option);
-        MouseEventHandler::new::<Self, _, _>(option as usize, cx, |state, cx| {
-            let style = &cx
-                .global::<Settings>()
-                .theme
-                .search
-                .option_button
-                .style_for(state, is_active);
-            Label::new(icon.to_string(), style.text.clone())
-                .contained()
-                .with_style(style.container)
-                .boxed()
-        })
-        .on_click(MouseButton::Left, move |_, cx| {
-            cx.dispatch_any_action(option.to_toggle_action())
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<Self, _>(
-            option as usize,
-            format!("Toggle {}", option.label()),
-            Some(option.to_toggle_action()),
-            tooltip_style,
-            cx,
+        Some(
+            MouseEventHandler::new::<Self, _, _>(option as usize, cx, |state, cx| {
+                let style = &cx
+                    .global::<Settings>()
+                    .theme
+                    .search
+                    .option_button
+                    .style_for(state, is_active);
+                Label::new(icon.to_string(), style.text.clone())
+                    .contained()
+                    .with_style(style.container)
+                    .boxed()
+            })
+            .on_click(MouseButton::Left, move |_, cx| {
+                cx.dispatch_any_action(option.to_toggle_action())
+            })
+            .with_cursor_style(CursorStyle::PointingHand)
+            .with_tooltip::<Self, _>(
+                option as usize,
+                format!("Toggle {}", option.label()),
+                Some(option.to_toggle_action()),
+                tooltip_style,
+                cx,
+            )
+            .boxed(),
         )
-        .boxed()
     }
 
     fn render_nav_button(
@@ -422,8 +450,10 @@ impl BufferSearchBar {
                     .seachable_items_with_matches
                     .get(&searchable_item.downgrade())
                 {
-                    searchable_item.select_next_match_in_direction(index, direction, matches, cx);
-                    searchable_item.highlight_matches(matches, cx);
+                    let new_match_index =
+                        searchable_item.match_index_for_direction(matches, index, direction, cx);
+                    searchable_item.update_matches(matches, cx);
+                    searchable_item.activate_match(new_match_index, matches, cx);
                 }
             }
         }
@@ -479,7 +509,7 @@ impl BufferSearchBar {
                 if Some(&searchable_item) == self.active_searchable_item.as_ref() {
                     active_item_matches = Some((searchable_item.downgrade(), matches));
                 } else {
-                    searchable_item.clear_highlights(cx);
+                    searchable_item.clear_matches(cx);
                 }
             }
         }
@@ -494,7 +524,7 @@ impl BufferSearchBar {
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
             if query.is_empty() {
                 self.active_match_index.take();
-                active_searchable_item.clear_highlights(cx);
+                active_searchable_item.clear_matches(cx);
             } else {
                 let query = if self.regex {
                     match SearchQuery::regex(query, self.whole_word, self.case_sensitive) {
@@ -509,7 +539,7 @@ impl BufferSearchBar {
                     SearchQuery::text(query, self.whole_word, self.case_sensitive)
                 };
 
-                let matches = active_searchable_item.matches(query, cx);
+                let matches = active_searchable_item.find_matches(query, cx);
 
                 let active_searchable_item = active_searchable_item.downgrade();
                 self.pending_search = Some(cx.spawn_weak(|this, mut cx| async move {
@@ -529,13 +559,13 @@ impl BufferSearchBar {
                                         .seachable_items_with_matches
                                         .get(&active_searchable_item.downgrade())
                                         .unwrap();
+                                    active_searchable_item.update_matches(matches, cx);
                                     if select_closest_match {
                                         if let Some(match_ix) = this.active_match_index {
                                             active_searchable_item
-                                                .select_match_by_index(match_ix, matches, cx);
+                                                .activate_match(match_ix, matches, cx);
                                         }
                                     }
-                                    active_searchable_item.highlight_matches(matches, cx);
                                 }
                                 cx.notify();
                             }
