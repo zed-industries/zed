@@ -1,6 +1,6 @@
-use std::time::Duration;
+use std::{ops::RangeInclusive, time::Duration};
 
-use alacritty_terminal::term::TermMode;
+use alacritty_terminal::{index::Point, term::TermMode};
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
     actions,
@@ -8,8 +8,8 @@ use gpui::{
     geometry::vector::Vector2F,
     impl_internal_actions,
     keymap::Keystroke,
-    AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, View,
-    ViewContext, ViewHandle,
+    AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, Task,
+    View, ViewContext, ViewHandle,
 };
 use settings::{Settings, TerminalBlink};
 use smol::Timer;
@@ -58,8 +58,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(TerminalView::paste);
     cx.add_action(TerminalView::clear);
     cx.add_action(TerminalView::show_character_palette);
-
-    cx.add_action(TerminalView::test_search);
 }
 
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
@@ -162,14 +160,6 @@ impl TerminalView {
         }
     }
 
-    fn test_search(&mut self, _: &SearchTest, cx: &mut ViewContext<Self>) {
-        let search_string = "ttys";
-        self.terminal.update(cx, |term, _| {
-            term.search(search_string);
-        });
-        cx.notify();
-    }
-
     fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
         self.terminal.update(cx, |term, _| term.clear());
         cx.notify();
@@ -244,6 +234,19 @@ impl TerminalView {
             }
         })
         .detach();
+    }
+
+    pub fn find_matches(
+        &mut self,
+        query: project::search::SearchQuery,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Vec<RangeInclusive<Point>>> {
+        self.terminal
+            .update(cx, |term, cx| term.find_matches(query, cx))
+    }
+
+    pub fn terminal(&self) -> &ModelHandle<Terminal> {
+        &self.terminal
     }
 
     fn next_blink_epoch(&mut self) -> usize {

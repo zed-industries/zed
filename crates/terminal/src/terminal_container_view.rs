@@ -1,17 +1,20 @@
 use crate::terminal_view::TerminalView;
 use crate::{Event, Terminal, TerminalBuilder, TerminalError};
 
+use alacritty_terminal::index::Point;
 use dirs::home_dir;
 use gpui::{
-    actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MutableAppContext, View,
-    ViewContext, ViewHandle,
+    actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MutableAppContext, Task,
+    View, ViewContext, ViewHandle,
 };
+use workspace::searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle};
 use workspace::{Item, Workspace};
 
 use crate::TerminalSize;
 use project::{LocalWorktree, Project, ProjectPath};
 use settings::{AlternateScroll, Settings, WorkingDirectory};
 use smallvec::SmallVec;
+use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
 use crate::terminal_element::TerminalElement;
@@ -327,6 +330,98 @@ impl Item for TerminalContainer {
 
     fn should_close_item_on_event(event: &Self::Event) -> bool {
         matches!(event, &Event::CloseTerminal)
+    }
+
+    fn as_searchable(&self, handle: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(handle.clone()))
+    }
+}
+
+impl SearchableItem for TerminalContainer {
+    type Match = RangeInclusive<Point>;
+
+    /// Convert events raised by this item into search-relevant events (if applicable)
+    fn to_search_event(event: &Self::Event) -> Option<SearchEvent> {
+        match event {
+            Event::Wakeup => Some(SearchEvent::MatchesInvalidated),
+            //TODO selection changed
+            _ => None,
+        }
+    }
+
+    /// Clear stored matches
+    fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
+        if let TerminalContent::Connected(connected) = &self.content {
+            let terminal = connected.read(cx).terminal().clone();
+            terminal.update(cx, |term, _| term.matches.clear())
+        }
+    }
+
+    /// Store matches returned from find_matches somewhere for rendering
+    fn update_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
+        if let TerminalContent::Connected(connected) = &self.content {
+            let terminal = connected.read(cx).terminal().clone();
+            dbg!(&matches);
+            terminal.update(cx, |term, _| term.matches = matches)
+        }
+    }
+
+    /// Return the selection content to pre-load into this search
+    fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
+        if let TerminalContent::Connected(connected) = &self.content {
+            let terminal = connected.read(cx).terminal().clone();
+            terminal.read(cx).selection_text.clone().unwrap_or_default()
+        } else {
+            Default::default()
+        }
+    }
+
+    /// Given an index, a set of matches for this index, and a direction,
+    /// get the next match (clicking the arrow)
+    fn activate_next_match(
+        &mut self,
+        _index: usize,
+        _direction: Direction,
+        _matches: Vec<Self::Match>,
+        _cx: &mut ViewContext<Self>,
+    ) {
+        // TODO:
+    }
+
+    /// Focus match at given index into the Vec of matches
+    fn activate_match_at_index(
+        &mut self,
+        _index: usize,
+        _matches: Vec<Self::Match>,
+        _cx: &mut ViewContext<Self>,
+    ) {
+    }
+
+    /// Get all of the matches for this query, should be done on the background
+    fn find_matches(
+        &mut self,
+        query: project::search::SearchQuery,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Vec<Self::Match>> {
+        if let TerminalContent::Connected(connected) = &self.content {
+            let terminal = connected.read(cx).terminal().clone();
+            terminal.update(cx, |term, cx| term.find_matches(query, cx))
+        } else {
+            Task::ready(Vec::new())
+        }
+    }
+
+    /// Reports back to the search toolbar what the active match should be (the selection)
+    fn active_match_index(
+        &mut self,
+        matches: Vec<Self::Match>,
+        _cx: &mut ViewContext<Self>,
+    ) -> Option<usize> {
+        if matches.len() > 0 {
+            Some(0)
+        } else {
+            None
+        }
     }
 }
 

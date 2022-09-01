@@ -513,17 +513,17 @@ impl SearchableItem for Editor {
 
     fn to_search_event(event: &Self::Event) -> Option<SearchEvent> {
         match event {
-            Event::BufferEdited => Some(SearchEvent::ContentsUpdated),
-            Event::SelectionsChanged { .. } => Some(SearchEvent::SelectionsChanged),
+            Event::BufferEdited => Some(SearchEvent::MatchesInvalidated),
+            Event::SelectionsChanged { .. } => Some(SearchEvent::ActiveMatchChanged),
             _ => None,
         }
     }
 
-    fn clear_highlights(&mut self, cx: &mut ViewContext<Self>) {
+    fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
         self.clear_background_highlights::<BufferSearchHighlights>(cx);
     }
 
-    fn highlight_matches(&mut self, matches: Vec<Range<Anchor>>, cx: &mut ViewContext<Self>) {
+    fn update_matches(&mut self, matches: Vec<Range<Anchor>>, cx: &mut ViewContext<Self>) {
         self.highlight_background::<BufferSearchHighlights>(
             matches,
             |theme| theme.search.match_background,
@@ -553,7 +553,7 @@ impl SearchableItem for Editor {
         }
     }
 
-    fn select_next_match_in_direction(
+    fn activate_next_match(
         &mut self,
         index: usize,
         direction: Direction,
@@ -575,7 +575,7 @@ impl SearchableItem for Editor {
         });
     }
 
-    fn select_match_by_index(
+    fn activate_match_at_index(
         &mut self,
         index: usize,
         matches: Vec<Range<Anchor>>,
@@ -586,7 +586,7 @@ impl SearchableItem for Editor {
         });
     }
 
-    fn matches(
+    fn find_matches(
         &mut self,
         query: project::search::SearchQuery,
         cx: &mut ViewContext<Self>,

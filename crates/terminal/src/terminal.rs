@@ -36,7 +36,7 @@ use settings::{AlternateScroll, Settings, Shell, TerminalBlink};
 use std::{
     collections::{HashMap, VecDeque},
     fmt::Display,
-    ops::Sub,
+    ops::{RangeInclusive, Sub},
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -48,7 +48,7 @@ use gpui::{
     keymap::Keystroke,
     scene::{ClickRegionEvent, DownRegionEvent, DragRegionEvent, UpRegionEvent},
     ClipboardItem, Entity, ModelContext, MouseButton, MouseMovedEvent, MutableAppContext,
-    ScrollWheelEvent,
+    ScrollWheelEvent, Task,
 };
 
 use crate::mappings::{
@@ -68,8 +68,6 @@ pub fn init(cx: &mut MutableAppContext) {
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
 ///Implement scroll bars.
 const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
-// const ALACRITTY_SEARCH_LINE_LIMIT: usize = 1000;
-const SEARCH_FORWARD: Direction = Direction::Left;
 const MAX_SEARCH_LINES: usize = 100;
 const DEBUG_TERMINAL_WIDTH: f32 = 500.;
 const DEBUG_TERMINAL_HEIGHT: f32 = 30.;
@@ -91,7 +89,7 @@ enum InternalEvent {
     ColorRequest(usize, Arc<dyn Fn(Rgb) -> String + Sync + Send + 'static>),
     Resize(TerminalSize),
     Clear,
-    FocusNextMatch,
+    // FocusNextMatch,
     Scroll(AlacScroll),
     SetSelection(Option<Selection>),
     UpdateSelection(Vector2F),
@@ -382,7 +380,8 @@ impl TerminalBuilder {
             cur_size: initial_size,
             last_mouse: None,
             last_offset: 0,
-            searcher: None,
+            matches: Vec::new(),
+            selection_text: None,
         };
 
         Ok(TerminalBuilder {
@@ -454,7 +453,8 @@ pub struct Terminal {
     last_mode: TermMode,
     last_offset: usize,
     last_mouse: Option<(Point, Direction)>,
-    searcher: Option<(Option<RegexSearch>, Point)>,
+    pub matches: Vec<RangeInclusive<Point>>,
+    pub selection_text: Option<String>,
 }
 
 impl Terminal {
@@ -531,32 +531,32 @@ impl Terminal {
             InternalEvent::Scroll(scroll) => {
                 term.scroll_display(*scroll);
             }
-            InternalEvent::FocusNextMatch => {
-                if let Some((Some(searcher), _origin)) = &self.searcher {
-                    match term.search_next(
-                        searcher,
-                        Point {
-                            line: Line(0),
-                            column: Column(0),
-                        },
-                        SEARCH_FORWARD,
-                        Direction::Left,
-                        None,
-                    ) {
-                        Some(regex_match) => {
-                            term.scroll_to_point(*regex_match.start());
+            // InternalEvent::FocusNextMatch => {
+            //     if let Some((Some(searcher), _origin)) = &self.searcher {
+            //         match term.search_next(
+            //             searcher,
+            //             Point {
+            //                 line: Line(0),
+            //                 column: Column(0),
+            //             },
+            //             SEARCH_FORWARD,
+            //             Direction::Left,
+            //             None,
+            //         ) {
+            //             Some(regex_match) => {
+            //                 term.scroll_to_point(*regex_match.start());
 
-                            //Focus is done with selections in zed
-                            let focus = make_selection(*regex_match.start(), *regex_match.end());
-                            term.selection = Some(focus);
-                        }
-                        None => {
-                            //Clear focused match
-                            term.selection = None;
-                        }
-                    }
-                }
-            }
+            //                 //Focus is done with selections in zed
+            //                 let focus = make_selection(*regex_match.start(), *regex_match.end());
+            //                 term.selection = Some(focus);
+            //             }
+            //             None => {
+            //                 //Clear focused match
+            //                 term.selection = None;
+            //             }
+            //         }
+            //     }
+            // }
             InternalEvent::SetSelection(sel) => term.selection = sel.clone(),
             InternalEvent::UpdateSelection(position) => {
                 if let Some(mut selection) = term.selection.take() {
@@ -594,34 +594,34 @@ impl Terminal {
         self.events.push_back(InternalEvent::Scroll(scroll));
     }
 
-    fn focus_next_match(&mut self) {
-        self.events.push_back(InternalEvent::FocusNextMatch);
-    }
+    // fn focus_next_match(&mut self) {
+    //     self.events.push_back(InternalEvent::FocusNextMatch);
+    // }
 
-    pub fn search(&mut self, search: &str) {
-        let new_searcher = RegexSearch::new(search).ok();
-        self.searcher = match (new_searcher, &self.searcher) {
-            //Nothing to do :(
-            (None, None) => None,
-            //No existing search, start a new one
-            (Some(new_searcher), None) => Some((Some(new_searcher), self.viewport_origin())),
-            //Existing search, carry over origin
-            (new_searcher, Some((_, origin))) => Some((new_searcher, *origin)),
-        };
+    // pub fn search(&mut self, search: &str) {
+    //     let new_searcher = RegexSearch::new(search).ok();
+    //     self.searcher = match (new_searcher, &self.searcher) {
+    //         //Nothing to do :(
+    //         (None, None) => None,
+    //         //No existing search, start a new one
+    //         (Some(new_searcher), None) => Some((Some(new_searcher), self.viewport_origin())),
+    //         //Existing search, carry over origin
+    //         (new_searcher, Some((_, origin))) => Some((new_searcher, *origin)),
+    //     };
 
-        if let Some((Some(_), _)) = self.searcher {
-            self.focus_next_match();
-        }
-    }
+    //     if let Some((Some(_), _)) = self.searcher {
+    //         self.focus_next_match();
+    //     }
+    // }
 
-    fn viewport_origin(&mut self) -> Point {
-        let viewport_top = alacritty_terminal::index::Line(-(self.last_offset as i32)) - 1;
-        Point::new(viewport_top, alacritty_terminal::index::Column(0))
-    }
+    // fn viewport_origin(&mut self) -> Point {
+    //     let viewport_top = alacritty_terminal::index::Line(-(self.last_offset as i32)) - 1;
+    //     Point::new(viewport_top, alacritty_terminal::index::Column(0))
+    // }
 
-    pub fn end_search(&mut self) {
-        self.searcher = None;
-    }
+    // pub fn end_search(&mut self) {
+    //     self.searcher = None;
+    // }
 
     pub fn copy(&mut self) {
         self.events.push_back(InternalEvent::Copy);
@@ -669,12 +669,12 @@ impl Terminal {
 
     pub fn render_lock<F, T>(&mut self, cx: &mut ModelContext<Self>, f: F) -> T
     where
-        F: FnOnce(RenderableContent, char, Vec<Match>) -> T,
+        F: FnOnce(RenderableContent, char) -> T,
     {
-        let m = self.term.clone(); //Arc clone
-        let mut term = m.lock();
+        let term = self.term.clone();
+        let mut term = term.lock();
 
-        //Note that this ordering matters for
+        //Note that this ordering matters for event processing
         while let Some(e) = self.events.pop_front() {
             self.process_terminal_event(&e, &mut term, cx)
         }
@@ -683,16 +683,12 @@ impl Terminal {
 
         let content = term.renderable_content();
 
+        self.selection_text = term.selection_to_string();
         self.last_offset = content.display_offset;
 
         let cursor_text = term.grid()[content.cursor.point].c;
 
-        let mut matches = vec![];
-        if let Some((Some(r), _)) = &self.searcher {
-            matches.extend(make_search_matches(&term, &r));
-        }
-
-        f(content, cursor_text, matches)
+        f(content, cursor_text)
     }
 
     pub fn focus_in(&self) {
@@ -865,6 +861,33 @@ impl Terminal {
             }
         }
     }
+
+    pub fn find_matches(
+        &mut self,
+        query: project::search::SearchQuery,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Vec<RangeInclusive<Point>>> {
+        let term = self.term.clone();
+        dbg!("Spawning find_matches");
+        cx.background().spawn(async move {
+            let searcher = match query {
+                project::search::SearchQuery::Text { query, .. } => {
+                    RegexSearch::new(query.as_ref())
+                }
+                project::search::SearchQuery::Regex { query, .. } => {
+                    RegexSearch::new(query.as_ref())
+                }
+            };
+
+            if searcher.is_err() {
+                return Vec::new();
+            }
+            let searcher = searcher.unwrap();
+
+            let term = term.lock();
+            dbg!(make_search_matches(&term, &searcher).collect())
+        })
+    }
 }
 
 impl Drop for Terminal {
@@ -877,11 +900,11 @@ impl Entity for Terminal {
     type Event = Event;
 }
 
-fn make_selection(from: Point, to: Point) -> Selection {
-    let mut focus = Selection::new(SelectionType::Simple, from, Direction::Left);
-    focus.update(to, Direction::Right);
-    focus
-}
+// fn make_selection(from: Point, to: Point) -> Selection {
+//     let mut focus = Selection::new(SelectionType::Simple, from, Direction::Left);
+//     focus.update(to, Direction::Right);
+//     focus
+// }
 
 /// Copied from alacritty/src/display/hint.rs HintMatches::visible_regex_matches()
 /// Iterate over all visible regex matches.

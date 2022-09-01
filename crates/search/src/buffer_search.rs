@@ -174,7 +174,9 @@ impl ToolbarItemView for BufferSearchBar {
                 cx,
                 Box::new(move |search_event, cx| {
                     if let Some(this) = handle.upgrade(cx) {
-                        this.update(cx, |this, cx| this.on_active_editor_event(search_event, cx));
+                        this.update(cx, |this, cx| {
+                            this.on_active_searchable_item_event(search_event, cx)
+                        });
                     }
                 }),
             ));
@@ -461,10 +463,10 @@ impl BufferSearchBar {
         }
     }
 
-    fn on_active_editor_event(&mut self, event: SearchEvent, cx: &mut ViewContext<Self>) {
+    fn on_active_searchable_item_event(&mut self, event: SearchEvent, cx: &mut ViewContext<Self>) {
         match event {
-            SearchEvent::ContentsUpdated => self.update_matches(false, cx),
-            SearchEvent::SelectionsChanged => self.update_match_index(cx),
+            SearchEvent::MatchesInvalidated => self.update_matches(false, cx),
+            SearchEvent::ActiveMatchChanged => self.update_match_index(cx),
         }
     }
 
