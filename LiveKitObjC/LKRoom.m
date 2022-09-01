@@ -26,3 +26,7 @@
     [self.room connectWithUrl:url token:token callback:callback];
 }
 @end
+
+LKRoom* BuildLKRoom() {
+    return [[LKRoom alloc] init];
+}

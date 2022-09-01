@@ -1,6 +1,7 @@
 use std::{env, path::PathBuf, process::Command};
 
 fn main() {
+    println!("cargo:rerun-if-changed=/Users/as-cii/Library/Developer/Xcode/DerivedData/LiveKitObjC-ftgpxknhsgkrocbhhgjkyyvkgkbj/Build/Products/Debug/libLiveKitObjC.a");
     println!("cargo:rustc-link-search=/Users/as-cii/Library/Developer/Xcode/DerivedData/LiveKitObjC-ftgpxknhsgkrocbhhgjkyyvkgkbj/Build/Products/Debug");
     println!("cargo:rustc-link-lib=static=LiveKitObjC");
     println!("cargo:rustc-link-lib=framework=ScreenCaptureKit");

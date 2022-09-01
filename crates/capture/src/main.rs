@@ -47,8 +47,14 @@ const NSUTF8StringEncoding: NSUInteger = 4;
 
 actions!(capture, [Quit]);
 
+extern "C" {
+    fn BuildLKRoom() -> *const c_void;
+}
+
 fn main() {
-    class!(LKRoom);
+    unsafe {
+        BuildLKRoom();
+    }
 
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 

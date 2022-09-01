@@ -10,7 +10,6 @@
 		AFA4DBD628C0F839001AD7BE /* LiveKit in Frameworks */ = {isa = PBXBuildFile; productRef = AFA4DBD528C0F839001AD7BE /* LiveKit */; };
 		AFA4DBD928C0F87F001AD7BE /* Room.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFA4DBD828C0F87F001AD7BE /* Room.swift */; };
 		AFA4DBDB28C0FBC0001AD7BE /* LKRoom.m in Sources */ = {isa = PBXBuildFile; fileRef = AFA4DBDA28C0FBC0001AD7BE /* LKRoom.m */; };
-		AFA4DBDE28C121E6001AD7BE /* LiveKit in Frameworks */ = {isa = PBXBuildFile; productRef = AFA4DBDD28C121E6001AD7BE /* LiveKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -26,7 +25,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				AFA4DBD628C0F839001AD7BE /* LiveKit in Frameworks */,
-				AFA4DBDE28C121E6001AD7BE /* LiveKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -79,7 +77,6 @@
 			name = LiveKitObjC;
 			packageProductDependencies = (
 				AFA4DBD528C0F839001AD7BE /* LiveKit */,
-				AFA4DBDD28C121E6001AD7BE /* LiveKit */,
 			);
 			productName = LiveKitObjC;
 			productReference = AFA4DBCD28C0F7F5001AD7BE /* libLiveKitObjC.a */;
@@ -111,7 +108,6 @@
 			mainGroup = AFA4DBC428C0F7F5001AD7BE;
 			packageReferences = (
 				AFA4DBD428C0F839001AD7BE /* XCRemoteSwiftPackageReference "client-sdk-swift" */,
-				AFA4DBDC28C121E6001AD7BE /* XCRemoteSwiftPackageReference "client-sdk-swift" */,
 			);
 			productRefGroup = AFA4DBCE28C0F7F5001AD7BE /* Products */;
 			projectDirPath = "";
@@ -247,10 +243,13 @@
 		AFA4DBD228C0F7F5001AD7BE /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				BUILD_LIBRARY_FOR_DISTRIBUTION = NO;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				DEFINES_MODULE = NO;
 				EXECUTABLE_PREFIX = lib;
+				KEEP_PRIVATE_EXTERNS = NO;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -267,10 +266,13 @@
 		AFA4DBD328C0F7F5001AD7BE /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				BUILD_LIBRARY_FOR_DISTRIBUTION = NO;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				DEFINES_MODULE = NO;
 				EXECUTABLE_PREFIX = lib;
+				KEEP_PRIVATE_EXTERNS = NO;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -315,25 +317,12 @@
 				minimumVersion = 1.0.0;
 			};
 		};
-		AFA4DBDC28C121E6001AD7BE /* XCRemoteSwiftPackageReference "client-sdk-swift" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/livekit/client-sdk-swift";
-			requirement = {
-				branch = main;
-				kind = branch;
-			};
-		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		AFA4DBD528C0F839001AD7BE /* LiveKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = AFA4DBD428C0F839001AD7BE /* XCRemoteSwiftPackageReference "client-sdk-swift" */;
-			productName = LiveKit;
-		};
-		AFA4DBDD28C121E6001AD7BE /* LiveKit */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = AFA4DBDC28C121E6001AD7BE /* XCRemoteSwiftPackageReference "client-sdk-swift" */;
 			productName = LiveKit;
 		};
 /* End XCSwiftPackageProductDependency section */
