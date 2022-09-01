@@ -1,11 +1,12 @@
 use std::{any::Any, rc::Rc};
 
+use collections::HashSet;
 use gpui::{
     elements::{Container, MouseEventHandler},
     geometry::vector::Vector2F,
     scene::DragRegionEvent,
-    CursorStyle, Element, ElementBox, EventContext, MouseButton, RenderContext, View, ViewContext,
-    WeakViewHandle,
+    CursorStyle, Element, ElementBox, EventContext, MouseButton, MutableAppContext, RenderContext,
+    View, WeakViewHandle,
 };
 
 struct State<V: View> {
@@ -29,23 +30,22 @@ impl<V: View> Clone for State<V> {
 }
 
 pub struct DragAndDrop<V: View> {
-    parent: WeakViewHandle<V>,
+    containers: HashSet<WeakViewHandle<V>>,
     currently_dragged: Option<State<V>>,
 }
 
-impl<V: View> DragAndDrop<V> {
-    pub fn new(parent: WeakViewHandle<V>, cx: &mut ViewContext<V>) -> Self {
-        cx.observe_global::<Self, _>(|cx| {
-            if let Some(parent) = cx.global::<Self>().parent.upgrade(cx) {
-                parent.update(cx, |_, cx| cx.notify())
-            }
-        })
-        .detach();
-
+impl<V: View> Default for DragAndDrop<V> {
+    fn default() -> Self {
         Self {
-            parent,
-            currently_dragged: None,
+            containers: Default::default(),
+            currently_dragged: Default::default(),
         }
+    }
+}
+
+impl<V: View> DragAndDrop<V> {
+    pub fn register_container(&mut self, handle: WeakViewHandle<V>) {
+        self.containers.insert(handle);
     }
 
     pub fn currently_dragged<T: Any>(&self, window_id: usize) -> Option<(Vector2F, Rc<T>)> {
@@ -93,9 +93,7 @@ impl<V: View> DragAndDrop<V> {
                 }),
             });
 
-            if let Some(parent) = this.parent.upgrade(cx) {
-                parent.update(cx, |_, cx| cx.notify())
-            }
+            this.notify_containers_for_window(window_id, cx);
         });
     }
 
@@ -129,13 +127,13 @@ impl<V: View> DragAndDrop<V> {
                     .with_cursor_style(CursorStyle::Arrow)
                     .on_up(MouseButton::Left, |_, cx| {
                         cx.defer(|cx| {
-                            cx.update_global::<Self, _, _>(|this, _| this.currently_dragged.take());
+                            cx.update_global::<Self, _, _>(|this, cx| this.stop_dragging(cx));
                         });
                         cx.propogate_event();
                     })
                     .on_up_out(MouseButton::Left, |_, cx| {
                         cx.defer(|cx| {
-                            cx.update_global::<Self, _, _>(|this, _| this.currently_dragged.take());
+                            cx.update_global::<Self, _, _>(|this, cx| this.stop_dragging(cx));
                         });
                     })
                     // Don't block hover events or invalidations
@@ -144,6 +142,25 @@ impl<V: View> DragAndDrop<V> {
                 )
             },
         )
+    }
+
+    fn stop_dragging(&mut self, cx: &mut MutableAppContext) {
+        if let Some(State { window_id, .. }) = self.currently_dragged.take() {
+            self.notify_containers_for_window(window_id, cx);
+        }
+    }
+
+    fn notify_containers_for_window(&mut self, window_id: usize, cx: &mut MutableAppContext) {
+        self.containers.retain(|container| {
+            if let Some(container) = container.upgrade(cx) {
+                if container.window_id() == window_id {
+                    container.update(cx, |_, cx| cx.notify());
+                }
+                true
+            } else {
+                false
+            }
+        });
     }
 }
 

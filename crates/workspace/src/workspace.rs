@@ -949,8 +949,9 @@ impl Workspace {
             status_bar
         });
 
-        let drag_and_drop = DragAndDrop::new(cx.weak_handle(), cx);
-        cx.set_global(drag_and_drop);
+        cx.update_default_global::<DragAndDrop<Workspace>, _, _>(|drag_and_drop, _| {
+            drag_and_drop.register_container(weak_self.clone());
+        });
 
         let mut this = Workspace {
             modal: None,
