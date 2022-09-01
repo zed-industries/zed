@@ -1,6 +1,8 @@
 use std::{env, path::PathBuf, process::Command};
 
 fn main() {
+    println!("cargo:rustc-link-search=/Users/as-cii/Library/Developer/Xcode/DerivedData/LiveKitObjC-ftgpxknhsgkrocbhhgjkyyvkgkbj/Build/Products/Debug");
+    println!("cargo:rustc-link-lib=static=LiveKitObjC");
     println!("cargo:rustc-link-lib=framework=ScreenCaptureKit");
     println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=12.3");
 

@@ -48,6 +48,8 @@ const NSUTF8StringEncoding: NSUInteger = 4;
 actions!(capture, [Quit]);
 
 fn main() {
+    class!(LKRoom);
+
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
     gpui::App::new(()).unwrap().run(|cx| {
@@ -97,60 +99,60 @@ impl ScreenCaptureView {
                 let display_width: usize = msg_send![display, width];
                 let display_height: usize = msg_send![display, height];
                 let mut compression_buffer = BytesMut::new();
-                let compression_session = CompressionSession::new(
-                    display_width,
-                    display_height,
-                    kCMVideoCodecType_H264,
-                    move |status, flags, sample_buffer| {
-                        if status != 0 {
-                            println!("error encoding frame, code: {}", status);
-                            return;
-                        }
-                        let sample_buffer = CMSampleBuffer::wrap_under_get_rule(sample_buffer);
+                // let compression_session = CompressionSession::new(
+                //     display_width,
+                //     display_height,
+                //     kCMVideoCodecType_H264,
+                //     move |status, flags, sample_buffer| {
+                //         if status != 0 {
+                //             println!("error encoding frame, code: {}", status);
+                //             return;
+                //         }
+                //         let sample_buffer = CMSampleBuffer::wrap_under_get_rule(sample_buffer);
 
-                        let mut is_iframe = false;
-                        let attachments = sample_buffer.attachments();
-                        if let Some(attachments) = attachments.first() {
-                            is_iframe = attachments
-                                .find(kCMSampleAttachmentKey_NotSync as CFStringRef)
-                                .map_or(true, |not_sync| {
-                                    CFBooleanGetValue(*not_sync as CFBooleanRef)
-                                });
-                        }
+                //         let mut is_iframe = false;
+                //         let attachments = sample_buffer.attachments();
+                //         if let Some(attachments) = attachments.first() {
+                //             is_iframe = attachments
+                //                 .find(kCMSampleAttachmentKey_NotSync as CFStringRef)
+                //                 .map_or(true, |not_sync| {
+                //                     CFBooleanGetValue(*not_sync as CFBooleanRef)
+                //                 });
+                //         }
 
-                        const START_CODE: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
-                        if is_iframe {
-                            let format_description = sample_buffer.format_description();
-                            for ix in 0..format_description.h264_parameter_set_count() {
-                                let parameter_set =
-                                    format_description.h264_parameter_set_at_index(ix).unwrap();
-                                compression_buffer.extend_from_slice(&START_CODE);
-                                compression_buffer.extend_from_slice(parameter_set);
-                                let nal_unit = compression_buffer.split();
-                            }
-                        }
+                //         const START_CODE: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
+                //         if is_iframe {
+                //             let format_description = sample_buffer.format_description();
+                //             for ix in 0..format_description.h264_parameter_set_count() {
+                //                 let parameter_set =
+                //                     format_description.h264_parameter_set_at_index(ix).unwrap();
+                //                 compression_buffer.extend_from_slice(&START_CODE);
+                //                 compression_buffer.extend_from_slice(parameter_set);
+                //                 let nal_unit = compression_buffer.split();
+                //             }
+                //         }
 
-                        let data = sample_buffer.data();
-                        let mut data = data.bytes();
+                //         let data = sample_buffer.data();
+                //         let mut data = data.bytes();
 
-                        const AVCC_HEADER_LENGTH: usize = 4;
-                        while data.len() - AVCC_HEADER_LENGTH > 0 {
-                            let nal_unit_len = match data.read_u32::<BigEndian>() {
-                                Ok(len) => len as usize,
-                                Err(error) => {
-                                    log::error!("error decoding nal unit length: {}", error);
-                                    return;
-                                }
-                            };
-                            compression_buffer.extend_from_slice(&START_CODE);
-                            compression_buffer.extend_from_slice(&data[..nal_unit_len as usize]);
-                            data = &data[nal_unit_len..];
+                //         const AVCC_HEADER_LENGTH: usize = 4;
+                //         while data.len() - AVCC_HEADER_LENGTH > 0 {
+                //             let nal_unit_len = match data.read_u32::<BigEndian>() {
+                //                 Ok(len) => len as usize,
+                //                 Err(error) => {
+                //                     log::error!("error decoding nal unit length: {}", error);
+                //                     return;
+                //                 }
+                //             };
+                //             compression_buffer.extend_from_slice(&START_CODE);
+                //             compression_buffer.extend_from_slice(&data[..nal_unit_len as usize]);
+                //             data = &data[nal_unit_len..];
 
-                            let nal_unit = compression_buffer.split();
-                        }
-                    },
-                )
-                .unwrap();
+                //             let nal_unit = compression_buffer.split();
+                //         }
+                //     },
+                // )
+                // .unwrap();
 
                 let mut decl = ClassDecl::new("CaptureOutput", class!(NSObject)).unwrap();
                 decl.add_ivar::<*mut c_void>("callback");
@@ -182,9 +184,9 @@ impl ScreenCaptureView {
 
                     let timing_info = buffer.sample_timing_info(0).unwrap();
                     let image_buffer = buffer.image_buffer();
-                    compression_session
-                        .encode_frame(&image_buffer, timing_info)
-                        .unwrap();
+                    // compression_session
+                    //     .encode_frame(&image_buffer, timing_info)
+                    //     .unwrap();
                     *surface_tx.lock().borrow_mut() = Some(image_buffer);
                 }) as Box<dyn FnMut(CMSampleBufferRef)>;
                 let callback = Box::into_raw(Box::new(callback));
