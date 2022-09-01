@@ -55,7 +55,10 @@ export default function editor(theme: Theme) {
     textColor: theme.syntax.primary.color,
     background: backgroundColor(theme, 500),
     activeLineBackground: theme.editor.line.active,
-    codeActionsIndicator: iconColor(theme, "secondary"),
+    codeActions: {
+      indicator: iconColor(theme, "secondary"),
+      verticalScale: 0.618
+    },
     diffBackgroundDeleted: backgroundColor(theme, "error"),
     diffBackgroundInserted: backgroundColor(theme, "ok"),
     documentHighlightReadBackground: theme.editor.highlight.occurrence,

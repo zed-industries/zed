@@ -1453,7 +1453,10 @@ impl Element for EditorElement {
 
         if let Some((_, indicator)) = code_actions_indicator.as_mut() {
             indicator.layout(
-                SizeConstraint::strict_along(Axis::Vertical, line_height * 0.618),
+                SizeConstraint::strict_along(
+                    Axis::Vertical,
+                    line_height * style.code_actions.vertical_scale,
+                ),
                 cx,
             );
         }

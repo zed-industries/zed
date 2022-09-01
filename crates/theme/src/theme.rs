@@ -480,7 +480,7 @@ pub struct Editor {
     pub hint_diagnostic: DiagnosticStyle,
     pub invalid_hint_diagnostic: DiagnosticStyle,
     pub autocomplete: AutocompleteStyle,
-    pub code_actions_indicator: Color,
+    pub code_actions: CodeActions,
     pub unnecessary_code_fade: f32,
     pub hover_popover: HoverPopover,
     pub link_definition: HighlightStyle,
@@ -539,6 +539,13 @@ pub struct FieldEditor {
     #[serde(default)]
     pub placeholder_text: Option<TextStyle>,
     pub selection: SelectionStyle,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct CodeActions {
+    #[serde(default)]
+    pub indicator: Color,
+    pub vertical_scale: f32,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
