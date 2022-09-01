@@ -149,7 +149,8 @@ impl TerminalView {
         if !self
             .terminal
             .read(cx)
-            .last_mode
+            .last_content
+            .mode
             .contains(TermMode::ALT_SCREEN)
         {
             cx.show_character_palette();
@@ -177,7 +178,8 @@ impl TerminalView {
             || self
                 .terminal
                 .read(cx)
-                .last_mode
+                .last_content
+                .mode
                 .contains(TermMode::ALT_SCREEN)
         {
             return true;
@@ -362,7 +364,8 @@ impl View for TerminalView {
         if self
             .terminal
             .read(cx)
-            .last_mode
+            .last_content
+            .mode
             .contains(TermMode::ALT_SCREEN)
         {
             None
@@ -387,7 +390,7 @@ impl View for TerminalView {
         if self.modal {
             context.set.insert("ModalTerminal".into());
         }
-        let mode = self.terminal.read(cx).last_mode;
+        let mode = self.terminal.read(cx).last_content.mode;
         context.map.insert(
             "screen".to_string(),
             (if mode.contains(TermMode::ALT_SCREEN) {

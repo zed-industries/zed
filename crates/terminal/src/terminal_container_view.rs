@@ -29,12 +29,12 @@ pub fn init(cx: &mut MutableAppContext) {
 //Take away all the result unwrapping in the current TerminalView by making it 'infallible'
 //Bubble up to deploy(_modal)() calls
 
-pub enum TerminalContent {
+pub enum TerminalContainerContent {
     Connected(ViewHandle<TerminalView>),
     Error(ViewHandle<ErrorView>),
 }
 
-impl TerminalContent {
+impl TerminalContainerContent {
     fn handle(&self) -> AnyViewHandle {
         match self {
             Self::Connected(handle) => handle.into(),
@@ -45,7 +45,7 @@ impl TerminalContent {
 
 pub struct TerminalContainer {
     modal: bool,
-    pub content: TerminalContent,
+    pub content: TerminalContainerContent,
     associated_directory: Option<PathBuf>,
 }
 
@@ -119,13 +119,13 @@ impl TerminalContainer {
                 let view = cx.add_view(|cx| TerminalView::from_terminal(terminal, modal, cx));
                 cx.subscribe(&view, |_this, _content, event, cx| cx.emit(*event))
                     .detach();
-                TerminalContent::Connected(view)
+                TerminalContainerContent::Connected(view)
             }
             Err(error) => {
                 let view = cx.add_view(|_| ErrorView {
                     error: error.downcast::<TerminalError>().unwrap(),
                 });
-                TerminalContent::Error(view)
+                TerminalContainerContent::Error(view)
             }
         };
         cx.focus(content.handle());
@@ -145,7 +145,7 @@ impl TerminalContainer {
         let connected_view = cx.add_view(|cx| TerminalView::from_terminal(terminal, modal, cx));
         TerminalContainer {
             modal,
-            content: TerminalContent::Connected(connected_view),
+            content: TerminalContainerContent::Connected(connected_view),
             associated_directory: None,
         }
     }
@@ -158,8 +158,8 @@ impl View for TerminalContainer {
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
         let child_view = match &self.content {
-            TerminalContent::Connected(connected) => ChildView::new(connected),
-            TerminalContent::Error(error) => ChildView::new(error),
+            TerminalContainerContent::Connected(connected) => ChildView::new(connected),
+            TerminalContainerContent::Error(error) => ChildView::new(error),
         };
         if self.modal {
             let settings = cx.global::<Settings>();
@@ -238,10 +238,10 @@ impl Item for TerminalContainer {
         cx: &gpui::AppContext,
     ) -> ElementBox {
         let title = match &self.content {
-            TerminalContent::Connected(connected) => {
+            TerminalContainerContent::Connected(connected) => {
                 connected.read(cx).handle().read(cx).title.to_string()
             }
-            TerminalContent::Error(_) => "Terminal".to_string(),
+            TerminalContainerContent::Error(_) => "Terminal".to_string(),
         };
 
         Flex::row()
@@ -309,7 +309,7 @@ impl Item for TerminalContainer {
     }
 
     fn is_dirty(&self, cx: &gpui::AppContext) -> bool {
-        if let TerminalContent::Connected(connected) = &self.content {
+        if let TerminalContainerContent::Connected(connected) = &self.content {
             connected.read(cx).has_new_content()
         } else {
             false
@@ -317,7 +317,7 @@ impl Item for TerminalContainer {
     }
 
     fn has_conflict(&self, cx: &AppContext) -> bool {
-        if let TerminalContent::Connected(connected) = &self.content {
+        if let TerminalContainerContent::Connected(connected) = &self.content {
             connected.read(cx).has_bell()
         } else {
             false
@@ -351,7 +351,7 @@ impl SearchableItem for TerminalContainer {
 
     /// Clear stored matches
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
-        if let TerminalContent::Connected(connected) = &self.content {
+        if let TerminalContainerContent::Connected(connected) = &self.content {
             let terminal = connected.read(cx).terminal().clone();
             terminal.update(cx, |term, _| term.matches.clear())
         }
@@ -359,18 +359,22 @@ impl SearchableItem for TerminalContainer {
 
     /// Store matches returned from find_matches somewhere for rendering
     fn update_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
-        if let TerminalContent::Connected(connected) = &self.content {
+        if let TerminalContainerContent::Connected(connected) = &self.content {
             let terminal = connected.read(cx).terminal().clone();
-            dbg!(&matches);
             terminal.update(cx, |term, _| term.matches = matches)
         }
     }
 
     /// Return the selection content to pre-load into this search
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
-        if let TerminalContent::Connected(connected) = &self.content {
+        if let TerminalContainerContent::Connected(connected) = &self.content {
             let terminal = connected.read(cx).terminal().clone();
-            terminal.read(cx).selection_text.clone().unwrap_or_default()
+            terminal
+                .read(cx)
+                .last_content
+                .selection_text
+                .clone()
+                .unwrap_or_default()
         } else {
             Default::default()
         }
@@ -403,7 +407,7 @@ impl SearchableItem for TerminalContainer {
         query: project::search::SearchQuery,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Self::Match>> {
-        if let TerminalContent::Connected(connected) = &self.content {
+        if let TerminalContainerContent::Connected(connected) = &self.content {
             let terminal = connected.read(cx).terminal().clone();
             terminal.update(cx, |term, cx| term.find_matches(query, cx))
         } else {

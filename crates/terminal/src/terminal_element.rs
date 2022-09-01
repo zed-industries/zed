@@ -2,10 +2,7 @@ use alacritty_terminal::{
     ansi::{Color as AnsiColor, Color::Named, CursorShape as AlacCursorShape, NamedColor},
     grid::Dimensions,
     index::Point,
-    term::{
-        cell::{Cell, Flags},
-        TermMode,
-    },
+    term::{cell::Flags, TermMode},
 };
 use editor::{Cursor, CursorShape, HighlightedRange, HighlightedRangeLine};
 use gpui::{
@@ -27,15 +24,12 @@ use theme::TerminalStyle;
 use util::ResultExt;
 
 use std::{fmt::Debug, ops::RangeInclusive};
-use std::{
-    mem,
-    ops::{Deref, Range},
-};
+use std::{mem, ops::Range};
 
 use crate::{
     mappings::colors::convert_color,
     terminal_view::{DeployContextMenu, TerminalView},
-    Terminal, TerminalSize,
+    IndexedCell, Terminal, TerminalContent, TerminalSize,
 };
 
 ///The information generated during layout that is nescessary for painting
@@ -48,21 +42,6 @@ pub struct LayoutState {
     size: TerminalSize,
     mode: TermMode,
     display_offset: usize,
-}
-
-#[derive(Debug)]
-struct IndexedCell {
-    point: Point,
-    cell: Cell,
-}
-
-impl Deref for IndexedCell {
-    type Target = Cell;
-
-    #[inline]
-    fn deref(&self) -> &Cell {
-        &self.cell
-    }
 }
 
 ///Helper struct for converting data between alacritty's cursor points, and displayed cursor points
@@ -195,7 +174,7 @@ impl TerminalElement {
     //Vec<Range<Point>> -> Clip out the parts of the ranges
 
     fn layout_grid(
-        grid: Vec<IndexedCell>,
+        grid: &Vec<IndexedCell>,
         text_style: &TextStyle,
         terminal_theme: &TerminalStyle,
         text_layout_cache: &TextLayoutCache,
@@ -581,40 +560,22 @@ impl Element for TerminalElement {
         } else {
             terminal_theme.colors.background
         };
+        let terminal_handle = self.terminal.upgrade(cx).unwrap();
 
-        let (cells, selection, cursor, display_offset, cursor_text, mode) = self
-            .terminal
-            .upgrade(cx)
-            .unwrap()
-            .update(cx.app, |terminal, cx| {
-                terminal.set_size(dimensions);
-                terminal.render_lock(cx, |content, cursor_text| {
-                    let mut cells = vec![];
-                    cells.extend(
-                        content
-                            .display_iter
-                            //TODO: Add this once there's a way to retain empty lines
-                            // .filter(|ic| {
-                            //     !ic.flags.contains(Flags::HIDDEN)
-                            //         && !(ic.bg == Named(NamedColor::Background)
-                            //             && ic.c == ' '
-                            //             && !ic.flags.contains(Flags::INVERSE))
-                            // })
-                            .map(|ic| IndexedCell {
-                                point: ic.point,
-                                cell: ic.cell.clone(),
-                            }),
-                    );
-                    (
-                        cells,
-                        content.selection,
-                        content.cursor,
-                        content.display_offset,
-                        cursor_text,
-                        content.mode,
-                    )
-                })
-            });
+        terminal_handle.update(cx.app, |terminal, cx| {
+            terminal.set_size(dimensions);
+            terminal.try_sync(cx)
+        });
+
+        let TerminalContent {
+            cells,
+            mode,
+            display_offset,
+            cursor_char,
+            selection,
+            cursor,
+            ..
+        } = &terminal_handle.read(cx).last_content;
 
         // searches, highlights to a single range representations
         let mut relative_highlighted_ranges = Vec::new();
@@ -641,9 +602,9 @@ impl Element for TerminalElement {
         let cursor = if let AlacCursorShape::Hidden = cursor.shape {
             None
         } else {
-            let cursor_point = DisplayCursor::from(cursor.point, display_offset);
+            let cursor_point = DisplayCursor::from(cursor.point, *display_offset);
             let cursor_text = {
-                let str_trxt = cursor_text.to_string();
+                let str_trxt = cursor_char.to_string();
 
                 let color = if self.focused {
                     terminal_theme.colors.background
@@ -699,8 +660,8 @@ impl Element for TerminalElement {
                 size: dimensions,
                 rects,
                 relative_highlighted_ranges,
-                mode,
-                display_offset,
+                mode: *mode,
+                display_offset: *display_offset,
             },
         )
     }
