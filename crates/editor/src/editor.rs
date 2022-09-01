@@ -2737,7 +2737,7 @@ impl Editor {
             Some(
                 MouseEventHandler::new::<Tag, _, _>(0, cx, |_, _| {
                     Svg::new("icons/bolt_8.svg")
-                        .with_color(style.code_actions_indicator)
+                        .with_color(style.code_actions.indicator)
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
