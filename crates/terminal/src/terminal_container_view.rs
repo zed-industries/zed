@@ -1,17 +1,20 @@
 use crate::terminal_view::TerminalView;
 use crate::{Event, Terminal, TerminalBuilder, TerminalError};
 
+use alacritty_terminal::index::Point;
 use dirs::home_dir;
 use gpui::{
-    actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MutableAppContext, View,
-    ViewContext, ViewHandle,
+    actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MutableAppContext, Task,
+    View, ViewContext, ViewHandle,
 };
+use workspace::searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle};
 use workspace::{Item, Workspace};
 
 use crate::TerminalSize;
 use project::{LocalWorktree, Project, ProjectPath};
 use settings::{AlternateScroll, Settings, WorkingDirectory};
 use smallvec::SmallVec;
+use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
 use crate::terminal_element::TerminalElement;
@@ -26,12 +29,12 @@ pub fn init(cx: &mut MutableAppContext) {
 //Take away all the result unwrapping in the current TerminalView by making it 'infallible'
 //Bubble up to deploy(_modal)() calls
 
-pub enum TerminalContent {
+pub enum TerminalContainerContent {
     Connected(ViewHandle<TerminalView>),
     Error(ViewHandle<ErrorView>),
 }
 
-impl TerminalContent {
+impl TerminalContainerContent {
     fn handle(&self) -> AnyViewHandle {
         match self {
             Self::Connected(handle) => handle.into(),
@@ -42,7 +45,7 @@ impl TerminalContent {
 
 pub struct TerminalContainer {
     modal: bool,
-    pub content: TerminalContent,
+    pub content: TerminalContainerContent,
     associated_directory: Option<PathBuf>,
 }
 
@@ -116,13 +119,13 @@ impl TerminalContainer {
                 let view = cx.add_view(|cx| TerminalView::from_terminal(terminal, modal, cx));
                 cx.subscribe(&view, |_this, _content, event, cx| cx.emit(*event))
                     .detach();
-                TerminalContent::Connected(view)
+                TerminalContainerContent::Connected(view)
             }
             Err(error) => {
                 let view = cx.add_view(|_| ErrorView {
                     error: error.downcast::<TerminalError>().unwrap(),
                 });
-                TerminalContent::Error(view)
+                TerminalContainerContent::Error(view)
             }
         };
         cx.focus(content.handle());
@@ -142,7 +145,7 @@ impl TerminalContainer {
         let connected_view = cx.add_view(|cx| TerminalView::from_terminal(terminal, modal, cx));
         TerminalContainer {
             modal,
-            content: TerminalContent::Connected(connected_view),
+            content: TerminalContainerContent::Connected(connected_view),
             associated_directory: None,
         }
     }
@@ -155,8 +158,8 @@ impl View for TerminalContainer {
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
         let child_view = match &self.content {
-            TerminalContent::Connected(connected) => ChildView::new(connected),
-            TerminalContent::Error(error) => ChildView::new(error),
+            TerminalContainerContent::Connected(connected) => ChildView::new(connected),
+            TerminalContainerContent::Error(error) => ChildView::new(error),
         };
         if self.modal {
             let settings = cx.global::<Settings>();
@@ -235,10 +238,10 @@ impl Item for TerminalContainer {
         cx: &gpui::AppContext,
     ) -> ElementBox {
         let title = match &self.content {
-            TerminalContent::Connected(connected) => {
+            TerminalContainerContent::Connected(connected) => {
                 connected.read(cx).handle().read(cx).title.to_string()
             }
-            TerminalContent::Error(_) => "Terminal".to_string(),
+            TerminalContainerContent::Error(_) => "Terminal".to_string(),
         };
 
         Flex::row()
@@ -306,7 +309,7 @@ impl Item for TerminalContainer {
     }
 
     fn is_dirty(&self, cx: &gpui::AppContext) -> bool {
-        if let TerminalContent::Connected(connected) = &self.content {
+        if let TerminalContainerContent::Connected(connected) = &self.content {
             connected.read(cx).has_new_content()
         } else {
             false
@@ -314,7 +317,7 @@ impl Item for TerminalContainer {
     }
 
     fn has_conflict(&self, cx: &AppContext) -> bool {
-        if let TerminalContent::Connected(connected) = &self.content {
+        if let TerminalContainerContent::Connected(connected) = &self.content {
             connected.read(cx).has_bell()
         } else {
             false
@@ -327,6 +330,115 @@ impl Item for TerminalContainer {
 
     fn should_close_item_on_event(event: &Self::Event) -> bool {
         matches!(event, &Event::CloseTerminal)
+    }
+
+    fn as_searchable(&self, handle: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(handle.clone()))
+    }
+}
+
+impl SearchableItem for TerminalContainer {
+    type Match = RangeInclusive<Point>;
+
+    fn supported_options() -> SearchOptions {
+        SearchOptions {
+            case: false,
+            word: false,
+            regex: false,
+        }
+    }
+
+    /// Convert events raised by this item into search-relevant events (if applicable)
+    fn to_search_event(event: &Self::Event) -> Option<SearchEvent> {
+        match event {
+            Event::Wakeup => Some(SearchEvent::MatchesInvalidated),
+            Event::SelectionsChanged => Some(SearchEvent::ActiveMatchChanged),
+            _ => None,
+        }
+    }
+
+    /// Clear stored matches
+    fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
+        if let TerminalContainerContent::Connected(connected) = &self.content {
+            let terminal = connected.read(cx).terminal().clone();
+            terminal.update(cx, |term, _| term.matches.clear())
+        }
+    }
+
+    /// Store matches returned from find_matches somewhere for rendering
+    fn update_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
+        if let TerminalContainerContent::Connected(connected) = &self.content {
+            let terminal = connected.read(cx).terminal().clone();
+            terminal.update(cx, |term, _| term.matches = matches)
+        }
+    }
+
+    /// Return the selection content to pre-load into this search
+    fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
+        if let TerminalContainerContent::Connected(connected) = &self.content {
+            let terminal = connected.read(cx).terminal().clone();
+            terminal
+                .read(cx)
+                .last_content
+                .selection_text
+                .clone()
+                .unwrap_or_default()
+        } else {
+            Default::default()
+        }
+    }
+
+    /// Focus match at given index into the Vec of matches
+    fn activate_match(&mut self, index: usize, _: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
+        if let TerminalContainerContent::Connected(connected) = &self.content {
+            let terminal = connected.read(cx).terminal().clone();
+            terminal.update(cx, |term, _| term.activate_match(index));
+            cx.notify();
+        }
+    }
+
+    /// Get all of the matches for this query, should be done on the background
+    fn find_matches(
+        &mut self,
+        query: project::search::SearchQuery,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Vec<Self::Match>> {
+        if let TerminalContainerContent::Connected(connected) = &self.content {
+            let terminal = connected.read(cx).terminal().clone();
+            terminal.update(cx, |term, cx| term.find_matches(query, cx))
+        } else {
+            Task::ready(Vec::new())
+        }
+    }
+
+    /// Reports back to the search toolbar what the active match should be (the selection)
+    fn active_match_index(
+        &mut self,
+        matches: Vec<Self::Match>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<usize> {
+        if let TerminalContainerContent::Connected(connected) = &self.content {
+            if let Some(selection_head) = connected.read(cx).terminal().read(cx).selection_head {
+                // If selection head is contained in a match. Return that match
+                for (ix, search_match) in matches.iter().enumerate() {
+                    if search_match.contains(&selection_head) {
+                        return Some(ix);
+                    }
+
+                    // If not contained, return the next match after the selection head
+                    if search_match.start() > &selection_head {
+                        return Some(ix);
+                    }
+                }
+
+                // If no selection after selection head, return the last match
+                return Some(matches.len() - 1);
+            } else {
+                Some(0)
+            }
+        } else {
+            None
+        }
     }
 }
 

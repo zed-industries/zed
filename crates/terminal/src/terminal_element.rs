@@ -2,11 +2,7 @@ use alacritty_terminal::{
     ansi::{Color as AnsiColor, Color::Named, CursorShape as AlacCursorShape, NamedColor},
     grid::Dimensions,
     index::Point,
-    selection::SelectionRange,
-    term::{
-        cell::{Cell, Flags},
-        TermMode,
-    },
+    term::{cell::Flags, TermMode},
 };
 use editor::{Cursor, CursorShape, HighlightedRange, HighlightedRangeLine};
 use gpui::{
@@ -27,43 +23,25 @@ use settings::Settings;
 use theme::TerminalStyle;
 use util::ResultExt;
 
-use std::fmt::Debug;
-use std::{
-    mem,
-    ops::{Deref, Range},
-};
+use std::{fmt::Debug, ops::RangeInclusive};
+use std::{mem, ops::Range};
 
 use crate::{
     mappings::colors::convert_color,
     terminal_view::{DeployContextMenu, TerminalView},
-    Terminal, TerminalSize,
+    IndexedCell, Terminal, TerminalContent, TerminalSize,
 };
 
 ///The information generated during layout that is nescessary for painting
 pub struct LayoutState {
     cells: Vec<LayoutCell>,
     rects: Vec<LayoutRect>,
-    highlights: Vec<RelativeHighlightedRange>,
+    relative_highlighted_ranges: Vec<(RangeInclusive<Point>, Color)>,
     cursor: Option<Cursor>,
     background_color: Color,
-    selection_color: Color,
     size: TerminalSize,
     mode: TermMode,
-}
-
-#[derive(Debug)]
-struct IndexedCell {
-    point: Point,
-    cell: Cell,
-}
-
-impl Deref for IndexedCell {
-    type Target = Cell;
-
-    #[inline]
-    fn deref(&self) -> &Cell {
-        &self.cell
-    }
+    display_offset: usize,
 }
 
 ///Helper struct for converting data between alacritty's cursor points, and displayed cursor points
@@ -166,30 +144,6 @@ impl LayoutRect {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-struct RelativeHighlightedRange {
-    line_index: usize,
-    range: Range<usize>,
-}
-
-impl RelativeHighlightedRange {
-    fn new(line_index: usize, range: Range<usize>) -> Self {
-        RelativeHighlightedRange { line_index, range }
-    }
-
-    fn to_highlighted_range_line(
-        &self,
-        origin: Vector2F,
-        layout: &LayoutState,
-    ) -> HighlightedRangeLine {
-        let start_x = origin.x() + self.range.start as f32 * layout.size.cell_width;
-        let end_x =
-            origin.x() + self.range.end as f32 * layout.size.cell_width + layout.size.cell_width;
-
-        HighlightedRangeLine { start_x, end_x }
-    }
-}
-
 ///The GPUI element that paints the terminal.
 ///We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalElement {
@@ -217,46 +171,29 @@ impl TerminalElement {
         }
     }
 
+    //Vec<Range<Point>> -> Clip out the parts of the ranges
+
     fn layout_grid(
-        grid: Vec<IndexedCell>,
+        grid: &Vec<IndexedCell>,
         text_style: &TextStyle,
         terminal_theme: &TerminalStyle,
         text_layout_cache: &TextLayoutCache,
         font_cache: &FontCache,
         modal: bool,
-        selection_range: Option<SelectionRange>,
-    ) -> (
-        Vec<LayoutCell>,
-        Vec<LayoutRect>,
-        Vec<RelativeHighlightedRange>,
-    ) {
+    ) -> (Vec<LayoutCell>, Vec<LayoutRect>) {
         let mut cells = vec![];
         let mut rects = vec![];
-        let mut highlight_ranges = vec![];
 
         let mut cur_rect: Option<LayoutRect> = None;
         let mut cur_alac_color = None;
-        let mut highlighted_range = None;
 
         let linegroups = grid.into_iter().group_by(|i| i.point.line);
         for (line_index, (_, line)) in linegroups.into_iter().enumerate() {
-            for (x_index, cell) in line.enumerate() {
+            for cell in line {
                 let mut fg = cell.fg;
                 let mut bg = cell.bg;
                 if cell.flags.contains(Flags::INVERSE) {
                     mem::swap(&mut fg, &mut bg);
-                }
-
-                //Increase selection range
-                {
-                    if selection_range
-                        .map(|range| range.contains(cell.point))
-                        .unwrap_or(false)
-                    {
-                        let mut range = highlighted_range.take().unwrap_or(x_index..x_index);
-                        range.end = range.end.max(x_index);
-                        highlighted_range = Some(range);
-                    }
                 }
 
                 //Expand background rect range
@@ -324,18 +261,11 @@ impl TerminalElement {
                 };
             }
 
-            if highlighted_range.is_some() {
-                highlight_ranges.push(RelativeHighlightedRange::new(
-                    line_index,
-                    highlighted_range.take().unwrap(),
-                ))
-            }
-
             if cur_rect.is_some() {
                 rects.push(cur_rect.take().unwrap());
             }
         }
-        (cells, rects, highlight_ranges)
+        (cells, rects)
     }
 
     // Compute the cursor position and expected block width, may return a zero width if x_for_index returns
@@ -612,10 +542,17 @@ impl Element for TerminalElement {
         let terminal_theme = settings.theme.terminal.clone(); //TODO: Try to minimize this clone.
         let text_style = TerminalElement::make_text_style(font_cache, settings);
         let selection_color = settings.theme.editor.selection.selection;
+        let match_color = settings.theme.search.match_background;
         let dimensions = {
             let line_height = font_cache.line_height(text_style.font_size);
             let cell_width = font_cache.em_advance(text_style.font_id, text_style.font_size);
             TerminalSize::new(line_height, cell_width, constraint.max)
+        };
+
+        let search_matches = if let Some(terminal_model) = self.terminal.upgrade(cx) {
+            terminal_model.read(cx).matches.clone()
+        } else {
+            Default::default()
         };
 
         let background_color = if self.modal {
@@ -623,49 +560,41 @@ impl Element for TerminalElement {
         } else {
             terminal_theme.colors.background
         };
+        let terminal_handle = self.terminal.upgrade(cx).unwrap();
 
-        let (cells, selection, cursor, display_offset, cursor_text, mode) = self
-            .terminal
-            .upgrade(cx)
-            .unwrap()
-            .update(cx.app, |terminal, mcx| {
-                terminal.set_size(dimensions);
-                terminal.render_lock(mcx, |content, cursor_text| {
-                    let mut cells = vec![];
-                    cells.extend(
-                        content
-                            .display_iter
-                            //TODO: Add this once there's a way to retain empty lines
-                            // .filter(|ic| {
-                            //     !ic.flags.contains(Flags::HIDDEN)
-                            //         && !(ic.bg == Named(NamedColor::Background)
-                            //             && ic.c == ' '
-                            //             && !ic.flags.contains(Flags::INVERSE))
-                            // })
-                            .map(|ic| IndexedCell {
-                                point: ic.point,
-                                cell: ic.cell.clone(),
-                            }),
-                    );
-                    (
-                        cells,
-                        content.selection,
-                        content.cursor,
-                        content.display_offset,
-                        cursor_text,
-                        content.mode,
-                    )
-                })
-            });
+        terminal_handle.update(cx.app, |terminal, cx| {
+            terminal.set_size(dimensions);
+            terminal.try_sync(cx)
+        });
 
-        let (cells, rects, highlights) = TerminalElement::layout_grid(
+        let TerminalContent {
+            cells,
+            mode,
+            display_offset,
+            cursor_char,
+            selection,
+            cursor,
+            ..
+        } = &terminal_handle.read(cx).last_content;
+
+        // searches, highlights to a single range representations
+        let mut relative_highlighted_ranges = Vec::new();
+        for search_match in search_matches {
+            relative_highlighted_ranges.push((search_match, match_color))
+        }
+        if let Some(selection) = selection {
+            relative_highlighted_ranges.push((selection.start..=selection.end, selection_color));
+        }
+
+        // then have that representation be converted to the appropriate highlight data structure
+
+        let (cells, rects) = TerminalElement::layout_grid(
             cells,
             &text_style,
             &terminal_theme,
             cx.text_layout_cache,
             cx.font_cache(),
             self.modal,
-            selection,
         );
 
         //Layout cursor. Rectangle is used for IME, so we should lay it out even
@@ -673,9 +602,9 @@ impl Element for TerminalElement {
         let cursor = if let AlacCursorShape::Hidden = cursor.shape {
             None
         } else {
-            let cursor_point = DisplayCursor::from(cursor.point, display_offset);
+            let cursor_point = DisplayCursor::from(cursor.point, *display_offset);
             let cursor_text = {
-                let str_trxt = cursor_text.to_string();
+                let str_trxt = cursor_char.to_string();
 
                 let color = if self.focused {
                     terminal_theme.colors.background
@@ -728,11 +657,11 @@ impl Element for TerminalElement {
                 cells,
                 cursor,
                 background_color,
-                selection_color,
                 size: dimensions,
                 rects,
-                highlights,
-                mode,
+                relative_highlighted_ranges,
+                mode: *mode,
+                display_offset: *display_offset,
             },
         )
     }
@@ -753,6 +682,11 @@ impl Element for TerminalElement {
             //Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
             self.attach_mouse_handlers(origin, self.view.id(), visible_bounds, layout.mode, cx);
 
+            cx.scene.push_cursor_region(gpui::CursorRegion {
+                bounds,
+                style: gpui::CursorStyle::IBeam,
+            });
+
             cx.paint_layer(clip_bounds, |cx| {
                 //Start with a background color
                 cx.scene.push_quad(Quad {
@@ -767,30 +701,23 @@ impl Element for TerminalElement {
                 }
             });
 
-            //Draw Selection
+            //Draw Highlighted Backgrounds
             cx.paint_layer(clip_bounds, |cx| {
-                let start_y = layout.highlights.get(0).map(|highlight| {
-                    origin.y() + highlight.line_index as f32 * layout.size.line_height
-                });
-
-                if let Some(y) = start_y {
-                    let range_lines = layout
-                        .highlights
-                        .iter()
-                        .map(|relative_highlight| {
-                            relative_highlight.to_highlighted_range_line(origin, layout)
-                        })
-                        .collect::<Vec<HighlightedRangeLine>>();
-
-                    let hr = HighlightedRange {
-                        start_y: y, //Need to change this
-                        line_height: layout.size.line_height,
-                        lines: range_lines,
-                        color: layout.selection_color,
-                        //Copied from editor. TODO: move to theme or something
-                        corner_radius: 0.15 * layout.size.line_height,
-                    };
-                    hr.paint(bounds, cx.scene);
+                for (relative_highlighted_range, color) in layout.relative_highlighted_ranges.iter()
+                {
+                    if let Some((start_y, highlighted_range_lines)) =
+                        to_highlighted_range_lines(relative_highlighted_range, layout, origin)
+                    {
+                        let hr = HighlightedRange {
+                            start_y, //Need to change this
+                            line_height: layout.size.line_height,
+                            lines: highlighted_range_lines,
+                            color: color.clone(),
+                            //Copied from editor. TODO: move to theme or something
+                            corner_radius: 0.15 * layout.size.line_height,
+                        };
+                        hr.paint(bounds, cx.scene);
+                    }
                 }
             });
 
@@ -892,4 +819,66 @@ impl Element for TerminalElement {
 
         Some(layout.cursor.as_ref()?.bounding_rect(origin))
     }
+}
+
+fn to_highlighted_range_lines(
+    range: &RangeInclusive<Point>,
+    layout: &LayoutState,
+    origin: Vector2F,
+) -> Option<(f32, Vec<HighlightedRangeLine>)> {
+    // Step 1. Normalize the points to be viewport relative.
+    //When display_offset = 1, here's how the grid is arranged:
+    //--- Viewport top
+    //-2,0 -2,1...
+    //-1,0 -1,1...
+    //--------- Terminal Top
+    // 0,0  0,1...
+    // 1,0  1,1...
+    //--- Viewport Bottom
+    // 2,0  2,1...
+    //--------- Terminal Bottom
+
+    // Normalize to viewport relative, from terminal relative.
+    // lines are i32s, which are negative above the top left corner of the terminal
+    // If the user has scrolled, we use the display_offset to tell us which offset
+    // of the grid data we should be looking at. But for the rendering step, we don't
+    // want negatives. We want things relative to the 'viewport' (the area of the grid
+    // which is currently shown according to the display offset)
+    let unclamped_start = Point::new(
+        range.start().line + layout.display_offset,
+        range.start().column,
+    );
+    let unclamped_end = Point::new(range.end().line + layout.display_offset, range.end().column);
+
+    // Step 2. Clamp range to viewport, and return None if it doesn't overlap
+    if unclamped_end.line.0 < 0 || unclamped_start.line.0 > layout.size.num_lines() as i32 {
+        return None;
+    }
+
+    let clamped_start_line = unclamped_start.line.0.max(0) as usize;
+    let clamped_end_line = unclamped_end.line.0.min(layout.size.num_lines() as i32) as usize;
+    //Convert the start of the range to pixels
+    let start_y = origin.y() + clamped_start_line as f32 * layout.size.line_height;
+
+    // Step 3. Expand ranges that cross lines into a collection of single-line ranges.
+    //  (also convert to pixels)
+    let mut highlighted_range_lines = Vec::new();
+    for line in clamped_start_line..=clamped_end_line {
+        let mut line_start = 0;
+        let mut line_end = layout.size.columns();
+
+        if line == clamped_start_line {
+            line_start = unclamped_start.column.0 as usize;
+        }
+        if line == clamped_end_line {
+            line_end = unclamped_end.column.0 as usize + 1; //+1 for inclusive
+        }
+
+        highlighted_range_lines.push(HighlightedRangeLine {
+            start_x: origin.x() + line_start as f32 * layout.size.cell_width,
+            end_x: origin.x() + line_end as f32 * layout.size.cell_width,
+        });
+    }
+
+    Some((start_y, highlighted_range_lines))
 }

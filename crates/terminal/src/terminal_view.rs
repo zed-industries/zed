@@ -1,6 +1,6 @@
-use std::time::Duration;
+use std::{ops::RangeInclusive, time::Duration};
 
-use alacritty_terminal::term::TermMode;
+use alacritty_terminal::{index::Point, term::TermMode};
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
     actions,
@@ -8,8 +8,8 @@ use gpui::{
     geometry::vector::Vector2F,
     impl_internal_actions,
     keymap::Keystroke,
-    AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, View,
-    ViewContext, ViewHandle,
+    AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, Task,
+    View, ViewContext, ViewHandle,
 };
 use settings::{Settings, TerminalBlink};
 use smol::Timer;
@@ -40,6 +40,7 @@ actions!(
         Copy,
         Paste,
         ShowCharacterPalette,
+        SearchTest
     ]
 );
 impl_internal_actions!(project_panel, [DeployContextMenu]);
@@ -148,7 +149,8 @@ impl TerminalView {
         if !self
             .terminal
             .read(cx)
-            .last_mode
+            .last_content
+            .mode
             .contains(TermMode::ALT_SCREEN)
         {
             cx.show_character_palette();
@@ -176,7 +178,8 @@ impl TerminalView {
             || self
                 .terminal
                 .read(cx)
-                .last_mode
+                .last_content
+                .mode
                 .contains(TermMode::ALT_SCREEN)
         {
             return true;
@@ -233,6 +236,19 @@ impl TerminalView {
             }
         })
         .detach();
+    }
+
+    pub fn find_matches(
+        &mut self,
+        query: project::search::SearchQuery,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Vec<RangeInclusive<Point>>> {
+        self.terminal
+            .update(cx, |term, cx| term.find_matches(query, cx))
+    }
+
+    pub fn terminal(&self) -> &ModelHandle<Terminal> {
+        &self.terminal
     }
 
     fn next_blink_epoch(&mut self) -> usize {
@@ -348,7 +364,8 @@ impl View for TerminalView {
         if self
             .terminal
             .read(cx)
-            .last_mode
+            .last_content
+            .mode
             .contains(TermMode::ALT_SCREEN)
         {
             None
@@ -373,7 +390,7 @@ impl View for TerminalView {
         if self.modal {
             context.set.insert("ModalTerminal".into());
         }
-        let mode = self.terminal.read(cx).last_mode;
+        let mode = self.terminal.read(cx).last_content.mode;
         context.map.insert(
             "screen".to_string(),
             (if mode.contains(TermMode::ALT_SCREEN) {

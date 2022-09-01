@@ -513,17 +513,17 @@ impl SearchableItem for Editor {
 
     fn to_search_event(event: &Self::Event) -> Option<SearchEvent> {
         match event {
-            Event::BufferEdited => Some(SearchEvent::ContentsUpdated),
-            Event::SelectionsChanged { .. } => Some(SearchEvent::SelectionsChanged),
+            Event::BufferEdited => Some(SearchEvent::MatchesInvalidated),
+            Event::SelectionsChanged { .. } => Some(SearchEvent::ActiveMatchChanged),
             _ => None,
         }
     }
 
-    fn clear_highlights(&mut self, cx: &mut ViewContext<Self>) {
+    fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
         self.clear_background_highlights::<BufferSearchHighlights>(cx);
     }
 
-    fn highlight_matches(&mut self, matches: Vec<Range<Anchor>>, cx: &mut ViewContext<Self>) {
+    fn update_matches(&mut self, matches: Vec<Range<Anchor>>, cx: &mut ViewContext<Self>) {
         self.highlight_background::<BufferSearchHighlights>(
             matches,
             |theme| theme.search.match_background,
@@ -553,40 +553,56 @@ impl SearchableItem for Editor {
         }
     }
 
-    fn select_next_match_in_direction(
-        &mut self,
-        index: usize,
-        direction: Direction,
-        matches: Vec<Range<Anchor>>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let new_index: usize = match_index_for_direction(
-            matches.as_slice(),
-            &self.selections.newest_anchor().head(),
-            index,
-            direction,
-            &self.buffer().read(cx).snapshot(cx),
-        );
-
-        let range_to_select = matches[new_index].clone();
-        self.unfold_ranges([range_to_select.clone()], false, cx);
-        self.change_selections(Some(Autoscroll::Fit), cx, |s| {
-            s.select_ranges([range_to_select])
-        });
-    }
-
-    fn select_match_by_index(
+    fn activate_match(
         &mut self,
         index: usize,
         matches: Vec<Range<Anchor>>,
         cx: &mut ViewContext<Self>,
     ) {
+        self.unfold_ranges([matches[index].clone()], false, cx);
         self.change_selections(Some(Autoscroll::Fit), cx, |s| {
             s.select_ranges([matches[index].clone()])
         });
     }
 
-    fn matches(
+    fn match_index_for_direction(
+        &mut self,
+        matches: &Vec<Range<Anchor>>,
+        mut current_index: usize,
+        direction: Direction,
+        cx: &mut ViewContext<Self>,
+    ) -> usize {
+        let buffer = self.buffer().read(cx).snapshot(cx);
+        let cursor = self.selections.newest_anchor().head();
+        if matches[current_index].start.cmp(&cursor, &buffer).is_gt() {
+            if direction == Direction::Prev {
+                if current_index == 0 {
+                    current_index = matches.len() - 1;
+                } else {
+                    current_index -= 1;
+                }
+            }
+        } else if matches[current_index].end.cmp(&cursor, &buffer).is_lt() {
+            if direction == Direction::Next {
+                current_index = 0;
+            }
+        } else if direction == Direction::Prev {
+            if current_index == 0 {
+                current_index = matches.len() - 1;
+            } else {
+                current_index -= 1;
+            }
+        } else if direction == Direction::Next {
+            if current_index == matches.len() - 1 {
+                current_index = 0
+            } else {
+                current_index += 1;
+            }
+        };
+        current_index
+    }
+
+    fn find_matches(
         &mut self,
         query: project::search::SearchQuery,
         cx: &mut ViewContext<Self>,
@@ -635,41 +651,6 @@ impl SearchableItem for Editor {
             &self.buffer().read(cx).snapshot(cx),
         )
     }
-}
-
-pub fn match_index_for_direction(
-    ranges: &[Range<Anchor>],
-    cursor: &Anchor,
-    mut index: usize,
-    direction: Direction,
-    buffer: &MultiBufferSnapshot,
-) -> usize {
-    if ranges[index].start.cmp(cursor, buffer).is_gt() {
-        if direction == Direction::Prev {
-            if index == 0 {
-                index = ranges.len() - 1;
-            } else {
-                index -= 1;
-            }
-        }
-    } else if ranges[index].end.cmp(cursor, buffer).is_lt() {
-        if direction == Direction::Next {
-            index = 0;
-        }
-    } else if direction == Direction::Prev {
-        if index == 0 {
-            index = ranges.len() - 1;
-        } else {
-            index -= 1;
-        }
-    } else if direction == Direction::Next {
-        if index == ranges.len() - 1 {
-            index = 0
-        } else {
-            index += 1;
-        }
-    };
-    index
 }
 
 pub fn active_match_index(

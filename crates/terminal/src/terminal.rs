@@ -9,15 +9,21 @@ use alacritty_terminal::{
     config::{Config, Program, PtyConfig, Scrolling},
     event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
     event_loop::{EventLoop, Msg, Notifier},
-    grid::{Dimensions, Scroll},
-    index::{Direction, Point},
-    selection::{Selection, SelectionType},
+    grid::{Dimensions, Scroll as AlacScroll},
+    index::{Column, Direction as AlacDirection, Line, Point},
+    selection::{Selection, SelectionRange, SelectionType},
     sync::FairMutex,
-    term::{RenderableContent, TermMode},
+    term::{
+        cell::Cell,
+        color::Rgb,
+        search::{Match, RegexIter, RegexSearch},
+        RenderableCursor, TermMode,
+    },
     tty::{self, setup_env},
     Term,
 };
 use anyhow::{bail, Result};
+
 use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
     FutureExt,
@@ -27,14 +33,15 @@ use mappings::mouse::{
     alt_scroll, mouse_button_report, mouse_moved_report, mouse_point, mouse_side, scroll_report,
 };
 use modal::deploy_modal;
+
 use settings::{AlternateScroll, Settings, Shell, TerminalBlink};
 use std::{
     collections::{HashMap, VecDeque},
     fmt::Display,
-    ops::Sub,
+    ops::{Deref, RangeInclusive, Sub},
     path::PathBuf,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use thiserror::Error;
 
@@ -43,7 +50,7 @@ use gpui::{
     keymap::Keystroke,
     scene::{ClickRegionEvent, DownRegionEvent, DragRegionEvent, UpRegionEvent},
     ClipboardItem, Entity, ModelContext, MouseButton, MouseMovedEvent, MutableAppContext,
-    ScrollWheelEvent,
+    ScrollWheelEvent, Task,
 };
 
 use crate::mappings::{
@@ -62,8 +69,8 @@ pub fn init(cx: &mut MutableAppContext) {
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
 ///Implement scroll bars.
-pub const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
-
+const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
+const MAX_SEARCH_LINES: usize = 100;
 const DEBUG_TERMINAL_WIDTH: f32 = 500.;
 const DEBUG_TERMINAL_HEIGHT: f32 = 30.;
 const DEBUG_CELL_WIDTH: f32 = 5.;
@@ -77,15 +84,18 @@ pub enum Event {
     Bell,
     Wakeup,
     BlinkChanged,
+    SelectionsChanged,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 enum InternalEvent {
-    TermEvent(AlacTermEvent),
+    ColorRequest(usize, Arc<dyn Fn(Rgb) -> String + Sync + Send + 'static>),
     Resize(TerminalSize),
     Clear,
-    Scroll(Scroll),
-    SetSelection(Option<Selection>),
+    // FocusNextMatch,
+    Scroll(AlacScroll),
+    ScrollToPoint(Point),
+    SetSelection(Option<(Selection, Point)>),
     UpdateSelection(Vector2F),
     Copy,
 }
@@ -164,8 +174,12 @@ impl From<TerminalSize> for WindowSize {
 }
 
 impl Dimensions for TerminalSize {
+    /// Note: this is supposed to be for the back buffer's length,
+    /// but we exclusively use it to resize the terminal, which does not
+    /// use this method. We still have to implement it for the trait though,
+    /// hence, this comment.
     fn total_lines(&self) -> usize {
-        self.screen_lines() //TODO: Check that this is fine. This is supposed to be for the back buffer...
+        self.screen_lines()
     }
 
     fn screen_lines(&self) -> usize {
@@ -366,11 +380,13 @@ impl TerminalBuilder {
             events: VecDeque::with_capacity(10), //Should never get this high.
             title: shell_txt.clone(),
             default_title: shell_txt,
-            last_mode: TermMode::NONE,
+            last_content: Default::default(),
             cur_size: initial_size,
             last_mouse: None,
-            last_offset: 0,
-            current_selection: false,
+            matches: Vec::new(),
+            last_synced: Instant::now(),
+            sync_task: None,
+            selection_head: None,
         };
 
         Ok(TerminalBuilder {
@@ -432,17 +448,62 @@ impl TerminalBuilder {
     }
 }
 
+#[derive(Debug, Clone)]
+struct IndexedCell {
+    point: Point,
+    cell: Cell,
+}
+
+impl Deref for IndexedCell {
+    type Target = Cell;
+
+    #[inline]
+    fn deref(&self) -> &Cell {
+        &self.cell
+    }
+}
+
+#[derive(Clone)]
+pub struct TerminalContent {
+    cells: Vec<IndexedCell>,
+    mode: TermMode,
+    display_offset: usize,
+    selection_text: Option<String>,
+    selection: Option<SelectionRange>,
+    cursor: RenderableCursor,
+    cursor_char: char,
+}
+
+impl Default for TerminalContent {
+    fn default() -> Self {
+        TerminalContent {
+            cells: Default::default(),
+            mode: Default::default(),
+            display_offset: Default::default(),
+            selection_text: Default::default(),
+            selection: Default::default(),
+            cursor: RenderableCursor {
+                shape: alacritty_terminal::ansi::CursorShape::Block,
+                point: Point::new(Line(0), Column(0)),
+            },
+            cursor_char: Default::default(),
+        }
+    }
+}
+
 pub struct Terminal {
     pty_tx: Notifier,
     term: Arc<FairMutex<Term<ZedListener>>>,
     events: VecDeque<InternalEvent>,
     default_title: String,
     title: String,
+    last_mouse: Option<(Point, AlacDirection)>,
+    pub matches: Vec<RangeInclusive<Point>>,
     cur_size: TerminalSize,
-    last_mode: TermMode,
-    last_offset: usize,
-    last_mouse: Option<(Point, Direction)>,
-    current_selection: bool,
+    last_content: TerminalContent,
+    last_synced: Instant,
+    sync_task: Option<Task<()>>,
+    selection_head: Option<Point>,
 }
 
 impl Terminal {
@@ -482,9 +543,11 @@ impl Terminal {
                 cx.emit(Event::Wakeup);
                 cx.notify();
             }
-            AlacTermEvent::ColorRequest(_, _) => self
-                .events
-                .push_back(InternalEvent::TermEvent(event.clone())),
+            AlacTermEvent::ColorRequest(idx, fun_ptr) => {
+                self.events
+                    .push_back(InternalEvent::ColorRequest(*idx, fun_ptr.clone()));
+                cx.notify(); //Immediately schedule a render to respond to the color request
+            }
         }
     }
 
@@ -496,14 +559,12 @@ impl Terminal {
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            InternalEvent::TermEvent(term_event) => {
-                if let AlacTermEvent::ColorRequest(index, format) = term_event {
-                    let color = term.colors()[*index].unwrap_or_else(|| {
-                        let term_style = &cx.global::<Settings>().theme.terminal;
-                        to_alac_rgb(get_color_at_index(index, &term_style.colors))
-                    });
-                    self.write_to_pty(format(color))
-                }
+            InternalEvent::ColorRequest(index, format) => {
+                let color = term.colors()[*index].unwrap_or_else(|| {
+                    let term_style = &cx.global::<Settings>().theme.terminal;
+                    to_alac_rgb(get_color_at_index(index, &term_style.colors))
+                });
+                self.write_to_pty(format(color))
             }
             InternalEvent::Resize(new_size) => {
                 self.cur_size = *new_size;
@@ -519,7 +580,14 @@ impl Terminal {
             InternalEvent::Scroll(scroll) => {
                 term.scroll_display(*scroll);
             }
-            InternalEvent::SetSelection(sel) => term.selection = sel.clone(),
+            InternalEvent::SetSelection(selection) => {
+                term.selection = selection.as_ref().map(|(sel, _)| sel.clone());
+
+                if let Some((_, head)) = selection {
+                    self.selection_head = Some(*head);
+                }
+                cx.emit(Event::SelectionsChanged)
+            }
             InternalEvent::UpdateSelection(position) => {
                 if let Some(mut selection) = term.selection.take() {
                     let point = mouse_point(*position, self.cur_size, term.grid().display_offset());
@@ -527,6 +595,9 @@ impl Terminal {
 
                     selection.update(point, side);
                     term.selection = Some(selection);
+
+                    self.selection_head = Some(point);
+                    cx.emit(Event::SelectionsChanged)
                 }
             }
 
@@ -535,27 +606,30 @@ impl Terminal {
                     cx.write_to_clipboard(ClipboardItem::new(txt))
                 }
             }
+            InternalEvent::ScrollToPoint(point) => term.scroll_to_point(*point),
         }
     }
 
-    fn begin_select(&mut self, sel: Selection) {
-        self.current_selection = true;
+    pub fn last_content(&self) -> &TerminalContent {
+        &self.last_content
+    }
+
+    //To test:
+    //- Activate match on terminal (scrolling and selection)
+    //- Editor search snapping behavior
+
+    pub fn activate_match(&mut self, index: usize) {
+        if let Some(search_match) = self.matches.get(index).cloned() {
+            self.set_selection(Some((make_selection(&search_match), *search_match.end())));
+
+            self.events
+                .push_back(InternalEvent::ScrollToPoint(*search_match.start()));
+        }
+    }
+
+    fn set_selection(&mut self, selection: Option<(Selection, Point)>) {
         self.events
-            .push_back(InternalEvent::SetSelection(Some(sel)));
-    }
-
-    fn continue_selection(&mut self, location: Vector2F) {
-        self.events
-            .push_back(InternalEvent::UpdateSelection(location))
-    }
-
-    fn end_select(&mut self) {
-        self.current_selection = false;
-        self.events.push_back(InternalEvent::SetSelection(None));
-    }
-
-    fn scroll(&mut self, scroll: Scroll) {
-        self.events.push_back(InternalEvent::Scroll(scroll));
+            .push_back(InternalEvent::SetSelection(selection));
     }
 
     pub fn copy(&mut self) {
@@ -577,13 +651,15 @@ impl Terminal {
     }
 
     pub fn input(&mut self, input: String) {
-        self.scroll(Scroll::Bottom);
-        self.end_select();
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
+        self.events.push_back(InternalEvent::SetSelection(None));
+
         self.write_to_pty(input);
     }
 
     pub fn try_keystroke(&mut self, keystroke: &Keystroke) -> bool {
-        let esc = to_esc_str(keystroke, &self.last_mode);
+        let esc = to_esc_str(keystroke, &self.last_content.mode);
         if let Some(esc) = esc {
             self.input(esc);
             true
@@ -594,7 +670,7 @@ impl Terminal {
 
     ///Paste text into the terminal
     pub fn paste(&mut self, text: &str) {
-        let paste_text = if self.last_mode.contains(TermMode::BRACKETED_PASTE) {
+        let paste_text = if self.last_content.mode.contains(TermMode::BRACKETED_PASTE) {
             format!("{}{}{}", "\x1b[200~", text.replace('\x1b', ""), "\x1b[201~")
         } else {
             text.replace("\r\n", "\r").replace('\n', "\r")
@@ -602,42 +678,81 @@ impl Terminal {
         self.input(paste_text)
     }
 
-    pub fn render_lock<F, T>(&mut self, cx: &mut ModelContext<Self>, f: F) -> T
-    where
-        F: FnOnce(RenderableContent, char) -> T,
-    {
-        let m = self.term.clone(); //Arc clone
-        let mut term = m.lock();
+    pub fn try_sync(&mut self, cx: &mut ModelContext<Self>) {
+        let term = self.term.clone();
 
-        //Note that this ordering matters for
+        let mut terminal = if let Some(term) = term.try_lock_unfair() {
+            term
+        } else if self.last_synced.elapsed().as_secs_f32() > 0.25 {
+            term.lock_unfair()
+        } else if let None = self.sync_task {
+            //Skip this frame
+            let delay = cx.background().timer(Duration::from_millis(16));
+            self.sync_task = Some(cx.spawn_weak(|weak_handle, mut cx| async move {
+                delay.await;
+                cx.update(|cx| {
+                    if let Some(handle) = weak_handle.upgrade(cx) {
+                        handle.update(cx, |terminal, cx| {
+                            terminal.sync_task.take();
+                            cx.notify();
+                        });
+                    }
+                });
+            }));
+            return;
+        } else {
+            //No lock and delayed rendering already scheduled, nothing to do
+            return;
+        };
+
+        //Note that this ordering matters for event processing
         while let Some(e) = self.events.pop_front() {
-            self.process_terminal_event(&e, &mut term, cx)
+            self.process_terminal_event(&e, &mut terminal, cx)
         }
 
-        self.last_mode = *term.mode();
+        self.last_content = Self::make_content(&terminal);
+        self.last_synced = Instant::now();
+    }
 
+    fn make_content(term: &Term<ZedListener>) -> TerminalContent {
         let content = term.renderable_content();
-
-        self.last_offset = content.display_offset;
-
-        let cursor_text = term.grid()[content.cursor.point].c;
-
-        f(content, cursor_text)
+        TerminalContent {
+            cells: content
+                .display_iter
+                //TODO: Add this once there's a way to retain empty lines
+                // .filter(|ic| {
+                //     !ic.flags.contains(Flags::HIDDEN)
+                //         && !(ic.bg == Named(NamedColor::Background)
+                //             && ic.c == ' '
+                //             && !ic.flags.contains(Flags::INVERSE))
+                // })
+                .map(|ic| IndexedCell {
+                    point: ic.point,
+                    cell: ic.cell.clone(),
+                })
+                .collect::<Vec<IndexedCell>>(),
+            mode: content.mode,
+            display_offset: content.display_offset,
+            selection_text: term.selection_to_string(),
+            selection: content.selection,
+            cursor: content.cursor,
+            cursor_char: term.grid()[content.cursor.point].c,
+        }
     }
 
     pub fn focus_in(&self) {
-        if self.last_mode.contains(TermMode::FOCUS_IN_OUT) {
+        if self.last_content.mode.contains(TermMode::FOCUS_IN_OUT) {
             self.write_to_pty("\x1b[I".to_string());
         }
     }
 
     pub fn focus_out(&self) {
-        if self.last_mode.contains(TermMode::FOCUS_IN_OUT) {
+        if self.last_content.mode.contains(TermMode::FOCUS_IN_OUT) {
             self.write_to_pty("\x1b[O".to_string());
         }
     }
 
-    pub fn mouse_changed(&mut self, point: Point, side: Direction) -> bool {
+    pub fn mouse_changed(&mut self, point: Point, side: AlacDirection) -> bool {
         match self.last_mouse {
             Some((old_point, old_side)) => {
                 if old_point == point && old_side == side {
@@ -655,17 +770,17 @@ impl Terminal {
     }
 
     pub fn mouse_mode(&self, shift: bool) -> bool {
-        self.last_mode.intersects(TermMode::MOUSE_MODE) && !shift
+        self.last_content.mode.intersects(TermMode::MOUSE_MODE) && !shift
     }
 
     pub fn mouse_move(&mut self, e: &MouseMovedEvent, origin: Vector2F) {
         let position = e.position.sub(origin);
 
-        let point = mouse_point(position, self.cur_size, self.last_offset);
+        let point = mouse_point(position, self.cur_size, self.last_content.display_offset);
         let side = mouse_side(position, self.cur_size);
 
         if self.mouse_changed(point, side) && self.mouse_mode(e.shift) {
-            if let Some(bytes) = mouse_moved_report(point, e, self.last_mode) {
+            if let Some(bytes) = mouse_moved_report(point, e, self.last_content.mode) {
                 self.pty_tx.notify(bytes);
             }
         }
@@ -677,40 +792,54 @@ impl Terminal {
         if !self.mouse_mode(e.shift) {
             // Alacritty has the same ordering, of first updating the selection
             // then scrolling 15ms later
-            self.continue_selection(position);
+            self.events
+                .push_back(InternalEvent::UpdateSelection(position));
 
             // Doesn't make sense to scroll the alt screen
-            if !self.last_mode.contains(TermMode::ALT_SCREEN) {
-                //TODO: Why do these need to be doubled?
-                let top = e.region.origin_y() + (self.cur_size.line_height * 2.);
-                let bottom = e.region.lower_left().y() - (self.cur_size.line_height * 2.);
-
-                let scroll_delta = if e.position.y() < top {
-                    (top - e.position.y()).powf(1.1)
-                } else if e.position.y() > bottom {
-                    -((e.position.y() - bottom).powf(1.1))
-                } else {
-                    return; //Nothing to do
+            if !self.last_content.mode.contains(TermMode::ALT_SCREEN) {
+                let scroll_delta = match self.drag_line_delta(e) {
+                    Some(value) => value,
+                    None => return,
                 };
 
                 let scroll_lines = (scroll_delta / self.cur_size.line_height) as i32;
-                self.scroll(Scroll::Delta(scroll_lines));
-                self.continue_selection(position)
+
+                self.events
+                    .push_back(InternalEvent::Scroll(AlacScroll::Delta(scroll_lines)));
+                self.events
+                    .push_back(InternalEvent::UpdateSelection(position))
             }
         }
     }
 
+    fn drag_line_delta(&mut self, e: DragRegionEvent) -> Option<f32> {
+        //TODO: Why do these need to be doubled? Probably the same problem that the IME has
+        let top = e.region.origin_y() + (self.cur_size.line_height * 2.);
+        let bottom = e.region.lower_left().y() - (self.cur_size.line_height * 2.);
+        let scroll_delta = if e.position.y() < top {
+            (top - e.position.y()).powf(1.1)
+        } else if e.position.y() > bottom {
+            -((e.position.y() - bottom).powf(1.1))
+        } else {
+            return None; //Nothing to do
+        };
+        Some(scroll_delta)
+    }
+
     pub fn mouse_down(&mut self, e: &DownRegionEvent, origin: Vector2F) {
         let position = e.position.sub(origin);
-        let point = mouse_point(position, self.cur_size, self.last_offset);
+        let point = mouse_point(position, self.cur_size, self.last_content.display_offset);
         let side = mouse_side(position, self.cur_size);
 
         if self.mouse_mode(e.shift) {
-            if let Some(bytes) = mouse_button_report(point, e, true, self.last_mode) {
+            if let Some(bytes) = mouse_button_report(point, e, true, self.last_content.mode) {
                 self.pty_tx.notify(bytes);
             }
         } else if e.button == MouseButton::Left {
-            self.begin_select(Selection::new(SelectionType::Simple, point, side));
+            self.events.push_back(InternalEvent::SetSelection(Some((
+                Selection::new(SelectionType::Simple, point, side),
+                point,
+            ))));
         }
     }
 
@@ -718,7 +847,7 @@ impl Terminal {
         let position = e.position.sub(origin);
 
         if !self.mouse_mode(e.shift) {
-            let point = mouse_point(position, self.cur_size, self.last_offset);
+            let point = mouse_point(position, self.cur_size, self.last_content.display_offset);
             let side = mouse_side(position, self.cur_size);
 
             let selection_type = match e.click_count {
@@ -733,7 +862,8 @@ impl Terminal {
                 selection_type.map(|selection_type| Selection::new(selection_type, point, side));
 
             if let Some(sel) = selection {
-                self.begin_select(sel);
+                self.events
+                    .push_back(InternalEvent::SetSelection(Some((sel, point))));
             }
         }
     }
@@ -741,9 +871,9 @@ impl Terminal {
     pub fn mouse_up(&mut self, e: &UpRegionEvent, origin: Vector2F) {
         let position = e.position.sub(origin);
         if self.mouse_mode(e.shift) {
-            let point = mouse_point(position, self.cur_size, self.last_offset);
+            let point = mouse_point(position, self.cur_size, self.last_content.display_offset);
 
-            if let Some(bytes) = mouse_button_report(point, e, false, self.last_mode) {
+            if let Some(bytes) = mouse_button_report(point, e, false, self.last_content.mode) {
                 self.pty_tx.notify(bytes);
             }
         } else if e.button == MouseButton::Left {
@@ -751,6 +881,7 @@ impl Terminal {
             // so let's do that here
             self.copy();
         }
+        self.last_mouse = None;
     }
 
     ///Scroll the terminal
@@ -761,15 +892,22 @@ impl Terminal {
             //The scroll enters 'TouchPhase::Started'. Do I need to replicate this?
             //This would be consistent with a scroll model based on 'distance from origin'...
             let scroll_lines = (e.delta.y() / self.cur_size.line_height) as i32;
-            let point = mouse_point(e.position.sub(origin), self.cur_size, self.last_offset);
+            let point = mouse_point(
+                e.position.sub(origin),
+                self.cur_size,
+                self.last_content.display_offset,
+            );
 
-            if let Some(scrolls) = scroll_report(point, scroll_lines as i32, e, self.last_mode) {
+            if let Some(scrolls) =
+                scroll_report(point, scroll_lines as i32, e, self.last_content.mode)
+            {
                 for scroll in scrolls {
                     self.pty_tx.notify(scroll);
                 }
             };
         } else if self
-            .last_mode
+            .last_content
+            .mode
             .contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
             && !e.shift
         {
@@ -782,10 +920,38 @@ impl Terminal {
             let scroll_lines =
                 ((e.delta.y() * ALACRITTY_SCROLL_MULTIPLIER) / self.cur_size.line_height) as i32;
             if scroll_lines != 0 {
-                let scroll = Scroll::Delta(scroll_lines);
-                self.scroll(scroll);
+                let scroll = AlacScroll::Delta(scroll_lines);
+
+                self.events.push_back(InternalEvent::Scroll(scroll));
             }
         }
+    }
+
+    pub fn find_matches(
+        &mut self,
+        query: project::search::SearchQuery,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Vec<RangeInclusive<Point>>> {
+        let term = self.term.clone();
+        cx.background().spawn(async move {
+            let searcher = match query {
+                project::search::SearchQuery::Text { query, .. } => {
+                    RegexSearch::new(query.as_ref())
+                }
+                project::search::SearchQuery::Regex { query, .. } => {
+                    RegexSearch::new(query.as_ref())
+                }
+            };
+
+            if searcher.is_err() {
+                return Vec::new();
+            }
+            let searcher = searcher.unwrap();
+
+            let term = term.lock();
+
+            make_search_matches(&term, &searcher).collect()
+        })
     }
 }
 
@@ -797,6 +963,30 @@ impl Drop for Terminal {
 
 impl Entity for Terminal {
     type Event = Event;
+}
+
+fn make_selection(range: &RangeInclusive<Point>) -> Selection {
+    let mut selection = Selection::new(SelectionType::Simple, *range.start(), AlacDirection::Left);
+    selection.update(*range.end(), AlacDirection::Right);
+    selection
+}
+
+/// Copied from alacritty/src/display/hint.rs HintMatches::visible_regex_matches()
+/// Iterate over all visible regex matches.
+fn make_search_matches<'a, T>(
+    term: &'a Term<T>,
+    regex: &'a RegexSearch,
+) -> impl Iterator<Item = Match> + 'a {
+    let viewport_start = Line(-(term.grid().display_offset() as i32));
+    let viewport_end = viewport_start + term.bottommost_line();
+    let mut start = term.line_search_left(Point::new(viewport_start, Column(0)));
+    let mut end = term.line_search_right(Point::new(viewport_end, Column(0)));
+    start.line = start.line.max(viewport_start - MAX_SEARCH_LINES);
+    end.line = end.line.min(viewport_end + MAX_SEARCH_LINES);
+
+    RegexIter::new(start, end, AlacDirection::Right, term, regex)
+        .skip_while(move |rm| rm.end().line < viewport_start)
+        .take_while(move |rm| rm.start().line <= viewport_end)
 }
 
 #[cfg(test)]

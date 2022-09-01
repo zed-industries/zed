@@ -4,8 +4,8 @@ use crate::{
 };
 use collections::HashMap;
 use editor::{
-    items::{active_match_index, match_index_for_direction},
-    Anchor, Autoscroll, Editor, MultiBuffer, SelectAll, MAX_TAB_TITLE_LEN,
+    items::active_match_index, Anchor, Autoscroll, Editor, MultiBuffer, SelectAll,
+    MAX_TAB_TITLE_LEN,
 };
 use gpui::{
     actions, elements::*, platform::CursorStyle, Action, AnyViewHandle, AppContext, ElementBox,
@@ -23,7 +23,7 @@ use std::{
 };
 use util::ResultExt as _;
 use workspace::{
-    searchable::{Direction, SearchableItemHandle},
+    searchable::{Direction, SearchableItem, SearchableItemHandle},
     Item, ItemHandle, ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
@@ -486,16 +486,12 @@ impl ProjectSearchView {
 
     fn select_match(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
         if let Some(index) = self.active_match_index {
-            let model = self.model.read(cx);
-            let results_editor = self.results_editor.read(cx);
-            let new_index = match_index_for_direction(
-                &model.match_ranges,
-                &results_editor.selections.newest_anchor().head(),
-                index,
-                direction,
-                &results_editor.buffer().read(cx).snapshot(cx),
-            );
-            let range_to_select = model.match_ranges[new_index].clone();
+            let match_ranges = self.model.read(cx).match_ranges.clone();
+            let new_index = self.results_editor.update(cx, |editor, cx| {
+                editor.match_index_for_direction(&match_ranges, index, direction, cx)
+            });
+
+            let range_to_select = match_ranges[new_index].clone();
             self.results_editor.update(cx, |editor, cx| {
                 editor.unfold_ranges([range_to_select.clone()], false, cx);
                 editor.change_selections(Some(Autoscroll::Fit), cx, |s| {

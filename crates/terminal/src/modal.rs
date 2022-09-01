@@ -4,7 +4,7 @@ use workspace::Workspace;
 
 use crate::{
     terminal_container_view::{
-        get_working_directory, DeployModal, TerminalContainer, TerminalContent,
+        get_working_directory, DeployModal, TerminalContainer, TerminalContainerContent,
     },
     Event, Terminal,
 };
@@ -42,7 +42,7 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
 
             let this = cx.add_view(|cx| TerminalContainer::new(working_directory, true, cx));
 
-            if let TerminalContent::Connected(connected) = &this.read(cx).content {
+            if let TerminalContainerContent::Connected(connected) = &this.read(cx).content {
                 let terminal_handle = connected.read(cx).handle();
                 cx.subscribe(&terminal_handle, on_event).detach();
                 // Set the global immediately if terminal construction was successful,
@@ -55,7 +55,8 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
             this
         }) {
             // Terminal modal was dismissed. Store terminal if the terminal view is connected
-            if let TerminalContent::Connected(connected) = &closed_terminal_handle.read(cx).content
+            if let TerminalContainerContent::Connected(connected) =
+                &closed_terminal_handle.read(cx).content
             {
                 let terminal_handle = connected.read(cx).handle();
                 // Set the global immediately if terminal construction was successful,

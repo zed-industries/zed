@@ -233,7 +233,6 @@ impl SyntaxSnapshot {
             };
             let (start_byte, start_point) = layer.range.start.summary::<(usize, Point)>(text);
 
-
             // Ignore edits that end before the start of this layer, and don't consider them
             // for any subsequent layers at this same depth.
             loop {

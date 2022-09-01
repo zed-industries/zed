@@ -10,38 +10,73 @@ use crate::{Item, ItemHandle, WeakItemHandle};
 
 #[derive(Debug)]
 pub enum SearchEvent {
-    ContentsUpdated,
-    SelectionsChanged,
+    MatchesInvalidated,
+    ActiveMatchChanged,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Direction {
     Prev,
     Next,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SearchOptions {
+    pub case: bool,
+    pub word: bool,
+    pub regex: bool,
+}
+
 pub trait SearchableItem: Item {
     type Match: Any + Sync + Send + Clone;
 
+    fn supported_options() -> SearchOptions {
+        SearchOptions {
+            case: true,
+            word: true,
+            regex: true,
+        }
+    }
     fn to_search_event(event: &Self::Event) -> Option<SearchEvent>;
-    fn clear_highlights(&mut self, cx: &mut ViewContext<Self>);
-    fn highlight_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>);
+    fn clear_matches(&mut self, cx: &mut ViewContext<Self>);
+    fn update_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>);
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String;
-    fn select_next_match_in_direction(
+    fn activate_match(
         &mut self,
         index: usize,
+        matches: Vec<Self::Match>,
+        cx: &mut ViewContext<Self>,
+    );
+    fn match_index_for_direction(
+        &mut self,
+        matches: &Vec<Self::Match>,
+        mut current_index: usize,
         direction: Direction,
-        matches: Vec<Self::Match>,
-        cx: &mut ViewContext<Self>,
-    );
-    fn select_match_by_index(
+        _: &mut ViewContext<Self>,
+    ) -> usize {
+        match direction {
+            Direction::Prev => {
+                if current_index == 0 {
+                    matches.len() - 1
+                } else {
+                    current_index - 1
+                }
+            }
+            Direction::Next => {
+                current_index += 1;
+                if current_index == matches.len() {
+                    0
+                } else {
+                    current_index
+                }
+            }
+        }
+    }
+    fn find_matches(
         &mut self,
-        index: usize,
-        matches: Vec<Self::Match>,
+        query: SearchQuery,
         cx: &mut ViewContext<Self>,
-    );
-    fn matches(&mut self, query: SearchQuery, cx: &mut ViewContext<Self>)
-        -> Task<Vec<Self::Match>>;
+    ) -> Task<Vec<Self::Match>>;
     fn active_match_index(
         &mut self,
         matches: Vec<Self::Match>,
@@ -52,28 +87,29 @@ pub trait SearchableItem: Item {
 pub trait SearchableItemHandle: ItemHandle {
     fn downgrade(&self) -> Box<dyn WeakSearchableItemHandle>;
     fn boxed_clone(&self) -> Box<dyn SearchableItemHandle>;
+    fn supported_options(&self) -> SearchOptions;
     fn subscribe(
         &self,
         cx: &mut MutableAppContext,
         handler: Box<dyn Fn(SearchEvent, &mut MutableAppContext)>,
     ) -> Subscription;
-    fn clear_highlights(&self, cx: &mut MutableAppContext);
-    fn highlight_matches(&self, matches: &Vec<Box<dyn Any + Send>>, cx: &mut MutableAppContext);
+    fn clear_matches(&self, cx: &mut MutableAppContext);
+    fn update_matches(&self, matches: &Vec<Box<dyn Any + Send>>, cx: &mut MutableAppContext);
     fn query_suggestion(&self, cx: &mut MutableAppContext) -> String;
-    fn select_next_match_in_direction(
+    fn activate_match(
         &self,
         index: usize,
+        matches: &Vec<Box<dyn Any + Send>>,
+        cx: &mut MutableAppContext,
+    );
+    fn match_index_for_direction(
+        &self,
+        matches: &Vec<Box<dyn Any + Send>>,
+        current_index: usize,
         direction: Direction,
-        matches: &Vec<Box<dyn Any + Send>>,
         cx: &mut MutableAppContext,
-    );
-    fn select_match_by_index(
-        &self,
-        index: usize,
-        matches: &Vec<Box<dyn Any + Send>>,
-        cx: &mut MutableAppContext,
-    );
-    fn matches(
+    ) -> usize;
+    fn find_matches(
         &self,
         query: SearchQuery,
         cx: &mut MutableAppContext,
@@ -94,6 +130,10 @@ impl<T: SearchableItem> SearchableItemHandle for ViewHandle<T> {
         Box::new(self.clone())
     }
 
+    fn supported_options(&self) -> SearchOptions {
+        T::supported_options()
+    }
+
     fn subscribe(
         &self,
         cx: &mut MutableAppContext,
@@ -106,45 +146,43 @@ impl<T: SearchableItem> SearchableItemHandle for ViewHandle<T> {
         })
     }
 
-    fn clear_highlights(&self, cx: &mut MutableAppContext) {
-        self.update(cx, |this, cx| this.clear_highlights(cx));
+    fn clear_matches(&self, cx: &mut MutableAppContext) {
+        self.update(cx, |this, cx| this.clear_matches(cx));
     }
-    fn highlight_matches(&self, matches: &Vec<Box<dyn Any + Send>>, cx: &mut MutableAppContext) {
+    fn update_matches(&self, matches: &Vec<Box<dyn Any + Send>>, cx: &mut MutableAppContext) {
         let matches = downcast_matches(matches);
-        self.update(cx, |this, cx| this.highlight_matches(matches, cx));
+        self.update(cx, |this, cx| this.update_matches(matches, cx));
     }
     fn query_suggestion(&self, cx: &mut MutableAppContext) -> String {
         self.update(cx, |this, cx| this.query_suggestion(cx))
     }
-    fn select_next_match_in_direction(
+    fn activate_match(
         &self,
         index: usize,
+        matches: &Vec<Box<dyn Any + Send>>,
+        cx: &mut MutableAppContext,
+    ) {
+        let matches = downcast_matches(matches);
+        self.update(cx, |this, cx| this.activate_match(index, matches, cx));
+    }
+    fn match_index_for_direction(
+        &self,
+        matches: &Vec<Box<dyn Any + Send>>,
+        current_index: usize,
         direction: Direction,
-        matches: &Vec<Box<dyn Any + Send>>,
         cx: &mut MutableAppContext,
-    ) {
+    ) -> usize {
         let matches = downcast_matches(matches);
         self.update(cx, |this, cx| {
-            this.select_next_match_in_direction(index, direction, matches, cx)
-        });
+            this.match_index_for_direction(&matches, current_index, direction, cx)
+        })
     }
-    fn select_match_by_index(
-        &self,
-        index: usize,
-        matches: &Vec<Box<dyn Any + Send>>,
-        cx: &mut MutableAppContext,
-    ) {
-        let matches = downcast_matches(matches);
-        self.update(cx, |this, cx| {
-            this.select_match_by_index(index, matches, cx)
-        });
-    }
-    fn matches(
+    fn find_matches(
         &self,
         query: SearchQuery,
         cx: &mut MutableAppContext,
     ) -> Task<Vec<Box<dyn Any + Send>>> {
-        let matches = self.update(cx, |this, cx| this.matches(query, cx));
+        let matches = self.update(cx, |this, cx| this.find_matches(query, cx));
         cx.foreground().spawn(async {
             let matches = matches.await;
             matches
