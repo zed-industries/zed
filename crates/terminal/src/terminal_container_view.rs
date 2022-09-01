@@ -432,7 +432,7 @@ impl SearchableItem for TerminalContainer {
                 }
 
                 // If no selection after selection head, return the last match
-                return Some(matches.len() - 1);
+                return Some(matches.len().saturating_sub(1));
             } else {
                 Some(0)
             }
