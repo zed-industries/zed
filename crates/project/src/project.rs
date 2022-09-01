@@ -4533,8 +4533,8 @@ impl Project {
     fn add_worktree(&mut self, worktree: &ModelHandle<Worktree>, cx: &mut ModelContext<Self>) {
         cx.observe(worktree, |_, _, cx| cx.notify()).detach();
         if worktree.read(cx).is_local() {
-            cx.subscribe(worktree, |this, worktree, _, cx| {
-                this.update_local_worktree_buffers(worktree, cx);
+            cx.subscribe(worktree, |this, worktree, event, cx| match event {
+                worktree::Event::UpdatedEntries => this.update_local_worktree_buffers(worktree, cx),
             })
             .detach();
         }

@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use fsevent::EventStream;
 use futures::{future::BoxFuture, Stream, StreamExt};
-use git2::{Repository, RepositoryOpenFlags};
+use language::git::libgit::{Repository, RepositoryOpenFlags};
 use language::LineEnding;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::{

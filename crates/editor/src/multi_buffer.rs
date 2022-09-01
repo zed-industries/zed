@@ -7,9 +7,10 @@ use collections::{BTreeMap, Bound, HashMap, HashSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 pub use language::Completion;
 use language::{
-    char_kind, AutoindentMode, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk,
-    DiagnosticEntry, Event, File, IndentSize, Language, OffsetRangeExt, Outline, OutlineItem,
-    Selection, ToOffset as _, ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId,
+    char_kind, git::DiffHunk, AutoindentMode, Buffer, BufferChunks, BufferSnapshot, CharKind,
+    Chunk, DiagnosticEntry, Event, File, IndentSize, Language, OffsetRangeExt, Outline,
+    OutlineItem, Selection, ToOffset as _, ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _,
+    TransactionId,
 };
 use smallvec::SmallVec;
 use std::{
@@ -2527,6 +2528,15 @@ impl MultiBufferSnapshot {
                     reversed,
                 )
             })
+    }
+
+    pub fn diff_hunks_in_range<'a>(
+        &'a self,
+        row_range: Range<u32>,
+    ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
+        self.as_singleton()
+            .into_iter()
+            .flat_map(move |(_, _, buffer)| buffer.diff_hunks_in_range(row_range.clone()))
     }
 
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
