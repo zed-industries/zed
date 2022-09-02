@@ -5,6 +5,7 @@
 /// specific locations.
 pub mod pane;
 pub mod pane_group;
+pub mod programs;
 pub mod searchable;
 pub mod sidebar;
 mod status_bar;
@@ -36,6 +37,7 @@ use log::error;
 pub use pane::*;
 pub use pane_group::*;
 use postage::prelude::Stream;
+use programs::ProgramManager;
 use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, ProjectStore, Worktree, WorktreeId};
 use searchable::SearchableItemHandle;
 use serde::Deserialize;
@@ -145,6 +147,8 @@ impl_actions!(workspace, [ToggleProjectOnline, ActivatePane]);
 
 pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     pane::init(cx);
+
+    cx.set_global(ProgramManager::new());
 
     cx.add_global_action(open);
     cx.add_global_action({
