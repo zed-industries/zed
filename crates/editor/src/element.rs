@@ -544,7 +544,7 @@ impl EditorElement {
             }
         }
 
-        println!("painting from hunks: {:#?}\n", &layout.diff_hunks);
+        println!("painting from hunks: {:#?}\n", layout.diff_hunks);
         for hunk in &layout.diff_hunks {
             let color = match hunk.status() {
                 DiffHunkStatus::Added => Color::green(),
@@ -555,19 +555,19 @@ impl EditorElement {
             let start_row = hunk.buffer_range.start;
             let end_row = hunk.buffer_range.end;
 
-            let start_y = start_row as f32 * layout.line_height - (scroll_top % layout.line_height);
-            let end_y = end_row as f32 * layout.line_height - (scroll_top % layout.line_height)
-                + layout.line_height;
+            let start_y = start_row as f32 * layout.line_height - scroll_top;
+            let end_y = end_row as f32 * layout.line_height + layout.line_height - scroll_top;
 
-            let highlight_origin = bounds.origin() + vec2f(0., start_y);
-            let highlight_size = vec2f(6., end_y - start_y);
+            let width = 0.22 * layout.line_height;
+            let highlight_origin = bounds.origin() + vec2f(-width, start_y);
+            let highlight_size = vec2f(width * 2., end_y - start_y);
             let highlight_bounds = RectF::new(highlight_origin, highlight_size);
 
             cx.scene.push_quad(Quad {
                 bounds: highlight_bounds,
                 background: Some(color),
                 border: Border::new(0., Color::transparent_black()),
-                corner_radius: 0.,
+                corner_radius: 0.2 * layout.line_height,
             });
         }
 
