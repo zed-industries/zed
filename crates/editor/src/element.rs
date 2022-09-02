@@ -549,14 +549,14 @@ impl EditorElement {
             let color = match hunk.status() {
                 DiffHunkStatus::Added => Color::green(),
                 DiffHunkStatus::Modified => Color::blue(),
-                _ => continue,
+                DiffHunkStatus::Removed => continue,
             };
 
             let start_row = hunk.buffer_range.start;
             let end_row = hunk.buffer_range.end;
 
             let start_y = start_row as f32 * layout.line_height - scroll_top;
-            let end_y = end_row as f32 * layout.line_height + layout.line_height - scroll_top;
+            let end_y = end_row as f32 * layout.line_height - scroll_top;
 
             let width = 0.22 * layout.line_height;
             let highlight_origin = bounds.origin() + vec2f(-width, start_y);

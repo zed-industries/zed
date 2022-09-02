@@ -5,7 +5,7 @@ use sum_tree::Bias;
 use text::{Anchor, Point};
 
 pub use git2 as libgit;
-use libgit::Patch as GitPatch;
+use libgit::{DiffOptions as GitOptions, Patch as GitPatch};
 
 #[derive(Debug, Clone, Copy)]
 pub enum DiffHunkStatus {
@@ -48,8 +48,12 @@ impl BufferDiff {
     }
 
     pub fn update(&mut self, head: &str, buffer: &text::BufferSnapshot) {
+        let head = head.as_bytes();
         let current = buffer.as_rope().to_string().into_bytes();
-        let patch = match GitPatch::from_buffers(head.as_bytes(), None, &current, None, None) {
+
+        let mut options = GitOptions::default();
+        options.context_lines(0);
+        let patch = match GitPatch::from_buffers(head, None, &current, None, Some(&mut options)) {
             Ok(patch) => patch,
             Err(_) => {
                 //Reset hunks in case of failure to avoid showing a stale (potentially erroneous) diff
@@ -62,16 +66,16 @@ impl BufferDiff {
         for index in 0..patch.num_hunks() {
             let (hunk, _) = match patch.hunk(index) {
                 Ok(it) => it,
-                Err(_) => break,
+                Err(_) => continue,
             };
 
-            let new_start = hunk.new_start();
+            let new_start = hunk.new_start() - 1;
             let new_end = new_start + hunk.new_lines();
             let start_anchor = buffer.anchor_at(Point::new(new_start, 0), Bias::Left);
             let end_anchor = buffer.anchor_at(Point::new(new_end, 0), Bias::Left);
             let buffer_range = start_anchor..end_anchor;
 
-            let old_start = hunk.old_start() as usize;
+            let old_start = hunk.old_start() as usize - 1;
             let old_end = old_start + hunk.old_lines() as usize;
             let head_range = old_start..old_end;
 
@@ -101,97 +105,3 @@ impl GitDiffEdit {
         }
     }
 }
-
-// struct DiffTracker {
-//     track_line_num: u32,
-//     edits: Vec<GitDiffEdit>,
-// }
-
-// impl DiffTracker {
-//     fn new() -> DiffTracker {
-//         DiffTracker {
-//             track_line_num: 0,
-//             edits: Vec::new(),
-//         }
-//     }
-
-//     fn attempt_finalize_file(&mut self, base_path: &Path) -> Result<()> {
-//         let relative = if let Some(relative) = self.last_file_path.clone() {
-//             relative
-//         } else {
-//             return Ok(());
-//         };
-
-//         let mut path = base_path.to_path_buf();
-//         path.push(relative);
-//         path = canonicalize(path).map_err(Error::Io)?;
-
-//         self.diffs.push(GitFileDiff {
-//             path,
-//             edits: take(&mut self.edits),
-//         });
-
-//         Ok(())
-//     }
-
-//     fn handle_diff_line(
-//         &mut self,
-//         delta: DiffDelta,
-//         line: DiffLine,
-//         base_path: &Path,
-//     ) -> Result<()> {
-//         let path = match (delta.old_file().path(), delta.new_file().path()) {
-//             (Some(old), _) => old,
-//             (_, Some(new)) => new,
-//             (_, _) => return Err(Error::DeltaMissingPath),
-//         };
-
-//         if self.last_file_path.as_deref() != Some(path) {
-//             self.attempt_finalize_file(base_path)?;
-//             self.last_file_path = Some(path.to_path_buf());
-//             self.track_line_num = 0;
-//         }
-
-//         match line.origin_value() {
-//             DiffLineType::Context => {
-//                 self.track_line_num = line.new_lineno().ok_or(Error::ContextMissingLineNum)?;
-//             }
-
-//             DiffLineType::Deletion => {
-//                 self.track_line_num += 1;
-//                 self.edits.push(GitDiffEdit::Removed(self.track_line_num));
-//             }
-
-//             DiffLineType::Addition => {
-//                 let addition_line_num = line.new_lineno().ok_or(Error::AdditionMissingLineNum)?;
-//                 self.track_line_num = addition_line_num;
-
-//                 let mut replaced = false;
-//                 for rewind_index in (0..self.edits.len()).rev() {
-//                     let edit = &mut self.edits[rewind_index];
-
-//                     if let GitDiffEdit::Removed(removed_line_num) = *edit {
-//                         match removed_line_num.cmp(&addition_line_num) {
-//                             Ordering::Equal => {
-//                                 *edit = GitDiffEdit::Modified(addition_line_num);
-//                                 replaced = true;
-//                                 break;
-//                             }
-
-//                             Ordering::Greater => continue,
-//                             Ordering::Less => break,
-//                         }
-//                     }
-//                 }
-
-//                 if !replaced {
-//                     self.edits.push(GitDiffEdit::Added(addition_line_num));
-//                 }
-//             }
-
-//             _ => {}
-//         }
-
-//         Ok(())
-//     }
-// }
