@@ -2059,7 +2059,8 @@ impl BufferSnapshot {
         range: Range<T>,
     ) -> Option<(Range<usize>, Range<usize>)> {
         // Find bracket pairs that *inclusively* contain the given range.
-        let range = range.start.to_offset(self).saturating_sub(1)..range.end.to_offset(self) + 1;
+        let range = range.start.to_offset(self).saturating_sub(1)
+            ..self.len().min(range.end.to_offset(self) + 1);
         let mut matches = self.syntax.matches(range, &self.text, |grammar| {
             grammar.brackets_config.as_ref().map(|c| &c.query)
         });
