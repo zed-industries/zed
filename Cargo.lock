@@ -3252,6 +3252,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ntapi"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c28774a7fd2fbb4f0babd8237ce554b73af68021b5f695a3cebd6c59bac0980f"
+dependencies = [
+ "winapi 0.3.9",
+]
+
+[[package]]
 name = "num-bigint"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3810,6 +3819,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd96a1e8ed2596c337f8eae5f24924ec83f5ad5ab21ea8e455d3566c69fbcaf7"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "procinfo"
+version = "0.1.0"
+source = "git+https://github.com/zed-industries/wezterm?rev=40a7dbf93542fbe4178c2e4b4bd438126a6432b9#40a7dbf93542fbe4178c2e4b4bd438126a6432b9"
+dependencies = [
+ "libc",
+ "log",
+ "ntapi",
+ "winapi 0.3.9",
 ]
 
 [[package]]
@@ -5358,6 +5378,7 @@ dependencies = [
  "libc",
  "mio-extras",
  "ordered-float",
+ "procinfo",
  "project",
  "settings",
  "shellexpand",

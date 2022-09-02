@@ -238,9 +238,23 @@ impl Item for TerminalContainer {
         cx: &gpui::AppContext,
     ) -> ElementBox {
         let title = match &self.content {
-            TerminalContainerContent::Connected(connected) => {
-                connected.read(cx).handle().read(cx).title.to_string()
-            }
+            TerminalContainerContent::Connected(connected) => connected
+                .read(cx)
+                .handle()
+                .read(cx)
+                .foreground_process_info
+                .as_ref()
+                .map(|fpi| {
+                    format!(
+                        "{} - {}",
+                        fpi.cwd
+                            .file_name()
+                            .map(|name| name.to_string_lossy().to_string())
+                            .unwrap_or_default(),
+                        fpi.name,
+                    )
+                })
+                .unwrap_or_else(|| "Terminal".to_string()),
             TerminalContainerContent::Error(_) => "Terminal".to_string(),
         };
 
