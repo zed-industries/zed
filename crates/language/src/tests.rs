@@ -571,6 +571,15 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
             Point::new(3, 4)..Point::new(3, 5)
         ))
     );
+
+    // Regression test: avoid crash when querying at the end of the buffer.
+    assert_eq!(
+        buffer.enclosing_bracket_point_ranges(buffer.len() - 1..buffer.len()),
+        Some((
+            Point::new(0, 6)..Point::new(0, 7),
+            Point::new(4, 0)..Point::new(4, 1)
+        ))
+    );
 }
 
 #[gpui::test]
