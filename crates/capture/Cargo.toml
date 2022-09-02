@@ -6,6 +6,7 @@ description = "An example of screen capture"
 
 [dependencies]
 gpui = { path = "../gpui" }
+live_kit = { path = "../live_kit" }
 media = { path = "../media" }
 
 anyhow = "1.0.38"
@@ -25,5 +26,3 @@ simplelog = "0.9"
 
 [build-dependencies]
 bindgen = "0.59.2"
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_json = { version = "1.0", features = ["preserve_order"] }

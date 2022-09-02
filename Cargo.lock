@@ -765,13 +765,12 @@ dependencies = [
  "foreign-types",
  "futures",
  "gpui",
+ "live_kit",
  "log",
  "media",
  "objc",
  "parking_lot 0.11.2",
  "postage",
- "serde",
- "serde_json",
  "simplelog",
 ]
 
@@ -2916,6 +2915,14 @@ checksum = "a8451846f1f337e44486666989fbce40be804da139d5a4477d6b88ece5dc69f4"
 dependencies = [
  "rand 0.8.5",
  "rand_chacha 0.3.1",
+]
+
+[[package]]
+name = "live_kit"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

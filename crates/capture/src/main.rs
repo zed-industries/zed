@@ -22,6 +22,7 @@ use gpui::{
     platform::current::Surface,
     Menu, MenuItem, ViewContext,
 };
+use live_kit::Room;
 use log::LevelFilter;
 use media::{
     core_media::{
@@ -46,29 +47,6 @@ use std::{ffi::c_void, ptr, slice, str, sync::Arc};
 const NSUTF8StringEncoding: NSUInteger = 4;
 
 actions!(capture, [Quit]);
-
-extern "C" {
-    fn LKRoomCreate() -> *const c_void;
-    fn LKRoomDestroy(ptr: *const c_void);
-}
-
-struct Room {
-    native_room: *const c_void,
-}
-
-impl Room {
-    pub fn new() -> Self {
-        Self {
-            native_room: unsafe { LKRoomCreate() },
-        }
-    }
-}
-
-impl Drop for Room {
-    fn drop(&mut self) {
-        unsafe { LKRoomDestroy(self.native_room) }
-    }
-}
 
 fn main() {
     println!("Creating room...");

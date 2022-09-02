@@ -1,0 +1,15 @@
+[package]
+name = "live_kit"
+version = "0.1.0"
+edition = "2021"
+description = "Bindings to LiveKit Swift client SDK"
+
+[lib]
+path = "src/live_kit.rs"
+doctest = false
+
+[dependencies]
+
+[build-dependencies]
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
