@@ -10,7 +10,7 @@ use cocoa::{
     foundation::{NSArray, NSString, NSUInteger},
 };
 use core_foundation::{
-    base::TCFType,
+    base::{CFRelease, TCFType},
     number::{CFBooleanGetValue, CFBooleanRef, CFNumberRef},
     string::CFStringRef,
 };
@@ -35,7 +35,7 @@ use objc::{
     class,
     declare::ClassDecl,
     msg_send,
-    runtime::{Object, Sel},
+    runtime::{Class, Object, Sel},
     sel, sel_impl,
 };
 use parking_lot::Mutex;
@@ -48,13 +48,34 @@ const NSUTF8StringEncoding: NSUInteger = 4;
 actions!(capture, [Quit]);
 
 extern "C" {
-    fn BuildLKRoom() -> *const c_void;
+    fn LKRoomCreate() -> *const c_void;
+    fn LKRoomDestroy(ptr: *const c_void);
+}
+
+struct Room {
+    native_room: *const c_void,
+}
+
+impl Room {
+    pub fn new() -> Self {
+        Self {
+            native_room: unsafe { LKRoomCreate() },
+        }
+    }
+}
+
+impl Drop for Room {
+    fn drop(&mut self) {
+        unsafe { LKRoomDestroy(self.native_room) }
+    }
 }
 
 fn main() {
-    unsafe {
-        BuildLKRoom();
-    }
+    println!("Creating room...");
+    let room = Room::new();
+
+    println!("Dropping room...");
+    drop(room);
 
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 

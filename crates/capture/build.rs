@@ -58,9 +58,11 @@ pub fn link_swift_libs() {
 fn main() {
     link_swift_libs();
     println!("cargo:rerun-if-changed=/Users/as-cii/Library/Developer/Xcode/DerivedData/LiveKitObjC-ftgpxknhsgkrocbhhgjkyyvkgkbj/Build/Products/Debug/libLiveKitObjC.a");
-    println!("cargo:rustc-link-search=/Users/as-cii/Library/Developer/Xcode/DerivedData/LiveKitObjC-ftgpxknhsgkrocbhhgjkyyvkgkbj/Build/Products/Debug");
+    println!("cargo:rustc-link-search=native=/Users/as-cii/Library/Developer/Xcode/DerivedData/LiveKitObjC-ftgpxknhsgkrocbhhgjkyyvkgkbj/Build/Products/libs");
+    println!("cargo:rustc-link-search=framework=/Users/as-cii/Library/Developer/Xcode/DerivedData/LiveKitObjC-ftgpxknhsgkrocbhhgjkyyvkgkbj/Build/Products/frameworks");
     println!("cargo:rustc-link-lib=static=LiveKitObjC");
     println!("cargo:rustc-link-lib=framework=ScreenCaptureKit");
+    println!("cargo:rustc-link-lib=framework=WebRTC");
     println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=12.3");
 
     let sdk_path = String::from_utf8(

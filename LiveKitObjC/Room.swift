@@ -8,10 +8,18 @@
 import Foundation
 import LiveKit
 
-@objc public class SLKRoom: NSObject, RoomDelegate {
+public class LKRoom: RoomDelegate {
     lazy var room = Room(delegate: self)
     
-    @objc public func connect(
+    init() {
+        print("INIT!\n");
+    }
+    
+    deinit {
+        print("DEINIT!\n");
+    }
+    
+    public func connect(
         url: String,
         token: String,
         callback: @convention(block) @escaping () -> Void
@@ -20,4 +28,18 @@ import LiveKit
             callback()
         }
     }
+    
 }
+
+
+@_cdecl("LKRoomCreate")
+public func LKRoomCreate() -> UnsafeMutableRawPointer  {
+    Unmanaged.passRetained(LKRoom()).toOpaque()
+}
+
+@_cdecl("LKRoomDestroy")
+public func LKRoomDestroy(ptr: UnsafeRawPointer)  {
+    let _ = Unmanaged<LKRoom>.fromOpaque(ptr).takeRetainedValue();
+}
+
+

@@ -9,14 +9,12 @@
 /* Begin PBXBuildFile section */
 		AFA4DBD628C0F839001AD7BE /* LiveKit in Frameworks */ = {isa = PBXBuildFile; productRef = AFA4DBD528C0F839001AD7BE /* LiveKit */; };
 		AFA4DBD928C0F87F001AD7BE /* Room.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFA4DBD828C0F87F001AD7BE /* Room.swift */; };
-		AFA4DBDB28C0FBC0001AD7BE /* LKRoom.m in Sources */ = {isa = PBXBuildFile; fileRef = AFA4DBDA28C0FBC0001AD7BE /* LKRoom.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		AFA4DBCD28C0F7F5001AD7BE /* libLiveKitObjC.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libLiveKitObjC.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		AFA4DBD728C0F87F001AD7BE /* LiveKitObjC-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "LiveKitObjC-Bridging-Header.h"; sourceTree = "<group>"; };
 		AFA4DBD828C0F87F001AD7BE /* Room.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Room.swift; sourceTree = "<group>"; };
-		AFA4DBDA28C0FBC0001AD7BE /* LKRoom.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LKRoom.m; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -34,7 +32,6 @@
 		AFA4DBC428C0F7F5001AD7BE = {
 			isa = PBXGroup;
 			children = (
-				AFA4DBDA28C0FBC0001AD7BE /* LKRoom.m */,
 				AFA4DBD828C0F87F001AD7BE /* Room.swift */,
 				AFA4DBCE28C0F7F5001AD7BE /* Products */,
 				AFA4DBD728C0F87F001AD7BE /* LiveKitObjC-Bridging-Header.h */,
@@ -124,7 +121,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				AFA4DBD928C0F87F001AD7BE /* Room.swift in Sources */,
-				AFA4DBDB28C0FBC0001AD7BE /* LKRoom.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -245,13 +241,15 @@
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
+				DEFINES_MODULE = YES;
 				EXECUTABLE_PREFIX = lib;
-				KEEP_PRIVATE_EXTERNS = NO;
+				KEEP_PRIVATE_EXTERNS = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
+				PRESERVE_DEAD_CODE_INITS_AND_TERMS = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "LiveKitObjC-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -264,13 +262,15 @@
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
+				DEFINES_MODULE = YES;
 				EXECUTABLE_PREFIX = lib;
-				KEEP_PRIVATE_EXTERNS = NO;
+				KEEP_PRIVATE_EXTERNS = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
+				PRESERVE_DEAD_CODE_INITS_AND_TERMS = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "LiveKitObjC-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
