@@ -5083,6 +5083,7 @@ impl Drop for AnyModelHandle {
     }
 }
 
+#[derive(Hash, PartialEq, Eq, Debug)]
 pub struct AnyWeakModelHandle {
     model_id: usize,
     model_type: TypeId,
@@ -5091,6 +5092,26 @@ pub struct AnyWeakModelHandle {
 impl AnyWeakModelHandle {
     pub fn upgrade(&self, cx: &impl UpgradeModelHandle) -> Option<AnyModelHandle> {
         cx.upgrade_any_model_handle(self)
+    }
+    pub fn model_type(&self) -> TypeId {
+        self.model_type
+    }
+
+    fn is<T: 'static>(&self) -> bool {
+        TypeId::of::<T>() == self.model_type
+    }
+
+    pub fn downcast<T: Entity>(&self) -> Option<WeakModelHandle<T>> {
+        if self.is::<T>() {
+            let result = Some(WeakModelHandle {
+                model_id: self.model_id,
+                model_type: PhantomData,
+            });
+
+            result
+        } else {
+            None
+        }
     }
 }
 

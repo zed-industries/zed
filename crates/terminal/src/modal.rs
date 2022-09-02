@@ -1,4 +1,9 @@
-use gpui::{ModelHandle, ViewContext};
+use std::{
+    any::TypeId,
+    collections::{HashMap, HashSet},
+};
+
+use gpui::{AnyWeakModelHandle, Entity, ModelHandle, ViewContext, WeakModelHandle};
 use settings::{Settings, WorkingDirectory};
 use workspace::Workspace;
 
@@ -9,10 +14,59 @@ use crate::{
     Event, Terminal,
 };
 
+// TODO: Need to put this basic structure in workspace, and make 'program handles'
+// based off of the 'searchable item' pattern except with models this way, the workspace's clients
+// can register their models as programs.
+// Programs are:
+//  - Kept alive by the program manager, they need to emit an event to get dropped from it
+//  - Can be interacted with directly, (closed, activated), etc, bypassing associated view(s)
+//  - Have special rendering methods that the program manager offers to fill out the status bar
+//  - Can emit events for the program manager which:
+//    - Add a jewel (notification, change, etc.)
+//    - Drop the program
+//    - ???
+//  - Program Manager is kept in a global, listens for window drop so it can drop all it's program handles
+//  - Start by making up the infrastructure, then just render the first item as the modal terminal in it's spot
+// update),
+
+struct ProgramManager {
+    window_to_programs: HashMap<usize, HashSet<AnyWeakModelHandle>>,
+}
+
+impl ProgramManager {
+    pub fn add_program<T: Entity>(&mut self, window: usize, program: WeakModelHandle<T>) {
+        let mut programs = if let Some(programs) = self.window_to_programs.remove(&window) {
+            programs
+        } else {
+            HashSet::default()
+        };
+
+        programs.insert(AnyWeakModelHandle::from(program));
+        self.window_to_programs.insert(window, programs);
+    }
+
+    pub fn get_programs<T: Entity>(
+        &self,
+        window: &usize,
+    ) -> impl Iterator<Item = WeakModelHandle<T>> + '_ {
+        self.window_to_programs
+            .get(window)
+            .into_iter()
+            .flat_map(|programs| {
+                programs
+                    .iter()
+                    .filter(|program| program.model_type() != TypeId::of::<T>())
+                    .map(|program| program.downcast().unwrap())
+            })
+    }
+}
+
 #[derive(Debug)]
 struct StoredTerminal(ModelHandle<Terminal>);
 
 pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewContext<Workspace>) {
+    // cx.window_id()
+
     // Pull the terminal connection out of the global if it has been stored
     let possible_terminal =
         cx.update_default_global::<Option<StoredTerminal>, _, _>(|possible_connection, _| {
