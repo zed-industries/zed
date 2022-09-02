@@ -25,3 +25,5 @@ simplelog = "0.9"
 
 [build-dependencies]
 bindgen = "0.59.2"
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }

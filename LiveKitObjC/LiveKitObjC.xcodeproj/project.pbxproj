@@ -243,11 +243,8 @@
 		AFA4DBD228C0F7F5001AD7BE /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
-				BUILD_LIBRARY_FOR_DISTRIBUTION = NO;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
-				DEFINES_MODULE = NO;
 				EXECUTABLE_PREFIX = lib;
 				KEEP_PRIVATE_EXTERNS = NO;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -256,7 +253,6 @@
 					"@loader_path/../Frameworks",
 				);
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SKIP_INSTALL = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "LiveKitObjC-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -266,11 +262,8 @@
 		AFA4DBD328C0F7F5001AD7BE /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
-				BUILD_LIBRARY_FOR_DISTRIBUTION = NO;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
-				DEFINES_MODULE = NO;
 				EXECUTABLE_PREFIX = lib;
 				KEEP_PRIVATE_EXTERNS = NO;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -279,7 +272,6 @@
 					"@loader_path/../Frameworks",
 				);
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SKIP_INSTALL = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "LiveKitObjC-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 			};

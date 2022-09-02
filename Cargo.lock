@@ -770,6 +770,8 @@ dependencies = [
  "objc",
  "parking_lot 0.11.2",
  "postage",
+ "serde",
+ "serde_json",
  "simplelog",
 ]
 
