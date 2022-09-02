@@ -525,8 +525,9 @@ impl EditorElement {
         layout: &mut LayoutState,
         cx: &mut PaintContext,
     ) {
-        let scroll_top =
-            layout.position_map.snapshot.scroll_position().y() * layout.position_map.line_height;
+        let line_height = layout.position_map.line_height;
+        let scroll_position = layout.position_map.snapshot.scroll_position();
+        let scroll_top = scroll_position.y() * line_height;
         for (ix, line) in layout.line_number_layouts.iter().enumerate() {
             if let Some(line) = line {
                 let line_origin = bounds.origin()
@@ -544,21 +545,42 @@ impl EditorElement {
             }
         }
 
-        println!("painting from hunks: {:#?}\n", layout.diff_hunks);
         for hunk in &layout.diff_hunks {
             let color = match hunk.status() {
                 DiffHunkStatus::Added => Color::green(),
                 DiffHunkStatus::Modified => Color::blue(),
-                DiffHunkStatus::Removed => continue,
+
+                //TODO: This rendering is entirely a horrible hack
+                DiffHunkStatus::Removed => {
+                    let row_above = hunk.buffer_range.start;
+
+                    let offset = line_height / 2.;
+                    let start_y = row_above as f32 * line_height + offset - scroll_top;
+                    let end_y = start_y + line_height;
+
+                    let width = 0.4 * line_height;
+                    let highlight_origin = bounds.origin() + vec2f(-width, start_y);
+                    let highlight_size = vec2f(width * 2., end_y - start_y);
+                    let highlight_bounds = RectF::new(highlight_origin, highlight_size);
+
+                    cx.scene.push_quad(Quad {
+                        bounds: highlight_bounds,
+                        background: Some(Color::red()),
+                        border: Border::new(0., Color::transparent_black()),
+                        corner_radius: 1. * line_height,
+                    });
+
+                    continue;
+                }
             };
 
             let start_row = hunk.buffer_range.start;
             let end_row = hunk.buffer_range.end;
 
-            let start_y = start_row as f32 * layout.line_height - scroll_top;
-            let end_y = end_row as f32 * layout.line_height - scroll_top;
+            let start_y = start_row as f32 * line_height - scroll_top;
+            let end_y = end_row as f32 * line_height - scroll_top;
 
-            let width = 0.22 * layout.line_height;
+            let width = 0.22 * line_height;
             let highlight_origin = bounds.origin() + vec2f(-width, start_y);
             let highlight_size = vec2f(width * 2., end_y - start_y);
             let highlight_bounds = RectF::new(highlight_origin, highlight_size);
@@ -567,15 +589,15 @@ impl EditorElement {
                 bounds: highlight_bounds,
                 background: Some(color),
                 border: Border::new(0., Color::transparent_black()),
-                corner_radius: 0.2 * layout.line_height,
+                corner_radius: 0.2 * line_height,
             });
         }
 
         if let Some((row, indicator)) = layout.code_actions_indicator.as_mut() {
             let mut x = bounds.width() - layout.gutter_padding;
-            let mut y = *row as f32 * layout.position_map.line_height - scroll_top;
+            let mut y = *row as f32 * line_height - scroll_top;
             x += ((layout.gutter_padding + layout.gutter_margin) - indicator.size().x()) / 2.;
-            y += (layout.position_map.line_height - indicator.size().y()) / 2.;
+            y += (line_height - indicator.size().y()) / 2.;
             indicator.paint(bounds.origin() + vec2f(x, y), visible_bounds, cx);
         }
     }
