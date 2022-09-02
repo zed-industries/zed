@@ -8,7 +8,8 @@ path = "src/terminal.rs"
 doctest = false
 
 [dependencies]
-alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4e1f0c6177975a040b37f942dfb0e723e46a9971"}
+alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4e1f0c6177975a040b37f942dfb0e723e46a9971" }
+procinfo = { git = "https://github.com/zed-industries/wezterm", rev = "40a7dbf93542fbe4178c2e4b4bd438126a6432b9", default-features = false }
 editor = { path = "../editor" }
 util = { path = "../util" }
 gpui = { path = "../gpui" }

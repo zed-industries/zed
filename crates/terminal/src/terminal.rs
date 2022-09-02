@@ -34,11 +34,14 @@ use mappings::mouse::{
 };
 use modal::deploy_modal;
 
+use procinfo::LocalProcessInfo;
 use settings::{AlternateScroll, Settings, Shell, TerminalBlink};
+
 use std::{
     collections::{HashMap, VecDeque},
     fmt::Display,
     ops::{Deref, RangeInclusive, Sub},
+    os::unix::prelude::AsRawFd,
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
@@ -347,19 +350,8 @@ impl TerminalBuilder {
             }
         };
 
-        let shell_txt = {
-            match shell {
-                Some(Shell::System) | None => {
-                    let mut buf = [0; 1024];
-                    let pw = alacritty_unix::get_pw_entry(&mut buf).unwrap();
-                    pw.shell.to_string()
-                }
-                Some(Shell::Program(program)) => program,
-                Some(Shell::WithArguments { program, args }) => {
-                    format!("{} {}", program, args.join(" "))
-                }
-            }
-        };
+        let fd = pty.file().as_raw_fd();
+        let shell_pid = pty.child().id();
 
         //And connect them together
         let event_loop = EventLoop::new(
@@ -378,8 +370,6 @@ impl TerminalBuilder {
             pty_tx: Notifier(pty_tx),
             term,
             events: VecDeque::with_capacity(10), //Should never get this high.
-            title: shell_txt.clone(),
-            default_title: shell_txt,
             last_content: Default::default(),
             cur_size: initial_size,
             last_mouse: None,
@@ -387,6 +377,10 @@ impl TerminalBuilder {
             last_synced: Instant::now(),
             sync_task: None,
             selection_head: None,
+            shell_fd: fd as u32,
+            shell_pid,
+            foreground_process_info: None,
+            breadcrumb_text: String::new(),
         };
 
         Ok(TerminalBuilder {
@@ -495,8 +489,6 @@ pub struct Terminal {
     pty_tx: Notifier,
     term: Arc<FairMutex<Term<ZedListener>>>,
     events: VecDeque<InternalEvent>,
-    default_title: String,
-    title: String,
     last_mouse: Option<(Point, AlacDirection)>,
     pub matches: Vec<RangeInclusive<Point>>,
     cur_size: TerminalSize,
@@ -504,18 +496,20 @@ pub struct Terminal {
     last_synced: Instant,
     sync_task: Option<Task<()>>,
     selection_head: Option<Point>,
+    breadcrumb_text: String,
+    shell_pid: u32,
+    shell_fd: u32,
+    foreground_process_info: Option<LocalProcessInfo>,
 }
 
 impl Terminal {
     fn process_event(&mut self, event: &AlacTermEvent, cx: &mut ModelContext<Self>) {
         match event {
             AlacTermEvent::Title(title) => {
-                self.title = title.to_string();
-                cx.emit(Event::TitleChanged);
+                self.breadcrumb_text = title.to_string();
             }
             AlacTermEvent::ResetTitle => {
-                self.title = self.default_title.clone();
-                cx.emit(Event::TitleChanged);
+                self.breadcrumb_text = String::new();
             }
             AlacTermEvent::ClipboardStore(_, data) => {
                 cx.write_to_clipboard(ClipboardItem::new(data.to_string()))
@@ -705,11 +699,24 @@ impl Terminal {
             return;
         };
 
-        //Note that this ordering matters for event processing
+        //Note that the ordering of events matters for event processing
         while let Some(e) = self.events.pop_front() {
             self.process_terminal_event(&e, &mut terminal, cx)
         }
 
+        if let Some(process_info) = self.compute_process_info() {
+            let should_emit_title_changed = self
+                .foreground_process_info
+                .as_ref()
+                .map(|old_info| {
+                    process_info.cwd != old_info.cwd || process_info.name != old_info.name
+                })
+                .unwrap_or(true);
+            if should_emit_title_changed {
+                cx.emit(Event::TitleChanged)
+            }
+            self.foreground_process_info = Some(process_info.clone());
+        }
         self.last_content = Self::make_content(&terminal);
         self.last_synced = Instant::now();
     }
@@ -952,6 +959,14 @@ impl Terminal {
 
             make_search_matches(&term, &searcher).collect()
         })
+    }
+
+    fn compute_process_info(&self) -> Option<LocalProcessInfo> {
+        let mut pid = unsafe { libc::tcgetpgrp(self.shell_fd as i32) };
+        if pid < 0 {
+            pid = self.shell_pid as i32;
+        }
+        LocalProcessInfo::with_root_pid(pid as u32)
     }
 }
 
