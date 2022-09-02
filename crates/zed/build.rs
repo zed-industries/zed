@@ -5,7 +5,7 @@ fn main() {
 
     let output = Command::new("npm")
         .current_dir("../../styles")
-        .args(["install"])
+        .args(["install", "--no-save"])
         .output()
         .expect("failed to run npm");
     if !output.status.success() {
