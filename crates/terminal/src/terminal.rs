@@ -72,7 +72,7 @@ pub fn init(cx: &mut MutableAppContext) {
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
 ///Implement scroll bars.
-const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
+const SCROLL_MULTIPLIER: f32 = 4.;
 const MAX_SEARCH_LINES: usize = 100;
 const DEBUG_TERMINAL_WIDTH: f32 = 500.;
 const DEBUG_TERMINAL_HEIGHT: f32 = 30.;
@@ -381,6 +381,7 @@ impl TerminalBuilder {
             shell_pid,
             foreground_process_info: None,
             breadcrumb_text: String::new(),
+            scroll_px: 0.,
         };
 
         Ok(TerminalBuilder {
@@ -500,6 +501,7 @@ pub struct Terminal {
     shell_pid: u32,
     shell_fd: u32,
     foreground_process_info: Option<LocalProcessInfo>,
+    scroll_px: f32,
 }
 
 impl Terminal {
@@ -893,44 +895,66 @@ impl Terminal {
 
     ///Scroll the terminal
     pub fn scroll_wheel(&mut self, e: &ScrollWheelEvent, origin: Vector2F) {
-        if self.mouse_mode(e.shift) {
-            //TODO: Currently this only sends the current scroll reports as they come in. Alacritty
-            //Sends the *entire* scroll delta on *every* scroll event, only resetting it when
-            //The scroll enters 'TouchPhase::Started'. Do I need to replicate this?
-            //This would be consistent with a scroll model based on 'distance from origin'...
-            let scroll_lines = (e.delta.y() / self.cur_size.line_height) as i32;
-            let point = mouse_point(
-                e.position.sub(origin),
-                self.cur_size,
-                self.last_content.display_offset,
-            );
+        let mouse_mode = self.mouse_mode(e.shift);
 
-            if let Some(scrolls) =
-                scroll_report(point, scroll_lines as i32, e, self.last_content.mode)
+        if let Some(scroll_lines) = self.determine_scroll_lines(e, mouse_mode) {
+            if mouse_mode {
+                let point = mouse_point(
+                    e.position.sub(origin),
+                    self.cur_size,
+                    self.last_content.display_offset,
+                );
+
+                if let Some(scrolls) =
+                    scroll_report(point, scroll_lines as i32, e, self.last_content.mode)
+                {
+                    for scroll in scrolls {
+                        self.pty_tx.notify(scroll);
+                    }
+                };
+            } else if self
+                .last_content
+                .mode
+                .contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
+                && !e.shift
             {
-                for scroll in scrolls {
-                    self.pty_tx.notify(scroll);
+                self.pty_tx.notify(alt_scroll(scroll_lines))
+            } else {
+                if scroll_lines != 0 {
+                    let scroll = AlacScroll::Delta(scroll_lines);
+
+                    self.events.push_back(InternalEvent::Scroll(scroll));
                 }
-            };
-        } else if self
-            .last_content
-            .mode
-            .contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
-            && !e.shift
-        {
-            //TODO: See above TODO, also applies here.
-            let scroll_lines =
-                ((e.delta.y() * ALACRITTY_SCROLL_MULTIPLIER) / self.cur_size.line_height) as i32;
-
-            self.pty_tx.notify(alt_scroll(scroll_lines))
-        } else {
-            let scroll_lines =
-                ((e.delta.y() * ALACRITTY_SCROLL_MULTIPLIER) / self.cur_size.line_height) as i32;
-            if scroll_lines != 0 {
-                let scroll = AlacScroll::Delta(scroll_lines);
-
-                self.events.push_back(InternalEvent::Scroll(scroll));
             }
+        }
+    }
+
+    fn determine_scroll_lines(&mut self, e: &ScrollWheelEvent, mouse_mode: bool) -> Option<i32> {
+        let scroll_multiplier = if mouse_mode { 1. } else { SCROLL_MULTIPLIER };
+
+        match e.phase {
+            /* Reset scroll state on started */
+            Some(gpui::TouchPhase::Started) => {
+                self.scroll_px = 0.;
+                None
+            }
+            /* Calculate the appropriate scroll lines */
+            Some(gpui::TouchPhase::Moved) => {
+                let old_offset = (self.scroll_px / self.cur_size.line_height) as i32;
+
+                self.scroll_px += e.delta.y() * scroll_multiplier;
+
+                let new_offset = (self.scroll_px / self.cur_size.line_height) as i32;
+
+                // Whenever we hit the edges, reset our stored scroll to 0
+                // so we can respond to changes in direction quickly
+                self.scroll_px %= self.cur_size.height;
+
+                Some(new_offset - old_offset)
+            }
+            /* Fall back to delta / line_height */
+            None => Some(((e.delta.y() * scroll_multiplier) / self.cur_size.line_height) as i32),
+            _ => None,
         }
     }
 

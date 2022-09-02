@@ -3,10 +3,10 @@ use crate::{
     keymap::Keystroke,
     platform::{Event, NavigationDirection},
     KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, MouseButton, MouseButtonEvent,
-    MouseMovedEvent, ScrollWheelEvent,
+    MouseMovedEvent, ScrollWheelEvent, TouchPhase,
 };
 use cocoa::{
-    appkit::{NSEvent, NSEventModifierFlags, NSEventType},
+    appkit::{NSEvent, NSEventModifierFlags, NSEventPhase, NSEventType},
     base::{id, YES},
     foundation::NSString as _,
 };
@@ -150,6 +150,14 @@ impl Event {
             NSEventType::NSScrollWheel => window_height.map(|window_height| {
                 let modifiers = native_event.modifierFlags();
 
+                let phase = match native_event.phase() {
+                    NSEventPhase::NSEventPhaseMayBegin | NSEventPhase::NSEventPhaseBegan => {
+                        Some(TouchPhase::Started)
+                    }
+                    NSEventPhase::NSEventPhaseEnded => Some(TouchPhase::Ended),
+                    _ => Some(TouchPhase::Moved),
+                };
+
                 Self::ScrollWheel(ScrollWheelEvent {
                     position: vec2f(
                         native_event.locationInWindow().x as f32,
@@ -159,6 +167,7 @@ impl Event {
                         native_event.scrollingDeltaX() as f32,
                         native_event.scrollingDeltaY() as f32,
                     ),
+                    phase,
                     precise: native_event.hasPreciseScrollingDeltas() == YES,
                     ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
                     alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
