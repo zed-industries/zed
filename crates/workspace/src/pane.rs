@@ -478,14 +478,28 @@ impl Pane {
         item.added_to_pane(workspace, pane.clone(), cx);
 
         // Does the item already exist?
-        if let Some(existing_item_index) = pane.read(cx).items.iter().position(|existing_item| {
-            let existing_item_entry_ids = existing_item.project_entry_ids(cx);
-            let added_item_entry_ids = item.project_entry_ids(cx);
-            let entries_match = !existing_item_entry_ids.is_empty()
-                && existing_item_entry_ids == added_item_entry_ids;
+        let project_entry_id = if item.is_singleton(cx) {
+            item.project_entry_ids(cx).get(0).copied()
+        } else {
+            None
+        };
 
-            existing_item.id() == item.id() || entries_match
-        }) {
+        let existing_item_index = pane.read(cx).items.iter().position(|existing_item| {
+            if existing_item.id() == item.id() {
+                true
+            } else if existing_item.is_singleton(cx) {
+                existing_item
+                    .project_entry_ids(cx)
+                    .get(0)
+                    .map_or(false, |existing_entry_id| {
+                        Some(existing_entry_id) == project_entry_id.as_ref()
+                    })
+            } else {
+                false
+            }
+        });
+
+        if let Some(existing_item_index) = existing_item_index {
             // If the item already exists, move it to the desired destination and activate it
             pane.update(cx, |pane, cx| {
                 if existing_item_index != insertion_index {
@@ -1540,12 +1554,10 @@ impl NavHistory {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::tests::TestItem;
     use gpui::TestAppContext;
     use project::FakeFs;
-
-    use crate::tests::TestItem;
-
-    use super::*;
 
     #[gpui::test]
     async fn test_add_item_with_new_item(cx: &mut TestAppContext) {
@@ -1709,6 +1721,116 @@ mod tests {
             Pane::add_item(workspace, &pane, a, false, false, None, cx);
         });
         assert_item_labels(&pane, ["A*", "B", "C"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_add_item_with_same_project_entries(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, None, cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // singleton view
+        workspace.update(cx, |workspace, cx| {
+            let item = TestItem::new()
+                .with_singleton(true)
+                .with_label("buffer 1")
+                .with_project_entry_ids(&[1]);
+
+            Pane::add_item(
+                workspace,
+                &pane,
+                Box::new(cx.add_view(|_| item)),
+                false,
+                false,
+                None,
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["buffer 1*"], cx);
+
+        // new singleton view with the same project entry
+        workspace.update(cx, |workspace, cx| {
+            let item = TestItem::new()
+                .with_singleton(true)
+                .with_label("buffer 1")
+                .with_project_entry_ids(&[1]);
+
+            Pane::add_item(
+                workspace,
+                &pane,
+                Box::new(cx.add_view(|_| item)),
+                false,
+                false,
+                None,
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["buffer 1*"], cx);
+
+        // new singleton view with different project entry
+        workspace.update(cx, |workspace, cx| {
+            let item = TestItem::new()
+                .with_singleton(true)
+                .with_label("buffer 2")
+                .with_project_entry_ids(&[2]);
+
+            Pane::add_item(
+                workspace,
+                &pane,
+                Box::new(cx.add_view(|_| item)),
+                false,
+                false,
+                None,
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["buffer 1", "buffer 2*"], cx);
+
+        // new multibuffer view with the same project entry
+        workspace.update(cx, |workspace, cx| {
+            let item = TestItem::new()
+                .with_singleton(false)
+                .with_label("multibuffer 1")
+                .with_project_entry_ids(&[1]);
+
+            Pane::add_item(
+                workspace,
+                &pane,
+                Box::new(cx.add_view(|_| item)),
+                false,
+                false,
+                None,
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["buffer 1", "buffer 2", "multibuffer 1*"], cx);
+
+        // another multibuffer view with the same project entry
+        workspace.update(cx, |workspace, cx| {
+            let item = TestItem::new()
+                .with_singleton(false)
+                .with_label("multibuffer 1b")
+                .with_project_entry_ids(&[1]);
+
+            Pane::add_item(
+                workspace,
+                &pane,
+                Box::new(cx.add_view(|_| item)),
+                false,
+                false,
+                None,
+                cx,
+            );
+        });
+        assert_item_labels(
+            &pane,
+            ["buffer 1", "buffer 2", "multibuffer 1", "multibuffer 1b*"],
+            cx,
+        );
     }
 
     fn set_labeled_items<const COUNT: usize>(

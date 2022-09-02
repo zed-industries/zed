@@ -3451,6 +3451,21 @@ mod tests {
             self
         }
 
+        pub fn with_singleton(mut self, singleton: bool) -> Self {
+            self.is_singleton = singleton;
+            self
+        }
+
+        pub fn with_project_entry_ids(mut self, project_entry_ids: &[u64]) -> Self {
+            self.project_entry_ids.extend(
+                project_entry_ids
+                    .iter()
+                    .copied()
+                    .map(ProjectEntryId::from_proto),
+            );
+            self
+        }
+
         fn set_state(&mut self, state: String, cx: &mut ViewContext<Self>) {
             self.push_to_nav_history(cx);
             self.state = state;
