@@ -910,13 +910,18 @@ impl Pane {
         destination_index: usize,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let (item_ix, item_handle) = from
+        let item_to_move = from
             .read(cx)
             .items()
             .enumerate()
-            .find(|(_, item_handle)| item_handle.id() == item_to_move)
-            .expect("Tried to move item handle which was not in from pane");
+            .find(|(_, item_handle)| item_handle.id() == item_to_move);
 
+        if item_to_move.is_none() {
+            log::warn!("Tried to move item handle which was not in `from` pane. Maybe tab was closed during drop");
+            return;
+        }
+
+        let (item_ix, item_handle) = item_to_move.unwrap();
         // This automatically removes duplicate items in the pane
         Pane::add_item(
             workspace,
