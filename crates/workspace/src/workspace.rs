@@ -146,9 +146,10 @@ impl_internal_actions!(
 impl_actions!(workspace, [ToggleProjectOnline, ActivatePane]);
 
 pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
-    pane::init(cx);
-
+    // Initialize the program manager immediately
     cx.set_global(ProgramManager::new());
+
+    pane::init(cx);
 
     cx.add_global_action(open);
     cx.add_global_action({

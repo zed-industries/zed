@@ -537,13 +537,39 @@ impl Terminal {
             }
             AlacTermEvent::Wakeup => {
                 cx.emit(Event::Wakeup);
-                cx.notify();
+
+                if self.update_process_info() {
+                    cx.emit(Event::TitleChanged)
+                }
             }
             AlacTermEvent::ColorRequest(idx, fun_ptr) => {
                 self.events
                     .push_back(InternalEvent::ColorRequest(*idx, fun_ptr.clone()));
-                cx.notify(); //Immediately schedule a render to respond to the color request
             }
+        }
+    }
+
+    /// Update the cached process info, returns whether the Zed-relevant info has changed
+    fn update_process_info(&mut self) -> bool {
+        let mut pid = unsafe { libc::tcgetpgrp(self.shell_fd as i32) };
+        if pid < 0 {
+            pid = self.shell_pid as i32;
+        }
+
+        if let Some(process_info) = LocalProcessInfo::with_root_pid(pid as u32) {
+            let res = self
+                .foreground_process_info
+                .as_ref()
+                .map(|old_info| {
+                    process_info.cwd != old_info.cwd || process_info.name != old_info.name
+                })
+                .unwrap_or(true);
+
+            self.foreground_process_info = Some(process_info.clone());
+
+            res
+        } else {
+            false
         }
     }
 
@@ -680,7 +706,7 @@ impl Terminal {
         let mut terminal = if let Some(term) = term.try_lock_unfair() {
             term
         } else if self.last_synced.elapsed().as_secs_f32() > 0.25 {
-            term.lock_unfair()
+            term.lock_unfair() //It's been too long, force block
         } else if let None = self.sync_task {
             //Skip this frame
             let delay = cx.background().timer(Duration::from_millis(16));
@@ -701,24 +727,15 @@ impl Terminal {
             return;
         };
 
+        if self.update_process_info() {
+            cx.emit(Event::TitleChanged);
+        }
+
         //Note that the ordering of events matters for event processing
         while let Some(e) = self.events.pop_front() {
             self.process_terminal_event(&e, &mut terminal, cx)
         }
 
-        if let Some(process_info) = self.compute_process_info() {
-            let should_emit_title_changed = self
-                .foreground_process_info
-                .as_ref()
-                .map(|old_info| {
-                    process_info.cwd != old_info.cwd || process_info.name != old_info.name
-                })
-                .unwrap_or(true);
-            if should_emit_title_changed {
-                cx.emit(Event::TitleChanged)
-            }
-            self.foreground_process_info = Some(process_info.clone());
-        }
         self.last_content = Self::make_content(&terminal);
         self.last_synced = Instant::now();
     }
@@ -983,14 +1000,6 @@ impl Terminal {
 
             make_search_matches(&term, &searcher).collect()
         })
-    }
-
-    fn compute_process_info(&self) -> Option<LocalProcessInfo> {
-        let mut pid = unsafe { libc::tcgetpgrp(self.shell_fd as i32) };
-        if pid < 0 {
-            pid = self.shell_pid as i32;
-        }
-        LocalProcessInfo::with_root_pid(pid as u32)
     }
 }
 
