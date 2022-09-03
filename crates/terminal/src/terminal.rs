@@ -3,7 +3,7 @@ pub mod modal;
 pub mod terminal_container_view;
 pub mod terminal_element;
 pub mod terminal_view;
-
+// procinfo = { git = "https://github.com/zed-industries/wezterm", rev = "40a7dbf93542fbe4178c2e4b4bd438126a6432b9", default-features = false }
 use alacritty_terminal::{
     ansi::{ClearMode, Handler},
     config::{Config, Program, PtyConfig, Scrolling},
@@ -237,28 +237,12 @@ impl TerminalError {
         self.shell
             .clone()
             .map(|shell| match shell {
-                Shell::System => {
-                    let mut buf = [0; 1024];
-                    let pw = alacritty_unix::get_pw_entry(&mut buf).ok();
+                Shell::System => "<system defined shell>".to_string(),
 
-                    match pw {
-                        Some(pw) => format!("<system defined shell> {}", pw.shell),
-                        None => "<could not access the password file>".to_string(),
-                    }
-                }
                 Shell::Program(s) => s,
                 Shell::WithArguments { program, args } => format!("{} {}", program, args.join(" ")),
             })
-            .unwrap_or_else(|| {
-                let mut buf = [0; 1024];
-                let pw = alacritty_unix::get_pw_entry(&mut buf).ok();
-                match pw {
-                    Some(pw) => {
-                        format!("<none specified, using system defined shell> {}", pw.shell)
-                    }
-                    None => "<none specified, could not access the password file> {}".to_string(),
-                }
-            })
+            .unwrap_or_else(|| "<none specified, using system defined shell>".to_string())
     }
 }
 
@@ -538,6 +522,7 @@ impl Terminal {
             AlacTermEvent::Wakeup => {
                 cx.emit(Event::Wakeup);
 
+                dbg!("*********");
                 if self.update_process_info() {
                     cx.emit(Event::TitleChanged)
                 }
@@ -1039,84 +1024,49 @@ fn make_search_matches<'a, T>(
 
 #[cfg(test)]
 mod tests {
+    use libc::c_int;
+
     pub mod terminal_test_context;
+
+    #[test]
+    pub fn wez_test() {
+        fn test() -> Option<Vec<String>> {
+            let size = 28;
+
+            //Test data pulled from running the code
+            let buf = [
+                2, 0, 0, 0, 47, 98, 105, 110, 47, 115, 108, 101, 101, 112, 0, 0, 0, 0, 0, 0, 115,
+                108, 101, 101, 112, 0, 53, 0,
+            ];
+
+            let mut ptr = &buf[0..size];
+
+            let argc: c_int = unsafe { std::ptr::read(ptr.as_ptr() as *const c_int) };
+            ptr = &ptr[std::mem::size_of::<c_int>()..];
+
+            fn consume_cstr(ptr: &mut &[u8]) -> Option<String> {
+                let nul = ptr.iter().position(|&c| c == 0)?;
+                let s = String::from_utf8_lossy(&ptr[0..nul]).to_owned().to_string();
+                *ptr = ptr.get(nul + 1..)?;
+                Some(s)
+            }
+
+            let _exe_path: Option<String> = consume_cstr(&mut ptr)?.into();
+
+            //Clear out the trailing null pointers
+            while ptr[0] == 0 {
+                ptr = ptr.get(1..)?;
+            }
+
+            let mut args = vec![];
+            for _ in 0..argc {
+                args.push(consume_cstr(&mut ptr)?);
+            }
+            Some(args)
+        }
+
+        assert_eq!(test(), Some(vec!["sleep".to_string(), "5".to_string()]));
+    }
 }
 
-//TODO Move this around and clean up the code
-mod alacritty_unix {
-    use alacritty_terminal::config::Program;
-    use gpui::anyhow::{bail, Result};
-
-    use std::ffi::CStr;
-    use std::mem::MaybeUninit;
-    use std::ptr;
-
-    #[derive(Debug)]
-    pub struct Passwd<'a> {
-        _name: &'a str,
-        _dir: &'a str,
-        pub shell: &'a str,
-    }
-
-    /// Return a Passwd struct with pointers into the provided buf.
-    ///
-    /// # Unsafety
-    ///
-    /// If `buf` is changed while `Passwd` is alive, bad thing will almost certainly happen.
-    pub fn get_pw_entry(buf: &mut [i8; 1024]) -> Result<Passwd<'_>> {
-        // Create zeroed passwd struct.
-        let mut entry: MaybeUninit<libc::passwd> = MaybeUninit::uninit();
-
-        let mut res: *mut libc::passwd = ptr::null_mut();
-
-        // Try and read the pw file.
-        let uid = unsafe { libc::getuid() };
-        let status = unsafe {
-            libc::getpwuid_r(
-                uid,
-                entry.as_mut_ptr(),
-                buf.as_mut_ptr() as *mut _,
-                buf.len(),
-                &mut res,
-            )
-        };
-        let entry = unsafe { entry.assume_init() };
-
-        if status < 0 {
-            bail!("getpwuid_r failed");
-        }
-
-        if res.is_null() {
-            bail!("pw not found");
-        }
-
-        // Sanity check.
-        assert_eq!(entry.pw_uid, uid);
-
-        // Build a borrowed Passwd struct.
-        Ok(Passwd {
-            _name: unsafe { CStr::from_ptr(entry.pw_name).to_str().unwrap() },
-            _dir: unsafe { CStr::from_ptr(entry.pw_dir).to_str().unwrap() },
-            shell: unsafe { CStr::from_ptr(entry.pw_shell).to_str().unwrap() },
-        })
-    }
-
-    #[cfg(target_os = "macos")]
-    pub fn _default_shell(pw: &Passwd<'_>) -> Program {
-        let shell_name = pw.shell.rsplit('/').next().unwrap();
-        let argv = vec![
-            String::from("-c"),
-            format!("exec -a -{} {}", shell_name, pw.shell),
-        ];
-
-        Program::WithArgs {
-            program: "/bin/bash".to_owned(),
-            args: argv,
-        }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    pub fn default_shell(pw: &Passwd<'_>) -> Program {
-        Program::Just(env::var("SHELL").unwrap_or_else(|_| pw.shell.to_owned()))
-    }
-}
+mod wez_proc_info {}

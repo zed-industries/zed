@@ -3824,7 +3824,6 @@ dependencies = [
 [[package]]
 name = "procinfo"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/wezterm?rev=40a7dbf93542fbe4178c2e4b4bd438126a6432b9#40a7dbf93542fbe4178c2e4b4bd438126a6432b9"
 dependencies = [
  "libc",
  "log",
