@@ -325,18 +325,14 @@ impl Item for TerminalContainer {
 
     fn is_dirty(&self, cx: &gpui::AppContext) -> bool {
         if let TerminalContainerContent::Connected(connected) = &self.content {
-            connected.read(cx).has_new_content()
+            connected.read(cx).has_bell()
         } else {
             false
         }
     }
 
-    fn has_conflict(&self, cx: &AppContext) -> bool {
-        if let TerminalContainerContent::Connected(connected) = &self.content {
-            connected.read(cx).has_bell()
-        } else {
-            false
-        }
+    fn has_conflict(&self, _cx: &AppContext) -> bool {
+        false
     }
 
     fn should_update_tab_on_event(event: &Self::Event) -> bool {
