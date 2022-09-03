@@ -253,13 +253,19 @@ impl Item for TerminalContainer {
                 .as_ref()
                 .map(|fpi| {
                     format!(
-                        "{} - {} {}",
+                        "{} - {}{}",
                         fpi.cwd
                             .file_name()
                             .map(|name| name.to_string_lossy().to_string())
                             .unwrap_or_default(),
                         fpi.name,
-                        (&fpi.argv[1..]).join(" ")
+                        {
+                            if fpi.argv.len() >= 1 {
+                                format!(" {}", (&fpi.argv[1..]).join(" "))
+                            } else {
+                                "".to_string()
+                            }
+                        }
                     )
                 })
                 .unwrap_or_else(|| "Terminal".to_string()),
@@ -463,8 +469,8 @@ impl SearchableItem for TerminalContainer {
                     Some(matches.len().saturating_sub(1))
                 }
             } else {
-                // Matches found but no active selection, return the first one
-                Some(0)
+                // Matches found but no active selection, return the first last one (closest to cursor)
+                Some(matches.len().saturating_sub(1))
             }
         } else {
             None
