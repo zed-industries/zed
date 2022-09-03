@@ -3,7 +3,7 @@ pub mod modal;
 pub mod terminal_container_view;
 pub mod terminal_element;
 pub mod terminal_view;
-// procinfo = { git = "https://github.com/zed-industries/wezterm", rev = "40a7dbf93542fbe4178c2e4b4bd438126a6432b9", default-features = false }
+
 use alacritty_terminal::{
     ansi::{ClearMode, Handler},
     config::{Config, Program, PtyConfig, Scrolling},
@@ -522,7 +522,6 @@ impl Terminal {
             AlacTermEvent::Wakeup => {
                 cx.emit(Event::Wakeup);
 
-                dbg!("*********");
                 if self.update_process_info() {
                     cx.emit(Event::TitleChanged)
                 }
@@ -1024,49 +1023,5 @@ fn make_search_matches<'a, T>(
 
 #[cfg(test)]
 mod tests {
-    use libc::c_int;
-
     pub mod terminal_test_context;
-
-    #[test]
-    pub fn wez_test() {
-        fn test() -> Option<Vec<String>> {
-            let size = 28;
-
-            //Test data pulled from running the code
-            let buf = [
-                2, 0, 0, 0, 47, 98, 105, 110, 47, 115, 108, 101, 101, 112, 0, 0, 0, 0, 0, 0, 115,
-                108, 101, 101, 112, 0, 53, 0,
-            ];
-
-            let mut ptr = &buf[0..size];
-
-            let argc: c_int = unsafe { std::ptr::read(ptr.as_ptr() as *const c_int) };
-            ptr = &ptr[std::mem::size_of::<c_int>()..];
-
-            fn consume_cstr(ptr: &mut &[u8]) -> Option<String> {
-                let nul = ptr.iter().position(|&c| c == 0)?;
-                let s = String::from_utf8_lossy(&ptr[0..nul]).to_owned().to_string();
-                *ptr = ptr.get(nul + 1..)?;
-                Some(s)
-            }
-
-            let _exe_path: Option<String> = consume_cstr(&mut ptr)?.into();
-
-            //Clear out the trailing null pointers
-            while ptr[0] == 0 {
-                ptr = ptr.get(1..)?;
-            }
-
-            let mut args = vec![];
-            for _ in 0..argc {
-                args.push(consume_cstr(&mut ptr)?);
-            }
-            Some(args)
-        }
-
-        assert_eq!(test(), Some(vec!["sleep".to_string(), "5".to_string()]));
-    }
 }
-
-mod wez_proc_info {}

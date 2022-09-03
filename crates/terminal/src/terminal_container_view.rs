@@ -246,12 +246,13 @@ impl Item for TerminalContainer {
                 .as_ref()
                 .map(|fpi| {
                     format!(
-                        "{} - {}",
+                        "{} - {} {}",
                         fpi.cwd
                             .file_name()
                             .map(|name| name.to_string_lossy().to_string())
                             .unwrap_or_default(),
                         fpi.name,
+                        (&fpi.argv[1..]).join(" ")
                     )
                 })
                 .unwrap_or_else(|| "Terminal".to_string()),
