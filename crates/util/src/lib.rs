@@ -9,6 +9,23 @@ use std::{
     task::{Context, Poll},
 };
 
+pub fn truncate(s: &str, max_chars: usize) -> &str {
+    match s.char_indices().nth(max_chars) {
+        None => s,
+        Some((idx, _)) => &s[..idx],
+    }
+}
+
+pub fn truncate_and_trailoff(s: &str, max_chars: usize) -> String {
+    debug_assert!(max_chars >= 5);
+
+    if s.len() > max_chars {
+        format!("{}…", truncate(&s, max_chars.saturating_sub(3)))
+    } else {
+        s.to_string()
+    }
+}
+
 pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
     let prev = *value;
     *value += T::from(1);
