@@ -73,7 +73,7 @@ pub fn init(cx: &mut MutableAppContext) {
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
 ///Implement scroll bars.
 const SCROLL_MULTIPLIER: f32 = 4.;
-const MAX_SEARCH_LINES: usize = 100;
+// const MAX_SEARCH_LINES: usize = 100;
 const DEBUG_TERMINAL_WIDTH: f32 = 500.;
 const DEBUG_TERMINAL_HEIGHT: f32 = 30.;
 const DEBUG_CELL_WIDTH: f32 = 5.;
@@ -982,7 +982,7 @@ impl Terminal {
 
             let term = term.lock();
 
-            make_search_matches(&term, &searcher).collect()
+            all_search_matches(&term, &searcher).collect()
         })
     }
 }
@@ -1005,20 +1005,29 @@ fn make_selection(range: &RangeInclusive<Point>) -> Selection {
 
 /// Copied from alacritty/src/display/hint.rs HintMatches::visible_regex_matches()
 /// Iterate over all visible regex matches.
-fn make_search_matches<'a, T>(
+// fn visible_search_matches<'a, T>(
+//     term: &'a Term<T>,
+//     regex: &'a RegexSearch,
+// ) -> impl Iterator<Item = Match> + 'a {
+//     let viewport_start = Line(-(term.grid().display_offset() as i32));
+//     let viewport_end = viewport_start + term.bottommost_line();
+//     let mut start = term.line_search_left(Point::new(viewport_start, Column(0)));
+//     let mut end = term.line_search_right(Point::new(viewport_end, Column(0)));
+//     start.line = start.line.max(viewport_start - MAX_SEARCH_LINES);
+//     end.line = end.line.min(viewport_end + MAX_SEARCH_LINES);
+
+//     RegexIter::new(start, end, AlacDirection::Right, term, regex)
+//         .skip_while(move |rm| rm.end().line < viewport_start)
+//         .take_while(move |rm| rm.start().line <= viewport_end)
+// }
+
+fn all_search_matches<'a, T>(
     term: &'a Term<T>,
     regex: &'a RegexSearch,
 ) -> impl Iterator<Item = Match> + 'a {
-    let viewport_start = Line(-(term.grid().display_offset() as i32));
-    let viewport_end = viewport_start + term.bottommost_line();
-    let mut start = term.line_search_left(Point::new(viewport_start, Column(0)));
-    let mut end = term.line_search_right(Point::new(viewport_end, Column(0)));
-    start.line = start.line.max(viewport_start - MAX_SEARCH_LINES);
-    end.line = end.line.min(viewport_end + MAX_SEARCH_LINES);
-
+    let start = Point::new(term.grid().topmost_line(), Column(0));
+    let end = Point::new(term.grid().bottommost_line(), term.grid().last_column());
     RegexIter::new(start, end, AlacDirection::Right, term, regex)
-        .skip_while(move |rm| rm.end().line < viewport_start)
-        .take_while(move |rm| rm.start().line <= viewport_end)
 }
 
 #[cfg(test)]
