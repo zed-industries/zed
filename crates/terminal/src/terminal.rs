@@ -572,12 +572,15 @@ impl Terminal {
                 });
                 self.write_to_pty(format(color))
             }
-            InternalEvent::Resize(new_size) => {
-                self.cur_size = *new_size;
+            InternalEvent::Resize(mut new_size) => {
+                new_size.height = f32::max(new_size.line_height, new_size.height);
+                new_size.width = f32::max(new_size.cell_width, new_size.width);
 
-                self.pty_tx.0.send(Msg::Resize((*new_size).into())).ok();
+                self.cur_size = new_size.clone();
 
-                term.resize(*new_size);
+                self.pty_tx.0.send(Msg::Resize((new_size).into())).ok();
+
+                term.resize(new_size);
             }
             InternalEvent::Clear => {
                 self.write_to_pty("\x0c".to_string());
