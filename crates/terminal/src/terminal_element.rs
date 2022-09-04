@@ -827,9 +827,9 @@ fn to_highlighted_range_lines(
     origin: Vector2F,
 ) -> Option<(f32, Vec<HighlightedRangeLine>)> {
     // Step 1. Normalize the points to be viewport relative.
-    //When display_offset = 1, here's how the grid is arranged:
-    //--- Viewport top
+    // When display_offset = 1, here's how the grid is arranged:
     //-2,0 -2,1...
+    //--- Viewport top
     //-1,0 -1,1...
     //--------- Terminal Top
     // 0,0  0,1...
