@@ -114,6 +114,7 @@ impl TerminalContainer {
             size_info,
             settings.terminal_overrides.blinking.clone(),
             scroll,
+            cx.window_id(),
         ) {
             Ok(terminal) => {
                 let terminal = cx.add_model(|cx| terminal.subscribe(cx));

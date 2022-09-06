@@ -60,9 +60,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "alacritty_config"
+version = "0.1.1-dev"
+source = "git+https://github.com/zed-industries/alacritty?rev=a51dbe25d67e84d6ed4261e640d3954fbdd9be45#a51dbe25d67e84d6ed4261e640d3954fbdd9be45"
+dependencies = [
+ "log",
+ "serde",
+ "serde_yaml",
+]
+
+[[package]]
 name = "alacritty_config_derive"
-version = "0.1.0"
-source = "git+https://github.com/zed-industries/alacritty?rev=4e1f0c6177975a040b37f942dfb0e723e46a9971#4e1f0c6177975a040b37f942dfb0e723e46a9971"
+version = "0.2.1-dev"
+source = "git+https://github.com/zed-industries/alacritty?rev=a51dbe25d67e84d6ed4261e640d3954fbdd9be45#a51dbe25d67e84d6ed4261e640d3954fbdd9be45"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -71,9 +81,10 @@ dependencies = [
 
 [[package]]
 name = "alacritty_terminal"
-version = "0.17.0-dev"
-source = "git+https://github.com/zed-industries/alacritty?rev=4e1f0c6177975a040b37f942dfb0e723e46a9971#4e1f0c6177975a040b37f942dfb0e723e46a9971"
+version = "0.17.1-dev"
+source = "git+https://github.com/zed-industries/alacritty?rev=a51dbe25d67e84d6ed4261e640d3954fbdd9be45#a51dbe25d67e84d6ed4261e640d3954fbdd9be45"
 dependencies = [
+ "alacritty_config",
  "alacritty_config_derive",
  "base64",
  "bitflags",
@@ -85,7 +96,7 @@ dependencies = [
  "mio-extras",
  "miow 0.3.7",
  "nix",
- "parking_lot 0.11.2",
+ "parking_lot 0.12.1",
  "regex-automata",
  "serde",
  "serde_yaml",
@@ -3230,12 +3241,11 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.22.3"
+version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4916f159ed8e5de0082076562152a76b7a1f64a01fd9d1e0fea002c37624faf"
+checksum = "195cdbc1741b8134346d515b3a56a1c94b0912758009cfd53f99ea0f57b065fc"
 dependencies = [
  "bitflags",
- "cc",
  "cfg-if 1.0.0",
  "libc",
  "memoffset",
@@ -3824,7 +3834,7 @@ dependencies = [
 [[package]]
 name = "procinfo"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/wezterm?rev=40a7dbf93542fbe4178c2e4b4bd438126a6432b9#40a7dbf93542fbe4178c2e4b4bd438126a6432b9"
+source = "git+https://github.com/zed-industries/wezterm?rev=5cd757e5f2eb039ed0c6bb6512223e69d5efc64d#5cd757e5f2eb039ed0c6bb6512223e69d5efc64d"
 dependencies = [
  "libc",
  "log",

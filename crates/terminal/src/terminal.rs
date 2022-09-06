@@ -272,6 +272,7 @@ impl TerminalBuilder {
         initial_size: TerminalSize,
         blink_settings: Option<TerminalBlink>,
         alternate_scroll: &AlternateScroll,
+        window_id: usize,
     ) -> Result<TerminalBuilder> {
         let pty_config = {
             let alac_shell = shell.clone().and_then(|shell| match shell {
@@ -323,7 +324,7 @@ impl TerminalBuilder {
         let term = Arc::new(FairMutex::new(term));
 
         //Setup the pty...
-        let pty = match tty::new(&pty_config, initial_size.into(), None) {
+        let pty = match tty::new(&pty_config, initial_size.into(), window_id as u64) {
             Ok(pty) => pty,
             Err(error) => {
                 bail!(TerminalError {
@@ -572,12 +573,21 @@ impl Terminal {
                 });
                 self.write_to_pty(format(color))
             }
-            InternalEvent::Resize(new_size) => {
-                self.cur_size = *new_size;
+            InternalEvent::Resize(mut new_size) => {
+                new_size.height = f32::max(new_size.line_height, new_size.height);
+                new_size.width = f32::max(new_size.cell_width, new_size.width);
 
-                self.pty_tx.0.send(Msg::Resize((*new_size).into())).ok();
+                self.cur_size = new_size.clone();
 
-                term.resize(*new_size);
+                self.pty_tx.0.send(Msg::Resize((new_size).into())).ok();
+
+                // When this resize happens
+                // We go from 737px -> 703px height
+                // This means there is 1 less line
+                // that means the delta is 1
+                // That means the selection is rotated by -1
+
+                term.resize(new_size);
             }
             InternalEvent::Clear => {
                 self.write_to_pty("\x0c".to_string());
