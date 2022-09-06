@@ -37,6 +37,7 @@ fn main() {
 }
 
 fn build_bridge(swift_target: &SwiftTarget) {
+    println!("cargo:rerun-if-changed={}", SWIFT_PACKAGE_NAME);
     let swift_package_root = swift_package_root();
     if !Command::new("swift")
         .args(&["build", "-c", &env::var("PROFILE").unwrap()])

@@ -765,12 +765,16 @@ dependencies = [
  "foreign-types",
  "futures",
  "gpui",
+ "hmac 0.12.1",
+ "jwt",
  "live_kit",
  "log",
  "media",
  "objc",
  "parking_lot 0.11.2",
  "postage",
+ "serde",
+ "sha2 0.10.2",
  "simplelog",
 ]
 
@@ -2748,6 +2752,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41ee439ee368ba4a77ac70d04f14015415af8600d6c894dc1f11bd79758c57d5"
 
 [[package]]
+name = "jwt"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6204285f77fe7d9784db3fdc449ecce1a0114927a51d5a41c4c7a292011c015f"
+dependencies = [
+ "base64",
+ "crypto-common",
+ "digest 0.10.3",
+ "hmac 0.12.1",
+ "serde",
+ "serde_json",
+ "sha2 0.10.2",
+]
+
+[[package]]
 name = "kernel32-sys"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2921,6 +2940,8 @@ dependencies = [
 name = "live_kit"
 version = "0.1.0"
 dependencies = [
+ "core-foundation",
+ "futures",
  "serde",
  "serde_json",
 ]
