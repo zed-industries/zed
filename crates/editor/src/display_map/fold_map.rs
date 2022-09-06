@@ -274,6 +274,7 @@ impl FoldMap {
             if buffer.edit_count() != new_buffer.edit_count()
                 || buffer.parse_count() != new_buffer.parse_count()
                 || buffer.diagnostics_update_count() != new_buffer.diagnostics_update_count()
+                || buffer.diff_update_count() != new_buffer.diff_update_count()
                 || buffer.trailing_excerpt_update_count()
                     != new_buffer.trailing_excerpt_update_count()
             {
