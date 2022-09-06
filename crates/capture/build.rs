@@ -1,12 +1,7 @@
 use std::{env, path::PathBuf, process::Command};
 
 fn main() {
-    println!(
-        "cargo:rustc-link-search=framework={}",
-        "crates/live_kit/LiveKitBridge/.build/arm64-apple-macosx/debug"
-    );
-
-    // Find frameworks as a sibling of the executable at runtime
+    // Find WebRTC.framework as a sibling of the executable when running outside of an application bundle
     println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
 
     println!("cargo:rustc-link-lib=framework=ScreenCaptureKit");

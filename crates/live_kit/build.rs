@@ -29,53 +29,70 @@ pub struct SwiftTarget {
 const MACOS_TARGET_VERSION: &str = "12";
 
 fn main() {
-    build_bridge();
-    link_swift_stdlib();
+    let swift_target = get_swift_target();
+
+    build_bridge(&swift_target);
+    link_swift_stdlib(&swift_target);
+    link_webrtc_framework(&swift_target);
 }
 
-fn build_bridge() {
-    let profile = env::var("PROFILE").unwrap();
-    let package_name = "LiveKitBridge";
-    let package_root = env::current_dir().unwrap().join(package_name);
+fn build_bridge(swift_target: &SwiftTarget) {
+    let swift_package_root = swift_package_root();
     if !Command::new("swift")
-        .args(&["build", "-c", &profile])
-        .current_dir(&package_root)
+        .args(&["build", "-c", &env::var("PROFILE").unwrap()])
+        .current_dir(&swift_package_root)
         .status()
         .unwrap()
         .success()
     {
         panic!(
             "Failed to compile swift package in {}",
-            package_root.display()
+            swift_package_root.display()
         );
     }
 
-    let swift_target_info = get_swift_target();
-    let swift_out_dir_path = format!(
-        "{}/.build/{}/{}",
-        package_root.display(),
-        swift_target_info.target.unversioned_triple,
-        profile
-    );
-
-    println!("cargo:rustc-link-search=native={}", swift_out_dir_path);
     println!(
-        "cargo:rustc-link-search=framework={}",
-        "/Users/nathan/src/zed/crates/live_kit/frameworks"
+        "cargo:rustc-link-search=native={}",
+        swift_target.out_dir_path().display()
     );
-    println!("cargo:rustc-link-lib=static={}", package_name);
-    println!("cargo:rustc-link-lib=framework=WebRTC");
+    println!("cargo:rustc-link-lib=static={}", SWIFT_PACKAGE_NAME);
 }
 
-fn link_swift_stdlib() {
-    let target = get_swift_target();
-    if target.target.libraries_require_rpath {
+fn link_swift_stdlib(swift_target: &SwiftTarget) {
+    if swift_target.target.libraries_require_rpath {
         panic!("Libraries require RPath! Change minimum MacOS value to fix.")
     }
 
-    target.paths.runtime_library_paths.iter().for_each(|path| {
-        println!("cargo:rustc-link-search=native={}", path);
-    });
+    swift_target
+        .paths
+        .runtime_library_paths
+        .iter()
+        .for_each(|path| {
+            println!("cargo:rustc-link-search=native={}", path);
+        });
+}
+
+fn link_webrtc_framework(swift_target: &SwiftTarget) {
+    let swift_out_dir_path = swift_target.out_dir_path();
+    println!("cargo:rustc-link-lib=framework=WebRTC");
+    println!(
+        "cargo:rustc-link-search=framework={}",
+        swift_out_dir_path.display()
+    );
+
+    let source_path = swift_out_dir_path.join("WebRTC.framework");
+    let target_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("../../../WebRTC.framework");
+    assert!(
+        Command::new("cp")
+            .arg("-r")
+            .args(&[&source_path, &target_path])
+            .status()
+            .unwrap()
+            .success(),
+        "could not copy WebRTC.framework from {:?} to {:?}",
+        source_path,
+        target_path
+    );
 }
 
 fn get_swift_target() -> SwiftTarget {
@@ -92,4 +109,19 @@ fn get_swift_target() -> SwiftTarget {
         .stdout;
 
     serde_json::from_slice(&swift_target_info_str).unwrap()
+}
+
+const SWIFT_PACKAGE_NAME: &'static str = "LiveKitBridge";
+
+fn swift_package_root() -> PathBuf {
+    env::current_dir().unwrap().join(SWIFT_PACKAGE_NAME)
+}
+
+impl SwiftTarget {
+    fn out_dir_path(&self) -> PathBuf {
+        swift_package_root()
+            .join(".build")
+            .join(&self.target.unversioned_triple)
+            .join(env::var("PROFILE").unwrap())
+    }
 }
