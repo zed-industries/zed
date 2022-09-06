@@ -26,7 +26,7 @@ use text::{Point, Selection};
 use util::TryFutureExt;
 use workspace::{
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
-    FollowableItem, Item, ItemHandle, ItemNavHistory, ProjectItem, StatusItemView,
+    FollowableItem, Item, ItemEvent, ItemHandle, ItemNavHistory, ProjectItem, StatusItemView,
 };
 
 pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -475,19 +475,13 @@ impl Item for Editor {
         })
     }
 
-    fn should_close_item_on_event(event: &Event) -> bool {
-        matches!(event, Event::Closed)
-    }
-
-    fn should_update_tab_on_event(event: &Event) -> bool {
-        matches!(
-            event,
-            Event::Saved | Event::DirtyChanged | Event::TitleChanged
-        )
-    }
-
-    fn is_edit_event(event: &Self::Event) -> bool {
-        matches!(event, Event::BufferEdited)
+    fn to_item_events(event: &Self::Event) -> Vec<workspace::ItemEvent> {
+        match event {
+            Event::Closed => vec![ItemEvent::CloseItem],
+            Event::Saved | Event::DirtyChanged | Event::TitleChanged => vec![ItemEvent::UpdateTab],
+            Event::BufferEdited => vec![ItemEvent::Edit],
+            _ => Vec::new(),
+        }
     }
 
     fn as_searchable(&self, handle: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {

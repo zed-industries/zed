@@ -17,6 +17,7 @@ search = { path = "../search" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
 workspace = { path = "../workspace" }
+itertools = "0.10"
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }

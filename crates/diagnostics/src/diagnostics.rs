@@ -566,12 +566,8 @@ impl workspace::Item for ProjectDiagnosticsEditor {
         unreachable!()
     }
 
-    fn should_update_tab_on_event(event: &Event) -> bool {
-        Editor::should_update_tab_on_event(event)
-    }
-
-    fn is_edit_event(event: &Self::Event) -> bool {
-        Editor::is_edit_event(event)
+    fn to_item_events(event: &Self::Event) -> Vec<workspace::ItemEvent> {
+        Editor::to_item_events(event)
     }
 
     fn set_nav_history(&mut self, nav_history: ItemNavHistory, cx: &mut ViewContext<Self>) {
