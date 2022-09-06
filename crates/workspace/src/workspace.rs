@@ -339,7 +339,7 @@ pub trait Item: View {
     fn breadcrumb_location(&self) -> ToolbarItemLocation {
         ToolbarItemLocation::Hidden
     }
-    fn breadcrumbs(&self, _theme: &Theme) -> Option<Vec<ElementBox>> {
+    fn breadcrumbs(&self, _theme: &Theme, _cx: &AppContext) -> Option<Vec<ElementBox>> {
         None
     }
 }
@@ -437,6 +437,11 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
 }
 
 pub trait ItemHandle: 'static + fmt::Debug {
+    fn subscribe_to_item_events(
+        &self,
+        cx: &mut MutableAppContext,
+        handler: Box<dyn Fn(ItemEvent, &mut MutableAppContext)>,
+    ) -> gpui::Subscription;
     fn tab_description<'a>(&self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>>;
     fn tab_content(&self, detail: Option<usize>, style: &theme::Tab, cx: &AppContext)
         -> ElementBox;
@@ -476,8 +481,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
         cx: &mut MutableAppContext,
         callback: Box<dyn FnOnce(&mut MutableAppContext)>,
     ) -> gpui::Subscription;
-    fn as_searchable(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
-
+    fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
     fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<ElementBox>>;
 }
@@ -500,6 +504,18 @@ impl dyn ItemHandle {
 }
 
 impl<T: Item> ItemHandle for ViewHandle<T> {
+    fn subscribe_to_item_events(
+        &self,
+        cx: &mut MutableAppContext,
+        handler: Box<dyn Fn(ItemEvent, &mut MutableAppContext)>,
+    ) -> gpui::Subscription {
+        cx.subscribe(self, move |_, event, cx| {
+            for item_event in T::to_item_events(event) {
+                handler(item_event, cx)
+            }
+        })
+    }
+
     fn tab_description<'a>(&self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>> {
         self.read(cx).tab_description(detail, cx)
     }
@@ -762,7 +778,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         cx.observe_release(self, move |_, cx| callback(cx))
     }
 
-    fn as_searchable(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>> {
+    fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>> {
         self.read(cx).as_searchable(self)
     }
 
@@ -771,7 +787,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
     }
 
     fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
-        self.read(cx).breadcrumbs(theme)
+        self.read(cx).breadcrumbs(theme, cx)
     }
 }
 

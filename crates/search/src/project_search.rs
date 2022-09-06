@@ -329,10 +329,22 @@ impl Item for ProjectSearchView {
 
     fn to_item_events(event: &Self::Event) -> Vec<ItemEvent> {
         match event {
-            ViewEvent::UpdateTab => vec![ItemEvent::UpdateTab],
+            ViewEvent::UpdateTab => vec![ItemEvent::UpdateBreadcrumbs, ItemEvent::UpdateTab],
             ViewEvent::EditorEvent(editor_event) => Editor::to_item_events(editor_event),
             _ => Vec::new(),
         }
+    }
+
+    fn breadcrumb_location(&self) -> ToolbarItemLocation {
+        if self.has_matches() {
+            ToolbarItemLocation::Secondary
+        } else {
+            ToolbarItemLocation::Hidden
+        }
+    }
+
+    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
+        self.results_editor.breadcrumbs(theme, cx)
     }
 }
 

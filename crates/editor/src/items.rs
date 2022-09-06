@@ -27,6 +27,7 @@ use util::TryFutureExt;
 use workspace::{
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
     FollowableItem, Item, ItemEvent, ItemHandle, ItemNavHistory, ProjectItem, StatusItemView,
+    ToolbarItemLocation,
 };
 
 pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -476,16 +477,70 @@ impl Item for Editor {
     }
 
     fn to_item_events(event: &Self::Event) -> Vec<workspace::ItemEvent> {
+        let mut result = Vec::new();
         match event {
-            Event::Closed => vec![ItemEvent::CloseItem],
-            Event::Saved | Event::DirtyChanged | Event::TitleChanged => vec![ItemEvent::UpdateTab],
-            Event::BufferEdited => vec![ItemEvent::Edit],
-            _ => Vec::new(),
+            Event::Closed => result.push(ItemEvent::CloseItem),
+            Event::Saved | Event::TitleChanged => {
+                result.push(ItemEvent::UpdateTab);
+                result.push(ItemEvent::UpdateBreadcrumbs);
+            }
+            Event::Reparsed => {
+                result.push(ItemEvent::UpdateBreadcrumbs);
+            }
+            Event::SelectionsChanged { local } if *local => {
+                result.push(ItemEvent::UpdateBreadcrumbs);
+            }
+            Event::DirtyChanged => {
+                result.push(ItemEvent::UpdateTab);
+            }
+            Event::BufferEdited => {
+                result.push(ItemEvent::Edit);
+                result.push(ItemEvent::UpdateBreadcrumbs);
+            }
+            _ => {}
         }
+        result
     }
 
     fn as_searchable(&self, handle: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
+    }
+
+    fn breadcrumb_location(&self) -> ToolbarItemLocation {
+        ToolbarItemLocation::PrimaryLeft { flex: None }
+    }
+
+    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
+        let cursor = self.selections.newest_anchor().head();
+        let multibuffer = &self.buffer().read(cx);
+        let (buffer_id, symbols) =
+            multibuffer.symbols_containing(cursor, Some(&theme.editor.syntax), cx)?;
+        let buffer = multibuffer.buffer(buffer_id)?;
+
+        let buffer = buffer.read(cx);
+        let filename = if let Some(file) = buffer.file() {
+            if file.path().file_name().is_none()
+                || self
+                    .project
+                    .as_ref()
+                    .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
+                    .unwrap_or_default()
+            {
+                file.full_path(cx).to_string_lossy().to_string()
+            } else {
+                file.path().to_string_lossy().to_string()
+            }
+        } else {
+            "untitled".to_string()
+        };
+
+        let mut breadcrumbs = vec![Label::new(filename, theme.breadcrumbs.text.clone()).boxed()];
+        breadcrumbs.extend(symbols.into_iter().map(|symbol| {
+            Text::new(symbol.text, theme.breadcrumbs.text.clone())
+                .with_highlights(symbol.highlight_ranges)
+                .boxed()
+        }));
+        Some(breadcrumbs)
     }
 }
 

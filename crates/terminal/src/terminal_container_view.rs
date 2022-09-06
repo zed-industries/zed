@@ -9,7 +9,7 @@ use gpui::{
 };
 use util::truncate_and_trailoff;
 use workspace::searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle};
-use workspace::{Item, ItemEvent, Workspace};
+use workspace::{Item, ItemEvent, ToolbarItemLocation, Workspace};
 
 use crate::TerminalSize;
 use project::{LocalWorktree, Project, ProjectPath};
@@ -363,12 +363,36 @@ impl Item for TerminalContainer {
         Some(Box::new(handle.clone()))
     }
 
-    fn to_item_events(event: &Self::Event) -> Vec<workspace::ItemEvent> {
+    fn to_item_events(event: &Self::Event) -> Vec<ItemEvent> {
         match event {
+            Event::BreadcrumbsChanged => vec![ItemEvent::UpdateBreadcrumbs],
             Event::TitleChanged | Event::Wakeup => vec![ItemEvent::UpdateTab],
             Event::CloseTerminal => vec![ItemEvent::CloseItem],
             _ => vec![],
         }
+    }
+
+    fn breadcrumb_location(&self) -> ToolbarItemLocation {
+        if self.connected().is_some() {
+            ToolbarItemLocation::PrimaryLeft { flex: None }
+        } else {
+            ToolbarItemLocation::Hidden
+        }
+    }
+
+    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
+        let connected = self.connected()?;
+
+        Some(vec![Text::new(
+            connected
+                .read(cx)
+                .terminal()
+                .read(cx)
+                .breadcrumb_text
+                .to_string(),
+            theme.breadcrumbs.text.clone(),
+        )
+        .boxed()])
     }
 }
 

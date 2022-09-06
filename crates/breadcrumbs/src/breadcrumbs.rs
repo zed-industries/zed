@@ -1,46 +1,29 @@
-use editor::Editor;
 use gpui::{
-    elements::*, AppContext, Entity, ModelHandle, RenderContext, Subscription, View, ViewContext,
-    ViewHandle,
+    elements::*, AppContext, Entity, RenderContext, Subscription, View, ViewContext, ViewHandle,
 };
 use itertools::Itertools;
-use project::Project;
 use search::ProjectSearchView;
 use settings::Settings;
-use workspace::{ItemHandle, ToolbarItemLocation, ToolbarItemView};
+use workspace::{ItemEvent, ItemHandle, ToolbarItemLocation, ToolbarItemView};
 
 pub enum Event {
     UpdateLocation,
 }
 
 pub struct Breadcrumbs {
-    project: ModelHandle<Project>,
     active_item: Option<Box<dyn ItemHandle>>,
     project_search: Option<ViewHandle<ProjectSearchView>>,
-    subscriptions: Vec<Subscription>,
+    subscription: Option<Subscription>,
 }
 
 impl Breadcrumbs {
-    pub fn new(project: ModelHandle<Project>) -> Self {
+    pub fn new() -> Self {
         Self {
-            project,
             active_item: Default::default(),
-            subscriptions: Default::default(),
+            subscription: Default::default(),
             project_search: Default::default(),
         }
     }
-    // fn active_symbols(
-    //     &self,
-    //     theme: &SyntaxTheme,
-    //     cx: &AppContext,
-    // ) -> Option<(ModelHandle<Buffer>, Vec<OutlineItem<Anchor>>)> {
-    //     let editor = self.active_item.as_ref()?.read(cx);
-    //     let cursor = editor.selections.newest_anchor().head();
-    //     let multibuffer = &editor.buffer().read(cx);
-    //     let (buffer_id, symbols) = multibuffer.symbols_containing(cursor, Some(theme), cx)?;
-    //     let buffer = multibuffer.buffer(buffer_id)?;
-    //     Some((buffer, symbols))
-    // }
 }
 
 impl Entity for Breadcrumbs {
@@ -53,42 +36,16 @@ impl View for Breadcrumbs {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        // let (buffer, symbols) =
-        //     if let Some((buffer, symbols)) = self.active_symbols(&theme.editor.syntax, cx) {
-        //         (buffer, symbols)
-        //     } else {
-        //         return Empty::new().boxed();
-        //     };
-        // let buffer = buffer.read(cx);
-        // let filename = if let Some(file) = buffer.file() {
-        //     if file.path().file_name().is_none()
-        //         || self.project.read(cx).visible_worktrees(cx).count() > 1
-        //     {
-        //         file.full_path(cx).to_string_lossy().to_string()
-        //     } else {
-        //         file.path().to_string_lossy().to_string()
-        //     }
-        // } else {
-        //     "untitled".to_string()
-        // };
-
         let theme = cx.global::<Settings>().theme.clone();
         if let Some(breadcrumbs) = self
             .active_item
+            .as_ref()
             .and_then(|item| item.breadcrumbs(&theme, cx))
         {
             Flex::row()
                 .with_children(Itertools::intersperse_with(breadcrumbs.into_iter(), || {
                     Label::new(" 〉 ".to_string(), theme.breadcrumbs.text.clone()).boxed()
                 }))
-                // .with_child(Label::new(filename, theme.breadcrumbs.text.clone()).boxed())
-                // .with_children(symbols.into_iter().flat_map(|symbol| {
-                //     [
-                //         Text::new(symbol.text, theme.breadcrumbs.text.clone())
-                //             .with_highlights(symbol.highlight_ranges)
-                //             .boxed(),
-                //     ]
-                // }))
                 .contained()
                 .with_style(theme.breadcrumbs.container)
                 .aligned()
@@ -107,39 +64,25 @@ impl ToolbarItemView for Breadcrumbs {
         cx: &mut ViewContext<Self>,
     ) -> ToolbarItemLocation {
         cx.notify();
-        self.subscriptions.clear();
         self.active_item = None;
         self.project_search = None;
         if let Some(item) = active_pane_item {
-            if let Some(editor) = item.act_as::<Editor>(cx) {
-                self.subscriptions
-                    .push(cx.subscribe(&editor, |_, _, event, cx| match event {
-                        editor::Event::BufferEdited
-                        | editor::Event::TitleChanged
-                        | editor::Event::Saved
-                        | editor::Event::Reparsed => cx.notify(),
-                        editor::Event::SelectionsChanged { local } if *local => cx.notify(),
-                        _ => {}
-                    }));
-                self.active_item = Some(editor);
-                if let Some(project_search) = item.downcast::<ProjectSearchView>() {
-                    self.subscriptions
-                        .push(cx.subscribe(&project_search, |_, _, _, cx| {
-                            cx.emit(Event::UpdateLocation);
-                        }));
-                    self.project_search = Some(project_search.clone());
-
-                    if project_search.read(cx).has_matches() {
-                        ToolbarItemLocation::Secondary
-                    } else {
-                        ToolbarItemLocation::Hidden
+            let this = cx.weak_handle();
+            self.subscription = Some(item.subscribe_to_item_events(
+                cx,
+                Box::new(move |event, cx| {
+                    if let Some(this) = this.upgrade(cx) {
+                        if let ItemEvent::UpdateBreadcrumbs = event {
+                            this.update(cx, |_, cx| {
+                                cx.emit(Event::UpdateLocation);
+                                cx.notify();
+                            });
+                        }
                     }
-                } else {
-                    ToolbarItemLocation::PrimaryLeft { flex: None }
-                }
-            } else {
-                ToolbarItemLocation::Hidden
-            }
+                }),
+            ));
+            self.active_item = Some(item.boxed_clone());
+            item.breadcrumb_location(cx)
         } else {
             ToolbarItemLocation::Hidden
         }
@@ -151,12 +94,8 @@ impl ToolbarItemView for Breadcrumbs {
         current_location: ToolbarItemLocation,
         cx: &AppContext,
     ) -> ToolbarItemLocation {
-        if let Some(project_search) = self.project_search.as_ref() {
-            if project_search.read(cx).has_matches() {
-                ToolbarItemLocation::Secondary
-            } else {
-                ToolbarItemLocation::Hidden
-            }
+        if let Some(active_item) = self.active_item.as_ref() {
+            active_item.breadcrumb_location(cx)
         } else {
             current_location
         }

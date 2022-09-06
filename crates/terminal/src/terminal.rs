@@ -83,6 +83,7 @@ const DEBUG_LINE_HEIGHT: f32 = 5.;
 #[derive(Clone, Copy, Debug)]
 pub enum Event {
     TitleChanged,
+    BreadcrumbsChanged,
     CloseTerminal,
     Bell,
     Wakeup,
@@ -494,9 +495,11 @@ impl Terminal {
         match event {
             AlacTermEvent::Title(title) => {
                 self.breadcrumb_text = title.to_string();
+                cx.emit(Event::BreadcrumbsChanged);
             }
             AlacTermEvent::ResetTitle => {
                 self.breadcrumb_text = String::new();
+                cx.emit(Event::BreadcrumbsChanged);
             }
             AlacTermEvent::ClipboardStore(_, data) => {
                 cx.write_to_clipboard(ClipboardItem::new(data.to_string()))
