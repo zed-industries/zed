@@ -7,6 +7,7 @@ use gpui::{
     actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MutableAppContext, Task,
     View, ViewContext, ViewHandle,
 };
+use util::truncate_and_trailoff;
 use workspace::searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle};
 use workspace::{Item, Workspace};
 
@@ -149,6 +150,13 @@ impl TerminalContainer {
             associated_directory: None,
         }
     }
+
+    fn connected(&self) -> Option<ViewHandle<TerminalView>> {
+        match &self.content {
+            TerminalContainerContent::Connected(vh) => Some(vh.clone()),
+            TerminalContainerContent::Error(_) => None,
+        }
+    }
 }
 
 impl View for TerminalContainer {
@@ -246,12 +254,28 @@ impl Item for TerminalContainer {
                 .as_ref()
                 .map(|fpi| {
                     format!(
-                        "{} - {}",
-                        fpi.cwd
-                            .file_name()
-                            .map(|name| name.to_string_lossy().to_string())
-                            .unwrap_or_default(),
-                        fpi.name,
+                        "{} — {}",
+                        truncate_and_trailoff(
+                            &fpi.cwd
+                                .file_name()
+                                .map(|name| name.to_string_lossy().to_string())
+                                .unwrap_or_default(),
+                            25
+                        ),
+                        truncate_and_trailoff(
+                            &{
+                                format!(
+                                    "{}{}",
+                                    fpi.name,
+                                    if fpi.argv.len() >= 1 {
+                                        format!(" {}", (&fpi.argv[1..]).join(" "))
+                                    } else {
+                                        "".to_string()
+                                    }
+                                )
+                            },
+                            25
+                        )
                     )
                 })
                 .unwrap_or_else(|| "Terminal".to_string()),
@@ -324,18 +348,14 @@ impl Item for TerminalContainer {
 
     fn is_dirty(&self, cx: &gpui::AppContext) -> bool {
         if let TerminalContainerContent::Connected(connected) = &self.content {
-            connected.read(cx).has_new_content()
+            connected.read(cx).has_bell()
         } else {
             false
         }
     }
 
-    fn has_conflict(&self, cx: &AppContext) -> bool {
-        if let TerminalContainerContent::Connected(connected) = &self.content {
-            connected.read(cx).has_bell()
-        } else {
-            false
-        }
+    fn has_conflict(&self, _cx: &AppContext) -> bool {
+        false
     }
 
     fn should_update_tab_on_event(event: &Self::Event) -> bool {
@@ -431,28 +451,42 @@ impl SearchableItem for TerminalContainer {
         matches: Vec<Self::Match>,
         cx: &mut ViewContext<Self>,
     ) -> Option<usize> {
-        if let TerminalContainerContent::Connected(connected) = &self.content {
-            if let Some(selection_head) = connected.read(cx).terminal().read(cx).selection_head {
+        let connected = self.connected();
+        // Selection head might have a value if there's a selection that isn't
+        // associated with a match. Therefore, if there are no matches, we should
+        // report None, no matter the state of the terminal
+        let res = if matches.len() > 0 && connected.is_some() {
+            if let Some(selection_head) = connected
+                .unwrap()
+                .read(cx)
+                .terminal()
+                .read(cx)
+                .selection_head
+            {
                 // If selection head is contained in a match. Return that match
-                for (ix, search_match) in matches.iter().enumerate() {
-                    if search_match.contains(&selection_head) {
-                        return Some(ix);
-                    }
-
-                    // If not contained, return the next match after the selection head
-                    if search_match.start() > &selection_head {
-                        return Some(ix);
-                    }
+                if let Some(ix) = matches
+                    .iter()
+                    .enumerate()
+                    .find(|(_, search_match)| {
+                        search_match.contains(&selection_head)
+                            || search_match.start() > &selection_head
+                    })
+                    .map(|(ix, _)| ix)
+                {
+                    Some(ix)
+                } else {
+                    // If no selection after selection head, return the last match
+                    Some(matches.len().saturating_sub(1))
                 }
-
-                // If no selection after selection head, return the last match
-                return Some(matches.len().saturating_sub(1));
             } else {
-                Some(0)
+                // Matches found but no active selection, return the first last one (closest to cursor)
+                Some(matches.len().saturating_sub(1))
             }
         } else {
             None
-        }
+        };
+
+        res
     }
 }
 

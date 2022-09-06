@@ -91,8 +91,8 @@ impl TerminalView {
                 if !cx.is_self_focused() {
                     this.has_new_content = true;
                     cx.notify();
-                    cx.emit(Event::Wakeup);
                 }
+                cx.emit(Event::Wakeup);
             }
             Event::Bell => {
                 this.has_bell = true;

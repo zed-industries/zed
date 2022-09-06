@@ -19,6 +19,15 @@ pub struct ModifiersChangedEvent {
     pub cmd: bool,
 }
 
+/// The phase of a touch motion event.
+/// Based on the winit enum of the same name,
+#[derive(Clone, Copy, Debug)]
+pub enum TouchPhase {
+    Started,
+    Moved,
+    Ended,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ScrollWheelEvent {
     pub position: Vector2F,
@@ -28,6 +37,8 @@ pub struct ScrollWheelEvent {
     pub alt: bool,
     pub shift: bool,
     pub cmd: bool,
+    /// If the platform supports returning the phase of a scroll wheel event, it will be stored here
+    pub phase: Option<TouchPhase>,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]

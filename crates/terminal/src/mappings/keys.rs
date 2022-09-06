@@ -57,6 +57,7 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode) -> Option<String> {
         ("tab", Modifiers::None) => Some("\x09".to_string()),
         ("escape", Modifiers::None) => Some("\x1b".to_string()),
         ("enter", Modifiers::None) => Some("\x0d".to_string()),
+        ("enter", Modifiers::Shift) => Some("\x0d".to_string()),
         ("backspace", Modifiers::None) => Some("\x7f".to_string()),
         //Interesting escape codes
         ("tab", Modifiers::Shift) => Some("\x1b[Z".to_string()),

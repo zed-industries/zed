@@ -72,8 +72,8 @@ pub fn init(cx: &mut MutableAppContext) {
 ///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
 ///Implement scroll bars.
-const ALACRITTY_SCROLL_MULTIPLIER: f32 = 3.;
-const MAX_SEARCH_LINES: usize = 100;
+const SCROLL_MULTIPLIER: f32 = 4.;
+// const MAX_SEARCH_LINES: usize = 100;
 const DEBUG_TERMINAL_WIDTH: f32 = 500.;
 const DEBUG_TERMINAL_HEIGHT: f32 = 30.;
 const DEBUG_CELL_WIDTH: f32 = 5.;
@@ -237,28 +237,12 @@ impl TerminalError {
         self.shell
             .clone()
             .map(|shell| match shell {
-                Shell::System => {
-                    let mut buf = [0; 1024];
-                    let pw = alacritty_unix::get_pw_entry(&mut buf).ok();
+                Shell::System => "<system defined shell>".to_string(),
 
-                    match pw {
-                        Some(pw) => format!("<system defined shell> {}", pw.shell),
-                        None => "<could not access the password file>".to_string(),
-                    }
-                }
                 Shell::Program(s) => s,
                 Shell::WithArguments { program, args } => format!("{} {}", program, args.join(" ")),
             })
-            .unwrap_or_else(|| {
-                let mut buf = [0; 1024];
-                let pw = alacritty_unix::get_pw_entry(&mut buf).ok();
-                match pw {
-                    Some(pw) => {
-                        format!("<none specified, using system defined shell> {}", pw.shell)
-                    }
-                    None => "<none specified, could not access the password file> {}".to_string(),
-                }
-            })
+            .unwrap_or_else(|| "<none specified, using system defined shell>".to_string())
     }
 }
 
@@ -381,6 +365,7 @@ impl TerminalBuilder {
             shell_pid,
             foreground_process_info: None,
             breadcrumb_text: String::new(),
+            scroll_px: 0.,
         };
 
         Ok(TerminalBuilder {
@@ -500,6 +485,7 @@ pub struct Terminal {
     shell_pid: u32,
     shell_fd: u32,
     foreground_process_info: Option<LocalProcessInfo>,
+    scroll_px: f32,
 }
 
 impl Terminal {
@@ -535,13 +521,39 @@ impl Terminal {
             }
             AlacTermEvent::Wakeup => {
                 cx.emit(Event::Wakeup);
-                cx.notify();
+
+                if self.update_process_info() {
+                    cx.emit(Event::TitleChanged)
+                }
             }
             AlacTermEvent::ColorRequest(idx, fun_ptr) => {
                 self.events
                     .push_back(InternalEvent::ColorRequest(*idx, fun_ptr.clone()));
-                cx.notify(); //Immediately schedule a render to respond to the color request
             }
+        }
+    }
+
+    /// Update the cached process info, returns whether the Zed-relevant info has changed
+    fn update_process_info(&mut self) -> bool {
+        let mut pid = unsafe { libc::tcgetpgrp(self.shell_fd as i32) };
+        if pid < 0 {
+            pid = self.shell_pid as i32;
+        }
+
+        if let Some(process_info) = LocalProcessInfo::with_root_pid(pid as u32) {
+            let res = self
+                .foreground_process_info
+                .as_ref()
+                .map(|old_info| {
+                    process_info.cwd != old_info.cwd || process_info.name != old_info.name
+                })
+                .unwrap_or(true);
+
+            self.foreground_process_info = Some(process_info.clone());
+
+            res
+        } else {
+            false
         }
     }
 
@@ -678,7 +690,7 @@ impl Terminal {
         let mut terminal = if let Some(term) = term.try_lock_unfair() {
             term
         } else if self.last_synced.elapsed().as_secs_f32() > 0.25 {
-            term.lock_unfair()
+            term.lock_unfair() //It's been too long, force block
         } else if let None = self.sync_task {
             //Skip this frame
             let delay = cx.background().timer(Duration::from_millis(16));
@@ -699,24 +711,15 @@ impl Terminal {
             return;
         };
 
+        if self.update_process_info() {
+            cx.emit(Event::TitleChanged);
+        }
+
         //Note that the ordering of events matters for event processing
         while let Some(e) = self.events.pop_front() {
             self.process_terminal_event(&e, &mut terminal, cx)
         }
 
-        if let Some(process_info) = self.compute_process_info() {
-            let should_emit_title_changed = self
-                .foreground_process_info
-                .as_ref()
-                .map(|old_info| {
-                    process_info.cwd != old_info.cwd || process_info.name != old_info.name
-                })
-                .unwrap_or(true);
-            if should_emit_title_changed {
-                cx.emit(Event::TitleChanged)
-            }
-            self.foreground_process_info = Some(process_info.clone());
-        }
         self.last_content = Self::make_content(&terminal);
         self.last_synced = Instant::now();
     }
@@ -893,44 +896,66 @@ impl Terminal {
 
     ///Scroll the terminal
     pub fn scroll_wheel(&mut self, e: &ScrollWheelEvent, origin: Vector2F) {
-        if self.mouse_mode(e.shift) {
-            //TODO: Currently this only sends the current scroll reports as they come in. Alacritty
-            //Sends the *entire* scroll delta on *every* scroll event, only resetting it when
-            //The scroll enters 'TouchPhase::Started'. Do I need to replicate this?
-            //This would be consistent with a scroll model based on 'distance from origin'...
-            let scroll_lines = (e.delta.y() / self.cur_size.line_height) as i32;
-            let point = mouse_point(
-                e.position.sub(origin),
-                self.cur_size,
-                self.last_content.display_offset,
-            );
+        let mouse_mode = self.mouse_mode(e.shift);
 
-            if let Some(scrolls) =
-                scroll_report(point, scroll_lines as i32, e, self.last_content.mode)
+        if let Some(scroll_lines) = self.determine_scroll_lines(e, mouse_mode) {
+            if mouse_mode {
+                let point = mouse_point(
+                    e.position.sub(origin),
+                    self.cur_size,
+                    self.last_content.display_offset,
+                );
+
+                if let Some(scrolls) =
+                    scroll_report(point, scroll_lines as i32, e, self.last_content.mode)
+                {
+                    for scroll in scrolls {
+                        self.pty_tx.notify(scroll);
+                    }
+                };
+            } else if self
+                .last_content
+                .mode
+                .contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
+                && !e.shift
             {
-                for scroll in scrolls {
-                    self.pty_tx.notify(scroll);
+                self.pty_tx.notify(alt_scroll(scroll_lines))
+            } else {
+                if scroll_lines != 0 {
+                    let scroll = AlacScroll::Delta(scroll_lines);
+
+                    self.events.push_back(InternalEvent::Scroll(scroll));
                 }
-            };
-        } else if self
-            .last_content
-            .mode
-            .contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
-            && !e.shift
-        {
-            //TODO: See above TODO, also applies here.
-            let scroll_lines =
-                ((e.delta.y() * ALACRITTY_SCROLL_MULTIPLIER) / self.cur_size.line_height) as i32;
-
-            self.pty_tx.notify(alt_scroll(scroll_lines))
-        } else {
-            let scroll_lines =
-                ((e.delta.y() * ALACRITTY_SCROLL_MULTIPLIER) / self.cur_size.line_height) as i32;
-            if scroll_lines != 0 {
-                let scroll = AlacScroll::Delta(scroll_lines);
-
-                self.events.push_back(InternalEvent::Scroll(scroll));
             }
+        }
+    }
+
+    fn determine_scroll_lines(&mut self, e: &ScrollWheelEvent, mouse_mode: bool) -> Option<i32> {
+        let scroll_multiplier = if mouse_mode { 1. } else { SCROLL_MULTIPLIER };
+
+        match e.phase {
+            /* Reset scroll state on started */
+            Some(gpui::TouchPhase::Started) => {
+                self.scroll_px = 0.;
+                None
+            }
+            /* Calculate the appropriate scroll lines */
+            Some(gpui::TouchPhase::Moved) => {
+                let old_offset = (self.scroll_px / self.cur_size.line_height) as i32;
+
+                self.scroll_px += e.delta.y() * scroll_multiplier;
+
+                let new_offset = (self.scroll_px / self.cur_size.line_height) as i32;
+
+                // Whenever we hit the edges, reset our stored scroll to 0
+                // so we can respond to changes in direction quickly
+                self.scroll_px %= self.cur_size.height;
+
+                Some(new_offset - old_offset)
+            }
+            /* Fall back to delta / line_height */
+            None => Some(((e.delta.y() * scroll_multiplier) / self.cur_size.line_height) as i32),
+            _ => None,
         }
     }
 
@@ -957,16 +982,8 @@ impl Terminal {
 
             let term = term.lock();
 
-            make_search_matches(&term, &searcher).collect()
+            all_search_matches(&term, &searcher).collect()
         })
-    }
-
-    fn compute_process_info(&self) -> Option<LocalProcessInfo> {
-        let mut pid = unsafe { libc::tcgetpgrp(self.shell_fd as i32) };
-        if pid < 0 {
-            pid = self.shell_pid as i32;
-        }
-        LocalProcessInfo::with_root_pid(pid as u32)
     }
 }
 
@@ -988,102 +1005,32 @@ fn make_selection(range: &RangeInclusive<Point>) -> Selection {
 
 /// Copied from alacritty/src/display/hint.rs HintMatches::visible_regex_matches()
 /// Iterate over all visible regex matches.
-fn make_search_matches<'a, T>(
+// fn visible_search_matches<'a, T>(
+//     term: &'a Term<T>,
+//     regex: &'a RegexSearch,
+// ) -> impl Iterator<Item = Match> + 'a {
+//     let viewport_start = Line(-(term.grid().display_offset() as i32));
+//     let viewport_end = viewport_start + term.bottommost_line();
+//     let mut start = term.line_search_left(Point::new(viewport_start, Column(0)));
+//     let mut end = term.line_search_right(Point::new(viewport_end, Column(0)));
+//     start.line = start.line.max(viewport_start - MAX_SEARCH_LINES);
+//     end.line = end.line.min(viewport_end + MAX_SEARCH_LINES);
+
+//     RegexIter::new(start, end, AlacDirection::Right, term, regex)
+//         .skip_while(move |rm| rm.end().line < viewport_start)
+//         .take_while(move |rm| rm.start().line <= viewport_end)
+// }
+
+fn all_search_matches<'a, T>(
     term: &'a Term<T>,
     regex: &'a RegexSearch,
 ) -> impl Iterator<Item = Match> + 'a {
-    let viewport_start = Line(-(term.grid().display_offset() as i32));
-    let viewport_end = viewport_start + term.bottommost_line();
-    let mut start = term.line_search_left(Point::new(viewport_start, Column(0)));
-    let mut end = term.line_search_right(Point::new(viewport_end, Column(0)));
-    start.line = start.line.max(viewport_start - MAX_SEARCH_LINES);
-    end.line = end.line.min(viewport_end + MAX_SEARCH_LINES);
-
+    let start = Point::new(term.grid().topmost_line(), Column(0));
+    let end = Point::new(term.grid().bottommost_line(), term.grid().last_column());
     RegexIter::new(start, end, AlacDirection::Right, term, regex)
-        .skip_while(move |rm| rm.end().line < viewport_start)
-        .take_while(move |rm| rm.start().line <= viewport_end)
 }
 
 #[cfg(test)]
 mod tests {
     pub mod terminal_test_context;
-}
-
-//TODO Move this around and clean up the code
-mod alacritty_unix {
-    use alacritty_terminal::config::Program;
-    use gpui::anyhow::{bail, Result};
-
-    use std::ffi::CStr;
-    use std::mem::MaybeUninit;
-    use std::ptr;
-
-    #[derive(Debug)]
-    pub struct Passwd<'a> {
-        _name: &'a str,
-        _dir: &'a str,
-        pub shell: &'a str,
-    }
-
-    /// Return a Passwd struct with pointers into the provided buf.
-    ///
-    /// # Unsafety
-    ///
-    /// If `buf` is changed while `Passwd` is alive, bad thing will almost certainly happen.
-    pub fn get_pw_entry(buf: &mut [i8; 1024]) -> Result<Passwd<'_>> {
-        // Create zeroed passwd struct.
-        let mut entry: MaybeUninit<libc::passwd> = MaybeUninit::uninit();
-
-        let mut res: *mut libc::passwd = ptr::null_mut();
-
-        // Try and read the pw file.
-        let uid = unsafe { libc::getuid() };
-        let status = unsafe {
-            libc::getpwuid_r(
-                uid,
-                entry.as_mut_ptr(),
-                buf.as_mut_ptr() as *mut _,
-                buf.len(),
-                &mut res,
-            )
-        };
-        let entry = unsafe { entry.assume_init() };
-
-        if status < 0 {
-            bail!("getpwuid_r failed");
-        }
-
-        if res.is_null() {
-            bail!("pw not found");
-        }
-
-        // Sanity check.
-        assert_eq!(entry.pw_uid, uid);
-
-        // Build a borrowed Passwd struct.
-        Ok(Passwd {
-            _name: unsafe { CStr::from_ptr(entry.pw_name).to_str().unwrap() },
-            _dir: unsafe { CStr::from_ptr(entry.pw_dir).to_str().unwrap() },
-            shell: unsafe { CStr::from_ptr(entry.pw_shell).to_str().unwrap() },
-        })
-    }
-
-    #[cfg(target_os = "macos")]
-    pub fn _default_shell(pw: &Passwd<'_>) -> Program {
-        let shell_name = pw.shell.rsplit('/').next().unwrap();
-        let argv = vec![
-            String::from("-c"),
-            format!("exec -a -{} {}", shell_name, pw.shell),
-        ];
-
-        Program::WithArgs {
-            program: "/bin/bash".to_owned(),
-            args: argv,
-        }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    pub fn default_shell(pw: &Passwd<'_>) -> Program {
-        Program::Just(env::var("SHELL").unwrap_or_else(|_| pw.shell.to_owned()))
-    }
 }
