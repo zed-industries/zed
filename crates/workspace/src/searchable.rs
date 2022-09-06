@@ -88,7 +88,7 @@ pub trait SearchableItemHandle: ItemHandle {
     fn downgrade(&self) -> Box<dyn WeakSearchableItemHandle>;
     fn boxed_clone(&self) -> Box<dyn SearchableItemHandle>;
     fn supported_options(&self) -> SearchOptions;
-    fn subscribe(
+    fn subscribe_to_search_events(
         &self,
         cx: &mut MutableAppContext,
         handler: Box<dyn Fn(SearchEvent, &mut MutableAppContext)>,
@@ -134,7 +134,7 @@ impl<T: SearchableItem> SearchableItemHandle for ViewHandle<T> {
         T::supported_options()
     }
 
-    fn subscribe(
+    fn subscribe_to_search_events(
         &self,
         cx: &mut MutableAppContext,
         handler: Box<dyn Fn(SearchEvent, &mut MutableAppContext)>,

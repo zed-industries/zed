@@ -9,7 +9,7 @@ use gpui::{
 };
 use util::truncate_and_trailoff;
 use workspace::searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle};
-use workspace::{Item, Workspace};
+use workspace::{Item, ItemEvent, ToolbarItemLocation, Workspace};
 
 use crate::TerminalSize;
 use project::{LocalWorktree, Project, ProjectPath};
@@ -359,16 +359,40 @@ impl Item for TerminalContainer {
         false
     }
 
-    fn should_update_tab_on_event(event: &Self::Event) -> bool {
-        matches!(event, &Event::TitleChanged | &Event::Wakeup)
-    }
-
-    fn should_close_item_on_event(event: &Self::Event) -> bool {
-        matches!(event, &Event::CloseTerminal)
-    }
-
     fn as_searchable(&self, handle: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
+    }
+
+    fn to_item_events(event: &Self::Event) -> Vec<ItemEvent> {
+        match event {
+            Event::BreadcrumbsChanged => vec![ItemEvent::UpdateBreadcrumbs],
+            Event::TitleChanged | Event::Wakeup => vec![ItemEvent::UpdateTab],
+            Event::CloseTerminal => vec![ItemEvent::CloseItem],
+            _ => vec![],
+        }
+    }
+
+    fn breadcrumb_location(&self) -> ToolbarItemLocation {
+        if self.connected().is_some() {
+            ToolbarItemLocation::PrimaryLeft { flex: None }
+        } else {
+            ToolbarItemLocation::Hidden
+        }
+    }
+
+    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
+        let connected = self.connected()?;
+
+        Some(vec![Text::new(
+            connected
+                .read(cx)
+                .terminal()
+                .read(cx)
+                .breadcrumb_text
+                .to_string(),
+            theme.breadcrumbs.text.clone(),
+        )
+        .boxed()])
     }
 }
 

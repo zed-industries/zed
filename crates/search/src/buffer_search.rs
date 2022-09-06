@@ -189,18 +189,21 @@ impl ToolbarItemView for BufferSearchBar {
         self.active_searchable_item.take();
         self.pending_search.take();
 
-        if let Some(searchable_item_handle) = item.and_then(|item| item.as_searchable(cx)) {
+        if let Some(searchable_item_handle) =
+            item.and_then(|item| item.to_searchable_item_handle(cx))
+        {
             let handle = cx.weak_handle();
-            self.active_searchable_item_subscription = Some(searchable_item_handle.subscribe(
-                cx,
-                Box::new(move |search_event, cx| {
-                    if let Some(this) = handle.upgrade(cx) {
-                        this.update(cx, |this, cx| {
-                            this.on_active_searchable_item_event(search_event, cx)
-                        });
-                    }
-                }),
-            ));
+            self.active_searchable_item_subscription =
+                Some(searchable_item_handle.subscribe_to_search_events(
+                    cx,
+                    Box::new(move |search_event, cx| {
+                        if let Some(this) = handle.upgrade(cx) {
+                            this.update(cx, |this, cx| {
+                                this.on_active_searchable_item_event(search_event, cx)
+                            });
+                        }
+                    }),
+                ));
 
             self.active_searchable_item = Some(searchable_item_handle);
             self.update_matches(false, cx);

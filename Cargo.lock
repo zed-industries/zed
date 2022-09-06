@@ -613,6 +613,7 @@ dependencies = [
  "collections",
  "editor",
  "gpui",
+ "itertools",
  "language",
  "project",
  "search",

@@ -24,7 +24,8 @@ use std::{
 use util::ResultExt as _;
 use workspace::{
     searchable::{Direction, SearchableItem, SearchableItemHandle},
-    Item, ItemHandle, ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView, Workspace,
+    Item, ItemEvent, ItemHandle, ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView,
+    Workspace,
 };
 
 actions!(project_search, [SearchInNew, ToggleFocus]);
@@ -326,16 +327,24 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.navigate(data, cx))
     }
 
-    fn should_update_tab_on_event(event: &ViewEvent) -> bool {
-        matches!(event, ViewEvent::UpdateTab)
+    fn to_item_events(event: &Self::Event) -> Vec<ItemEvent> {
+        match event {
+            ViewEvent::UpdateTab => vec![ItemEvent::UpdateBreadcrumbs, ItemEvent::UpdateTab],
+            ViewEvent::EditorEvent(editor_event) => Editor::to_item_events(editor_event),
+            _ => Vec::new(),
+        }
     }
 
-    fn is_edit_event(event: &Self::Event) -> bool {
-        if let ViewEvent::EditorEvent(editor_event) = event {
-            Editor::is_edit_event(editor_event)
+    fn breadcrumb_location(&self) -> ToolbarItemLocation {
+        if self.has_matches() {
+            ToolbarItemLocation::Secondary
         } else {
-            false
+            ToolbarItemLocation::Hidden
         }
+    }
+
+    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
+        self.results_editor.breadcrumbs(theme, cx)
     }
 }
 

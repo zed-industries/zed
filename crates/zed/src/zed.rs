@@ -225,12 +225,11 @@ pub fn initialize_workspace(
     cx: &mut ViewContext<Workspace>,
 ) {
     cx.subscribe(&cx.handle(), {
-        let project = workspace.project().clone();
         move |_, _, event, cx| {
             if let workspace::Event::PaneAdded(pane) = event {
                 pane.update(cx, |pane, cx| {
                     pane.toolbar().update(cx, |toolbar, cx| {
-                        let breadcrumbs = cx.add_view(|_| Breadcrumbs::new(project.clone()));
+                        let breadcrumbs = cx.add_view(|_| Breadcrumbs::new());
                         toolbar.add_item(breadcrumbs, cx);
                         let buffer_search_bar = cx.add_view(BufferSearchBar::new);
                         toolbar.add_item(buffer_search_bar, cx);

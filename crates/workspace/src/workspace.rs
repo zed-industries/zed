@@ -267,6 +267,14 @@ pub struct AppState {
     pub initialize_workspace: fn(&mut Workspace, &Arc<AppState>, &mut ViewContext<Workspace>),
 }
 
+#[derive(Eq, PartialEq, Hash)]
+pub enum ItemEvent {
+    CloseItem,
+    UpdateTab,
+    UpdateBreadcrumbs,
+    Edit,
+}
+
 pub trait Item: View {
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn workspace_deactivated(&mut self, _: &mut ViewContext<Self>) {}
@@ -311,15 +319,7 @@ pub trait Item: View {
         project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>>;
-    fn should_close_item_on_event(_: &Self::Event) -> bool {
-        false
-    }
-    fn should_update_tab_on_event(_: &Self::Event) -> bool {
-        false
-    }
-    fn is_edit_event(_: &Self::Event) -> bool {
-        false
-    }
+    fn to_item_events(event: &Self::Event) -> Vec<ItemEvent>;
     fn act_as_type(
         &self,
         type_id: TypeId,
@@ -333,6 +333,13 @@ pub trait Item: View {
         }
     }
     fn as_searchable(&self, _: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+        None
+    }
+
+    fn breadcrumb_location(&self) -> ToolbarItemLocation {
+        ToolbarItemLocation::Hidden
+    }
+    fn breadcrumbs(&self, _theme: &Theme, _cx: &AppContext) -> Option<Vec<ElementBox>> {
         None
     }
 }
@@ -430,6 +437,11 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
 }
 
 pub trait ItemHandle: 'static + fmt::Debug {
+    fn subscribe_to_item_events(
+        &self,
+        cx: &mut MutableAppContext,
+        handler: Box<dyn Fn(ItemEvent, &mut MutableAppContext)>,
+    ) -> gpui::Subscription;
     fn tab_description<'a>(&self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>>;
     fn tab_content(&self, detail: Option<usize>, style: &theme::Tab, cx: &AppContext)
         -> ElementBox;
@@ -469,7 +481,9 @@ pub trait ItemHandle: 'static + fmt::Debug {
         cx: &mut MutableAppContext,
         callback: Box<dyn FnOnce(&mut MutableAppContext)>,
     ) -> gpui::Subscription;
-    fn as_searchable(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
+    fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
+    fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
+    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<ElementBox>>;
 }
 
 pub trait WeakItemHandle {
@@ -490,6 +504,18 @@ impl dyn ItemHandle {
 }
 
 impl<T: Item> ItemHandle for ViewHandle<T> {
+    fn subscribe_to_item_events(
+        &self,
+        cx: &mut MutableAppContext,
+        handler: Box<dyn Fn(ItemEvent, &mut MutableAppContext)>,
+    ) -> gpui::Subscription {
+        cx.subscribe(self, move |_, event, cx| {
+            for item_event in T::to_item_events(event) {
+                handler(item_event, cx)
+            }
+        })
+    }
+
     fn tab_description<'a>(&self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>> {
         self.read(cx).tab_description(detail, cx)
     }
@@ -605,47 +631,53 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                         }
                     }
 
-                    if T::should_close_item_on_event(event) {
-                        Pane::close_item(workspace, pane, item.id(), cx).detach_and_log_err(cx);
-                        return;
-                    }
+                    for item_event in T::to_item_events(event).into_iter() {
+                        match item_event {
+                            ItemEvent::CloseItem => {
+                                Pane::close_item(workspace, pane, item.id(), cx)
+                                    .detach_and_log_err(cx);
+                                return;
+                            }
+                            ItemEvent::UpdateTab => {
+                                pane.update(cx, |_, cx| {
+                                    cx.emit(pane::Event::ChangeItemTitle);
+                                    cx.notify();
+                                });
+                            }
+                            ItemEvent::Edit => {
+                                if let Autosave::AfterDelay { milliseconds } =
+                                    cx.global::<Settings>().autosave
+                                {
+                                    let prev_autosave = pending_autosave
+                                        .take()
+                                        .unwrap_or_else(|| Task::ready(Some(())));
+                                    let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
+                                    let prev_cancel_tx =
+                                        mem::replace(&mut cancel_pending_autosave, cancel_tx);
+                                    let project = workspace.project.downgrade();
+                                    let _ = prev_cancel_tx.send(());
+                                    let item = item.clone();
+                                    pending_autosave =
+                                        Some(cx.spawn_weak(|_, mut cx| async move {
+                                            let mut timer = cx
+                                                .background()
+                                                .timer(Duration::from_millis(milliseconds))
+                                                .fuse();
+                                            prev_autosave.await;
+                                            futures::select_biased! {
+                                                _ = cancel_rx => return None,
+                                                    _ = timer => {}
+                                            }
 
-                    if T::should_update_tab_on_event(event) {
-                        pane.update(cx, |_, cx| {
-                            cx.emit(pane::Event::ChangeItemTitle);
-                            cx.notify();
-                        });
-                    }
-
-                    if T::is_edit_event(event) {
-                        if let Autosave::AfterDelay { milliseconds } =
-                            cx.global::<Settings>().autosave
-                        {
-                            let prev_autosave = pending_autosave
-                                .take()
-                                .unwrap_or_else(|| Task::ready(Some(())));
-                            let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
-                            let prev_cancel_tx =
-                                mem::replace(&mut cancel_pending_autosave, cancel_tx);
-                            let project = workspace.project.downgrade();
-                            let _ = prev_cancel_tx.send(());
-                            pending_autosave = Some(cx.spawn_weak(|_, mut cx| async move {
-                                let mut timer = cx
-                                    .background()
-                                    .timer(Duration::from_millis(milliseconds))
-                                    .fuse();
-                                prev_autosave.await;
-                                futures::select_biased! {
-                                    _ = cancel_rx => return None,
-                                    _ = timer => {}
+                                            let project = project.upgrade(&cx)?;
+                                            cx.update(|cx| Pane::autosave_item(&item, project, cx))
+                                                .await
+                                                .log_err();
+                                            None
+                                        }));
                                 }
-
-                                let project = project.upgrade(&cx)?;
-                                cx.update(|cx| Pane::autosave_item(&item, project, cx))
-                                    .await
-                                    .log_err();
-                                None
-                            }));
+                            }
+                            _ => {}
                         }
                     }
                 }));
@@ -746,8 +778,16 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         cx.observe_release(self, move |_, cx| callback(cx))
     }
 
-    fn as_searchable(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>> {
+    fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>> {
         self.read(cx).as_searchable(self)
+    }
+
+    fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation {
+        self.read(cx).breadcrumb_location()
+    }
+
+    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
+        self.read(cx).breadcrumbs(theme, cx)
     }
 }
 
@@ -3590,12 +3630,8 @@ mod tests {
             Task::ready(Ok(()))
         }
 
-        fn should_update_tab_on_event(_: &Self::Event) -> bool {
-            true
-        }
-
-        fn is_edit_event(event: &Self::Event) -> bool {
-            matches!(event, TestItemEvent::Edit)
+        fn to_item_events(_: &Self::Event) -> Vec<ItemEvent> {
+            vec![ItemEvent::UpdateTab, ItemEvent::Edit]
         }
     }
 }
