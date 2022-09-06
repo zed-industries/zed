@@ -49,7 +49,7 @@ pub use lsp::DiagnosticSeverity;
 pub struct Buffer {
     text: TextBuffer,
     head_text: Option<String>,
-    diff: BufferDiff,
+    git_diff: BufferDiff,
     file: Option<Arc<dyn File>>,
     saved_version: clock::Global,
     saved_version_fingerprint: String,
@@ -69,6 +69,7 @@ pub struct Buffer {
     diagnostics_update_count: usize,
     diagnostics_timestamp: clock::Lamport,
     file_update_count: usize,
+    diff_update_count: usize,
     completion_triggers: Vec<String>,
     completion_triggers_timestamp: clock::Lamport,
     deferred_ops: OperationQueue<Operation>,
@@ -76,12 +77,13 @@ pub struct Buffer {
 
 pub struct BufferSnapshot {
     text: text::BufferSnapshot,
-    git_hunks: Arc<[DiffHunk<Anchor>]>,
+    pub git_hunks: Arc<[DiffHunk<Anchor>]>,
     pub(crate) syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: DiagnosticSet,
     diagnostics_update_count: usize,
     file_update_count: usize,
+    diff_update_count: usize,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     selections_update_count: usize,
     language: Option<Arc<Language>>,
@@ -419,9 +421,9 @@ impl Buffer {
             UNIX_EPOCH
         };
 
-        let mut diff = BufferDiff::new();
+        let mut git_diff = BufferDiff::new();
         if let Some(head_text) = &head_text {
-            diff.update(head_text, &buffer);
+            git_diff.update(head_text, &buffer);
         }
 
         Self {
@@ -432,7 +434,7 @@ impl Buffer {
             was_dirty_before_starting_transaction: None,
             text: buffer,
             head_text,
-            diff,
+            git_diff,
             file,
             syntax_map: Mutex::new(SyntaxMap::new()),
             parsing_in_background: false,
@@ -447,6 +449,7 @@ impl Buffer {
             diagnostics_update_count: 0,
             diagnostics_timestamp: Default::default(),
             file_update_count: 0,
+            diff_update_count: 0,
             completion_triggers: Default::default(),
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
@@ -462,12 +465,13 @@ impl Buffer {
         BufferSnapshot {
             text,
             syntax,
-            git_hunks: self.diff.hunks(),
+            git_hunks: self.git_diff.hunks(),
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
             diagnostics_update_count: self.diagnostics_update_count,
             file_update_count: self.file_update_count,
+            diff_update_count: self.diff_update_count,
             language: self.language.clone(),
             parse_count: self.parse_count,
             selections_update_count: self.selections_update_count,
@@ -649,6 +653,14 @@ impl Buffer {
         task
     }
 
+    pub fn update_git(&mut self) {
+        if let Some(head_text) = &self.head_text {
+            let snapshot = self.snapshot();
+            self.git_diff.update(head_text, &snapshot);
+            self.diff_update_count += 1;
+        }
+    }
+
     pub fn close(&mut self, cx: &mut ModelContext<Self>) {
         cx.emit(Event::Closed);
     }
@@ -671,6 +683,10 @@ impl Buffer {
 
     pub fn file_update_count(&self) -> usize {
         self.file_update_count
+    }
+
+    pub fn diff_update_count(&self) -> usize {
+        self.diff_update_count
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -2226,6 +2242,10 @@ impl BufferSnapshot {
     pub fn file_update_count(&self) -> usize {
         self.file_update_count
     }
+
+    pub fn diff_update_count(&self) -> usize {
+        self.diff_update_count
+    }
 }
 
 pub fn indent_size_for_line(text: &text::BufferSnapshot, row: u32) -> IndentSize {
@@ -2260,6 +2280,7 @@ impl Clone for BufferSnapshot {
             selections_update_count: self.selections_update_count,
             diagnostics_update_count: self.diagnostics_update_count,
             file_update_count: self.file_update_count,
+            diff_update_count: self.diff_update_count,
             language: self.language.clone(),
             parse_count: self.parse_count,
         }

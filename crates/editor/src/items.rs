@@ -481,9 +481,12 @@ impl Item for Editor {
     fn update_git(
         &mut self,
         _project: ModelHandle<Project>,
-        _cx: &mut ViewContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        println!("Editor::update_git");
+        self.buffer().update(cx, |multibuffer, cx| {
+            multibuffer.update_git(cx);
+        });
+        cx.notify();
         Task::ready(Ok(()))
     }
 

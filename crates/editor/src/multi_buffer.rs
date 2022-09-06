@@ -91,6 +91,7 @@ struct BufferState {
     last_selections_update_count: usize,
     last_diagnostics_update_count: usize,
     last_file_update_count: usize,
+    last_diff_update_count: usize,
     excerpts: Vec<ExcerptId>,
     _subscriptions: [gpui::Subscription; 2],
 }
@@ -102,6 +103,7 @@ pub struct MultiBufferSnapshot {
     parse_count: usize,
     diagnostics_update_count: usize,
     trailing_excerpt_update_count: usize,
+    diff_update_count: usize,
     edit_count: usize,
     is_dirty: bool,
     has_conflict: bool,
@@ -203,6 +205,7 @@ impl MultiBuffer {
                     last_selections_update_count: buffer_state.last_selections_update_count,
                     last_diagnostics_update_count: buffer_state.last_diagnostics_update_count,
                     last_file_update_count: buffer_state.last_file_update_count,
+                    last_diff_update_count: buffer_state.last_diff_update_count,
                     excerpts: buffer_state.excerpts.clone(),
                     _subscriptions: [
                         new_cx.observe(&buffer_state.buffer, |_, _, cx| cx.notify()),
@@ -307,6 +310,15 @@ impl MultiBuffer {
         cx: &AppContext,
     ) -> Option<(usize, Vec<OutlineItem<Anchor>>)> {
         self.read(cx).symbols_containing(offset, theme)
+    }
+
+    pub fn update_git(&mut self, cx: &mut ModelContext<Self>) {
+        let mut buffers = self.buffers.borrow_mut();
+        for buffer in buffers.values_mut() {
+            buffer.buffer.update(cx, |buffer, _| {
+                buffer.update_git();
+            })
+        }
     }
 
     pub fn edit<I, S, T>(
@@ -828,6 +840,7 @@ impl MultiBuffer {
             last_selections_update_count: buffer_snapshot.selections_update_count(),
             last_diagnostics_update_count: buffer_snapshot.diagnostics_update_count(),
             last_file_update_count: buffer_snapshot.file_update_count(),
+            last_diff_update_count: buffer_snapshot.diff_update_count(),
             excerpts: Default::default(),
             _subscriptions: [
                 cx.observe(&buffer, |_, _, cx| cx.notify()),
@@ -1250,6 +1263,7 @@ impl MultiBuffer {
         let mut excerpts_to_edit = Vec::new();
         let mut reparsed = false;
         let mut diagnostics_updated = false;
+        let mut diff_updated = false;
         let mut is_dirty = false;
         let mut has_conflict = false;
         let mut edited = false;
@@ -1261,6 +1275,7 @@ impl MultiBuffer {
             let selections_update_count = buffer.selections_update_count();
             let diagnostics_update_count = buffer.diagnostics_update_count();
             let file_update_count = buffer.file_update_count();
+            let diff_update_count = buffer.diff_update_count();
 
             let buffer_edited = version.changed_since(&buffer_state.last_version);
             let buffer_reparsed = parse_count > buffer_state.last_parse_count;
@@ -1269,17 +1284,20 @@ impl MultiBuffer {
             let buffer_diagnostics_updated =
                 diagnostics_update_count > buffer_state.last_diagnostics_update_count;
             let buffer_file_updated = file_update_count > buffer_state.last_file_update_count;
+            let buffer_diff_updated = diff_update_count > buffer_state.last_diff_update_count;
             if buffer_edited
                 || buffer_reparsed
                 || buffer_selections_updated
                 || buffer_diagnostics_updated
                 || buffer_file_updated
+                || buffer_diff_updated
             {
                 buffer_state.last_version = version;
                 buffer_state.last_parse_count = parse_count;
                 buffer_state.last_selections_update_count = selections_update_count;
                 buffer_state.last_diagnostics_update_count = diagnostics_update_count;
                 buffer_state.last_file_update_count = file_update_count;
+                buffer_state.last_diff_update_count = diff_update_count;
                 excerpts_to_edit.extend(
                     buffer_state
                         .excerpts
@@ -1291,6 +1309,7 @@ impl MultiBuffer {
             edited |= buffer_edited;
             reparsed |= buffer_reparsed;
             diagnostics_updated |= buffer_diagnostics_updated;
+            diff_updated |= buffer_diff_updated;
             is_dirty |= buffer.is_dirty();
             has_conflict |= buffer.has_conflict();
         }
@@ -1302,6 +1321,9 @@ impl MultiBuffer {
         }
         if diagnostics_updated {
             snapshot.diagnostics_update_count += 1;
+        }
+        if diff_updated {
+            snapshot.diff_update_count += 1;
         }
         snapshot.is_dirty = is_dirty;
         snapshot.has_conflict = has_conflict;
@@ -2478,6 +2500,10 @@ impl MultiBufferSnapshot {
 
     pub fn diagnostics_update_count(&self) -> usize {
         self.diagnostics_update_count
+    }
+
+    pub fn diff_update_count(&self) -> usize {
+        self.diff_update_count
     }
 
     pub fn trailing_excerpt_update_count(&self) -> usize {
