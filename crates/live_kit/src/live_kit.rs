@@ -14,6 +14,7 @@ use std::ffi::c_void;
 
 extern "C" {
     fn LKRelease(object: *const c_void);
+
     fn LKRoomCreate() -> *const c_void;
     fn LKRoomConnect(
         room: *const c_void,
@@ -22,6 +23,13 @@ extern "C" {
         callback: extern "C" fn(*mut c_void) -> (),
         callback_data: *mut c_void,
     );
+    fn LKRoomPublishVideoTrack(
+        room: *const c_void,
+        track: *const c_void,
+        callback: extern "C" fn(*mut c_void) -> (),
+        callback_data: *mut c_void,
+    );
+
     fn LKCreateScreenShareTrackForWindow(windowId: u32) -> *const c_void;
 }
 
@@ -35,24 +43,48 @@ impl Room {
     pub fn connect(&self, url: &str, token: &str) -> impl Future<Output = ()> {
         let url = CFString::new(url);
         let token = CFString::new(token);
-
-        let (tx, rx) = oneshot::channel();
-        extern "C" fn did_connect(tx: *mut c_void) {
-            let tx = unsafe { Box::from_raw(tx as *mut oneshot::Sender<()>) };
-            let _ = tx.send(());
-        }
-
+        let (did_connect, tx, rx) = Self::build_done_callback();
         unsafe {
             LKRoomConnect(
                 self.0,
                 url.as_concrete_TypeRef(),
                 token.as_concrete_TypeRef(),
                 did_connect,
-                Box::into_raw(Box::new(tx)) as *mut c_void,
+                tx,
             )
         }
 
         async { rx.await.unwrap() }
+    }
+
+    pub fn publish_video_track(&self, track: &LocalVideoTrack) -> impl Future<Output = ()> {
+        let (did_publish, tx, rx) = Self::build_done_callback();
+        unsafe {
+            LKRoomPublishVideoTrack(
+                self.0,
+                track.0,
+                did_publish,
+                Box::into_raw(Box::new(tx)) as *mut c_void,
+            )
+        }
+        async { rx.await.unwrap() }
+    }
+
+    fn build_done_callback() -> (
+        extern "C" fn(*mut c_void),
+        *mut c_void,
+        oneshot::Receiver<()>,
+    ) {
+        let (tx, rx) = oneshot::channel();
+        extern "C" fn done_callback(tx: *mut c_void) {
+            let tx = unsafe { Box::from_raw(tx as *mut oneshot::Sender<()>) };
+            let _ = tx.send(());
+        }
+        (
+            done_callback,
+            Box::into_raw(Box::new(tx)) as *mut c_void,
+            rx,
+        )
     }
 }
 

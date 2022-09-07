@@ -22,6 +22,17 @@ public func LKRoomConnect(room: UnsafeRawPointer, url: CFString, token: CFString
     };
 }
 
+@_cdecl("LKRoomPublishVideoTrack")
+public func LKRoomPublishVideoTrack(room: UnsafeRawPointer, track: UnsafeRawPointer, callback: @escaping @convention(c) (UnsafeRawPointer) -> Void, callback_data: UnsafeRawPointer) {
+    let room = Unmanaged<Room>.fromOpaque(room).takeUnretainedValue();
+    let track = Unmanaged<LocalVideoTrack>.fromOpaque(track).takeUnretainedValue();
+    room.localParticipant?.publishVideoTrack(track: track).then { _ in
+        callback(callback_data);
+    }.catch { error in
+        print(error);
+    };
+}
+
 @_cdecl("LKCreateScreenShareTrackForWindow")
 public func LKCreateScreenShareTrackForWindow(windowId: uint32) -> UnsafeMutableRawPointer {
     let track = LocalVideoTrack.createMacOSScreenShareTrack(source: .window(id: windowId));

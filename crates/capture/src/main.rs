@@ -41,7 +41,7 @@ fn main() {
         )
         .unwrap();
 
-        let room = live_kit::Room::new();
+        let room = Room::new();
         cx.foreground()
             .spawn(async move {
                 println!("connecting...");
@@ -51,6 +51,7 @@ fn main() {
 
                 let window_id = windows.iter().next().unwrap().id;
                 let track = LocalVideoTrack::screen_share_for_window(window_id);
+                room.publish_video_track(&track).await;
             })
             .detach();
 
