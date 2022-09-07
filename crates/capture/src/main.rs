@@ -45,13 +45,15 @@ fn main() {
         cx.foreground()
             .spawn(async move {
                 println!("connecting...");
-                room.connect("wss://zed.livekit.cloud", &token).await;
+                room.connect("wss://zed.livekit.cloud", &token)
+                    .await
+                    .unwrap();
                 let windows = live_kit::list_windows();
                 println!("connected! {:?}", windows);
 
                 let window_id = windows.iter().next().unwrap().id;
                 let track = LocalVideoTrack::screen_share_for_window(window_id);
-                room.publish_video_track(&track).await;
+                room.publish_video_track(&track).await.unwrap();
             })
             .detach();
 

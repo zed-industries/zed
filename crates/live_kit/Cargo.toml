@@ -9,6 +9,7 @@ path = "src/live_kit.rs"
 doctest = false
 
 [dependencies]
+anyhow = "1.0.38"
 core-foundation = "0.9.3"
 core-graphics = "0.22.3"
 futures = "0.3"

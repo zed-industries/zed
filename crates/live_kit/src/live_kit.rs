@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Context, Result};
 use core_foundation::{
     array::CFArray,
     base::{TCFType, TCFTypeRef},
@@ -20,13 +21,13 @@ extern "C" {
         room: *const c_void,
         url: CFStringRef,
         token: CFStringRef,
-        callback: extern "C" fn(*mut c_void) -> (),
+        callback: extern "C" fn(*mut c_void, CFStringRef) -> (),
         callback_data: *mut c_void,
     );
     fn LKRoomPublishVideoTrack(
         room: *const c_void,
         track: *const c_void,
-        callback: extern "C" fn(*mut c_void) -> (),
+        callback: extern "C" fn(*mut c_void, CFStringRef) -> (),
         callback_data: *mut c_void,
     );
 
@@ -40,7 +41,7 @@ impl Room {
         Self(unsafe { LKRoomCreate() })
     }
 
-    pub fn connect(&self, url: &str, token: &str) -> impl Future<Output = ()> {
+    pub fn connect(&self, url: &str, token: &str) -> impl Future<Output = Result<()>> {
         let url = CFString::new(url);
         let token = CFString::new(token);
         let (did_connect, tx, rx) = Self::build_done_callback();
@@ -54,10 +55,10 @@ impl Room {
             )
         }
 
-        async { rx.await.unwrap() }
+        async { rx.await.unwrap().context("error connecting to room") }
     }
 
-    pub fn publish_video_track(&self, track: &LocalVideoTrack) -> impl Future<Output = ()> {
+    pub fn publish_video_track(&self, track: &LocalVideoTrack) -> impl Future<Output = Result<()>> {
         let (did_publish, tx, rx) = Self::build_done_callback();
         unsafe {
             LKRoomPublishVideoTrack(
@@ -67,18 +68,23 @@ impl Room {
                 Box::into_raw(Box::new(tx)) as *mut c_void,
             )
         }
-        async { rx.await.unwrap() }
+        async { rx.await.unwrap().context("error publishing video track") }
     }
 
     fn build_done_callback() -> (
-        extern "C" fn(*mut c_void),
+        extern "C" fn(*mut c_void, CFStringRef),
         *mut c_void,
-        oneshot::Receiver<()>,
+        oneshot::Receiver<Result<()>>,
     ) {
         let (tx, rx) = oneshot::channel();
-        extern "C" fn done_callback(tx: *mut c_void) {
-            let tx = unsafe { Box::from_raw(tx as *mut oneshot::Sender<()>) };
-            let _ = tx.send(());
+        extern "C" fn done_callback(tx: *mut c_void, error: CFStringRef) {
+            let tx = unsafe { Box::from_raw(tx as *mut oneshot::Sender<Result<()>>) };
+            if error.is_null() {
+                let _ = tx.send(Ok(()));
+            } else {
+                let error = unsafe { CFString::wrap_under_get_rule(error).to_string() };
+                let _ = tx.send(Err(anyhow!(error)));
+            }
         }
         (
             done_callback,

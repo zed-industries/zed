@@ -2940,6 +2940,7 @@ dependencies = [
 name = "live_kit"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "core-foundation",
  "core-graphics",
  "futures",
