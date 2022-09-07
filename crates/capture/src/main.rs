@@ -30,6 +30,7 @@ fn main() {
             }],
         }]);
 
+        let live_kit_url = std::env::var("LIVE_KIT_URL").unwrap();
         let live_kit_key = std::env::var("LIVE_KIT_KEY").unwrap();
         let live_kit_secret = std::env::var("LIVE_KIT_SECRET").unwrap();
 
@@ -45,9 +46,7 @@ fn main() {
         cx.foreground()
             .spawn(async move {
                 println!("connecting...");
-                room.connect("wss://zed.livekit.cloud", &token)
-                    .await
-                    .unwrap();
+                room.connect(&live_kit_url, &token).await.unwrap();
                 let windows = live_kit::list_windows();
                 println!("connected! {:?}", windows);
 
