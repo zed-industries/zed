@@ -1,5 +1,7 @@
 mod live_kit_token;
 
+use std::time::Duration;
+
 use gpui::{
     actions,
     elements::{Canvas, *},
@@ -34,25 +36,38 @@ fn main() {
         let live_kit_key = std::env::var("LIVE_KIT_KEY").unwrap();
         let live_kit_secret = std::env::var("LIVE_KIT_SECRET").unwrap();
 
-        let token = live_kit_token::create_token(
-            &live_kit_key,
-            &live_kit_secret,
-            "test-room",
-            "test-participant",
-        )
-        .unwrap();
-
-        let room = Room::new();
+        let background = cx.background().clone();
         cx.foreground()
             .spawn(async move {
                 println!("connecting...");
-                room.connect(&live_kit_url, &token).await.unwrap();
+                let user1_token = live_kit_token::create_token(
+                    &live_kit_key,
+                    &live_kit_secret,
+                    "test-room",
+                    "test-participant-1",
+                )
+                .unwrap();
+                let room1 = Room::new("user-1 room");
+                room1.connect(&live_kit_url, &user1_token).await.unwrap();
+
+                let user2_token = live_kit_token::create_token(
+                    &live_kit_key,
+                    &live_kit_secret,
+                    "test-room",
+                    "test-participant-2",
+                )
+                .unwrap();
+                let room2 = Room::new("user-2 room");
+                room2.connect(&live_kit_url, &user2_token).await.unwrap();
+
                 let windows = live_kit::list_windows();
                 println!("connected! {:?}", windows);
 
                 let window_id = windows.iter().next().unwrap().id;
                 let track = LocalVideoTrack::screen_share_for_window(window_id);
-                room.publish_video_track(&track).await.unwrap();
+                room1.publish_video_track(&track).await.unwrap();
+
+                background.timer(Duration::from_secs(120)).await;
             })
             .detach();
 

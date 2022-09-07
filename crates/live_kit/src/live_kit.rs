@@ -11,34 +11,56 @@ use core_graphics::window::{
     kCGWindowNumber, kCGWindowOwnerName, kCGWindowOwnerPID, CGWindowListCopyWindowInfo,
 };
 use futures::{channel::oneshot, Future};
-use std::ffi::c_void;
+use std::{
+    ffi::c_void,
+    sync::{Arc, Weak},
+};
 
 extern "C" {
     fn LKRelease(object: *const c_void);
 
-    fn LKRoomCreate() -> *const c_void;
+    fn LKRoomDelegateCreate(
+        callback_data: *const c_void,
+        on_did_subscribe_to_remote_track: extern "C" fn(
+            callback_data: *mut c_void,
+            remote_track: *const c_void,
+        ),
+    ) -> *const c_void;
+
+    fn LKRoomCreate(delegate: *const c_void) -> *const c_void;
     fn LKRoomConnect(
         room: *const c_void,
         url: CFStringRef,
         token: CFStringRef,
-        callback: extern "C" fn(*mut c_void, CFStringRef) -> (),
+        callback: extern "C" fn(*mut c_void, CFStringRef),
         callback_data: *mut c_void,
     );
     fn LKRoomPublishVideoTrack(
         room: *const c_void,
         track: *const c_void,
-        callback: extern "C" fn(*mut c_void, CFStringRef) -> (),
+        callback: extern "C" fn(*mut c_void, CFStringRef),
         callback_data: *mut c_void,
     );
 
     fn LKCreateScreenShareTrackForWindow(windowId: u32) -> *const c_void;
 }
 
-pub struct Room(*const c_void);
+pub struct Room {
+    debug_name: &'static str,
+    native_room: *const c_void,
+    _delegate: RoomDelegate,
+}
 
 impl Room {
-    pub fn new() -> Self {
-        Self(unsafe { LKRoomCreate() })
+    pub fn new(debug_name: &'static str) -> Arc<Self> {
+        Arc::new_cyclic(|weak_room| {
+            let delegate = RoomDelegate::new(weak_room.clone());
+            Self {
+                debug_name,
+                native_room: unsafe { LKRoomCreate(delegate.native_delegate) },
+                _delegate: delegate,
+            }
+        })
     }
 
     pub fn connect(&self, url: &str, token: &str) -> impl Future<Output = Result<()>> {
@@ -47,7 +69,7 @@ impl Room {
         let (did_connect, tx, rx) = Self::build_done_callback();
         unsafe {
             LKRoomConnect(
-                self.0,
+                self.native_room,
                 url.as_concrete_TypeRef(),
                 token.as_concrete_TypeRef(),
                 did_connect,
@@ -61,9 +83,13 @@ impl Room {
     pub fn publish_video_track(&self, track: &LocalVideoTrack) -> impl Future<Output = Result<()>> {
         let (did_publish, tx, rx) = Self::build_done_callback();
         unsafe {
-            LKRoomPublishVideoTrack(self.0, track.0, did_publish, tx);
+            LKRoomPublishVideoTrack(self.native_room, track.0, did_publish, tx);
         }
         async { rx.await.unwrap().context("error publishing video track") }
+    }
+
+    fn did_subscribe_to_remote_track(&self, track: RemoteVideoTrack) {
+        println!("{}: !!!!!!!!!!!!!!!!!!", self.debug_name);
     }
 
     fn build_done_callback() -> (
@@ -91,7 +117,46 @@ impl Room {
 
 impl Drop for Room {
     fn drop(&mut self) {
-        unsafe { LKRelease(self.0) }
+        unsafe { LKRelease(self.native_room) }
+    }
+}
+
+struct RoomDelegate {
+    native_delegate: *const c_void,
+    weak_room: *const Room,
+}
+
+impl RoomDelegate {
+    fn new(weak_room: Weak<Room>) -> Self {
+        let weak_room = Weak::into_raw(weak_room);
+        let native_delegate = unsafe {
+            LKRoomDelegateCreate(
+                weak_room as *const c_void,
+                Self::on_did_subscribe_to_remote_track,
+            )
+        };
+        Self {
+            native_delegate,
+            weak_room,
+        }
+    }
+
+    extern "C" fn on_did_subscribe_to_remote_track(room: *mut c_void, track: *const c_void) {
+        let room = unsafe { Weak::from_raw(room as *mut Room) };
+        let track = unsafe { RemoteVideoTrack(track) };
+        if let Some(room) = room.upgrade() {
+            room.did_subscribe_to_remote_track(track);
+        }
+        let _ = Weak::into_raw(room);
+    }
+}
+
+impl Drop for RoomDelegate {
+    fn drop(&mut self) {
+        unsafe {
+            LKRelease(self.native_delegate);
+            let _ = Weak::from_raw(self.weak_room);
+        }
     }
 }
 
@@ -104,6 +169,14 @@ impl LocalVideoTrack {
 }
 
 impl Drop for LocalVideoTrack {
+    fn drop(&mut self) {
+        unsafe { LKRelease(self.0) }
+    }
+}
+
+pub struct RemoteVideoTrack(*const c_void);
+
+impl Drop for RemoteVideoTrack {
     fn drop(&mut self) {
         unsafe { LKRelease(self.0) }
     }
