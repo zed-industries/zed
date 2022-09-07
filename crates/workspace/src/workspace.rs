@@ -18,7 +18,7 @@ use client::{
 };
 use clock::ReplicaId;
 use collections::{hash_map, HashMap, HashSet};
-use dock::{Dock, DockPosition};
+use dock::{Dock, DockPosition, ToggleDock};
 use drag_and_drop::DragAndDrop;
 use futures::{channel::oneshot, FutureExt};
 use gpui::{
@@ -980,23 +980,25 @@ impl Workspace {
 
         cx.emit_global(WorkspaceCreated(weak_self.clone()));
 
+        let dock = Dock::new(cx);
+
         let left_sidebar = cx.add_view(|_| Sidebar::new(Side::Left));
         let right_sidebar = cx.add_view(|_| Sidebar::new(Side::Right));
         let left_sidebar_buttons = cx.add_view(|cx| SidebarButtons::new(left_sidebar.clone(), cx));
+        let toggle_dock = cx.add_view(|cx| ToggleDock::new(Arc::new(dock), cx));
         let right_sidebar_buttons =
             cx.add_view(|cx| SidebarButtons::new(right_sidebar.clone(), cx));
         let status_bar = cx.add_view(|cx| {
             let mut status_bar = StatusBar::new(&pane.clone(), cx);
             status_bar.add_left_item(left_sidebar_buttons, cx);
             status_bar.add_right_item(right_sidebar_buttons, cx);
+            status_bar.add_right_item(toggle_dock, cx);
             status_bar
         });
 
         cx.update_default_global::<DragAndDrop<Workspace>, _, _>(|drag_and_drop, _| {
             drag_and_drop.register_container(weak_self.clone());
         });
-
-        let dock = Dock::new(cx);
 
         let mut this = Workspace {
             modal: None,
