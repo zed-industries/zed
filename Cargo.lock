@@ -2941,6 +2941,7 @@ name = "live_kit"
 version = "0.1.0"
 dependencies = [
  "core-foundation",
+ "core-graphics",
  "futures",
  "serde",
  "serde_json",

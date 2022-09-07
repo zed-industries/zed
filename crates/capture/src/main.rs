@@ -7,7 +7,7 @@ use gpui::{
     platform::current::Surface,
     Menu, MenuItem, ViewContext,
 };
-use live_kit::Room;
+use live_kit::{LocalVideoTrack, Room};
 use log::LevelFilter;
 use media::core_video::CVImageBuffer;
 use simplelog::SimpleLogger;
@@ -42,13 +42,17 @@ fn main() {
         .unwrap();
 
         let room = live_kit::Room::new();
-        cx.spawn(|cx| async move {
-            println!("connecting...");
-            room.connect("wss://zed.livekit.cloud", &token).await;
-            println!("connected!");
-            drop(room);
-        })
-        .detach();
+        cx.foreground()
+            .spawn(async move {
+                println!("connecting...");
+                room.connect("wss://zed.livekit.cloud", &token).await;
+                let windows = live_kit::list_windows();
+                println!("connected! {:?}", windows);
+
+                let window_id = windows.iter().next().unwrap().id;
+                let track = LocalVideoTrack::screen_share_for_window(window_id);
+            })
+            .detach();
 
         // cx.add_window(Default::default(), |cx| ScreenCaptureView::new(cx));
     });

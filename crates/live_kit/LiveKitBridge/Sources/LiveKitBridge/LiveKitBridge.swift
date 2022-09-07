@@ -1,14 +1,14 @@
 import Foundation
 import LiveKit
 
+@_cdecl("LKRelease")
+public func LKRelease(ptr: UnsafeRawPointer)  {
+    let _ = Unmanaged<AnyObject>.fromOpaque(ptr).takeRetainedValue();
+}
+
 @_cdecl("LKRoomCreate")
 public func LKRoomCreate() -> UnsafeMutableRawPointer  {
     Unmanaged.passRetained(Room()).toOpaque()
-}
-
-@_cdecl("LKRoomDestroy")
-public func LKRoomDestroy(ptr: UnsafeRawPointer)  {
-    let _ = Unmanaged<Room>.fromOpaque(ptr).takeRetainedValue();
 }
 
 @_cdecl("LKRoomConnect")
@@ -20,4 +20,10 @@ public func LKRoomConnect(room: UnsafeRawPointer, url: CFString, token: CFString
     }.catch { error in
         print(error);
     };
+}
+
+@_cdecl("LKCreateScreenShareTrackForWindow")
+public func LKCreateScreenShareTrackForWindow(windowId: uint32) -> UnsafeMutableRawPointer {
+    let track = LocalVideoTrack.createMacOSScreenShareTrack(source: .window(id: windowId));
+    return Unmanaged.passRetained(track).toOpaque()
 }
