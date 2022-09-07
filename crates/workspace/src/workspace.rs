@@ -1,3 +1,4 @@
+pub mod dock;
 /// NOTE: Focus only 'takes' after an update has flushed_effects. Pane sends an event in on_focus_in
 /// which the workspace uses to change the activated pane.
 ///
@@ -5,7 +6,6 @@
 /// specific locations.
 pub mod pane;
 pub mod pane_group;
-pub mod programs;
 pub mod searchable;
 pub mod sidebar;
 mod status_bar;
@@ -18,6 +18,7 @@ use client::{
 };
 use clock::ReplicaId;
 use collections::{hash_map, HashMap, HashSet};
+use dock::{Dock, DockPosition};
 use drag_and_drop::DragAndDrop;
 use futures::{channel::oneshot, FutureExt};
 use gpui::{
@@ -37,7 +38,6 @@ use log::error;
 pub use pane::*;
 pub use pane_group::*;
 use postage::prelude::Stream;
-use programs::Dock;
 use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, ProjectStore, Worktree, WorktreeId};
 use searchable::SearchableItemHandle;
 use serde::Deserialize;
@@ -146,9 +146,6 @@ impl_internal_actions!(
 impl_actions!(workspace, [ToggleProjectOnline, ActivatePane]);
 
 pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
-    // Initialize the program manager immediately
-    cx.set_global(Dock::new());
-
     pane::init(cx);
 
     cx.add_global_action(open);
@@ -893,6 +890,7 @@ pub struct Workspace {
     panes_by_item: HashMap<usize, WeakViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
     status_bar: ViewHandle<StatusBar>,
+    dock: Dock,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: ModelHandle<Project>,
     leader_state: LeaderState,
@@ -998,10 +996,13 @@ impl Workspace {
             drag_and_drop.register_container(weak_self.clone());
         });
 
+        let dock = Dock::new(cx);
+
         let mut this = Workspace {
             modal: None,
             weak_self,
             center: PaneGroup::new(pane.clone()),
+            dock,
             panes: vec![pane.clone()],
             panes_by_item: Default::default(),
             active_pane: pane.clone(),
@@ -2557,13 +2558,35 @@ impl View for Workspace {
                                         },
                                     )
                                     .with_child(
-                                        FlexItem::new(self.center.render(
-                                            &theme,
-                                            &self.follower_states_by_leader,
-                                            self.project.read(cx).collaborators(),
-                                        ))
+                                        FlexItem::new(
+                                            Flex::column()
+                                                .with_child(
+                                                    FlexItem::new(self.center.render(
+                                                        &theme,
+                                                        &self.follower_states_by_leader,
+                                                        self.project.read(cx).collaborators(),
+                                                    ))
+                                                    .flex(1., true)
+                                                    .boxed(),
+                                                )
+                                                .with_children(
+                                                    self.dock
+                                                        .render(&theme, DockPosition::Bottom)
+                                                        .map(|dock| {
+                                                            FlexItem::new(dock)
+                                                                .flex(1., true)
+                                                                .boxed()
+                                                        }),
+                                                )
+                                                .boxed(),
+                                        )
                                         .flex(1., true)
                                         .boxed(),
+                                    )
+                                    .with_children(
+                                        self.dock
+                                            .render(&theme, DockPosition::Right)
+                                            .map(|dock| FlexItem::new(dock).flex(1., true).boxed()),
                                     )
                                     .with_children(
                                         if self.right_sidebar.read(cx).active_item().is_some() {
@@ -2578,6 +2601,7 @@ impl View for Workspace {
                                     )
                                     .boxed()
                             })
+                            .with_children(self.dock.render(&theme, DockPosition::Fullscreen))
                             .with_children(self.modal.as_ref().map(|m| {
                                 ChildView::new(m)
                                     .contained()

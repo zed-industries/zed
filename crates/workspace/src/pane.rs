@@ -1412,6 +1412,10 @@ impl View for Pane {
                     .on_down(MouseButton::Left, |_, cx| {
                         cx.focus_parent_view();
                     })
+                    .on_up(MouseButton::Left, {
+                        let pane = this.clone();
+                        move |_, cx: &mut EventContext| Pane::handle_dropped_item(&pane, 0, cx)
+                    })
                     .boxed()
                 })
                 .on_navigate_mouse_down(move |direction, cx| {
