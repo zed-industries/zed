@@ -61,12 +61,7 @@ impl Room {
     pub fn publish_video_track(&self, track: &LocalVideoTrack) -> impl Future<Output = Result<()>> {
         let (did_publish, tx, rx) = Self::build_done_callback();
         unsafe {
-            LKRoomPublishVideoTrack(
-                self.0,
-                track.0,
-                did_publish,
-                Box::into_raw(Box::new(tx)) as *mut c_void,
-            )
+            LKRoomPublishVideoTrack(self.0, track.0, did_publish, tx);
         }
         async { rx.await.unwrap().context("error publishing video track") }
     }
