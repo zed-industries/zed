@@ -37,7 +37,7 @@ use log::error;
 pub use pane::*;
 pub use pane_group::*;
 use postage::prelude::Stream;
-use programs::ProgramManager;
+use programs::Dock;
 use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, ProjectStore, Worktree, WorktreeId};
 use searchable::SearchableItemHandle;
 use serde::Deserialize;
@@ -147,7 +147,7 @@ impl_actions!(workspace, [ToggleProjectOnline, ActivatePane]);
 
 pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     // Initialize the program manager immediately
-    cx.set_global(ProgramManager::new());
+    cx.set_global(Dock::new());
 
     pane::init(cx);
 

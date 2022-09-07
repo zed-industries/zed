@@ -1,6 +1,6 @@
 use gpui::{ModelHandle, ViewContext};
 use settings::{Settings, WorkingDirectory};
-use workspace::{programs::ProgramManager, Workspace};
+use workspace::{programs::Dock, Workspace};
 
 use crate::{
     terminal_container_view::{
@@ -13,7 +13,7 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
     let window = cx.window_id();
 
     // Pull the terminal connection out of the global if it has been stored
-    let possible_terminal = ProgramManager::remove::<Terminal, _>(window, cx);
+    let possible_terminal = Dock::remove::<Terminal, _>(window, cx);
 
     if let Some(terminal_handle) = possible_terminal {
         workspace.toggle_modal(cx, |_, cx| {
@@ -22,7 +22,7 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
         });
         // Toggle Modal will dismiss the terminal modal if it is currently shown, so we must
         // store the terminal back in the global
-        ProgramManager::insert_or_replace::<Terminal, _>(window, terminal_handle, cx);
+        Dock::insert_or_replace::<Terminal, _>(window, terminal_handle, cx);
     } else {
         // No connection was stored, create a new terminal
         if let Some(closed_terminal_handle) = workspace.toggle_modal(cx, |workspace, cx| {
@@ -43,7 +43,7 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
                 cx.subscribe(&terminal_handle, on_event).detach();
                 // Set the global immediately if terminal construction was successful,
                 // in case the user opens the command palette
-                ProgramManager::insert_or_replace::<Terminal, _>(window, terminal_handle, cx);
+                Dock::insert_or_replace::<Terminal, _>(window, terminal_handle, cx);
             }
 
             this
@@ -55,7 +55,7 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
                 let terminal_handle = connected.read(cx).handle();
                 // Set the global immediately if terminal construction was successful,
                 // in case the user opens the command palette
-                ProgramManager::insert_or_replace::<Terminal, _>(window, terminal_handle, cx);
+                Dock::insert_or_replace::<Terminal, _>(window, terminal_handle, cx);
             }
         }
     }
@@ -69,7 +69,7 @@ pub fn on_event(
 ) {
     // Dismiss the modal if the terminal quit
     if let Event::CloseTerminal = event {
-        ProgramManager::remove::<Terminal, _>(cx.window_id(), cx);
+        Dock::remove::<Terminal, _>(cx.window_id(), cx);
 
         if workspace.modal::<TerminalContainer>().is_some() {
             workspace.dismiss_modal(cx)

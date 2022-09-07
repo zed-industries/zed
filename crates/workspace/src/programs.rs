@@ -19,27 +19,25 @@ use gpui::{AnyModelHandle, Entity, ModelHandle, View, ViewContext};
 /// This struct is going to be the starting point for the 'program manager' feature that will
 /// eventually be implemented to provide a collaborative way of engaging with identity-having
 /// features like the terminal.
-pub struct ProgramManager {
+pub struct Dock {
     // TODO: Make this a hashset or something
     modals: HashMap<usize, AnyModelHandle>,
 }
 
-impl ProgramManager {
+impl Dock {
     pub fn insert_or_replace<T: Entity, V: View>(
         window: usize,
         program: ModelHandle<T>,
         cx: &mut ViewContext<V>,
     ) -> Option<AnyModelHandle> {
-        cx.update_global::<ProgramManager, _, _>(|pm, _| {
-            pm.insert_or_replace_internal::<T>(window, program)
-        })
+        cx.update_global::<Dock, _, _>(|pm, _| pm.insert_or_replace_internal::<T>(window, program))
     }
 
     pub fn remove<T: Entity, V: View>(
         window: usize,
         cx: &mut ViewContext<V>,
     ) -> Option<ModelHandle<T>> {
-        cx.update_global::<ProgramManager, _, _>(|pm, _| pm.remove_internal::<T>(window))
+        cx.update_global::<Dock, _, _>(|pm, _| pm.remove_internal::<T>(window))
     }
 
     pub fn new() -> Self {
