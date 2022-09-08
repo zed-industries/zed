@@ -42,8 +42,15 @@ struct ActionWithData(Box<str>, Box<RawValue>);
 
 impl KeymapFileContent {
     pub fn load_defaults(cx: &mut MutableAppContext) {
+        let settings = cx.global::<Settings>();
         let mut paths = vec!["keymaps/default.json", "keymaps/vim.json"];
-        paths.extend(cx.global::<Settings>().experiments.keymap_files());
+
+        if settings.staff_mode {
+            paths.push("keymaps/internal.json")
+        }
+
+        paths.extend(settings.experiments.keymap_files());
+
         for path in paths {
             Self::load(path, cx).unwrap();
         }

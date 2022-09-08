@@ -7,3 +7,5 @@
 /crates/collab/static/styles.css
 /vendor/bin
 /assets/themes/*.json
+/assets/themes/internal/*.json
+/assets/themes/experiments/*.json

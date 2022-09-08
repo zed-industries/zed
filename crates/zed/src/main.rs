@@ -60,6 +60,7 @@ fn main() {
     load_embedded_fonts(&app);
 
     let fs = Arc::new(RealFs);
+
     let themes = ThemeRegistry::new(Assets, app.font_cache());
     let default_settings = Settings::defaults(Assets, &app.font_cache(), &themes);
 
