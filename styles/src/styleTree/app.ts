@@ -22,6 +22,10 @@ export const panel = {
 
 export default function app(theme: Theme): Object {
   return {
+    meta: {
+      name: theme.name,
+      isLight: theme.isLight
+    },
     picker: picker(theme),
     workspace: workspace(theme),
     contextMenu: contextMenu(theme),

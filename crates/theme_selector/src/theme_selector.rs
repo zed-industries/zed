@@ -6,12 +6,12 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
 use std::sync::Arc;
-use theme::{Theme, ThemeRegistry};
+use theme::{Theme, ThemeMeta, ThemeRegistry};
 use workspace::{AppState, Workspace};
 
 pub struct ThemeSelector {
     registry: Arc<ThemeRegistry>,
-    theme_names: Vec<String>,
+    theme_data: Vec<ThemeMeta>,
     matches: Vec<StringMatch>,
     original_theme: Arc<Theme>,
     picker: ViewHandle<Picker<Self>>,
@@ -42,29 +42,30 @@ impl ThemeSelector {
         let original_theme = cx.global::<Settings>().theme.clone();
         let mut theme_names = registry.list().collect::<Vec<_>>();
         theme_names.sort_unstable_by(|a, b| {
-            a.ends_with("dark")
-                .cmp(&b.ends_with("dark"))
-                .then_with(|| a.cmp(b))
+            a.is_light.cmp(&b.is_light).reverse()
+            // a.ends_with("dark")
+            //     .cmp(&b.ends_with("dark"))
+            //     .then_with(|| a.cmp(b))
         });
         let matches = theme_names
             .iter()
-            .map(|name| StringMatch {
+            .map(|meta| StringMatch {
                 candidate_id: 0,
                 score: 0.0,
                 positions: Default::default(),
-                string: name.clone(),
+                string: meta.name.clone(),
             })
             .collect();
         let mut this = Self {
             registry,
-            theme_names,
+            theme_data: theme_names,
             matches,
             picker,
             original_theme: original_theme.clone(),
             selected_index: 0,
             selection_completed: false,
         };
-        this.select_if_matching(&original_theme.name);
+        this.select_if_matching(&original_theme.meta.name);
         this
     }
 
@@ -82,7 +83,7 @@ impl ThemeSelector {
 
     #[cfg(debug_assertions)]
     pub fn reload(themes: Arc<ThemeRegistry>, cx: &mut MutableAppContext) {
-        let current_theme_name = cx.global::<Settings>().theme.name.clone();
+        let current_theme_name = cx.global::<Settings>().theme.meta.name.clone();
         themes.clear();
         match themes.get(&current_theme_name) {
             Ok(theme) => {
@@ -165,13 +166,13 @@ impl PickerDelegate for ThemeSelector {
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) -> gpui::Task<()> {
         let background = cx.background().clone();
         let candidates = self
-            .theme_names
+            .theme_data
             .iter()
             .enumerate()
-            .map(|(id, name)| StringMatchCandidate {
+            .map(|(id, meta)| StringMatchCandidate {
                 id,
-                char_bag: name.as_str().into(),
-                string: name.clone(),
+                char_bag: meta.name.as_str().into(),
+                string: meta.name.clone(),
             })
             .collect::<Vec<_>>();
 

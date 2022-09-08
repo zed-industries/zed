@@ -15,7 +15,7 @@ pub use theme_registry::*;
 #[derive(Deserialize, Default)]
 pub struct Theme {
     #[serde(default)]
-    pub name: String,
+    pub meta: ThemeMeta,
     pub workspace: Workspace,
     pub context_menu: ContextMenu,
     pub chat_panel: ChatPanel,
@@ -32,6 +32,12 @@ pub struct Theme {
     pub update_notification: UpdateNotification,
     pub tooltip: TooltipStyle,
     pub terminal: TerminalStyle,
+}
+
+#[derive(Deserialize, Default, Clone)]
+pub struct ThemeMeta {
+    pub name: String,
+    pub is_light: bool,
 }
 
 #[derive(Deserialize, Default)]

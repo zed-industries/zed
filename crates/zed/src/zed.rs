@@ -244,7 +244,7 @@ pub fn initialize_workspace(
 
     cx.emit(workspace::Event::PaneAdded(workspace.active_pane().clone()));
 
-    let theme_names = app_state.themes.list().collect();
+    let theme_names = app_state.themes.list().map(|meta| meta.name).collect();
     let language_names = &languages::LANGUAGE_NAMES;
 
     workspace.project().update(cx, |project, cx| {
@@ -1668,12 +1668,12 @@ mod tests {
         let settings = Settings::defaults(Assets, cx.font_cache(), &themes);
 
         let mut has_default_theme = false;
-        for theme_name in themes.list() {
+        for theme_name in themes.list().map(|meta| meta.name) {
             let theme = themes.get(&theme_name).unwrap();
-            if theme.name == settings.theme.name {
+            if theme.meta.name == settings.theme.meta.name {
                 has_default_theme = true;
             }
-            assert_eq!(theme.name, theme_name);
+            assert_eq!(theme.meta.name, theme_name);
         }
         assert!(has_default_theme);
     }

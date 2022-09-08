@@ -1,4 +1,4 @@
-use crate::Theme;
+use crate::{Theme, ThemeMeta};
 use anyhow::{Context, Result};
 use gpui::{fonts, AssetSource, FontCache};
 use parking_lot::Mutex;
@@ -22,11 +22,11 @@ impl ThemeRegistry {
         })
     }
 
-    pub fn list(&self) -> impl Iterator<Item = String> {
+    pub fn list(&self) -> impl Iterator<Item = ThemeMeta> + '_ {
         self.assets.list("themes/").into_iter().filter_map(|path| {
             let filename = path.strip_prefix("themes/")?;
             let theme_name = filename.strip_suffix(".json")?;
-            Some(theme_name.to_string())
+            self.get(theme_name).ok().map(|theme| theme.meta.clone())
         })
     }
 
@@ -50,7 +50,7 @@ impl ThemeRegistry {
             serde_path_to_error::deserialize(&mut serde_json::Deserializer::from_slice(&theme_json))
         })?;
 
-        theme.name = name.into();
+        theme.meta.name = name.into();
         let theme = Arc::new(theme);
         self.themes.lock().insert(name.to_string(), theme.clone());
         Ok(theme)
