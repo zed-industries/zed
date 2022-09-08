@@ -8,6 +8,10 @@ export default themes;
 const internalThemes: Theme[] = [];
 export { internalThemes }
 
+const experimentalThemes: Theme[] = [];
+export { experimentalThemes }
+
+
 function fillThemes(themesPath: string, themes: Theme[]) {
   for (const fileName of fs.readdirSync(themesPath)) {
     if (fileName == "template.ts") continue;
@@ -23,3 +27,5 @@ function fillThemes(themesPath: string, themes: Theme[]) {
 
 fillThemes(path.resolve(`${__dirname}/themes`), themes)
 fillThemes(path.resolve(`${__dirname}/themes/internal`), internalThemes)
+fillThemes(path.resolve(`${__dirname}/themes/experiments`), experimentalThemes)
+

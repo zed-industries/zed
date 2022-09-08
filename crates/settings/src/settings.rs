@@ -41,7 +41,9 @@ pub struct Settings {
 }
 
 #[derive(Copy, Clone, Debug, Default, Deserialize, JsonSchema)]
-pub struct FeatureFlags {}
+pub struct FeatureFlags {
+    pub experimental_themes: bool,
+}
 
 impl FeatureFlags {
     pub fn keymap_files(&self) -> Vec<&'static str> {

@@ -71,7 +71,6 @@ fn main() {
                 .map(|github| {
                     &github == "as-cii"
                         || &github == "ForLoveOfCats"
-                        || &github == "ForLoveOfCats"
                         || &github == "gibusu"
                         || &github == "iamnbutler"
                         || &github == "JosephTLyons"
@@ -85,7 +84,7 @@ fn main() {
         }
     });
 
-    let themes = ThemeRegistry::new(Assets, app.font_cache(), internal);
+    let themes = ThemeRegistry::new(Assets, app.font_cache());
     let default_settings = Settings::defaults(Assets, &app.font_cache(), &themes);
 
     let config_files = load_config_files(&app, fs.clone());
@@ -127,9 +126,12 @@ fn main() {
                 let fs = fs.clone();
                 async move {
                     while let Some(user) = current_user.recv().await {
-                        let user_name = user
-                            .map(|user| user.github_login.clone())
-                            .unwrap_or_else(|| String::new());
+                        // When the user logs out, `user` is None.
+                        if user.is_none() {
+                            continue;
+                        }
+
+                        let user_name = user.unwrap().github_login.clone();
 
                         fs.save(
                             &*zed::paths::LAST_USERNAME,

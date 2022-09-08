@@ -2,12 +2,13 @@ import * as fs from "fs";
 import * as path from "path";
 import { tmpdir } from "os";
 import app from "./styleTree/app";
-import themes, { internalThemes } from "./themes";
+import themes, { internalThemes, experimentalThemes } from "./themes";
 import snakeCase from "./utils/snakeCase";
 import Theme from "./themes/common/theme";
 
 const themeDirectory = `${__dirname}/../../assets/themes`;
 const internalDirectory = `${themeDirectory}/internal`;
+const experimentsDirectory = `${themeDirectory}/experiments`;
 const tempDirectory = fs.mkdtempSync(path.join(tmpdir(), "build-themes"));
 
 // Clear existing themes
@@ -24,6 +25,7 @@ function clearThemes(themeDirectory: string) {
 
 clearThemes(themeDirectory);
 clearThemes(internalDirectory);
+clearThemes(experimentsDirectory);
 
 function writeThemes(themes: Theme[], outputDirectory: string) {
   for (let theme of themes) {
@@ -40,3 +42,4 @@ function writeThemes(themes: Theme[], outputDirectory: string) {
 // Write new themes to theme directory
 writeThemes(themes, themeDirectory);
 writeThemes(internalThemes, internalDirectory);
+writeThemes(experimentalThemes, experimentsDirectory);

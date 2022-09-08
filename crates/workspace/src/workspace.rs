@@ -860,7 +860,7 @@ impl AppState {
         let client = Client::new(http_client.clone());
         let project_store = cx.add_model(|_| ProjectStore::new(project::Db::open_fake()));
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let themes = ThemeRegistry::new((), cx.font_cache().clone(), false);
+        let themes = ThemeRegistry::new((), cx.font_cache().clone());
         Arc::new(Self {
             client,
             themes,

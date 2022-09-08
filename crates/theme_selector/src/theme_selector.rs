@@ -39,13 +39,17 @@ impl ThemeSelector {
     fn new(registry: Arc<ThemeRegistry>, cx: &mut ViewContext<Self>) -> Self {
         let handle = cx.weak_handle();
         let picker = cx.add_view(|cx| Picker::new(handle, cx));
-        let original_theme = cx.global::<Settings>().theme.clone();
-        let mut theme_names = registry.list().collect::<Vec<_>>();
+        let settings = cx.global::<Settings>();
+        let original_theme = settings.theme.clone();
+
+        let mut theme_names = registry
+            .list(settings.internal, settings.experiments.experimental_themes)
+            .collect::<Vec<_>>();
         theme_names.sort_unstable_by(|a, b| {
-            a.is_light.cmp(&b.is_light).reverse()
-            // a.ends_with("dark")
-            //     .cmp(&b.ends_with("dark"))
-            //     .then_with(|| a.cmp(b))
+            a.is_light
+                .cmp(&b.is_light)
+                .reverse()
+                .then(a.name.cmp(&b.name))
         });
         let matches = theme_names
             .iter()

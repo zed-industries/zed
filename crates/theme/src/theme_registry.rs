@@ -10,26 +10,34 @@ pub struct ThemeRegistry {
     themes: Mutex<HashMap<String, Arc<Theme>>>,
     theme_data: Mutex<HashMap<String, Arc<Value>>>,
     font_cache: Arc<FontCache>,
-    internal: bool,
 }
 
 impl ThemeRegistry {
-    pub fn new(source: impl AssetSource, font_cache: Arc<FontCache>, internal: bool) -> Arc<Self> {
+    pub fn new(source: impl AssetSource, font_cache: Arc<FontCache>) -> Arc<Self> {
         Arc::new(Self {
             assets: Box::new(source),
             themes: Default::default(),
             theme_data: Default::default(),
             font_cache,
-            internal,
         })
     }
 
-    pub fn list(&self) -> impl Iterator<Item = ThemeMeta> + '_ {
+    pub fn list(&self, internal: bool, experiments: bool) -> impl Iterator<Item = ThemeMeta> + '_ {
         let mut dirs = self.assets.list("themes/");
 
-        if self.internal {
-            dirs.extend(self.assets.list("themes/internal/"))
-        };
+        if !internal {
+            dirs = dirs
+                .into_iter()
+                .filter(|path| !path.starts_with("themes/internal"))
+                .collect()
+        }
+
+        if !experiments {
+            dirs = dirs
+                .into_iter()
+                .filter(|path| !path.starts_with("themes/experiments"))
+                .collect()
+        }
 
         dirs.into_iter().filter_map(|path| {
             let filename = path.strip_prefix("themes/")?;
