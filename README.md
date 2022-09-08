@@ -42,9 +42,9 @@ script/zed_with_local_servers --release
 
 If you trigger `cmd-alt-i`, Zed will copy a JSON representation of the current window contents to the clipboard. You can paste this in a tool like [DJSON](https://chrome.google.com/webstore/detail/djson-json-viewer-formatt/chaeijjekipecdajnijdldjjipaegdjc?hl=en) to navigate the state of on-screen elements in a structured way.
 
-### Internal Only Features
+### Staff Only Features
 
-Many features (e.g. the terminal) take significant time and effort before they are polished enough to be released to even Alpha users. But Zed's team workflow relies on fast, daily PRs and there can be large merge conflicts a feature branch diverges. To bridge this gap, there is an `internal` field in the Settings struct that is set to `true` if the user is Zed staff and `false` otherwise. Note that this field is only read once, on startup, and is only set when a user has logged in to github. Once a staff member logs into github from the Zed application, they must restart Zed for the internal feature flag to be set to true.
+Many features (e.g. the terminal) take significant time and effort before they are polished enough to be released to even Alpha users. But Zed's team workflow relies on fast, daily PRs and there can be large merge conflicts for feature branchs that diverge for a few days. To bridge this gap, there is a `staff_mode` field in the Settings that staff can set to enable these unpolished or incomplete features. Note that this setting isn't leaked via autocompletion, but there is no mechanism to stop users from setting this anyway. As initilization of Zed components is only done once, on startup, setting `staff_mode` may require a restart to take effect.
 
 ### Experimental Features
 
