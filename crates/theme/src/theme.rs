@@ -57,6 +57,7 @@ pub struct Workspace {
     pub notifications: Notifications,
     pub joining_project_avatar: ImageStyle,
     pub joining_project_message: ContainedText,
+    pub fullscreen_dock: ContainerStyle,
 }
 
 #[derive(Clone, Deserialize, Default)]

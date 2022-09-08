@@ -156,5 +156,9 @@ export default function workspace(theme: Theme) {
       width: 400,
       margin: { right: 10, bottom: 10 },
     },
+    fullscreenDock: {
+      background: withOpacity(theme.backgroundColor[500].base, 0.8),
+      padding: 25,
+    }
   };
 }

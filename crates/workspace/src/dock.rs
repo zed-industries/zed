@@ -105,7 +105,7 @@ impl Dock {
 
     fn ensure_not_empty(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
         let pane = workspace.dock.pane.clone();
-        if !pane.read(cx).items().next().is_none() {
+        if pane.read(cx).items().next().is_none() {
             let item_to_add = (workspace.dock.default_item_factory)(workspace, cx);
             Pane::add_item(workspace, &pane, item_to_add, true, true, None, cx);
         }
@@ -130,8 +130,12 @@ impl Dock {
         workspace.dock.position = workspace.dock.position.toggle();
         if workspace.dock.position.visible().is_some() {
             Self::ensure_not_empty(workspace, cx);
+            cx.focus(workspace.dock.pane.clone());
+        } else {
+            cx.focus_self();
         }
         cx.notify();
+        workspace.status_bar().update(cx, |_, cx| cx.notify());
     }
 
     fn move_dock(
@@ -198,7 +202,9 @@ impl View for ToggleDockButton {
                 .boxed()
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(ToggleDock))
+        .on_click(MouseButton::Left, |_, cx| {
+            cx.dispatch_action(ToggleDock);
+        })
         // TODO: Add tooltip
         .boxed()
     }

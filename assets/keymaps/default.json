@@ -310,7 +310,7 @@
             "cmd-shift-m": "diagnostics::Deploy",
             "cmd-shift-e": "project_panel::ToggleFocus",
             "cmd-alt-s": "workspace::SaveAll",
-            "shift-escape": "terminal::DeployModal"
+            "shift-escape": "workspace::ToggleDock"
         }
     },
     // Bindings from Sublime Text

@@ -2614,7 +2614,13 @@ impl View for Workspace {
                                     )
                                     .boxed()
                             })
-                            .with_children(self.dock.render(&theme, DockAnchor::Expanded))
+                            .with_children(self.dock.render(&theme, DockAnchor::Expanded).map(
+                                |dock| {
+                                    Container::new(dock)
+                                        .with_style(theme.workspace.fullscreen_dock)
+                                        .boxed()
+                                },
+                            ))
                             .with_children(self.modal.as_ref().map(|m| {
                                 ChildView::new(m)
                                     .contained()
