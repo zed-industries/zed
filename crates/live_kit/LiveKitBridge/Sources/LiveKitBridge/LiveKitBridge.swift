@@ -1,17 +1,49 @@
 import Foundation
 import LiveKit
+import WebRTC
 
 class LKRoomDelegate: RoomDelegate {
     var data: UnsafeRawPointer
-    var onDidSubscribeToRemoteTrack: @convention(c) (UnsafeRawPointer, UnsafeRawPointer) -> Void
+    var onDidSubscribeToRemoteVideoTrack: @convention(c) (UnsafeRawPointer, UnsafeRawPointer) -> Void
     
-    init(data: UnsafeRawPointer, onDidSubscribeToRemoteTrack: @escaping @convention(c) (UnsafeRawPointer, UnsafeRawPointer) -> Void) {
+    init(data: UnsafeRawPointer, onDidSubscribeToRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, UnsafeRawPointer) -> Void) {
         self.data = data
-        self.onDidSubscribeToRemoteTrack = onDidSubscribeToRemoteTrack
+        self.onDidSubscribeToRemoteVideoTrack = onDidSubscribeToRemoteVideoTrack
     }
     
     func room(_ room: Room, participant: RemoteParticipant, didSubscribe publication: RemoteTrackPublication, track: Track) {
-        self.onDidSubscribeToRemoteTrack(self.data, Unmanaged.passRetained(track).toOpaque())
+        if track.kind == .video {
+            self.onDidSubscribeToRemoteVideoTrack(self.data, Unmanaged.passRetained(track).toOpaque())
+        }
+    }
+}
+
+class LKVideoRenderer: NSObject, VideoRenderer {
+    var data: UnsafeRawPointer
+    var onFrame: @convention(c) (UnsafeRawPointer, CVPixelBuffer) -> Void
+    var onDrop: @convention(c) (UnsafeRawPointer) -> Void
+    var adaptiveStreamIsEnabled: Bool = false
+    var adaptiveStreamSize: CGSize = .zero
+
+    init(data: UnsafeRawPointer, onFrame: @escaping @convention(c) (UnsafeRawPointer, CVPixelBuffer) -> Void, onDrop: @escaping @convention(c) (UnsafeRawPointer) -> Void) {
+        self.data = data
+        self.onFrame = onFrame
+        self.onDrop = onDrop
+    }
+
+    deinit {
+        self.onDrop(self.data)
+    }
+
+    func setSize(_ size: CGSize) {
+        print("Called setSize", size);
+    }
+
+    func renderFrame(_ frame: RTCVideoFrame?) {
+        let buffer = frame?.buffer as? RTCCVPixelBuffer
+        if let pixelBuffer = buffer?.pixelBuffer {
+            self.onFrame(self.data, pixelBuffer)
+        }
     }
 }
 
@@ -21,8 +53,8 @@ public func LKRelease(ptr: UnsafeRawPointer)  {
 }
 
 @_cdecl("LKRoomDelegateCreate")
-public func LKRoomDelegateCreate(data: UnsafeRawPointer, onDidSubscribeToRemoteTrack: @escaping @convention(c) (UnsafeRawPointer, UnsafeRawPointer) -> Void) -> UnsafeMutableRawPointer {
-    let delegate = LKRoomDelegate(data: data, onDidSubscribeToRemoteTrack: onDidSubscribeToRemoteTrack)
+public func LKRoomDelegateCreate(data: UnsafeRawPointer, onDidSubscribeToRemoteVideoTrack: @escaping @convention(c) (UnsafeRawPointer, UnsafeRawPointer) -> Void) -> UnsafeMutableRawPointer {
+    let delegate = LKRoomDelegate(data: data, onDidSubscribeToRemoteVideoTrack: onDidSubscribeToRemoteVideoTrack)
     return Unmanaged.passRetained(delegate).toOpaque()
 }
 
@@ -58,4 +90,16 @@ public func LKRoomPublishVideoTrack(room: UnsafeRawPointer, track: UnsafeRawPoin
 public func LKCreateScreenShareTrackForWindow(windowId: uint32) -> UnsafeMutableRawPointer {
     let track = LocalVideoTrack.createMacOSScreenShareTrack(source: .window(id: windowId))
     return Unmanaged.passRetained(track).toOpaque()
+}
+
+@_cdecl("LKVideoRendererCreate")
+public func LKVideoRendererCreate(data: UnsafeRawPointer, onFrame: @escaping @convention(c) (UnsafeRawPointer, CVPixelBuffer) -> Void, onDrop: @escaping @convention(c) (UnsafeRawPointer) -> Void) -> UnsafeMutableRawPointer {
+    Unmanaged.passRetained(LKVideoRenderer(data: data, onFrame: onFrame, onDrop: onDrop)).toOpaque()
+}
+
+@_cdecl("LKVideoTrackAddRenderer")
+public func LKVideoTrackAddRenderer(track: UnsafeRawPointer, renderer: UnsafeRawPointer) {
+    let track = Unmanaged<Track>.fromOpaque(track).takeUnretainedValue() as! VideoTrack
+    let renderer = Unmanaged<LKVideoRenderer>.fromOpaque(renderer).takeRetainedValue()
+    track.add(videoRenderer: renderer)
 }

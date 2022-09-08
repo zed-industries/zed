@@ -822,7 +822,7 @@ impl Renderer {
             {
                 MTLPixelFormat::BGRA8Unorm
             } else {
-                panic!("unsupported pixel format")
+                MTLPixelFormat::R8Unorm
             };
 
             let texture = self

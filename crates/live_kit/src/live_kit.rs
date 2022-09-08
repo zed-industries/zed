@@ -10,7 +10,12 @@ use core_graphics::window::{
     kCGNullWindowID, kCGWindowListOptionExcludeDesktopElements, kCGWindowListOptionOnScreenOnly,
     kCGWindowNumber, kCGWindowOwnerName, kCGWindowOwnerPID, CGWindowListCopyWindowInfo,
 };
-use futures::{channel::oneshot, Future};
+use futures::{
+    channel::{mpsc, oneshot},
+    Future,
+};
+use media::core_video::{CVImageBuffer, CVImageBufferRef};
+use parking_lot::Mutex;
 use std::{
     ffi::c_void,
     sync::{Arc, Weak},
@@ -20,8 +25,8 @@ extern "C" {
     fn LKRelease(object: *const c_void);
 
     fn LKRoomDelegateCreate(
-        callback_data: *const c_void,
-        on_did_subscribe_to_remote_track: extern "C" fn(
+        callback_data: *mut c_void,
+        on_did_subscribe_to_remote_video_track: extern "C" fn(
             callback_data: *mut c_void,
             remote_track: *const c_void,
         ),
@@ -42,22 +47,30 @@ extern "C" {
         callback_data: *mut c_void,
     );
 
+    fn LKVideoRendererCreate(
+        callback_data: *mut c_void,
+        on_frame: extern "C" fn(callback_data: *mut c_void, frame: CVImageBufferRef),
+        on_drop: extern "C" fn(callback_data: *mut c_void),
+    ) -> *const c_void;
+
+    fn LKVideoTrackAddRenderer(track: *const c_void, renderer: *const c_void);
+
     fn LKCreateScreenShareTrackForWindow(windowId: u32) -> *const c_void;
 }
 
 pub struct Room {
-    debug_name: &'static str,
     native_room: *const c_void,
+    remote_video_track_subscribers: Mutex<Vec<mpsc::UnboundedSender<Arc<RemoteVideoTrack>>>>,
     _delegate: RoomDelegate,
 }
 
 impl Room {
-    pub fn new(debug_name: &'static str) -> Arc<Self> {
+    pub fn new() -> Arc<Self> {
         Arc::new_cyclic(|weak_room| {
             let delegate = RoomDelegate::new(weak_room.clone());
             Self {
-                debug_name,
                 native_room: unsafe { LKRoomCreate(delegate.native_delegate) },
+                remote_video_track_subscribers: Default::default(),
                 _delegate: delegate,
             }
         })
@@ -88,8 +101,17 @@ impl Room {
         async { rx.await.unwrap().context("error publishing video track") }
     }
 
-    fn did_subscribe_to_remote_track(&self, track: RemoteVideoTrack) {
-        println!("{}: !!!!!!!!!!!!!!!!!!", self.debug_name);
+    pub fn remote_video_tracks(&self) -> mpsc::UnboundedReceiver<Arc<RemoteVideoTrack>> {
+        let (tx, rx) = mpsc::unbounded();
+        self.remote_video_track_subscribers.lock().push(tx);
+        rx
+    }
+
+    fn did_subscribe_to_remote_video_track(&self, track: RemoteVideoTrack) {
+        let track = Arc::new(track);
+        self.remote_video_track_subscribers
+            .lock()
+            .retain(|tx| tx.unbounded_send(track.clone()).is_ok());
     }
 
     fn build_done_callback() -> (
@@ -131,8 +153,8 @@ impl RoomDelegate {
         let weak_room = Weak::into_raw(weak_room);
         let native_delegate = unsafe {
             LKRoomDelegateCreate(
-                weak_room as *const c_void,
-                Self::on_did_subscribe_to_remote_track,
+                weak_room as *mut c_void,
+                Self::on_did_subscribe_to_remote_video_track,
             )
         };
         Self {
@@ -141,11 +163,11 @@ impl RoomDelegate {
         }
     }
 
-    extern "C" fn on_did_subscribe_to_remote_track(room: *mut c_void, track: *const c_void) {
+    extern "C" fn on_did_subscribe_to_remote_video_track(room: *mut c_void, track: *const c_void) {
         let room = unsafe { Weak::from_raw(room as *mut Room) };
-        let track = unsafe { RemoteVideoTrack(track) };
+        let track = RemoteVideoTrack(track);
         if let Some(room) = room.upgrade() {
-            room.did_subscribe_to_remote_track(track);
+            room.did_subscribe_to_remote_video_track(track);
         }
         let _ = Weak::into_raw(room);
     }
@@ -175,6 +197,37 @@ impl Drop for LocalVideoTrack {
 }
 
 pub struct RemoteVideoTrack(*const c_void);
+
+impl RemoteVideoTrack {
+    pub fn add_renderer<F>(&self, callback: F)
+    where
+        F: 'static + FnMut(CVImageBuffer),
+    {
+        extern "C" fn on_frame<F>(callback_data: *mut c_void, frame: CVImageBufferRef)
+        where
+            F: FnMut(CVImageBuffer),
+        {
+            unsafe {
+                let buffer = CVImageBuffer::wrap_under_get_rule(frame);
+                let callback = &mut *(callback_data as *mut F);
+                callback(buffer);
+            }
+        }
+
+        extern "C" fn on_drop<F>(callback_data: *mut c_void) {
+            unsafe {
+                let _ = Box::from_raw(callback_data as *mut F);
+            }
+        }
+
+        let callback_data = Box::into_raw(Box::new(callback));
+        unsafe {
+            let renderer =
+                LKVideoRendererCreate(callback_data as *mut c_void, on_frame::<F>, on_drop::<F>);
+            LKVideoTrackAddRenderer(self.0, renderer);
+        }
+    }
+}
 
 impl Drop for RemoteVideoTrack {
     fn drop(&mut self) {

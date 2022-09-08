@@ -2944,6 +2944,8 @@ dependencies = [
  "core-foundation",
  "core-graphics",
  "futures",
+ "media",
+ "parking_lot 0.11.2",
  "serde",
  "serde_json",
 ]

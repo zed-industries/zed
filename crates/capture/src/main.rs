@@ -1,7 +1,6 @@
 mod live_kit_token;
 
-use std::time::Duration;
-
+use futures::StreamExt;
 use gpui::{
     actions,
     elements::{Canvas, *},
@@ -13,6 +12,7 @@ use live_kit::{LocalVideoTrack, Room};
 use log::LevelFilter;
 use media::core_video::CVImageBuffer;
 use simplelog::SimpleLogger;
+use std::sync::Arc;
 
 actions!(capture, [Quit]);
 
@@ -36,47 +36,46 @@ fn main() {
         let live_kit_key = std::env::var("LIVE_KIT_KEY").unwrap();
         let live_kit_secret = std::env::var("LIVE_KIT_SECRET").unwrap();
 
-        let background = cx.background().clone();
-        cx.foreground()
-            .spawn(async move {
-                println!("connecting...");
-                let user1_token = live_kit_token::create_token(
-                    &live_kit_key,
-                    &live_kit_secret,
-                    "test-room",
-                    "test-participant-1",
-                )
+        cx.spawn(|mut cx| async move {
+            let user1_token = live_kit_token::create_token(
+                &live_kit_key,
+                &live_kit_secret,
+                "test-room",
+                "test-participant-1",
+            )
+            .unwrap();
+            let room1 = Room::new();
+            room1.connect(&live_kit_url, &user1_token).await.unwrap();
+
+            let user2_token = live_kit_token::create_token(
+                &live_kit_key,
+                &live_kit_secret,
+                "test-room",
+                "test-participant-2",
+            )
+            .unwrap();
+            let room2 = Room::new();
+            room2.connect(&live_kit_url, &user2_token).await.unwrap();
+            cx.add_window(Default::default(), |cx| ScreenCaptureView::new(room2, cx));
+
+            let windows = live_kit::list_windows();
+            let window = windows
+                .iter()
+                .find(|w| w.owner_name.as_deref() == Some("Safari"))
                 .unwrap();
-                let room1 = Room::new("user-1 room");
-                room1.connect(&live_kit_url, &user1_token).await.unwrap();
+            let track = LocalVideoTrack::screen_share_for_window(window.id);
+            room1.publish_video_track(&track).await.unwrap();
 
-                let user2_token = live_kit_token::create_token(
-                    &live_kit_key,
-                    &live_kit_secret,
-                    "test-room",
-                    "test-participant-2",
-                )
-                .unwrap();
-                let room2 = Room::new("user-2 room");
-                room2.connect(&live_kit_url, &user2_token).await.unwrap();
-
-                let windows = live_kit::list_windows();
-                println!("connected! {:?}", windows);
-
-                let window_id = windows.iter().next().unwrap().id;
-                let track = LocalVideoTrack::screen_share_for_window(window_id);
-                room1.publish_video_track(&track).await.unwrap();
-
-                background.timer(Duration::from_secs(120)).await;
-            })
-            .detach();
-
-        // cx.add_window(Default::default(), |cx| ScreenCaptureView::new(cx));
+            std::mem::forget(track);
+            std::mem::forget(room1);
+        })
+        .detach();
     });
 }
 
 struct ScreenCaptureView {
     image_buffer: Option<CVImageBuffer>,
+    _room: Arc<Room>,
 }
 
 impl gpui::Entity for ScreenCaptureView {
@@ -84,8 +83,25 @@ impl gpui::Entity for ScreenCaptureView {
 }
 
 impl ScreenCaptureView {
-    pub fn new(_: &mut ViewContext<Self>) -> Self {
-        Self { image_buffer: None }
+    pub fn new(room: Arc<Room>, cx: &mut ViewContext<Self>) -> Self {
+        let mut remote_video_tracks = room.remote_video_tracks();
+        cx.spawn_weak(|this, mut cx| async move {
+            if let Some(video_track) = remote_video_tracks.next().await {
+                video_track.add_renderer(move |frame| {
+                    if let Some(this) = this.upgrade(&cx) {
+                        this.update(&mut cx, |this, cx| {
+                            this.image_buffer = Some(frame);
+                            cx.notify();
+                        });
+                    }
+                });
+            }
+        })
+        .detach();
+        Self {
+            image_buffer: None,
+            _room: room,
+        }
     }
 }
 
