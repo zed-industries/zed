@@ -37,6 +37,7 @@ pub struct Settings {
     pub language_overrides: HashMap<Arc<str>, EditorSettings>,
     pub lsp: HashMap<Arc<str>, LspSettings>,
     pub theme: Arc<Theme>,
+    pub internal: bool,
 }
 
 #[derive(Copy, Clone, Debug, Default, Deserialize, JsonSchema)]
@@ -226,6 +227,7 @@ impl Settings {
             language_overrides: Default::default(),
             lsp: defaults.lsp.clone(),
             theme: themes.get(&defaults.theme.unwrap()).unwrap(),
+            internal: false,
         }
     }
 
@@ -234,6 +236,7 @@ impl Settings {
         data: SettingsFileContent,
         theme_registry: &ThemeRegistry,
         font_cache: &FontCache,
+        internal: bool,
     ) {
         if let Some(value) = &data.buffer_font_family {
             if let Some(id) = font_cache.load_family(&[value]).log_err() {
@@ -271,6 +274,7 @@ impl Settings {
         self.terminal_overrides = data.terminal;
         self.language_overrides = data.languages;
         self.lsp = data.lsp;
+        self.internal = internal
     }
 
     pub fn with_language_defaults(
@@ -345,6 +349,7 @@ impl Settings {
             lsp: Default::default(),
             projects_online_by_default: true,
             theme: gpui::fonts::with_font_cache(cx.font_cache().clone(), Default::default),
+            internal: false,
         }
     }
 
