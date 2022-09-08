@@ -21,10 +21,9 @@ use futures::{
 };
 use gpui::{executor::Background, App, AssetSource, AsyncAppContext, Task};
 use isahc::{config::Configurable, AsyncBody, Request};
-use language::{LanguageRegistry, Rope};
+use language::LanguageRegistry;
 use log::LevelFilter;
 use parking_lot::Mutex;
-use postage::stream::Stream;
 use project::{Fs, ProjectStore};
 use serde_json::json;
 use settings::{self, KeymapFileContent, Settings, SettingsFileContent};
@@ -62,28 +61,6 @@ fn main() {
 
     let fs = Arc::new(RealFs);
 
-    let internal = smol::block_on({
-        let fs = fs.clone();
-
-        async move {
-            fs.load(&*zed::paths::LAST_USERNAME)
-                .await
-                .map(|github| {
-                    &github == "as-cii"
-                        || &github == "ForLoveOfCats"
-                        || &github == "gibusu"
-                        || &github == "iamnbutler"
-                        || &github == "JosephTLyons"
-                        || &github == "Kethku"
-                        || &github == "maxbrunsfeld"
-                        || &github == "mikayla-maki"
-                        || &github == "nathansobo"
-                        || &github == "slightknack"
-                })
-                .unwrap_or(false)
-        }
-    });
-
     let themes = ThemeRegistry::new(Assets, app.font_cache());
     let default_settings = Settings::defaults(Assets, &app.font_cache(), &themes);
 
@@ -119,42 +96,10 @@ fn main() {
             .spawn(languages::init(languages.clone(), cx.background().clone()));
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
 
-        // Watch for the current user so we can set the internal flag
-        let mut current_user = user_store.read(cx).watch_current_user();
-        cx.background()
-            .spawn({
-                let fs = fs.clone();
-                async move {
-                    while let Some(user) = current_user.recv().await {
-                        // When the user logs out, `user` is None.
-                        if user.is_none() {
-                            continue;
-                        }
-
-                        let user_name = user.unwrap().github_login.clone();
-
-                        fs.save(
-                            &*zed::paths::LAST_USERNAME,
-                            &Rope::from(user_name.as_str()),
-                            Default::default(),
-                        )
-                        .await
-                        .ok();
-                    }
-                }
-            })
-            .detach();
-
         let (settings_file, keymap_file) = cx.background().block(config_files).unwrap();
 
         //Setup settings global before binding actions
-        watch_settings_file(
-            default_settings,
-            settings_file,
-            themes.clone(),
-            internal,
-            cx,
-        );
+        watch_settings_file(default_settings, settings_file, themes.clone(), cx);
         watch_keymap_file(keymap_file, cx);
 
         context_menu::init(cx);

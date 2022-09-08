@@ -40,10 +40,14 @@ impl ThemeSelector {
         let handle = cx.weak_handle();
         let picker = cx.add_view(|cx| Picker::new(handle, cx));
         let settings = cx.global::<Settings>();
+
         let original_theme = settings.theme.clone();
 
         let mut theme_names = registry
-            .list(settings.internal, settings.experiments.experimental_themes)
+            .list(
+                settings.staff_mode,
+                settings.experiments.experimental_themes,
+            )
             .collect::<Vec<_>>();
         theme_names.sort_unstable_by(|a, b| {
             a.is_light

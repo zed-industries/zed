@@ -60,19 +60,12 @@ pub fn watch_settings_file(
     defaults: Settings,
     mut file: WatchedJsonFile<SettingsFileContent>,
     theme_registry: Arc<ThemeRegistry>,
-    internal: bool,
     cx: &mut MutableAppContext,
 ) {
-    settings_updated(
-        &defaults,
-        file.0.borrow().clone(),
-        &theme_registry,
-        internal,
-        cx,
-    );
+    settings_updated(&defaults, file.0.borrow().clone(), &theme_registry, cx);
     cx.spawn(|mut cx| async move {
         while let Some(content) = file.0.recv().await {
-            cx.update(|cx| settings_updated(&defaults, content, &theme_registry, internal, cx));
+            cx.update(|cx| settings_updated(&defaults, content, &theme_registry, cx));
         }
     })
     .detach();
@@ -88,11 +81,10 @@ pub fn settings_updated(
     defaults: &Settings,
     content: SettingsFileContent,
     theme_registry: &Arc<ThemeRegistry>,
-    internal: bool,
     cx: &mut MutableAppContext,
 ) {
     let mut settings = defaults.clone();
-    settings.set_user_settings(content, theme_registry, cx.font_cache(), internal);
+    settings.set_user_settings(content, theme_registry, cx.font_cache());
     cx.set_global(settings);
     cx.refresh_windows();
 }
@@ -154,7 +146,6 @@ mod tests {
                 default_settings.clone(),
                 source,
                 ThemeRegistry::new((), font_cache),
-                false,
                 cx,
             )
         });

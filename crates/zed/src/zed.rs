@@ -248,7 +248,10 @@ pub fn initialize_workspace(
 
     let theme_names = app_state
         .themes
-        .list(settings.internal, settings.experiments.experimental_themes)
+        .list(
+            settings.staff_mode,
+            settings.experiments.experimental_themes,
+        )
         .map(|meta| meta.name)
         .collect();
     let language_names = &languages::LANGUAGE_NAMES;

@@ -37,7 +37,7 @@ pub struct Settings {
     pub language_overrides: HashMap<Arc<str>, EditorSettings>,
     pub lsp: HashMap<Arc<str>, LspSettings>,
     pub theme: Arc<Theme>,
-    pub internal: bool,
+    pub staff_mode: bool,
 }
 
 #[derive(Copy, Clone, Debug, Default, Deserialize, JsonSchema)]
@@ -178,6 +178,8 @@ pub struct SettingsFileContent {
     pub lsp: HashMap<Arc<str>, LspSettings>,
     #[serde(default)]
     pub theme: Option<String>,
+    #[serde(default)]
+    pub staff_mode: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -229,7 +231,8 @@ impl Settings {
             language_overrides: Default::default(),
             lsp: defaults.lsp.clone(),
             theme: themes.get(&defaults.theme.unwrap()).unwrap(),
-            internal: false,
+
+            staff_mode: false,
         }
     }
 
@@ -238,7 +241,6 @@ impl Settings {
         data: SettingsFileContent,
         theme_registry: &ThemeRegistry,
         font_cache: &FontCache,
-        internal: bool,
     ) {
         if let Some(value) = &data.buffer_font_family {
             if let Some(id) = font_cache.load_family(&[value]).log_err() {
@@ -265,7 +267,7 @@ impl Settings {
         merge(&mut self.vim_mode, data.vim_mode);
         merge(&mut self.autosave, data.autosave);
         merge(&mut self.experiments, data.experiments);
-
+        merge(&mut self.staff_mode, data.staff_mode);
         // Ensure terminal font is loaded, so we can request it in terminal_element layout
         if let Some(terminal_font) = &data.terminal.font_family {
             font_cache.load_family(&[terminal_font]).log_err();
@@ -276,7 +278,6 @@ impl Settings {
         self.terminal_overrides = data.terminal;
         self.language_overrides = data.languages;
         self.lsp = data.lsp;
-        self.internal = internal
     }
 
     pub fn with_language_defaults(
@@ -351,7 +352,7 @@ impl Settings {
             lsp: Default::default(),
             projects_online_by_default: true,
             theme: gpui::fonts::with_font_cache(cx.font_cache().clone(), Default::default),
-            internal: false,
+            staff_mode: false,
         }
     }
 
@@ -407,27 +408,25 @@ pub fn settings_file_json_schema(
         ("ThemeName".into(), theme_name_schema.into()),
         ("Languages".into(), languages_object_schema.into()),
     ]);
-    root_schema
-        .schema
-        .object
-        .as_mut()
-        .unwrap()
-        .properties
-        .extend([
-            (
-                "theme".to_owned(),
-                Schema::new_ref("#/definitions/ThemeName".into()),
-            ),
-            (
-                "languages".to_owned(),
-                Schema::new_ref("#/definitions/Languages".into()),
-            ),
-            // For backward compatibility
-            (
-                "language_overrides".to_owned(),
-                Schema::new_ref("#/definitions/Languages".into()),
-            ),
-        ]);
+    let root_schema_object = &mut root_schema.schema.object.as_mut().unwrap();
+
+    // Avoid automcomplete for non-user facing settings
+    root_schema_object.properties.remove("staff_mode");
+    root_schema_object.properties.extend([
+        (
+            "theme".to_owned(),
+            Schema::new_ref("#/definitions/ThemeName".into()),
+        ),
+        (
+            "languages".to_owned(),
+            Schema::new_ref("#/definitions/Languages".into()),
+        ),
+        // For backward compatibility
+        (
+            "language_overrides".to_owned(),
+            Schema::new_ref("#/definitions/Languages".into()),
+        ),
+    ]);
 
     serde_json::to_value(root_schema).unwrap()
 }
