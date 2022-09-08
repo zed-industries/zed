@@ -85,7 +85,7 @@ fn main() {
         }
     });
 
-    let themes = ThemeRegistry::new(Assets, app.font_cache());
+    let themes = ThemeRegistry::new(Assets, app.font_cache(), internal);
     let default_settings = Settings::defaults(Assets, &app.font_cache(), &themes);
 
     let config_files = load_config_files(&app, fs.clone());

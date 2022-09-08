@@ -1664,7 +1664,7 @@ mod tests {
                     .into(),
             ])
             .unwrap();
-        let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
+        let themes = ThemeRegistry::new(Assets, cx.font_cache().clone(), false);
         let settings = Settings::defaults(Assets, cx.font_cache(), &themes);
 
         let mut has_default_theme = false;

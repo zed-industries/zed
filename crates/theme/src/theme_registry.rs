@@ -10,20 +10,28 @@ pub struct ThemeRegistry {
     themes: Mutex<HashMap<String, Arc<Theme>>>,
     theme_data: Mutex<HashMap<String, Arc<Value>>>,
     font_cache: Arc<FontCache>,
+    internal: bool,
 }
 
 impl ThemeRegistry {
-    pub fn new(source: impl AssetSource, font_cache: Arc<FontCache>) -> Arc<Self> {
+    pub fn new(source: impl AssetSource, font_cache: Arc<FontCache>, internal: bool) -> Arc<Self> {
         Arc::new(Self {
             assets: Box::new(source),
             themes: Default::default(),
             theme_data: Default::default(),
             font_cache,
+            internal,
         })
     }
 
     pub fn list(&self) -> impl Iterator<Item = ThemeMeta> + '_ {
-        self.assets.list("themes/").into_iter().filter_map(|path| {
+        let mut dirs = self.assets.list("themes/");
+
+        if self.internal {
+            dirs.extend(self.assets.list("themes/internal/"))
+        };
+
+        dirs.into_iter().filter_map(|path| {
             let filename = path.strip_prefix("themes/")?;
             let theme_name = filename.strip_suffix(".json")?;
             self.get(theme_name).ok().map(|theme| theme.meta.clone())
@@ -50,6 +58,7 @@ impl ThemeRegistry {
             serde_path_to_error::deserialize(&mut serde_json::Deserializer::from_slice(&theme_json))
         })?;
 
+        // Reset name to be the file path, so that we can use it to access the stored themes
         theme.meta.name = name.into();
         let theme = Arc::new(theme);
         self.themes.lock().insert(name.to_string(), theme.clone());

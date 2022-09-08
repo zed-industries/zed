@@ -153,7 +153,7 @@ mod tests {
             watch_settings_file(
                 default_settings.clone(),
                 source,
-                ThemeRegistry::new((), font_cache),
+                ThemeRegistry::new((), font_cache, false),
                 false,
                 cx,
             )

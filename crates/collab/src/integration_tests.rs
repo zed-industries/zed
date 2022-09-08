@@ -5220,7 +5220,7 @@ impl TestServer {
             user_store: user_store.clone(),
             project_store: project_store.clone(),
             languages: Arc::new(LanguageRegistry::new(Task::ready(()))),
-            themes: ThemeRegistry::new((), cx.font_cache()),
+            themes: ThemeRegistry::new((), cx.font_cache(), false),
             fs: fs.clone(),
             build_window_options: Default::default,
             initialize_workspace: |_, _, _| unimplemented!(),
