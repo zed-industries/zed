@@ -11,6 +11,7 @@ use gpui::{
 use live_kit::{LocalVideoTrack, Room};
 use log::LevelFilter;
 use media::core_video::CVImageBuffer;
+use postage::watch;
 use simplelog::SimpleLogger;
 use std::sync::Arc;
 
@@ -65,9 +66,6 @@ fn main() {
                 .unwrap();
             let track = LocalVideoTrack::screen_share_for_window(window.id);
             room1.publish_video_track(&track).await.unwrap();
-
-            std::mem::forget(track);
-            std::mem::forget(room1);
         })
         .detach();
     });
@@ -87,17 +85,23 @@ impl ScreenCaptureView {
         let mut remote_video_tracks = room.remote_video_tracks();
         cx.spawn_weak(|this, mut cx| async move {
             if let Some(video_track) = remote_video_tracks.next().await {
-                video_track.add_renderer(move |frame| {
+                let (mut frames_tx, mut frames_rx) = watch::channel_with(None);
+                video_track.add_renderer(move |frame| *frames_tx.borrow_mut() = Some(frame));
+
+                while let Some(frame) = frames_rx.next().await {
                     if let Some(this) = this.upgrade(&cx) {
                         this.update(&mut cx, |this, cx| {
-                            this.image_buffer = Some(frame);
+                            this.image_buffer = frame;
                             cx.notify();
                         });
+                    } else {
+                        break;
                     }
-                });
+                }
             }
         })
         .detach();
+
         Self {
             image_buffer: None,
             _room: room,
