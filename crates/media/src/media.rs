@@ -31,7 +31,10 @@ pub mod core_video {
     #![allow(non_snake_case)]
 
     use super::*;
-    pub use crate::bindings::kCVPixelFormatType_32BGRA;
+    pub use crate::bindings::{
+        kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8Planar,
+    };
     use crate::bindings::{kCVReturnSuccess, CVReturn, OSType};
     use anyhow::{anyhow, Result};
     use core_foundation::{
@@ -68,6 +71,14 @@ pub mod core_video {
             unsafe { CVPixelBufferGetHeight(self.as_concrete_TypeRef()) }
         }
 
+        pub fn plane_width(&self, plane: usize) -> usize {
+            unsafe { CVPixelBufferGetWidthOfPlane(self.as_concrete_TypeRef(), plane) }
+        }
+
+        pub fn plane_height(&self, plane: usize) -> usize {
+            unsafe { CVPixelBufferGetHeightOfPlane(self.as_concrete_TypeRef(), plane) }
+        }
+
         pub fn pixel_format_type(&self) -> OSType {
             unsafe { CVPixelBufferGetPixelFormatType(self.as_concrete_TypeRef()) }
         }
@@ -79,6 +90,8 @@ pub mod core_video {
         fn CVPixelBufferGetIOSurface(buffer: CVImageBufferRef) -> IOSurfaceRef;
         fn CVPixelBufferGetWidth(buffer: CVImageBufferRef) -> usize;
         fn CVPixelBufferGetHeight(buffer: CVImageBufferRef) -> usize;
+        fn CVPixelBufferGetWidthOfPlane(buffer: CVImageBufferRef, plane: usize) -> usize;
+        fn CVPixelBufferGetHeightOfPlane(buffer: CVImageBufferRef, plane: usize) -> usize;
         fn CVPixelBufferGetPixelFormatType(buffer: CVImageBufferRef) -> OSType;
     }
 

@@ -28,6 +28,7 @@ pub struct Renderer {
     shadow_pipeline_state: metal::RenderPipelineState,
     sprite_pipeline_state: metal::RenderPipelineState,
     image_pipeline_state: metal::RenderPipelineState,
+    surface_pipeline_state: metal::RenderPipelineState,
     path_atlas_pipeline_state: metal::RenderPipelineState,
     underline_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
@@ -116,6 +117,14 @@ impl Renderer {
             "image_fragment",
             pixel_format,
         );
+        let surface_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "surface",
+            "surface_vertex",
+            "surface_fragment",
+            pixel_format,
+        );
         let path_atlas_pipeline_state = build_path_atlas_pipeline_state(
             &device,
             &library,
@@ -141,6 +150,7 @@ impl Renderer {
             shadow_pipeline_state,
             sprite_pipeline_state,
             image_pipeline_state,
+            surface_pipeline_state,
             path_atlas_pipeline_state,
             underline_pipeline_state,
             unit_vertices,
@@ -798,14 +808,14 @@ impl Renderer {
             return;
         }
 
-        command_encoder.set_render_pipeline_state(&self.image_pipeline_state);
+        command_encoder.set_render_pipeline_state(&self.surface_pipeline_state);
         command_encoder.set_vertex_buffer(
-            shaders::GPUIImageVertexInputIndex_GPUIImageVertexInputIndexVertices as u64,
+            shaders::GPUISurfaceVertexInputIndex_GPUISurfaceVertexInputIndexVertices as u64,
             Some(&self.unit_vertices),
             0,
         );
         command_encoder.set_vertex_bytes(
-            shaders::GPUIImageVertexInputIndex_GPUIImageVertexInputIndexViewportSize as u64,
+            shaders::GPUISurfaceVertexInputIndex_GPUISurfaceVertexInputIndexViewportSize as u64,
             mem::size_of::<shaders::vector_float2>() as u64,
             [drawable_size.to_float2()].as_ptr() as *const c_void,
         );
@@ -817,64 +827,71 @@ impl Renderer {
                 surface.image_buffer.height() as i32,
             );
             let target_size = surface.bounds.size() * scale_factor;
-            let pixel_format = if surface.image_buffer.pixel_format_type()
-                == core_video::kCVPixelFormatType_32BGRA
-            {
-                MTLPixelFormat::BGRA8Unorm
-            } else {
-                MTLPixelFormat::R8Unorm
-            };
 
-            let texture = self
+            assert_eq!(
+                surface.image_buffer.pixel_format_type(),
+                core_video::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+            );
+
+            let y_texture = self
                 .cv_texture_cache
                 .create_texture_from_image(
                     surface.image_buffer.as_concrete_TypeRef(),
                     ptr::null(),
-                    pixel_format,
-                    source_size.x() as usize,
-                    source_size.y() as usize,
+                    MTLPixelFormat::R8Unorm,
+                    surface.image_buffer.plane_width(0),
+                    surface.image_buffer.plane_height(0),
                     0,
+                )
+                .unwrap();
+            let cb_cr_texture = self
+                .cv_texture_cache
+                .create_texture_from_image(
+                    surface.image_buffer.as_concrete_TypeRef(),
+                    ptr::null(),
+                    MTLPixelFormat::RG8Unorm,
+                    surface.image_buffer.plane_width(1),
+                    surface.image_buffer.plane_height(1),
+                    1,
                 )
                 .unwrap();
 
             align_offset(offset);
-            let next_offset = *offset + mem::size_of::<shaders::GPUIImage>();
+            let next_offset = *offset + mem::size_of::<shaders::GPUISurface>();
             assert!(
                 next_offset <= INSTANCE_BUFFER_SIZE,
                 "instance buffer exhausted"
             );
 
             command_encoder.set_vertex_buffer(
-                shaders::GPUIImageVertexInputIndex_GPUIImageVertexInputIndexImages as u64,
+                shaders::GPUISurfaceVertexInputIndex_GPUISurfaceVertexInputIndexSurfaces as u64,
                 Some(&self.instances),
                 *offset as u64,
             );
             command_encoder.set_vertex_bytes(
-                shaders::GPUIImageVertexInputIndex_GPUIImageVertexInputIndexAtlasSize as u64,
+                shaders::GPUISurfaceVertexInputIndex_GPUISurfaceVertexInputIndexAtlasSize as u64,
                 mem::size_of::<shaders::vector_float2>() as u64,
                 [source_size.to_float2()].as_ptr() as *const c_void,
             );
             command_encoder.set_fragment_texture(
-                shaders::GPUIImageFragmentInputIndex_GPUIImageFragmentInputIndexAtlas as u64,
-                Some(texture.as_texture_ref()),
+                shaders::GPUISurfaceFragmentInputIndex_GPUISurfaceFragmentInputIndexYAtlas as u64,
+                Some(y_texture.as_texture_ref()),
+            );
+            command_encoder.set_fragment_texture(
+                shaders::GPUISurfaceFragmentInputIndex_GPUISurfaceFragmentInputIndexCbCrAtlas
+                    as u64,
+                Some(cb_cr_texture.as_texture_ref()),
             );
 
             unsafe {
-                let buffer_contents =
-                    (self.instances.contents() as *mut u8).add(*offset) as *mut shaders::GPUIImage;
+                let buffer_contents = (self.instances.contents() as *mut u8).add(*offset)
+                    as *mut shaders::GPUISurface;
                 std::ptr::write(
                     buffer_contents,
-                    shaders::GPUIImage {
+                    shaders::GPUISurface {
                         origin: origin.to_float2(),
                         target_size: target_size.to_float2(),
                         source_size: source_size.to_float2(),
-                        atlas_origin: Default::default(),
-                        border_top: Default::default(),
-                        border_right: Default::default(),
-                        border_bottom: Default::default(),
-                        border_left: Default::default(),
-                        border_color: Default::default(),
-                        corner_radius: Default::default(),
                     },
                 );
             }
