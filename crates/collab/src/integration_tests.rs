@@ -298,7 +298,8 @@ async fn test_host_disconnect(
     let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
-    let (_, workspace_b) = cx_b.add_window(|cx| Workspace::new(project_b.clone(), cx));
+    let (_, workspace_b) =
+        cx_b.add_window(|cx| Workspace::new(project_b.clone(), |_, _| unimplemented!(), cx));
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
             workspace.open_path((worktree_id, "b.txt"), true, cx)
@@ -2786,7 +2787,8 @@ async fn test_collaborating_with_code_actions(
 
     // Join the project as client B.
     let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
-    let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(project_b.clone(), cx));
+    let (_window_b, workspace_b) =
+        cx_b.add_window(|cx| Workspace::new(project_b.clone(), |_, _| unimplemented!(), cx));
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
             workspace.open_path((worktree_id, "main.rs"), true, cx)
@@ -3001,7 +3003,8 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
     let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
-    let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(project_b.clone(), cx));
+    let (_window_b, workspace_b) =
+        cx_b.add_window(|cx| Workspace::new(project_b.clone(), |_, _| unimplemented!(), cx));
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
             workspace.open_path((worktree_id, "one.rs"), true, cx)
@@ -5224,6 +5227,7 @@ impl TestServer {
             fs: fs.clone(),
             build_window_options: Default::default,
             initialize_workspace: |_, _, _| unimplemented!(),
+            default_item_factory: |_, _| unimplemented!(),
         });
 
         Channel::init(&client);
@@ -5459,7 +5463,9 @@ impl TestClient {
         cx: &mut TestAppContext,
     ) -> ViewHandle<Workspace> {
         let (_, root_view) = cx.add_window(|_| EmptyView);
-        cx.add_view(&root_view, |cx| Workspace::new(project.clone(), cx))
+        cx.add_view(&root_view, |cx| {
+            Workspace::new(project.clone(), |_, _| unimplemented!(), cx)
+        })
     }
 
     async fn simulate_host(

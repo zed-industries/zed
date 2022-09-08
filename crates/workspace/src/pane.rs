@@ -1,5 +1,9 @@
 use super::{ItemHandle, SplitDirection};
-use crate::{toolbar::Toolbar, Item, NewFile, NewSearch, NewTerminal, WeakItemHandle, Workspace};
+use crate::{
+    dock::{DockAnchor, MoveDock},
+    toolbar::Toolbar,
+    Item, NewFile, NewSearch, NewTerminal, WeakItemHandle, Workspace,
+};
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use context_menu::{ContextMenu, ContextMenuItem};
@@ -77,12 +81,26 @@ pub struct DeploySplitMenu {
 }
 
 #[derive(Clone, PartialEq)]
+pub struct DeployDockMenu {
+    position: Vector2F,
+}
+
+#[derive(Clone, PartialEq)]
 pub struct DeployNewMenu {
     position: Vector2F,
 }
 
 impl_actions!(pane, [GoBack, GoForward, ActivateItem]);
-impl_internal_actions!(pane, [CloseItem, DeploySplitMenu, DeployNewMenu, MoveItem]);
+impl_internal_actions!(
+    pane,
+    [
+        CloseItem,
+        DeploySplitMenu,
+        DeployNewMenu,
+        DeployDockMenu,
+        MoveItem
+    ]
+);
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
@@ -141,6 +159,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx));
     cx.add_action(Pane::deploy_split_menu);
     cx.add_action(Pane::deploy_new_menu);
+    cx.add_action(Pane::deploy_dock_menu);
     cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
         Pane::reopen_closed_item(workspace, cx).detach();
     });
@@ -186,6 +205,7 @@ pub struct Pane {
     nav_history: Rc<RefCell<NavHistory>>,
     toolbar: ViewHandle<Toolbar>,
     context_menu: ViewHandle<ContextMenu>,
+    is_dock: bool,
 }
 
 pub struct ItemNavHistory {
@@ -235,7 +255,7 @@ pub enum ReorderBehavior {
 }
 
 impl Pane {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(is_dock: bool, cx: &mut ViewContext<Self>) -> Self {
         let handle = cx.weak_handle();
         let context_menu = cx.add_view(ContextMenu::new);
         Self {
@@ -254,6 +274,7 @@ impl Pane {
             })),
             toolbar: cx.add_view(|_| Toolbar::new(handle)),
             context_menu,
+            is_dock,
         }
     }
 
@@ -976,6 +997,20 @@ impl Pane {
         });
     }
 
+    fn deploy_dock_menu(&mut self, action: &DeployDockMenu, cx: &mut ViewContext<Self>) {
+        self.context_menu.update(cx, |menu, cx| {
+            menu.show(
+                action.position,
+                vec![
+                    ContextMenuItem::item("Move Dock Right", MoveDock(DockAnchor::Right)),
+                    ContextMenuItem::item("Move Dock Bottom", MoveDock(DockAnchor::Bottom)),
+                    ContextMenuItem::item("Move Dock Maximized", MoveDock(DockAnchor::Expanded)),
+                ],
+                cx,
+            );
+        });
+    }
+
     fn deploy_new_menu(&mut self, action: &DeployNewMenu, cx: &mut ViewContext<Self>) {
         self.context_menu.update(cx, |menu, cx| {
             menu.show(
@@ -1320,6 +1355,8 @@ impl View for Pane {
 
         let this = cx.handle();
 
+        let is_dock = self.is_dock;
+
         Stack::new()
             .with_child(
                 EventHandler::new(if let Some(active_item) = self.active_item() {
@@ -1382,10 +1419,16 @@ impl View for Pane {
                                         },
                                     )
                                     .with_cursor_style(CursorStyle::PointingHand)
-                                    .on_down(MouseButton::Left, |e, cx| {
-                                        cx.dispatch_action(DeploySplitMenu {
-                                            position: e.position,
-                                        });
+                                    .on_down(MouseButton::Left, move |e, cx| {
+                                        if is_dock {
+                                            cx.dispatch_action(DeployDockMenu {
+                                                position: e.position,
+                                            });
+                                        } else {
+                                            cx.dispatch_action(DeploySplitMenu {
+                                                position: e.position,
+                                            });
+                                        }
                                     })
                                     .boxed(),
                                 ])
@@ -1570,7 +1613,8 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (_, workspace) =
+            cx.add_window(|cx| Workspace::new(project, crate::tests::default_item_factory, cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // 1. Add with a destination index
@@ -1658,7 +1702,8 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (_, workspace) =
+            cx.add_window(|cx| Workspace::new(project, crate::tests::default_item_factory, cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // 1. Add with a destination index
@@ -1734,7 +1779,8 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (_, workspace) =
+            cx.add_window(|cx| Workspace::new(project, crate::tests::default_item_factory, cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // singleton view

@@ -1,15 +1,9 @@
 use gpui::{ModelHandle, ViewContext};
-use settings::{Settings, WorkingDirectory};
-use workspace::{dock::Dock, Workspace};
+use workspace::Workspace;
 
-use crate::{
-    terminal_container_view::{
-        get_working_directory, DeployModal, TerminalContainer, TerminalContainerContent,
-    },
-    Event, Terminal,
-};
+use crate::{terminal_container_view::DeployModal, Event, Terminal};
 
-pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewContext<Workspace>) {
+pub fn deploy_modal(_workspace: &mut Workspace, _: &DeployModal, _cx: &mut ViewContext<Workspace>) {
     // let window = cx.window_id();
 
     // // Pull the terminal connection out of the global if it has been stored
@@ -62,10 +56,10 @@ pub fn deploy_modal(workspace: &mut Workspace, _: &DeployModal, cx: &mut ViewCon
 }
 
 pub fn on_event(
-    workspace: &mut Workspace,
+    _workspace: &mut Workspace,
     _: ModelHandle<Terminal>,
-    event: &Event,
-    cx: &mut ViewContext<Workspace>,
+    _event: &Event,
+    _cx: &mut ViewContext<Workspace>,
 ) {
     // Dismiss the modal if the terminal quit
     // if let Event::CloseTerminal = event {

@@ -7100,7 +7100,7 @@ mod tests {
     fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
         cx.set_global(Settings::test(cx));
         use workspace::Item;
-        let (_, pane) = cx.add_window(Default::default(), Pane::new);
+        let (_, pane) = cx.add_window(Default::default(), |cx| Pane::new(false, cx));
         let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
 
         cx.add_view(&pane, |cx| {

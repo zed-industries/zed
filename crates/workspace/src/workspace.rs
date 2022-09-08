@@ -1,9 +1,9 @@
-pub mod dock;
 /// NOTE: Focus only 'takes' after an update has flushed_effects. Pane sends an event in on_focus_in
 /// which the workspace uses to change the activated pane.
 ///
 /// This may cause issues when you're trying to write tests that use workspace focus to add items at
 /// specific locations.
+pub mod dock;
 pub mod pane;
 pub mod pane_group;
 pub mod searchable;
@@ -18,7 +18,7 @@ use client::{
 };
 use clock::ReplicaId;
 use collections::{hash_map, HashMap, HashSet};
-use dock::{Dock, DockPosition, ToggleDock};
+use dock::{DefaultItemFactory, Dock, DockAnchor, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
 use futures::{channel::oneshot, FutureExt};
 use gpui::{
@@ -147,6 +147,7 @@ impl_actions!(workspace, [ToggleProjectOnline, ActivatePane]);
 
 pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     pane::init(cx);
+    dock::init(cx);
 
     cx.add_global_action(open);
     cx.add_global_action({
@@ -262,6 +263,7 @@ pub struct AppState {
     pub fs: Arc<dyn fs::Fs>,
     pub build_window_options: fn() -> WindowOptions<'static>,
     pub initialize_workspace: fn(&mut Workspace, &Arc<AppState>, &mut ViewContext<Workspace>),
+    pub default_item_factory: DefaultItemFactory,
 }
 
 #[derive(Eq, PartialEq, Hash)]
@@ -867,6 +869,7 @@ impl AppState {
             project_store,
             initialize_workspace: |_, _, _| {},
             build_window_options: Default::default,
+            default_item_factory: |_, _| unimplemented!(),
         })
     }
 }
@@ -920,7 +923,11 @@ enum FollowerItem {
 }
 
 impl Workspace {
-    pub fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        project: ModelHandle<Project>,
+        dock_default_factory: DefaultItemFactory,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         cx.observe_fullscreen(|_, _, cx| cx.notify()).detach();
 
         cx.observe_window_activation(Self::on_window_activation_changed)
@@ -947,14 +954,14 @@ impl Workspace {
         })
         .detach();
 
-        let pane = cx.add_view(Pane::new);
-        let pane_id = pane.id();
-        cx.subscribe(&pane, move |this, _, event, cx| {
+        let center_pane = cx.add_view(|cx| Pane::new(false, cx));
+        let pane_id = center_pane.id();
+        cx.subscribe(&center_pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
         })
         .detach();
-        cx.focus(&pane);
-        cx.emit(Event::PaneAdded(pane.clone()));
+        cx.focus(&center_pane);
+        cx.emit(Event::PaneAdded(center_pane.clone()));
 
         let fs = project.read(cx).fs().clone();
         let user_store = project.read(cx).user_store();
@@ -977,19 +984,18 @@ impl Workspace {
         });
 
         let weak_self = cx.weak_handle();
-
         cx.emit_global(WorkspaceCreated(weak_self.clone()));
 
-        let dock = Dock::new(cx);
+        let dock = Dock::new(cx, dock_default_factory);
 
         let left_sidebar = cx.add_view(|_| Sidebar::new(Side::Left));
         let right_sidebar = cx.add_view(|_| Sidebar::new(Side::Right));
         let left_sidebar_buttons = cx.add_view(|cx| SidebarButtons::new(left_sidebar.clone(), cx));
-        let toggle_dock = cx.add_view(|cx| ToggleDock::new(Arc::new(dock), cx));
+        let toggle_dock = cx.add_view(|cx| ToggleDockButton::new(weak_self.clone(), cx));
         let right_sidebar_buttons =
             cx.add_view(|cx| SidebarButtons::new(right_sidebar.clone(), cx));
         let status_bar = cx.add_view(|cx| {
-            let mut status_bar = StatusBar::new(&pane.clone(), cx);
+            let mut status_bar = StatusBar::new(&center_pane.clone(), cx);
             status_bar.add_left_item(left_sidebar_buttons, cx);
             status_bar.add_right_item(right_sidebar_buttons, cx);
             status_bar.add_right_item(toggle_dock, cx);
@@ -1003,11 +1009,11 @@ impl Workspace {
         let mut this = Workspace {
             modal: None,
             weak_self,
-            center: PaneGroup::new(pane.clone()),
+            center: PaneGroup::new(center_pane.clone()),
             dock,
-            panes: vec![pane.clone()],
+            panes: vec![center_pane.clone()],
             panes_by_item: Default::default(),
-            active_pane: pane.clone(),
+            active_pane: center_pane.clone(),
             status_bar,
             notifications: Default::default(),
             client,
@@ -1081,6 +1087,7 @@ impl Workspace {
                         app_state.fs.clone(),
                         cx,
                     ),
+                    app_state.default_item_factory,
                     cx,
                 );
                 (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
@@ -1532,7 +1539,7 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
-        let pane = cx.add_view(Pane::new);
+        let pane = cx.add_view(|cx| Pane::new(false, cx));
         let pane_id = pane.id();
         cx.subscribe(&pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
@@ -1547,6 +1554,10 @@ impl Workspace {
     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
         let active_pane = self.active_pane().clone();
         Pane::add_item(self, &active_pane, item, true, true, None, cx);
+    }
+
+    pub fn add_item_to_dock(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+        Pane::add_item(self, &self.dock.pane(), item, true, true, None, cx);
     }
 
     pub fn open_path(
@@ -2573,7 +2584,7 @@ impl View for Workspace {
                                                 )
                                                 .with_children(
                                                     self.dock
-                                                        .render(&theme, DockPosition::Bottom)
+                                                        .render(&theme, DockAnchor::Bottom)
                                                         .map(|dock| {
                                                             FlexItem::new(dock)
                                                                 .flex(1., true)
@@ -2587,7 +2598,7 @@ impl View for Workspace {
                                     )
                                     .with_children(
                                         self.dock
-                                            .render(&theme, DockPosition::Right)
+                                            .render(&theme, DockAnchor::Right)
                                             .map(|dock| FlexItem::new(dock).flex(1., true).boxed()),
                                     )
                                     .with_children(
@@ -2603,7 +2614,7 @@ impl View for Workspace {
                                     )
                                     .boxed()
                             })
-                            .with_children(self.dock.render(&theme, DockPosition::Fullscreen))
+                            .with_children(self.dock.render(&theme, DockAnchor::Expanded))
                             .with_children(self.modal.as_ref().map(|m| {
                                 ChildView::new(m)
                                     .contained()
@@ -2811,7 +2822,7 @@ pub fn open_paths(
                     cx,
                 );
                 new_project = Some(project.clone());
-                let mut workspace = Workspace::new(project, cx);
+                let mut workspace = Workspace::new(project, app_state.default_item_factory, cx);
                 (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
                 if contains_directory {
                     workspace.toggle_sidebar(Side::Left, cx);
@@ -2872,6 +2883,7 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
                 app_state.fs.clone(),
                 cx,
             ),
+            app_state.default_item_factory,
             cx,
         );
         (app_state.initialize_workspace)(&mut workspace, app_state, cx);
@@ -2889,6 +2901,13 @@ mod tests {
     use project::{FakeFs, Project, ProjectEntryId};
     use serde_json::json;
 
+    pub fn default_item_factory(
+        _workspace: &mut Workspace,
+        _cx: &mut ViewContext<Workspace>,
+    ) -> Box<dyn ItemHandle> {
+        unimplemented!();
+    }
+
     #[gpui::test]
     async fn test_tab_disambiguation(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
@@ -2896,7 +2915,8 @@ mod tests {
 
         let fs = FakeFs::new(cx.background());
         let project = Project::test(fs, [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        let (_, workspace) =
+            cx.add_window(|cx| Workspace::new(project.clone(), default_item_factory, cx));
 
         // Adding an item with no ambiguity renders the tab without detail.
         let item1 = cx.add_view(&workspace, |_| {
@@ -2960,7 +2980,8 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["root1".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        let (window_id, workspace) =
+            cx.add_window(|cx| Workspace::new(project.clone(), default_item_factory, cx));
         let worktree_id = project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
@@ -3056,7 +3077,8 @@ mod tests {
         fs.insert_tree("/root", json!({ "one": "" })).await;
 
         let project = Project::test(fs, ["root".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        let (window_id, workspace) =
+            cx.add_window(|cx| Workspace::new(project.clone(), default_item_factory, cx));
 
         // When there are no dirty items, there's nothing to do.
         let item1 = cx.add_view(&workspace, |_| TestItem::new());
@@ -3096,7 +3118,8 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (window_id, workspace) =
+            cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
 
         let item1 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
@@ -3191,7 +3214,8 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (window_id, workspace) =
+            cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
 
         // Create several workspace items with single project entries, and two
         // workspace items with multiple project entries.
@@ -3292,7 +3316,8 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (window_id, workspace) =
+            cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
 
         let item = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
@@ -3409,7 +3434,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
 
         let item = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
