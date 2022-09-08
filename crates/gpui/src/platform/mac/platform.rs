@@ -1,4 +1,6 @@
-use super::{event::key_to_native, BoolExt as _, Dispatcher, FontSystem, Window};
+use super::{
+    event::key_to_native, status_item::StatusItem, BoolExt as _, Dispatcher, FontSystem, Window,
+};
 use crate::{
     executor, keymap,
     platform::{self, CursorStyle},
@@ -439,23 +441,6 @@ impl platform::Platform for MacPlatform {
         }
     }
 
-    fn open_window(
-        &self,
-        id: usize,
-        options: platform::WindowOptions,
-        executor: Rc<executor::Foreground>,
-    ) -> Box<dyn platform::Window> {
-        Box::new(Window::open(id, options, executor, self.fonts()))
-    }
-
-    fn key_window_id(&self) -> Option<usize> {
-        Window::key_window_id()
-    }
-
-    fn fonts(&self) -> Arc<dyn platform::FontSystem> {
-        self.fonts.clone()
-    }
-
     fn hide(&self) {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
@@ -495,6 +480,27 @@ impl platform::Platform for MacPlatform {
             let app = NSApplication::sharedApplication(nil);
             let _: () = msg_send![app, terminate: nil];
         }
+    }
+
+    fn open_window(
+        &self,
+        id: usize,
+        options: platform::WindowOptions,
+        executor: Rc<executor::Foreground>,
+    ) -> Box<dyn platform::Window> {
+        Box::new(Window::open(id, options, executor, self.fonts()))
+    }
+
+    fn key_window_id(&self) -> Option<usize> {
+        Window::key_window_id()
+    }
+
+    fn add_status_item(&self) -> Box<dyn platform::StatusItem> {
+        Box::new(StatusItem::add())
+    }
+
+    fn fonts(&self) -> Arc<dyn platform::FontSystem> {
+        self.fonts.clone()
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {

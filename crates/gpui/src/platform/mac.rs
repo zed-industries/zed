@@ -7,6 +7,7 @@ mod image_cache;
 mod platform;
 mod renderer;
 mod sprite_cache;
+mod status_item;
 mod window;
 
 use cocoa::base::{BOOL, NO, YES};

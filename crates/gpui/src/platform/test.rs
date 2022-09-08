@@ -120,6 +120,14 @@ impl super::Platform for Platform {
 
     fn activate(&self, _ignoring_other_apps: bool) {}
 
+    fn hide(&self) {}
+
+    fn hide_other_apps(&self) {}
+
+    fn unhide_other_apps(&self) {}
+
+    fn quit(&self) {}
+
     fn open_window(
         &self,
         _: usize,
@@ -136,13 +144,9 @@ impl super::Platform for Platform {
         None
     }
 
-    fn hide(&self) {}
-
-    fn hide_other_apps(&self) {}
-
-    fn unhide_other_apps(&self) {}
-
-    fn quit(&self) {}
+    fn add_status_item(&self) -> Box<dyn crate::StatusItem> {
+        todo!()
+    }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
         *self.current_clipboard_item.lock() = Some(item);

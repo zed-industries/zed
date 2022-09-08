@@ -87,6 +87,8 @@ fn main() {
     });
 
     app.run(move |cx| {
+        std::mem::forget(cx.platform().add_status_item());
+
         let client = client::Client::new(http.clone());
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         languages.set_language_server_download_dir(zed::paths::LANGUAGES_DIR.clone());

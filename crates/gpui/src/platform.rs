@@ -39,6 +39,11 @@ pub trait Platform: Send + Sync {
     fn fonts(&self) -> Arc<dyn FontSystem>;
 
     fn activate(&self, ignoring_other_apps: bool);
+    fn hide(&self);
+    fn hide_other_apps(&self);
+    fn unhide_other_apps(&self);
+    fn quit(&self);
+
     fn open_window(
         &self,
         id: usize,
@@ -46,10 +51,8 @@ pub trait Platform: Send + Sync {
         executor: Rc<executor::Foreground>,
     ) -> Box<dyn Window>;
     fn key_window_id(&self) -> Option<usize>;
-    fn hide(&self);
-    fn hide_other_apps(&self);
-    fn unhide_other_apps(&self);
-    fn quit(&self);
+
+    fn add_status_item(&self) -> Box<dyn StatusItem>;
 
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
@@ -132,6 +135,8 @@ pub trait WindowContext {
     fn titlebar_height(&self) -> f32;
     fn present_scene(&mut self, scene: Scene);
 }
+
+pub trait StatusItem {}
 
 #[derive(Debug)]
 pub struct WindowOptions<'a> {

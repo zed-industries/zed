@@ -116,15 +116,25 @@ impl gpui::View for ScreenCaptureView {
 
     fn render(&mut self, _: &mut gpui::RenderContext<Self>) -> gpui::ElementBox {
         let image_buffer = self.image_buffer.clone();
-        Canvas::new(move |bounds, _, cx| {
+        let canvas = Canvas::new(move |bounds, _, cx| {
             if let Some(image_buffer) = image_buffer.clone() {
                 cx.scene.push_surface(Surface {
                     bounds,
                     image_buffer,
                 });
             }
-        })
-        .boxed()
+        });
+
+        if let Some(image_buffer) = self.image_buffer.as_ref() {
+            canvas
+                .constrained()
+                .with_width(image_buffer.width() as f32)
+                .with_height(image_buffer.height() as f32)
+                .aligned()
+                .boxed()
+        } else {
+            canvas.boxed()
+        }
     }
 }
 
