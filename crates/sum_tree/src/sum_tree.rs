@@ -101,6 +101,12 @@ pub enum Bias {
     Right,
 }
 
+impl Default for Bias {
+    fn default() -> Self {
+        Bias::Left
+    }
+}
+
 impl PartialOrd for Bias {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
