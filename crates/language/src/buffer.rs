@@ -35,7 +35,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     vec,
 };
-use sum_tree::TreeMap;
+use sum_tree::{SumTree, TreeMap};
 use text::operation_queue::OperationQueue;
 pub use text::{Buffer as TextBuffer, BufferSnapshot as TextBufferSnapshot, Operation as _, *};
 use theme::SyntaxTheme;
@@ -48,7 +48,7 @@ pub use lsp::DiagnosticSeverity;
 
 pub struct Buffer {
     text: TextBuffer,
-    head_text: Option<String>,
+    head_text: Option<Rope>,
     git_diff: BufferDiff,
     file: Option<Arc<dyn File>>,
     saved_version: clock::Global,
@@ -77,7 +77,7 @@ pub struct Buffer {
 
 pub struct BufferSnapshot {
     text: text::BufferSnapshot,
-    pub git_hunks: Arc<[DiffHunk<Anchor>]>,
+    pub git_hunks: SumTree<DiffHunk<Anchor>>,
     pub(crate) syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: DiagnosticSet,
@@ -371,7 +371,7 @@ impl Buffer {
             id: self.remote_id(),
             file: self.file.as_ref().map(|f| f.to_proto()),
             base_text: self.base_text().to_string(),
-            head_text: self.head_text.clone(),
+            head_text: self.head_text.as_ref().map(|h| h.to_string()),
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
         }
     }
@@ -421,10 +421,8 @@ impl Buffer {
             UNIX_EPOCH
         };
 
-        let mut git_diff = BufferDiff::new();
-        if let Some(head_text) = &head_text {
-            git_diff.update(head_text, &buffer);
-        }
+        let git_diff = BufferDiff::new(&head_text, &buffer);
+        let head_text = head_text.map(|h| Rope::from(h.as_str()));
 
         Self {
             saved_mtime,
@@ -465,7 +463,7 @@ impl Buffer {
         BufferSnapshot {
             text,
             syntax,
-            git_hunks: self.git_diff.hunks(),
+            git_hunks: self.git_diff.hunks().clone(),
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
@@ -2175,6 +2173,8 @@ impl BufferSnapshot {
         &'a self,
         query_row_range: Range<u32>,
     ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
+        println!("{} hunks overall", self.git_hunks.iter().count());
+        //This is pretty terrible, find a way to utilize sumtree traversal to accelerate this
         self.git_hunks.iter().filter_map(move |hunk| {
             let range = hunk.buffer_range.to_point(&self.text);
 

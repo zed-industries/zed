@@ -54,6 +54,13 @@ impl Rope {
         cursor.slice(range.end)
     }
 
+    pub fn slice_rows(&self, range: Range<u32>) -> Rope {
+        //This would be more efficient with a forward advance after the first, but it's fine
+        let start = self.point_to_offset(Point::new(range.start, 0));
+        let end = self.point_to_offset(Point::new(range.end, 0));
+        self.slice(start..end)
+    }
+
     pub fn push(&mut self, text: &str) {
         let mut new_chunks = SmallVec::<[_; 16]>::new();
         let mut new_chunk = ArrayString::new();
