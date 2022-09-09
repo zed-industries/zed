@@ -110,7 +110,7 @@ pub trait InputHandler {
     fn rect_for_range(&self, range_utf16: Range<usize>) -> Option<RectF>;
 }
 
-pub trait Window: WindowContext {
+pub trait Window {
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn on_event(&mut self, callback: Box<dyn FnMut(Event) -> bool>);
     fn on_active_status_change(&mut self, callback: Box<dyn FnMut(bool)>);
@@ -127,9 +127,7 @@ pub trait Window: WindowContext {
     fn minimize(&self);
     fn zoom(&self);
     fn toggle_full_screen(&self);
-}
 
-pub trait WindowContext {
     fn size(&self) -> Vector2F;
     fn scale_factor(&self) -> f32;
     fn titlebar_height(&self) -> f32;

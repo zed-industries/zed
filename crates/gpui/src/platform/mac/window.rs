@@ -6,7 +6,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     keymap::Keystroke,
-    platform::{self, Event, WindowBounds, WindowContext},
+    platform::{self, Event, WindowBounds},
     InputHandler, KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseButtonEvent,
     MouseMovedEvent, Scene,
 };
@@ -649,9 +649,7 @@ impl platform::Window for Window {
             })
             .detach();
     }
-}
 
-impl platform::WindowContext for Window {
     fn size(&self) -> Vector2F {
         self.0.as_ref().borrow().size()
     }
@@ -713,9 +711,7 @@ impl WindowState {
             }
         }
     }
-}
 
-impl platform::WindowContext for WindowState {
     fn size(&self) -> Vector2F {
         let NSSize { width, height, .. } =
             unsafe { NSView::frame(self.native_window.contentView()) }.size;

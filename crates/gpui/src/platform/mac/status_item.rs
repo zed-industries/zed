@@ -1,7 +1,6 @@
 use cocoa::{
     appkit::{NSSquareStatusItemLength, NSStatusBar, NSStatusItem, NSView},
     base::{id, nil, NO, YES},
-    foundation::NSRect,
     quartzcore::AutoresizingMask,
 };
 use core_foundation::base::TCFType;

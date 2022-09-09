@@ -228,24 +228,6 @@ impl super::Dispatcher for Dispatcher {
     }
 }
 
-impl super::WindowContext for Window {
-    fn size(&self) -> Vector2F {
-        self.size
-    }
-
-    fn scale_factor(&self) -> f32 {
-        self.scale_factor
-    }
-
-    fn titlebar_height(&self) -> f32 {
-        24.
-    }
-
-    fn present_scene(&mut self, scene: crate::Scene) {
-        self.current_scene = Some(scene);
-    }
-}
-
 impl super::Window for Window {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
@@ -300,6 +282,22 @@ impl super::Window for Window {
     fn zoom(&self) {}
 
     fn toggle_full_screen(&self) {}
+
+    fn size(&self) -> Vector2F {
+        self.size
+    }
+
+    fn scale_factor(&self) -> f32 {
+        self.scale_factor
+    }
+
+    fn titlebar_height(&self) -> f32 {
+        24.
+    }
+
+    fn present_scene(&mut self, scene: crate::Scene) {
+        self.current_scene = Some(scene);
+    }
 }
 
 pub fn platform() -> Platform {
