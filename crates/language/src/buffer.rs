@@ -1,4 +1,4 @@
-use crate::git::{BufferDiff, DiffHunk};
+use crate::git::{BufferDiff, BufferDiffSnapshot, DiffHunk};
 pub use crate::{
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
@@ -35,7 +35,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     vec,
 };
-use sum_tree::{SumTree, TreeMap};
+use sum_tree::TreeMap;
 use text::operation_queue::OperationQueue;
 pub use text::{Buffer as TextBuffer, BufferSnapshot as TextBufferSnapshot, Operation as _, *};
 use theme::SyntaxTheme;
@@ -77,7 +77,7 @@ pub struct Buffer {
 
 pub struct BufferSnapshot {
     text: text::BufferSnapshot,
-    pub git_hunks: SumTree<DiffHunk<Anchor>>,
+    pub diff_snapshot: BufferDiffSnapshot,
     pub(crate) syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: DiagnosticSet,
@@ -463,7 +463,7 @@ impl Buffer {
         BufferSnapshot {
             text,
             syntax,
-            git_hunks: self.git_diff.hunks().clone(),
+            diff_snapshot: self.git_diff.snapshot(),
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
@@ -2173,26 +2173,7 @@ impl BufferSnapshot {
         &'a self,
         query_row_range: Range<u32>,
     ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
-        println!("{} hunks overall", self.git_hunks.iter().count());
-        //This is pretty terrible, find a way to utilize sumtree traversal to accelerate this
-        self.git_hunks.iter().filter_map(move |hunk| {
-            let range = hunk.buffer_range.to_point(&self.text);
-
-            if range.start.row < query_row_range.end && query_row_range.start < range.end.row {
-                let end_row = if range.end.column > 0 {
-                    range.end.row + 1
-                } else {
-                    range.end.row
-                };
-
-                Some(DiffHunk {
-                    buffer_range: range.start.row..end_row,
-                    head_range: hunk.head_range.clone(),
-                })
-            } else {
-                None
-            }
-        })
+        self.diff_snapshot.hunks_in_range(query_row_range, self)
     }
 
     pub fn diagnostics_in_range<'a, T, O>(
@@ -2272,7 +2253,7 @@ impl Clone for BufferSnapshot {
     fn clone(&self) -> Self {
         Self {
             text: self.text.clone(),
-            git_hunks: self.git_hunks.clone(),
+            diff_snapshot: self.diff_snapshot.clone(),
             syntax: self.syntax.clone(),
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),

@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use sum_tree::{Bias, SumTree};
-use text::{Anchor, BufferSnapshot, Point, Rope};
+use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToPoint};
 
 pub use git2 as libgit;
 use libgit::{DiffOptions as GitOptions, Patch as GitPatch};
@@ -13,10 +13,10 @@ pub enum DiffHunkStatus {
     Removed,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffHunk<T> {
     pub buffer_range: Range<T>,
-    pub head_range: Range<usize>,
+    pub head_range: Range<u32>,
 }
 
 impl DiffHunk<u32> {
@@ -36,6 +36,7 @@ impl sum_tree::Item for DiffHunk<Anchor> {
 
     fn summary(&self) -> Self::Summary {
         DiffHunkSummary {
+            buffer_range: self.buffer_range.clone(),
             head_range: self.head_range.clone(),
         }
     }
@@ -43,11 +44,12 @@ impl sum_tree::Item for DiffHunk<Anchor> {
 
 #[derive(Debug, Default, Clone)]
 pub struct DiffHunkSummary {
-    head_range: Range<usize>,
+    buffer_range: Range<Anchor>,
+    head_range: Range<u32>,
 }
 
 impl sum_tree::Summary for DiffHunkSummary {
-    type Context = ();
+    type Context = text::BufferSnapshot;
 
     fn add_summary(&mut self, other: &Self, _: &Self::Context) {
         self.head_range.start = self.head_range.start.min(other.head_range.start);
@@ -55,16 +57,29 @@ impl sum_tree::Summary for DiffHunkSummary {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct HunkHeadEnd(usize);
+#[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct HunkHeadEnd(u32);
 
 impl<'a> sum_tree::Dimension<'a, DiffHunkSummary> for HunkHeadEnd {
-    fn add_summary(&mut self, summary: &'a DiffHunkSummary, _: &()) {
+    fn add_summary(&mut self, summary: &'a DiffHunkSummary, _: &text::BufferSnapshot) {
         self.0 = summary.head_range.end;
     }
 
-    fn from_summary(summary: &'a DiffHunkSummary, _: &()) -> Self {
+    fn from_summary(summary: &'a DiffHunkSummary, _: &text::BufferSnapshot) -> Self {
         HunkHeadEnd(summary.head_range.end)
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct HunkBufferEnd(u32);
+
+impl<'a> sum_tree::Dimension<'a, DiffHunkSummary> for HunkBufferEnd {
+    fn add_summary(&mut self, summary: &'a DiffHunkSummary, buffer: &text::BufferSnapshot) {
+        self.0 = summary.buffer_range.end.to_point(buffer).row;
+    }
+
+    fn from_summary(summary: &'a DiffHunkSummary, buffer: &text::BufferSnapshot) -> Self {
+        HunkBufferEnd(summary.buffer_range.end.to_point(buffer).row)
     }
 }
 
@@ -105,8 +120,8 @@ impl<'a> HunkIter<'a> {
         let head_range = if hunk.old_start() == 0 {
             0..0
         } else {
-            let old_start = hunk.old_start() as usize - 1;
-            let old_end = old_start + hunk.old_lines() as usize;
+            let old_start = hunk.old_start() - 1;
+            let old_end = old_start + hunk.old_lines();
             old_start..old_end
         };
 
@@ -118,9 +133,48 @@ impl<'a> HunkIter<'a> {
     }
 }
 
+#[derive(Clone)]
+pub struct BufferDiffSnapshot {
+    tree: SumTree<DiffHunk<Anchor>>,
+}
+
+impl BufferDiffSnapshot {
+    pub fn hunks_in_range<'a>(
+        &'a self,
+        query_row_range: Range<u32>,
+        buffer: &'a BufferSnapshot,
+    ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
+        println!("{} hunks overall", self.tree.iter().count());
+
+        self.tree.iter().filter_map(move |hunk| {
+            let range = hunk.buffer_range.to_point(&buffer);
+
+            if range.start.row < query_row_range.end && query_row_range.start < range.end.row {
+                let end_row = if range.end.column > 0 {
+                    range.end.row + 1
+                } else {
+                    range.end.row
+                };
+
+                Some(DiffHunk {
+                    buffer_range: range.start.row..end_row,
+                    head_range: hunk.head_range.clone(),
+                })
+            } else {
+                None
+            }
+        })
+    }
+
+    #[cfg(test)]
+    fn hunks<'a>(&'a self, text: &'a BufferSnapshot) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
+        self.hunks_in_range(0..u32::MAX, text)
+    }
+}
+
 pub struct BufferDiff {
     last_update_version: clock::Global,
-    hunks: SumTree<DiffHunk<Anchor>>,
+    snapshot: BufferDiffSnapshot,
 }
 
 impl BufferDiff {
@@ -128,13 +182,12 @@ impl BufferDiff {
         let hunks = if let Some(head_text) = head_text {
             let buffer_string = buffer.as_rope().to_string();
             let buffer_bytes = buffer_string.as_bytes();
+
             let iter = HunkIter::diff(head_text.as_bytes(), buffer_bytes);
             if let Some(mut iter) = iter {
-                println!("some iter");
                 let mut hunks = SumTree::new();
                 while let Some(hunk) = iter.next(buffer) {
-                    println!("hunk");
-                    hunks.push(hunk, &());
+                    hunks.push(hunk, buffer);
                 }
                 hunks
             } else {
@@ -146,12 +199,12 @@ impl BufferDiff {
 
         BufferDiff {
             last_update_version: buffer.version().clone(),
-            hunks,
+            snapshot: BufferDiffSnapshot { tree: hunks },
         }
     }
 
-    pub fn hunks(&self) -> &SumTree<DiffHunk<Anchor>> {
-        &self.hunks
+    pub fn snapshot(&self) -> BufferDiffSnapshot {
+        self.snapshot.clone()
     }
 
     pub fn update(&mut self, head: &Rope, buffer: &text::BufferSnapshot) {
@@ -206,7 +259,7 @@ impl BufferDiff {
         self.last_update_version = buffer.version().clone();
 
         let mut new_hunks = SumTree::new();
-        let mut cursor = self.hunks.cursor::<HunkHeadEnd>();
+        let mut cursor = self.snapshot.tree.cursor::<HunkHeadEnd>();
 
         for range in ranges {
             let head_range = range.head_start..range.head_end;
@@ -226,18 +279,18 @@ impl BufferDiff {
 
             while let Some(hunk) = iter.next(buffer) {
                 println!("hunk");
-                let prefix = cursor.slice(&HunkHeadEnd(hunk.head_range.end), Bias::Right, &());
+                let prefix = cursor.slice(&HunkHeadEnd(hunk.head_range.end), Bias::Right, buffer);
                 println!("prefix len: {}", prefix.iter().count());
-                new_hunks.extend(prefix.iter().cloned(), &());
+                new_hunks.extend(prefix.iter().cloned(), buffer);
 
-                new_hunks.push(hunk.clone(), &());
+                new_hunks.push(hunk.clone(), buffer);
 
-                cursor.seek(&HunkHeadEnd(hunk.head_range.end), Bias::Right, &());
+                cursor.seek(&HunkHeadEnd(hunk.head_range.end), Bias::Right, buffer);
                 println!("item: {:?}", cursor.item());
                 if let Some(item) = cursor.item() {
                     if item.head_range.end <= hunk.head_range.end {
                         println!("skipping");
-                        cursor.next(&());
+                        cursor.next(buffer);
                     }
                 }
             }
@@ -245,18 +298,18 @@ impl BufferDiff {
 
         new_hunks.extend(
             cursor
-                .suffix(&())
+                .suffix(buffer)
                 .iter()
                 .map(|i| {
                     println!("extending with {i:?}");
                     i
                 })
                 .cloned(),
-            &(),
+            buffer,
         );
         drop(cursor);
 
-        self.hunks = new_hunks;
+        self.snapshot.tree = new_hunks;
     }
 }
 
@@ -275,4 +328,51 @@ impl GitDiffEdit {
             Added(line) | Modified(line) | Removed(line) => line,
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use text::Buffer;
+    use unindent::Unindent as _;
+
+    #[gpui::test]
+    fn test_buffer_diff_simple() {
+        let head_text = "
+            one
+            two
+            three
+        "
+        .unindent();
+
+        let buffer_text = "
+            one
+            hello
+            three
+        "
+        .unindent();
+
+        let mut buffer = Buffer::new(0, 0, buffer_text);
+        let diff = BufferDiff::new(&Some(head_text.clone()), &buffer);
+        assert_eq!(
+            diff.snapshot.hunks(&buffer).collect::<Vec<_>>(),
+            &[DiffHunk {
+                buffer_range: 1..2,
+                head_range: 1..2
+            }]
+        );
+
+        buffer.edit([(0..0, "point five\n")]);
+        assert_eq!(
+            diff.snapshot.hunks(&buffer).collect::<Vec<_>>(),
+            &[DiffHunk {
+                buffer_range: 2..3,
+                head_range: 1..2
+            }]
+        );
+    }
+
+    // use rand::rngs::StdRng;
+    // #[gpui::test(iterations = 100)]
+    // fn test_buffer_diff_random(mut rng: StdRng) {}
 }
