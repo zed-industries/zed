@@ -243,6 +243,7 @@ pub fn initialize_workspace(
     .detach();
 
     cx.emit(workspace::Event::PaneAdded(workspace.active_pane().clone()));
+    cx.emit(workspace::Event::PaneAdded(workspace.dock_pane().clone()));
 
     let settings = cx.global::<Settings>();
 

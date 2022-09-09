@@ -1,7 +1,7 @@
 use crate::{
-    geometry::vector::Vector2F, presenter::MeasurementContext, CursorRegion, DebugContext, Element,
-    ElementBox, Event, EventContext, LayoutContext, MouseButton, MouseButtonEvent, MouseRegion,
-    NavigationDirection, PaintContext, SizeConstraint,
+    geometry::vector::Vector2F, presenter::MeasurementContext, scene::HandlerSet, CursorRegion,
+    DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, MouseButton,
+    MouseButtonEvent, MouseRegion, NavigationDirection, PaintContext, SizeConstraint,
 };
 use pathfinder_geometry::rect::RectF;
 use serde_json::json;
@@ -82,11 +82,13 @@ impl Element for EventHandler {
                 bounds: visible_bounds,
                 style: Default::default(),
             });
-            cx.scene.push_mouse_region(MouseRegion::handle_all(
-                cx.current_view_id(),
-                Some(discriminant),
-                visible_bounds,
-            ));
+            cx.scene.push_mouse_region(MouseRegion {
+                view_id: cx.current_view_id(),
+                discriminant,
+                bounds: visible_bounds,
+                handlers: HandlerSet::capture_all(),
+                hoverable: true,
+            });
             cx.scene.pop_stacking_context();
         }
         self.child.paint(bounds.origin(), visible_bounds, cx);

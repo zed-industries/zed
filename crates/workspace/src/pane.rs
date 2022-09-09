@@ -1,8 +1,7 @@
 use super::{ItemHandle, SplitDirection};
 use crate::{
-    dock::{DockAnchor, MoveDock},
-    toolbar::Toolbar,
-    Item, NewFile, NewSearch, NewTerminal, WeakItemHandle, Workspace,
+    dock::MoveDock, toolbar::Toolbar, Item, NewFile, NewSearch, NewTerminal, WeakItemHandle,
+    Workspace,
 };
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
@@ -25,7 +24,7 @@ use gpui::{
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
-use settings::{Autosave, Settings};
+use settings::{Autosave, DockAnchor, Settings};
 use std::{any::Any, cell::RefCell, cmp, mem, path::Path, rc::Rc};
 use theme::Theme;
 use util::ResultExt;
@@ -187,6 +186,7 @@ pub fn init(cx: &mut MutableAppContext) {
     });
 }
 
+#[derive(Debug)]
 pub enum Event {
     Focused,
     ActivateItem { local: bool },
@@ -1392,7 +1392,7 @@ impl View for Pane {
                                     .with_cursor_style(CursorStyle::PointingHand)
                                     .on_down(MouseButton::Left, |e, cx| {
                                         cx.dispatch_action(DeployNewMenu {
-                                            position: e.position,
+                                            position: e.region.lower_right(),
                                         });
                                     })
                                     .boxed(),
@@ -1422,11 +1422,11 @@ impl View for Pane {
                                     .on_down(MouseButton::Left, move |e, cx| {
                                         if is_dock {
                                             cx.dispatch_action(DeployDockMenu {
-                                                position: e.position,
+                                                position: e.region.lower_right(),
                                             });
                                         } else {
                                             cx.dispatch_action(DeploySplitMenu {
-                                                position: e.position,
+                                                position: e.region.lower_right(),
                                             });
                                         }
                                     })
@@ -1613,7 +1613,8 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
+        let (_, workspace) =
+            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // 1. Add with a destination index
@@ -1701,7 +1702,8 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
+        let (_, workspace) =
+            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // 1. Add with a destination index
@@ -1777,7 +1779,8 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
+        let (_, workspace) =
+            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // singleton view

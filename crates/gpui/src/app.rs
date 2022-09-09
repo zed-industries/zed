@@ -4028,7 +4028,7 @@ pub struct RenderParams {
     pub view_id: usize,
     pub titlebar_height: f32,
     pub hovered_region_ids: HashSet<MouseRegionId>,
-    pub clicked_region_ids: Option<(Vec<MouseRegionId>, MouseButton)>,
+    pub clicked_region_ids: Option<(HashSet<MouseRegionId>, MouseButton)>,
     pub refreshing: bool,
 }
 
@@ -4037,7 +4037,7 @@ pub struct RenderContext<'a, T: View> {
     pub(crate) view_id: usize,
     pub(crate) view_type: PhantomData<T>,
     pub(crate) hovered_region_ids: HashSet<MouseRegionId>,
-    pub(crate) clicked_region_ids: Option<(Vec<MouseRegionId>, MouseButton)>,
+    pub(crate) clicked_region_ids: Option<(HashSet<MouseRegionId>, MouseButton)>,
     pub app: &'a mut MutableAppContext,
     pub titlebar_height: f32,
     pub refreshing: bool,

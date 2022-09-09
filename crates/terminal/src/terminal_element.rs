@@ -366,7 +366,7 @@ impl TerminalElement {
     ) {
         let connection = self.terminal;
 
-        let mut region = MouseRegion::new(view_id, None, visible_bounds);
+        let mut region = MouseRegion::new::<Self>(view_id, view_id, visible_bounds);
 
         // Terminal Emulator controlled behavior:
         region = region

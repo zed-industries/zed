@@ -6,50 +6,47 @@ use pathfinder_geometry::rect::RectF;
 
 use crate::{EventContext, MouseButton};
 
-use super::mouse_region_event::{
-    ClickRegionEvent, DownOutRegionEvent, DownRegionEvent, DragRegionEvent, HoverRegionEvent,
-    MouseRegionEvent, MoveRegionEvent, UpOutRegionEvent, UpRegionEvent,
+use super::{
+    mouse_region_event::{
+        ClickRegionEvent, DownOutRegionEvent, DownRegionEvent, DragRegionEvent, HoverRegionEvent,
+        MouseRegionEvent, MoveRegionEvent, UpOutRegionEvent, UpRegionEvent,
+    },
+    ScrollWheelRegionEvent,
 };
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct MouseRegion {
     pub view_id: usize,
-    pub discriminant: Option<(TypeId, usize)>,
+    pub discriminant: (TypeId, usize),
     pub bounds: RectF,
     pub handlers: HandlerSet,
     pub hoverable: bool,
 }
 
 impl MouseRegion {
-    pub fn new(view_id: usize, discriminant: Option<(TypeId, usize)>, bounds: RectF) -> Self {
-        Self::from_handlers(view_id, discriminant, bounds, Default::default())
+    /// Region ID is used to track semantically equivalent mouse regions across render passes.
+    /// e.g. if you have mouse handlers attached to a list item type, then each item of the list
+    /// should pass a different (consistent) region_id. If you have one big region that covers your
+    /// whole component, just pass the view_id again.
+    pub fn new<Tag: 'static>(view_id: usize, region_id: usize, bounds: RectF) -> Self {
+        Self::from_handlers::<Tag>(view_id, region_id, bounds, Default::default())
     }
 
-    pub fn from_handlers(
+    pub fn handle_all<Tag: 'static>(view_id: usize, region_id: usize, bounds: RectF) -> Self {
+        Self::from_handlers::<Tag>(view_id, region_id, bounds, HandlerSet::capture_all())
+    }
+
+    pub fn from_handlers<Tag: 'static>(
         view_id: usize,
-        discriminant: Option<(TypeId, usize)>,
+        region_id: usize,
         bounds: RectF,
         handlers: HandlerSet,
     ) -> Self {
         Self {
             view_id,
-            discriminant,
+            discriminant: (TypeId::of::<Tag>(), region_id),
             bounds,
             handlers,
-            hoverable: true,
-        }
-    }
-
-    pub fn handle_all(
-        view_id: usize,
-        discriminant: Option<(TypeId, usize)>,
-        bounds: RectF,
-    ) -> Self {
-        Self {
-            view_id,
-            discriminant,
-            bounds,
-            handlers: HandlerSet::capture_all(),
             hoverable: true,
         }
     }
@@ -121,6 +118,14 @@ impl MouseRegion {
         handler: impl Fn(MoveRegionEvent, &mut EventContext) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_move(handler);
+        self
+    }
+
+    pub fn on_scroll(
+        mut self,
+        handler: impl Fn(ScrollWheelRegionEvent, &mut EventContext) + 'static,
+    ) -> Self {
+        self.handlers = self.handlers.on_scroll(handler);
         self
     }
 
@@ -341,6 +346,24 @@ impl HandlerSet {
                     panic!(
                         "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Hover, found {:?}", 
                         region_event);
+                }
+            }));
+        self
+    }
+
+    pub fn on_scroll(
+        mut self,
+        handler: impl Fn(ScrollWheelRegionEvent, &mut EventContext) + 'static,
+    ) -> Self {
+        self.set.insert((MouseRegionEvent::scroll_wheel_disc(), None),
+            Rc::new(move |region_event, cx| {
+                if let MouseRegionEvent::ScrollWheel(e) = region_event {
+                    handler(e, cx);
+                } else {
+                    panic!(
+                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::ScrollWheel, found {:?}",
+                        region_event
+                    );
                 }
             }));
         self

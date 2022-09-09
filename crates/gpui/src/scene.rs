@@ -536,11 +536,11 @@ impl ToJson for Border {
 }
 
 impl MouseRegion {
-    pub fn id(&self) -> Option<MouseRegionId> {
-        self.discriminant.map(|discriminant| MouseRegionId {
+    pub fn id(&self) -> MouseRegionId {
+        MouseRegionId {
             view_id: self.view_id,
-            discriminant,
-        })
+            discriminant: self.discriminant,
+        }
     }
 }
 

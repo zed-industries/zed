@@ -1,14 +1,14 @@
 use gpui::{
     actions,
-    elements::{ChildView, MouseEventHandler, Svg},
+    elements::{ChildView, Container, FlexItem, Margin, MouseEventHandler, Svg},
     impl_internal_actions, CursorStyle, Element, ElementBox, Entity, MouseButton,
-    MutableAppContext, View, ViewContext, ViewHandle, WeakViewHandle,
+    MutableAppContext, RenderContext, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use serde::Deserialize;
-use settings::Settings;
+use settings::{DockAnchor, Settings};
 use theme::Theme;
 
-use crate::{pane, ItemHandle, Pane, StatusItemView, Workspace};
+use crate::{ItemHandle, Pane, StatusItemView, Workspace};
 
 #[derive(PartialEq, Clone, Deserialize)]
 pub struct MoveDock(pub DockAnchor);
@@ -22,14 +22,6 @@ impl_internal_actions!(workspace, [MoveDock, AddDefaultItemToDock]);
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Dock::toggle);
     cx.add_action(Dock::move_dock);
-}
-
-#[derive(PartialEq, Eq, Default, Copy, Clone, Deserialize)]
-pub enum DockAnchor {
-    #[default]
-    Bottom,
-    Right,
-    Expanded,
 }
 
 #[derive(Copy, Clone)]
@@ -79,63 +71,56 @@ pub struct Dock {
 impl Dock {
     pub fn new(cx: &mut ViewContext<Workspace>, default_item_factory: DefaultItemFactory) -> Self {
         let pane = cx.add_view(|cx| Pane::new(true, cx));
-
-        cx.subscribe(&pane.clone(), |workspace, _, event, cx| {
-            if let pane::Event::Remove = event {
-                workspace.dock.hide();
-                cx.notify();
-            }
+        let pane_id = pane.id();
+        cx.subscribe(&pane, move |workspace, _, event, cx| {
+            workspace.handle_pane_event(pane_id, event, cx);
         })
         .detach();
 
         Self {
             pane,
-            position: Default::default(),
+            position: DockPosition::Hidden(cx.global::<Settings>().default_dock_anchor),
             default_item_factory,
         }
     }
 
-    pub fn pane(&self) -> ViewHandle<Pane> {
-        self.pane.clone()
+    pub fn pane(&self) -> &ViewHandle<Pane> {
+        &self.pane
     }
 
-    fn hide(&mut self) {
-        self.position = self.position.hide();
+    pub fn visible_pane(&self) -> Option<&ViewHandle<Pane>> {
+        self.position.visible().map(|_| self.pane())
     }
 
-    fn ensure_not_empty(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
-        let pane = workspace.dock.pane.clone();
-        if pane.read(cx).items().next().is_none() {
-            let item_to_add = (workspace.dock.default_item_factory)(workspace, cx);
-            Pane::add_item(workspace, &pane, item_to_add, true, true, None, cx);
+    fn set_dock_position(
+        workspace: &mut Workspace,
+        new_position: DockPosition,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        workspace.dock.position = new_position;
+        let now_visible = workspace.dock.visible_pane().is_some();
+        if now_visible {
+            // Ensure that the pane has at least one item or construct a default item to put in it
+            let pane = workspace.dock.pane.clone();
+            if pane.read(cx).items().next().is_none() {
+                let item_to_add = (workspace.dock.default_item_factory)(workspace, cx);
+                Pane::add_item(workspace, &pane, item_to_add, true, true, None, cx);
+            }
+            cx.focus(pane);
+        } else {
+            if let Some(last_active_center_pane) = workspace.last_active_center_pane.clone() {
+                cx.focus(last_active_center_pane);
+            }
         }
+        cx.notify();
+    }
+
+    pub fn hide(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+        Self::set_dock_position(workspace, workspace.dock.position.hide(), cx);
     }
 
     fn toggle(workspace: &mut Workspace, _: &ToggleDock, cx: &mut ViewContext<Workspace>) {
-        // Shift-escape ON
-        // Get or insert the dock's last focused terminal
-        // Open the dock in fullscreen
-        // Focus that terminal
-
-        // Shift-escape OFF
-        // Close the dock
-        // Return focus to center
-
-        // Behaviors:
-        // If the dock is shown, hide it
-        // If the dock is hidden, show it
-        // If the dock was full screen, open it in last position (bottom or right)
-        // If the dock was bottom or right, re-open it in that context (and with the previous % width)
-
-        workspace.dock.position = workspace.dock.position.toggle();
-        if workspace.dock.position.visible().is_some() {
-            Self::ensure_not_empty(workspace, cx);
-            cx.focus(workspace.dock.pane.clone());
-        } else {
-            cx.focus_self();
-        }
-        cx.notify();
-        workspace.status_bar().update(cx, |_, cx| cx.notify());
+        Self::set_dock_position(workspace, workspace.dock.position.toggle(), cx);
     }
 
     fn move_dock(
@@ -143,17 +128,54 @@ impl Dock {
         &MoveDock(new_anchor): &MoveDock,
         cx: &mut ViewContext<Workspace>,
     ) {
-        // Clear the previous position if the dock is not visible.
-        workspace.dock.position = DockPosition::Shown(new_anchor);
-        Self::ensure_not_empty(workspace, cx);
-        cx.notify();
+        Self::set_dock_position(workspace, DockPosition::Shown(new_anchor), cx);
     }
 
-    pub fn render(&self, _theme: &Theme, anchor: DockAnchor) -> Option<ElementBox> {
+    pub fn render(
+        &self,
+        theme: &Theme,
+        anchor: DockAnchor,
+        cx: &mut RenderContext<Workspace>,
+    ) -> Option<ElementBox> {
+        let style = &theme.workspace.dock;
         self.position
             .visible()
             .filter(|current_anchor| *current_anchor == anchor)
-            .map(|_| ChildView::new(self.pane.clone()).boxed())
+            .map(|anchor| match anchor {
+                DockAnchor::Bottom | DockAnchor::Right => {
+                    let mut panel_style = style.panel.clone();
+                    if anchor == DockAnchor::Bottom {
+                        panel_style.margin = Margin {
+                            top: panel_style.margin.top,
+                            ..Default::default()
+                        };
+                    } else {
+                        panel_style.margin = Margin {
+                            left: panel_style.margin.left,
+                            ..Default::default()
+                        };
+                    }
+                    FlexItem::new(
+                        Container::new(ChildView::new(self.pane.clone()).boxed())
+                            .with_style(style.panel)
+                            .boxed(),
+                    )
+                    .flex(style.flex, true)
+                    .boxed()
+                }
+                DockAnchor::Expanded => Container::new(
+                    MouseEventHandler::new::<Dock, _, _>(0, cx, |_state, _cx| {
+                        Container::new(ChildView::new(self.pane.clone()).boxed())
+                            .with_style(style.maximized)
+                            .boxed()
+                    })
+                    .capture_all()
+                    .with_cursor_style(CursorStyle::Arrow)
+                    .boxed(),
+                )
+                .with_background_color(style.wash_color)
+                .boxed(),
+            })
     }
 }
 

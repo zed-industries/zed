@@ -57,7 +57,7 @@ pub struct Workspace {
     pub notifications: Notifications,
     pub joining_project_avatar: ImageStyle,
     pub joining_project_message: ContainedText,
-    pub fullscreen_dock: ContainerStyle,
+    pub dock: Dock,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -148,6 +148,14 @@ pub struct Toolbar {
     pub height: f32,
     pub item_spacing: f32,
     pub nav_button: Interactive<IconButton>,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct Dock {
+    pub wash_color: Color,
+    pub flex: f32,
+    pub panel: ContainerStyle,
+    pub maximized: ContainerStyle,
 }
 
 #[derive(Clone, Deserialize, Default)]

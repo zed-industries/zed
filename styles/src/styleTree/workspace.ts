@@ -156,9 +156,17 @@ export default function workspace(theme: Theme) {
       width: 400,
       margin: { right: 10, bottom: 10 },
     },
-    fullscreenDock: {
-      background: withOpacity(theme.backgroundColor[500].base, 0.8),
-      padding: 25,
+    dock: {
+      wash_color: withOpacity(theme.backgroundColor[500].base, 0.5),
+      flex: 0.5,
+      panel: {
+        margin: 4,
+      },
+      maximized: {
+        margin: 32,
+        border: border(theme, "secondary"),
+        shadow: modalShadow(theme),
+      }
     }
   };
 }

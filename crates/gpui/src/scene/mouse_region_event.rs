@@ -168,7 +168,7 @@ impl MouseRegionEvent {
     pub fn is_capturable(&self) -> bool {
         match self {
             MouseRegionEvent::Move(_) => true,
-            MouseRegionEvent::Drag(_) => false,
+            MouseRegionEvent::Drag(_) => true,
             MouseRegionEvent::Hover(_) => false,
             MouseRegionEvent::Down(_) => true,
             MouseRegionEvent::Up(_) => true,

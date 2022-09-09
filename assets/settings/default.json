@@ -32,6 +32,16 @@
     // 4. Save when idle for a certain amount of time:
     //     "autosave": { "after_delay": {"milliseconds": 500} },
     "autosave": "off",
+    // Where to place the dock by default. This setting can take three
+    // values:
+    //
+    // 1. Position the dock attached to the bottom of the workspace
+    //     "default_dock_anchor": "bottom"
+    // 2. Position the dock to the right of the workspace like a side panel
+    //     "default_dock_anchor": "right"
+    // 3. Position the dock full screen over the entire workspace"
+    //     "default_dock_anchor": "expanded"
+    "default_dock_anchor": "right",
     // How to auto-format modified buffers when saving them. This
     // setting can take three values:
     //

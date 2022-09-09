@@ -167,15 +167,13 @@ impl Element for MouseEventHandler {
             });
         }
 
-        cx.scene.push_mouse_region(
-            MouseRegion::from_handlers(
-                cx.current_view_id(),
-                Some(self.discriminant),
-                hit_bounds,
-                self.handlers.clone(),
-            )
-            .with_hoverable(self.hoverable),
-        );
+        cx.scene.push_mouse_region(MouseRegion {
+            view_id: cx.current_view_id(),
+            discriminant: self.discriminant,
+            bounds: hit_bounds,
+            handlers: self.handlers.clone(),
+            hoverable: self.hoverable,
+        });
 
         self.child.paint(bounds.origin(), visible_bounds, cx);
     }

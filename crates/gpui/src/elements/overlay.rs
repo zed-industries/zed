@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{any::TypeId, ops::Range};
 
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
@@ -78,10 +78,13 @@ impl Element for Overlay {
         cx.scene.push_stacking_context(None);
 
         if self.hoverable {
+            enum OverlayHoverCapture {}
             cx.scene.push_mouse_region(MouseRegion {
                 view_id: cx.current_view_id(),
                 bounds,
-                ..Default::default()
+                discriminant: (TypeId::of::<OverlayHoverCapture>(), cx.current_view_id()),
+                handlers: Default::default(),
+                hoverable: true,
             });
         }
 

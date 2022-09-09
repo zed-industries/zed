@@ -29,6 +29,7 @@ pub struct Settings {
     pub show_completions_on_input: bool,
     pub vim_mode: bool,
     pub autosave: Autosave,
+    pub default_dock_anchor: DockAnchor,
     pub editor_defaults: EditorSettings,
     pub editor_overrides: EditorSettings,
     pub terminal_defaults: TerminalSettings,
@@ -150,6 +151,15 @@ pub enum WorkingDirectory {
     Always { directory: String },
 }
 
+#[derive(PartialEq, Eq, Debug, Default, Copy, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DockAnchor {
+    #[default]
+    Bottom,
+    Right,
+    Expanded,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct SettingsFileContent {
     pub experiments: Option<FeatureFlags>,
@@ -167,6 +177,8 @@ pub struct SettingsFileContent {
     pub vim_mode: Option<bool>,
     #[serde(default)]
     pub autosave: Option<Autosave>,
+    #[serde(default)]
+    pub default_dock_anchor: Option<DockAnchor>,
     #[serde(flatten)]
     pub editor: EditorSettings,
     #[serde(default)]
@@ -216,6 +228,7 @@ impl Settings {
             projects_online_by_default: defaults.projects_online_by_default.unwrap(),
             vim_mode: defaults.vim_mode.unwrap(),
             autosave: defaults.autosave.unwrap(),
+            default_dock_anchor: defaults.default_dock_anchor.unwrap(),
             editor_defaults: EditorSettings {
                 tab_size: required(defaults.editor.tab_size),
                 hard_tabs: required(defaults.editor.hard_tabs),
@@ -268,6 +281,8 @@ impl Settings {
         merge(&mut self.autosave, data.autosave);
         merge(&mut self.experiments, data.experiments);
         merge(&mut self.staff_mode, data.staff_mode);
+        merge(&mut self.default_dock_anchor, data.default_dock_anchor);
+
         // Ensure terminal font is loaded, so we can request it in terminal_element layout
         if let Some(terminal_font) = &data.terminal.font_family {
             font_cache.load_family(&[terminal_font]).log_err();
@@ -336,6 +351,7 @@ impl Settings {
             show_completions_on_input: true,
             vim_mode: false,
             autosave: Autosave::Off,
+            default_dock_anchor: DockAnchor::Bottom,
             editor_defaults: EditorSettings {
                 tab_size: Some(4.try_into().unwrap()),
                 hard_tabs: Some(false),

@@ -18,7 +18,7 @@ use client::{
 };
 use clock::ReplicaId;
 use collections::{hash_map, HashMap, HashSet};
-use dock::{DefaultItemFactory, Dock, DockAnchor, ToggleDockButton};
+use dock::{DefaultItemFactory, Dock, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
 use futures::{channel::oneshot, FutureExt};
 use gpui::{
@@ -41,7 +41,7 @@ use postage::prelude::Stream;
 use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, ProjectStore, Worktree, WorktreeId};
 use searchable::SearchableItemHandle;
 use serde::Deserialize;
-use settings::{Autosave, Settings};
+use settings::{Autosave, DockAnchor, Settings};
 use sidebar::{Side, Sidebar, SidebarButtons, ToggleSidebarItem};
 use smallvec::SmallVec;
 use status_bar::StatusBar;
@@ -892,6 +892,7 @@ pub struct Workspace {
     panes: Vec<ViewHandle<Pane>>,
     panes_by_item: HashMap<usize, WeakViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
+    last_active_center_pane: Option<ViewHandle<Pane>>,
     status_bar: ViewHandle<StatusBar>,
     dock: Dock,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
@@ -987,6 +988,7 @@ impl Workspace {
         cx.emit_global(WorkspaceCreated(weak_self.clone()));
 
         let dock = Dock::new(cx, dock_default_factory);
+        let dock_pane = dock.pane().clone();
 
         let left_sidebar = cx.add_view(|_| Sidebar::new(Side::Left));
         let right_sidebar = cx.add_view(|_| Sidebar::new(Side::Right));
@@ -1011,9 +1013,10 @@ impl Workspace {
             weak_self,
             center: PaneGroup::new(center_pane.clone()),
             dock,
-            panes: vec![center_pane.clone()],
+            panes: vec![center_pane.clone(), dock_pane],
             panes_by_item: Default::default(),
             active_pane: center_pane.clone(),
+            last_active_center_pane: Some(center_pane.clone()),
             status_bar,
             notifications: Default::default(),
             client,
@@ -1556,10 +1559,6 @@ impl Workspace {
         Pane::add_item(self, &active_pane, item, true, true, None, cx);
     }
 
-    pub fn add_item_to_dock(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
-        Pane::add_item(self, &self.dock.pane(), item, true, true, None, cx);
-    }
-
     pub fn open_path(
         &mut self,
         path: impl Into<ProjectPath>,
@@ -1696,6 +1695,10 @@ impl Workspace {
                 status_bar.set_active_pane(&self.active_pane, cx);
             });
             self.active_item_path_changed(cx);
+
+            if &pane != self.dock.pane() {
+                self.last_active_center_pane = Some(pane.clone());
+            }
             cx.notify();
         }
 
@@ -1715,21 +1718,19 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(pane) = self.pane(pane_id) {
+            let is_dock = &pane == self.dock.pane();
             match event {
-                pane::Event::Split(direction) => {
+                pane::Event::Split(direction) if !is_dock => {
                     self.split_pane(pane, *direction, cx);
                 }
-                pane::Event::Remove => {
-                    self.remove_pane(pane, cx);
-                }
-                pane::Event::Focused => {
-                    self.handle_pane_focused(pane, cx);
-                }
+                pane::Event::Remove if !is_dock => self.remove_pane(pane, cx),
+                pane::Event::Remove if is_dock => Dock::hide(self, cx),
+                pane::Event::Focused => self.handle_pane_focused(pane, cx),
                 pane::Event::ActivateItem { local } => {
                     if *local {
                         self.unfollow(&pane, cx);
                     }
-                    if pane == self.active_pane {
+                    if &pane == self.active_pane() {
                         self.active_item_path_changed(cx);
                     }
                 }
@@ -1747,8 +1748,9 @@ impl Workspace {
                         }
                     }
                 }
+                _ => {}
             }
-        } else {
+        } else if self.dock.visible_pane().is_none() {
             error!("pane {} not found", pane_id);
         }
     }
@@ -1779,6 +1781,10 @@ impl Workspace {
             for removed_item in pane.read(cx).items() {
                 self.panes_by_item.remove(&removed_item.id());
             }
+            if self.last_active_center_pane == Some(pane) {
+                self.last_active_center_pane = None;
+            }
+
             cx.notify();
         } else {
             self.active_item_path_changed(cx);
@@ -1795,6 +1801,10 @@ impl Workspace {
 
     pub fn active_pane(&self) -> &ViewHandle<Pane> {
         &self.active_pane
+    }
+
+    pub fn dock_pane(&self) -> &ViewHandle<Pane> {
+        self.dock.pane()
     }
 
     fn project_remote_id_changed(&mut self, remote_id: Option<u64>, cx: &mut ViewContext<Self>) {
@@ -2582,25 +2592,17 @@ impl View for Workspace {
                                                     .flex(1., true)
                                                     .boxed(),
                                                 )
-                                                .with_children(
-                                                    self.dock
-                                                        .render(&theme, DockAnchor::Bottom)
-                                                        .map(|dock| {
-                                                            FlexItem::new(dock)
-                                                                .flex(1., true)
-                                                                .boxed()
-                                                        }),
-                                                )
+                                                .with_children(self.dock.render(
+                                                    &theme,
+                                                    DockAnchor::Bottom,
+                                                    cx,
+                                                ))
                                                 .boxed(),
                                         )
                                         .flex(1., true)
                                         .boxed(),
                                     )
-                                    .with_children(
-                                        self.dock
-                                            .render(&theme, DockAnchor::Right)
-                                            .map(|dock| FlexItem::new(dock).flex(1., true).boxed()),
-                                    )
+                                    .with_children(self.dock.render(&theme, DockAnchor::Right, cx))
                                     .with_children(
                                         if self.right_sidebar.read(cx).active_item().is_some() {
                                             Some(
@@ -2614,13 +2616,7 @@ impl View for Workspace {
                                     )
                                     .boxed()
                             })
-                            .with_children(self.dock.render(&theme, DockAnchor::Expanded).map(
-                                |dock| {
-                                    Container::new(dock)
-                                        .with_style(theme.workspace.fullscreen_dock)
-                                        .boxed()
-                                },
-                            ))
+                            .with_children(self.dock.render(&theme, DockAnchor::Expanded, cx))
                             .with_children(self.modal.as_ref().map(|m| {
                                 ChildView::new(m)
                                     .contained()
