@@ -3,7 +3,6 @@ mod canvas;
 mod constrained_box;
 mod container;
 mod empty;
-mod event_handler;
 mod expanded;
 mod flex;
 mod hook;
@@ -21,9 +20,9 @@ mod uniform_list;
 
 use self::expanded::Expanded;
 pub use self::{
-    align::*, canvas::*, constrained_box::*, container::*, empty::*, event_handler::*, flex::*,
-    hook::*, image::*, keystroke_label::*, label::*, list::*, mouse_event_handler::*, overlay::*,
-    stack::*, svg::*, text::*, tooltip::*, uniform_list::*,
+    align::*, canvas::*, constrained_box::*, container::*, empty::*, flex::*, hook::*, image::*,
+    keystroke_label::*, label::*, list::*, mouse_event_handler::*, overlay::*, stack::*, svg::*,
+    text::*, tooltip::*, uniform_list::*,
 };
 pub use crate::presenter::ChildView;
 use crate::{

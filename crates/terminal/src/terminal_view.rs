@@ -4,7 +4,7 @@ use alacritty_terminal::{index::Point, term::TermMode};
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
     actions,
-    elements::{ChildView, ParentElement, Stack},
+    elements::{AnchorCorner, ChildView, ParentElement, Stack},
     geometry::vector::Vector2F,
     impl_internal_actions,
     keymap::Keystroke,
@@ -139,8 +139,9 @@ impl TerminalView {
             ContextMenuItem::item("Close Terminal", pane::CloseActiveItem),
         ];
 
-        self.context_menu
-            .update(cx, |menu, cx| menu.show(action.position, menu_entries, cx));
+        self.context_menu.update(cx, |menu, cx| {
+            menu.show(action.position, AnchorCorner::TopLeft, menu_entries, cx)
+        });
 
         cx.notify();
     }

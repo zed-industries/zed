@@ -114,8 +114,9 @@ impl<V: View> DragAndDrop<V> {
 
                 let position = position + region_offset;
 
+                enum DraggedElementHandler {}
                 Some(
-                    MouseEventHandler::new::<Self, _, _>(0, cx, |_, cx| {
+                    MouseEventHandler::<DraggedElementHandler>::new(0, cx, |_, cx| {
                         Container::new(render(payload, cx))
                             .with_margin_left(position.x())
                             .with_margin_top(position.y())
@@ -174,7 +175,7 @@ pub trait Draggable {
         Self: Sized;
 }
 
-impl Draggable for MouseEventHandler {
+impl<Tag> Draggable for MouseEventHandler<Tag> {
     fn as_draggable<V: View, P: Any>(
         self,
         payload: P,

@@ -1,4 +1,4 @@
-use std::{any::TypeId, mem::Discriminant, rc::Rc};
+use std::{any::TypeId, fmt::Debug, mem::Discriminant, rc::Rc};
 
 use collections::HashMap;
 
@@ -16,8 +16,7 @@ use super::{
 
 #[derive(Clone)]
 pub struct MouseRegion {
-    pub view_id: usize,
-    pub discriminant: (TypeId, usize),
+    pub id: MouseRegionId,
     pub bounds: RectF,
     pub handlers: HandlerSet,
     pub hoverable: bool,
@@ -43,8 +42,13 @@ impl MouseRegion {
         handlers: HandlerSet,
     ) -> Self {
         Self {
-            view_id,
-            discriminant: (TypeId::of::<Tag>(), region_id),
+            id: MouseRegionId {
+                view_id,
+                tag: TypeId::of::<Tag>(),
+                region_id,
+                #[cfg(debug_assertions)]
+                tag_type_name: std::any::type_name::<Tag>(),
+            },
             bounds,
             handlers,
             hoverable: true,
@@ -137,8 +141,32 @@ impl MouseRegion {
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct MouseRegionId {
-    pub view_id: usize,
-    pub discriminant: (TypeId, usize),
+    view_id: usize,
+    tag: TypeId,
+    region_id: usize,
+    #[cfg(debug_assertions)]
+    tag_type_name: &'static str,
+}
+
+impl MouseRegionId {
+    pub(crate) fn new<Tag: 'static>(view_id: usize, region_id: usize) -> Self {
+        MouseRegionId {
+            view_id,
+            region_id,
+            tag: TypeId::of::<Tag>(),
+            #[cfg(debug_assertions)]
+            tag_type_name: std::any::type_name::<Tag>(),
+        }
+    }
+
+    pub fn view_id(&self) -> usize {
+        self.view_id
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn tag_type_name(&self) -> &'static str {
+        self.tag_type_name
+    }
 }
 
 #[derive(Clone, Default)]

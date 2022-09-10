@@ -52,7 +52,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                     .boxed(),
                 )
                 .with_child(
-                    MouseEventHandler::new::<Dismiss, _, _>(user.id as usize, cx, |state, _| {
+                    MouseEventHandler::<Dismiss>::new(user.id as usize, cx, |state, _| {
                         render_icon_button(
                             theme.dismiss_button.style_for(state, false),
                             "icons/x_mark_thin_8.svg",
@@ -90,7 +90,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                 Flex::row()
                     .with_children(buttons.into_iter().enumerate().map(
                         |(ix, (message, action))| {
-                            MouseEventHandler::new::<Button, _, _>(ix, cx, |state, _| {
+                            MouseEventHandler::<Button>::new(ix, cx, |state, _| {
                                 let button = theme.button.style_for(state, false);
                                 Label::new(message.to_string(), button.text.clone())
                                     .contained()

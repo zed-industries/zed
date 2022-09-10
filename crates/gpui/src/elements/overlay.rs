@@ -1,49 +1,98 @@
-use std::{any::TypeId, ops::Range};
+use std::ops::Range;
 
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::ToJson,
     presenter::MeasurementContext,
-    DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, MouseRegion,
+    Axis, DebugContext, Element, ElementBox, Event, EventContext, LayoutContext, MouseRegion,
     PaintContext, SizeConstraint,
 };
 use serde_json::json;
 
 pub struct Overlay {
     child: ElementBox,
-    abs_position: Option<Vector2F>,
+    anchor_position: Option<Vector2F>,
     fit_mode: OverlayFitMode,
+    anchor_corner: AnchorCorner,
     hoverable: bool,
 }
 
 #[derive(Copy, Clone)]
 pub enum OverlayFitMode {
     SnapToWindow,
-    FlipAlignment,
+    SwitchAnchor,
     None,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AnchorCorner {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+impl AnchorCorner {
+    fn get_bounds(&self, anchor_position: Vector2F, size: Vector2F) -> RectF {
+        match self {
+            Self::TopLeft => RectF::from_points(anchor_position, anchor_position + size),
+            Self::TopRight => RectF::from_points(
+                anchor_position - Vector2F::new(size.x(), 0.),
+                anchor_position + Vector2F::new(0., size.y()),
+            ),
+            Self::BottomLeft => RectF::from_points(
+                anchor_position - Vector2F::new(0., size.y()),
+                anchor_position + Vector2F::new(size.x(), 0.),
+            ),
+            Self::BottomRight => RectF::from_points(anchor_position - size, anchor_position),
+        }
+    }
+
+    fn switch_axis(self, axis: Axis) -> Self {
+        match axis {
+            Axis::Vertical => match self {
+                AnchorCorner::TopLeft => AnchorCorner::BottomLeft,
+                AnchorCorner::TopRight => AnchorCorner::BottomRight,
+                AnchorCorner::BottomLeft => AnchorCorner::TopLeft,
+                AnchorCorner::BottomRight => AnchorCorner::TopRight,
+            },
+            Axis::Horizontal => match self {
+                AnchorCorner::TopLeft => AnchorCorner::TopRight,
+                AnchorCorner::TopRight => AnchorCorner::TopLeft,
+                AnchorCorner::BottomLeft => AnchorCorner::BottomRight,
+                AnchorCorner::BottomRight => AnchorCorner::BottomLeft,
+            },
+        }
+    }
 }
 
 impl Overlay {
     pub fn new(child: ElementBox) -> Self {
         Self {
             child,
-            abs_position: None,
+            anchor_position: None,
             fit_mode: OverlayFitMode::None,
+            anchor_corner: AnchorCorner::TopLeft,
             hoverable: false,
         }
     }
 
-    pub fn with_abs_position(mut self, position: Vector2F) -> Self {
-        self.abs_position = Some(position);
+    pub fn with_anchor_position(mut self, position: Vector2F) -> Self {
+        self.anchor_position = Some(position);
         self
     }
 
-    pub fn fit_mode(mut self, fit_mode: OverlayFitMode) -> Self {
+    pub fn with_anchor_corner(mut self, anchor_corner: AnchorCorner) -> Self {
+        self.anchor_corner = anchor_corner;
+        self
+    }
+
+    pub fn with_fit_mode(mut self, fit_mode: OverlayFitMode) -> Self {
         self.fit_mode = fit_mode;
         self
     }
 
-    pub fn hoverable(mut self, hoverable: bool) -> Self {
+    pub fn with_hoverable(mut self, hoverable: bool) -> Self {
         self.hoverable = hoverable;
         self
     }
@@ -58,7 +107,7 @@ impl Element for Overlay {
         constraint: SizeConstraint,
         cx: &mut LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        let constraint = if self.abs_position.is_some() {
+        let constraint = if self.anchor_position.is_some() {
             SizeConstraint::new(Vector2F::zero(), cx.window_size)
         } else {
             constraint
@@ -74,46 +123,74 @@ impl Element for Overlay {
         size: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) {
-        let mut bounds = RectF::new(self.abs_position.unwrap_or_else(|| bounds.origin()), *size);
+        let anchor_position = self.anchor_position.unwrap_or_else(|| bounds.origin());
+        let mut bounds = self.anchor_corner.get_bounds(anchor_position, *size);
+
+        match self.fit_mode {
+            OverlayFitMode::SnapToWindow => {
+                // Snap the horizontal edges of the overlay to the horizontal edges of the window if
+                // its horizontal bounds overflow
+                if bounds.max_x() > cx.window_size.x() {
+                    let mut lower_right = bounds.lower_right();
+                    lower_right.set_x(cx.window_size.x());
+                    bounds = RectF::from_points(lower_right - *size, lower_right);
+                } else if bounds.min_x() < 0. {
+                    let mut upper_left = bounds.origin();
+                    upper_left.set_x(0.);
+                    bounds = RectF::from_points(upper_left, upper_left + *size);
+                }
+
+                // Snap the vertical edges of the overlay to the vertical edges of the window if
+                // its vertical bounds overflow.
+                if bounds.max_y() > cx.window_size.y() {
+                    let mut lower_right = bounds.lower_right();
+                    lower_right.set_y(cx.window_size.y());
+                    bounds = RectF::from_points(lower_right - *size, lower_right);
+                } else if bounds.min_y() < 0. {
+                    let mut upper_left = bounds.origin();
+                    upper_left.set_y(0.);
+                    bounds = RectF::from_points(upper_left, upper_left + *size);
+                }
+            }
+            OverlayFitMode::SwitchAnchor => {
+                let mut anchor_corner = self.anchor_corner;
+
+                if bounds.max_x() > cx.window_size.x() {
+                    anchor_corner = anchor_corner.switch_axis(Axis::Horizontal);
+                }
+
+                if bounds.max_y() > cx.window_size.y() {
+                    anchor_corner = anchor_corner.switch_axis(Axis::Vertical);
+                }
+
+                if bounds.min_x() < 0. {
+                    anchor_corner = anchor_corner.switch_axis(Axis::Horizontal)
+                }
+
+                if bounds.min_y() < 0. {
+                    anchor_corner = anchor_corner.switch_axis(Axis::Vertical)
+                }
+
+                // Update bounds if needed
+                if anchor_corner != self.anchor_corner {
+                    bounds = anchor_corner.get_bounds(anchor_position, *size)
+                }
+            }
+            OverlayFitMode::None => {}
+        }
+
         cx.scene.push_stacking_context(None);
 
         if self.hoverable {
             enum OverlayHoverCapture {}
-            cx.scene.push_mouse_region(MouseRegion {
-                view_id: cx.current_view_id(),
-                bounds,
-                discriminant: (TypeId::of::<OverlayHoverCapture>(), cx.current_view_id()),
-                handlers: Default::default(),
-                hoverable: true,
-            });
-        }
-
-        match self.fit_mode {
-            OverlayFitMode::SnapToWindow => {
-                // Snap the right edge of the overlay to the right edge of the window if
-                // its horizontal bounds overflow.
-                if bounds.lower_right().x() > cx.window_size.x() {
-                    bounds.set_origin_x((cx.window_size.x() - bounds.width()).max(0.));
-                }
-
-                // Snap the bottom edge of the overlay to the bottom edge of the window if
-                // its vertical bounds overflow.
-                if bounds.lower_right().y() > cx.window_size.y() {
-                    bounds.set_origin_y((cx.window_size.y() - bounds.height()).max(0.));
-                }
-            }
-            OverlayFitMode::FlipAlignment => {
-                // Right-align overlay if its horizontal bounds overflow.
-                if bounds.lower_right().x() > cx.window_size.x() {
-                    bounds.set_origin_x(bounds.origin_x() - bounds.width());
-                }
-
-                // Bottom-align overlay if its vertical bounds overflow.
-                if bounds.lower_right().y() > cx.window_size.y() {
-                    bounds.set_origin_y(bounds.origin_y() - bounds.height());
-                }
-            }
-            OverlayFitMode::None => {}
+            cx.scene.push_mouse_region(
+                MouseRegion::new::<OverlayHoverCapture>(
+                    cx.current_view_id(),
+                    cx.current_view_id(),
+                    bounds,
+                )
+                .with_hoverable(true),
+            );
         }
 
         self.child.paint(bounds.origin(), bounds, cx);
@@ -153,7 +230,7 @@ impl Element for Overlay {
     ) -> serde_json::Value {
         json!({
             "type": "Overlay",
-            "abs_position": self.abs_position.to_json(),
+            "abs_position": self.anchor_position.to_json(),
             "child": self.child.debug(cx),
         })
     }

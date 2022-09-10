@@ -1,5 +1,8 @@
 use context_menu::ContextMenuItem;
-use gpui::{geometry::vector::Vector2F, impl_internal_actions, MutableAppContext, ViewContext};
+use gpui::{
+    elements::AnchorCorner, geometry::vector::Vector2F, impl_internal_actions, MutableAppContext,
+    ViewContext,
+};
 
 use crate::{
     DisplayPoint, Editor, EditorMode, FindAllReferences, GoToDefinition, GoToTypeDefinition,
@@ -46,6 +49,7 @@ pub fn deploy_context_menu(
     editor.mouse_context_menu.update(cx, |menu, cx| {
         menu.show(
             position,
+            AnchorCorner::TopLeft,
             vec![
                 ContextMenuItem::item("Rename Symbol", Rename),
                 ContextMenuItem::item("Go To Definition", GoToDefinition),

@@ -4076,10 +4076,7 @@ impl<'a, V: View> RenderContext<'a, V> {
     }
 
     pub fn mouse_state<Tag: 'static>(&self, region_id: usize) -> MouseState {
-        let region_id = MouseRegionId {
-            view_id: self.view_id,
-            discriminant: (TypeId::of::<Tag>(), region_id),
-        };
+        let region_id = MouseRegionId::new::<Tag>(self.view_id, region_id);
         MouseState {
             hovered: self.hovered_region_ids.contains(&region_id),
             clicked: self.clicked_region_ids.as_ref().and_then(|(ids, button)| {
@@ -6032,12 +6029,12 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+            fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+                enum Handler {}
                 let mouse_down_count = self.mouse_down_count.clone();
-                EventHandler::new(Empty::new().boxed())
-                    .on_mouse_down(move |_| {
+                MouseEventHandler::<Handler>::new(0, cx, |_, _| Empty::new().boxed())
+                    .on_down(MouseButton::Left, move |_, _| {
                         mouse_down_count.fetch_add(1, SeqCst);
-                        true
                     })
                     .boxed()
             }

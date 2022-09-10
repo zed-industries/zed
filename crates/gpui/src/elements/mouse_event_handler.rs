@@ -13,31 +13,32 @@ use crate::{
     MouseButton, MouseRegion, MouseState, PaintContext, RenderContext, SizeConstraint, View,
 };
 use serde_json::json;
-use std::{any::TypeId, ops::Range};
+use std::{marker::PhantomData, ops::Range};
 
-pub struct MouseEventHandler {
+pub struct MouseEventHandler<Tag: 'static> {
     child: ElementBox,
-    discriminant: (TypeId, usize),
+    region_id: usize,
     cursor_style: Option<CursorStyle>,
     handlers: HandlerSet,
     hoverable: bool,
     padding: Padding,
+    _tag: PhantomData<Tag>,
 }
 
-impl MouseEventHandler {
-    pub fn new<Tag, V, F>(id: usize, cx: &mut RenderContext<V>, render_child: F) -> Self
+impl<Tag> MouseEventHandler<Tag> {
+    pub fn new<V, F>(region_id: usize, cx: &mut RenderContext<V>, render_child: F) -> Self
     where
-        Tag: 'static,
         V: View,
         F: FnOnce(MouseState, &mut RenderContext<V>) -> ElementBox,
     {
         Self {
-            child: render_child(cx.mouse_state::<Tag>(id), cx),
+            child: render_child(cx.mouse_state::<Tag>(region_id), cx),
+            region_id,
             cursor_style: None,
-            discriminant: (TypeId::of::<Tag>(), id),
             handlers: Default::default(),
             hoverable: true,
             padding: Default::default(),
+            _tag: PhantomData,
         }
     }
 
@@ -140,7 +141,7 @@ impl MouseEventHandler {
     }
 }
 
-impl Element for MouseEventHandler {
+impl<Tag> Element for MouseEventHandler<Tag> {
     type LayoutState = ();
     type PaintState = ();
 
@@ -167,13 +168,15 @@ impl Element for MouseEventHandler {
             });
         }
 
-        cx.scene.push_mouse_region(MouseRegion {
-            view_id: cx.current_view_id(),
-            discriminant: self.discriminant,
-            bounds: hit_bounds,
-            handlers: self.handlers.clone(),
-            hoverable: self.hoverable,
-        });
+        cx.scene.push_mouse_region(
+            MouseRegion::from_handlers::<Tag>(
+                cx.current_view_id(),
+                self.region_id,
+                hit_bounds,
+                self.handlers.clone(),
+            )
+            .with_hoverable(self.hoverable),
+        );
 
         self.child.paint(bounds.origin(), visible_bounds, cx);
     }

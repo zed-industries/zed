@@ -312,7 +312,7 @@ pub struct InfoPopover {
 
 impl InfoPopover {
     pub fn render(&self, style: &EditorStyle, cx: &mut RenderContext<Editor>) -> ElementBox {
-        MouseEventHandler::new::<InfoPopover, _, _>(0, cx, |_, cx| {
+        MouseEventHandler::<InfoPopover>::new(0, cx, |_, cx| {
             let mut flex = Flex::new(Axis::Vertical).scrollable::<HoverBlock, _>(1, None, cx);
             flex.extend(self.contents.iter().map(|content| {
                 let project = self.project.read(cx);
@@ -383,7 +383,7 @@ impl DiagnosticPopover {
 
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
 
-        MouseEventHandler::new::<DiagnosticPopover, _, _>(0, cx, |_, _| {
+        MouseEventHandler::<DiagnosticPopover>::new(0, cx, |_, _| {
             Text::new(self.local_diagnostic.diagnostic.message.clone(), text_style)
                 .with_soft_wrap(true)
                 .contained()

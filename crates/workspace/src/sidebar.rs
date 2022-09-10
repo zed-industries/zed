@@ -176,7 +176,7 @@ impl Sidebar {
         let actual_width = self.actual_width.clone();
         let custom_width = self.custom_width.clone();
         let side = self.side;
-        MouseEventHandler::new::<Self, _, _>(side as usize, cx, |_, _| {
+        MouseEventHandler::<Self>::new(side as usize, cx, |_, _| {
             Empty::new()
                 .contained()
                 .with_style(theme.workspace.sidebar_resize_handle)
@@ -291,7 +291,7 @@ impl View for SidebarButtons {
                         side,
                         item_index: ix,
                     };
-                    MouseEventHandler::new::<Self, _, _>(ix, cx, move |state, cx| {
+                    MouseEventHandler::<Self>::new(ix, cx, move |state, cx| {
                         let is_active = is_open && ix == active_ix;
                         let style = item_style.style_for(state, is_active);
                         Stack::new()

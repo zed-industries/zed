@@ -372,13 +372,13 @@ impl Presenter {
                                 //Ensure that hover entrance events aren't sent twice
                                 if self.hovered_region_ids.insert(region.id()) {
                                     valid_regions.push(region.clone());
-                                    invalidated_views.insert(region.view_id);
+                                    invalidated_views.insert(region.id().view_id());
                                 }
                             } else {
                                 // Ensure that hover exit events aren't sent twice
                                 if self.hovered_region_ids.remove(&region.id()) {
                                     valid_regions.push(region.clone());
-                                    invalidated_views.insert(region.view_id);
+                                    invalidated_views.insert(region.id().view_id());
                                 }
                             }
                         }
@@ -452,8 +452,10 @@ impl Presenter {
 
                     if let Some(callback) = valid_region.handlers.get(&region_event.handler_key()) {
                         event_cx.handled = true;
-                        event_cx.invalidated_views.insert(valid_region.view_id);
-                        event_cx.with_current_view(valid_region.view_id, {
+                        event_cx
+                            .invalidated_views
+                            .insert(valid_region.id().view_id());
+                        event_cx.with_current_view(valid_region.id().view_id(), {
                             let region_event = region_event.clone();
                             |cx| {
                                 callback(region_event, cx);

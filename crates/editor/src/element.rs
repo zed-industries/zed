@@ -1138,7 +1138,7 @@ impl EditorElement {
 
                         enum JumpIcon {}
                         cx.render(&editor, |_, cx| {
-                            MouseEventHandler::new::<JumpIcon, _, _>(*key, cx, |state, _| {
+                            MouseEventHandler::<JumpIcon>::new(*key, cx, |state, _| {
                                 let style = style.jump_icon.style_for(state, false);
                                 Svg::new("icons/arrow_up_right_8.svg")
                                     .with_color(style.color)

@@ -682,7 +682,7 @@ impl CompletionsMenu {
                     let completion = &completions[mat.candidate_id];
                     let item_ix = start_ix + ix;
                     items.push(
-                        MouseEventHandler::new::<CompletionTag, _, _>(
+                        MouseEventHandler::<CompletionTag>::new(
                             mat.candidate_id,
                             cx,
                             |state, _| {
@@ -830,7 +830,7 @@ impl CodeActionsMenu {
                 for (ix, action) in actions[range].iter().enumerate() {
                     let item_ix = start_ix + ix;
                     items.push(
-                        MouseEventHandler::new::<ActionTag, _, _>(item_ix, cx, |state, _| {
+                        MouseEventHandler::<ActionTag>::new(item_ix, cx, |state, _| {
                             let item_style = if item_ix == selected_item {
                                 style.autocomplete.selected_item
                             } else if state.hovered {
@@ -2735,7 +2735,7 @@ impl Editor {
         if self.available_code_actions.is_some() {
             enum Tag {}
             Some(
-                MouseEventHandler::new::<Tag, _, _>(0, cx, |_, _| {
+                MouseEventHandler::<Tag>::new(0, cx, |_, _| {
                     Svg::new("icons/bolt_8.svg")
                         .with_color(style.code_actions.indicator)
                         .boxed()
@@ -7100,7 +7100,7 @@ mod tests {
     fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
         cx.set_global(Settings::test(cx));
         use workspace::Item;
-        let (_, pane) = cx.add_window(Default::default(), |cx| Pane::new(false, cx));
+        let (_, pane) = cx.add_window(Default::default(), |cx| Pane::new(None, cx));
         let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
 
         cx.add_view(&pane, |cx| {

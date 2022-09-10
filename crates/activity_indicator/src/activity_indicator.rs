@@ -278,7 +278,7 @@ impl View for ActivityIndicator {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let (icon, message, action) = self.content_to_render(cx);
 
-        let mut element = MouseEventHandler::new::<Self, _, _>(0, cx, |state, cx| {
+        let mut element = MouseEventHandler::<Self>::new(0, cx, |state, cx| {
             let theme = &cx
                 .global::<Settings>()
                 .theme

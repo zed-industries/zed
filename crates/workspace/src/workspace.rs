@@ -955,7 +955,7 @@ impl Workspace {
         })
         .detach();
 
-        let center_pane = cx.add_view(|cx| Pane::new(false, cx));
+        let center_pane = cx.add_view(|cx| Pane::new(None, cx));
         let pane_id = center_pane.id();
         cx.subscribe(&center_pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
@@ -1542,7 +1542,7 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
-        let pane = cx.add_view(|cx| Pane::new(false, cx));
+        let pane = cx.add_view(|cx| Pane::new(None, cx));
         let pane_id = pane.id();
         cx.subscribe(&pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
@@ -1999,8 +1999,9 @@ impl Workspace {
             theme.workspace.titlebar.container
         };
 
+        enum TitleBar {}
         ConstrainedBox::new(
-            MouseEventHandler::new::<Self, _, _>(0, cx, |_, cx| {
+            MouseEventHandler::<TitleBar>::new(0, cx, |_, cx| {
                 Container::new(
                     Stack::new()
                         .with_child(
@@ -2129,7 +2130,7 @@ impl Workspace {
             None
         } else {
             Some(
-                MouseEventHandler::new::<Authenticate, _, _>(0, cx, |state, _| {
+                MouseEventHandler::<Authenticate>::new(0, cx, |state, _| {
                     let style = theme
                         .workspace
                         .titlebar
@@ -2189,7 +2190,7 @@ impl Workspace {
             .boxed();
 
         if let Some((peer_id, peer_github_login)) = peer {
-            MouseEventHandler::new::<ToggleFollow, _, _>(replica_id.into(), cx, move |_, _| content)
+            MouseEventHandler::<ToggleFollow>::new(replica_id.into(), cx, move |_, _| content)
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, cx| {
                     cx.dispatch_action(ToggleFollow(peer_id))
@@ -2215,7 +2216,7 @@ impl Workspace {
         if self.project.read(cx).is_read_only() {
             enum DisconnectedOverlay {}
             Some(
-                MouseEventHandler::new::<DisconnectedOverlay, _, _>(0, cx, |_, cx| {
+                MouseEventHandler::<DisconnectedOverlay>::new(0, cx, |_, cx| {
                     let theme = &cx.global::<Settings>().theme;
                     Label::new(
                         "Your connection to the remote project has been lost.".to_string(),
@@ -2226,6 +2227,7 @@ impl Workspace {
                     .with_style(theme.workspace.disconnected_overlay.container)
                     .boxed()
                 })
+                .with_cursor_style(CursorStyle::Arrow)
                 .capture_all()
                 .boxed(),
             )

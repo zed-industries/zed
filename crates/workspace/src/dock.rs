@@ -37,6 +37,12 @@ impl Default for DockPosition {
 }
 
 impl DockPosition {
+    fn anchor(&self) -> DockAnchor {
+        match self {
+            DockPosition::Shown(anchor) | DockPosition::Hidden(anchor) => *anchor,
+        }
+    }
+
     fn toggle(self) -> Self {
         match self {
             DockPosition::Shown(anchor) => DockPosition::Hidden(anchor),
@@ -70,7 +76,8 @@ pub struct Dock {
 
 impl Dock {
     pub fn new(cx: &mut ViewContext<Workspace>, default_item_factory: DefaultItemFactory) -> Self {
-        let pane = cx.add_view(|cx| Pane::new(true, cx));
+        let anchor = cx.global::<Settings>().default_dock_anchor;
+        let pane = cx.add_view(|cx| Pane::new(Some(anchor), cx));
         let pane_id = pane.id();
         cx.subscribe(&pane, move |workspace, _, event, cx| {
             workspace.handle_pane_event(pane_id, event, cx);
@@ -79,7 +86,7 @@ impl Dock {
 
         Self {
             pane,
-            position: DockPosition::Hidden(cx.global::<Settings>().default_dock_anchor),
+            position: DockPosition::Hidden(anchor),
             default_item_factory,
         }
     }
@@ -98,6 +105,11 @@ impl Dock {
         cx: &mut ViewContext<Workspace>,
     ) {
         workspace.dock.position = new_position;
+        // Tell the pane about the new anchor position
+        workspace.dock.pane.update(cx, |pane, cx| {
+            pane.set_docked(Some(new_position.anchor()), cx)
+        });
+
         let now_visible = workspace.dock.visible_pane().is_some();
         if now_visible {
             // Ensure that the pane has at least one item or construct a default item to put in it
@@ -164,7 +176,7 @@ impl Dock {
                     .boxed()
                 }
                 DockAnchor::Expanded => Container::new(
-                    MouseEventHandler::new::<Dock, _, _>(0, cx, |_state, _cx| {
+                    MouseEventHandler::<Dock>::new(0, cx, |_state, _cx| {
                         Container::new(ChildView::new(self.pane.clone()).boxed())
                             .with_style(style.maximized)
                             .boxed()
@@ -205,7 +217,7 @@ impl View for ToggleDockButton {
             .map(|workspace| workspace.read(cx).dock.position.visible().is_some())
             .unwrap_or(false);
 
-        MouseEventHandler::new::<Self, _, _>(0, cx, |state, cx| {
+        MouseEventHandler::<Self>::new(0, cx, |state, cx| {
             let theme = &cx
                 .global::<Settings>()
                 .theme

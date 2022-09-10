@@ -5,8 +5,8 @@ use gpui::{
     actions,
     anyhow::{anyhow, Result},
     elements::{
-        ChildView, ConstrainedBox, Empty, Flex, Label, MouseEventHandler, ParentElement,
-        ScrollTarget, Stack, Svg, UniformList, UniformListState,
+        AnchorCorner, ChildView, ConstrainedBox, Empty, Flex, Label, MouseEventHandler,
+        ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState,
     },
     geometry::vector::Vector2F,
     impl_internal_actions, keymap,
@@ -302,7 +302,7 @@ impl ProjectPanel {
         }
 
         self.context_menu.update(cx, |menu, cx| {
-            menu.show(action.position, menu_entries, cx);
+            menu.show(action.position, AnchorCorner::TopLeft, menu_entries, cx);
         });
 
         cx.notify();
@@ -1012,7 +1012,7 @@ impl ProjectPanel {
     ) -> ElementBox {
         let kind = details.kind;
         let show_editor = details.is_editing && !details.is_processing;
-        MouseEventHandler::new::<Self, _, _>(entry_id.to_usize(), cx, |state, _| {
+        MouseEventHandler::<Self>::new(entry_id.to_usize(), cx, |state, _| {
             let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
             let mut style = theme.entry.style_for(state, details.is_selected).clone();
             if details.is_ignored {
@@ -1107,7 +1107,7 @@ impl View for ProjectPanel {
         let last_worktree_root_id = self.last_worktree_root_id;
         Stack::new()
             .with_child(
-                MouseEventHandler::new::<Tag, _, _>(0, cx, |_, cx| {
+                MouseEventHandler::<Tag>::new(0, cx, |_, cx| {
                     UniformList::new(
                         self.list.clone(),
                         self.visible_entries
