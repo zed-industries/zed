@@ -12,8 +12,8 @@ use serde_json::json;
 pub struct Overlay {
     child: ElementBox,
     anchor_position: Option<Vector2F>,
-    fit_mode: OverlayFitMode,
     anchor_corner: AnchorCorner,
+    fit_mode: OverlayFitMode,
     hoverable: bool,
 }
 
@@ -71,8 +71,8 @@ impl Overlay {
         Self {
             child,
             anchor_position: None,
-            fit_mode: OverlayFitMode::None,
             anchor_corner: AnchorCorner::TopLeft,
+            fit_mode: OverlayFitMode::None,
             hoverable: false,
         }
     }
@@ -183,14 +183,13 @@ impl Element for Overlay {
 
         if self.hoverable {
             enum OverlayHoverCapture {}
-            cx.scene.push_mouse_region(
-                MouseRegion::new::<OverlayHoverCapture>(
+            // Block hovers in lower stacking contexts
+            cx.scene
+                .push_mouse_region(MouseRegion::new::<OverlayHoverCapture>(
                     cx.current_view_id(),
                     cx.current_view_id(),
                     bounds,
-                )
-                .with_hoverable(true),
-            );
+                ));
         }
 
         self.child.paint(bounds.origin(), bounds, cx);

@@ -2,7 +2,7 @@ use std::{any::Any, rc::Rc};
 
 use collections::HashSet;
 use gpui::{
-    elements::{Container, MouseEventHandler},
+    elements::{Container, MouseEventHandler, Overlay},
     geometry::vector::Vector2F,
     scene::DragRegionEvent,
     CursorStyle, Element, ElementBox, EventContext, MouseButton, MutableAppContext, RenderContext,
@@ -116,29 +116,27 @@ impl<V: View> DragAndDrop<V> {
 
                 enum DraggedElementHandler {}
                 Some(
-                    MouseEventHandler::<DraggedElementHandler>::new(0, cx, |_, cx| {
-                        Container::new(render(payload, cx))
-                            .with_margin_left(position.x())
-                            .with_margin_top(position.y())
-                            .aligned()
-                            .top()
-                            .left()
-                            .boxed()
-                    })
-                    .with_cursor_style(CursorStyle::Arrow)
-                    .on_up(MouseButton::Left, |_, cx| {
-                        cx.defer(|cx| {
-                            cx.update_global::<Self, _, _>(|this, cx| this.stop_dragging(cx));
-                        });
-                        cx.propogate_event();
-                    })
-                    .on_up_out(MouseButton::Left, |_, cx| {
-                        cx.defer(|cx| {
-                            cx.update_global::<Self, _, _>(|this, cx| this.stop_dragging(cx));
-                        });
-                    })
-                    // Don't block hover events or invalidations
-                    .with_hoverable(false)
+                    Overlay::new(
+                        MouseEventHandler::<DraggedElementHandler>::new(0, cx, |_, cx| {
+                            render(payload, cx)
+                        })
+                        .with_cursor_style(CursorStyle::Arrow)
+                        .on_up(MouseButton::Left, |_, cx| {
+                            cx.defer(|cx| {
+                                cx.update_global::<Self, _, _>(|this, cx| this.stop_dragging(cx));
+                            });
+                            cx.propogate_event();
+                        })
+                        .on_up_out(MouseButton::Left, |_, cx| {
+                            cx.defer(|cx| {
+                                cx.update_global::<Self, _, _>(|this, cx| this.stop_dragging(cx));
+                            });
+                        })
+                        // Don't block hover events or invalidations
+                        .with_hoverable(false)
+                        .boxed(),
+                    )
+                    .with_anchor_position(position)
                     .boxed(),
                 )
             },

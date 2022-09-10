@@ -150,6 +150,7 @@ impl Dock {
         cx: &mut RenderContext<Workspace>,
     ) -> Option<ElementBox> {
         let style = &theme.workspace.dock;
+
         self.position
             .visible()
             .filter(|current_anchor| *current_anchor == anchor)

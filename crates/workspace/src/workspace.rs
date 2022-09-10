@@ -2618,16 +2618,27 @@ impl View for Workspace {
                                     )
                                     .boxed()
                             })
-                            .with_children(self.dock.render(&theme, DockAnchor::Expanded, cx))
-                            .with_children(self.modal.as_ref().map(|m| {
-                                ChildView::new(m)
-                                    .contained()
-                                    .with_style(theme.workspace.modal)
-                                    .aligned()
-                                    .top()
-                                    .boxed()
-                            }))
-                            .with_children(self.render_notifications(&theme.workspace))
+                            .with_child(
+                                Overlay::new(
+                                    Stack::new()
+                                        .with_children(self.dock.render(
+                                            &theme,
+                                            DockAnchor::Expanded,
+                                            cx,
+                                        ))
+                                        .with_children(self.modal.as_ref().map(|m| {
+                                            ChildView::new(m)
+                                                .contained()
+                                                .with_style(theme.workspace.modal)
+                                                .aligned()
+                                                .top()
+                                                .boxed()
+                                        }))
+                                        .with_children(self.render_notifications(&theme.workspace))
+                                        .boxed(),
+                                )
+                                .boxed(),
+                            )
                             .flex(1.0, true)
                             .boxed(),
                     )
