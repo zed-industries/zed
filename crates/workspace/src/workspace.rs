@@ -2189,7 +2189,7 @@ impl Workspace {
 
     fn render_disconnected_overlay(&self, cx: &mut RenderContext<Workspace>) -> Option<ElementBox> {
         if self.project.read(cx).is_read_only() {
-            enum DisconnectedOverlay {};
+            enum DisconnectedOverlay {}
             Some(
                 MouseEventHandler::new::<DisconnectedOverlay, _, _>(0, cx, |_, cx| {
                     let theme = &cx.global::<Settings>().theme;
