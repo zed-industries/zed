@@ -410,7 +410,7 @@ pub struct Editor {
     add_selections_state: Option<AddSelectionsState>,
     select_next_state: Option<SelectNextState>,
     selection_history: SelectionHistory,
-    autoclose_stack: InvalidationStack<BracketPairState>,
+    autoclose_regions: Vec<AutocloseRegion>,
     snippet_stack: InvalidationStack<SnippetState>,
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     ime_transaction: Option<TransactionId>,
@@ -569,8 +569,9 @@ struct SelectNextState {
     done: bool,
 }
 
-struct BracketPairState {
-    ranges: Vec<Range<Anchor>>,
+struct AutocloseRegion {
+    selection_id: usize,
+    range: Range<Anchor>,
     pair: BracketPair,
 }
 
@@ -1010,7 +1011,7 @@ impl Editor {
             add_selections_state: None,
             select_next_state: None,
             selection_history: Default::default(),
-            autoclose_stack: Default::default(),
+            autoclose_regions: Default::default(),
             snippet_stack: Default::default(),
             select_larger_syntax_node_stack: Vec::new(),
             ime_transaction: Default::default(),
@@ -1401,8 +1402,7 @@ impl Editor {
         self.add_selections_state = None;
         self.select_next_state = None;
         self.select_larger_syntax_node_stack.clear();
-        self.autoclose_stack
-            .invalidate(&self.selections.disjoint_anchors(), buffer);
+        self.invalidate_autoclose_regions(&self.selections.disjoint_anchors(), buffer);
         self.snippet_stack
             .invalidate(&self.selections.disjoint_anchors(), buffer);
         self.take_rename(false, cx);
@@ -1849,15 +1849,158 @@ impl Editor {
             return;
         }
 
-        if !self.skip_autoclose_end(text, cx) {
-            self.transact(cx, |this, cx| {
-                if !this.surround_with_bracket_pair(text, cx) {
-                    this.insert(text, cx);
-                    this.autoclose_bracket_pairs(cx);
+        let text: Arc<str> = text.into();
+        let selections = self.selections.all_adjusted(cx);
+        let mut edits = Vec::new();
+        let mut new_selections = Vec::with_capacity(selections.len());
+        let mut new_autoclose_regions = Vec::new();
+        let snapshot = self.buffer.read(cx).read(cx);
+
+        for (selection, autoclose_region) in
+            self.selections_with_autoclose_regions(selections, &snapshot)
+        {
+            if let Some(language) = snapshot.language_at(selection.head()) {
+                // Determine if the inserted text matches the opening or closing
+                // bracket of any of this language's bracket pairs.
+                let mut bracket_pair = None;
+                let mut is_bracket_pair_start = false;
+                for pair in language.brackets() {
+                    if pair.start.ends_with(text.as_ref()) {
+                        bracket_pair = Some(pair.clone());
+                        is_bracket_pair_start = true;
+                        break;
+                    } else if pair.end.as_str() == text.as_ref() {
+                        bracket_pair = Some(pair.clone());
+                        break;
+                    }
                 }
-            });
-            self.trigger_completion_on_input(text, cx);
+
+                if let Some(bracket_pair) = bracket_pair {
+                    if selection.is_empty() {
+                        if is_bracket_pair_start {
+                            let prefix_len = bracket_pair.start.len() - text.len();
+
+                            // If the inserted text is a suffix of an opening bracket and the
+                            // selection is preceded by the rest of the opening bracket, then
+                            // insert the closing bracket.
+                            let should_autoclose = selection.start.column > (prefix_len as u32)
+                                && snapshot.contains_str_at(
+                                    Point::new(
+                                        selection.start.row,
+                                        selection.start.column - (prefix_len as u32),
+                                    ),
+                                    &bracket_pair.start[..prefix_len],
+                                )
+                                && snapshot
+                                    .chars_at(selection.start)
+                                    .next()
+                                    .map_or(true, |c| language.should_autoclose_before(c));
+                            if should_autoclose {
+                                let anchor = snapshot.anchor_before(selection.end);
+                                new_selections
+                                    .push((selection.map(|_| anchor.clone()), text.len()));
+                                new_autoclose_regions.push((
+                                    anchor.clone(),
+                                    text.len(),
+                                    selection.id,
+                                    bracket_pair.clone(),
+                                ));
+                                edits.push((
+                                    selection.range(),
+                                    format!("{}{}", text, bracket_pair.end).into(),
+                                ));
+                                continue;
+                            }
+                        } else if let Some(region) = autoclose_region {
+                            // If the selection is followed by an auto-inserted closing bracket,
+                            // then don't insert anything else; just move the selection past the
+                            // closing bracket.
+                            let should_skip = selection.end == region.range.end.to_point(&snapshot);
+                            if should_skip {
+                                let anchor = snapshot.anchor_after(selection.end);
+                                new_selections.push((
+                                    selection.map(|_| anchor.clone()),
+                                    region.pair.end.len(),
+                                ));
+                                continue;
+                            }
+                        }
+                    }
+                    // If an opening bracket is typed while text is selected, then
+                    // surround that text with the bracket pair.
+                    else if is_bracket_pair_start {
+                        edits.push((selection.start..selection.start, text.clone()));
+                        edits.push((
+                            selection.end..selection.end,
+                            bracket_pair.end.as_str().into(),
+                        ));
+                        new_selections.push((
+                            Selection {
+                                id: selection.id,
+                                start: snapshot.anchor_after(selection.start),
+                                end: snapshot.anchor_before(selection.end),
+                                reversed: selection.reversed,
+                                goal: selection.goal,
+                            },
+                            0,
+                        ));
+                        continue;
+                    }
+                }
+            }
+
+            // If not handling any auto-close operation, then just replace the selected
+            // text with the given input and move the selection to the end of the
+            // newly inserted text.
+            let anchor = snapshot.anchor_after(selection.end);
+            new_selections.push((selection.map(|_| anchor.clone()), 0));
+            edits.push((selection.start..selection.end, text.clone()));
         }
+
+        drop(snapshot);
+        self.transact(cx, |this, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, Some(AutoindentMode::EachLine), cx);
+            });
+
+            let new_anchor_selections = new_selections.iter().map(|e| &e.0);
+            let new_selection_deltas = new_selections.iter().map(|e| e.1);
+            let snapshot = this.buffer.read(cx).read(cx);
+            let new_selections = resolve_multiple::<usize, _>(new_anchor_selections, &snapshot)
+                .zip(new_selection_deltas)
+                .map(|(selection, delta)| selection.map(|e| e + delta))
+                .collect::<Vec<_>>();
+
+            let mut i = 0;
+            for (position, delta, selection_id, pair) in new_autoclose_regions {
+                let position = position.to_offset(&snapshot) + delta;
+                let start = snapshot.anchor_before(position);
+                let end = snapshot.anchor_after(position);
+                while let Some(existing_state) = this.autoclose_regions.get(i) {
+                    match existing_state.range.start.cmp(&start, &snapshot) {
+                        Ordering::Less => i += 1,
+                        Ordering::Greater => break,
+                        Ordering::Equal => match end.cmp(&existing_state.range.end, &snapshot) {
+                            Ordering::Less => i += 1,
+                            Ordering::Equal => break,
+                            Ordering::Greater => break,
+                        },
+                    }
+                }
+                this.autoclose_regions.insert(
+                    i,
+                    AutocloseRegion {
+                        selection_id,
+                        range: start..end,
+                        pair,
+                    },
+                );
+            }
+
+            drop(snapshot);
+            this.change_selections(None, cx, |s| s.select(new_selections));
+            this.trigger_completion_on_input(&text, cx);
+        });
     }
 
     pub fn newline(&mut self, _: &Newline, cx: &mut ViewContext<Self>) {
@@ -2029,232 +2172,89 @@ impl Editor {
         }
     }
 
-    fn surround_with_bracket_pair(&mut self, text: &str, cx: &mut ViewContext<Self>) -> bool {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        if let Some(pair) = snapshot
-            .language()
-            .and_then(|language| language.brackets().iter().find(|b| b.start == text))
-            .cloned()
-        {
-            if self
-                .selections
-                .all::<usize>(cx)
-                .iter()
-                .any(|selection| selection.is_empty())
-            {
-                return false;
-            }
-
-            let mut selections = self.selections.disjoint_anchors().to_vec();
-            for selection in &mut selections {
-                selection.end = selection.end.bias_left(&snapshot);
-            }
-            drop(snapshot);
-
-            self.buffer.update(cx, |buffer, cx| {
-                let pair_start: Arc<str> = pair.start.clone().into();
-                let pair_end: Arc<str> = pair.end.clone().into();
-                buffer.edit(
-                    selections.iter().flat_map(|s| {
-                        [
-                            (s.start.clone()..s.start.clone(), pair_start.clone()),
-                            (s.end.clone()..s.end.clone(), pair_end.clone()),
-                        ]
-                    }),
-                    None,
-                    cx,
-                );
-            });
-
-            let snapshot = self.buffer.read(cx).read(cx);
-            for selection in &mut selections {
-                selection.end = selection.end.bias_right(&snapshot);
-            }
-            drop(snapshot);
-
-            self.change_selections(None, cx, |s| s.select_anchors(selections));
-            true
-        } else {
-            false
-        }
-    }
-
-    fn autoclose_bracket_pairs(&mut self, cx: &mut ViewContext<Self>) {
+    /// If any empty selections is touching the start of its innermost containing autoclose
+    /// region, expand it to select the brackets.
+    fn select_autoclose_pair(&mut self, cx: &mut ViewContext<Self>) {
         let selections = self.selections.all::<usize>(cx);
-        let mut bracket_pair_state = None;
-        let mut new_selections = None;
-        self.buffer.update(cx, |buffer, cx| {
-            let mut snapshot = buffer.snapshot(cx);
-            let left_biased_selections = selections
-                .iter()
-                .map(|selection| selection.map(|p| snapshot.anchor_before(p)))
-                .collect::<Vec<_>>();
-
-            let autoclose_pair = snapshot.language().and_then(|language| {
-                let first_selection_start = selections.first().unwrap().start;
-                let pair = language.brackets().iter().find(|pair| {
-                    pair.close
-                        && snapshot.contains_str_at(
-                            first_selection_start.saturating_sub(pair.start.len()),
-                            &pair.start,
-                        )
-                });
-                pair.and_then(|pair| {
-                    let should_autoclose = selections.iter().all(|selection| {
-                        // Ensure all selections are parked at the end of a pair start.
-                        if snapshot.contains_str_at(
-                            selection.start.saturating_sub(pair.start.len()),
-                            &pair.start,
-                        ) {
-                            snapshot
-                                .chars_at(selection.start)
-                                .next()
-                                .map_or(true, |c| language.should_autoclose_before(c))
-                        } else {
-                            false
+        let buffer = self.buffer.read(cx).read(cx);
+        let mut new_selections = Vec::new();
+        for (mut selection, region) in self.selections_with_autoclose_regions(selections, &buffer) {
+            if let (Some(region), true) = (region, selection.is_empty()) {
+                let mut range = region.range.to_offset(&buffer);
+                if selection.start == range.start {
+                    if range.start >= region.pair.start.len() {
+                        range.start -= region.pair.start.len();
+                        if buffer.contains_str_at(range.start, &region.pair.start) {
+                            if buffer.contains_str_at(range.end, &region.pair.end) {
+                                range.end += region.pair.end.len();
+                                selection.start = range.start;
+                                selection.end = range.end;
+                            }
                         }
-                    });
-
-                    if should_autoclose {
-                        Some(pair.clone())
-                    } else {
-                        None
                     }
-                })
-            });
-
-            if let Some(pair) = autoclose_pair {
-                let selection_ranges = selections
-                    .iter()
-                    .map(|selection| {
-                        let start = selection.start.to_offset(&snapshot);
-                        start..start
-                    })
-                    .collect::<SmallVec<[_; 32]>>();
-
-                let pair_end: Arc<str> = pair.end.clone().into();
-                buffer.edit(
-                    selection_ranges
-                        .iter()
-                        .map(|range| (range.clone(), pair_end.clone())),
-                    None,
-                    cx,
-                );
-                snapshot = buffer.snapshot(cx);
-
-                new_selections = Some(
-                    resolve_multiple::<usize, _>(left_biased_selections.iter(), &snapshot)
-                        .collect::<Vec<_>>(),
-                );
-
-                if pair.end.len() == 1 {
-                    let mut delta = 0;
-                    bracket_pair_state = Some(BracketPairState {
-                        ranges: selections
-                            .iter()
-                            .map(move |selection| {
-                                let offset = selection.start + delta;
-                                delta += 1;
-                                snapshot.anchor_before(offset)..snapshot.anchor_after(offset)
-                            })
-                            .collect(),
-                        pair,
-                    });
                 }
             }
-        });
+            new_selections.push(selection);
+        }
 
-        if let Some(new_selections) = new_selections {
-            self.change_selections(None, cx, |s| {
-                s.select(new_selections);
-            });
-        }
-        if let Some(bracket_pair_state) = bracket_pair_state {
-            self.autoclose_stack.push(bracket_pair_state);
-        }
+        drop(buffer);
+        self.change_selections(None, cx, |selections| selections.select(new_selections));
     }
 
-    fn skip_autoclose_end(&mut self, text: &str, cx: &mut ViewContext<Self>) -> bool {
-        let buffer = self.buffer.read(cx).snapshot(cx);
-        let old_selections = self.selections.all::<usize>(cx);
-        let autoclose_pair = if let Some(autoclose_pair) = self.autoclose_stack.last() {
-            autoclose_pair
-        } else {
-            return false;
-        };
-        if text != autoclose_pair.pair.end {
-            return false;
-        }
+    /// Iterate the given selections, and for each one, find the smallest surrounding
+    /// autoclose region. This uses the ordering of the selections and the autoclose
+    /// regions to avoid repeated comparisons.
+    fn selections_with_autoclose_regions<'a, D: ToOffset + Clone>(
+        &'a self,
+        selections: impl IntoIterator<Item = Selection<D>>,
+        buffer: &'a MultiBufferSnapshot,
+    ) -> impl Iterator<Item = (Selection<D>, Option<&'a AutocloseRegion>)> {
+        let mut i = 0;
+        let mut pair_states = self.autoclose_regions.as_slice();
+        selections.into_iter().map(move |selection| {
+            let range = selection.start.to_offset(buffer)..selection.end.to_offset(buffer);
 
-        debug_assert_eq!(old_selections.len(), autoclose_pair.ranges.len());
-
-        if old_selections
-            .iter()
-            .zip(autoclose_pair.ranges.iter().map(|r| r.to_offset(&buffer)))
-            .all(|(selection, autoclose_range)| {
-                let autoclose_range_end = autoclose_range.end.to_offset(&buffer);
-                selection.is_empty() && selection.start == autoclose_range_end
-            })
-        {
-            let new_selections = old_selections
-                .into_iter()
-                .map(|selection| {
-                    let cursor = selection.start + 1;
-                    Selection {
-                        id: selection.id,
-                        start: cursor,
-                        end: cursor,
-                        reversed: false,
-                        goal: SelectionGoal::None,
-                    }
-                })
-                .collect();
-            self.autoclose_stack.pop();
-            self.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                s.select(new_selections);
-            });
-            true
-        } else {
-            false
-        }
-    }
-
-    fn select_autoclose_pair(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        let buffer = self.buffer.read(cx).snapshot(cx);
-        let old_selections = self.selections.all::<usize>(cx);
-        let autoclose_pair = if let Some(autoclose_pair) = self.autoclose_stack.last() {
-            autoclose_pair
-        } else {
-            return false;
-        };
-
-        debug_assert_eq!(old_selections.len(), autoclose_pair.ranges.len());
-
-        let mut new_selections = Vec::new();
-        for (selection, autoclose_range) in old_selections
-            .iter()
-            .zip(autoclose_pair.ranges.iter().map(|r| r.to_offset(&buffer)))
-        {
-            if selection.is_empty()
-                && autoclose_range.is_empty()
-                && selection.start == autoclose_range.start
-            {
-                new_selections.push(Selection {
-                    id: selection.id,
-                    start: selection.start - autoclose_pair.pair.start.len(),
-                    end: selection.end + autoclose_pair.pair.end.len(),
-                    reversed: true,
-                    goal: selection.goal,
-                });
-            } else {
-                return false;
+            let mut enclosing = None;
+            while let Some(pair_state) = pair_states.get(i) {
+                if pair_state.range.end.to_offset(buffer) < range.start {
+                    pair_states = &pair_states[i + 1..];
+                    i = 0;
+                } else if pair_state.range.start.to_offset(buffer) > range.end {
+                    break;
+                } else if pair_state.selection_id == selection.id {
+                    enclosing = Some(pair_state);
+                    i += 1;
+                }
             }
-        }
 
-        self.change_selections(Some(Autoscroll::Fit), cx, |selections| {
-            selections.select(new_selections)
+            (selection.clone(), enclosing)
+        })
+    }
+
+    /// Remove any autoclose regions that no longer contain their selection.
+    fn invalidate_autoclose_regions(
+        &mut self,
+        mut selections: &[Selection<Anchor>],
+        buffer: &MultiBufferSnapshot,
+    ) {
+        self.autoclose_regions.retain(|state| {
+            let mut i = 0;
+            while let Some(selection) = selections.get(i) {
+                if selection.end.cmp(&state.range.start, buffer).is_lt() {
+                    selections = &selections[1..];
+                    continue;
+                }
+                if selection.start.cmp(&state.range.end, buffer).is_gt() {
+                    break;
+                }
+                if selection.id == state.selection_id {
+                    return true;
+                } else {
+                    i += 1;
+                }
+            }
+            false
         });
-        true
     }
 
     fn completion_query(buffer: &MultiBufferSnapshot, position: impl ToOffset) -> Option<String> {
@@ -2909,51 +2909,47 @@ impl Editor {
 
     pub fn backspace(&mut self, _: &Backspace, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
-            if !this.select_autoclose_pair(cx) {
-                let mut selections = this.selections.all::<Point>(cx);
-                if !this.selections.line_mode {
-                    let display_map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
-                    for selection in &mut selections {
-                        if selection.is_empty() {
-                            let old_head = selection.head();
-                            let mut new_head = movement::left(
-                                &display_map,
-                                old_head.to_display_point(&display_map),
-                            )
-                            .to_point(&display_map);
-                            if let Some((buffer, line_buffer_range)) = display_map
-                                .buffer_snapshot
-                                .buffer_line_for_row(old_head.row)
-                            {
-                                let indent_size =
-                                    buffer.indent_size_for_line(line_buffer_range.start.row);
-                                let language_name =
-                                    buffer.language().map(|language| language.name());
-                                let indent_len = match indent_size.kind {
-                                    IndentKind::Space => {
-                                        cx.global::<Settings>().tab_size(language_name.as_deref())
-                                    }
-                                    IndentKind::Tab => NonZeroU32::new(1).unwrap(),
-                                };
-                                if old_head.column <= indent_size.len && old_head.column > 0 {
-                                    let indent_len = indent_len.get();
-                                    new_head = cmp::min(
-                                        new_head,
-                                        Point::new(
-                                            old_head.row,
-                                            ((old_head.column - 1) / indent_len) * indent_len,
-                                        ),
-                                    );
+            this.select_autoclose_pair(cx);
+            let mut selections = this.selections.all::<Point>(cx);
+            if !this.selections.line_mode {
+                let display_map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
+                for selection in &mut selections {
+                    if selection.is_empty() {
+                        let old_head = selection.head();
+                        let mut new_head =
+                            movement::left(&display_map, old_head.to_display_point(&display_map))
+                                .to_point(&display_map);
+                        if let Some((buffer, line_buffer_range)) = display_map
+                            .buffer_snapshot
+                            .buffer_line_for_row(old_head.row)
+                        {
+                            let indent_size =
+                                buffer.indent_size_for_line(line_buffer_range.start.row);
+                            let language_name = buffer.language().map(|language| language.name());
+                            let indent_len = match indent_size.kind {
+                                IndentKind::Space => {
+                                    cx.global::<Settings>().tab_size(language_name.as_deref())
                                 }
+                                IndentKind::Tab => NonZeroU32::new(1).unwrap(),
+                            };
+                            if old_head.column <= indent_size.len && old_head.column > 0 {
+                                let indent_len = indent_len.get();
+                                new_head = cmp::min(
+                                    new_head,
+                                    Point::new(
+                                        old_head.row,
+                                        ((old_head.column - 1) / indent_len) * indent_len,
+                                    ),
+                                );
                             }
-
-                            selection.set_head(new_head, SelectionGoal::None);
                         }
+
+                        selection.set_head(new_head, SelectionGoal::None);
                     }
                 }
-
-                this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections));
             }
+
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections));
             this.insert("", cx);
         });
     }
@@ -3957,17 +3953,16 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
-            if !this.select_autoclose_pair(cx) {
-                this.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                    let line_mode = s.line_mode;
-                    s.move_with(|map, selection| {
-                        if selection.is_empty() && !line_mode {
-                            let cursor = movement::previous_word_start(map, selection.head());
-                            selection.set_head(cursor, SelectionGoal::None);
-                        }
-                    });
+            this.select_autoclose_pair(cx);
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                let line_mode = s.line_mode;
+                s.move_with(|map, selection| {
+                    if selection.is_empty() && !line_mode {
+                        let cursor = movement::previous_word_start(map, selection.head());
+                        selection.set_head(cursor, SelectionGoal::None);
+                    }
                 });
-            }
+            });
             this.insert("", cx);
         });
     }
@@ -3978,17 +3973,16 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.transact(cx, |this, cx| {
-            if !this.select_autoclose_pair(cx) {
-                this.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                    let line_mode = s.line_mode;
-                    s.move_with(|map, selection| {
-                        if selection.is_empty() && !line_mode {
-                            let cursor = movement::previous_subword_start(map, selection.head());
-                            selection.set_head(cursor, SelectionGoal::None);
-                        }
-                    });
+            this.select_autoclose_pair(cx);
+            this.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                let line_mode = s.line_mode;
+                s.move_with(|map, selection| {
+                    if selection.is_empty() && !line_mode {
+                        let cursor = movement::previous_subword_start(map, selection.head());
+                        selection.set_head(cursor, SelectionGoal::None);
+                    }
                 });
-            }
+            });
             this.insert("", cx);
         });
     }
@@ -6492,12 +6486,6 @@ impl<T> Deref for InvalidationStack<T> {
 impl<T> DerefMut for InvalidationStack<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
-    }
-}
-
-impl InvalidationRegion for BracketPairState {
-    fn ranges(&self) -> &[Range<Anchor>] {
-        &self.ranges
     }
 }
 

@@ -1,6 +1,6 @@
 name = "HTML"
 path_suffixes = ["html"]
-autoclose_before = ">"
+autoclose_before = ">})"
 brackets = [
     { start = "<", end = ">", close = true, newline = true },
     { start = "{", end = "}", close = true, newline = true },
