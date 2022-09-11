@@ -1048,7 +1048,7 @@ impl Pane {
         });
     }
 
-    fn render_tab_bar(&mut self, cx: &mut RenderContext<Self>) -> impl Element {
+    fn render_tabs(&mut self, cx: &mut RenderContext<Self>) -> impl Element {
         let theme = cx.global::<Settings>().theme.clone();
         let filler_index = self.items.len();
 
@@ -1366,10 +1366,11 @@ impl View for Pane {
                     if let Some(active_item) = self.active_item() {
                         Flex::column()
                             .with_child({
-                                let mut tab_row = Flex::row().with_child(
-                                    self.render_tab_bar(cx).flex(1., true).named("tabs"),
-                                );
+                                let mut tab_row = Flex::row()
+                                    .with_child(self.render_tabs(cx).flex(1., true).named("tabs"));
 
+                                // Render pane buttons
+                                let theme = cx.global::<Settings>().theme.clone();
                                 if self.is_active {
                                     tab_row.add_child(
                                         Flex::row()
@@ -1420,24 +1421,16 @@ impl View for Pane {
                                                 })
                                             }))
                                             .contained()
-                                            .with_style(
-                                                cx.global::<Settings>()
-                                                    .theme
-                                                    .workspace
-                                                    .tab_bar
-                                                    .pane_button
-                                                    .default
-                                                    .container,
-                                            )
+                                            .with_style(theme.workspace.tab_bar.container)
                                             .boxed(),
                                     )
                                 }
 
                                 tab_row
                                     .constrained()
-                                    .with_height(
-                                        cx.global::<Settings>().theme.workspace.tab_bar.height,
-                                    )
+                                    .with_height(theme.workspace.tab_bar.height)
+                                    .contained()
+                                    .with_style(theme.workspace.tab_bar.container)
                                     .named("tab bar")
                             })
                             .with_child(ChildView::new(&self.toolbar).boxed())
@@ -1519,7 +1512,6 @@ fn tab_bar_button<A: Action>(
             .constrained()
             .with_width(style.icon_width)
             .aligned()
-            .contained()
             .constrained()
             .with_width(style.button_width)
             .with_height(style.button_width)
