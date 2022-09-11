@@ -443,6 +443,8 @@ impl Presenter {
                 //3. Fire region events
                 let hovered_region_ids = self.hovered_region_ids.clone();
                 for valid_region in valid_regions.into_iter() {
+                    let mut event_cx = self.build_event_context(&mut invalidated_views, cx);
+
                     region_event.set_region(valid_region.bounds);
                     if let MouseRegionEvent::Hover(e) = &mut region_event {
                         e.started = valid_region
@@ -450,25 +452,34 @@ impl Presenter {
                             .map(|region_id| hovered_region_ids.contains(&region_id))
                             .unwrap_or(false)
                     }
+                    // Handle Down events if the MouseRegion has a Click handler. This makes the api more intuitive as you would
+                    // not expect a MouseRegion to be transparent to Down events if it also has a Click handler.
+                    // This behavior can be overridden by adding a Down handler that calls cx.propogate_event
+                    if let MouseRegionEvent::Down(e) = &region_event {
+                        if valid_region
+                            .handlers
+                            .contains_handler(MouseRegionEvent::click_disc(), Some(e.button))
+                        {
+                            event_cx.handled = true;
+                        }
+                    }
 
                     if let Some(callback) = valid_region.handlers.get(&region_event.handler_key()) {
-                        invalidated_views.insert(valid_region.view_id);
-
-                        let mut event_cx = self.build_event_context(&mut invalidated_views, cx);
                         event_cx.handled = true;
+                        event_cx.invalidated_views.insert(valid_region.view_id);
                         event_cx.with_current_view(valid_region.view_id, {
                             let region_event = region_event.clone();
                             |cx| {
                                 callback(region_event, cx);
                             }
                         });
+                    }
 
-                        any_event_handled = any_event_handled || event_cx.handled;
-                        // For bubbling events, if the event was handled, don't continue dispatching
-                        // This only makes sense for local events.
-                        if event_cx.handled && region_event.is_capturable() {
-                            break;
-                        }
+                    any_event_handled = any_event_handled || event_cx.handled;
+                    // For bubbling events, if the event was handled, don't continue dispatching
+                    // This only makes sense for local events.
+                    if event_cx.handled && region_event.is_capturable() {
+                        break;
                     }
                 }
             }

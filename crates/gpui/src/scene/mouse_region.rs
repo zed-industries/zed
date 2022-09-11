@@ -196,6 +196,14 @@ impl HandlerSet {
         self.set.get(key).cloned()
     }
 
+    pub fn contains_handler(
+        &self,
+        event: Discriminant<MouseRegionEvent>,
+        button: Option<MouseButton>,
+    ) -> bool {
+        self.set.contains_key(&(event, button))
+    }
+
     pub fn on_move(
         mut self,
         handler: impl Fn(MoveRegionEvent, &mut EventContext) + 'static,
