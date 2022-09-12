@@ -1,14 +1,14 @@
 use std::{cell::Cell, rc::Rc};
 
-use pathfinder_geometry::vector::Vector2F;
+use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
 
 use crate::{
-    color::Color, scene::DragRegionEvent, Axis, Border, CursorStyle, Element, ElementBox,
-    ElementStateHandle, MouseButton, RenderContext, View, MouseRegion,
+    geometry::rect::RectF, scene::DragRegionEvent, Axis, CursorStyle, Element, ElementBox,
+    ElementStateHandle, MouseButton, MouseRegion, RenderContext, View,
 };
 
-use super::{ConstrainedBox, Empty, Flex, Hook, MouseEventHandler, Padding, ParentElement};
+use super::{ConstrainedBox, Flex, Hook, ParentElement};
 
 #[derive(Copy, Clone, Debug)]
 pub enum Side {
@@ -35,13 +35,6 @@ impl Side {
         }
     }
 
-    fn resize_padding(&self, padding_size: f32) -> Padding {
-        match self.axis() {
-            Axis::Horizontal => Padding::horizontal(padding_size),
-            Axis::Vertical => Padding::vertical(padding_size),
-        }
-    }
-
     fn relevant_component(&self, vector: Vector2F) -> f32 {
         match self.axis() {
             Axis::Horizontal => vector.x(),
@@ -56,6 +49,19 @@ impl Side {
             self.relevant_component(e.position) - self.relevant_component(e.prev_mouse_position)
         }
     }
+
+    fn of_rect(&self, bounds: RectF, handle_size: f32) -> RectF {
+        match self {
+            Side::Top => RectF::new(bounds.origin(), vec2f(bounds.width(), handle_size)),
+            Side::Bottom => RectF::new(bounds.lower_left(), vec2f(bounds.width(), handle_size)),
+            Side::Left => RectF::new(bounds.origin(), vec2f(handle_size, bounds.height())),
+            Side::Right => {
+                let mut origin = bounds.upper_right();
+                origin.set_x(origin.x() - handle_size);
+                RectF::new(origin, vec2f(handle_size, bounds.height()))
+            }
+        }
+    }
 }
 
 struct ResizeHandleState {
@@ -65,6 +71,7 @@ struct ResizeHandleState {
 
 pub struct Resizable {
     side: Side,
+    handle_size: f32,
     child: ElementBox,
     state: Rc<ResizeHandleState>,
     _state_handle: ElementStateHandle<Rc<ResizeHandleState>>,
@@ -91,11 +98,6 @@ impl Resizable {
 
         let mut flex = Flex::new(side.axis());
 
-        if side.before_content() {
-            dbg!("HANDLE BEING RENDERED BEFORE");
-            flex.add_child(render_resize_handle(state.clone(), side, handle_size, cx))
-        }
-
         flex.add_child(
             Hook::new({
                 let constrained = ConstrainedBox::new(child);
@@ -114,55 +116,16 @@ impl Resizable {
             .boxed(),
         );
 
-        if !side.before_content() {
-            dbg!("HANDLE BEING RENDERED AFTER");
-            flex.add_child(render_resize_handle(state.clone(), side, handle_size, cx))
-        }
-
         let child = flex.boxed();
 
         Self {
             side,
             child,
+            handle_size,
             state,
             _state_handle: state_handle,
         }
     }
-}
-
-fn render_resize_handle<T: View>(
-    state: Rc<ResizeHandleState>,
-    side: Side,
-    padding_size: f32,
-    cx: &mut RenderContext<T>,
-) -> ElementBox {
-    enum ResizeHandle {}
-    MouseEventHandler::<ResizeHandle>::new(side as usize, cx, |_, _| {
-        Empty::new()
-            // Border necessary to properly add a MouseRegion
-            .contained()
-            .with_border(Border {
-                width: 4.,
-                left: true,
-                color: Color::red(),
-                ..Default::default()
-            })
-            .boxed()
-    })
-    .with_padding(side.resize_padding(padding_size))
-    .with_cursor_style(match side.axis() {
-        Axis::Horizontal => CursorStyle::ResizeLeftRight,
-        Axis::Vertical => CursorStyle::ResizeUpDown,
-    })
-    .on_down(MouseButton::Left, |_, _| {}) // This prevents the mouse down event from being propagated elsewhere
-    .on_drag(MouseButton::Left, move |e, cx| {
-        let prev_width = state.actual_dimension.get();
-        state
-            .custom_dimension
-            .set(0f32.max(prev_width + side.compute_delta(e)).round());
-        cx.notify();
-    })
-    .boxed()
 }
 
 impl Element for Resizable {
@@ -182,19 +145,42 @@ impl Element for Resizable {
         &mut self,
         bounds: pathfinder_geometry::rect::RectF,
         visible_bounds: pathfinder_geometry::rect::RectF,
-        child_size: &mut Self::LayoutState,
+        _child_size: &mut Self::LayoutState,
         cx: &mut crate::PaintContext,
     ) -> Self::PaintState {
         cx.scene.push_stacking_context(None);
-        
-        // Render a mouse region on the appropriate border (likely just bounds)
-        // Use the padding in the above code to decide the size of the rect to pass to the mouse region
-        // Add handlers for Down and Drag like above
-        
-        // Maybe try pushing a quad to visually inspect where the region gets placed
-        // Push a cursor region
-        cx.scene.push_mouse_region(MouseRegion::)
-        
+
+        let handle_region = self.side.of_rect(bounds, self.handle_size);
+
+        enum ResizeHandle {}
+        cx.scene.push_mouse_region(
+            MouseRegion::new::<ResizeHandle>(
+                cx.current_view_id(),
+                self.side as usize,
+                handle_region,
+            )
+            .on_down(MouseButton::Left, |_, _| {}) // This prevents the mouse down event from being propagated elsewhere
+            .on_drag(MouseButton::Left, {
+                let state = self.state.clone();
+                let side = self.side;
+                move |e, cx| {
+                    let prev_width = state.actual_dimension.get();
+                    state
+                        .custom_dimension
+                        .set(0f32.max(prev_width + side.compute_delta(e)).round());
+                    cx.notify();
+                }
+            }),
+        );
+
+        cx.scene.push_cursor_region(crate::CursorRegion {
+            bounds: handle_region,
+            style: match self.side.axis() {
+                Axis::Horizontal => CursorStyle::ResizeLeftRight,
+                Axis::Vertical => CursorStyle::ResizeUpDown,
+            },
+        });
+
         cx.scene.pop_stacking_context();
 
         self.child.paint(bounds.origin(), visible_bounds, cx);

@@ -1,6 +1,6 @@
 use gpui::{
     actions,
-    elements::{ChildView, Container, Empty, FlexItem, Margin, MouseEventHandler, Side, Svg},
+    elements::{ChildView, Container, Empty, Margin, MouseEventHandler, Side, Svg},
     impl_internal_actions, CursorStyle, Element, ElementBox, Entity, MouseButton,
     MutableAppContext, RenderContext, View, ViewContext, ViewHandle, WeakViewHandle,
 };
