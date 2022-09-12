@@ -8,12 +8,17 @@ use crate::{
     platform,
     scene::{Glyph, Icon, Image, ImageGlyph, Layer, Quad, Scene, Shadow, Underline},
 };
-use cocoa::foundation::NSUInteger;
+use cocoa::{
+    base::{NO, YES},
+    foundation::{NSRect, NSUInteger},
+    quartzcore::AutoresizingMask,
+};
 use core_foundation::base::TCFType;
 use foreign_types::ForeignTypeRef;
 use log::warn;
 use media::core_video::{self, CVMetalTextureCache};
-use metal::{MTLPixelFormat, MTLResourceOptions, NSRange};
+use metal::{CGFloat, CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
+use objc::{self, msg_send, sel, sel_impl};
 use shaders::ToFloat2 as _;
 use std::{collections::HashMap, ffi::c_void, iter::Peekable, mem, ptr, sync::Arc, vec};
 
@@ -21,6 +26,8 @@ const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shader
 const INSTANCE_BUFFER_SIZE: usize = 8192 * 1024; // This is an arbitrary decision. There's probably a more optimal value.
 
 pub struct Renderer {
+    layer: metal::MetalLayer,
+    command_queue: CommandQueue,
     sprite_cache: SpriteCache,
     image_cache: ImageCache,
     path_atlases: AtlasAllocator,
@@ -48,12 +55,30 @@ pub struct Surface {
 }
 
 impl Renderer {
-    pub fn new(
-        device: metal::Device,
-        pixel_format: metal::MTLPixelFormat,
-        scale_factor: f32,
-        fonts: Arc<dyn platform::FontSystem>,
-    ) -> Self {
+    pub fn new(fonts: Arc<dyn platform::FontSystem>) -> Self {
+        const PIXEL_FORMAT: MTLPixelFormat = MTLPixelFormat::BGRA8Unorm;
+
+        let device: metal::Device = if let Some(device) = metal::Device::system_default() {
+            device
+        } else {
+            log::error!("unable to access a compatible graphics device");
+            std::process::exit(1);
+        };
+
+        let layer = metal::MetalLayer::new();
+        layer.set_device(&device);
+        layer.set_pixel_format(PIXEL_FORMAT);
+        layer.set_presents_with_transaction(true);
+        unsafe {
+            let _: () = msg_send![&*layer, setAllowsNextDrawableTimeout: NO];
+            let _: () = msg_send![&*layer, setNeedsDisplayOnBoundsChange: YES];
+            let _: () = msg_send![
+                &*layer,
+                setAutoresizingMask: AutoresizingMask::WIDTH_SIZABLE
+                    | AutoresizingMask::HEIGHT_SIZABLE
+            ];
+        }
+
         let library = device
             .new_library_with_data(SHADERS_METALLIB)
             .expect("error building metal library");
@@ -76,13 +101,8 @@ impl Renderer {
             MTLResourceOptions::StorageModeManaged,
         );
 
-        let sprite_cache = SpriteCache::new(
-            device.clone(),
-            vec2i(1024, 768),
-            scale_factor,
-            fonts.clone(),
-        );
-        let image_cache = ImageCache::new(device.clone(), vec2i(1024, 768), scale_factor, fonts);
+        let sprite_cache = SpriteCache::new(device.clone(), vec2i(1024, 768), 1., fonts.clone());
+        let image_cache = ImageCache::new(device.clone(), vec2i(1024, 768), 1., fonts);
         let path_atlases =
             AtlasAllocator::new(device.clone(), build_path_atlas_texture_descriptor());
         let quad_pipeline_state = build_pipeline_state(
@@ -91,7 +111,7 @@ impl Renderer {
             "quad",
             "quad_vertex",
             "quad_fragment",
-            pixel_format,
+            PIXEL_FORMAT,
         );
         let shadow_pipeline_state = build_pipeline_state(
             &device,
@@ -99,7 +119,7 @@ impl Renderer {
             "shadow",
             "shadow_vertex",
             "shadow_fragment",
-            pixel_format,
+            PIXEL_FORMAT,
         );
         let sprite_pipeline_state = build_pipeline_state(
             &device,
@@ -107,7 +127,7 @@ impl Renderer {
             "sprite",
             "sprite_vertex",
             "sprite_fragment",
-            pixel_format,
+            PIXEL_FORMAT,
         );
         let image_pipeline_state = build_pipeline_state(
             &device,
@@ -115,7 +135,7 @@ impl Renderer {
             "image",
             "image_vertex",
             "image_fragment",
-            pixel_format,
+            PIXEL_FORMAT,
         );
         let surface_pipeline_state = build_pipeline_state(
             &device,
@@ -123,7 +143,7 @@ impl Renderer {
             "surface",
             "surface_vertex",
             "surface_fragment",
-            pixel_format,
+            PIXEL_FORMAT,
         );
         let path_atlas_pipeline_state = build_path_atlas_pipeline_state(
             &device,
@@ -139,10 +159,12 @@ impl Renderer {
             "underline",
             "underline_vertex",
             "underline_fragment",
-            pixel_format,
+            PIXEL_FORMAT,
         );
         let cv_texture_cache = CVMetalTextureCache::new(device.as_ptr()).unwrap();
         Self {
+            layer,
+            command_queue: device.new_command_queue(),
             sprite_cache,
             image_cache,
             path_atlases,
@@ -159,13 +181,21 @@ impl Renderer {
         }
     }
 
-    pub fn render(
-        &mut self,
-        scene: &Scene,
-        drawable_size: Vector2F,
-        command_buffer: &metal::CommandBufferRef,
-        output: &metal::TextureRef,
-    ) {
+    pub fn layer(&self) -> &metal::MetalLayerRef {
+        &*self.layer
+    }
+
+    pub fn render(&mut self, scene: &Scene) {
+        let layer = self.layer.clone();
+        let drawable = layer.next_drawable().unwrap();
+        let command_queue = self.command_queue.clone();
+        let command_buffer = command_queue.new_command_buffer();
+
+        let frame: NSRect = unsafe { msg_send![self.layer(), frame] };
+        let scale_factor: CGFloat = unsafe { msg_send![self.layer(), contentsScale] };
+        let drawable_size =
+            vec2f(frame.size.width as f32, frame.size.height as f32) * scale_factor as f32;
+
         self.sprite_cache.set_scale_factor(scene.scale_factor());
         self.image_cache.set_scale_factor(scene.scale_factor());
 
@@ -178,13 +208,17 @@ impl Renderer {
             &mut offset,
             drawable_size,
             command_buffer,
-            output,
+            drawable.texture(),
         );
         self.instances.did_modify_range(NSRange {
             location: 0,
             length: offset as NSUInteger,
         });
         self.image_cache.finish_frame();
+
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+        drawable.present();
     }
 
     fn render_path_atlases(

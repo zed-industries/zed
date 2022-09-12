@@ -20,11 +20,10 @@ use cocoa::{
     foundation::{
         NSAutoreleasePool, NSInteger, NSNotFound, NSPoint, NSRect, NSSize, NSString, NSUInteger,
     },
-    quartzcore::AutoresizingMask,
 };
 use core_graphics::display::CGRect;
 use ctor::ctor;
-use foreign_types::ForeignType as _;
+use foreign_types::ForeignTypeRef;
 use objc::{
     class,
     declare::ClassDecl,
@@ -306,9 +305,7 @@ struct WindowState {
     executor: Rc<executor::Foreground>,
     scene_to_render: Option<Scene>,
     renderer: Renderer,
-    command_queue: metal::CommandQueue,
     last_fresh_keydown: Option<Keystroke>,
-    layer: id,
     traffic_light_position: Option<Vector2F>,
     previous_modifiers_changed_event: Option<Event>,
     //State tracking what the IME did after the last request
@@ -329,8 +326,6 @@ impl Window {
         executor: Rc<executor::Foreground>,
         fonts: Arc<dyn platform::FontSystem>,
     ) -> Self {
-        const PIXEL_FORMAT: metal::MTLPixelFormat = metal::MTLPixelFormat::BGRA8Unorm;
-
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
 
@@ -368,25 +363,6 @@ impl Window {
                 native_window.setFrame_display_(screen.visibleFrame(), YES);
             }
 
-            let device: metal::Device = if let Some(device) = metal::Device::system_default() {
-                device
-            } else {
-                log::error!("unable to access a compatible graphics device");
-                std::process::exit(1);
-            };
-
-            let layer: id = msg_send![class!(CAMetalLayer), layer];
-            let _: () = msg_send![layer, setDevice: device.as_ptr()];
-            let _: () = msg_send![layer, setPixelFormat: PIXEL_FORMAT];
-            let _: () = msg_send![layer, setAllowsNextDrawableTimeout: NO];
-            let _: () = msg_send![layer, setNeedsDisplayOnBoundsChange: YES];
-            let _: () = msg_send![layer, setPresentsWithTransaction: YES];
-            let _: () = msg_send![
-                layer,
-                setAutoresizingMask: AutoresizingMask::WIDTH_SIZABLE
-                    | AutoresizingMask::HEIGHT_SIZABLE
-            ];
-
             let native_view: id = msg_send![VIEW_CLASS, alloc];
             let native_view = NSView::init(native_view);
             assert!(!native_view.is_null());
@@ -406,15 +382,8 @@ impl Window {
                 synthetic_drag_counter: 0,
                 executor,
                 scene_to_render: Default::default(),
-                renderer: Renderer::new(
-                    device.clone(),
-                    PIXEL_FORMAT,
-                    get_scale_factor(native_window),
-                    fonts,
-                ),
-                command_queue: device.new_command_queue(),
+                renderer: Renderer::new(fonts),
                 last_fresh_keydown: None,
-                layer,
                 traffic_light_position: options
                     .titlebar
                     .as_ref()
@@ -1057,7 +1026,7 @@ extern "C" fn close_window(this: &Object, _: Sel) {
 extern "C" fn make_backing_layer(this: &Object, _: Sel) -> id {
     let window_state = unsafe { get_window_state(this) };
     let window_state = window_state.as_ref().borrow();
-    window_state.layer
+    window_state.renderer.layer().as_ptr() as id
 }
 
 extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
@@ -1072,8 +1041,14 @@ extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
             height: size.y() as f64 * scale_factor,
         };
 
-        let _: () = msg_send![window_state_borrow.layer, setContentsScale: scale_factor];
-        let _: () = msg_send![window_state_borrow.layer, setDrawableSize: drawable_size];
+        let _: () = msg_send![
+            window_state_borrow.renderer.layer(),
+            setContentsScale: scale_factor
+        ];
+        let _: () = msg_send![
+            window_state_borrow.renderer.layer(),
+            setDrawableSize: drawable_size
+        ];
     }
 
     if let Some(mut callback) = window_state_borrow.resize_callback.take() {
@@ -1102,7 +1077,10 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     };
 
     unsafe {
-        let _: () = msg_send![window_state_borrow.layer, setDrawableSize: drawable_size];
+        let _: () = msg_send![
+            window_state_borrow.renderer.layer(),
+            setDrawableSize: drawable_size
+        ];
     }
 
     drop(window_state_borrow);
@@ -1118,25 +1096,8 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     unsafe {
         let window_state = get_window_state(this);
         let mut window_state = window_state.as_ref().borrow_mut();
-
         if let Some(scene) = window_state.scene_to_render.take() {
-            let drawable: &metal::MetalDrawableRef = msg_send![window_state.layer, nextDrawable];
-            let command_queue = window_state.command_queue.clone();
-            let command_buffer = command_queue.new_command_buffer();
-
-            let size = window_state.size();
-            let scale_factor = window_state.scale_factor();
-
-            window_state.renderer.render(
-                &scene,
-                size * scale_factor,
-                command_buffer,
-                drawable.texture(),
-            );
-
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
-            drawable.present();
+            window_state.renderer.render(&scene);
         };
     }
 }
