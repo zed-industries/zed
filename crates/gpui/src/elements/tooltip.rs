@@ -62,7 +62,7 @@ impl Tooltip {
         struct ElementState<Tag>(Tag);
         struct MouseEventHandlerState<Tag>(Tag);
 
-        let state_handle = cx.element_state::<ElementState<Tag>, Rc<TooltipState>>(id);
+        let state_handle = cx.default_element_state::<ElementState<Tag>, Rc<TooltipState>>(id);
         let state = state_handle.read(cx).clone();
         let tooltip = if state.visible.get() {
             let mut collapsed_tooltip = Self::render_tooltip(

@@ -1960,6 +1960,7 @@ impl MutableAppContext {
         {
             let mut app = self.upgrade();
             let presenter = Rc::downgrade(&presenter);
+
             window.on_event(Box::new(move |event| {
                 app.update(|cx| {
                     if let Some(presenter) = presenter.upgrade() {
@@ -4089,9 +4090,10 @@ impl<'a, V: View> RenderContext<'a, V> {
         }
     }
 
-    pub fn element_state<Tag: 'static, T: 'static + Default>(
+    pub fn element_state<Tag: 'static, T: 'static>(
         &mut self,
         element_id: usize,
+        initial: T,
     ) -> ElementStateHandle<T> {
         let id = ElementStateId {
             view_id: self.view_id(),
@@ -4101,8 +4103,15 @@ impl<'a, V: View> RenderContext<'a, V> {
         self.cx
             .element_states
             .entry(id)
-            .or_insert_with(|| Box::new(T::default()));
+            .or_insert_with(|| Box::new(initial));
         ElementStateHandle::new(id, self.frame_count, &self.cx.ref_counts)
+    }
+
+    pub fn default_element_state<Tag: 'static, T: 'static + Default>(
+        &mut self,
+        element_id: usize,
+    ) -> ElementStateHandle<T> {
+        self.element_state::<Tag, T>(element_id, T::default())
     }
 }
 
@@ -5224,6 +5233,10 @@ impl<T: 'static> ElementStateHandle<T> {
             id,
             ref_counts: Arc::downgrade(ref_counts),
         }
+    }
+
+    pub fn id(&self) -> ElementStateId {
+        self.id
     }
 
     pub fn read<'a>(&self, cx: &'a AppContext) -> &'a T {

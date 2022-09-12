@@ -42,7 +42,7 @@ use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, ProjectStore, Worktr
 use searchable::SearchableItemHandle;
 use serde::Deserialize;
 use settings::{Autosave, DockAnchor, Settings};
-use sidebar::{Side, Sidebar, SidebarButtons, ToggleSidebarItem};
+use sidebar::{Sidebar, SidebarButtons, SidebarSide, ToggleSidebarItem};
 use smallvec::SmallVec;
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
@@ -215,10 +215,10 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
         workspace.activate_next_pane(cx)
     });
     cx.add_action(|workspace: &mut Workspace, _: &ToggleLeftSidebar, cx| {
-        workspace.toggle_sidebar(Side::Left, cx);
+        workspace.toggle_sidebar(SidebarSide::Left, cx);
     });
     cx.add_action(|workspace: &mut Workspace, _: &ToggleRightSidebar, cx| {
-        workspace.toggle_sidebar(Side::Right, cx);
+        workspace.toggle_sidebar(SidebarSide::Right, cx);
     });
     cx.add_action(Workspace::activate_pane_at_index);
 
@@ -875,6 +875,7 @@ impl AppState {
 }
 
 pub enum Event {
+    DockAnchorChanged,
     PaneAdded(ViewHandle<Pane>),
     ContactRequestedJoin(u64),
 }
@@ -984,16 +985,18 @@ impl Workspace {
             }
         });
 
-        let weak_self = cx.weak_handle();
-        cx.emit_global(WorkspaceCreated(weak_self.clone()));
+        let handle = cx.handle();
+        let weak_handle = cx.weak_handle();
+
+        cx.emit_global(WorkspaceCreated(weak_handle.clone()));
 
         let dock = Dock::new(cx, dock_default_factory);
         let dock_pane = dock.pane().clone();
 
-        let left_sidebar = cx.add_view(|_| Sidebar::new(Side::Left));
-        let right_sidebar = cx.add_view(|_| Sidebar::new(Side::Right));
+        let left_sidebar = cx.add_view(|_| Sidebar::new(SidebarSide::Left));
+        let right_sidebar = cx.add_view(|_| Sidebar::new(SidebarSide::Right));
         let left_sidebar_buttons = cx.add_view(|cx| SidebarButtons::new(left_sidebar.clone(), cx));
-        let toggle_dock = cx.add_view(|cx| ToggleDockButton::new(weak_self.clone(), cx));
+        let toggle_dock = cx.add_view(|cx| ToggleDockButton::new(handle, cx));
         let right_sidebar_buttons =
             cx.add_view(|cx| SidebarButtons::new(right_sidebar.clone(), cx));
         let status_bar = cx.add_view(|cx| {
@@ -1005,12 +1008,12 @@ impl Workspace {
         });
 
         cx.update_default_global::<DragAndDrop<Workspace>, _, _>(|drag_and_drop, _| {
-            drag_and_drop.register_container(weak_self.clone());
+            drag_and_drop.register_container(weak_handle.clone());
         });
 
         let mut this = Workspace {
             modal: None,
-            weak_self,
+            weak_self: weak_handle,
             center: PaneGroup::new(center_pane.clone()),
             dock,
             panes: vec![center_pane.clone(), dock_pane],
@@ -1472,10 +1475,11 @@ impl Workspace {
         }
     }
 
-    pub fn toggle_sidebar(&mut self, side: Side, cx: &mut ViewContext<Self>) {
-        let sidebar = match side {
-            Side::Left => &mut self.left_sidebar,
-            Side::Right => &mut self.right_sidebar,
+    pub fn toggle_sidebar(&mut self, sidebar_side: SidebarSide, cx: &mut ViewContext<Self>) {
+        let sidebar = match sidebar_side {
+            SidebarSide::Left => &mut self.left_sidebar,
+            SidebarSide::Right => &mut self.right_sidebar,
+            // Side::Top | Side::Bottom => unreachable!(),
         };
         sidebar.update(cx, |sidebar, cx| {
             sidebar.set_open(!sidebar.is_open(), cx);
@@ -1485,9 +1489,9 @@ impl Workspace {
     }
 
     pub fn toggle_sidebar_item(&mut self, action: &ToggleSidebarItem, cx: &mut ViewContext<Self>) {
-        let sidebar = match action.side {
-            Side::Left => &mut self.left_sidebar,
-            Side::Right => &mut self.right_sidebar,
+        let sidebar = match action.sidebar_side {
+            SidebarSide::Left => &mut self.left_sidebar,
+            SidebarSide::Right => &mut self.right_sidebar,
         };
         let active_item = sidebar.update(cx, |sidebar, cx| {
             if sidebar.is_open() && sidebar.active_item_ix() == action.item_index {
@@ -1513,13 +1517,13 @@ impl Workspace {
 
     pub fn toggle_sidebar_item_focus(
         &mut self,
-        side: Side,
+        sidebar_side: SidebarSide,
         item_index: usize,
         cx: &mut ViewContext<Self>,
     ) {
-        let sidebar = match side {
-            Side::Left => &mut self.left_sidebar,
-            Side::Right => &mut self.right_sidebar,
+        let sidebar = match sidebar_side {
+            SidebarSide::Left => &mut self.left_sidebar,
+            SidebarSide::Right => &mut self.right_sidebar,
         };
         let active_item = sidebar.update(cx, |sidebar, cx| {
             sidebar.set_open(true, cx);
@@ -2840,7 +2844,7 @@ pub fn open_paths(
                 let mut workspace = Workspace::new(project, app_state.default_item_factory, cx);
                 (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
                 if contains_directory {
-                    workspace.toggle_sidebar(Side::Left, cx);
+                    workspace.toggle_sidebar(SidebarSide::Left, cx);
                 }
                 workspace
             })

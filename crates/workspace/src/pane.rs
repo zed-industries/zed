@@ -1,6 +1,6 @@
 use super::{ItemHandle, SplitDirection};
 use crate::{
-    dock::{MoveDock, ToggleDock},
+    dock::{icon_for_dock_anchor, MoveDock, ToggleDock},
     toolbar::Toolbar,
     Item, NewFile, NewSearch, NewTerminal, WeakItemHandle, Workspace,
 };
@@ -1385,17 +1385,8 @@ impl View for Pane {
                                                 self.docked
                                                     .map(|anchor| {
                                                         // Add the dock menu button if this pane is a dock
-                                                        let dock_icon = match anchor {
-                                                            DockAnchor::Right => {
-                                                                "icons/dock_right_12.svg"
-                                                            }
-                                                            DockAnchor::Bottom => {
-                                                                "icons/dock_bottom_12.svg"
-                                                            }
-                                                            DockAnchor::Expanded => {
-                                                                "icons/dock_modal_12.svg"
-                                                            }
-                                                        };
+                                                        let dock_icon =
+                                                            icon_for_dock_anchor(anchor);
 
                                                         tab_bar_button(
                                                             2,

@@ -1,6 +1,6 @@
 use gpui::{
     actions,
-    elements::{ChildView, Container, FlexItem, Margin, MouseEventHandler, Svg},
+    elements::{ChildView, Container, Empty, FlexItem, Margin, MouseEventHandler, Side, Svg},
     impl_internal_actions, CursorStyle, Element, ElementBox, Entity, MouseButton,
     MutableAppContext, RenderContext, View, ViewContext, ViewHandle, WeakViewHandle,
 };
@@ -36,7 +36,22 @@ impl Default for DockPosition {
     }
 }
 
+pub fn icon_for_dock_anchor(anchor: DockAnchor) -> &'static str {
+    match anchor {
+        DockAnchor::Right => "icons/dock_right_12.svg",
+        DockAnchor::Bottom => "icons/dock_bottom_12.svg",
+        DockAnchor::Expanded => "icons/dock_modal_12.svg",
+    }
+}
+
 impl DockPosition {
+    fn is_visible(&self) -> bool {
+        match self {
+            DockPosition::Shown(_) => true,
+            DockPosition::Hidden(_) => false,
+        }
+    }
+
     fn anchor(&self) -> DockAnchor {
         match self {
             DockPosition::Shown(anchor) | DockPosition::Hidden(anchor) => *anchor,
@@ -47,13 +62,6 @@ impl DockPosition {
         match self {
             DockPosition::Shown(anchor) => DockPosition::Hidden(anchor),
             DockPosition::Hidden(anchor) => DockPosition::Shown(anchor),
-        }
-    }
-
-    fn visible(&self) -> Option<DockAnchor> {
-        match self {
-            DockPosition::Shown(anchor) => Some(*anchor),
-            DockPosition::Hidden(_) => None,
         }
     }
 
@@ -96,7 +104,7 @@ impl Dock {
     }
 
     pub fn visible_pane(&self) -> Option<&ViewHandle<Pane>> {
-        self.position.visible().map(|_| self.pane())
+        self.position.is_visible().then(|| self.pane())
     }
 
     fn set_dock_position(
@@ -124,6 +132,7 @@ impl Dock {
                 cx.focus(last_active_center_pane);
             }
         }
+        cx.emit(crate::Event::DockAnchorChanged);
         cx.notify();
     }
 
@@ -152,29 +161,32 @@ impl Dock {
         let style = &theme.workspace.dock;
 
         self.position
-            .visible()
+            .is_visible()
+            .then(|| self.position.anchor())
             .filter(|current_anchor| *current_anchor == anchor)
             .map(|anchor| match anchor {
                 DockAnchor::Bottom | DockAnchor::Right => {
                     let mut panel_style = style.panel.clone();
-                    if anchor == DockAnchor::Bottom {
+                    let resize_side = if anchor == DockAnchor::Bottom {
                         panel_style.margin = Margin {
                             top: panel_style.margin.top,
                             ..Default::default()
                         };
+                        Side::Top
                     } else {
                         panel_style.margin = Margin {
                             left: panel_style.margin.left,
                             ..Default::default()
                         };
-                    }
-                    FlexItem::new(
-                        Container::new(ChildView::new(self.pane.clone()).boxed())
-                            .with_style(style.panel)
-                            .boxed(),
-                    )
-                    .flex(style.flex, true)
-                    .boxed()
+                        Side::Left
+                    };
+
+                    enum DockResizeHandle {}
+                    Container::new(ChildView::new(self.pane.clone()).boxed())
+                        .with_style(style.panel)
+                        .with_resize_handle::<DockResizeHandle, _>(0, resize_side, 4., 200., cx)
+                        .flex(style.flex, false)
+                        .boxed()
                 }
                 DockAnchor::Expanded => Container::new(
                     MouseEventHandler::<Dock>::new(0, cx, |_state, _cx| {
@@ -197,8 +209,13 @@ pub struct ToggleDockButton {
 }
 
 impl ToggleDockButton {
-    pub fn new(workspace: WeakViewHandle<Workspace>, _cx: &mut ViewContext<Self>) -> Self {
-        Self { workspace }
+    pub fn new(workspace: ViewHandle<Workspace>, cx: &mut ViewContext<Self>) -> Self {
+        // When dock moves, redraw so that the icon and toggle status matches.
+        cx.subscribe(&workspace, |_, _, _, cx| cx.notify()).detach();
+
+        Self {
+            workspace: workspace.downgrade(),
+        }
     }
 }
 
@@ -212,35 +229,46 @@ impl View for ToggleDockButton {
     }
 
     fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
-        let dock_is_open = self
-            .workspace
-            .upgrade(cx)
-            .map(|workspace| workspace.read(cx).dock.position.visible().is_some())
-            .unwrap_or(false);
+        let workspace = self.workspace.upgrade(cx);
 
-        MouseEventHandler::<Self>::new(0, cx, |state, cx| {
-            let theme = &cx
-                .global::<Settings>()
-                .theme
-                .workspace
-                .status_bar
-                .sidebar_buttons;
-            let style = theme.item.style_for(state, dock_is_open);
+        if workspace.is_none() {
+            return Empty::new().boxed();
+        }
 
-            Svg::new("icons/terminal_16.svg")
-                .with_color(style.icon_color)
-                .constrained()
-                .with_width(style.icon_size)
-                .with_height(style.icon_size)
-                .contained()
-                .with_style(style.container)
-                .boxed()
+        let dock_position = workspace.unwrap().read(cx).dock.position;
+
+        let theme = cx.global::<Settings>().theme.clone();
+        MouseEventHandler::<Self>::new(0, cx, {
+            let theme = theme.clone();
+            move |state, _| {
+                let style = theme
+                    .workspace
+                    .status_bar
+                    .sidebar_buttons
+                    .item
+                    .style_for(state, dock_position.is_visible());
+
+                Svg::new(icon_for_dock_anchor(dock_position.anchor()))
+                    .with_color(style.icon_color)
+                    .constrained()
+                    .with_width(style.icon_size)
+                    .with_height(style.icon_size)
+                    .contained()
+                    .with_style(style.container)
+                    .boxed()
+            }
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .on_click(MouseButton::Left, |_, cx| {
             cx.dispatch_action(ToggleDock);
         })
-        // TODO: Add tooltip
+        .with_tooltip::<Self, _>(
+            0,
+            "Toggle Dock".to_string(),
+            Some(Box::new(ToggleDock)),
+            theme.tooltip.clone(),
+            cx,
+        )
         .boxed()
     }
 }

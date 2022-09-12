@@ -1,4 +1,4 @@
-use crate::{sidebar::Side, AppState, ToggleFollow, Workspace};
+use crate::{sidebar::SidebarSide, AppState, ToggleFollow, Workspace};
 use anyhow::Result;
 use client::{proto, Client, Contact};
 use gpui::{
@@ -101,7 +101,7 @@ impl WaitingRoom {
                                         &app_state,
                                         cx,
                                     );
-                                    workspace.toggle_sidebar(Side::Left, cx);
+                                    workspace.toggle_sidebar(SidebarSide::Left, cx);
                                     if let Some((host_peer_id, _)) = workspace
                                         .project
                                         .read(cx)

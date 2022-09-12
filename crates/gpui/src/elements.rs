@@ -12,6 +12,7 @@ mod label;
 mod list;
 mod mouse_event_handler;
 mod overlay;
+mod resizable;
 mod stack;
 mod svg;
 mod text;
@@ -21,8 +22,8 @@ mod uniform_list;
 use self::expanded::Expanded;
 pub use self::{
     align::*, canvas::*, constrained_box::*, container::*, empty::*, flex::*, hook::*, image::*,
-    keystroke_label::*, label::*, list::*, mouse_event_handler::*, overlay::*, stack::*, svg::*,
-    text::*, tooltip::*, uniform_list::*,
+    keystroke_label::*, label::*, list::*, mouse_event_handler::*, overlay::*, resizable::*,
+    stack::*, svg::*, text::*, tooltip::*, uniform_list::*,
 };
 pub use crate::presenter::ChildView;
 use crate::{
@@ -185,6 +186,27 @@ pub trait Element {
         Self: 'static + Sized,
     {
         Tooltip::new::<Tag, T>(id, text, action, style, self.boxed(), cx)
+    }
+
+    fn with_resize_handle<Tag: 'static, T: View>(
+        self,
+        element_id: usize,
+        side: Side,
+        handle_size: f32,
+        initial_size: f32,
+        cx: &mut RenderContext<T>,
+    ) -> Resizable
+    where
+        Self: 'static + Sized,
+    {
+        Resizable::new::<Tag, T>(
+            self.boxed(),
+            element_id,
+            side,
+            handle_size,
+            initial_size,
+            cx,
+        )
     }
 }
 

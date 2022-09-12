@@ -163,6 +163,7 @@ pub enum PromptLevel {
 pub enum CursorStyle {
     Arrow,
     ResizeLeftRight,
+    ResizeUpDown,
     PointingHand,
     IBeam,
 }

@@ -33,7 +33,7 @@ use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
 use std::{env, path::Path, str, sync::Arc};
 use util::ResultExt;
 pub use workspace;
-use workspace::{sidebar::Side, AppState, Workspace};
+use workspace::{sidebar::SidebarSide, AppState, Workspace};
 
 #[derive(Deserialize, Clone, PartialEq)]
 struct OpenBrowser {
@@ -204,14 +204,14 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         |workspace: &mut Workspace,
          _: &project_panel::ToggleFocus,
          cx: &mut ViewContext<Workspace>| {
-            workspace.toggle_sidebar_item_focus(Side::Left, 0, cx);
+            workspace.toggle_sidebar_item_focus(SidebarSide::Left, 0, cx);
         },
     );
     cx.add_action(
         |workspace: &mut Workspace,
          _: &contacts_panel::ToggleFocus,
          cx: &mut ViewContext<Workspace>| {
-            workspace.toggle_sidebar_item_focus(Side::Right, 0, cx);
+            workspace.toggle_sidebar_item_focus(SidebarSide::Right, 0, cx);
         },
     );
 

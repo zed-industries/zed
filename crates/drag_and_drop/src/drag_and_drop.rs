@@ -2,7 +2,7 @@ use std::{any::Any, rc::Rc};
 
 use collections::HashSet;
 use gpui::{
-    elements::{Container, MouseEventHandler, Overlay},
+    elements::{MouseEventHandler, Overlay},
     geometry::vector::Vector2F,
     scene::DragRegionEvent,
     CursorStyle, Element, ElementBox, EventContext, MouseButton, MutableAppContext, RenderContext,
