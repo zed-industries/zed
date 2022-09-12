@@ -1,60 +1,121 @@
-use cocoa::{
-    appkit::{NSSquareStatusItemLength, NSStatusBar, NSStatusItem, NSView},
-    base::{id, nil, NO, YES},
-    quartzcore::AutoresizingMask,
+use crate::{
+    geometry::vector::{vec2f, Vector2F},
+    platform::{self, mac::renderer::Renderer},
+    Event, FontSystem, Scene,
 };
-use core_foundation::base::TCFType;
-use core_graphics::color::CGColor;
-use foreign_types::ForeignType;
-use objc::{class, msg_send, rc::StrongPtr, sel, sel_impl};
+use cocoa::{
+    appkit::{
+        NSSquareStatusItemLength, NSStatusBar, NSStatusItem, NSView, NSViewHeightSizable,
+        NSViewWidthSizable, NSWindow,
+    },
+    base::{id, nil, YES},
+    foundation::NSSize,
+};
+use foreign_types::ForeignTypeRef;
+use objc::{msg_send, rc::StrongPtr, sel, sel_impl};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
-pub struct StatusItem(StrongPtr);
+pub struct StatusItem(Rc<RefCell<StatusItemState>>);
+
+struct StatusItemState {
+    native_item: StrongPtr,
+    renderer: Renderer,
+    event_callback: Option<Box<dyn FnMut(Event) -> bool>>,
+}
 
 impl StatusItem {
-    pub fn add() -> Self {
-        const PIXEL_FORMAT: metal::MTLPixelFormat = metal::MTLPixelFormat::BGRA8Unorm;
-
+    pub fn add(fonts: Arc<dyn FontSystem>) -> Self {
         unsafe {
+            let renderer = Renderer::new(fonts);
             let status_bar = NSStatusBar::systemStatusBar(nil);
             let native_item =
                 StrongPtr::retain(status_bar.statusItemWithLength_(NSSquareStatusItemLength));
-            native_item.button().setWantsLayer(true);
 
-            let device: metal::Device = if let Some(device) = metal::Device::system_default() {
-                device
-            } else {
-                log::error!("unable to access a compatible graphics device");
-                std::process::exit(1);
-            };
+            let button = native_item.button();
+            button.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
+            button.setWantsBestResolutionOpenGLSurface_(YES);
+            button.setLayer(renderer.layer().as_ptr() as id);
 
-            let layer: id = msg_send![class!(CAMetalLayer), layer];
-            let _: () = msg_send![layer, setDevice: device.as_ptr()];
-            let _: () = msg_send![layer, setPixelFormat: PIXEL_FORMAT];
-            let _: () = msg_send![layer, setAllowsNextDrawableTimeout: NO];
-            let _: () = msg_send![layer, setNeedsDisplayOnBoundsChange: YES];
-            let _: () = msg_send![layer, setPresentsWithTransaction: YES];
-            let _: () = msg_send![
-                layer,
-                setAutoresizingMask: AutoresizingMask::WIDTH_SIZABLE
-                    | AutoresizingMask::HEIGHT_SIZABLE
-            ];
-            let _: () = msg_send![
-                layer,
-                setBackgroundColor: CGColor::rgb(1., 0., 0., 1.).as_concrete_TypeRef()
-            ];
-
-            let _: () = msg_send![native_item.button(), setLayer: layer];
-            let native_item_window: id = msg_send![native_item.button(), window];
-
-            dbg!(native_item_window.frame().as_CGRect());
-            // let rect_in_window: NSRect = msg_send![native_item.button(), convertRect: native_item.button().bounds() toView: nil];
-            // let screen_rect: NSRect =
-            //     msg_send![native_item_window, convertRectToScreen: rect_in_window];
-            // dbg!(screen_rect.as_CGRect());
-
-            StatusItem(native_item)
+            Self(Rc::new(RefCell::new(StatusItemState {
+                native_item,
+                renderer,
+                event_callback: None,
+            })))
         }
     }
 }
 
-impl crate::StatusItem for StatusItem {}
+impl platform::Window for StatusItem {
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+
+    fn on_event(&mut self, callback: Box<dyn FnMut(crate::Event) -> bool>) {
+        self.0.borrow_mut().event_callback = Some(callback);
+    }
+
+    fn on_active_status_change(&mut self, _: Box<dyn FnMut(bool)>) {}
+
+    fn on_resize(&mut self, _: Box<dyn FnMut()>) {}
+
+    fn on_fullscreen(&mut self, _: Box<dyn FnMut(bool)>) {}
+
+    fn on_should_close(&mut self, _: Box<dyn FnMut() -> bool>) {}
+
+    fn on_close(&mut self, _: Box<dyn FnOnce()>) {}
+
+    fn set_input_handler(&mut self, _: Box<dyn crate::InputHandler>) {}
+
+    fn prompt(
+        &self,
+        _: crate::PromptLevel,
+        _: &str,
+        _: &[&str],
+    ) -> postage::oneshot::Receiver<usize> {
+        panic!()
+    }
+
+    fn activate(&self) {}
+
+    fn set_title(&mut self, _: &str) {}
+
+    fn set_edited(&mut self, _: bool) {}
+
+    fn show_character_palette(&self) {}
+
+    fn minimize(&self) {}
+
+    fn zoom(&self) {}
+
+    fn toggle_full_screen(&self) {}
+
+    fn size(&self) -> Vector2F {
+        self.0.borrow().size()
+    }
+
+    fn scale_factor(&self) -> f32 {
+        self.0.borrow().scale_factor()
+    }
+
+    fn titlebar_height(&self) -> f32 {
+        0.
+    }
+
+    fn present_scene(&mut self, scene: Scene) {
+        self.0.borrow_mut().renderer.render(&scene);
+    }
+}
+
+impl StatusItemState {
+    fn size(&self) -> Vector2F {
+        let NSSize { width, height, .. } = unsafe { NSView::frame(self.native_item.button()) }.size;
+        vec2f(width as f32, height as f32)
+    }
+
+    fn scale_factor(&self) -> f32 {
+        unsafe {
+            let window: id = msg_send![self.native_item.button(), window];
+            window.screen().backingScaleFactor() as f32
+        }
+    }
+}

@@ -495,8 +495,8 @@ impl platform::Platform for MacPlatform {
         Window::key_window_id()
     }
 
-    fn add_status_item(&self) -> Box<dyn platform::StatusItem> {
-        Box::new(StatusItem::add())
+    fn add_status_item(&self) -> Box<dyn platform::Window> {
+        Box::new(StatusItem::add(self.fonts()))
     }
 
     fn fonts(&self) -> Arc<dyn platform::FontSystem> {

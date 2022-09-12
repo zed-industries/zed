@@ -144,8 +144,8 @@ impl super::Platform for Platform {
         None
     }
 
-    fn add_status_item(&self) -> Box<dyn crate::StatusItem> {
-        todo!()
+    fn add_status_item(&self) -> Box<dyn crate::Window> {
+        Box::new(Window::new(vec2f(24., 24.)))
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {

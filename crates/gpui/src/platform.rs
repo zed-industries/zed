@@ -52,7 +52,7 @@ pub trait Platform: Send + Sync {
     ) -> Box<dyn Window>;
     fn key_window_id(&self) -> Option<usize>;
 
-    fn add_status_item(&self) -> Box<dyn StatusItem>;
+    fn add_status_item(&self) -> Box<dyn Window>;
 
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
@@ -133,8 +133,6 @@ pub trait Window {
     fn titlebar_height(&self) -> f32;
     fn present_scene(&mut self, scene: Scene);
 }
-
-pub trait StatusItem {}
 
 #[derive(Debug)]
 pub struct WindowOptions<'a> {
