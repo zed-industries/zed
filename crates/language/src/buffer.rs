@@ -48,7 +48,7 @@ pub use lsp::DiagnosticSeverity;
 
 pub struct Buffer {
     text: TextBuffer,
-    head_text: Option<Rope>,
+    head_text: Option<String>,
     git_diff: BufferDiff,
     file: Option<Arc<dyn File>>,
     saved_version: clock::Global,
@@ -422,7 +422,6 @@ impl Buffer {
         };
 
         let git_diff = BufferDiff::new(&head_text, &buffer);
-        let head_text = head_text.map(|h| Rope::from(h.as_str()));
 
         Self {
             saved_mtime,
