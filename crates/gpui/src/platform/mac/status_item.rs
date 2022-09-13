@@ -5,15 +5,53 @@ use crate::{
 };
 use cocoa::{
     appkit::{
-        NSSquareStatusItemLength, NSStatusBar, NSStatusItem, NSView, NSViewHeightSizable,
-        NSViewWidthSizable, NSWindow,
+        NSApplication, NSButton, NSSquareStatusItemLength, NSStatusBar, NSStatusItem, NSView,
+        NSViewHeightSizable, NSViewWidthSizable, NSWindow,
     },
     base::{id, nil, YES},
-    foundation::NSSize,
+    foundation::{NSSize, NSUInteger},
 };
+use ctor::ctor;
 use foreign_types::ForeignTypeRef;
-use objc::{msg_send, rc::StrongPtr, sel, sel_impl};
-use std::{cell::RefCell, rc::Rc, sync::Arc};
+use objc::{
+    class,
+    declare::ClassDecl,
+    msg_send,
+    rc::StrongPtr,
+    runtime::{Class, Object, Sel},
+    sel, sel_impl,
+};
+use std::{
+    cell::RefCell,
+    ffi::c_void,
+    ptr,
+    rc::{Rc, Weak},
+    sync::Arc,
+};
+
+static mut HANDLER_CLASS: *const Class = ptr::null();
+const STATE_IVAR: &str = "state";
+
+#[allow(non_upper_case_globals)]
+const NSEventMaskAny: NSUInteger = NSUInteger::MAX;
+
+#[ctor]
+unsafe fn build_classes() {
+    HANDLER_CLASS = {
+        let mut decl = ClassDecl::new("GPUIStatusItemEventHandler", class!(NSObject)).unwrap();
+        decl.add_ivar::<*mut c_void>(STATE_IVAR);
+        decl.add_method(
+            sel!(dealloc),
+            dealloc_handler as extern "C" fn(&Object, Sel),
+        );
+        decl.add_method(
+            sel!(handleEvent),
+            handle_event as extern "C" fn(&Object, Sel),
+        );
+
+        decl.register()
+    };
+}
 
 pub struct StatusItem(Rc<RefCell<StatusItemState>>);
 
@@ -21,6 +59,7 @@ struct StatusItemState {
     native_item: StrongPtr,
     renderer: Renderer,
     event_callback: Option<Box<dyn FnMut(Event) -> bool>>,
+    _event_handler: StrongPtr,
 }
 
 impl StatusItem {
@@ -36,11 +75,22 @@ impl StatusItem {
             button.setWantsBestResolutionOpenGLSurface_(YES);
             button.setLayer(renderer.layer().as_ptr() as id);
 
-            Self(Rc::new(RefCell::new(StatusItemState {
-                native_item,
-                renderer,
-                event_callback: None,
-            })))
+            Self(Rc::new_cyclic(|state| {
+                let event_handler = StrongPtr::new(msg_send![HANDLER_CLASS, alloc]);
+                let _: () = msg_send![*event_handler, init];
+                (**event_handler)
+                    .set_ivar(STATE_IVAR, Weak::into_raw(state.clone()) as *const c_void);
+                button.setTarget_(*event_handler);
+                button.setAction_(sel!(handleEvent));
+                let _: () = msg_send![button, sendActionOn: NSEventMaskAny];
+
+                RefCell::new(StatusItemState {
+                    native_item,
+                    renderer,
+                    event_callback: None,
+                    _event_handler: event_handler,
+                })
+            }))
         }
     }
 }
@@ -54,17 +104,29 @@ impl platform::Window for StatusItem {
         self.0.borrow_mut().event_callback = Some(callback);
     }
 
-    fn on_active_status_change(&mut self, _: Box<dyn FnMut(bool)>) {}
+    fn on_active_status_change(&mut self, _: Box<dyn FnMut(bool)>) {
+        unimplemented!()
+    }
 
-    fn on_resize(&mut self, _: Box<dyn FnMut()>) {}
+    fn on_resize(&mut self, _: Box<dyn FnMut()>) {
+        unimplemented!()
+    }
 
-    fn on_fullscreen(&mut self, _: Box<dyn FnMut(bool)>) {}
+    fn on_fullscreen(&mut self, _: Box<dyn FnMut(bool)>) {
+        unimplemented!()
+    }
 
-    fn on_should_close(&mut self, _: Box<dyn FnMut() -> bool>) {}
+    fn on_should_close(&mut self, _: Box<dyn FnMut() -> bool>) {
+        unimplemented!()
+    }
 
-    fn on_close(&mut self, _: Box<dyn FnOnce()>) {}
+    fn on_close(&mut self, _: Box<dyn FnOnce()>) {
+        unimplemented!()
+    }
 
-    fn set_input_handler(&mut self, _: Box<dyn crate::InputHandler>) {}
+    fn set_input_handler(&mut self, _: Box<dyn crate::InputHandler>) {
+        unimplemented!()
+    }
 
     fn prompt(
         &self,
@@ -72,22 +134,36 @@ impl platform::Window for StatusItem {
         _: &str,
         _: &[&str],
     ) -> postage::oneshot::Receiver<usize> {
-        panic!()
+        unimplemented!()
     }
 
-    fn activate(&self) {}
+    fn activate(&self) {
+        unimplemented!()
+    }
 
-    fn set_title(&mut self, _: &str) {}
+    fn set_title(&mut self, _: &str) {
+        unimplemented!()
+    }
 
-    fn set_edited(&mut self, _: bool) {}
+    fn set_edited(&mut self, _: bool) {
+        unimplemented!()
+    }
 
-    fn show_character_palette(&self) {}
+    fn show_character_palette(&self) {
+        unimplemented!()
+    }
 
-    fn minimize(&self) {}
+    fn minimize(&self) {
+        unimplemented!()
+    }
 
-    fn zoom(&self) {}
+    fn zoom(&self) {
+        unimplemented!()
+    }
 
-    fn toggle_full_screen(&self) {}
+    fn toggle_full_screen(&self) {
+        unimplemented!()
+    }
 
     fn size(&self) -> Vector2F {
         self.0.borrow().size()
@@ -118,4 +194,41 @@ impl StatusItemState {
             window.screen().backingScaleFactor() as f32
         }
     }
+}
+
+extern "C" fn dealloc_handler(this: &Object, _: Sel) {
+    unsafe {
+        drop_state(this);
+        let _: () = msg_send![super(this, class!(NSObject)), dealloc];
+    }
+}
+
+extern "C" fn handle_event(this: &Object, _: Sel) {
+    unsafe {
+        if let Some(state) = get_state(this).upgrade() {
+            let mut state_borrow = state.as_ref().borrow_mut();
+            let app = NSApplication::sharedApplication(nil);
+            let native_event: id = msg_send![app, currentEvent];
+            if let Some(event) = Event::from_native(native_event, Some(state_borrow.size().y())) {
+                if let Some(mut callback) = state_borrow.event_callback.take() {
+                    drop(state_borrow);
+                    callback(event);
+                    state.borrow_mut().event_callback = Some(callback);
+                }
+            }
+        }
+    }
+}
+
+unsafe fn get_state(object: &Object) -> Weak<RefCell<StatusItemState>> {
+    let raw: *mut c_void = *object.get_ivar(STATE_IVAR);
+    let weak1 = Weak::from_raw(raw as *mut RefCell<StatusItemState>);
+    let weak2 = weak1.clone();
+    let _ = Weak::into_raw(weak1);
+    weak2
+}
+
+unsafe fn drop_state(object: &Object) {
+    let raw: *const c_void = *object.get_ivar(STATE_IVAR);
+    Weak::from_raw(raw as *const RefCell<StatusItemState>);
 }
