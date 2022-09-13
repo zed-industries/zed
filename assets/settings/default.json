@@ -127,7 +127,7 @@
         //  1. Rely on default platform handling of option key, on macOS
         //     this means generating certain unicode characters
         //         "option_to_meta": false,
-        //  2. Make the option keys behave as the meta key
+        //  2. Make the option keys behave as a 'meta' key, e.g. for emacs
         //         "option_to_meta": true,
         "option_as_meta": false,
         // Any key-value pairs added to this list will be added to the terminal's
