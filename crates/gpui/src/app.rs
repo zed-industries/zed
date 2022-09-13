@@ -2027,7 +2027,7 @@ impl MutableAppContext {
                 status_item.on_event(Box::new(move |event| {
                     app.update(|cx| {
                         if let Some(presenter) = presenter.upgrade() {
-                            presenter.borrow_mut().dispatch_event(event, cx)
+                            presenter.borrow_mut().dispatch_event(event, false, cx)
                         } else {
                             false
                         }
