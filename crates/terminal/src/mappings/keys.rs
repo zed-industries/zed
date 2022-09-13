@@ -406,6 +406,40 @@ mod test {
     }
 
     #[test]
+    fn alt_is_meta() {
+        let ascii_printable = ' '..='~';
+        for character in ascii_printable {
+            assert_eq!(
+                to_esc_str(
+                    &Keystroke::parse(&format!("alt-{}", character)).unwrap(),
+                    &TermMode::NONE,
+                    true
+                )
+                .unwrap(),
+                format!("\x1b{}", character)
+            );
+        }
+
+        let gpui_keys = [
+            "up", "down", "right", "left", "f1", "f2", "f3", "f4", "F5", "f6", "f7", "f8", "f9",
+            "f10", "f11", "f12", "f13", "f14", "f15", "f16", "f17", "f18", "f19", "f20", "insert",
+            "pageup", "pagedown", "end", "home",
+        ];
+
+        for key in gpui_keys {
+            assert_ne!(
+                to_esc_str(
+                    &Keystroke::parse(&format!("alt-{}", key)).unwrap(),
+                    &TermMode::NONE,
+                    true
+                )
+                .unwrap(),
+                format!("\x1b{}", key)
+            );
+        }
+    }
+
+    #[test]
     fn test_modifier_code_calc() {
         //   Code     Modifiers
         // ---------+---------------------------
