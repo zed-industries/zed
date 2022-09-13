@@ -1367,7 +1367,7 @@ impl View for Pane {
                         Flex::column()
                             .with_child({
                                 let mut tab_row = Flex::row()
-                                    .with_child(self.render_tabs(cx).flex(1., true).named("tabs"));
+                                    .with_child(self.render_tabs(cx).flex(1.0, true).named("tabs"));
 
                                 // Render pane buttons
                                 let theme = cx.global::<Settings>().theme.clone();
@@ -1389,7 +1389,7 @@ impl View for Pane {
                                                             icon_for_dock_anchor(anchor);
 
                                                         tab_bar_button(
-                                                            2,
+                                                            1,
                                                             dock_icon,
                                                             cx,
                                                             |position| DeployDockMenu { position },
@@ -1398,7 +1398,7 @@ impl View for Pane {
                                                     .unwrap_or_else(|| {
                                                         // Add the split menu if this pane is not a dock
                                                         tab_bar_button(
-                                                            1,
+                                                            2,
                                                             "icons/split_12.svg",
                                                             cx,
                                                             |position| DeployNewMenu { position },
@@ -1413,6 +1413,7 @@ impl View for Pane {
                                             }))
                                             .contained()
                                             .with_style(theme.workspace.tab_bar.container)
+                                            .flex(1., false)
                                             .boxed(),
                                     )
                                 }
@@ -1422,6 +1423,7 @@ impl View for Pane {
                                     .with_height(theme.workspace.tab_bar.height)
                                     .contained()
                                     .with_style(theme.workspace.tab_bar.container)
+                                    .flex(1., false)
                                     .named("tab bar")
                             })
                             .with_child(ChildView::new(&self.toolbar).boxed())
@@ -1506,13 +1508,14 @@ fn tab_bar_button<A: Action>(
             .constrained()
             .with_width(style.button_width)
             .with_height(style.button_width)
-            .aligned()
+            // .aligned()
             .boxed()
     })
     .with_cursor_style(CursorStyle::PointingHand)
     .on_click(MouseButton::Left, move |e, cx| {
         cx.dispatch_action(action_builder(e.region.lower_right()));
     })
+    .flex(1., false)
     .boxed()
 }
 

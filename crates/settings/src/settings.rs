@@ -151,7 +151,7 @@ pub enum WorkingDirectory {
     Always { directory: String },
 }
 
-#[derive(PartialEq, Eq, Debug, Default, Copy, Clone, Deserialize, JsonSchema)]
+#[derive(PartialEq, Eq, Debug, Default, Copy, Clone, Hash, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DockAnchor {
     #[default]

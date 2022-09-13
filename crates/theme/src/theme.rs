@@ -48,7 +48,7 @@ pub struct Workspace {
     pub pane_divider: Border,
     pub leader_border_opacity: f32,
     pub leader_border_width: f32,
-    pub sidebar_resize_handle: ContainerStyle,
+    pub sidebar: Sidebar,
     pub status_bar: StatusBar,
     pub toolbar: Toolbar,
     pub disconnected_overlay: ContainedText,
@@ -152,6 +152,8 @@ pub struct Toolbar {
 
 #[derive(Clone, Deserialize, Default)]
 pub struct Dock {
+    pub initial_size_right: f32,
+    pub initial_size_bottom: f32,
     pub wash_color: Color,
     pub flex: f32,
     pub panel: ContainerStyle,
@@ -240,7 +242,9 @@ pub struct StatusBarLspStatus {
 
 #[derive(Deserialize, Default)]
 pub struct Sidebar {
-    pub resize_handle: ContainerStyle,
+    pub initial_size: f32,
+    #[serde(flatten)]
+    pub container: ContainerStyle,
 }
 
 #[derive(Clone, Copy, Deserialize, Default)]

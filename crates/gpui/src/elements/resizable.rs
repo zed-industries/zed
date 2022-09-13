@@ -8,7 +8,7 @@ use crate::{
     ElementStateHandle, MouseButton, MouseRegion, RenderContext, View,
 };
 
-use super::{ConstrainedBox, Flex, Hook, ParentElement};
+use super::{ConstrainedBox, Hook};
 
 #[derive(Copy, Clone, Debug)]
 pub enum Side {
@@ -53,8 +53,12 @@ impl Side {
     fn of_rect(&self, bounds: RectF, handle_size: f32) -> RectF {
         match self {
             Side::Top => RectF::new(bounds.origin(), vec2f(bounds.width(), handle_size)),
-            Side::Bottom => RectF::new(bounds.lower_left(), vec2f(bounds.width(), handle_size)),
             Side::Left => RectF::new(bounds.origin(), vec2f(handle_size, bounds.height())),
+            Side::Bottom => {
+                let mut origin = bounds.lower_left();
+                origin.set_y(origin.y() - handle_size);
+                RectF::new(origin, vec2f(bounds.width(), handle_size))
+            }
             Side::Right => {
                 let mut origin = bounds.upper_right();
                 origin.set_x(origin.x() - handle_size);
@@ -96,27 +100,21 @@ impl Resizable {
 
         let state = state_handle.read(cx).clone();
 
-        let mut flex = Flex::new(side.axis());
-
-        flex.add_child(
-            Hook::new({
-                let constrained = ConstrainedBox::new(child);
-                match side.axis() {
-                    Axis::Horizontal => constrained.with_max_width(state.custom_dimension.get()),
-                    Axis::Vertical => constrained.with_max_height(state.custom_dimension.get()),
-                }
-                .boxed()
-            })
-            .on_after_layout({
-                let state = state.clone();
-                move |size, _| {
-                    state.actual_dimension.set(side.relevant_component(size));
-                }
-            })
-            .boxed(),
-        );
-
-        let child = flex.boxed();
+        let child = Hook::new({
+            let constrained = ConstrainedBox::new(child);
+            match side.axis() {
+                Axis::Horizontal => constrained.with_max_width(state.custom_dimension.get()),
+                Axis::Vertical => constrained.with_max_height(state.custom_dimension.get()),
+            }
+            .boxed()
+        })
+        .on_after_layout({
+            let state = state.clone();
+            move |size, _| {
+                state.actual_dimension.set(side.relevant_component(size));
+            }
+        })
+        .boxed();
 
         Self {
             side,
@@ -126,10 +124,14 @@ impl Resizable {
             _state_handle: state_handle,
         }
     }
+
+    pub fn current_size(&self) -> f32 {
+        self.state.actual_dimension.get()
+    }
 }
 
 impl Element for Resizable {
-    type LayoutState = Vector2F;
+    type LayoutState = ();
     type PaintState = ();
 
     fn layout(
@@ -137,8 +139,7 @@ impl Element for Resizable {
         constraint: crate::SizeConstraint,
         cx: &mut crate::LayoutContext,
     ) -> (Vector2F, Self::LayoutState) {
-        let child_size = self.child.layout(constraint, cx);
-        (child_size, child_size)
+        (self.child.layout(constraint, cx), ())
     }
 
     fn paint(

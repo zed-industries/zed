@@ -189,13 +189,15 @@ impl View for Sidebar {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         if let Some(active_item) = self.active_item() {
             enum ResizeHandleTag {}
+            let style = &cx.global::<Settings>().theme.workspace.sidebar;
             ChildView::new(active_item.to_any())
+                .contained()
+                .with_style(style.container)
                 .with_resize_handle::<ResizeHandleTag, _>(
                     self.sidebar_side as usize,
                     self.sidebar_side.to_resizable_side(),
-                    // TODO: Expose both of these constants in the theme
                     4.,
-                    260.,
+                    style.initial_size,
                     cx,
                 )
                 .boxed()

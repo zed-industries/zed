@@ -1,3 +1,4 @@
+use collections::HashMap;
 use gpui::{
     actions,
     elements::{ChildView, Container, Empty, Margin, MouseEventHandler, Side, Svg},
@@ -8,7 +9,7 @@ use serde::Deserialize;
 use settings::{DockAnchor, Settings};
 use theme::Theme;
 
-use crate::{ItemHandle, Pane, StatusItemView, Workspace};
+use crate::{sidebar::SidebarSide, ItemHandle, Pane, StatusItemView, Workspace};
 
 #[derive(PartialEq, Clone, Deserialize)]
 pub struct MoveDock(pub DockAnchor);
@@ -78,6 +79,7 @@ pub type DefaultItemFactory =
 
 pub struct Dock {
     position: DockPosition,
+    panel_sizes: HashMap<DockAnchor, f32>,
     pane: ViewHandle<Pane>,
     default_item_factory: DefaultItemFactory,
 }
@@ -94,6 +96,7 @@ impl Dock {
 
         Self {
             pane,
+            panel_sizes: Default::default(),
             position: DockPosition::Hidden(anchor),
             default_item_factory,
         }
@@ -107,6 +110,10 @@ impl Dock {
         self.position.is_visible().then(|| self.pane())
     }
 
+    pub fn is_anchored_at(&self, anchor: DockAnchor) -> bool {
+        self.position.is_visible() && self.position.anchor() == anchor
+    }
+
     fn set_dock_position(
         workspace: &mut Workspace,
         new_position: DockPosition,
@@ -118,8 +125,14 @@ impl Dock {
             pane.set_docked(Some(new_position.anchor()), cx)
         });
 
-        let now_visible = workspace.dock.visible_pane().is_some();
-        if now_visible {
+        if workspace.dock.position.is_visible() {
+            // Close the right sidebar if the dock is on the right side and the right sidebar is open
+            if workspace.dock.position.anchor() == DockAnchor::Right {
+                if workspace.right_sidebar().read(cx).is_open() {
+                    workspace.toggle_sidebar(SidebarSide::Right, cx);
+                }
+            }
+
             // Ensure that the pane has at least one item or construct a default item to put in it
             let pane = workspace.dock.pane.clone();
             if pane.read(cx).items().next().is_none() {
@@ -127,10 +140,8 @@ impl Dock {
                 Pane::add_item(workspace, &pane, item_to_add, true, true, None, cx);
             }
             cx.focus(pane);
-        } else {
-            if let Some(last_active_center_pane) = workspace.last_active_center_pane.clone() {
-                cx.focus(last_active_center_pane);
-            }
+        } else if let Some(last_active_center_pane) = workspace.last_active_center_pane.clone() {
+            cx.focus(last_active_center_pane);
         }
         cx.emit(crate::Event::DockAnchorChanged);
         cx.notify();
@@ -182,11 +193,28 @@ impl Dock {
                     };
 
                     enum DockResizeHandle {}
-                    Container::new(ChildView::new(self.pane.clone()).boxed())
-                        .with_style(style.panel)
-                        .with_resize_handle::<DockResizeHandle, _>(0, resize_side, 4., 200., cx)
-                        .flex(style.flex, false)
-                        .boxed()
+
+                    let resizable = Container::new(ChildView::new(self.pane.clone()).boxed())
+                        .with_style(panel_style)
+                        .with_resize_handle::<DockResizeHandle, _>(
+                            resize_side as usize,
+                            resize_side,
+                            4.,
+                            self.panel_sizes.get(&anchor).copied().unwrap_or(200.),
+                            cx,
+                        );
+
+                    let size = resizable.current_size();
+                    let workspace = cx.handle();
+                    cx.defer(move |cx| {
+                        if let Some(workspace) = workspace.upgrade(cx) {
+                            workspace.update(cx, |workspace, _| {
+                                workspace.dock.panel_sizes.insert(anchor, size);
+                            })
+                        }
+                    });
+
+                    resizable.flex(style.flex, false).boxed()
                 }
                 DockAnchor::Expanded => Container::new(
                     MouseEventHandler::<Dock>::new(0, cx, |_state, _cx| {

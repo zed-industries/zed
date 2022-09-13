@@ -37,11 +37,14 @@ export default function workspace(theme: Theme) {
       },
       cursor: "Arrow",
     },
-    sidebarResizeHandle: {
-      background: border(theme, "primary").color,
-      padding: {
-        left: 1,
-      },
+    sidebar: {
+      initialSize: 240,
+      border: {
+        color: border(theme, "primary").color,
+        width: 1,
+        left: true,
+        right: true,
+      }
     },
     paneDivider: {
       color: border(theme, "secondary").color,
@@ -157,6 +160,8 @@ export default function workspace(theme: Theme) {
       margin: { right: 10, bottom: 10 },
     },
     dock: {
+      initialSizeRight: 240,
+      initialSizeBottom: 360,
       wash_color: withOpacity(theme.backgroundColor[500].base, 0.5),
       flex: 0.5,
       panel: {

@@ -1479,11 +1479,17 @@ impl Workspace {
         let sidebar = match sidebar_side {
             SidebarSide::Left => &mut self.left_sidebar,
             SidebarSide::Right => &mut self.right_sidebar,
-            // Side::Top | Side::Bottom => unreachable!(),
         };
-        sidebar.update(cx, |sidebar, cx| {
-            sidebar.set_open(!sidebar.is_open(), cx);
+        let open = sidebar.update(cx, |sidebar, cx| {
+            let open = !sidebar.is_open();
+            sidebar.set_open(open, cx);
+            open
         });
+        if open && sidebar_side == SidebarSide::Right && self.dock.is_anchored_at(DockAnchor::Right)
+        {
+            Dock::hide(self, cx);
+        }
+
         cx.focus_self();
         cx.notify();
     }
@@ -1493,7 +1499,7 @@ impl Workspace {
             SidebarSide::Left => &mut self.left_sidebar,
             SidebarSide::Right => &mut self.right_sidebar,
         };
-        let active_item = sidebar.update(cx, |sidebar, cx| {
+        let active_item = sidebar.update(cx, move |sidebar, cx| {
             if sidebar.is_open() && sidebar.active_item_ix() == action.item_index {
                 sidebar.set_open(false, cx);
                 None
@@ -1503,7 +1509,16 @@ impl Workspace {
                 sidebar.active_item().cloned()
             }
         });
+
         if let Some(active_item) = active_item {
+            // If there is an active item, that means the sidebar was opened,
+            // which means we need to check if the dock is open and close it
+            if action.sidebar_side == SidebarSide::Right
+                && self.dock.is_anchored_at(DockAnchor::Right)
+            {
+                Dock::hide(self, cx);
+            }
+
             if active_item.is_focused(cx) {
                 cx.focus_self();
             } else {
@@ -1531,6 +1546,12 @@ impl Workspace {
             sidebar.active_item().cloned()
         });
         if let Some(active_item) = active_item {
+            // If there is an active item, that means the sidebar was opened,
+            // which means we need to check if the dock is open and close it
+            if sidebar_side == SidebarSide::Right && self.dock.is_anchored_at(DockAnchor::Right) {
+                Dock::hide(self, cx);
+            }
+
             if active_item.is_focused(cx) {
                 cx.focus_self();
             } else {
