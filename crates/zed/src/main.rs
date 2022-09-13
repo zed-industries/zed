@@ -14,6 +14,7 @@ use client::{
     http::{self, HttpClient},
     UserStore, ZED_SECRET_CLIENT_TOKEN,
 };
+use contacts_status_item::ContactsStatusItem;
 use fs::OpenOptions;
 use futures::{
     channel::{mpsc, oneshot},
@@ -87,7 +88,8 @@ fn main() {
     });
 
     app.run(move |cx| {
-        std::mem::forget(cx.platform().add_status_item());
+        cx.add_status_bar_item(|_| ContactsStatusItem::new());
+
         let client = client::Client::new(http.clone());
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         languages.set_language_server_download_dir(zed::paths::LANGUAGES_DIR.clone());

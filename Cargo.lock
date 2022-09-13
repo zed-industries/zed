@@ -1127,6 +1127,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "contacts_status_item"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "collections",
+ "editor",
+ "futures",
+ "fuzzy",
+ "gpui",
+ "language",
+ "log",
+ "menu",
+ "picker",
+ "postage",
+ "project",
+ "serde",
+ "settings",
+ "theme",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "context_menu"
 version = "0.1.0"
 dependencies = [
@@ -7122,6 +7146,7 @@ dependencies = [
  "collections",
  "command_palette",
  "contacts_panel",
+ "contacts_status_item",
  "context_menu",
  "ctor",
  "diagnostics",
