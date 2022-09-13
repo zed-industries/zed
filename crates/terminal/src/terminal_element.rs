@@ -775,7 +775,15 @@ impl Element for TerminalElement {
                 self.terminal
                     .upgrade(cx.app)
                     .map(|model_handle| {
-                        model_handle.update(cx.app, |term, _| term.try_keystroke(keystroke))
+                        model_handle.update(cx.app, |term, cx| {
+                            term.try_keystroke(
+                                keystroke,
+                                cx.global::<Settings>()
+                                    .terminal_overrides
+                                    .option_as_meta
+                                    .unwrap_or(false),
+                            )
+                        })
                     })
                     .unwrap_or(false)
             }
