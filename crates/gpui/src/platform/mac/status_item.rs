@@ -1,7 +1,7 @@
 use crate::{
     geometry::vector::{vec2f, Vector2F},
     platform::{self, mac::renderer::Renderer},
-    Event, FontSystem, Scene,
+    Event, FontSystem, Scene, Window,
 };
 use cocoa::{
     appkit::{
@@ -75,7 +75,7 @@ impl StatusItem {
             button.setWantsBestResolutionOpenGLSurface_(YES);
             button.setLayer(renderer.layer().as_ptr() as id);
 
-            Self(Rc::new_cyclic(|state| {
+            let item = Self(Rc::new_cyclic(|state| {
                 let event_handler = StrongPtr::new(msg_send![HANDLER_CLASS, alloc]);
                 let _: () = msg_send![*event_handler, init];
                 (**event_handler)
@@ -90,7 +90,18 @@ impl StatusItem {
                     event_callback: None,
                     _event_handler: event_handler,
                 })
-            }))
+            }));
+
+            {
+                let item = item.0.borrow();
+                let layer = item.renderer.layer();
+                let scale_factor = item.scale_factor();
+                let size = item.size() * scale_factor;
+                layer.set_contents_scale(scale_factor.into());
+                layer.set_drawable_size(metal::CGSize::new(size.x().into(), size.y().into()));
+            }
+
+            item
         }
     }
 }

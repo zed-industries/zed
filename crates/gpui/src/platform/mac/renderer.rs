@@ -187,14 +187,10 @@ impl Renderer {
 
     pub fn render(&mut self, scene: &Scene) {
         let layer = self.layer.clone();
+        let drawable_size = layer.drawable_size();
         let drawable = layer.next_drawable().unwrap();
         let command_queue = self.command_queue.clone();
         let command_buffer = command_queue.new_command_buffer();
-
-        let frame: NSRect = unsafe { msg_send![self.layer(), frame] };
-        let scale_factor: CGFloat = unsafe { msg_send![self.layer(), contentsScale] };
-        let drawable_size =
-            vec2f(frame.size.width as f32, frame.size.height as f32) * scale_factor as f32;
 
         self.sprite_cache.set_scale_factor(scene.scale_factor());
         self.image_cache.set_scale_factor(scene.scale_factor());
@@ -206,7 +202,7 @@ impl Renderer {
             scene,
             path_sprites,
             &mut offset,
-            drawable_size,
+            vec2f(drawable_size.width as f32, drawable_size.height as f32),
             command_buffer,
             drawable.texture(),
         );
