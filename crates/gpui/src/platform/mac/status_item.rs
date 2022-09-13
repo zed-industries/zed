@@ -1,15 +1,12 @@
 use crate::{
     geometry::vector::{vec2f, Vector2F},
     platform::{self, mac::renderer::Renderer},
-    Event, FontSystem, Scene, Window,
+    Event, FontSystem, Scene,
 };
 use cocoa::{
-    appkit::{
-        NSApplication, NSButton, NSEventMask, NSSquareStatusItemLength, NSStatusBar, NSStatusItem,
-        NSView, NSViewHeightSizable, NSViewWidthSizable, NSWindow,
-    },
+    appkit::{NSSquareStatusItemLength, NSStatusBar, NSStatusItem, NSView, NSWindow},
     base::{id, nil, YES},
-    foundation::{NSSize, NSUInteger},
+    foundation::{NSAutoreleasePool, NSPoint, NSRect, NSSize},
 };
 use ctor::ctor;
 use foreign_types::ForeignTypeRef;
@@ -29,21 +26,56 @@ use std::{
     sync::Arc,
 };
 
-static mut HANDLER_CLASS: *const Class = ptr::null();
+static mut VIEW_CLASS: *const Class = ptr::null();
 const STATE_IVAR: &str = "state";
 
 #[ctor]
 unsafe fn build_classes() {
-    HANDLER_CLASS = {
-        let mut decl = ClassDecl::new("GPUIStatusItemEventHandler", class!(NSObject)).unwrap();
+    VIEW_CLASS = {
+        let mut decl = ClassDecl::new("GPUIStatusItemView", class!(NSView)).unwrap();
         decl.add_ivar::<*mut c_void>(STATE_IVAR);
+
+        decl.add_method(sel!(dealloc), dealloc_view as extern "C" fn(&Object, Sel));
+
         decl.add_method(
-            sel!(dealloc),
-            dealloc_handler as extern "C" fn(&Object, Sel),
+            sel!(mouseDown:),
+            handle_view_event as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
-            sel!(handleEvent),
-            handle_event as extern "C" fn(&Object, Sel),
+            sel!(mouseUp:),
+            handle_view_event as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(rightMouseDown:),
+            handle_view_event as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(rightMouseUp:),
+            handle_view_event as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(otherMouseDown:),
+            handle_view_event as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(otherMouseUp:),
+            handle_view_event as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(mouseMoved:),
+            handle_view_event as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(mouseDragged:),
+            handle_view_event as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(scrollWheel:),
+            handle_view_event as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(flagsChanged:),
+            handle_view_event as extern "C" fn(&Object, Sel, id),
         );
 
         decl.register()
@@ -56,36 +88,39 @@ struct StatusItemState {
     native_item: StrongPtr,
     renderer: Renderer,
     event_callback: Option<Box<dyn FnMut(Event) -> bool>>,
-    _event_handler: StrongPtr,
 }
 
 impl StatusItem {
     pub fn add(fonts: Arc<dyn FontSystem>) -> Self {
         unsafe {
+            let pool = NSAutoreleasePool::new(nil);
+
             let renderer = Renderer::new(false, fonts);
             let status_bar = NSStatusBar::systemStatusBar(nil);
             let native_item =
                 StrongPtr::retain(status_bar.statusItemWithLength_(NSSquareStatusItemLength));
 
             let button = native_item.button();
-            button.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
-            button.setWantsBestResolutionOpenGLSurface_(YES);
-            button.setLayer(renderer.layer().as_ptr() as id);
+            let _: () = msg_send![button, setHidden: YES];
 
             let item = Self(Rc::new_cyclic(|state| {
-                let event_handler = StrongPtr::new(msg_send![HANDLER_CLASS, alloc]);
-                let _: () = msg_send![*event_handler, init];
-                (**event_handler)
-                    .set_ivar(STATE_IVAR, Weak::into_raw(state.clone()) as *const c_void);
-                button.setTarget_(*event_handler);
-                button.setAction_(sel!(handleEvent));
-                let _: () = msg_send![button, sendActionOn: NSEventMask::NSAnyEventMask];
+                let parent_view = button.superview().superview();
+
+                let view: id = msg_send![VIEW_CLASS, alloc];
+                NSView::initWithFrame_(
+                    view,
+                    NSRect::new(NSPoint::new(0., 0.), NSView::frame(parent_view).size),
+                );
+                view.setWantsBestResolutionOpenGLSurface_(YES);
+                view.setLayer(renderer.layer().as_ptr() as id);
+                view.setWantsLayer(true);
+                (*view).set_ivar(STATE_IVAR, Weak::into_raw(state.clone()) as *const c_void);
+                parent_view.addSubview_(view.autorelease());
 
                 RefCell::new(StatusItemState {
                     native_item,
                     renderer,
                     event_callback: None,
-                    _event_handler: event_handler,
                 })
             }));
 
@@ -97,6 +132,8 @@ impl StatusItem {
                 layer.set_contents_scale(scale_factor.into());
                 layer.set_drawable_size(metal::CGSize::new(size.x().into(), size.y().into()));
             }
+
+            pool.drain();
 
             item
         }
@@ -192,8 +229,11 @@ impl platform::Window for StatusItem {
 
 impl StatusItemState {
     fn size(&self) -> Vector2F {
-        let NSSize { width, height, .. } = unsafe { NSView::frame(self.native_item.button()) }.size;
-        vec2f(width as f32, height as f32)
+        unsafe {
+            let NSSize { width, height, .. } =
+                NSWindow::frame(self.native_item.button().superview().superview()).size;
+            vec2f(width as f32, height as f32)
+        }
     }
 
     fn scale_factor(&self) -> f32 {
@@ -204,19 +244,17 @@ impl StatusItemState {
     }
 }
 
-extern "C" fn dealloc_handler(this: &Object, _: Sel) {
+extern "C" fn dealloc_view(this: &Object, _: Sel) {
     unsafe {
         drop_state(this);
-        let _: () = msg_send![super(this, class!(NSObject)), dealloc];
+        let _: () = msg_send![super(this, class!(NSView)), dealloc];
     }
 }
 
-extern "C" fn handle_event(this: &Object, _: Sel) {
+extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     unsafe {
         if let Some(state) = get_state(this).upgrade() {
             let mut state_borrow = state.as_ref().borrow_mut();
-            let app = NSApplication::sharedApplication(nil);
-            let native_event: id = msg_send![app, currentEvent];
             if let Some(event) = Event::from_native(native_event, Some(state_borrow.size().y())) {
                 if let Some(mut callback) = state_borrow.event_callback.take() {
                     drop(state_borrow);
