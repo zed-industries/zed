@@ -5,8 +5,8 @@ use crate::{
 };
 use cocoa::{
     appkit::{
-        NSApplication, NSButton, NSSquareStatusItemLength, NSStatusBar, NSStatusItem, NSView,
-        NSViewHeightSizable, NSViewWidthSizable, NSWindow,
+        NSApplication, NSButton, NSEventMask, NSSquareStatusItemLength, NSStatusBar, NSStatusItem,
+        NSView, NSViewHeightSizable, NSViewWidthSizable, NSWindow,
     },
     base::{id, nil, YES},
     foundation::{NSSize, NSUInteger},
@@ -31,9 +31,6 @@ use std::{
 
 static mut HANDLER_CLASS: *const Class = ptr::null();
 const STATE_IVAR: &str = "state";
-
-#[allow(non_upper_case_globals)]
-const NSEventMaskAny: NSUInteger = NSUInteger::MAX;
 
 #[ctor]
 unsafe fn build_classes() {
@@ -82,7 +79,7 @@ impl StatusItem {
                     .set_ivar(STATE_IVAR, Weak::into_raw(state.clone()) as *const c_void);
                 button.setTarget_(*event_handler);
                 button.setAction_(sel!(handleEvent));
-                let _: () = msg_send![button, sendActionOn: NSEventMaskAny];
+                let _: () = msg_send![button, sendActionOn: NSEventMask::NSAnyEventMask];
 
                 RefCell::new(StatusItemState {
                     native_item,
