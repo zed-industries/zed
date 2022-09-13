@@ -957,6 +957,7 @@ impl Workspace {
         .detach();
 
         let center_pane = cx.add_view(|cx| Pane::new(None, cx));
+        dbg!(&center_pane);
         let pane_id = center_pane.id();
         cx.subscribe(&center_pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
@@ -992,6 +993,7 @@ impl Workspace {
 
         let dock = Dock::new(cx, dock_default_factory);
         let dock_pane = dock.pane().clone();
+        dbg!(&dock_pane);
 
         let left_sidebar = cx.add_view(|_| Sidebar::new(SidebarSide::Left));
         let right_sidebar = cx.add_view(|_| Sidebar::new(SidebarSide::Right));
@@ -1016,7 +1018,10 @@ impl Workspace {
             weak_self: weak_handle,
             center: PaneGroup::new(center_pane.clone()),
             dock,
-            panes: vec![center_pane.clone(), dock_pane],
+            // When removing an item, the last element remaining in this array
+            // is used to find where focus should fallback to. As such, the order
+            // of these two variables is important.
+            panes: vec![dock_pane, center_pane.clone()],
             panes_by_item: Default::default(),
             active_pane: center_pane.clone(),
             last_active_center_pane: Some(center_pane.clone()),
