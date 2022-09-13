@@ -5,7 +5,9 @@ use super::{
 };
 use crate::{
     display_map::{BlockStyle, DisplaySnapshot, TransformBlock},
-    hover_popover::HoverAt,
+    hover_popover::{
+        HoverAt, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
+    },
     link_go_to_definition::{
         CmdShiftChanged, GoToFetchedDefinition, GoToFetchedTypeDefinition, UpdateGoToDefinitionLink,
     },
@@ -43,10 +45,6 @@ use std::{
     ops::Range,
     sync::Arc,
 };
-
-const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
-const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
-const HOVER_POPOVER_GAP: f32 = 10.;
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -559,7 +557,6 @@ impl EditorElement {
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut LayoutState,
-        paint: &mut PaintState,
         cx: &mut PaintContext,
     ) {
         let view = self.view(cx.app);
@@ -729,8 +726,6 @@ impl EditorElement {
                 cx,
             );
 
-            paint.context_menu_bounds = Some(RectF::new(list_origin, context_menu.size()));
-
             cx.scene.pop_stacking_context();
         }
 
@@ -753,8 +748,6 @@ impl EditorElement {
             let y = position.row() as f32 * layout.position_map.line_height - scroll_top;
             let hovered_point = content_origin + vec2f(x, y);
 
-            paint.hover_popover_bounds.clear();
-
             if hovered_point.y() - height_to_reserve > 0.0 {
                 // There is enough space above. Render popovers above the hovered point
                 let mut current_y = hovered_point.y();
@@ -771,11 +764,6 @@ impl EditorElement {
                         popover_origin,
                         RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
                         cx,
-                    );
-
-                    paint.hover_popover_bounds.push(
-                        RectF::new(popover_origin, hover_popover.size())
-                            .dilate(Vector2F::new(0., 5.)),
                     );
 
                     current_y = popover_origin.y() - HOVER_POPOVER_GAP;
@@ -796,11 +784,6 @@ impl EditorElement {
                         popover_origin,
                         RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
                         cx,
-                    );
-
-                    paint.hover_popover_bounds.push(
-                        RectF::new(popover_origin, hover_popover.size())
-                            .dilate(Vector2F::new(0., 5.)),
                     );
 
                     current_y = popover_origin.y() + size.y() + HOVER_POPOVER_GAP;
@@ -1271,7 +1254,7 @@ impl EditorElement {
 
 impl Element for EditorElement {
     type LayoutState = LayoutState;
-    type PaintState = PaintState;
+    type PaintState = ();
 
     fn layout(
         &mut self,
@@ -1614,11 +1597,6 @@ impl Element for EditorElement {
             layout.text_size,
         );
 
-        let mut paint_state = PaintState {
-            context_menu_bounds: None,
-            hover_popover_bounds: Default::default(),
-        };
-
         Self::attach_mouse_handlers(
             &self.view,
             &layout.position_map,
@@ -1633,7 +1611,7 @@ impl Element for EditorElement {
         if layout.gutter_size.x() > 0. {
             self.paint_gutter(gutter_bounds, visible_bounds, layout, cx);
         }
-        self.paint_text(text_bounds, visible_bounds, layout, &mut paint_state, cx);
+        self.paint_text(text_bounds, visible_bounds, layout, cx);
 
         if !layout.blocks.is_empty() {
             cx.scene.push_layer(Some(bounds));
@@ -1642,8 +1620,6 @@ impl Element for EditorElement {
         }
 
         cx.scene.pop_layer();
-
-        paint_state
     }
 
     fn dispatch_event(
@@ -1652,7 +1628,7 @@ impl Element for EditorElement {
         _: RectF,
         _: RectF,
         _: &mut LayoutState,
-        _: &mut PaintState,
+        _: &mut (),
         cx: &mut EventContext,
     ) -> bool {
         if let Event::ModifiersChanged(event) = event {
@@ -1819,11 +1795,6 @@ fn layout_line(
             },
         )],
     )
-}
-
-pub struct PaintState {
-    context_menu_bounds: Option<RectF>,
-    hover_popover_bounds: Vec<RectF>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
