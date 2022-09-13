@@ -1,6 +1,7 @@
 mod mouse_region;
 mod mouse_region_event;
 
+#[cfg(debug_assertions)]
 use collections::HashSet;
 use serde::Deserialize;
 use serde_json::json;
@@ -247,6 +248,7 @@ impl Scene {
     pub fn push_mouse_region(&mut self, region: MouseRegion) {
         if can_draw(region.bounds) {
             // Ensure that Regions cannot be added to a scene with the same region id.
+            #[cfg(debug_assertions)]
             let region_id;
             #[cfg(debug_assertions)]
             {
