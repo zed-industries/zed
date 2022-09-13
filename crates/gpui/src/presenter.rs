@@ -76,6 +76,7 @@ impl Presenter {
     ) {
         cx.start_frame();
         for view_id in &invalidation.removed {
+            invalidation.updated.remove(view_id);
             self.rendered_views.remove(view_id);
         }
         for view_id in &invalidation.updated {
