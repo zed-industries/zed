@@ -98,6 +98,7 @@ pub struct TerminalSettings {
     pub env: Option<HashMap<String, String>>,
     pub blinking: Option<TerminalBlink>,
     pub alternate_scroll: Option<AlternateScroll>,
+    pub option_as_meta: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]

@@ -677,8 +677,8 @@ impl Terminal {
         self.write_to_pty(input);
     }
 
-    pub fn try_keystroke(&mut self, keystroke: &Keystroke) -> bool {
-        let esc = to_esc_str(keystroke, &self.last_content.mode);
+    pub fn try_keystroke(&mut self, keystroke: &Keystroke, alt_is_meta: bool) -> bool {
+        let esc = to_esc_str(keystroke, &self.last_content.mode, alt_is_meta);
         if let Some(esc) = esc {
             self.input(esc);
             true
