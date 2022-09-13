@@ -17,15 +17,16 @@ pub struct MoveDock(pub DockAnchor);
 #[derive(PartialEq, Clone)]
 pub struct AddDefaultItemToDock;
 
-actions!(workspace, [ToggleDock]);
+actions!(workspace, [ToggleDock, ActivateOrHideDock]);
 impl_internal_actions!(workspace, [MoveDock, AddDefaultItemToDock]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Dock::toggle);
+    cx.add_action(Dock::activate_or_hide_dock);
     cx.add_action(Dock::move_dock);
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum DockPosition {
     Shown(DockAnchor),
     Hidden(DockAnchor),
@@ -72,6 +73,13 @@ impl DockPosition {
             DockPosition::Hidden(_) => self,
         }
     }
+
+    fn show(self) -> Self {
+        match self {
+            DockPosition::Hidden(anchor) => DockPosition::Shown(anchor),
+            DockPosition::Shown(_) => self,
+        }
+    }
 }
 
 pub type DefaultItemFactory =
@@ -88,6 +96,9 @@ impl Dock {
     pub fn new(cx: &mut ViewContext<Workspace>, default_item_factory: DefaultItemFactory) -> Self {
         let anchor = cx.global::<Settings>().default_dock_anchor;
         let pane = cx.add_view(|cx| Pane::new(Some(anchor), cx));
+        pane.update(cx, |pane, cx| {
+            pane.set_active(false, cx);
+        });
         let pane_id = pane.id();
         cx.subscribe(&pane, move |workspace, _, event, cx| {
             workspace.handle_pane_event(pane_id, event, cx);
@@ -119,6 +130,10 @@ impl Dock {
         new_position: DockPosition,
         cx: &mut ViewContext<Workspace>,
     ) {
+        if workspace.dock.position == new_position {
+            return;
+        }
+
         workspace.dock.position = new_position;
         // Tell the pane about the new anchor position
         workspace.dock.pane.update(cx, |pane, cx| {
@@ -139,7 +154,6 @@ impl Dock {
                 let item_to_add = (workspace.dock.default_item_factory)(workspace, cx);
                 Pane::add_item(workspace, &pane, item_to_add, true, true, None, cx);
             }
-            cx.focus(pane);
         } else if let Some(last_active_center_pane) = workspace.last_active_center_pane.clone() {
             cx.focus(last_active_center_pane);
         }
@@ -151,8 +165,38 @@ impl Dock {
         Self::set_dock_position(workspace, workspace.dock.position.hide(), cx);
     }
 
+    pub fn show(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+        Self::set_dock_position(workspace, workspace.dock.position.show(), cx);
+    }
+
+    pub fn hide_on_sidebar_shown(
+        workspace: &mut Workspace,
+        sidebar_side: SidebarSide,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        if (sidebar_side == SidebarSide::Right && workspace.dock.is_anchored_at(DockAnchor::Right))
+            || workspace.dock.is_anchored_at(DockAnchor::Expanded)
+        {
+            Self::hide(workspace, cx);
+        }
+    }
+
     fn toggle(workspace: &mut Workspace, _: &ToggleDock, cx: &mut ViewContext<Workspace>) {
         Self::set_dock_position(workspace, workspace.dock.position.toggle(), cx);
+    }
+
+    fn activate_or_hide_dock(
+        workspace: &mut Workspace,
+        _: &ActivateOrHideDock,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let dock_pane = workspace.dock_pane().clone();
+        if dock_pane.read(cx).is_active() {
+            Self::hide(workspace, cx);
+        } else {
+            Self::show(workspace, cx);
+            cx.focus(dock_pane);
+        }
     }
 
     fn move_dock(
@@ -178,18 +222,19 @@ impl Dock {
             .map(|anchor| match anchor {
                 DockAnchor::Bottom | DockAnchor::Right => {
                     let mut panel_style = style.panel.clone();
-                    let resize_side = if anchor == DockAnchor::Bottom {
+                    let (resize_side, initial_size) = if anchor == DockAnchor::Bottom {
                         panel_style.margin = Margin {
                             top: panel_style.margin.top,
                             ..Default::default()
                         };
-                        Side::Top
+
+                        (Side::Top, style.initial_size_bottom)
                     } else {
                         panel_style.margin = Margin {
                             left: panel_style.margin.left,
                             ..Default::default()
                         };
-                        Side::Left
+                        (Side::Left, style.initial_size_right)
                     };
 
                     enum DockResizeHandle {}
@@ -200,7 +245,10 @@ impl Dock {
                             resize_side as usize,
                             resize_side,
                             4.,
-                            self.panel_sizes.get(&anchor).copied().unwrap_or(200.),
+                            self.panel_sizes
+                                .get(&anchor)
+                                .copied()
+                                .unwrap_or(initial_size),
                             cx,
                         );
 
@@ -216,18 +264,29 @@ impl Dock {
 
                     resizable.flex(style.flex, false).boxed()
                 }
-                DockAnchor::Expanded => Container::new(
-                    MouseEventHandler::<Dock>::new(0, cx, |_state, _cx| {
-                        Container::new(ChildView::new(self.pane.clone()).boxed())
+                DockAnchor::Expanded => {
+                    enum ExpandedDockWash {}
+                    enum ExpandedDockPane {}
+                    Container::new(
+                        MouseEventHandler::<ExpandedDockWash>::new(0, cx, |_state, cx| {
+                            MouseEventHandler::<ExpandedDockPane>::new(0, cx, |_state, _cx| {
+                                ChildView::new(self.pane.clone()).boxed()
+                            })
+                            .capture_all()
+                            .contained()
                             .with_style(style.maximized)
                             .boxed()
-                    })
-                    .capture_all()
-                    .with_cursor_style(CursorStyle::Arrow)
-                    .boxed(),
-                )
-                .with_background_color(style.wash_color)
-                .boxed(),
+                        })
+                        .capture_all()
+                        .on_down(MouseButton::Left, |_, cx| {
+                            cx.dispatch_action(ToggleDock);
+                        })
+                        .with_cursor_style(CursorStyle::Arrow)
+                        .boxed(),
+                    )
+                    .with_background_color(style.wash_color)
+                    .boxed()
+                }
             })
     }
 }

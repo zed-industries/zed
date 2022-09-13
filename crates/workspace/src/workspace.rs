@@ -957,7 +957,6 @@ impl Workspace {
         .detach();
 
         let center_pane = cx.add_view(|cx| Pane::new(None, cx));
-        dbg!(&center_pane);
         let pane_id = center_pane.id();
         cx.subscribe(&center_pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
@@ -993,7 +992,6 @@ impl Workspace {
 
         let dock = Dock::new(cx, dock_default_factory);
         let dock_pane = dock.pane().clone();
-        dbg!(&dock_pane);
 
         let left_sidebar = cx.add_view(|_| Sidebar::new(SidebarSide::Left));
         let right_sidebar = cx.add_view(|_| Sidebar::new(SidebarSide::Right));
@@ -1490,9 +1488,9 @@ impl Workspace {
             sidebar.set_open(open, cx);
             open
         });
-        if open && sidebar_side == SidebarSide::Right && self.dock.is_anchored_at(DockAnchor::Right)
-        {
-            Dock::hide(self, cx);
+
+        if open {
+            Dock::hide_on_sidebar_shown(self, sidebar_side, cx);
         }
 
         cx.focus_self();
@@ -1516,13 +1514,7 @@ impl Workspace {
         });
 
         if let Some(active_item) = active_item {
-            // If there is an active item, that means the sidebar was opened,
-            // which means we need to check if the dock is open and close it
-            if action.sidebar_side == SidebarSide::Right
-                && self.dock.is_anchored_at(DockAnchor::Right)
-            {
-                Dock::hide(self, cx);
-            }
+            Dock::hide_on_sidebar_shown(self, action.sidebar_side, cx);
 
             if active_item.is_focused(cx) {
                 cx.focus_self();
@@ -1551,11 +1543,7 @@ impl Workspace {
             sidebar.active_item().cloned()
         });
         if let Some(active_item) = active_item {
-            // If there is an active item, that means the sidebar was opened,
-            // which means we need to check if the dock is open and close it
-            if sidebar_side == SidebarSide::Right && self.dock.is_anchored_at(DockAnchor::Right) {
-                Dock::hide(self, cx);
-            }
+            Dock::hide_on_sidebar_shown(self, sidebar_side, cx);
 
             if active_item.is_focused(cx) {
                 cx.focus_self();
@@ -1726,8 +1714,13 @@ impl Workspace {
             });
             self.active_item_path_changed(cx);
 
-            if &pane != self.dock.pane() {
+            if &pane == self.dock_pane() {
+                Dock::show(self, cx);
+            } else {
                 self.last_active_center_pane = Some(pane.clone());
+                if self.dock.is_anchored_at(DockAnchor::Expanded) {
+                    Dock::hide(self, cx);
+                }
             }
             cx.notify();
         }

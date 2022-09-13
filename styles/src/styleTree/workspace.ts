@@ -160,8 +160,8 @@ export default function workspace(theme: Theme) {
       margin: { right: 10, bottom: 10 },
     },
     dock: {
-      initialSizeRight: 240,
-      initialSizeBottom: 360,
+      initialSizeRight: 640,
+      initialSizeBottom: 480,
       wash_color: withOpacity(theme.backgroundColor[500].base, 0.5),
       flex: 0.5,
       panel: {

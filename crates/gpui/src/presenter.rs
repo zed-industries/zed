@@ -218,6 +218,7 @@ impl Presenter {
     ) -> bool {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
             let mut events_to_send = Vec::new();
+            let mut invalidated_views: HashSet<usize> = Default::default();
 
             // 1. Allocate the correct set of GPUI events generated from the platform events
             //  -> These are usually small: [Mouse Down] or [Mouse up, Click] or [Mouse Moved, Mouse Dragged?]
@@ -242,6 +243,12 @@ impl Presenter {
                                 }
                             })
                             .collect();
+
+                        // Clicked status is used when rendering views via the RenderContext.
+                        // So when it changes, these views need to be rerendered
+                        for clicked_region_id in self.clicked_region_ids.iter() {
+                            invalidated_views.insert(clicked_region_id.view_id());
+                        }
                         self.clicked_button = Some(e.button);
                     }
 
@@ -339,7 +346,6 @@ impl Presenter {
                 self.mouse_position = position;
             }
 
-            let mut invalidated_views: HashSet<usize> = Default::default();
             let mut any_event_handled = false;
             // 2. Process the raw mouse events into region events
             for mut region_event in events_to_send {
@@ -394,12 +400,19 @@ impl Presenter {
                             // Clear clicked regions and clicked button
                             let clicked_region_ids =
                                 std::mem::replace(&mut self.clicked_region_ids, Default::default());
+                            // Clicked status is used when rendering views via the RenderContext.
+                            // So when it changes, these views need to be rerendered
+                            for clicked_region_id in clicked_region_ids.iter() {
+                                invalidated_views.insert(clicked_region_id.view_id());
+                            }
                             self.clicked_button = None;
 
                             // Find regions which still overlap with the mouse since the last MouseDown happened
                             for (mouse_region, _) in self.mouse_regions.iter().rev() {
                                 if clicked_region_ids.contains(&mouse_region.id()) {
-                                    valid_regions.push(mouse_region.clone());
+                                    if mouse_region.bounds.contains_point(self.mouse_position) {
+                                        valid_regions.push(mouse_region.clone());
+                                    }
                                 }
                             }
                         }
@@ -439,13 +452,16 @@ impl Presenter {
                     if let MouseRegionEvent::Hover(e) = &mut region_event {
                         e.started = hovered_region_ids.contains(&valid_region.id())
                     }
-                    // Handle Down events if the MouseRegion has a Click handler. This makes the api more intuitive as you would
+                    // Handle Down events if the MouseRegion has a Click or Drag handler. This makes the api more intuitive as you would
                     // not expect a MouseRegion to be transparent to Down events if it also has a Click handler.
                     // This behavior can be overridden by adding a Down handler that calls cx.propogate_event
                     if let MouseRegionEvent::Down(e) = &region_event {
                         if valid_region
                             .handlers
                             .contains_handler(MouseRegionEvent::click_disc(), Some(e.button))
+                            || valid_region
+                                .handlers
+                                .contains_handler(MouseRegionEvent::drag_disc(), Some(e.button))
                         {
                             event_cx.handled = true;
                         }

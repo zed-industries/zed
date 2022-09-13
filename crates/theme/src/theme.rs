@@ -571,6 +571,7 @@ pub struct CodeActions {
 pub struct Interactive<T> {
     pub default: T,
     pub hover: Option<T>,
+    pub clicked: Option<T>,
     pub active: Option<T>,
     pub disabled: Option<T>,
 }
@@ -579,6 +580,8 @@ impl<T> Interactive<T> {
     pub fn style_for(&self, state: MouseState, active: bool) -> &T {
         if active {
             self.active.as_ref().unwrap_or(&self.default)
+        } else if state.clicked == Some(gpui::MouseButton::Left) && self.clicked.is_some() {
+            self.clicked.as_ref().unwrap()
         } else if state.hovered {
             self.hover.as_ref().unwrap_or(&self.default)
         } else {
@@ -601,6 +604,7 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
             #[serde(flatten)]
             default: Value,
             hover: Option<Value>,
+            clicked: Option<Value>,
             active: Option<Value>,
             disabled: Option<Value>,
         }
@@ -627,6 +631,7 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
         };
 
         let hover = deserialize_state(json.hover)?;
+        let clicked = deserialize_state(json.clicked)?;
         let active = deserialize_state(json.active)?;
         let disabled = deserialize_state(json.disabled)?;
         let default = serde_json::from_value(json.default).map_err(serde::de::Error::custom)?;
@@ -634,6 +639,7 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
         Ok(Interactive {
             default,
             hover,
+            clicked,
             active,
             disabled,
         })

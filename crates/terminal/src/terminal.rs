@@ -1,5 +1,4 @@
 pub mod mappings;
-pub mod modal;
 pub mod terminal_container_view;
 pub mod terminal_element;
 pub mod terminal_view;
@@ -32,7 +31,6 @@ use futures::{
 use mappings::mouse::{
     alt_scroll, mouse_button_report, mouse_moved_report, mouse_point, mouse_side, scroll_report,
 };
-use modal::deploy_modal;
 
 use procinfo::LocalProcessInfo;
 use settings::{AlternateScroll, Settings, Shell, TerminalBlink};
@@ -63,8 +61,6 @@ use crate::mappings::{
 
 ///Initialize and register all of our action handlers
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(deploy_modal);
-
     terminal_view::init(cx);
     terminal_container_view::init(cx);
 }

@@ -279,6 +279,10 @@ impl Pane {
         }
     }
 
+    pub fn is_active(&self) -> bool {
+        self.is_active
+    }
+
     pub fn set_active(&mut self, is_active: bool, cx: &mut ViewContext<Self>) {
         self.is_active = is_active;
         cx.notify();
@@ -1010,9 +1014,9 @@ impl Pane {
                 action.position,
                 AnchorCorner::TopRight,
                 vec![
-                    ContextMenuItem::item("Move Dock Right", MoveDock(DockAnchor::Right)),
-                    ContextMenuItem::item("Move Dock Bottom", MoveDock(DockAnchor::Bottom)),
-                    ContextMenuItem::item("Move Dock Maximized", MoveDock(DockAnchor::Expanded)),
+                    ContextMenuItem::item("Anchor Dock Right", MoveDock(DockAnchor::Right)),
+                    ContextMenuItem::item("Anchor Dock Bottom", MoveDock(DockAnchor::Bottom)),
+                    ContextMenuItem::item("Expand Dock", MoveDock(DockAnchor::Expanded)),
                 ],
                 cx,
             );
@@ -1407,9 +1411,12 @@ impl View for Pane {
                                             )
                                             // Add the close dock button if this pane is a dock
                                             .with_children(self.docked.map(|_| {
-                                                tab_bar_button(3, "icons/x_mark_12.svg", cx, |_| {
-                                                    ToggleDock
-                                                })
+                                                tab_bar_button(
+                                                    3,
+                                                    "icons/x_mark_thin_8.svg",
+                                                    cx,
+                                                    |_| ToggleDock,
+                                                )
                                             }))
                                             .contained()
                                             .with_style(theme.workspace.tab_bar.container)
@@ -1426,7 +1433,7 @@ impl View for Pane {
                                     .flex(1., false)
                                     .named("tab bar")
                             })
-                            .with_child(ChildView::new(&self.toolbar).boxed())
+                            .with_child(ChildView::new(&self.toolbar).expanded().boxed())
                             .with_child(ChildView::new(active_item).flex(1., true).boxed())
                             .boxed()
                     } else {
