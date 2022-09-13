@@ -122,6 +122,14 @@
         //  2. Default alternate scroll mode to off
         //         "alternate_scroll": "off",
         "alternate_scroll": "off",
+        // Set whether the option key behaves as the meta key.
+        // May take 2 values:
+        //  1. Rely on default platform handling of option key, on macOS
+        //     this means generating certain unicode characters
+        //         "option_to_meta": false,
+        //  2. Make the option keys behave as the meta key
+        //         "option_to_meta": true,
+        "option_as_meta": false,
         // Any key-value pairs added to this list will be added to the terminal's
         // enviroment. Use `:` to seperate multiple values.
         "env": {
