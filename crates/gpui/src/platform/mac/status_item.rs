@@ -65,7 +65,7 @@ struct StatusItemState {
 impl StatusItem {
     pub fn add(fonts: Arc<dyn FontSystem>) -> Self {
         unsafe {
-            let renderer = Renderer::new(fonts);
+            let renderer = Renderer::new(false, fonts);
             let status_bar = NSStatusBar::systemStatusBar(nil);
             let native_item =
                 StrongPtr::retain(status_bar.statusItemWithLength_(NSSquareStatusItemLength));

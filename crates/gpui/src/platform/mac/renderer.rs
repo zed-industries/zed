@@ -10,14 +10,14 @@ use crate::{
 };
 use cocoa::{
     base::{NO, YES},
-    foundation::{NSRect, NSUInteger},
+    foundation::NSUInteger,
     quartzcore::AutoresizingMask,
 };
 use core_foundation::base::TCFType;
 use foreign_types::ForeignTypeRef;
 use log::warn;
 use media::core_video::{self, CVMetalTextureCache};
-use metal::{CGFloat, CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
+use metal::{CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
 use objc::{self, msg_send, sel, sel_impl};
 use shaders::ToFloat2 as _;
 use std::{collections::HashMap, ffi::c_void, iter::Peekable, mem, ptr, sync::Arc, vec};
@@ -55,7 +55,7 @@ pub struct Surface {
 }
 
 impl Renderer {
-    pub fn new(fonts: Arc<dyn platform::FontSystem>) -> Self {
+    pub fn new(is_opaque: bool, fonts: Arc<dyn platform::FontSystem>) -> Self {
         const PIXEL_FORMAT: MTLPixelFormat = MTLPixelFormat::BGRA8Unorm;
 
         let device: metal::Device = if let Some(device) = metal::Device::system_default() {
@@ -69,6 +69,7 @@ impl Renderer {
         layer.set_device(&device);
         layer.set_pixel_format(PIXEL_FORMAT);
         layer.set_presents_with_transaction(true);
+        layer.set_opaque(is_opaque);
         unsafe {
             let _: () = msg_send![&*layer, setAllowsNextDrawableTimeout: NO];
             let _: () = msg_send![&*layer, setNeedsDisplayOnBoundsChange: YES];
@@ -363,7 +364,8 @@ impl Renderer {
         color_attachment.set_texture(Some(output));
         color_attachment.set_load_action(metal::MTLLoadAction::Clear);
         color_attachment.set_store_action(metal::MTLStoreAction::Store);
-        color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., 1.));
+        let alpha = if self.layer.is_opaque() { 1. } else { 0. };
+        color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., alpha));
         let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
 
         command_encoder.set_viewport(metal::MTLViewport {

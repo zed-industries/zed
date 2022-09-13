@@ -382,7 +382,7 @@ impl Window {
                 synthetic_drag_counter: 0,
                 executor,
                 scene_to_render: Default::default(),
-                renderer: Renderer::new(fonts),
+                renderer: Renderer::new(true, fonts),
                 last_fresh_keydown: None,
                 traffic_light_position: options
                     .titlebar
