@@ -1,8 +1,7 @@
 use std::ops::Range;
 
-use client::proto::create_buffer_for_peer;
 use sum_tree::{Bias, SumTree};
-use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToPoint};
+use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
 
 pub use git2 as libgit;
 use libgit::{
@@ -148,7 +147,7 @@ impl BufferDiffSnapshot {
         self.tree.iter().filter_map(move |hunk| {
             let range = hunk.buffer_range.to_point(&buffer);
 
-            if range.start.row < query_row_range.end && query_row_range.start < range.end.row {
+            if range.start.row <= query_row_range.end && query_row_range.start <= range.end.row {
                 let end_row = if range.end.column > 0 {
                     range.end.row + 1
                 } else {
@@ -186,8 +185,8 @@ impl BufferDiff {
 
             if let Some(patch) = patch {
                 for hunk_index in 0..patch.num_hunks() {
-                    let patch = Self::process_patch_hunk(&patch, hunk_index, buffer);
-                    tree.push(patch, buffer);
+                    let hunk = Self::process_patch_hunk(&patch, hunk_index, buffer);
+                    tree.push(hunk, buffer);
                 }
             }
         }
@@ -348,10 +347,14 @@ impl BufferDiff {
         hunk_index: usize,
         buffer: &text::BufferSnapshot,
     ) -> DiffHunk<Anchor> {
+        let line_item_count = patch.num_lines_in_hunk(hunk_index).unwrap();
+        assert!(line_item_count > 0);
+
+        let mut first_deletion_buffer_row: Option<u32> = None;
         let mut buffer_byte_range: Option<Range<usize>> = None;
         let mut head_byte_range: Option<Range<usize>> = None;
 
-        for line_index in 0..patch.num_lines_in_hunk(hunk_index).unwrap() {
+        for line_index in 0..line_item_count {
             let line = patch.line_in_hunk(hunk_index, line_index).unwrap();
             let kind = line.origin_value();
             let content_offset = line.content_offset() as isize;
@@ -380,10 +383,24 @@ impl BufferDiff {
 
                 _ => {}
             }
+
+            if kind == GitDiffLineType::Deletion && first_deletion_buffer_row.is_none() {
+                //old_lineno is guarenteed to be Some for deletions
+                //libgit gives us line numbers that are 1-indexed but also returns a 0 for some states
+                let row = line.old_lineno().unwrap().saturating_sub(1);
+                first_deletion_buffer_row = Some(row);
+            }
         }
 
         //unwrap_or deletion without addition
-        let buffer_byte_range = buffer_byte_range.unwrap_or(0..0);
+        let buffer_byte_range = buffer_byte_range.unwrap_or_else(|| {
+            //we cannot have an addition-less hunk without deletion(s) or else there would be no hunk
+            let row = first_deletion_buffer_row.unwrap();
+            let anchor = buffer.anchor_before(Point::new(row, 0));
+            let offset = anchor.to_offset(buffer);
+            offset..offset
+        });
+
         //unwrap_or addition without deletion
         let head_byte_range = head_byte_range.unwrap_or(0..0);
 
