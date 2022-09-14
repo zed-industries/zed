@@ -202,96 +202,20 @@ impl BufferDiff {
     }
 
     pub fn update(&mut self, head_text: &str, buffer: &text::BufferSnapshot) {
-        // let buffer_string = buffer.as_rope().to_string();
-        // let buffer_bytes = buffer_string.as_bytes();
+        let mut tree = SumTree::new();
 
-        // let mut options = GitOptions::default();
-        // options.context_lines(0);
-        // let patch = match GitPatch::from_buffers(
-        //     head_text.as_bytes(),
-        //     None,
-        //     buffer_bytes,
-        //     None,
-        //     Some(&mut options),
-        // ) {
-        //     Ok(patch) => patch,
-        //     Err(_) => todo!("This needs to be handled"),
-        // };
+        let buffer_text = buffer.as_rope().to_string();
+        let patch = Self::diff(&head_text, &buffer_text);
 
-        // let mut hunks = SumTree::<DiffHunk<Anchor>>::new();
-        // let mut delta = 0i64;
-        // for hunk_index in 0..patch.num_hunks() {
-        //     for line_index in 0..patch.num_lines_in_hunk(hunk_index).unwrap() {
-        //         let line = patch.line_in_hunk(hunk_index, line_index).unwrap();
-
-        //         let hunk = match line.origin_value() {
-        //             GitDiffLineType::Addition => {
-        //                 let buffer_start = line.content_offset();
-        //                 let buffer_end = buffer_start as usize + line.content().len();
-        //                 let head_offset = (buffer_start - delta) as usize;
-        //                 delta += line.content().len() as i64;
-        //                 DiffHunk {
-        //                     buffer_range: buffer.anchor_before(buffer_start as usize)
-        //                         ..buffer.anchor_after(buffer_end),
-        //                     head_byte_range: head_offset..head_offset,
-        //                 }
-        //             }
-
-        //             GitDiffLineType::Deletion => {
-        //                 let head_start = line.content_offset();
-        //                 let head_end = head_start as usize + line.content().len();
-        //                 let buffer_offset = (head_start + delta) as usize;
-        //                 delta -= line.content().len() as i64;
-        //                 DiffHunk {
-        //                     buffer_range: buffer.anchor_before(buffer_offset)
-        //                         ..buffer.anchor_after(buffer_offset),
-        //                     head_byte_range: (head_start as usize)..head_end,
-        //                 }
-        //             }
-
-        //             _ => continue,
-        //         };
-
-        //         let mut combined = false;
-        //         hunks.update_last(
-        //             |last_hunk| {
-        //                 if last_hunk.head_byte_range.end == hunk.head_byte_range.start {
-        //                     last_hunk.head_byte_range.end = hunk.head_byte_range.end;
-        //                     last_hunk.buffer_range.end = hunk.buffer_range.end;
-        //                     combined = true;
-        //                 }
-        //             },
-        //             buffer,
-        //         );
-        //         if !combined {
-        //             hunks.push(hunk, buffer);
-        //         }
-        //     }
-        // }
-
-        // println!("=====");
-        // for hunk in hunks.iter() {
-        //     let buffer_range = hunk.buffer_range.to_point(&buffer);
-        //     println!(
-        //         "hunk in buffer range {buffer_range:?}, head slice {:?}",
-        //         &head_text[hunk.head_byte_range.clone()]
-        //     );
-        // }
-        // println!("=====");
-
-        // self.snapshot.tree = hunks;
-    }
-
-    pub fn actual_update(
-        &mut self,
-        head_text: &str,
-        buffer: &BufferSnapshot,
-    ) -> Option<DiffHunk<Anchor>> {
-        for edit_range in self.group_edit_ranges(buffer) {
-            // let patch = self.diff(head, current)?;
+        if let Some(patch) = patch {
+            for hunk_index in 0..patch.num_hunks() {
+                let hunk = Self::process_patch_hunk(&patch, hunk_index, buffer);
+                tree.push(hunk, buffer);
+            }
         }
 
-        None
+        self.last_update_version = buffer.version().clone();
+        self.snapshot.tree = tree;
     }
 
     fn diff<'a>(head: &'a str, current: &'a str) -> Option<GitPatch<'a>> {
@@ -316,7 +240,7 @@ impl BufferDiff {
         }
     }
 
-    fn group_edit_ranges(&mut self, buffer: &text::BufferSnapshot) -> Vec<Range<u32>> {
+    fn group_edit_ranges(&self, buffer: &text::BufferSnapshot) -> Vec<Range<u32>> {
         const EXPAND_BY: u32 = 20;
         const COMBINE_DISTANCE: u32 = 5;
 
@@ -338,7 +262,6 @@ impl BufferDiff {
             }
         }
 
-        self.last_update_version = buffer.version().clone();
         ranges
     }
 
@@ -409,49 +332,6 @@ impl BufferDiff {
                 ..buffer.anchor_before(buffer_byte_range.end),
             head_byte_range,
         }
-    }
-
-    fn name() {
-        // if self.hunk_index >= self.patch.num_hunks() {
-        //     return None;
-        // }
-
-        // let mut line_iter = HunkLineIter::new(&self.patch, self.hunk_index);
-        // let line = line_iter.find(|line| {
-        //     matches!(
-        //         line.origin_value(),
-        //         GitDiffLineType::Addition | GitDiffLineType::Deletion
-        //     )
-        // })?;
-
-        // //For the first line of a hunk the content offset is equally valid for an addition or deletion
-        // let content_offset = line.content_offset() as usize;
-
-        // let mut buffer_range = content_offset..content_offset;
-        // let mut head_byte_range = match line.origin_value() {
-        //     GitDiffLineType::Addition => content_offset..content_offset,
-        //     GitDiffLineType::Deletion => content_offset..content_offset + line.content().len(),
-        //     _ => unreachable!(),
-        // };
-
-        // for line in line_iter {
-        //     match line.origin_value() {
-        //         GitDiffLineType::Addition => {
-        //             // buffer_range.end =
-        //         }
-
-        //         GitDiffLineType::Deletion => {}
-
-        //         _ => continue,
-        //     }
-        // }
-
-        // self.hunk_index += 1;
-        // Some(DiffHunk {
-        //     buffer_range: buffer.anchor_before(buffer_range.start)
-        //         ..buffer.anchor_before(buffer_range.end),
-        //     head_byte_range,
-        // })
     }
 }
 
