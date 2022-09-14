@@ -5,7 +5,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     keymap::Keystroke,
-    mac::platform::{NSKeyValueObservingOptionNew, NSViewLayerContentsRedrawDuringViewResize},
+    mac::platform::NSViewLayerContentsRedrawDuringViewResize,
     platform::{
         self,
         mac::{geometry::RectFExt, renderer::Renderer},
@@ -266,8 +266,8 @@ unsafe fn build_classes() {
                 as extern "C" fn(&Object, Sel, NSRange, *mut c_void) -> id,
         );
         decl.add_method(
-            sel!(observeValueForKeyPath:ofObject:change:context:),
-            appearance_changed as extern "C" fn(&Object, Sel, id, id, id, id),
+            sel!(viewDidChangeEffectiveAppearance),
+            view_did_change_effective_appearance as extern "C" fn(&Object, Sel),
         );
 
         // Suppress beep on keystrokes with modifier keys.
@@ -452,13 +452,6 @@ impl Window {
             }
 
             native_window.makeKeyAndOrderFront_(nil);
-            let _: () = msg_send![
-                native_window,
-                addObserver: native_view
-                forKeyPath: NSString::alloc(nil).init_str("effectiveAppearance")
-                options: NSKeyValueObservingOptionNew
-                context: nil
-            ];
 
             window.0.borrow().move_traffic_light();
             pool.drain();
@@ -1330,7 +1323,7 @@ extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
     }
 }
 
-extern "C" fn appearance_changed(this: &Object, _: Sel, _: id, _: id, _: id, _: id) {
+extern "C" fn view_did_change_effective_appearance(this: &Object, _: Sel) {
     unsafe {
         let state = get_window_state(this);
         let mut state_borrow = state.as_ref().borrow_mut();

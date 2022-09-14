@@ -54,8 +54,6 @@ const NSUTF8StringEncoding: NSUInteger = 4;
 
 #[allow(non_upper_case_globals)]
 pub const NSViewLayerContentsRedrawDuringViewResize: NSInteger = 2;
-#[allow(non_upper_case_globals)]
-pub const NSKeyValueObservingOptionNew: NSInteger = 1;
 
 const MAC_PLATFORM_IVAR: &str = "platform";
 static mut APP_CLASS: *const Class = ptr::null();

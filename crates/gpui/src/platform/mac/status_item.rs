@@ -5,17 +5,14 @@ use crate::{
     },
     platform::{
         self,
-        mac::{
-            platform::{NSKeyValueObservingOptionNew, NSViewLayerContentsRedrawDuringViewResize},
-            renderer::Renderer,
-        },
+        mac::{platform::NSViewLayerContentsRedrawDuringViewResize, renderer::Renderer},
     },
     Event, FontSystem, Scene,
 };
 use cocoa::{
     appkit::{NSScreen, NSSquareStatusItemLength, NSStatusBar, NSStatusItem, NSView, NSWindow},
     base::{id, nil, YES},
-    foundation::{NSPoint, NSRect, NSSize, NSString},
+    foundation::{NSPoint, NSRect, NSSize},
 };
 use ctor::ctor;
 use foreign_types::ForeignTypeRef;
@@ -91,8 +88,8 @@ unsafe fn build_classes() {
             make_backing_layer as extern "C" fn(&Object, Sel) -> id,
         );
         decl.add_method(
-            sel!(observeValueForKeyPath:ofObject:change:context:),
-            appearance_changed as extern "C" fn(&Object, Sel, id, id, id, id),
+            sel!(viewDidChangeEffectiveAppearance),
+            view_did_change_effective_appearance as extern "C" fn(&Object, Sel),
         );
 
         decl.add_protocol(Protocol::get("CALayerDelegate").unwrap());
@@ -151,13 +148,6 @@ impl StatusItem {
             let _: () = msg_send![
                 native_view,
                 setLayerContentsRedrawPolicy: NSViewLayerContentsRedrawDuringViewResize
-            ];
-            let _: () = msg_send![
-                button,
-                addObserver: native_view
-                forKeyPath: NSString::alloc(nil).init_str("effectiveAppearance")
-                options: NSKeyValueObservingOptionNew
-                context: nil
             ];
 
             parent_view.addSubview_(native_view);
@@ -350,7 +340,7 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     }
 }
 
-extern "C" fn appearance_changed(this: &Object, _: Sel, _: id, _: id, _: id, _: id) {
+extern "C" fn view_did_change_effective_appearance(this: &Object, _: Sel) {
     unsafe {
         if let Some(state) = get_state(this).upgrade() {
             let mut state_borrow = state.as_ref().borrow_mut();
