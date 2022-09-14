@@ -12,7 +12,7 @@ use crate::{
         Event, WindowBounds,
     },
     InputHandler, KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseButtonEvent,
-    MouseMovedEvent, Scene,
+    MouseMovedEvent, Scene, WindowLevel,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -55,6 +55,12 @@ const WINDOW_STATE_IVAR: &str = "windowState";
 
 static mut WINDOW_CLASS: *const Class = ptr::null();
 static mut VIEW_CLASS: *const Class = ptr::null();
+
+#[allow(non_upper_case_globals)]
+const NSNormalWindowLevel: NSInteger = 0;
+
+#[allow(non_upper_case_globals)]
+const NSPopUpWindowLevel: NSInteger = 101;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -452,6 +458,11 @@ impl Window {
             }
 
             native_window.makeKeyAndOrderFront_(nil);
+            let native_level = match options.level {
+                WindowLevel::Normal => NSNormalWindowLevel,
+                WindowLevel::PopUp => NSPopUpWindowLevel,
+            };
+            native_window.setLevel_(native_level);
 
             window.0.borrow().move_traffic_light();
             pool.drain();

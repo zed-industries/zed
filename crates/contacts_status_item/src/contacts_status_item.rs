@@ -62,17 +62,16 @@ impl ContactsStatusItem {
                 let size = vec2f(360., 460.);
                 let origin = window_bounds.lower_left()
                     + vec2f(window_bounds.width() / 2. - size.x() / 2., 0.);
-                self.popover = Some(
-                    cx.add_window(
-                        gpui::WindowOptions {
-                            bounds: gpui::WindowBounds::Fixed(RectF::new(origin, size)),
-                            titlebar: None,
-                            center: false,
-                        },
-                        |_| ContactsPopover::new(),
-                    )
-                    .1,
+                let (_, popover) = cx.add_window(
+                    gpui::WindowOptions {
+                        bounds: gpui::WindowBounds::Fixed(RectF::new(origin, size)),
+                        titlebar: None,
+                        center: false,
+                        level: gpui::WindowLevel::PopUp,
+                    },
+                    |_| ContactsPopover::new(),
                 );
+                self.popover = Some(popover);
             }
         }
     }

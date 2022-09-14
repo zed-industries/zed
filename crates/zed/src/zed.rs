@@ -20,7 +20,7 @@ use gpui::{
     geometry::vector::vec2f,
     impl_actions,
     platform::{WindowBounds, WindowOptions},
-    AssetSource, AsyncAppContext, TitlebarOptions, ViewContext,
+    AssetSource, AsyncAppContext, TitlebarOptions, ViewContext, WindowLevel,
 };
 use language::Rope;
 pub use lsp;
@@ -336,6 +336,7 @@ pub fn build_window_options() -> WindowOptions<'static> {
             traffic_light_position: Some(vec2f(8., 8.)),
         }),
         center: false,
+        level: WindowLevel::Normal,
     }
 }
 
