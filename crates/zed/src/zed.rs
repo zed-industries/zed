@@ -335,6 +335,7 @@ pub fn build_window_options() -> WindowOptions<'static> {
             appears_transparent: true,
             traffic_light_position: Some(vec2f(8., 8.)),
         }),
+        center: false,
     }
 }
 

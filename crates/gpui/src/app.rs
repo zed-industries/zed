@@ -1244,6 +1244,10 @@ impl MutableAppContext {
             .map_or(false, |window| window.is_fullscreen)
     }
 
+    pub fn window_bounds(&self, window_id: usize) -> RectF {
+        self.presenters_and_platform_windows[&window_id].1.bounds()
+    }
+
     pub fn render_view(&mut self, params: RenderParams) -> Result<ElementBox> {
         let window_id = params.window_id;
         let view_id = params.view_id;
@@ -2032,10 +2036,12 @@ impl MutableAppContext {
             window_id,
         }));
 
-        let scene =
-            presenter
-                .borrow_mut()
-                .build_scene(window.size(), window.scale_factor(), false, self);
+        let scene = presenter.borrow_mut().build_scene(
+            window.content_size(),
+            window.scale_factor(),
+            false,
+            self,
+        );
         window.present_scene(scene);
         self.presenters_and_platform_windows
             .insert(window_id, (presenter.clone(), window));
@@ -2411,8 +2417,12 @@ impl MutableAppContext {
                 {
                     let mut presenter = presenter.borrow_mut();
                     presenter.invalidate(&mut invalidation, window.appearance(), self);
-                    let scene =
-                        presenter.build_scene(window.size(), window.scale_factor(), false, self);
+                    let scene = presenter.build_scene(
+                        window.content_size(),
+                        window.scale_factor(),
+                        false,
+                        self,
+                    );
                     window.present_scene(scene);
                 }
                 self.presenters_and_platform_windows
@@ -2477,7 +2487,8 @@ impl MutableAppContext {
                 window.appearance(),
                 self,
             );
-            let scene = presenter.build_scene(window.size(), window.scale_factor(), true, self);
+            let scene =
+                presenter.build_scene(window.content_size(), window.scale_factor(), true, self);
             window.present_scene(scene);
         }
         self.presenters_and_platform_windows = presenters;
@@ -3747,6 +3758,10 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn toggle_full_screen(&self) {
         self.app.toggle_window_full_screen(self.window_id)
+    }
+
+    pub fn window_bounds(&self) -> RectF {
+        self.app.window_bounds(self.window_id)
     }
 
     pub fn prompt(

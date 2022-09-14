@@ -105,6 +105,7 @@ fn main() {
         watch_settings_file(default_settings, settings_file, themes.clone(), cx);
         watch_keymap_file(keymap_file, cx);
 
+        contacts_status_item::init(cx);
         context_menu::init(cx);
         project::Project::init(&client);
         client::Channel::init(&client);

@@ -1,5 +1,8 @@
 use crate::{
-    geometry::vector::{vec2f, Vector2F},
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
     platform::{
         self,
         mac::{
@@ -10,7 +13,7 @@ use crate::{
     Event, FontSystem, Scene,
 };
 use cocoa::{
-    appkit::{NSSquareStatusItemLength, NSStatusBar, NSStatusItem, NSView, NSWindow},
+    appkit::{NSScreen, NSSquareStatusItemLength, NSStatusBar, NSStatusItem, NSView, NSWindow},
     base::{id, nil, YES},
     foundation::{NSPoint, NSRect, NSSize, NSString},
 };
@@ -163,7 +166,7 @@ impl StatusItem {
                 let state = state.borrow();
                 let layer = state.renderer.layer();
                 let scale_factor = state.scale_factor();
-                let size = state.size() * scale_factor;
+                let size = state.content_size() * scale_factor;
                 layer.set_contents_scale(scale_factor.into());
                 layer.set_drawable_size(metal::CGSize::new(size.x().into(), size.y().into()));
             }
@@ -235,8 +238,12 @@ impl platform::Window for StatusItem {
         unimplemented!()
     }
 
-    fn size(&self) -> Vector2F {
-        self.0.borrow().size()
+    fn bounds(&self) -> RectF {
+        self.0.borrow().bounds()
+    }
+
+    fn content_size(&self) -> Vector2F {
+        self.0.borrow().content_size()
     }
 
     fn scale_factor(&self) -> f32 {
@@ -264,10 +271,28 @@ impl platform::Window for StatusItem {
 }
 
 impl StatusItemState {
-    fn size(&self) -> Vector2F {
+    fn bounds(&self) -> RectF {
+        unsafe {
+            let window: id = msg_send![self.native_item.button(), window];
+            let screen_frame = window.screen().visibleFrame();
+            let window_frame = NSWindow::frame(window);
+            let origin = vec2f(
+                window_frame.origin.x as f32,
+                (window_frame.origin.y - screen_frame.size.height - window_frame.size.height)
+                    as f32,
+            );
+            let size = vec2f(
+                window_frame.size.width as f32,
+                window_frame.size.height as f32,
+            );
+            RectF::new(origin, size)
+        }
+    }
+
+    fn content_size(&self) -> Vector2F {
         unsafe {
             let NSSize { width, height, .. } =
-                NSWindow::frame(self.native_item.button().superview().superview()).size;
+                NSView::frame(self.native_item.button().superview().superview()).size;
             vec2f(width as f32, height as f32)
         }
     }
@@ -275,7 +300,7 @@ impl StatusItemState {
     fn scale_factor(&self) -> f32 {
         unsafe {
             let window: id = msg_send![self.native_item.button(), window];
-            window.screen().backingScaleFactor() as f32
+            NSScreen::backingScaleFactor(window.screen()) as f32
         }
     }
 }
@@ -292,7 +317,9 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     unsafe {
         if let Some(state) = get_state(this).upgrade() {
             let mut state_borrow = state.as_ref().borrow_mut();
-            if let Some(event) = Event::from_native(native_event, Some(state_borrow.size().y())) {
+            if let Some(event) =
+                Event::from_native(native_event, Some(state_borrow.content_size().y()))
+            {
                 if let Some(mut callback) = state_borrow.event_callback.take() {
                     drop(state_borrow);
                     callback(event);

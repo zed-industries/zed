@@ -128,7 +128,8 @@ pub trait Window {
     fn zoom(&self);
     fn toggle_full_screen(&self);
 
-    fn size(&self) -> Vector2F;
+    fn bounds(&self) -> RectF;
+    fn content_size(&self) -> Vector2F;
     fn scale_factor(&self) -> f32;
     fn titlebar_height(&self) -> f32;
     fn present_scene(&mut self, scene: Scene);
@@ -140,6 +141,7 @@ pub trait Window {
 pub struct WindowOptions<'a> {
     pub bounds: WindowBounds,
     pub titlebar: Option<TitlebarOptions<'a>>,
+    pub center: bool,
 }
 
 #[derive(Debug)]
@@ -273,6 +275,7 @@ impl<'a> Default for WindowOptions<'a> {
                 appears_transparent: Default::default(),
                 traffic_light_position: Default::default(),
             }),
+            center: false,
         }
     }
 }

@@ -335,12 +335,6 @@ impl Window {
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
 
-            let frame = match options.bounds {
-                WindowBounds::Maximized => RectF::new(Default::default(), vec2f(1024., 768.)),
-                WindowBounds::Fixed(rect) => rect,
-            }
-            .to_ns_rect();
-
             let mut style_mask;
             if let Some(titlebar) = options.titlebar.as_ref() {
                 style_mask = NSWindowStyleMask::NSClosableWindowMask
@@ -357,16 +351,31 @@ impl Window {
 
             let native_window: id = msg_send![WINDOW_CLASS, alloc];
             let native_window = native_window.initWithContentRect_styleMask_backing_defer_(
-                frame,
+                RectF::new(Default::default(), vec2f(1024., 768.)).to_ns_rect(),
                 style_mask,
                 NSBackingStoreBuffered,
                 NO,
             );
             assert!(!native_window.is_null());
 
-            if matches!(options.bounds, WindowBounds::Maximized) {
-                let screen = native_window.screen();
-                native_window.setFrame_display_(screen.visibleFrame(), YES);
+            let screen = native_window.screen();
+            match options.bounds {
+                WindowBounds::Maximized => {
+                    native_window.setFrame_display_(screen.visibleFrame(), YES);
+                }
+                WindowBounds::Fixed(top_left_bounds) => {
+                    let frame = screen.visibleFrame();
+                    let bottom_left_bounds = RectF::new(
+                        vec2f(
+                            top_left_bounds.origin_x(),
+                            frame.size.height as f32
+                                - top_left_bounds.origin_y()
+                                - top_left_bounds.height(),
+                        ),
+                        top_left_bounds.size(),
+                    );
+                    native_window.setFrame_display_(bottom_left_bounds.to_ns_rect(), YES);
+                }
             }
 
             let native_view: id = msg_send![VIEW_CLASS, alloc];
@@ -438,7 +447,10 @@ impl Window {
             native_window.setContentView_(native_view.autorelease());
             native_window.makeFirstResponder_(native_view);
 
-            native_window.center();
+            if options.center {
+                native_window.center();
+            }
+
             native_window.makeKeyAndOrderFront_(nil);
             let _: () = msg_send![
                 native_window,
@@ -633,8 +645,12 @@ impl platform::Window for Window {
             .detach();
     }
 
-    fn size(&self) -> Vector2F {
-        self.0.as_ref().borrow().size()
+    fn bounds(&self) -> RectF {
+        self.0.as_ref().borrow().bounds()
+    }
+
+    fn content_size(&self) -> Vector2F {
+        self.0.as_ref().borrow().content_size()
     }
 
     fn scale_factor(&self) -> f32 {
@@ -706,7 +722,24 @@ impl WindowState {
         }
     }
 
-    fn size(&self) -> Vector2F {
+    fn bounds(&self) -> RectF {
+        unsafe {
+            let screen_frame = self.native_window.screen().visibleFrame();
+            let window_frame = NSWindow::frame(self.native_window);
+            let origin = vec2f(
+                window_frame.origin.x as f32,
+                (window_frame.origin.y - screen_frame.size.height - window_frame.size.height)
+                    as f32,
+            );
+            let size = vec2f(
+                window_frame.size.width as f32,
+                window_frame.size.height as f32,
+            );
+            RectF::new(origin, size)
+        }
+    }
+
+    fn content_size(&self) -> Vector2F {
         let NSSize { width, height, .. } =
             unsafe { NSView::frame(self.native_window.contentView()) }.size;
         vec2f(width as f32, height as f32)
@@ -783,7 +816,8 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
     let mut window_state_borrow = window_state.as_ref().borrow_mut();
 
-    let event = unsafe { Event::from_native(native_event, Some(window_state_borrow.size().y())) };
+    let event =
+        unsafe { Event::from_native(native_event, Some(window_state_borrow.content_size().y())) };
 
     if let Some(event) = event {
         if key_equivalent {
@@ -875,7 +909,8 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let weak_window_state = Rc::downgrade(&window_state);
     let mut window_state_borrow = window_state.as_ref().borrow_mut();
 
-    let event = unsafe { Event::from_native(native_event, Some(window_state_borrow.size().y())) };
+    let event =
+        unsafe { Event::from_native(native_event, Some(window_state_borrow.content_size().y())) };
     if let Some(event) = event {
         match &event {
             Event::MouseMoved(
@@ -1060,7 +1095,7 @@ extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
 
     unsafe {
         let scale_factor = window_state_borrow.scale_factor() as f64;
-        let size = window_state_borrow.size();
+        let size = window_state_borrow.content_size();
         let drawable_size: NSSize = NSSize {
             width: size.x() as f64 * scale_factor,
             height: size.y() as f64 * scale_factor,
@@ -1087,7 +1122,7 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     let window_state = unsafe { get_window_state(this) };
     let window_state_borrow = window_state.as_ref().borrow();
 
-    if window_state_borrow.size() == vec2f(size.width as f32, size.height as f32) {
+    if window_state_borrow.content_size() == vec2f(size.width as f32, size.height as f32) {
         return;
     }
 

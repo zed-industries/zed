@@ -1,6 +1,24 @@
-use gpui::{color::Color, elements::*, Appearance, Entity, RenderContext, View};
+mod contacts_popover;
 
-pub struct ContactsStatusItem;
+use contacts_popover::ContactsPopover;
+use gpui::{
+    actions,
+    color::Color,
+    elements::*,
+    geometry::{rect::RectF, vector::vec2f},
+    Appearance, Entity, MouseButton, MutableAppContext, RenderContext, View, ViewContext,
+    ViewHandle,
+};
+
+actions!(contacts_status_item, [ToggleContactsPopover]);
+
+pub fn init(cx: &mut MutableAppContext) {
+    cx.add_action(ContactsStatusItem::toggle_contacts_popover);
+}
+
+pub struct ContactsStatusItem {
+    popover: Option<ViewHandle<ContactsPopover>>,
+}
 
 impl Entity for ContactsStatusItem {
     type Event = ();
@@ -16,15 +34,46 @@ impl View for ContactsStatusItem {
             Appearance::Light | Appearance::VibrantLight => Color::black(),
             Appearance::Dark | Appearance::VibrantDark => Color::white(),
         };
-        Svg::new("icons/zed_22.svg")
-            .with_color(color)
-            .aligned()
-            .boxed()
+        MouseEventHandler::new::<Self, _, _>(0, cx, |_, _| {
+            Svg::new("icons/zed_22.svg")
+                .with_color(color)
+                .aligned()
+                .boxed()
+        })
+        .on_click(MouseButton::Left, |_, cx| {
+            cx.dispatch_action(ToggleContactsPopover);
+        })
+        .boxed()
     }
 }
 
 impl ContactsStatusItem {
     pub fn new() -> Self {
-        Self
+        Self { popover: None }
+    }
+
+    fn toggle_contacts_popover(&mut self, _: &ToggleContactsPopover, cx: &mut ViewContext<Self>) {
+        match self.popover.take() {
+            Some(popover) => {
+                cx.remove_window(popover.window_id());
+            }
+            None => {
+                let window_bounds = cx.window_bounds();
+                let size = vec2f(360., 460.);
+                let origin = window_bounds.lower_left()
+                    + vec2f(window_bounds.width() / 2. - size.x() / 2., 0.);
+                self.popover = Some(
+                    cx.add_window(
+                        gpui::WindowOptions {
+                            bounds: gpui::WindowBounds::Fixed(RectF::new(origin, size)),
+                            titlebar: None,
+                            center: false,
+                        },
+                        |_| ContactsPopover::new(),
+                    )
+                    .1,
+                );
+            }
+        }
     }
 }

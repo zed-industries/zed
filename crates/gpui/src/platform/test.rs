@@ -1,6 +1,9 @@
 use super::{AppVersion, CursorStyle, WindowBounds};
 use crate::{
-    geometry::vector::{vec2f, Vector2F},
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
     keymap, Action, ClipboardItem,
 };
 use anyhow::{anyhow, Result};
@@ -283,7 +286,11 @@ impl super::Window for Window {
 
     fn toggle_full_screen(&self) {}
 
-    fn size(&self) -> Vector2F {
+    fn bounds(&self) -> RectF {
+        RectF::new(Default::default(), self.size)
+    }
+
+    fn content_size(&self) -> Vector2F {
         self.size
     }
 
