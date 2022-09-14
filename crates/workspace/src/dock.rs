@@ -460,11 +460,13 @@ mod tests {
         center_item.update(&mut cx, |_, cx| cx.focus_self());
         cx.assert_dock_position(DockPosition::Shown(DockAnchor::Right));
         cx.assert_dock_pane_inactive();
+        cx.assert_workspace_pane_active();
 
-        // Focus dock item
+        // Focusing an item in the dock activates it's pane
         dock_item.update(&mut cx, |_, cx| cx.focus_self());
         cx.assert_dock_position(DockPosition::Shown(DockAnchor::Right));
         cx.assert_dock_pane_active();
+        cx.assert_workspace_pane_inactive();
     }
 
     struct DockTestContext<'a> {
@@ -541,6 +543,15 @@ mod tests {
             })
         }
 
+        pub fn center_pane_handle(&self) -> ViewHandle<Pane> {
+            self.workspace(|workspace, _| {
+                workspace
+                    .last_active_center_pane
+                    .clone()
+                    .unwrap_or_else(|| workspace.center.panes()[0].clone())
+            })
+        }
+
         pub fn add_item_to_center_pane(&mut self) -> ViewHandle<TestItem> {
             self.update_workspace(|workspace, cx| {
                 let item = cx.add_view(|_| TestItem::new());
@@ -612,6 +623,18 @@ mod tests {
 
         pub fn assert_sidebar_closed(&self, sidebar_side: SidebarSide) {
             assert!(!self.sidebar(sidebar_side, |sidebar, _| sidebar.is_open()));
+        }
+
+        pub fn assert_workspace_pane_active(&self) {
+            assert!(self
+                .center_pane_handle()
+                .read_with(self.cx, |pane, _| pane.is_active()));
+        }
+
+        pub fn assert_workspace_pane_inactive(&self) {
+            assert!(!self
+                .center_pane_handle()
+                .read_with(self.cx, |pane, _| pane.is_active()));
         }
 
         pub fn assert_dock_pane_active(&self) {
