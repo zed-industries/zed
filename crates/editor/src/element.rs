@@ -552,10 +552,10 @@ impl EditorElement {
 
                 //TODO: This rendering is entirely a horrible hack
                 DiffHunkStatus::Removed => {
-                    let row_above = hunk.buffer_range.start;
+                    let row = hunk.buffer_range.start as i64 - 1;
 
                     let offset = line_height / 2.;
-                    let start_y = row_above as f32 * line_height + offset - scroll_top;
+                    let start_y = row as f32 * line_height + offset - scroll_top;
                     let end_y = start_y + line_height;
 
                     let width = 0.4 * line_height;
