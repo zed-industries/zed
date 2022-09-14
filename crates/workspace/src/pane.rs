@@ -706,7 +706,7 @@ impl Pane {
         pane: ViewHandle<Pane>,
         item_id_to_close: usize,
         cx: &mut ViewContext<Workspace>,
-    ) -> Task<Result<bool>> {
+    ) -> Task<Result<()>> {
         Self::close_items(workspace, pane, cx, move |view_id| {
             view_id == item_id_to_close
         })
@@ -717,7 +717,7 @@ impl Pane {
         pane: ViewHandle<Pane>,
         cx: &mut ViewContext<Workspace>,
         should_close: impl 'static + Fn(usize) -> bool,
-    ) -> Task<Result<bool>> {
+    ) -> Task<Result<()>> {
         let project = workspace.project().clone();
 
         // Find the items to close.
@@ -790,7 +790,7 @@ impl Pane {
             }
 
             pane.update(&mut cx, |_, cx| cx.notify());
-            Ok(true)
+            Ok(())
         })
     }
 

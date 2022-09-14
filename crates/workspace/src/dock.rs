@@ -26,7 +26,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Dock::move_dock);
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum DockPosition {
     Shown(DockAnchor),
     Hidden(DockAnchor),
@@ -372,12 +372,14 @@ impl StatusItemView for ToggleDockButton {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use gpui::{TestAppContext, ViewContext};
+    use std::ops::{Deref, DerefMut};
+
+    use gpui::{AppContext, TestAppContext, UpdateView, ViewContext};
     use project::{FakeFs, Project};
     use settings::Settings;
 
-    use crate::{tests::TestItem, ItemHandle, Workspace};
+    use super::*;
+    use crate::{sidebar::Sidebar, tests::TestItem, ItemHandle, Workspace};
 
     pub fn default_item_factory(
         _workspace: &mut Workspace,
@@ -388,83 +390,263 @@ mod tests {
 
     #[gpui::test]
     async fn test_dock_hides_when_pane_empty(cx: &mut TestAppContext) {
-        cx.foreground().forbid_parking();
+        let mut cx = DockTestContext::new(cx).await;
 
-        Settings::test_async(cx);
-        let fs = FakeFs::new(cx.background());
+        // Closing the last item in the dock hides the dock
+        cx.move_dock(DockAnchor::Right);
+        let old_items = cx.dock_items();
+        assert!(!old_items.is_empty());
+        cx.close_dock_items().await;
+        cx.assert_dock_position(DockPosition::Hidden(DockAnchor::Right));
 
-        let project = Project::test(fs, [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
-
-        // Open dock
-        workspace.update(cx, |workspace, cx| {
-            Dock::show(workspace, cx);
-        });
-
-        // Ensure dock has an item in it
-        let dock_item_handle = workspace.read_with(cx, |workspace, cx| {
-            let dock = workspace.dock_pane().read(cx);
-            dock.items()
-                .next()
-                .expect("Dock should have an item in it")
-                .clone()
-        });
-
-        // Close item
-        let close_task = workspace.update(cx, |workspace, cx| {
-            Pane::close_item(
-                workspace,
-                workspace.dock_pane().clone(),
-                dock_item_handle.id(),
-                cx,
-            )
-        });
-        close_task.await.expect("Dock item closed successfully");
-
-        // Ensure dock closes
-        workspace.read_with(cx, |workspace, cx| {
-            assert!(workspace.dock.visible_pane().is_some())
-        });
-
-        // Open again
-        workspace.update(cx, |workspace, cx| {
-            Dock::show(workspace, cx);
-        });
-
-        // Ensure dock has item in it
-        workspace.read_with(cx, |workspace, cx| {
-            let dock = workspace.dock_pane().read(cx);
-            dock.items().next().expect("Dock should have an item in it");
-        });
+        // Reopening the dock adds a new item
+        cx.move_dock(DockAnchor::Right);
+        let new_items = cx.dock_items();
+        assert!(!new_items.is_empty());
+        assert!(new_items
+            .into_iter()
+            .all(|new_item| !old_items.contains(&new_item)));
     }
 
     #[gpui::test]
     async fn test_dock_panel_collisions(cx: &mut TestAppContext) {
-        // Open dock expanded
-        // Open left panel
-        // Ensure dock closes
-        // Open dock to the right
-        // Open left panel
-        // Ensure dock is left open
-        // Open right panel
-        // Ensure dock closes
-        // Open dock bottom
-        // Open left panel
-        // Open right panel
-        // Ensure dock still open
+        let mut cx = DockTestContext::new(cx).await;
+
+        // Dock closes when expanded for either panel
+        cx.move_dock(DockAnchor::Expanded);
+        cx.open_sidebar(SidebarSide::Left);
+        cx.assert_dock_position(DockPosition::Hidden(DockAnchor::Expanded));
+        cx.close_sidebar(SidebarSide::Left);
+        cx.move_dock(DockAnchor::Expanded);
+        cx.open_sidebar(SidebarSide::Right);
+        cx.assert_dock_position(DockPosition::Hidden(DockAnchor::Expanded));
+
+        // Dock closes in the right position if the right sidebar is opened
+        cx.move_dock(DockAnchor::Right);
+        cx.open_sidebar(SidebarSide::Left);
+        cx.assert_dock_position(DockPosition::Shown(DockAnchor::Right));
+        cx.open_sidebar(SidebarSide::Right);
+        cx.assert_dock_position(DockPosition::Hidden(DockAnchor::Right));
+        cx.close_sidebar(SidebarSide::Right);
+
+        // Dock in bottom position ignores sidebars
+        cx.move_dock(DockAnchor::Bottom);
+        cx.open_sidebar(SidebarSide::Left);
+        cx.open_sidebar(SidebarSide::Right);
+        cx.assert_dock_position(DockPosition::Shown(DockAnchor::Bottom));
+
+        // Opening the dock in the right position closes the right sidebar
+        cx.move_dock(DockAnchor::Right);
+        cx.assert_sidebar_closed(SidebarSide::Right);
     }
 
     #[gpui::test]
     async fn test_focusing_panes_shows_and_hides_dock(cx: &mut TestAppContext) {
-        // Open item in center pane
-        // Open dock expanded
-        // Focus new item
-        // Ensure the dock gets hidden
-        // Open dock to the right
-        // Focus new item
-        // Ensure dock stays shown but inactive
-        // Add item to dock and hide it
-        // Focus the added item
-        // Ensure the dock is open
+        let mut cx = DockTestContext::new(cx).await;
+
+        // Focusing an item not in the dock when expanded hides the dock
+        let center_item = cx.add_item_to_center_pane();
+        cx.move_dock(DockAnchor::Expanded);
+        let dock_item = cx
+            .dock_items()
+            .get(0)
+            .cloned()
+            .expect("Dock should have an item at this point");
+        center_item.update(&mut cx, |_, cx| cx.focus_self());
+        cx.assert_dock_position(DockPosition::Hidden(DockAnchor::Expanded));
+
+        // Focusing an item not in the dock when not expanded, leaves the dock open but inactive
+        cx.move_dock(DockAnchor::Right);
+        center_item.update(&mut cx, |_, cx| cx.focus_self());
+        cx.assert_dock_position(DockPosition::Shown(DockAnchor::Right));
+        cx.assert_dock_pane_inactive();
+
+        // Focus dock item
+        dock_item.update(&mut cx, |_, cx| cx.focus_self());
+        cx.assert_dock_position(DockPosition::Shown(DockAnchor::Right));
+        cx.assert_dock_pane_active();
+    }
+
+    struct DockTestContext<'a> {
+        pub cx: &'a mut TestAppContext,
+        pub window_id: usize,
+        pub workspace: ViewHandle<Workspace>,
+    }
+
+    impl<'a> DockTestContext<'a> {
+        pub async fn new(cx: &'a mut TestAppContext) -> DockTestContext<'a> {
+            Settings::test_async(cx);
+            let fs = FakeFs::new(cx.background());
+
+            cx.update(|cx| init(cx));
+            let project = Project::test(fs, [], cx).await;
+            let (window_id, workspace) =
+                cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
+
+            workspace.update(cx, |workspace, cx| {
+                let left_panel = cx.add_view(|_| TestItem::new());
+                workspace.left_sidebar().update(cx, |sidebar, cx| {
+                    sidebar.add_item(
+                        "icons/folder_tree_16.svg",
+                        "Left Test Panel".to_string(),
+                        left_panel.clone(),
+                        cx,
+                    );
+                });
+
+                let right_panel = cx.add_view(|_| TestItem::new());
+                workspace.right_sidebar().update(cx, |sidebar, cx| {
+                    sidebar.add_item(
+                        "icons/folder_tree_16.svg",
+                        "Right Test Panel".to_string(),
+                        right_panel.clone(),
+                        cx,
+                    );
+                });
+            });
+
+            Self {
+                cx,
+                window_id,
+                workspace,
+            }
+        }
+
+        pub fn workspace<F, T>(&self, read: F) -> T
+        where
+            F: FnOnce(&Workspace, &AppContext) -> T,
+        {
+            self.workspace.read_with(self.cx, read)
+        }
+
+        pub fn update_workspace<F, T>(&mut self, update: F) -> T
+        where
+            F: FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
+        {
+            self.workspace.update(self.cx, update)
+        }
+
+        pub fn sidebar<F, T>(&self, sidebar_side: SidebarSide, read: F) -> T
+        where
+            F: FnOnce(&Sidebar, &AppContext) -> T,
+        {
+            self.workspace(|workspace, cx| {
+                let sidebar = match sidebar_side {
+                    SidebarSide::Left => workspace.left_sidebar(),
+                    SidebarSide::Right => workspace.right_sidebar(),
+                }
+                .read(cx);
+
+                read(sidebar, cx)
+            })
+        }
+
+        pub fn add_item_to_center_pane(&mut self) -> ViewHandle<TestItem> {
+            self.update_workspace(|workspace, cx| {
+                let item = cx.add_view(|_| TestItem::new());
+                let pane = workspace
+                    .last_active_center_pane
+                    .clone()
+                    .unwrap_or_else(|| workspace.center.panes()[0].clone());
+                Pane::add_item(
+                    workspace,
+                    &pane,
+                    Box::new(item.clone()),
+                    true,
+                    true,
+                    None,
+                    cx,
+                );
+                item
+            })
+        }
+
+        pub fn dock_pane<F, T>(&self, read: F) -> T
+        where
+            F: FnOnce(&Pane, &AppContext) -> T,
+        {
+            self.workspace(|workspace, cx| {
+                let dock_pane = workspace.dock_pane().read(cx);
+                read(dock_pane, cx)
+            })
+        }
+
+        pub fn move_dock(&self, anchor: DockAnchor) {
+            self.cx.dispatch_action(self.window_id, MoveDock(anchor));
+        }
+
+        pub fn open_sidebar(&mut self, sidebar_side: SidebarSide) {
+            if !self.sidebar(sidebar_side, |sidebar, _| sidebar.is_open()) {
+                self.update_workspace(|workspace, cx| workspace.toggle_sidebar(sidebar_side, cx));
+            }
+        }
+
+        pub fn close_sidebar(&mut self, sidebar_side: SidebarSide) {
+            if self.sidebar(sidebar_side, |sidebar, _| sidebar.is_open()) {
+                self.update_workspace(|workspace, cx| workspace.toggle_sidebar(sidebar_side, cx));
+            }
+        }
+
+        pub fn dock_items(&self) -> Vec<ViewHandle<TestItem>> {
+            self.dock_pane(|pane, cx| {
+                pane.items()
+                    .map(|item| {
+                        item.act_as::<TestItem>(cx)
+                            .expect("Dock Test Context uses TestItems in the dock")
+                    })
+                    .collect()
+            })
+        }
+
+        pub async fn close_dock_items(&mut self) {
+            self.update_workspace(|workspace, cx| {
+                Pane::close_items(workspace, workspace.dock_pane().clone(), cx, |_| true)
+            })
+            .await
+            .expect("Could not close dock items")
+        }
+
+        pub fn assert_dock_position(&self, expected_position: DockPosition) {
+            self.workspace(|workspace, _| assert_eq!(workspace.dock.position, expected_position));
+        }
+
+        pub fn assert_sidebar_closed(&self, sidebar_side: SidebarSide) {
+            assert!(!self.sidebar(sidebar_side, |sidebar, _| sidebar.is_open()));
+        }
+
+        pub fn assert_dock_pane_active(&self) {
+            assert!(self.dock_pane(|pane, _| pane.is_active()))
+        }
+
+        pub fn assert_dock_pane_inactive(&self) {
+            assert!(!self.dock_pane(|pane, _| pane.is_active()))
+        }
+    }
+
+    impl<'a> Deref for DockTestContext<'a> {
+        type Target = gpui::TestAppContext;
+
+        fn deref(&self) -> &Self::Target {
+            self.cx
+        }
+    }
+
+    impl<'a> DerefMut for DockTestContext<'a> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.cx
+        }
+    }
+
+    impl<'a> UpdateView for DockTestContext<'a> {
+        fn update_view<T, S>(
+            &mut self,
+            handle: &ViewHandle<T>,
+            update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
+        ) -> S
+        where
+            T: View,
+        {
+            handle.update(self.cx, update)
+        }
     }
 }

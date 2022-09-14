@@ -7826,7 +7826,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_delete_to_beginning_of_line(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
         cx.set_state("one «two threeˇ» four");
         cx.update_editor(|editor, cx| {
             editor.delete_to_beginning_of_line(&DeleteToBeginningOfLine, cx);
@@ -7974,7 +7974,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_newline_below(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
         cx.update(|cx| {
             cx.update_global::<Settings, _, _>(|settings, _| {
                 settings.editor_overrides.tab_size = Some(NonZeroU32::new(4).unwrap());
@@ -8050,7 +8050,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_tab(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
         cx.update(|cx| {
             cx.update_global::<Settings, _, _>(|settings, _| {
                 settings.editor_overrides.tab_size = Some(NonZeroU32::new(3).unwrap());
@@ -8081,7 +8081,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_tab_on_blank_line_auto_indents(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
         let language = Arc::new(
             Language::new(
                 LanguageConfig::default(),
@@ -8139,7 +8139,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
 
         cx.set_state(indoc! {"
               «oneˇ» «twoˇ»
@@ -8208,7 +8208,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_indent_outdent_with_hard_tabs(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
         cx.update(|cx| {
             cx.update_global::<Settings, _, _>(|settings, _| {
                 settings.editor_overrides.hard_tabs = Some(true);
@@ -8416,7 +8416,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_backspace(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
 
         // Basic backspace
         cx.set_state(indoc! {"
@@ -8463,7 +8463,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_delete(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
 
         cx.set_state(indoc! {"
             onˇe two three
@@ -8800,7 +8800,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_clipboard(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
 
         cx.set_state("«one✅ ˇ»two «three ˇ»four «five ˇ»six ");
         cx.update_editor(|e, cx| e.cut(&Cut, cx));
@@ -8876,7 +8876,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_paste_multiline(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
         let language = Arc::new(Language::new(
             LanguageConfig::default(),
             Some(tree_sitter_rust::language()),
@@ -9305,7 +9305,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_select_next(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
         cx.set_state("abc\nˇabc abc\ndefabc\nabc");
 
         cx.update_editor(|e, cx| e.select_next(&SelectNext::default(), cx));

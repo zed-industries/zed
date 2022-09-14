@@ -88,7 +88,7 @@ pub struct EditorTestContext<'a> {
 }
 
 impl<'a> EditorTestContext<'a> {
-    pub async fn new(cx: &'a mut gpui::TestAppContext) -> EditorTestContext<'a> {
+    pub fn new(cx: &'a mut gpui::TestAppContext) -> EditorTestContext<'a> {
         let (window_id, editor) = cx.update(|cx| {
             cx.set_global(Settings::test(cx));
             crate::init(cx);

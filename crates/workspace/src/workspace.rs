@@ -2934,6 +2934,8 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
 mod tests {
     use std::cell::Cell;
 
+    use crate::sidebar::SidebarItem;
+
     use super::*;
     use gpui::{executor::Deterministic, ModelHandle, TestAppContext, ViewContext};
     use project::{FakeFs, Project, ProjectEntryId};
@@ -3724,4 +3726,6 @@ mod tests {
             vec![ItemEvent::UpdateTab, ItemEvent::Edit]
         }
     }
+
+    impl SidebarItem for TestItem {}
 }

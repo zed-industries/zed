@@ -11,7 +11,9 @@ pub trait SidebarItem: View {
     fn should_activate_item_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
         false
     }
-    fn should_show_badge(&self, cx: &AppContext) -> bool;
+    fn should_show_badge(&self, _: &AppContext) -> bool {
+        false
+    }
     fn contains_focused_view(&self, _: &AppContext) -> bool {
         false
     }
