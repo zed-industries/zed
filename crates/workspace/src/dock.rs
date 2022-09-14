@@ -472,6 +472,17 @@ mod tests {
         cx.assert_workspace_pane_inactive();
     }
 
+    #[gpui::test]
+    async fn test_toggle_dock_focus(cx: &mut TestAppContext) {
+        let cx = DockTestContext::new(cx).await;
+
+        cx.move_dock(DockAnchor::Right);
+        cx.assert_dock_pane_active();
+        cx.toggle_dock();
+        cx.move_dock(DockAnchor::Right);
+        cx.assert_dock_pane_active();
+    }
+
     struct DockTestContext<'a> {
         pub cx: &'a mut TestAppContext,
         pub window_id: usize,
@@ -587,6 +598,10 @@ mod tests {
 
         pub fn move_dock(&self, anchor: DockAnchor) {
             self.cx.dispatch_action(self.window_id, MoveDock(anchor));
+        }
+
+        pub fn toggle_dock(&self) {
+            self.cx.dispatch_action(self.window_id, ToggleDock);
         }
 
         pub fn open_sidebar(&mut self, sidebar_side: SidebarSide) {
