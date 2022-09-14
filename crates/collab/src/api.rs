@@ -1,6 +1,6 @@
 use crate::{
     auth,
-    db::{ProjectId, User, UserId},
+    db::{ProjectId, Signup, SignupInvite, SignupRedemption, User, UserId},
     rpc::{self, ResultExt},
     AppState, Error, Result,
 };
@@ -45,6 +45,10 @@ pub fn routes(rpc_server: &Arc<rpc::Server>, state: Arc<AppState>) -> Router<Bod
         )
         .route("/user_activity/counts", get(get_active_user_counts))
         .route("/project_metadata", get(get_project_metadata))
+        .route("/signups", post(create_signup))
+        .route("/signup/redeem", post(redeem_signup))
+        .route("/signups_invites", get(get_signup_invites))
+        .route("/signups_invites_sent", post(record_signup_invites_sent))
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(state))
@@ -414,4 +418,40 @@ async fn get_user_for_invite_code(
     Extension(app): Extension<Arc<AppState>>,
 ) -> Result<Json<User>> {
     Ok(Json(app.db.get_user_for_invite_code(&code).await?))
+}
+
+async fn create_signup(
+    Json(params): Json<Signup>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<()> {
+    app.db.create_signup(params).await?;
+    Ok(())
+}
+
+async fn redeem_signup(
+    Json(redemption): Json<SignupRedemption>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<()> {
+    app.db.redeem_signup(redemption).await?;
+    Ok(())
+}
+
+async fn record_signup_invites_sent(
+    Json(params): Json<Vec<SignupInvite>>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<()> {
+    app.db.record_signup_invites_sent(&params).await?;
+    Ok(())
+}
+
+#[derive(Deserialize)]
+pub struct GetSignupInvitesParams {
+    pub count: usize,
+}
+
+async fn get_signup_invites(
+    Query(params): Query<GetSignupInvitesParams>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<Json<Vec<SignupInvite>>> {
+    Ok(Json(app.db.get_signup_invites(params.count).await?))
 }

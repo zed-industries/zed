@@ -30,6 +30,11 @@ pub trait Db: Send + Sync {
     async fn set_user_connected_once(&self, id: UserId, connected_once: bool) -> Result<()>;
     async fn destroy_user(&self, id: UserId) -> Result<()>;
 
+    async fn create_signup(&self, signup: Signup) -> Result<()>;
+    async fn get_signup_invites(&self, count: usize) -> Result<Vec<SignupInvite>>;
+    async fn record_signup_invites_sent(&self, signups: &[SignupInvite]) -> Result<()>;
+    async fn redeem_signup(&self, redemption: SignupRedemption) -> Result<UserId>;
+
     async fn set_invite_count(&self, id: UserId, count: u32) -> Result<()>;
     async fn get_invite_code_for_user(&self, id: UserId) -> Result<Option<(String, u32)>>;
     async fn get_user_for_invite_code(&self, code: &str) -> Result<User>;
@@ -331,6 +336,125 @@ impl Db for PostgresDb {
             .execute(&self.pool)
             .await
             .map(drop)?)
+    }
+
+    // signups
+
+    async fn create_signup(&self, signup: Signup) -> Result<()> {
+        sqlx::query(
+            "
+            INSERT INTO signups
+            (
+                email_address,
+                email_confirmation_code,
+                email_confirmation_sent,
+                platform_linux,
+                platform_mac,
+                platform_windows,
+                platform_unknown,
+                editor_features,
+                programming_languages
+            )
+            VALUES
+                ($1, $2, 'f', $3, $4, $5, 'f', $6, $7)
+            ",
+        )
+        .bind(&signup.email_address)
+        .bind(&random_email_confirmation_code())
+        .bind(&signup.platform_linux)
+        .bind(&signup.platform_mac)
+        .bind(&signup.platform_windows)
+        .bind(&signup.editor_features)
+        .bind(&signup.programming_languages)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn get_signup_invites(&self, count: usize) -> Result<Vec<SignupInvite>> {
+        Ok(sqlx::query_as(
+            "
+                SELECT
+                    email_address, email_confirmation_code
+                FROM signups
+                WHERE
+                    NOT email_confirmation_sent AND
+                    platform_mac
+                LIMIT $1
+            ",
+        )
+        .bind(count as i32)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    async fn record_signup_invites_sent(&self, signups: &[SignupInvite]) -> Result<()> {
+        sqlx::query(
+            "
+                UPDATE signups
+                SET email_confirmation_sent = 't'
+                WHERE email_address = ANY ($1)
+            ",
+        )
+        .bind(
+            &signups
+                .iter()
+                .map(|s| s.email_address.as_str())
+                .collect::<Vec<_>>(),
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn redeem_signup(&self, redemption: SignupRedemption) -> Result<UserId> {
+        let mut tx = self.pool.begin().await?;
+        let signup_id: i32 = sqlx::query_scalar(
+            "
+            SELECT id
+            FROM signups
+            WHERE
+                email_address = $1 AND
+                email_confirmation_code = $2 AND
+                email_confirmation_sent AND
+                user_id is NULL
+            ",
+        )
+        .bind(&redemption.email_address)
+        .bind(&redemption.email_confirmation_code)
+        .fetch_one(&mut tx)
+        .await?;
+
+        let user_id: i32 = sqlx::query_scalar(
+            "
+            INSERT INTO users
+            (email_address, github_login, admin, invite_count, invite_code)
+            VALUES
+            ($1, $2, 'f', $3, $4)
+            RETURNING id
+            ",
+        )
+        .bind(&redemption.email_address)
+        .bind(&redemption.github_login)
+        .bind(&redemption.invite_count)
+        .bind(random_invite_code())
+        .fetch_one(&mut tx)
+        .await?;
+
+        sqlx::query(
+            "
+            UPDATE signups
+            SET user_id = $1
+            WHERE id = $2
+            ",
+        )
+        .bind(&user_id)
+        .bind(&signup_id)
+        .execute(&mut tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(UserId(user_id))
     }
 
     // invite codes
@@ -1445,6 +1569,30 @@ pub struct IncomingContactRequest {
     pub should_notify: bool,
 }
 
+#[derive(Clone, Deserialize)]
+pub struct Signup {
+    pub email_address: String,
+    pub platform_mac: bool,
+    pub platform_windows: bool,
+    pub platform_linux: bool,
+    pub editor_features: Vec<String>,
+    pub programming_languages: Vec<String>,
+}
+
+#[derive(FromRow, PartialEq, Debug, Serialize, Deserialize)]
+pub struct SignupInvite {
+    pub email_address: String,
+    pub email_confirmation_code: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SignupRedemption {
+    pub email_address: String,
+    pub email_confirmation_code: String,
+    pub github_login: String,
+    pub invite_count: i32,
+}
+
 fn fuzzy_like_string(string: &str) -> String {
     let mut result = String::with_capacity(string.len() * 2 + 1);
     for c in string.chars() {
@@ -1459,6 +1607,10 @@ fn fuzzy_like_string(string: &str) -> String {
 
 fn random_invite_code() -> String {
     nanoid::nanoid!(16)
+}
+
+fn random_email_confirmation_code() -> String {
+    nanoid::nanoid!(64)
 }
 
 #[cfg(test)]
@@ -2400,6 +2552,105 @@ pub mod tests {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_signups() {
+        let postgres = TestDb::postgres().await;
+        let db = postgres.db();
+
+        // people sign up on the waitlist
+        for i in 0..8 {
+            db.create_signup(Signup {
+                email_address: format!("person-{i}@example.com"),
+                platform_mac: true,
+                platform_linux: true,
+                platform_windows: false,
+                editor_features: vec!["speed".into()],
+                programming_languages: vec!["rust".into(), "c".into()],
+            })
+            .await
+            .unwrap();
+        }
+
+        // retrieve the next batch of signup emails to send
+        let signups_batch1 = db.get_signup_invites(3).await.unwrap();
+        let addresses = signups_batch1
+            .iter()
+            .map(|s| &s.email_address)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            addresses,
+            &[
+                "person-0@example.com",
+                "person-1@example.com",
+                "person-2@example.com"
+            ]
+        );
+        assert_ne!(
+            signups_batch1[0].email_confirmation_code,
+            signups_batch1[1].email_confirmation_code
+        );
+
+        // the waitlist isn't updated until we record that the emails
+        // were successfully sent.
+        let signups_batch = db.get_signup_invites(3).await.unwrap();
+        assert_eq!(signups_batch, signups_batch1);
+
+        // once the emails go out, we can retrieve the next batch
+        // of signups.
+        db.record_signup_invites_sent(&signups_batch1)
+            .await
+            .unwrap();
+        let signups_batch2 = db.get_signup_invites(3).await.unwrap();
+        let addresses = signups_batch2
+            .iter()
+            .map(|s| &s.email_address)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            addresses,
+            &[
+                "person-3@example.com",
+                "person-4@example.com",
+                "person-5@example.com"
+            ]
+        );
+
+        // user completes the signup process by providing their
+        // github account.
+        let user_id = db
+            .redeem_signup(SignupRedemption {
+                email_address: signups_batch1[0].email_address.clone(),
+                email_confirmation_code: signups_batch1[0].email_confirmation_code.clone(),
+                github_login: "person-0".into(),
+                invite_count: 5,
+            })
+            .await
+            .unwrap();
+        let user = db.get_user_by_id(user_id).await.unwrap().unwrap();
+        assert_eq!(user.github_login, "person-0");
+        assert_eq!(user.email_address.as_deref(), Some("person-0@example.com"));
+        assert_eq!(user.invite_count, 5);
+
+        // cannot redeem the same signup again.
+        db.redeem_signup(SignupRedemption {
+            email_address: signups_batch1[0].email_address.clone(),
+            email_confirmation_code: signups_batch1[0].email_confirmation_code.clone(),
+            github_login: "some-other-github_account".into(),
+            invite_count: 5,
+        })
+        .await
+        .unwrap_err();
+
+        // cannot redeem a signup with the wrong confirmation code.
+        db.redeem_signup(SignupRedemption {
+            email_address: signups_batch1[1].email_address.clone(),
+            email_confirmation_code: "the-wrong-code".to_string(),
+            github_login: "person-1".into(),
+            invite_count: 5,
+        })
+        .await
+        .unwrap_err();
+    }
+
     pub struct TestDb {
         pub db: Option<Arc<dyn Db>>,
         pub url: String,
@@ -2583,6 +2834,27 @@ pub mod tests {
         }
 
         async fn destroy_user(&self, _id: UserId) -> Result<()> {
+            unimplemented!()
+        }
+
+        // signups
+
+        async fn create_signup(&self, _signup: Signup) -> Result<()> {
+            unimplemented!()
+        }
+
+        async fn get_signup_invites(&self, _count: usize) -> Result<Vec<SignupInvite>> {
+            unimplemented!()
+        }
+
+        async fn record_signup_invites_sent(&self, _signups: &[SignupInvite]) -> Result<()> {
+            unimplemented!()
+        }
+
+        async fn redeem_signup(
+            &self,
+            _redemption: SignupRedemption,
+        ) -> Result<UserId> {
             unimplemented!()
         }
 
