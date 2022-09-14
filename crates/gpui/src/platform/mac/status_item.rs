@@ -186,29 +186,17 @@ impl platform::Window for StatusItem {
         self.0.borrow_mut().appearance_changed_callback = Some(callback);
     }
 
-    fn on_active_status_change(&mut self, _: Box<dyn FnMut(bool)>) {
-        unimplemented!()
-    }
+    fn on_active_status_change(&mut self, _: Box<dyn FnMut(bool)>) {}
 
-    fn on_resize(&mut self, _: Box<dyn FnMut()>) {
-        unimplemented!()
-    }
+    fn on_resize(&mut self, _: Box<dyn FnMut()>) {}
 
-    fn on_fullscreen(&mut self, _: Box<dyn FnMut(bool)>) {
-        unimplemented!()
-    }
+    fn on_fullscreen(&mut self, _: Box<dyn FnMut(bool)>) {}
 
-    fn on_should_close(&mut self, _: Box<dyn FnMut() -> bool>) {
-        unimplemented!()
-    }
+    fn on_should_close(&mut self, _: Box<dyn FnMut() -> bool>) {}
 
-    fn on_close(&mut self, _: Box<dyn FnOnce()>) {
-        unimplemented!()
-    }
+    fn on_close(&mut self, _: Box<dyn FnOnce()>) {}
 
-    fn set_input_handler(&mut self, _: Box<dyn crate::InputHandler>) {
-        unimplemented!()
-    }
+    fn set_input_handler(&mut self, _: Box<dyn crate::InputHandler>) {}
 
     fn prompt(
         &self,

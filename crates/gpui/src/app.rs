@@ -1924,84 +1924,11 @@ impl MutableAppContext {
             );
             root_view.update(this, |view, cx| view.on_focus_in(cx.handle().into(), cx));
 
-            let mut window =
+            let window =
                 this.cx
                     .platform
                     .open_window(window_id, window_options, this.foreground.clone());
-            let presenter = Rc::new(RefCell::new(this.build_presenter(
-                window_id,
-                window.titlebar_height(),
-                window.appearance(),
-            )));
-
-            {
-                let mut app = this.upgrade();
-                let presenter = Rc::downgrade(&presenter);
-                window.on_event(Box::new(move |event| {
-                    app.update(|cx| {
-                        if let Some(presenter) = presenter.upgrade() {
-                            if let Event::KeyDown(KeyDownEvent { keystroke, .. }) = &event {
-                                if cx.dispatch_keystroke(window_id, keystroke) {
-                                    return true;
-                                }
-                            }
-
-                            presenter.borrow_mut().dispatch_event(event, false, cx)
-                        } else {
-                            false
-                        }
-                    })
-                }));
-            }
-
-            {
-                let mut app = this.upgrade();
-                window.on_active_status_change(Box::new(move |is_active| {
-                    app.update(|cx| cx.window_changed_active_status(window_id, is_active))
-                }));
-            }
-
-            {
-                let mut app = this.upgrade();
-                window.on_resize(Box::new(move || {
-                    app.update(|cx| cx.window_was_resized(window_id))
-                }));
-            }
-
-            {
-                let mut app = this.upgrade();
-                window.on_fullscreen(Box::new(move |is_fullscreen| {
-                    app.update(|cx| cx.window_was_fullscreen_changed(window_id, is_fullscreen))
-                }));
-            }
-
-            {
-                let mut app = this.upgrade();
-                window.on_close(Box::new(move || {
-                    app.update(|cx| cx.remove_window(window_id));
-                }));
-            }
-
-            {
-                let mut app = this.upgrade();
-                window
-                    .on_appearance_changed(Box::new(move || app.update(|cx| cx.refresh_windows())));
-            }
-
-            window.set_input_handler(Box::new(WindowInputHandler {
-                app: this.upgrade().0,
-                window_id,
-            }));
-
-            let scene = presenter.borrow_mut().build_scene(
-                window.size(),
-                window.scale_factor(),
-                false,
-                this,
-            );
-            window.present_scene(scene);
-            this.presenters_and_platform_windows
-                .insert(window_id, (presenter.clone(), window));
+            this.register_platform_window(window_id, window);
 
             (window_id, root_view)
         })
@@ -2029,45 +1956,89 @@ impl MutableAppContext {
             );
             root_view.update(this, |view, cx| view.on_focus_in(cx.handle().into(), cx));
 
-            let mut status_item = this.cx.platform.add_status_item();
-            let presenter = Rc::new(RefCell::new(this.build_presenter(
-                window_id,
-                0.,
-                status_item.appearance(),
-            )));
-
-            {
-                let mut app = this.upgrade();
-                let presenter = Rc::downgrade(&presenter);
-                status_item.on_event(Box::new(move |event| {
-                    app.update(|cx| {
-                        if let Some(presenter) = presenter.upgrade() {
-                            presenter.borrow_mut().dispatch_event(event, false, cx)
-                        } else {
-                            false
-                        }
-                    })
-                }));
-            }
-
-            {
-                let mut app = this.upgrade();
-                status_item
-                    .on_appearance_changed(Box::new(move || app.update(|cx| cx.refresh_windows())));
-            }
-
-            let scene = presenter.borrow_mut().build_scene(
-                status_item.size(),
-                status_item.scale_factor(),
-                false,
-                this,
-            );
-            status_item.present_scene(scene);
-            this.presenters_and_platform_windows
-                .insert(window_id, (presenter.clone(), status_item));
+            let status_item = this.cx.platform.add_status_item();
+            this.register_platform_window(window_id, status_item);
 
             (window_id, root_view)
         })
+    }
+
+    fn register_platform_window(
+        &mut self,
+        window_id: usize,
+        mut window: Box<dyn platform::Window>,
+    ) {
+        let presenter = Rc::new(RefCell::new(self.build_presenter(
+            window_id,
+            window.titlebar_height(),
+            window.appearance(),
+        )));
+
+        {
+            let mut app = self.upgrade();
+            let presenter = Rc::downgrade(&presenter);
+            window.on_event(Box::new(move |event| {
+                app.update(|cx| {
+                    if let Some(presenter) = presenter.upgrade() {
+                        if let Event::KeyDown(KeyDownEvent { keystroke, .. }) = &event {
+                            if cx.dispatch_keystroke(window_id, keystroke) {
+                                return true;
+                            }
+                        }
+
+                        presenter.borrow_mut().dispatch_event(event, false, cx)
+                    } else {
+                        false
+                    }
+                })
+            }));
+        }
+
+        {
+            let mut app = self.upgrade();
+            window.on_active_status_change(Box::new(move |is_active| {
+                app.update(|cx| cx.window_changed_active_status(window_id, is_active))
+            }));
+        }
+
+        {
+            let mut app = self.upgrade();
+            window.on_resize(Box::new(move || {
+                app.update(|cx| cx.window_was_resized(window_id))
+            }));
+        }
+
+        {
+            let mut app = self.upgrade();
+            window.on_fullscreen(Box::new(move |is_fullscreen| {
+                app.update(|cx| cx.window_was_fullscreen_changed(window_id, is_fullscreen))
+            }));
+        }
+
+        {
+            let mut app = self.upgrade();
+            window.on_close(Box::new(move || {
+                app.update(|cx| cx.remove_window(window_id));
+            }));
+        }
+
+        {
+            let mut app = self.upgrade();
+            window.on_appearance_changed(Box::new(move || app.update(|cx| cx.refresh_windows())));
+        }
+
+        window.set_input_handler(Box::new(WindowInputHandler {
+            app: self.upgrade().0,
+            window_id,
+        }));
+
+        let scene =
+            presenter
+                .borrow_mut()
+                .build_scene(window.size(), window.scale_factor(), false, self);
+        window.present_scene(scene);
+        self.presenters_and_platform_windows
+            .insert(window_id, (presenter.clone(), window));
     }
 
     pub fn replace_root_view<T, F>(&mut self, window_id: usize, build_root_view: F) -> ViewHandle<T>
