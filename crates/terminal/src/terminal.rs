@@ -270,7 +270,6 @@ impl TerminalBuilder {
         working_directory: Option<PathBuf>,
         shell: Option<Shell>,
         env: Option<HashMap<String, String>>,
-        initial_size: TerminalSize,
         blink_settings: Option<TerminalBlink>,
         alternate_scroll: &AlternateScroll,
         window_id: usize,
@@ -310,7 +309,11 @@ impl TerminalBuilder {
         //TODO: Remove with a bounded sender which can be dispatched on &self
         let (events_tx, events_rx) = unbounded();
         //Set up the terminal...
-        let mut term = Term::new(&config, &initial_size, ZedListener(events_tx.clone()));
+        let mut term = Term::new(
+            &config,
+            &TerminalSize::default(),
+            ZedListener(events_tx.clone()),
+        );
 
         //Start off blinking if we need to
         if let Some(TerminalBlink::On) = blink_settings {
@@ -325,7 +328,11 @@ impl TerminalBuilder {
         let term = Arc::new(FairMutex::new(term));
 
         //Setup the pty...
-        let pty = match tty::new(&pty_config, initial_size.into(), window_id as u64) {
+        let pty = match tty::new(
+            &pty_config,
+            TerminalSize::default().into(),
+            window_id as u64,
+        ) {
             Ok(pty) => pty,
             Err(error) => {
                 bail!(TerminalError {
@@ -357,7 +364,6 @@ impl TerminalBuilder {
             term,
             events: VecDeque::with_capacity(10), //Should never get this high.
             last_content: Default::default(),
-            cur_size: initial_size,
             last_mouse: None,
             matches: Vec::new(),
             last_synced: Instant::now(),
@@ -453,6 +459,7 @@ pub struct TerminalContent {
     selection: Option<SelectionRange>,
     cursor: RenderableCursor,
     cursor_char: char,
+    size: TerminalSize,
 }
 
 impl Default for TerminalContent {
@@ -468,6 +475,7 @@ impl Default for TerminalContent {
                 point: Point::new(Line(0), Column(0)),
             },
             cursor_char: Default::default(),
+            size: Default::default(),
         }
     }
 }
@@ -478,7 +486,6 @@ pub struct Terminal {
     events: VecDeque<InternalEvent>,
     last_mouse: Option<(Point, AlacDirection)>,
     pub matches: Vec<RangeInclusive<Point>>,
-    cur_size: TerminalSize,
     last_content: TerminalContent,
     last_synced: Instant,
     sync_task: Option<Task<()>>,
@@ -511,7 +518,7 @@ impl Terminal {
             )),
             AlacTermEvent::PtyWrite(out) => self.write_to_pty(out.clone()),
             AlacTermEvent::TextAreaSizeRequest(format) => {
-                self.write_to_pty(format(self.cur_size.into()))
+                self.write_to_pty(format(self.last_content.size.into()))
             }
             AlacTermEvent::CursorBlinkingChange => {
                 cx.emit(Event::BlinkChanged);
@@ -580,7 +587,7 @@ impl Terminal {
                 new_size.height = f32::max(new_size.line_height, new_size.height);
                 new_size.width = f32::max(new_size.cell_width, new_size.width);
 
-                self.cur_size = new_size.clone();
+                self.last_content.size = new_size.clone();
 
                 self.pty_tx.0.send(Msg::Resize((new_size).into())).ok();
 
@@ -609,8 +616,12 @@ impl Terminal {
             }
             InternalEvent::UpdateSelection(position) => {
                 if let Some(mut selection) = term.selection.take() {
-                    let point = mouse_point(*position, self.cur_size, term.grid().display_offset());
-                    let side = mouse_side(*position, self.cur_size);
+                    let point = mouse_point(
+                        *position,
+                        self.last_content.size,
+                        term.grid().display_offset(),
+                    );
+                    let side = mouse_side(*position, self.last_content.size);
 
                     selection.update(point, side);
                     term.selection = Some(selection);
@@ -733,11 +744,11 @@ impl Terminal {
             self.process_terminal_event(&e, &mut terminal, cx)
         }
 
-        self.last_content = Self::make_content(&terminal);
+        self.last_content = Self::make_content(&terminal, self.last_content.size);
         self.last_synced = Instant::now();
     }
 
-    fn make_content(term: &Term<ZedListener>) -> TerminalContent {
+    fn make_content(term: &Term<ZedListener>, last_size: TerminalSize) -> TerminalContent {
         let content = term.renderable_content();
         TerminalContent {
             cells: content
@@ -760,6 +771,7 @@ impl Terminal {
             selection: content.selection,
             cursor: content.cursor,
             cursor_char: term.grid()[content.cursor.point].c,
+            size: last_size,
         }
     }
 
@@ -799,8 +811,12 @@ impl Terminal {
     pub fn mouse_move(&mut self, e: &MouseMovedEvent, origin: Vector2F) {
         let position = e.position.sub(origin);
 
-        let point = mouse_point(position, self.cur_size, self.last_content.display_offset);
-        let side = mouse_side(position, self.cur_size);
+        let point = mouse_point(
+            position,
+            self.last_content.size,
+            self.last_content.display_offset,
+        );
+        let side = mouse_side(position, self.last_content.size);
 
         if self.mouse_changed(point, side) && self.mouse_mode(e.shift) {
             if let Some(bytes) = mouse_moved_report(point, e, self.last_content.mode) {
@@ -825,7 +841,7 @@ impl Terminal {
                     None => return,
                 };
 
-                let scroll_lines = (scroll_delta / self.cur_size.line_height) as i32;
+                let scroll_lines = (scroll_delta / self.last_content.size.line_height) as i32;
 
                 self.events
                     .push_back(InternalEvent::Scroll(AlacScroll::Delta(scroll_lines)));
@@ -837,8 +853,8 @@ impl Terminal {
 
     fn drag_line_delta(&mut self, e: DragRegionEvent) -> Option<f32> {
         //TODO: Why do these need to be doubled? Probably the same problem that the IME has
-        let top = e.region.origin_y() + (self.cur_size.line_height * 2.);
-        let bottom = e.region.lower_left().y() - (self.cur_size.line_height * 2.);
+        let top = e.region.origin_y() + (self.last_content.size.line_height * 2.);
+        let bottom = e.region.lower_left().y() - (self.last_content.size.line_height * 2.);
         let scroll_delta = if e.position.y() < top {
             (top - e.position.y()).powf(1.1)
         } else if e.position.y() > bottom {
@@ -851,8 +867,12 @@ impl Terminal {
 
     pub fn mouse_down(&mut self, e: &DownRegionEvent, origin: Vector2F) {
         let position = e.position.sub(origin);
-        let point = mouse_point(position, self.cur_size, self.last_content.display_offset);
-        let side = mouse_side(position, self.cur_size);
+        let point = mouse_point(
+            position,
+            self.last_content.size,
+            self.last_content.display_offset,
+        );
+        let side = mouse_side(position, self.last_content.size);
 
         if self.mouse_mode(e.shift) {
             if let Some(bytes) = mouse_button_report(point, e, true, self.last_content.mode) {
@@ -870,8 +890,12 @@ impl Terminal {
         let position = e.position.sub(origin);
 
         if !self.mouse_mode(e.shift) {
-            let point = mouse_point(position, self.cur_size, self.last_content.display_offset);
-            let side = mouse_side(position, self.cur_size);
+            let point = mouse_point(
+                position,
+                self.last_content.size,
+                self.last_content.display_offset,
+            );
+            let side = mouse_side(position, self.last_content.size);
 
             let selection_type = match e.click_count {
                 0 => return, //This is a release
@@ -894,7 +918,11 @@ impl Terminal {
     pub fn mouse_up(&mut self, e: &UpRegionEvent, origin: Vector2F) {
         let position = e.position.sub(origin);
         if self.mouse_mode(e.shift) {
-            let point = mouse_point(position, self.cur_size, self.last_content.display_offset);
+            let point = mouse_point(
+                position,
+                self.last_content.size,
+                self.last_content.display_offset,
+            );
 
             if let Some(bytes) = mouse_button_report(point, e, false, self.last_content.mode) {
                 self.pty_tx.notify(bytes);
@@ -915,7 +943,7 @@ impl Terminal {
             if mouse_mode {
                 let point = mouse_point(
                     e.position.sub(origin),
-                    self.cur_size,
+                    self.last_content.size,
                     self.last_content.display_offset,
                 );
 
@@ -954,20 +982,22 @@ impl Terminal {
             }
             /* Calculate the appropriate scroll lines */
             Some(gpui::TouchPhase::Moved) => {
-                let old_offset = (self.scroll_px / self.cur_size.line_height) as i32;
+                let old_offset = (self.scroll_px / self.last_content.size.line_height) as i32;
 
                 self.scroll_px += e.delta.y() * scroll_multiplier;
 
-                let new_offset = (self.scroll_px / self.cur_size.line_height) as i32;
+                let new_offset = (self.scroll_px / self.last_content.size.line_height) as i32;
 
                 // Whenever we hit the edges, reset our stored scroll to 0
                 // so we can respond to changes in direction quickly
-                self.scroll_px %= self.cur_size.height;
+                self.scroll_px %= self.last_content.size.height;
 
                 Some(new_offset - old_offset)
             }
             /* Fall back to delta / line_height */
-            None => Some(((e.delta.y() * scroll_multiplier) / self.cur_size.line_height) as i32),
+            None => Some(
+                ((e.delta.y() * scroll_multiplier) / self.last_content.size.line_height) as i32,
+            ),
             _ => None,
         }
     }
@@ -1043,7 +1073,68 @@ fn all_search_matches<'a, T>(
     RegexIter::new(start, end, AlacDirection::Right, term, regex)
 }
 
+fn cell_for_mouse<'a>(pos: Vector2F, content: &'a TerminalContent) -> &'a IndexedCell {
+    fn pos_to_viewport(pos: Vector2F, size: TerminalSize) -> Point {
+        Point {
+            line: Line((pos.x() / size.cell_width()) as i32),
+            column: Column((pos.y() / size.line_height()) as usize),
+        }
+    }
+
+    fn cell_for_pos<'a>(point: Point, content: &'a TerminalContent) -> &'a IndexedCell {
+        dbg!(point.line.0, content.size.columns(), point.column.0);
+        debug_assert!(point.line.0.is_positive() || point.line.0 == 0);
+        &content.cells[(point.line.0 as usize * content.size.columns() + point.column.0)]
+    }
+
+    cell_for_pos(pos_to_viewport(pos, content.size), &content)
+}
+
 #[cfg(test)]
 mod tests {
+    use gpui::geometry::vector::vec2f;
+    use rand::{thread_rng, Rng};
+
+    use crate::cell_for_mouse;
+
+    use self::terminal_test_context::TerminalTestContext;
+
     pub mod terminal_test_context;
+
+    #[test]
+    fn test_mouse_to_cell() {
+        let mut rng = thread_rng();
+
+        for _ in 0..10 {
+            let viewport_cells = rng.gen_range(5..50);
+            let cell_size = rng.gen_range(5.0..20.0);
+
+            let size = crate::TerminalSize {
+                cell_width: cell_size,
+                line_height: cell_size,
+                height: cell_size * (viewport_cells as f32),
+                width: cell_size * (viewport_cells as f32),
+            };
+
+            let (content, cells) = TerminalTestContext::create_terminal_content(size, &mut rng);
+
+            for i in 0..viewport_cells {
+                let i = i as usize;
+                for j in 0..viewport_cells {
+                    let j = j as usize;
+                    let min_row = i as f32 * cell_size;
+                    let max_row = (i + 1) as f32 * cell_size;
+                    let min_col = j as f32 * cell_size;
+                    let max_col = (j + 1) as f32 * cell_size;
+
+                    let mouse_pos = vec2f(
+                        rng.gen_range(min_row..max_row),
+                        rng.gen_range(min_col..max_col),
+                    );
+
+                    assert_eq!(cell_for_mouse(mouse_pos, &content).c, cells[i][j]);
+                }
+            }
+        }
+    }
 }

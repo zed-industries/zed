@@ -11,7 +11,6 @@ use util::truncate_and_trailoff;
 use workspace::searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle};
 use workspace::{Item, ItemEvent, ToolbarItemLocation, Workspace};
 
-use crate::TerminalSize;
 use project::{LocalWorktree, Project, ProjectPath};
 use settings::{AlternateScroll, Settings, WorkingDirectory};
 use smallvec::SmallVec;
@@ -87,9 +86,6 @@ impl TerminalContainer {
         modal: bool,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        //The exact size here doesn't matter, the terminal will be resized on the first layout
-        let size_info = TerminalSize::default();
-
         let settings = cx.global::<Settings>();
         let shell = settings.terminal_overrides.shell.clone();
         let envs = settings.terminal_overrides.env.clone(); //Should be short and cheap.
@@ -111,7 +107,6 @@ impl TerminalContainer {
             working_directory.clone(),
             shell,
             envs,
-            size_info,
             settings.terminal_overrides.blinking.clone(),
             scroll,
             cx.window_id(),

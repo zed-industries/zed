@@ -5391,6 +5391,7 @@ dependencies = [
  "ordered-float",
  "procinfo",
  "project",
+ "rand 0.8.5",
  "settings",
  "shellexpand",
  "smallvec",
