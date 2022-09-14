@@ -185,16 +185,8 @@ impl BufferDiff {
             let patch = Self::diff(&head_text, &buffer_text);
 
             if let Some(patch) = patch {
-                let mut buffer_divergence = 0;
-
                 for hunk_index in 0..patch.num_hunks() {
-                    let patch = Self::process_patch_hunk(
-                        &mut buffer_divergence,
-                        &patch,
-                        hunk_index,
-                        buffer,
-                    );
-
+                    let patch = Self::process_patch_hunk(&patch, hunk_index, buffer);
                     tree.push(patch, buffer);
                 }
             }
@@ -352,7 +344,6 @@ impl BufferDiff {
     }
 
     fn process_patch_hunk<'a>(
-        buffer_divergence: &mut isize,
         patch: &GitPatch<'a>,
         hunk_index: usize,
         buffer: &text::BufferSnapshot,
@@ -363,18 +354,17 @@ impl BufferDiff {
         for line_index in 0..patch.num_lines_in_hunk(hunk_index).unwrap() {
             let line = patch.line_in_hunk(hunk_index, line_index).unwrap();
             let kind = line.origin_value();
-            println!("line index: {line_index}, kind: {kind:?}");
             let content_offset = line.content_offset() as isize;
 
             match (kind, &mut buffer_byte_range, &mut head_byte_range) {
                 (GitDiffLineType::Addition, None, _) => {
-                    let start = *buffer_divergence + content_offset;
-                    let end = start + line.content().len() as isize;
-                    buffer_byte_range = Some(start as usize..end as usize);
+                    let end = content_offset + line.content().len() as isize;
+                    buffer_byte_range = Some(content_offset as usize..end as usize);
                 }
 
                 (GitDiffLineType::Addition, Some(buffer_byte_range), _) => {
-                    buffer_byte_range.end = content_offset as usize;
+                    let end = content_offset + line.content().len() as isize;
+                    buffer_byte_range.end = end as usize;
                 }
 
                 (GitDiffLineType::Deletion, _, None) => {
@@ -395,8 +385,6 @@ impl BufferDiff {
         let buffer_byte_range = buffer_byte_range.unwrap_or(0..0);
         //unwrap_or addition without deletion
         let head_byte_range = head_byte_range.unwrap_or(0..0);
-
-        *buffer_divergence += buffer_byte_range.len() as isize - head_byte_range.len() as isize;
 
         DiffHunk {
             buffer_range: buffer.anchor_before(buffer_byte_range.start)
