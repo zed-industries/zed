@@ -46,6 +46,11 @@ export default function search(theme: Theme) {
         background: backgroundColor(theme, "on500", "active"),
         border: border(theme, "muted"),
       },
+      clicked: {
+        ...text(theme, "mono", "active"),
+        background: backgroundColor(theme, "on300", "active"),
+        border: border(theme, "secondary"),
+      },
       hover: {
         ...text(theme, "mono", "active"),
         background: backgroundColor(theme, "on500", "hovered"),

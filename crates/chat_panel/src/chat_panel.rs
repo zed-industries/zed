@@ -308,7 +308,7 @@ impl ChatPanel {
         enum SignInPromptLabel {}
 
         Align::new(
-            MouseEventHandler::new::<SignInPromptLabel, _, _>(0, cx, |mouse_state, _| {
+            MouseEventHandler::<SignInPromptLabel>::new(0, cx, |mouse_state, _| {
                 Label::new(
                     "Sign in to use chat".to_string(),
                     if mouse_state.hovered {

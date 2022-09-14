@@ -96,7 +96,6 @@ export default function tabBar(theme: Theme) {
       buttonWidth: activePaneActiveTab.height,
       hover: {
         color: iconColor(theme, "active"),
-        background: backgroundColor(theme, 300),
       },
     },
   }

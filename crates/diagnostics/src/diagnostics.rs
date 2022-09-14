@@ -776,7 +776,8 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        let (_, workspace) =
+            cx.add_window(|cx| Workspace::new(project.clone(), |_, _| unimplemented!(), cx));
 
         // Create some diagnostics
         project.update(cx, |project, cx| {

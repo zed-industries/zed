@@ -62,7 +62,7 @@ impl Tooltip {
         struct ElementState<Tag>(Tag);
         struct MouseEventHandlerState<Tag>(Tag);
 
-        let state_handle = cx.element_state::<ElementState<Tag>, Rc<TooltipState>>(id);
+        let state_handle = cx.default_element_state::<ElementState<Tag>, Rc<TooltipState>>(id);
         let state = state_handle.read(cx).clone();
         let tooltip = if state.visible.get() {
             let mut collapsed_tooltip = Self::render_tooltip(
@@ -84,42 +84,41 @@ impl Tooltip {
                         })
                         .boxed(),
                 )
-                .fit_mode(OverlayFitMode::FlipAlignment)
-                .with_abs_position(state.position.get())
+                .with_fit_mode(OverlayFitMode::SwitchAnchor)
+                .with_anchor_position(state.position.get())
                 .boxed(),
             )
         } else {
             None
         };
-        let child =
-            MouseEventHandler::new::<MouseEventHandlerState<Tag>, _, _>(id, cx, |_, _| child)
-                .on_hover(move |e, cx| {
-                    let position = e.position;
-                    let window_id = cx.window_id();
-                    if let Some(view_id) = cx.view_id() {
-                        if e.started {
-                            if !state.visible.get() {
-                                state.position.set(position);
+        let child = MouseEventHandler::<MouseEventHandlerState<Tag>>::new(id, cx, |_, _| child)
+            .on_hover(move |e, cx| {
+                let position = e.position;
+                let window_id = cx.window_id();
+                if let Some(view_id) = cx.view_id() {
+                    if e.started {
+                        if !state.visible.get() {
+                            state.position.set(position);
 
-                                let mut debounce = state.debounce.borrow_mut();
-                                if debounce.is_none() {
-                                    *debounce = Some(cx.spawn({
-                                        let state = state.clone();
-                                        |mut cx| async move {
-                                            cx.background().timer(DEBOUNCE_TIMEOUT).await;
-                                            state.visible.set(true);
-                                            cx.update(|cx| cx.notify_view(window_id, view_id));
-                                        }
-                                    }));
-                                }
+                            let mut debounce = state.debounce.borrow_mut();
+                            if debounce.is_none() {
+                                *debounce = Some(cx.spawn({
+                                    let state = state.clone();
+                                    |mut cx| async move {
+                                        cx.background().timer(DEBOUNCE_TIMEOUT).await;
+                                        state.visible.set(true);
+                                        cx.update(|cx| cx.notify_view(window_id, view_id));
+                                    }
+                                }));
                             }
-                        } else {
-                            state.visible.set(false);
-                            state.debounce.take();
                         }
+                    } else {
+                        state.visible.set(false);
+                        state.debounce.take();
                     }
-                })
-                .boxed();
+                }
+            })
+            .boxed();
         Self {
             child,
             tooltip,

@@ -1960,6 +1960,7 @@ impl MutableAppContext {
         {
             let mut app = self.upgrade();
             let presenter = Rc::downgrade(&presenter);
+
             window.on_event(Box::new(move |event| {
                 app.update(|cx| {
                     if let Some(presenter) = presenter.upgrade() {
@@ -4028,7 +4029,7 @@ pub struct RenderParams {
     pub view_id: usize,
     pub titlebar_height: f32,
     pub hovered_region_ids: HashSet<MouseRegionId>,
-    pub clicked_region_ids: Option<(Vec<MouseRegionId>, MouseButton)>,
+    pub clicked_region_ids: Option<(HashSet<MouseRegionId>, MouseButton)>,
     pub refreshing: bool,
 }
 
@@ -4037,7 +4038,7 @@ pub struct RenderContext<'a, T: View> {
     pub(crate) view_id: usize,
     pub(crate) view_type: PhantomData<T>,
     pub(crate) hovered_region_ids: HashSet<MouseRegionId>,
-    pub(crate) clicked_region_ids: Option<(Vec<MouseRegionId>, MouseButton)>,
+    pub(crate) clicked_region_ids: Option<(HashSet<MouseRegionId>, MouseButton)>,
     pub app: &'a mut MutableAppContext,
     pub titlebar_height: f32,
     pub refreshing: bool,
@@ -4076,10 +4077,7 @@ impl<'a, V: View> RenderContext<'a, V> {
     }
 
     pub fn mouse_state<Tag: 'static>(&self, region_id: usize) -> MouseState {
-        let region_id = MouseRegionId {
-            view_id: self.view_id,
-            discriminant: (TypeId::of::<Tag>(), region_id),
-        };
+        let region_id = MouseRegionId::new::<Tag>(self.view_id, region_id);
         MouseState {
             hovered: self.hovered_region_ids.contains(&region_id),
             clicked: self.clicked_region_ids.as_ref().and_then(|(ids, button)| {
@@ -4092,9 +4090,10 @@ impl<'a, V: View> RenderContext<'a, V> {
         }
     }
 
-    pub fn element_state<Tag: 'static, T: 'static + Default>(
+    pub fn element_state<Tag: 'static, T: 'static>(
         &mut self,
         element_id: usize,
+        initial: T,
     ) -> ElementStateHandle<T> {
         let id = ElementStateId {
             view_id: self.view_id(),
@@ -4104,8 +4103,15 @@ impl<'a, V: View> RenderContext<'a, V> {
         self.cx
             .element_states
             .entry(id)
-            .or_insert_with(|| Box::new(T::default()));
+            .or_insert_with(|| Box::new(initial));
         ElementStateHandle::new(id, self.frame_count, &self.cx.ref_counts)
+    }
+
+    pub fn default_element_state<Tag: 'static, T: 'static + Default>(
+        &mut self,
+        element_id: usize,
+    ) -> ElementStateHandle<T> {
+        self.element_state::<Tag, T>(element_id, T::default())
     }
 }
 
@@ -5229,6 +5235,10 @@ impl<T: 'static> ElementStateHandle<T> {
         }
     }
 
+    pub fn id(&self) -> ElementStateId {
+        self.id
+    }
+
     pub fn read<'a>(&self, cx: &'a AppContext) -> &'a T {
         cx.element_states
             .get(&self.id)
@@ -6032,12 +6042,12 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+            fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+                enum Handler {}
                 let mouse_down_count = self.mouse_down_count.clone();
-                EventHandler::new(Empty::new().boxed())
-                    .on_mouse_down(move |_| {
+                MouseEventHandler::<Handler>::new(0, cx, |_, _| Empty::new().boxed())
+                    .on_down(MouseButton::Left, move |_, _| {
                         mouse_down_count.fetch_add(1, SeqCst);
-                        true
                     })
                     .boxed()
             }

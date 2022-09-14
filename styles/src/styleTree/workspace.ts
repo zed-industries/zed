@@ -37,11 +37,14 @@ export default function workspace(theme: Theme) {
       },
       cursor: "Arrow",
     },
-    sidebarResizeHandle: {
-      background: border(theme, "primary").color,
-      padding: {
-        left: 1,
-      },
+    sidebar: {
+      initialSize: 240,
+      border: {
+        color: border(theme, "primary").color,
+        width: 1,
+        left: true,
+        right: true,
+      }
     },
     paneDivider: {
       color: border(theme, "secondary").color,
@@ -156,5 +159,19 @@ export default function workspace(theme: Theme) {
       width: 400,
       margin: { right: 10, bottom: 10 },
     },
+    dock: {
+      initialSizeRight: 640,
+      initialSizeBottom: 480,
+      wash_color: withOpacity(theme.backgroundColor[500].base, 0.5),
+      flex: 0.5,
+      panel: {
+        margin: 4,
+      },
+      maximized: {
+        margin: 32,
+        border: border(theme, "secondary"),
+        shadow: modalShadow(theme),
+      }
+    }
   };
 }

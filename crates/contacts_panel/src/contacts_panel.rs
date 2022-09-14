@@ -276,7 +276,7 @@ impl ContactsPanel {
             Section::Offline => "Offline",
         };
         let icon_size = theme.section_icon_size;
-        MouseEventHandler::new::<Header, _, _>(section as usize, cx, |_, _| {
+        MouseEventHandler::<Header>::new(section as usize, cx, |_, _| {
             Flex::row()
                 .with_child(
                     Svg::new(if is_collapsed {
@@ -375,7 +375,7 @@ impl ContactsPanel {
         let baseline_offset =
             row.name.text.baseline_offset(font_cache) + (theme.row_height - line_height) / 2.;
 
-        MouseEventHandler::new::<JoinProject, _, _>(project_id as usize, cx, |mouse_state, cx| {
+        MouseEventHandler::<JoinProject>::new(project_id as usize, cx, |mouse_state, cx| {
             let tree_branch = *tree_branch.style_for(mouse_state, is_selected);
             let row = theme.project_row.style_for(mouse_state, is_selected);
 
@@ -424,7 +424,7 @@ impl ContactsPanel {
                                 return None;
                             }
 
-                            let button = MouseEventHandler::new::<ToggleProjectOnline, _, _>(
+                            let button = MouseEventHandler::<ToggleProjectOnline>::new(
                                 project_id as usize,
                                 cx,
                                 |state, _| {
@@ -529,7 +529,7 @@ impl ContactsPanel {
         enum ToggleOnline {}
 
         let project_id = project_handle.id();
-        MouseEventHandler::new::<LocalProject, _, _>(project_id, cx, |state, cx| {
+        MouseEventHandler::<LocalProject>::new(project_id, cx, |state, cx| {
             let row = theme.project_row.style_for(state, is_selected);
             let mut worktree_root_names = String::new();
             let project = if let Some(project) = project_handle.upgrade(cx.deref_mut()) {
@@ -548,7 +548,7 @@ impl ContactsPanel {
             Flex::row()
                 .with_child({
                     let button =
-                        MouseEventHandler::new::<ToggleOnline, _, _>(project_id, cx, |state, _| {
+                        MouseEventHandler::<ToggleOnline>::new(project_id, cx, |state, _| {
                             let mut style = *theme.private_button.style_for(state, false);
                             if is_going_online {
                                 style.color = theme.disabled_button.color;
@@ -636,7 +636,7 @@ impl ContactsPanel {
 
         if is_incoming {
             row.add_children([
-                MouseEventHandler::new::<Decline, _, _>(user.id as usize, cx, |mouse_state, _| {
+                MouseEventHandler::<Decline>::new(user.id as usize, cx, |mouse_state, _| {
                     let button_style = if is_contact_request_pending {
                         &theme.disabled_button
                     } else {
@@ -658,7 +658,7 @@ impl ContactsPanel {
                 .contained()
                 .with_margin_right(button_spacing)
                 .boxed(),
-                MouseEventHandler::new::<Accept, _, _>(user.id as usize, cx, |mouse_state, _| {
+                MouseEventHandler::<Accept>::new(user.id as usize, cx, |mouse_state, _| {
                     let button_style = if is_contact_request_pending {
                         &theme.disabled_button
                     } else {
@@ -680,7 +680,7 @@ impl ContactsPanel {
             ]);
         } else {
             row.add_child(
-                MouseEventHandler::new::<Cancel, _, _>(user.id as usize, cx, |mouse_state, _| {
+                MouseEventHandler::<Cancel>::new(user.id as usize, cx, |mouse_state, _| {
                     let button_style = if is_contact_request_pending {
                         &theme.disabled_button
                     } else {
@@ -1071,7 +1071,7 @@ impl View for ContactsPanel {
                                 .boxed(),
                         )
                         .with_child(
-                            MouseEventHandler::new::<AddContact, _, _>(0, cx, |_, _| {
+                            MouseEventHandler::<AddContact>::new(0, cx, |_, _| {
                                 Svg::new("icons/user_plus_16.svg")
                                     .with_color(theme.add_contact_button.color)
                                     .constrained()
@@ -1102,35 +1102,31 @@ impl View for ContactsPanel {
 
                             if info.count > 0 {
                                 Some(
-                                    MouseEventHandler::new::<InviteLink, _, _>(
-                                        0,
-                                        cx,
-                                        |state, cx| {
-                                            let style =
-                                                theme.invite_row.style_for(state, false).clone();
+                                    MouseEventHandler::<InviteLink>::new(0, cx, |state, cx| {
+                                        let style =
+                                            theme.invite_row.style_for(state, false).clone();
 
-                                            let copied =
-                                                cx.read_from_clipboard().map_or(false, |item| {
-                                                    item.text().as_str() == info.url.as_ref()
-                                                });
+                                        let copied =
+                                            cx.read_from_clipboard().map_or(false, |item| {
+                                                item.text().as_str() == info.url.as_ref()
+                                            });
 
-                                            Label::new(
-                                                format!(
-                                                    "{} invite link ({} left)",
-                                                    if copied { "Copied" } else { "Copy" },
-                                                    info.count
-                                                ),
-                                                style.label.clone(),
-                                            )
-                                            .aligned()
-                                            .left()
-                                            .constrained()
-                                            .with_height(theme.row_height)
-                                            .contained()
-                                            .with_style(style.container)
-                                            .boxed()
-                                        },
-                                    )
+                                        Label::new(
+                                            format!(
+                                                "{} invite link ({} left)",
+                                                if copied { "Copied" } else { "Copy" },
+                                                info.count
+                                            ),
+                                            style.label.clone(),
+                                        )
+                                        .aligned()
+                                        .left()
+                                        .constrained()
+                                        .with_height(theme.row_height)
+                                        .contained()
+                                        .with_style(style.container)
+                                        .boxed()
+                                    })
                                     .with_cursor_style(CursorStyle::PointingHand)
                                     .on_click(MouseButton::Left, move |_, cx| {
                                         cx.write_to_clipboard(ClipboardItem::new(
@@ -1247,7 +1243,8 @@ mod tests {
             .0
             .read_with(cx, |worktree, _| worktree.id().to_proto());
 
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        let (_, workspace) =
+            cx.add_window(|cx| Workspace::new(project.clone(), |_, _| unimplemented!(), cx));
         let panel = cx.add_view(&workspace, |cx| {
             ContactsPanel::new(
                 user_store.clone(),
