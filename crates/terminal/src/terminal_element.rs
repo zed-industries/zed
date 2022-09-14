@@ -427,7 +427,14 @@ impl TerminalElement {
                         position: e.position,
                     });
                 }
-            });
+            })
+            .on_scroll(TerminalElement::generic_button_handler(
+                connection,
+                origin,
+                move |terminal, origin, e, _cx| {
+                    terminal.scroll_wheel(e, origin);
+                },
+            ));
 
         // Mouse mode handlers:
         // All mouse modes need the extra click handlers
@@ -742,24 +749,13 @@ impl Element for TerminalElement {
     fn dispatch_event(
         &mut self,
         event: &gpui::Event,
-        bounds: gpui::geometry::rect::RectF,
-        visible_bounds: gpui::geometry::rect::RectF,
-        layout: &mut Self::LayoutState,
+        _bounds: gpui::geometry::rect::RectF,
+        _visible_bounds: gpui::geometry::rect::RectF,
+        _layout: &mut Self::LayoutState,
         _paint: &mut Self::PaintState,
         cx: &mut gpui::EventContext,
     ) -> bool {
         match event {
-            Event::ScrollWheel(e) => visible_bounds
-                .contains_point(e.position)
-                .then(|| {
-                    let origin = bounds.origin() + vec2f(layout.size.cell_width, 0.);
-
-                    if let Some(terminal) = self.terminal.upgrade(cx.app) {
-                        terminal.update(cx.app, |term, _| term.scroll_wheel(e, origin));
-                        cx.notify();
-                    }
-                })
-                .is_some(),
             Event::KeyDown(KeyDownEvent { keystroke, .. }) => {
                 if !cx.is_parent_view_focused() {
                     return false;

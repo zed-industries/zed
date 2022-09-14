@@ -369,3 +369,102 @@ impl StatusItemView for ToggleDockButton {
         //Not applicable
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{TestAppContext, ViewContext};
+    use project::{FakeFs, Project};
+    use settings::Settings;
+
+    use crate::{tests::TestItem, ItemHandle, Workspace};
+
+    pub fn default_item_factory(
+        _workspace: &mut Workspace,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Box<dyn ItemHandle> {
+        Box::new(cx.add_view(|_| TestItem::new()))
+    }
+
+    #[gpui::test]
+    async fn test_dock_hides_when_pane_empty(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, [], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
+
+        // Open dock
+        workspace.update(cx, |workspace, cx| {
+            Dock::show(workspace, cx);
+        });
+
+        // Ensure dock has an item in it
+        let dock_item_handle = workspace.read_with(cx, |workspace, cx| {
+            let dock = workspace.dock_pane().read(cx);
+            dock.items()
+                .next()
+                .expect("Dock should have an item in it")
+                .clone()
+        });
+
+        // Close item
+        let close_task = workspace.update(cx, |workspace, cx| {
+            Pane::close_item(
+                workspace,
+                workspace.dock_pane().clone(),
+                dock_item_handle.id(),
+                cx,
+            )
+        });
+        close_task.await.expect("Dock item closed successfully");
+
+        // Ensure dock closes
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(workspace.dock.visible_pane().is_some())
+        });
+
+        // Open again
+        workspace.update(cx, |workspace, cx| {
+            Dock::show(workspace, cx);
+        });
+
+        // Ensure dock has item in it
+        workspace.read_with(cx, |workspace, cx| {
+            let dock = workspace.dock_pane().read(cx);
+            dock.items().next().expect("Dock should have an item in it");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_dock_panel_collisions(cx: &mut TestAppContext) {
+        // Open dock expanded
+        // Open left panel
+        // Ensure dock closes
+        // Open dock to the right
+        // Open left panel
+        // Ensure dock is left open
+        // Open right panel
+        // Ensure dock closes
+        // Open dock bottom
+        // Open left panel
+        // Open right panel
+        // Ensure dock still open
+    }
+
+    #[gpui::test]
+    async fn test_focusing_panes_shows_and_hides_dock(cx: &mut TestAppContext) {
+        // Open item in center pane
+        // Open dock expanded
+        // Focus new item
+        // Ensure the dock gets hidden
+        // Open dock to the right
+        // Focus new item
+        // Ensure dock stays shown but inactive
+        // Add item to dock and hide it
+        // Focus the added item
+        // Ensure the dock is open
+    }
+}

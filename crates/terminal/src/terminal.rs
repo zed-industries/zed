@@ -49,9 +49,10 @@ use thiserror::Error;
 use gpui::{
     geometry::vector::{vec2f, Vector2F},
     keymap::Keystroke,
-    scene::{ClickRegionEvent, DownRegionEvent, DragRegionEvent, UpRegionEvent},
-    ClipboardItem, Entity, ModelContext, MouseButton, MouseMovedEvent, MutableAppContext,
-    ScrollWheelEvent, Task,
+    scene::{
+        ClickRegionEvent, DownRegionEvent, DragRegionEvent, ScrollWheelRegionEvent, UpRegionEvent,
+    },
+    ClipboardItem, Entity, ModelContext, MouseButton, MouseMovedEvent, MutableAppContext, Task,
 };
 
 use crate::mappings::{
@@ -904,10 +905,10 @@ impl Terminal {
     }
 
     ///Scroll the terminal
-    pub fn scroll_wheel(&mut self, e: &ScrollWheelEvent, origin: Vector2F) {
+    pub fn scroll_wheel(&mut self, e: ScrollWheelRegionEvent, origin: Vector2F) {
         let mouse_mode = self.mouse_mode(e.shift);
 
-        if let Some(scroll_lines) = self.determine_scroll_lines(e, mouse_mode) {
+        if let Some(scroll_lines) = self.determine_scroll_lines(&e, mouse_mode) {
             if mouse_mode {
                 let point = mouse_point(
                     e.position.sub(origin),
@@ -916,7 +917,7 @@ impl Terminal {
                 );
 
                 if let Some(scrolls) =
-                    scroll_report(point, scroll_lines as i32, e, self.last_content.mode)
+                    scroll_report(point, scroll_lines as i32, &e, self.last_content.mode)
                 {
                     for scroll in scrolls {
                         self.pty_tx.notify(scroll);
@@ -939,7 +940,11 @@ impl Terminal {
         }
     }
 
-    fn determine_scroll_lines(&mut self, e: &ScrollWheelEvent, mouse_mode: bool) -> Option<i32> {
+    fn determine_scroll_lines(
+        &mut self,
+        e: &ScrollWheelRegionEvent,
+        mouse_mode: bool,
+    ) -> Option<i32> {
         let scroll_multiplier = if mouse_mode { 1. } else { SCROLL_MULTIPLIER };
 
         match e.phase {
