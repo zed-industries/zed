@@ -152,7 +152,10 @@ impl Dock {
             let pane = workspace.dock.pane.clone();
             if pane.read(cx).items().next().is_none() {
                 let item_to_add = (workspace.dock.default_item_factory)(workspace, cx);
+                // Adding the item focuses the pane by default
                 Pane::add_item(workspace, &pane, item_to_add, true, true, None, cx);
+            } else {
+                cx.focus(pane);
             }
         } else if let Some(last_active_center_pane) = workspace.last_active_center_pane.clone() {
             cx.focus(last_active_center_pane);
