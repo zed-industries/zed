@@ -298,6 +298,12 @@ impl super::Window for Window {
     fn present_scene(&mut self, scene: crate::Scene) {
         self.current_scene = Some(scene);
     }
+
+    fn appearance(&self) -> crate::Appearance {
+        crate::Appearance::Light
+    }
+
+    fn on_appearance_changed(&mut self, _: Box<dyn FnMut()>) {}
 }
 
 pub fn platform() -> Platform {

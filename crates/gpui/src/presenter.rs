@@ -11,10 +11,10 @@ use crate::{
         HoverRegionEvent, MouseRegionEvent, MoveRegionEvent, UpOutRegionEvent, UpRegionEvent,
     },
     text_layout::TextLayoutCache,
-    Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox, Entity,
-    FontSystem, ModelHandle, MouseButton, MouseMovedEvent, MouseRegion, MouseRegionId, ParentId,
-    ReadModel, ReadView, RenderContext, RenderParams, Scene, UpgradeModelHandle, UpgradeViewHandle,
-    View, ViewHandle, WeakModelHandle, WeakViewHandle,
+    Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, Appearance, AssetCache, ElementBox,
+    Entity, FontSystem, ModelHandle, MouseButton, MouseMovedEvent, MouseRegion, MouseRegionId,
+    ParentId, ReadModel, ReadView, RenderContext, RenderParams, Scene, UpgradeModelHandle,
+    UpgradeViewHandle, View, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use collections::{HashMap, HashSet};
 use pathfinder_geometry::vector::{vec2f, Vector2F};
@@ -40,12 +40,14 @@ pub struct Presenter {
     clicked_button: Option<MouseButton>,
     mouse_position: Vector2F,
     titlebar_height: f32,
+    appearance: Appearance,
 }
 
 impl Presenter {
     pub fn new(
         window_id: usize,
         titlebar_height: f32,
+        appearance: Appearance,
         font_cache: Arc<FontCache>,
         text_layout_cache: TextLayoutCache,
         asset_cache: Arc<AssetCache>,
@@ -53,7 +55,7 @@ impl Presenter {
     ) -> Self {
         Self {
             window_id,
-            rendered_views: cx.render_views(window_id, titlebar_height),
+            rendered_views: cx.render_views(window_id, titlebar_height, appearance),
             cursor_regions: Default::default(),
             mouse_regions: Default::default(),
             font_cache,
@@ -65,15 +67,18 @@ impl Presenter {
             clicked_button: None,
             mouse_position: vec2f(0., 0.),
             titlebar_height,
+            appearance,
         }
     }
 
     pub fn invalidate(
         &mut self,
         invalidation: &mut WindowInvalidation,
+        appearance: Appearance,
         cx: &mut MutableAppContext,
     ) {
         cx.start_frame();
+        self.appearance = appearance;
         for view_id in &invalidation.removed {
             invalidation.updated.remove(view_id);
             self.rendered_views.remove(view_id);
@@ -96,14 +101,20 @@ impl Presenter {
                         )
                     }),
                     refreshing: false,
+                    appearance,
                 })
                 .unwrap(),
             );
         }
     }
 
-    pub fn refresh(&mut self, invalidation: &mut WindowInvalidation, cx: &mut MutableAppContext) {
-        self.invalidate(invalidation, cx);
+    pub fn refresh(
+        &mut self,
+        invalidation: &mut WindowInvalidation,
+        appearance: Appearance,
+        cx: &mut MutableAppContext,
+    ) {
+        self.invalidate(invalidation, appearance, cx);
         for (view_id, view) in &mut self.rendered_views {
             if !invalidation.updated.contains(view_id) {
                 *view = cx
@@ -122,6 +133,7 @@ impl Presenter {
                             )
                         }),
                         refreshing: true,
+                        appearance,
                     })
                     .unwrap();
             }
@@ -194,6 +206,7 @@ impl Presenter {
                 )
             }),
             titlebar_height: self.titlebar_height,
+            appearance: self.appearance,
             window_size,
             app: cx,
         }
@@ -545,6 +558,7 @@ pub struct LayoutContext<'a> {
     pub refreshing: bool,
     pub window_size: Vector2F,
     titlebar_height: f32,
+    appearance: Appearance,
     hovered_region_ids: HashSet<MouseRegionId>,
     clicked_region_ids: Option<(Vec<MouseRegionId>, MouseButton)>,
 }
@@ -619,6 +633,7 @@ impl<'a> LayoutContext<'a> {
                 hovered_region_ids: self.hovered_region_ids.clone(),
                 clicked_region_ids: self.clicked_region_ids.clone(),
                 refreshing: self.refreshing,
+                appearance: self.appearance,
             };
             f(view, &mut render_cx)
         })

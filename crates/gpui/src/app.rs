@@ -9,8 +9,8 @@ use crate::{
     platform::{self, KeyDownEvent, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::post_inc,
-    AssetCache, AssetSource, ClipboardItem, FontCache, InputHandler, MouseButton, MouseRegionId,
-    PathPromptOptions, TextLayoutCache,
+    Appearance, AssetCache, AssetSource, ClipboardItem, FontCache, InputHandler, MouseButton,
+    MouseRegionId, PathPromptOptions, TextLayoutCache,
 };
 pub use action::*;
 use anyhow::{anyhow, Context, Result};
@@ -579,6 +579,7 @@ impl TestAppContext {
                 hovered_region_ids: Default::default(),
                 clicked_region_ids: None,
                 refreshing: false,
+                appearance: Appearance::Light,
             };
             f(view, &mut render_cx)
         })
@@ -1260,6 +1261,7 @@ impl MutableAppContext {
         &mut self,
         window_id: usize,
         titlebar_height: f32,
+        appearance: Appearance,
     ) -> HashMap<usize, ElementBox> {
         self.start_frame();
         #[allow(clippy::needless_collect)]
@@ -1287,6 +1289,7 @@ impl MutableAppContext {
                         hovered_region_ids: Default::default(),
                         clicked_region_ids: None,
                         refreshing: false,
+                        appearance,
                     })
                     .unwrap(),
                 )
@@ -1925,9 +1928,11 @@ impl MutableAppContext {
                 this.cx
                     .platform
                     .open_window(window_id, window_options, this.foreground.clone());
-            let presenter = Rc::new(RefCell::new(
-                this.build_presenter(window_id, window.titlebar_height()),
-            ));
+            let presenter = Rc::new(RefCell::new(this.build_presenter(
+                window_id,
+                window.titlebar_height(),
+                window.appearance(),
+            )));
 
             {
                 let mut app = this.upgrade();
@@ -1977,6 +1982,12 @@ impl MutableAppContext {
                 }));
             }
 
+            {
+                let mut app = this.upgrade();
+                window
+                    .on_appearance_changed(Box::new(move || app.update(|cx| cx.refresh_windows())));
+            }
+
             window.set_input_handler(Box::new(WindowInputHandler {
                 app: this.upgrade().0,
                 window_id,
@@ -2019,7 +2030,11 @@ impl MutableAppContext {
             root_view.update(this, |view, cx| view.on_focus_in(cx.handle().into(), cx));
 
             let mut status_item = this.cx.platform.add_status_item();
-            let presenter = Rc::new(RefCell::new(this.build_presenter(window_id, 0.)));
+            let presenter = Rc::new(RefCell::new(this.build_presenter(
+                window_id,
+                0.,
+                status_item.appearance(),
+            )));
 
             {
                 let mut app = this.upgrade();
@@ -2033,6 +2048,12 @@ impl MutableAppContext {
                         }
                     })
                 }));
+            }
+
+            {
+                let mut app = this.upgrade();
+                status_item
+                    .on_appearance_changed(Box::new(move || app.update(|cx| cx.refresh_windows())));
             }
 
             let scene = presenter.borrow_mut().build_scene(
@@ -2071,10 +2092,16 @@ impl MutableAppContext {
         self.flush_effects();
     }
 
-    pub fn build_presenter(&mut self, window_id: usize, titlebar_height: f32) -> Presenter {
+    pub fn build_presenter(
+        &mut self,
+        window_id: usize,
+        titlebar_height: f32,
+        appearance: Appearance,
+    ) -> Presenter {
         Presenter::new(
             window_id,
             titlebar_height,
+            appearance,
             self.cx.font_cache.clone(),
             TextLayoutCache::new(self.cx.platform.fonts()),
             self.assets.clone(),
@@ -2412,7 +2439,7 @@ impl MutableAppContext {
             {
                 {
                     let mut presenter = presenter.borrow_mut();
-                    presenter.invalidate(&mut invalidation, self);
+                    presenter.invalidate(&mut invalidation, window.appearance(), self);
                     let scene =
                         presenter.build_scene(window.size(), window.scale_factor(), false, self);
                     window.present_scene(scene);
@@ -2476,6 +2503,7 @@ impl MutableAppContext {
             let mut presenter = presenter.borrow_mut();
             presenter.refresh(
                 invalidation.as_mut().unwrap_or(&mut Default::default()),
+                window.appearance(),
                 self,
             );
             let scene = presenter.build_scene(window.size(), window.scale_factor(), true, self);
@@ -4082,6 +4110,7 @@ pub struct RenderParams {
     pub hovered_region_ids: HashSet<MouseRegionId>,
     pub clicked_region_ids: Option<(Vec<MouseRegionId>, MouseButton)>,
     pub refreshing: bool,
+    pub appearance: Appearance,
 }
 
 pub struct RenderContext<'a, T: View> {
@@ -4092,6 +4121,7 @@ pub struct RenderContext<'a, T: View> {
     pub(crate) clicked_region_ids: Option<(Vec<MouseRegionId>, MouseButton)>,
     pub app: &'a mut MutableAppContext,
     pub titlebar_height: f32,
+    pub appearance: Appearance,
     pub refreshing: bool,
 }
 
@@ -4112,6 +4142,7 @@ impl<'a, V: View> RenderContext<'a, V> {
             hovered_region_ids: params.hovered_region_ids.clone(),
             clicked_region_ids: params.clicked_region_ids.clone(),
             refreshing: params.refreshing,
+            appearance: params.appearance,
         }
     }
 

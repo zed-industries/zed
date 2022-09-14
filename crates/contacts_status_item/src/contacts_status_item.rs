@@ -1,4 +1,4 @@
-use gpui::{elements::*, Entity, RenderContext, View};
+use gpui::{color::Color, elements::*, Appearance, Entity, RenderContext, View};
 
 pub struct ContactsStatusItem;
 
@@ -11,8 +11,15 @@ impl View for ContactsStatusItem {
         "ContactsStatusItem"
     }
 
-    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-        Svg::new("icons/zed_22.svg").aligned().boxed()
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+        let color = match cx.appearance {
+            Appearance::Light | Appearance::VibrantLight => Color::black(),
+            Appearance::Dark | Appearance::VibrantDark => Color::white(),
+        };
+        Svg::new("icons/zed_22.svg")
+            .with_color(color)
+            .aligned()
+            .boxed()
     }
 }
 

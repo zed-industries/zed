@@ -1,4 +1,3 @@
-use super::{geometry::RectFExt, renderer::Renderer};
 use crate::{
     executor,
     geometry::{
@@ -6,7 +5,12 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     keymap::Keystroke,
-    platform::{self, Event, WindowBounds},
+    mac::platform::{NSKeyValueObservingOptionNew, NSViewLayerContentsRedrawDuringViewResize},
+    platform::{
+        self,
+        mac::{geometry::RectFExt, renderer::Renderer},
+        Event, WindowBounds,
+    },
     InputHandler, KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseButtonEvent,
     MouseMovedEvent, Scene,
 };
@@ -101,9 +105,6 @@ unsafe impl objc::Encode for NSRange {
         unsafe { objc::Encoding::from_str(&encoding) }
     }
 }
-
-#[allow(non_upper_case_globals)]
-const NSViewLayerContentsRedrawDuringViewResize: NSInteger = 2;
 
 #[ctor]
 unsafe fn build_classes() {
@@ -264,6 +265,10 @@ unsafe fn build_classes() {
             attributed_substring_for_proposed_range
                 as extern "C" fn(&Object, Sel, NSRange, *mut c_void) -> id,
         );
+        decl.add_method(
+            sel!(observeValueForKeyPath:ofObject:change:context:),
+            appearance_changed as extern "C" fn(&Object, Sel, id, id, id, id),
+        );
 
         // Suppress beep on keystrokes with modifier keys.
         decl.add_method(
@@ -298,6 +303,7 @@ struct WindowState {
     fullscreen_callback: Option<Box<dyn FnMut(bool)>>,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
+    appearance_changed_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<Box<dyn InputHandler>>,
     pending_key_down: Option<(KeyDownEvent, Option<InsertText>)>,
     performed_key_equivalent: bool,
@@ -376,6 +382,7 @@ impl Window {
                 close_callback: None,
                 activate_callback: None,
                 fullscreen_callback: None,
+                appearance_changed_callback: None,
                 input_handler: None,
                 pending_key_down: None,
                 performed_key_equivalent: false,
@@ -433,6 +440,13 @@ impl Window {
 
             native_window.center();
             native_window.makeKeyAndOrderFront_(nil);
+            let _: () = msg_send![
+                native_window,
+                addObserver: native_view
+                forKeyPath: NSString::alloc(nil).init_str("effectiveAppearance")
+                options: NSKeyValueObservingOptionNew
+                context: nil
+            ];
 
             window.0.borrow().move_traffic_light();
             pool.drain();
@@ -633,6 +647,17 @@ impl platform::Window for Window {
 
     fn titlebar_height(&self) -> f32 {
         self.0.as_ref().borrow().titlebar_height()
+    }
+
+    fn appearance(&self) -> crate::Appearance {
+        unsafe {
+            let appearance: id = msg_send![self.0.borrow().native_window, effectiveAppearance];
+            crate::Appearance::from_native(appearance)
+        }
+    }
+
+    fn on_appearance_changed(&mut self, callback: Box<dyn FnMut()>) {
+        self.0.borrow_mut().appearance_changed_callback = Some(callback);
     }
 }
 
@@ -1267,6 +1292,18 @@ extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
         let mut borrow = state.borrow_mut();
         borrow.ime_state = ImeState::Continue;
         borrow.ime_text.take();
+    }
+}
+
+extern "C" fn appearance_changed(this: &Object, _: Sel, _: id, _: id, _: id, _: id) {
+    unsafe {
+        let state = get_window_state(this);
+        let mut state_borrow = state.as_ref().borrow_mut();
+        if let Some(mut callback) = state_borrow.appearance_changed_callback.take() {
+            drop(state_borrow);
+            callback();
+            state.borrow_mut().appearance_changed_callback = Some(callback);
+        }
     }
 }
 

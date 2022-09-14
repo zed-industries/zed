@@ -1,12 +1,18 @@
 use crate::{
     geometry::vector::{vec2f, Vector2F},
-    platform::{self, mac::renderer::Renderer},
+    platform::{
+        self,
+        mac::{
+            platform::{NSKeyValueObservingOptionNew, NSViewLayerContentsRedrawDuringViewResize},
+            renderer::Renderer,
+        },
+    },
     Event, FontSystem, Scene,
 };
 use cocoa::{
     appkit::{NSSquareStatusItemLength, NSStatusBar, NSStatusItem, NSView, NSWindow},
     base::{id, nil, YES},
-    foundation::{NSAutoreleasePool, NSPoint, NSRect, NSSize},
+    foundation::{NSPoint, NSRect, NSSize, NSString},
 };
 use ctor::ctor;
 use foreign_types::ForeignTypeRef;
@@ -15,7 +21,7 @@ use objc::{
     declare::ClassDecl,
     msg_send,
     rc::StrongPtr,
-    runtime::{Class, Object, Sel},
+    runtime::{Class, Object, Protocol, Sel},
     sel, sel_impl,
 };
 use std::{
@@ -77,6 +83,20 @@ unsafe fn build_classes() {
             sel!(flagsChanged:),
             handle_view_event as extern "C" fn(&Object, Sel, id),
         );
+        decl.add_method(
+            sel!(makeBackingLayer),
+            make_backing_layer as extern "C" fn(&Object, Sel) -> id,
+        );
+        decl.add_method(
+            sel!(observeValueForKeyPath:ofObject:change:context:),
+            appearance_changed as extern "C" fn(&Object, Sel, id, id, id, id),
+        );
+
+        decl.add_protocol(Protocol::get("CALayerDelegate").unwrap());
+        decl.add_method(
+            sel!(displayLayer:),
+            display_layer as extern "C" fn(&Object, Sel, id),
+        );
 
         decl.register()
     };
@@ -86,15 +106,16 @@ pub struct StatusItem(Rc<RefCell<StatusItemState>>);
 
 struct StatusItemState {
     native_item: StrongPtr,
+    native_view: StrongPtr,
     renderer: Renderer,
+    scene: Option<Scene>,
     event_callback: Option<Box<dyn FnMut(Event) -> bool>>,
+    appearance_changed_callback: Option<Box<dyn FnMut()>>,
 }
 
 impl StatusItem {
     pub fn add(fonts: Arc<dyn FontSystem>) -> Self {
         unsafe {
-            let pool = NSAutoreleasePool::new(nil);
-
             let renderer = Renderer::new(false, fonts);
             let status_bar = NSStatusBar::systemStatusBar(nil);
             let native_item =
@@ -103,39 +124,51 @@ impl StatusItem {
             let button = native_item.button();
             let _: () = msg_send![button, setHidden: YES];
 
-            let item = Self(Rc::new_cyclic(|state| {
-                let parent_view = button.superview().superview();
-
-                let view: id = msg_send![VIEW_CLASS, alloc];
-                NSView::initWithFrame_(
-                    view,
-                    NSRect::new(NSPoint::new(0., 0.), NSView::frame(parent_view).size),
-                );
-                view.setWantsBestResolutionOpenGLSurface_(YES);
-                view.setLayer(renderer.layer().as_ptr() as id);
-                view.setWantsLayer(true);
-                (*view).set_ivar(STATE_IVAR, Weak::into_raw(state.clone()) as *const c_void);
-                parent_view.addSubview_(view.autorelease());
-
-                RefCell::new(StatusItemState {
-                    native_item,
-                    renderer,
-                    event_callback: None,
-                })
+            let native_view = msg_send![VIEW_CLASS, alloc];
+            let state = Rc::new(RefCell::new(StatusItemState {
+                native_item,
+                native_view: StrongPtr::new(native_view),
+                renderer,
+                scene: None,
+                event_callback: None,
+                appearance_changed_callback: None,
             }));
 
+            let parent_view = button.superview().superview();
+            NSView::initWithFrame_(
+                native_view,
+                NSRect::new(NSPoint::new(0., 0.), NSView::frame(parent_view).size),
+            );
+            (*native_view).set_ivar(
+                STATE_IVAR,
+                Weak::into_raw(Rc::downgrade(&state)) as *const c_void,
+            );
+            native_view.setWantsBestResolutionOpenGLSurface_(YES);
+            native_view.setWantsLayer(true);
+            let _: () = msg_send![
+                native_view,
+                setLayerContentsRedrawPolicy: NSViewLayerContentsRedrawDuringViewResize
+            ];
+            let _: () = msg_send![
+                button,
+                addObserver: native_view
+                forKeyPath: NSString::alloc(nil).init_str("effectiveAppearance")
+                options: NSKeyValueObservingOptionNew
+                context: nil
+            ];
+
+            parent_view.addSubview_(native_view);
+
             {
-                let item = item.0.borrow();
-                let layer = item.renderer.layer();
-                let scale_factor = item.scale_factor();
-                let size = item.size() * scale_factor;
+                let state = state.borrow();
+                let layer = state.renderer.layer();
+                let scale_factor = state.scale_factor();
+                let size = state.size() * scale_factor;
                 layer.set_contents_scale(scale_factor.into());
                 layer.set_drawable_size(metal::CGSize::new(size.x().into(), size.y().into()));
             }
 
-            pool.drain();
-
-            item
+            Self(state)
         }
     }
 }
@@ -147,6 +180,10 @@ impl platform::Window for StatusItem {
 
     fn on_event(&mut self, callback: Box<dyn FnMut(crate::Event) -> bool>) {
         self.0.borrow_mut().event_callback = Some(callback);
+    }
+
+    fn on_appearance_changed(&mut self, callback: Box<dyn FnMut()>) {
+        self.0.borrow_mut().appearance_changed_callback = Some(callback);
     }
 
     fn on_active_status_change(&mut self, _: Box<dyn FnMut(bool)>) {
@@ -223,7 +260,18 @@ impl platform::Window for StatusItem {
     }
 
     fn present_scene(&mut self, scene: Scene) {
-        self.0.borrow_mut().renderer.render(&scene);
+        self.0.borrow_mut().scene = Some(scene);
+        unsafe {
+            let _: () = msg_send![*self.0.borrow().native_view, setNeedsDisplay: YES];
+        }
+    }
+
+    fn appearance(&self) -> crate::Appearance {
+        unsafe {
+            let appearance: id =
+                msg_send![self.0.borrow().native_item.button(), effectiveAppearance];
+            crate::Appearance::from_native(appearance)
+        }
     }
 }
 
@@ -247,6 +295,7 @@ impl StatusItemState {
 extern "C" fn dealloc_view(this: &Object, _: Sel) {
     unsafe {
         drop_state(this);
+
         let _: () = msg_send![super(this, class!(NSView)), dealloc];
     }
 }
@@ -261,6 +310,39 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                     callback(event);
                     state.borrow_mut().event_callback = Some(callback);
                 }
+            }
+        }
+    }
+}
+
+extern "C" fn make_backing_layer(this: &Object, _: Sel) -> id {
+    if let Some(state) = unsafe { get_state(this).upgrade() } {
+        let state = state.borrow();
+        state.renderer.layer().as_ptr() as id
+    } else {
+        nil
+    }
+}
+
+extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
+    unsafe {
+        if let Some(state) = get_state(this).upgrade() {
+            let mut state = state.borrow_mut();
+            if let Some(scene) = state.scene.take() {
+                state.renderer.render(&scene);
+            }
+        }
+    }
+}
+
+extern "C" fn appearance_changed(this: &Object, _: Sel, _: id, _: id, _: id, _: id) {
+    unsafe {
+        if let Some(state) = get_state(this).upgrade() {
+            let mut state_borrow = state.as_ref().borrow_mut();
+            if let Some(mut callback) = state_borrow.appearance_changed_callback.take() {
+                drop(state_borrow);
+                callback();
+                state.borrow_mut().appearance_changed_callback = Some(callback);
             }
         }
     }

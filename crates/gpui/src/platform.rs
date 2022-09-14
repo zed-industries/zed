@@ -132,6 +132,8 @@ pub trait Window {
     fn scale_factor(&self) -> f32;
     fn titlebar_height(&self) -> f32;
     fn present_scene(&mut self, scene: Scene);
+    fn appearance(&self) -> Appearance;
+    fn on_appearance_changed(&mut self, callback: Box<dyn FnMut()>);
 }
 
 #[derive(Debug)]
@@ -145,6 +147,20 @@ pub struct TitlebarOptions<'a> {
     pub title: Option<&'a str>,
     pub appears_transparent: bool,
     pub traffic_light_position: Option<Vector2F>,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum Appearance {
+    Light,
+    VibrantLight,
+    Dark,
+    VibrantDark,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Self::Light
+    }
 }
 
 #[derive(Debug)]
@@ -173,17 +189,17 @@ pub enum CursorStyle {
     IBeam,
 }
 
+impl Default for CursorStyle {
+    fn default() -> Self {
+        Self::Arrow
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AppVersion {
     major: usize,
     minor: usize,
     patch: usize,
-}
-
-impl Default for CursorStyle {
-    fn default() -> Self {
-        Self::Arrow
-    }
 }
 
 impl FromStr for AppVersion {

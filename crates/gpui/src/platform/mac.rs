@@ -1,3 +1,4 @@
+mod appearance;
 mod atlas;
 mod dispatcher;
 mod event;
