@@ -33,7 +33,7 @@ use settings::{keymap_file_json_schema, settings_file_json_schema, Settings};
 use std::{env, path::Path, str, sync::Arc};
 use util::ResultExt;
 pub use workspace;
-use workspace::{sidebar::Side, AppState, Workspace};
+use workspace::{sidebar::SidebarSide, AppState, Workspace};
 
 #[derive(Deserialize, Clone, PartialEq)]
 struct OpenBrowser {
@@ -204,14 +204,14 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         |workspace: &mut Workspace,
          _: &project_panel::ToggleFocus,
          cx: &mut ViewContext<Workspace>| {
-            workspace.toggle_sidebar_item_focus(Side::Left, 0, cx);
+            workspace.toggle_sidebar_item_focus(SidebarSide::Left, 0, cx);
         },
     );
     cx.add_action(
         |workspace: &mut Workspace,
          _: &contacts_panel::ToggleFocus,
          cx: &mut ViewContext<Workspace>| {
-            workspace.toggle_sidebar_item_focus(Side::Right, 0, cx);
+            workspace.toggle_sidebar_item_focus(SidebarSide::Right, 0, cx);
         },
     );
 
@@ -243,6 +243,7 @@ pub fn initialize_workspace(
     .detach();
 
     cx.emit(workspace::Event::PaneAdded(workspace.active_pane().clone()));
+    cx.emit(workspace::Event::PaneAdded(workspace.dock_pane().clone()));
 
     let settings = cx.global::<Settings>();
 
@@ -728,7 +729,8 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (_, workspace) =
+            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -847,7 +849,8 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/dir1".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (_, workspace) =
+            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
 
         // Open a file within an existing worktree.
         cx.update(|cx| {
@@ -1006,7 +1009,8 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (window_id, workspace) =
+            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
 
         // Open a file within an existing worktree.
         cx.update(|cx| {
@@ -1048,7 +1052,8 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         project.update(cx, |project, _| project.languages().add(rust_lang()));
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (window_id, workspace) =
+            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
         let worktree = cx.read(|cx| workspace.read(cx).worktrees(cx).next().unwrap());
 
         // Create a new untitled buffer
@@ -1137,7 +1142,8 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         project.update(cx, |project, _| project.languages().add(rust_lang()));
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (window_id, workspace) =
+            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
 
         // Create a new untitled buffer
         cx.dispatch_action(window_id, NewFile);
@@ -1190,7 +1196,8 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (window_id, workspace) =
+            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -1226,7 +1233,7 @@ mod tests {
 
         cx.foreground().run_until_parked();
         workspace.read_with(cx, |workspace, _| {
-            assert_eq!(workspace.panes().len(), 1);
+            assert_eq!(workspace.panes().len(), 2); //Center pane + Dock pane
             assert_eq!(workspace.active_pane(), &pane_1);
         });
 
@@ -1236,6 +1243,7 @@ mod tests {
         cx.foreground().run_until_parked();
 
         workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.panes().len(), 2);
             assert!(workspace.active_item(cx).is_none());
         });
 
@@ -1263,7 +1271,8 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        let (_, workspace) =
+            cx.add_window(|cx| Workspace::new(project.clone(), |_, _| unimplemented!(), cx));
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -1527,7 +1536,8 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        let (_, workspace) =
+            cx.add_window(|cx| Workspace::new(project.clone(), |_, _| unimplemented!(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));

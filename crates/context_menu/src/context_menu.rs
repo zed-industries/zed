@@ -22,7 +22,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ContextMenu::cancel);
 }
 
-//
 pub enum ContextMenuItem {
     Item {
         label: String,
@@ -57,7 +56,8 @@ impl ContextMenuItem {
 
 pub struct ContextMenu {
     show_count: usize,
-    position: Vector2F,
+    anchor_position: Vector2F,
+    anchor_corner: AnchorCorner,
     items: Vec<ContextMenuItem>,
     selected_index: Option<usize>,
     visible: bool,
@@ -100,9 +100,10 @@ impl View for ContextMenu {
             .boxed();
 
         Overlay::new(expanded_menu)
-            .hoverable(true)
-            .fit_mode(OverlayFitMode::SnapToWindow)
-            .with_abs_position(self.position)
+            .with_hoverable(true)
+            .with_fit_mode(OverlayFitMode::SnapToWindow)
+            .with_anchor_position(self.anchor_position)
+            .with_anchor_corner(self.anchor_corner)
             .boxed()
     }
 
@@ -115,7 +116,8 @@ impl ContextMenu {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         Self {
             show_count: 0,
-            position: Default::default(),
+            anchor_position: Default::default(),
+            anchor_corner: AnchorCorner::TopLeft,
             items: Default::default(),
             selected_index: Default::default(),
             visible: Default::default(),
@@ -226,14 +228,16 @@ impl ContextMenu {
 
     pub fn show(
         &mut self,
-        position: Vector2F,
+        anchor_position: Vector2F,
+        anchor_corner: AnchorCorner,
         items: impl IntoIterator<Item = ContextMenuItem>,
         cx: &mut ViewContext<Self>,
     ) {
         let mut items = items.into_iter().peekable();
         if items.peek().is_some() {
             self.items = items.collect();
-            self.position = position;
+            self.anchor_position = anchor_position;
+            self.anchor_corner = anchor_corner;
             self.visible = true;
             self.show_count += 1;
             if !cx.is_self_focused() {
@@ -310,13 +314,13 @@ impl ContextMenu {
         enum Menu {}
         enum MenuItem {}
         let style = cx.global::<Settings>().theme.context_menu.clone();
-        MouseEventHandler::new::<Menu, _, _>(0, cx, |_, cx| {
+        MouseEventHandler::<Menu>::new(0, cx, |_, cx| {
             Flex::column()
                 .with_children(self.items.iter().enumerate().map(|(ix, item)| {
                     match item {
                         ContextMenuItem::Item { label, action } => {
                             let action = action.boxed_clone();
-                            MouseEventHandler::new::<MenuItem, _, _>(ix, cx, |state, _| {
+                            MouseEventHandler::<MenuItem>::new(ix, cx, |state, _| {
                                 let style =
                                     style.item.style_for(state, Some(ix) == self.selected_index);
 

@@ -319,7 +319,7 @@ impl BufferSearchBar {
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
         let is_active = self.is_search_option_enabled(option);
         Some(
-            MouseEventHandler::new::<Self, _, _>(option as usize, cx, |state, cx| {
+            MouseEventHandler::<Self>::new(option as usize, cx, |state, cx| {
                 let style = &cx
                     .global::<Settings>()
                     .theme
@@ -367,7 +367,7 @@ impl BufferSearchBar {
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
 
         enum NavButton {}
-        MouseEventHandler::new::<NavButton, _, _>(direction as usize, cx, |state, cx| {
+        MouseEventHandler::<NavButton>::new(direction as usize, cx, |state, cx| {
             let style = &cx
                 .global::<Settings>()
                 .theme

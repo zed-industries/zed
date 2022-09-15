@@ -89,7 +89,7 @@ impl View for DiagnosticIndicator {
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
         let in_progress = !self.in_progress_checks.is_empty();
         let mut element = Flex::row().with_child(
-            MouseEventHandler::new::<Summary, _, _>(0, cx, |state, cx| {
+            MouseEventHandler::<Summary>::new(0, cx, |state, cx| {
                 let style = cx
                     .global::<Settings>()
                     .theme
@@ -190,7 +190,7 @@ impl View for DiagnosticIndicator {
         } else if let Some(diagnostic) = &self.current_diagnostic {
             let message_style = style.diagnostic_message.clone();
             element.add_child(
-                MouseEventHandler::new::<Message, _, _>(1, cx, |state, _| {
+                MouseEventHandler::<Message>::new(1, cx, |state, _| {
                     Label::new(
                         diagnostic.message.split('\n').next().unwrap().to_string(),
                         message_style.style_for(state, false).text.clone(),

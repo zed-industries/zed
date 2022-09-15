@@ -4,7 +4,7 @@ use alacritty_terminal::{index::Point, term::TermMode};
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
     actions,
-    elements::{ChildView, ParentElement, Stack},
+    elements::{AnchorCorner, ChildView, ParentElement, Stack},
     geometry::vector::Vector2F,
     impl_internal_actions,
     keymap::Keystroke,
@@ -139,8 +139,9 @@ impl TerminalView {
             ContextMenuItem::item("Close Terminal", pane::CloseActiveItem),
         ];
 
-        self.context_menu
-            .update(cx, |menu, cx| menu.show(action.position, menu_entries, cx));
+        self.context_menu.update(cx, |menu, cx| {
+            menu.show(action.position, AnchorCorner::TopLeft, menu_entries, cx)
+        });
 
         cx.notify();
     }
@@ -155,8 +156,14 @@ impl TerminalView {
         {
             cx.show_character_palette();
         } else {
-            self.terminal.update(cx, |term, _| {
-                term.try_keystroke(&Keystroke::parse("ctrl-cmd-space").unwrap())
+            self.terminal.update(cx, |term, cx| {
+                term.try_keystroke(
+                    &Keystroke::parse("ctrl-cmd-space").unwrap(),
+                    cx.global::<Settings>()
+                        .terminal_overrides
+                        .option_as_meta
+                        .unwrap_or(false),
+                )
             });
         }
     }
@@ -280,7 +287,7 @@ impl TerminalView {
     fn up(&mut self, _: &Up, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
         self.terminal.update(cx, |term, _| {
-            term.try_keystroke(&Keystroke::parse("up").unwrap())
+            term.try_keystroke(&Keystroke::parse("up").unwrap(), false)
         });
     }
 
@@ -288,7 +295,7 @@ impl TerminalView {
     fn down(&mut self, _: &Down, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
         self.terminal.update(cx, |term, _| {
-            term.try_keystroke(&Keystroke::parse("down").unwrap())
+            term.try_keystroke(&Keystroke::parse("down").unwrap(), false)
         });
     }
 
@@ -296,7 +303,7 @@ impl TerminalView {
     fn ctrl_c(&mut self, _: &CtrlC, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
         self.terminal.update(cx, |term, _| {
-            term.try_keystroke(&Keystroke::parse("ctrl-c").unwrap())
+            term.try_keystroke(&Keystroke::parse("ctrl-c").unwrap(), false)
         });
     }
 
@@ -304,7 +311,7 @@ impl TerminalView {
     fn escape(&mut self, _: &Escape, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
         self.terminal.update(cx, |term, _| {
-            term.try_keystroke(&Keystroke::parse("escape").unwrap())
+            term.try_keystroke(&Keystroke::parse("escape").unwrap(), false)
         });
     }
 
@@ -312,7 +319,7 @@ impl TerminalView {
     fn enter(&mut self, _: &Enter, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
         self.terminal.update(cx, |term, _| {
-            term.try_keystroke(&Keystroke::parse("enter").unwrap())
+            term.try_keystroke(&Keystroke::parse("enter").unwrap(), false)
         });
     }
 }

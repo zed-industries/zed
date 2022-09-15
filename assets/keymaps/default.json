@@ -310,7 +310,7 @@
             "cmd-shift-m": "diagnostics::Deploy",
             "cmd-shift-e": "project_panel::ToggleFocus",
             "cmd-alt-s": "workspace::SaveAll",
-            "shift-escape": "terminal::DeployModal"
+            "shift-escape": "workspace::ActivateOrHideDock"
         }
     },
     // Bindings from Sublime Text
@@ -425,13 +425,6 @@
             "cmd-c": "terminal::Copy",
             "cmd-v": "terminal::Paste",
             "cmd-k": "terminal::Clear"
-        }
-    },
-    {
-        "context": "ModalTerminal",
-        "bindings": {
-            "ctrl-cmd-space": "terminal::ShowCharacterPalette",
-            "shift-escape": "terminal::DeployModal"
         }
     }
 ]

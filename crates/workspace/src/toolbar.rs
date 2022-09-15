@@ -166,7 +166,7 @@ fn nav_button<A: Action + Clone>(
     action_name: &str,
     cx: &mut RenderContext<Toolbar>,
 ) -> ElementBox {
-    MouseEventHandler::new::<A, _, _>(0, cx, |state, _| {
+    MouseEventHandler::<A>::new(0, cx, |state, _| {
         let style = if enabled {
             style.style_for(state, false)
         } else {

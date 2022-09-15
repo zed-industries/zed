@@ -2,7 +2,7 @@
 use alacritty_terminal::term::TermMode;
 use gpui::keymap::Keystroke;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Modifiers {
     None,
     Alt,
@@ -45,10 +45,10 @@ impl Modifiers {
 ///that depend on terminal modes also have a mapping that doesn't depend on the terminal mode.
 ///This is fragile, but as these mappings are locked up in legacy compatibility, it's probably good enough
 pub fn might_convert(keystroke: &Keystroke) -> bool {
-    to_esc_str(keystroke, &TermMode::NONE).is_some()
+    to_esc_str(keystroke, &TermMode::NONE, false).is_some()
 }
 
-pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode) -> Option<String> {
+pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> Option<String> {
     let modifiers = Modifiers::new(keystroke);
 
     // Manual Bindings including modifiers
@@ -244,6 +244,17 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode) -> Option<String> {
         }
     }
 
+    let alt_meta_binding = if alt_is_meta && modifiers == Modifiers::Alt && keystroke.key.is_ascii()
+    {
+        Some(format!("\x1b{}", keystroke.key))
+    } else {
+        None
+    };
+
+    if alt_meta_binding.is_some() {
+        return alt_meta_binding;
+    }
+
     None
 }
 
@@ -286,26 +297,26 @@ mod test {
         let shift_end = Keystroke::parse("shift-end").unwrap();
 
         let none = TermMode::NONE;
-        assert_eq!(to_esc_str(&shift_pageup, &none), None);
-        assert_eq!(to_esc_str(&shift_pagedown, &none), None);
-        assert_eq!(to_esc_str(&shift_home, &none), None);
-        assert_eq!(to_esc_str(&shift_end, &none), None);
+        assert_eq!(to_esc_str(&shift_pageup, &none, false), None);
+        assert_eq!(to_esc_str(&shift_pagedown, &none, false), None);
+        assert_eq!(to_esc_str(&shift_home, &none, false), None);
+        assert_eq!(to_esc_str(&shift_end, &none, false), None);
 
         let alt_screen = TermMode::ALT_SCREEN;
         assert_eq!(
-            to_esc_str(&shift_pageup, &alt_screen),
+            to_esc_str(&shift_pageup, &alt_screen, false),
             Some("\x1b[5;2~".to_string())
         );
         assert_eq!(
-            to_esc_str(&shift_pagedown, &alt_screen),
+            to_esc_str(&shift_pagedown, &alt_screen, false),
             Some("\x1b[6;2~".to_string())
         );
         assert_eq!(
-            to_esc_str(&shift_home, &alt_screen),
+            to_esc_str(&shift_home, &alt_screen, false),
             Some("\x1b[1;2H".to_string())
         );
         assert_eq!(
-            to_esc_str(&shift_end, &alt_screen),
+            to_esc_str(&shift_end, &alt_screen, false),
             Some("\x1b[1;2F".to_string())
         );
 
@@ -313,8 +324,14 @@ mod test {
         let pagedown = Keystroke::parse("pagedown").unwrap();
         let any = TermMode::ANY;
 
-        assert_eq!(to_esc_str(&pageup, &any), Some("\x1b[5~".to_string()));
-        assert_eq!(to_esc_str(&pagedown, &any), Some("\x1b[6~".to_string()));
+        assert_eq!(
+            to_esc_str(&pageup, &any, false),
+            Some("\x1b[5~".to_string())
+        );
+        assert_eq!(
+            to_esc_str(&pagedown, &any, false),
+            Some("\x1b[6~".to_string())
+        );
     }
 
     #[test]
@@ -327,7 +344,7 @@ mod test {
             function: false,
             key: "🖖🏻".to_string(), //2 char string
         };
-        assert_eq!(to_esc_str(&ks, &TermMode::NONE), None);
+        assert_eq!(to_esc_str(&ks, &TermMode::NONE, false), None);
     }
 
     #[test]
@@ -340,15 +357,27 @@ mod test {
         let left = Keystroke::parse("left").unwrap();
         let right = Keystroke::parse("right").unwrap();
 
-        assert_eq!(to_esc_str(&up, &none), Some("\x1b[A".to_string()));
-        assert_eq!(to_esc_str(&down, &none), Some("\x1b[B".to_string()));
-        assert_eq!(to_esc_str(&right, &none), Some("\x1b[C".to_string()));
-        assert_eq!(to_esc_str(&left, &none), Some("\x1b[D".to_string()));
+        assert_eq!(to_esc_str(&up, &none, false), Some("\x1b[A".to_string()));
+        assert_eq!(to_esc_str(&down, &none, false), Some("\x1b[B".to_string()));
+        assert_eq!(to_esc_str(&right, &none, false), Some("\x1b[C".to_string()));
+        assert_eq!(to_esc_str(&left, &none, false), Some("\x1b[D".to_string()));
 
-        assert_eq!(to_esc_str(&up, &app_cursor), Some("\x1bOA".to_string()));
-        assert_eq!(to_esc_str(&down, &app_cursor), Some("\x1bOB".to_string()));
-        assert_eq!(to_esc_str(&right, &app_cursor), Some("\x1bOC".to_string()));
-        assert_eq!(to_esc_str(&left, &app_cursor), Some("\x1bOD".to_string()));
+        assert_eq!(
+            to_esc_str(&up, &app_cursor, false),
+            Some("\x1bOA".to_string())
+        );
+        assert_eq!(
+            to_esc_str(&down, &app_cursor, false),
+            Some("\x1bOB".to_string())
+        );
+        assert_eq!(
+            to_esc_str(&right, &app_cursor, false),
+            Some("\x1bOC".to_string())
+        );
+        assert_eq!(
+            to_esc_str(&left, &app_cursor, false),
+            Some("\x1bOD".to_string())
+        );
     }
 
     #[test]
@@ -361,16 +390,52 @@ mod test {
             assert_eq!(
                 to_esc_str(
                     &Keystroke::parse(&format!("ctrl-{}", lower)).unwrap(),
-                    &mode
+                    &mode,
+                    false
                 ),
                 to_esc_str(
                     &Keystroke::parse(&format!("ctrl-shift-{}", upper)).unwrap(),
-                    &mode
+                    &mode,
+                    false
                 ),
                 "On letter: {}/{}",
                 lower,
                 upper
             )
+        }
+    }
+
+    #[test]
+    fn alt_is_meta() {
+        let ascii_printable = ' '..='~';
+        for character in ascii_printable {
+            assert_eq!(
+                to_esc_str(
+                    &Keystroke::parse(&format!("alt-{}", character)).unwrap(),
+                    &TermMode::NONE,
+                    true
+                )
+                .unwrap(),
+                format!("\x1b{}", character)
+            );
+        }
+
+        let gpui_keys = [
+            "up", "down", "right", "left", "f1", "f2", "f3", "f4", "F5", "f6", "f7", "f8", "f9",
+            "f10", "f11", "f12", "f13", "f14", "f15", "f16", "f17", "f18", "f19", "f20", "insert",
+            "pageup", "pagedown", "end", "home",
+        ];
+
+        for key in gpui_keys {
+            assert_ne!(
+                to_esc_str(
+                    &Keystroke::parse(&format!("alt-{}", key)).unwrap(),
+                    &TermMode::NONE,
+                    true
+                )
+                .unwrap(),
+                format!("\x1b{}", key)
+            );
         }
     }
 

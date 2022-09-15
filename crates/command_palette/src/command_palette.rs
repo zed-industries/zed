@@ -350,7 +350,8 @@ mod tests {
         });
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (_, workspace) =
+            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
         let editor = cx.add_view(&workspace, |cx| {
             let mut editor = Editor::single_line(None, cx);
             editor.set_text("abc", cx);

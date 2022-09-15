@@ -1,6 +1,8 @@
 mod mouse_region;
 mod mouse_region_event;
 
+#[cfg(debug_assertions)]
+use collections::HashSet;
 use serde::Deserialize;
 use serde_json::json;
 use std::{borrow::Cow, sync::Arc};
@@ -20,6 +22,8 @@ pub struct Scene {
     scale_factor: f32,
     stacking_contexts: Vec<StackingContext>,
     active_stacking_context_stack: Vec<usize>,
+    #[cfg(debug_assertions)]
+    mouse_region_ids: HashSet<MouseRegionId>,
 }
 
 struct StackingContext {
@@ -178,6 +182,8 @@ impl Scene {
             scale_factor,
             stacking_contexts: vec![stacking_context],
             active_stacking_context_stack: vec![0],
+            #[cfg(debug_assertions)]
+            mouse_region_ids: Default::default(),
         }
     }
 
@@ -242,7 +248,24 @@ impl Scene {
 
     pub fn push_mouse_region(&mut self, region: MouseRegion) {
         if can_draw(region.bounds) {
-            self.active_layer().push_mouse_region(region);
+            // Ensure that Regions cannot be added to a scene with the same region id.
+            #[cfg(debug_assertions)]
+            let region_id;
+            #[cfg(debug_assertions)]
+            {
+                region_id = region.id();
+            }
+
+            if self.active_layer().push_mouse_region(region) {
+                #[cfg(debug_assertions)]
+                {
+                    if !self.mouse_region_ids.insert(region_id) {
+                        let tag_name = region_id.tag_type_name();
+                        panic!("Same MouseRegionId: {region_id:?} inserted multiple times to the same scene. \
+                            Will cause problems! Look for MouseRegion that uses Tag: {tag_name}");
+                    }
+                }
+            }
         }
     }
 
@@ -370,15 +393,17 @@ impl Layer {
         }
     }
 
-    fn push_mouse_region(&mut self, region: MouseRegion) {
+    fn push_mouse_region(&mut self, region: MouseRegion) -> bool {
         if let Some(bounds) = region
             .bounds
             .intersection(self.clip_bounds.unwrap_or(region.bounds))
         {
             if can_draw(bounds) {
                 self.mouse_regions.push(region);
+                return true;
             }
         }
+        false
     }
 
     fn push_underline(&mut self, underline: Underline) {
@@ -552,11 +577,8 @@ impl ToJson for Border {
 }
 
 impl MouseRegion {
-    pub fn id(&self) -> Option<MouseRegionId> {
-        self.discriminant.map(|discriminant| MouseRegionId {
-            view_id: self.view_id,
-            discriminant,
-        })
+    pub fn id(&self) -> MouseRegionId {
+        self.id
     }
 }
 

@@ -34,7 +34,7 @@ impl View for ContactsStatusItem {
             Appearance::Light | Appearance::VibrantLight => Color::black(),
             Appearance::Dark | Appearance::VibrantDark => Color::white(),
         };
-        MouseEventHandler::new::<Self, _, _>(0, cx, |_, _| {
+        MouseEventHandler::<Self>::new(0, cx, |_, _| {
             Svg::new("icons/zed_22.svg")
                 .with_color(color)
                 .aligned()

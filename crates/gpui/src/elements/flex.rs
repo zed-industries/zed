@@ -52,7 +52,7 @@ impl Flex {
         Tag: 'static,
         V: View,
     {
-        let scroll_state = cx.element_state::<Tag, ScrollState>(element_id);
+        let scroll_state = cx.default_element_state::<Tag, ScrollState>(element_id);
         scroll_state.update(cx, |scroll_state, _| scroll_state.scroll_to = scroll_to);
         self.scroll_state = Some(scroll_state);
         self

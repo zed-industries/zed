@@ -20,20 +20,21 @@ use futures::{
     channel::{mpsc, oneshot},
     FutureExt, SinkExt, StreamExt,
 };
-use gpui::{executor::Background, App, AssetSource, AsyncAppContext, Task};
+use gpui::{executor::Background, App, AssetSource, AsyncAppContext, Task, ViewContext};
 use isahc::{config::Configurable, AsyncBody, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
 use parking_lot::Mutex;
 use project::{Fs, ProjectStore};
 use serde_json::json;
-use settings::{self, KeymapFileContent, Settings, SettingsFileContent};
+use settings::{self, KeymapFileContent, Settings, SettingsFileContent, WorkingDirectory};
 use smol::process::Command;
 use std::{env, ffi::OsStr, fs, panic, path::PathBuf, sync::Arc, thread, time::Duration};
+use terminal::terminal_container_view::{get_working_directory, TerminalContainer};
 
 use theme::ThemeRegistry;
 use util::{ResultExt, TryFutureExt};
-use workspace::{self, AppState, NewFile, OpenPaths};
+use workspace::{self, AppState, ItemHandle, NewFile, OpenPaths, Workspace};
 use zed::{
     self, build_window_options,
     fs::RealFs,
@@ -152,6 +153,7 @@ fn main() {
             fs,
             build_window_options,
             initialize_workspace,
+            default_item_factory,
         });
         auto_update::init(db, http, client::ZED_SERVER_URL.clone(), cx);
         workspace::init(app_state.clone(), cx);
@@ -594,4 +596,21 @@ async fn handle_cli_connection(
             }
         }
     }
+}
+
+pub fn default_item_factory(
+    workspace: &mut Workspace,
+    cx: &mut ViewContext<Workspace>,
+) -> Box<dyn ItemHandle> {
+    let strategy = cx
+        .global::<Settings>()
+        .terminal_overrides
+        .working_directory
+        .clone()
+        .unwrap_or(WorkingDirectory::CurrentProjectDirectory);
+
+    let working_directory = get_working_directory(workspace, cx, strategy);
+
+    let terminal_handle = cx.add_view(|cx| TerminalContainer::new(working_directory, false, cx));
+    Box::new(terminal_handle)
 }

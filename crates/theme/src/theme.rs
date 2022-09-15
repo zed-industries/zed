@@ -49,7 +49,7 @@ pub struct Workspace {
     pub pane_divider: Border,
     pub leader_border_opacity: f32,
     pub leader_border_width: f32,
-    pub sidebar_resize_handle: ContainerStyle,
+    pub sidebar: Sidebar,
     pub status_bar: StatusBar,
     pub toolbar: Toolbar,
     pub disconnected_overlay: ContainedText,
@@ -58,6 +58,7 @@ pub struct Workspace {
     pub notifications: Notifications,
     pub joining_project_avatar: ImageStyle,
     pub joining_project_message: ContainedText,
+    pub dock: Dock,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -151,6 +152,16 @@ pub struct Toolbar {
 }
 
 #[derive(Clone, Deserialize, Default)]
+pub struct Dock {
+    pub initial_size_right: f32,
+    pub initial_size_bottom: f32,
+    pub wash_color: Color,
+    pub flex: f32,
+    pub panel: ContainerStyle,
+    pub maximized: ContainerStyle,
+}
+
+#[derive(Clone, Deserialize, Default)]
 pub struct Notifications {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -232,7 +243,9 @@ pub struct StatusBarLspStatus {
 
 #[derive(Deserialize, Default)]
 pub struct Sidebar {
-    pub resize_handle: ContainerStyle,
+    pub initial_size: f32,
+    #[serde(flatten)]
+    pub container: ContainerStyle,
 }
 
 #[derive(Clone, Copy, Deserialize, Default)]
@@ -564,6 +577,7 @@ pub struct CodeActions {
 pub struct Interactive<T> {
     pub default: T,
     pub hover: Option<T>,
+    pub clicked: Option<T>,
     pub active: Option<T>,
     pub disabled: Option<T>,
 }
@@ -572,6 +586,8 @@ impl<T> Interactive<T> {
     pub fn style_for(&self, state: MouseState, active: bool) -> &T {
         if active {
             self.active.as_ref().unwrap_or(&self.default)
+        } else if state.clicked == Some(gpui::MouseButton::Left) && self.clicked.is_some() {
+            self.clicked.as_ref().unwrap()
         } else if state.hovered {
             self.hover.as_ref().unwrap_or(&self.default)
         } else {
@@ -594,6 +610,7 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
             #[serde(flatten)]
             default: Value,
             hover: Option<Value>,
+            clicked: Option<Value>,
             active: Option<Value>,
             disabled: Option<Value>,
         }
@@ -620,6 +637,7 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
         };
 
         let hover = deserialize_state(json.hover)?;
+        let clicked = deserialize_state(json.clicked)?;
         let active = deserialize_state(json.active)?;
         let disabled = deserialize_state(json.disabled)?;
         let default = serde_json::from_value(json.default).map_err(serde::de::Error::custom)?;
@@ -627,6 +645,7 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
         Ok(Interactive {
             default,
             hover,
+            clicked,
             active,
             disabled,
         })

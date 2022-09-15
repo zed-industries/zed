@@ -373,6 +373,24 @@ pub struct Padding {
     pub right: f32,
 }
 
+impl Padding {
+    pub fn horizontal(padding: f32) -> Self {
+        Self {
+            left: padding,
+            right: padding,
+            ..Default::default()
+        }
+    }
+
+    pub fn vertical(padding: f32) -> Self {
+        Self {
+            top: padding,
+            bottom: padding,
+            ..Default::default()
+        }
+    }
+}
+
 impl<'de> Deserialize<'de> for Padding {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
