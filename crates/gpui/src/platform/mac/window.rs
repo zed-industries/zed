@@ -1070,17 +1070,12 @@ fn window_fullscreen_changed(this: &Object, is_fullscreen: bool) {
     }
 }
 
-extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
-    let is_active = if selector == sel!(windowDidBecomeKey:) {
-        true
-    } else if selector == sel!(windowDidResignKey:) {
-        false
-    } else {
-        unreachable!();
-    };
-
+extern "C" fn window_did_change_key_status(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let executor = window_state.as_ref().borrow().executor.clone();
+    let window_state_borrow = window_state.borrow();
+    let is_active = unsafe { window_state_borrow.native_window.isKeyWindow() };
+    let executor = window_state_borrow.executor.clone();
+    drop(window_state_borrow);
     executor
         .spawn(async move {
             let mut window_state_borrow = window_state.as_ref().borrow_mut();
