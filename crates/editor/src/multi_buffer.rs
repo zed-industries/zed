@@ -313,11 +313,13 @@ impl MultiBuffer {
     }
 
     pub fn update_git(&mut self, cx: &mut ModelContext<Self>) {
-        let mut buffers = self.buffers.borrow_mut();
-        for buffer in buffers.values_mut() {
-            buffer.buffer.update(cx, |buffer, _| {
-                buffer.update_git();
-            })
+        let buffers = self.buffers.borrow();
+        for buffer_state in buffers.values() {
+            if buffer_state.buffer.read(cx).needs_git_update() {
+                buffer_state
+                    .buffer
+                    .update(cx, |buffer, cx| buffer.update_git(cx))
+            }
         }
     }
 
