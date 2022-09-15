@@ -1,4 +1,5 @@
-use gpui::{color::Color, elements::*, Entity, RenderContext, View, ViewContext};
+use gpui::{elements::*, Entity, RenderContext, View, ViewContext};
+use settings::Settings;
 
 pub enum Event {
     Deactivated,
@@ -16,9 +17,10 @@ impl View for ContactsPopover {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+        let theme = &cx.global::<Settings>().theme.contacts_popover;
         Empty::new()
             .contained()
-            .with_background_color(Color::red())
+            .with_background_color(theme.background)
             .boxed()
     }
 }
