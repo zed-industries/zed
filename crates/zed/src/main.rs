@@ -14,7 +14,6 @@ use client::{
     http::{self, HttpClient},
     UserStore, ZED_SECRET_CLIENT_TOKEN,
 };
-use contacts_status_item::ContactsStatusItem;
 use fs::OpenOptions;
 use futures::{
     channel::{mpsc, oneshot},
@@ -89,8 +88,6 @@ fn main() {
     });
 
     app.run(move |cx| {
-        cx.add_status_bar_item(|_| ContactsStatusItem::new());
-
         let client = client::Client::new(http.clone());
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         languages.set_language_server_download_dir(zed::paths::LANGUAGES_DIR.clone());
@@ -106,7 +103,6 @@ fn main() {
         watch_settings_file(default_settings, settings_file, themes.clone(), cx);
         watch_keymap_file(keymap_file, cx);
 
-        contacts_status_item::init(cx);
         context_menu::init(cx);
         project::Project::init(&client);
         client::Channel::init(&client);
