@@ -58,10 +58,20 @@ static mut PANEL_CLASS: *const Class = ptr::null();
 static mut VIEW_CLASS: *const Class = ptr::null();
 
 #[allow(non_upper_case_globals)]
+const NSWindowStyleMaskNonactivatingPanel: NSWindowStyleMask =
+    unsafe { NSWindowStyleMask::from_bits_unchecked(1 << 7) };
+#[allow(non_upper_case_globals)]
 const NSNormalWindowLevel: NSInteger = 0;
-
 #[allow(non_upper_case_globals)]
 const NSPopUpWindowLevel: NSInteger = 101;
+#[allow(non_upper_case_globals)]
+const NSTrackingMouseMoved: NSUInteger = 0x02;
+#[allow(non_upper_case_globals)]
+const NSTrackingActiveAlways: NSUInteger = 0x80;
+#[allow(non_upper_case_globals)]
+const NSTrackingInVisibleRect: NSUInteger = 0x200;
+#[allow(non_upper_case_globals)]
+const NSWindowAnimationBehaviorUtilityWindow: NSInteger = 4;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -362,10 +372,6 @@ impl Window {
             let native_window: id = match options.kind {
                 WindowKind::Normal => msg_send![WINDOW_CLASS, alloc],
                 WindowKind::PopUp => {
-                    #[allow(non_upper_case_globals)]
-                    const NSWindowStyleMaskNonactivatingPanel: NSWindowStyleMask =
-                        unsafe { NSWindowStyleMask::from_bits_unchecked(1 << 7) };
-
                     style_mask |= NSWindowStyleMaskNonactivatingPanel;
                     msg_send![PANEL_CLASS, alloc]
                 }
@@ -452,7 +458,16 @@ impl Window {
                 native_window.setTitlebarAppearsTransparent_(YES);
             }
 
-            native_window.setAcceptsMouseMovedEvents_(YES);
+            let tracking_area: id = msg_send![class!(NSTrackingArea), alloc];
+            let rect = NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.));
+            let _: () = msg_send![
+                tracking_area,
+                initWithRect: rect
+                options: NSTrackingMouseMoved | NSTrackingActiveAlways | NSTrackingInVisibleRect
+                owner: native_view
+                userInfo: nil
+            ];
+            let _: () = msg_send![native_view, addTrackingArea: tracking_area];
 
             native_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
             native_view.setWantsBestResolutionOpenGLSurface_(YES);
@@ -478,9 +493,6 @@ impl Window {
             match options.kind {
                 WindowKind::Normal => native_window.setLevel_(NSNormalWindowLevel),
                 WindowKind::PopUp => {
-                    #[allow(non_upper_case_globals)]
-                    const NSWindowAnimationBehaviorUtilityWindow: NSInteger = 4;
-
                     native_window.setLevel_(NSPopUpWindowLevel);
                     let _: () = msg_send![
                         native_window,
