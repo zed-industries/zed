@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use sum_tree::SumTree;
-use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, ToOffset, ToPoint};
+use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, ToPoint};
 
 pub use git2 as libgit;
 use libgit::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
@@ -203,7 +203,7 @@ impl BufferDiff {
         assert!(line_item_count > 0);
 
         let mut first_deletion_buffer_row: Option<u32> = None;
-        let mut buffer_byte_range: Option<Range<usize>> = None;
+        let mut buffer_row_range: Option<Range<u32>> = None;
         let mut head_byte_range: Option<Range<usize>> = None;
 
         for line_index in 0..line_item_count {
@@ -212,15 +212,16 @@ impl BufferDiff {
             let content_offset = line.content_offset() as isize;
             let content_len = line.content().len() as isize;
 
-            match (kind, &mut buffer_byte_range, &mut head_byte_range) {
+            match (kind, &mut buffer_row_range, &mut head_byte_range) {
                 (GitDiffLineType::Addition, None, _) => {
-                    let end = content_offset + content_len;
-                    buffer_byte_range = Some(content_offset as usize..end as usize);
+                    //guarenteed to be present for additions
+                    let row = line.new_lineno().unwrap().saturating_sub(1);
+                    buffer_row_range = Some(row..row + 1);
                 }
 
                 (GitDiffLineType::Addition, Some(buffer_byte_range), _) => {
-                    let end = content_offset + content_len;
-                    buffer_byte_range.end = end as usize;
+                    let row = line.new_lineno().unwrap().saturating_sub(1);
+                    buffer_byte_range.end = row + 1;
                 }
 
                 (GitDiffLineType::Deletion, _, None) => {
@@ -245,20 +246,20 @@ impl BufferDiff {
         }
 
         //unwrap_or deletion without addition
-        let buffer_byte_range = buffer_byte_range.unwrap_or_else(|| {
+        let buffer_byte_range = buffer_row_range.unwrap_or_else(|| {
             //we cannot have an addition-less hunk without deletion(s) or else there would be no hunk
             let row = first_deletion_buffer_row.unwrap();
-            let anchor = buffer.anchor_before(Point::new(row, 0));
-            let offset = anchor.to_offset(buffer);
-            offset..offset
+            row..row
         });
 
         //unwrap_or addition without deletion
         let head_byte_range = head_byte_range.unwrap_or(0..0);
 
+        let start = Point::new(buffer_byte_range.start, 0);
+        let end = Point::new(buffer_byte_range.end, 0);
+        let buffer_range = buffer.anchor_before(start)..buffer.anchor_before(end);
         DiffHunk {
-            buffer_range: buffer.anchor_before(buffer_byte_range.start)
-                ..buffer.anchor_before(buffer_byte_range.end),
+            buffer_range,
             head_byte_range,
         }
     }
