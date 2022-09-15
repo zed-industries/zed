@@ -475,11 +475,20 @@ impl Window {
                 native_window.center();
             }
 
-            native_window.makeKeyAndOrderFront_(nil);
             match options.kind {
                 WindowKind::Normal => native_window.setLevel_(NSNormalWindowLevel),
-                WindowKind::PopUp => native_window.setLevel_(NSPopUpWindowLevel),
+                WindowKind::PopUp => {
+                    #[allow(non_upper_case_globals)]
+                    const NSWindowAnimationBehaviorUtilityWindow: NSInteger = 4;
+
+                    native_window.setLevel_(NSPopUpWindowLevel);
+                    let _: () = msg_send![
+                        native_window,
+                        setAnimationBehavior: NSWindowAnimationBehaviorUtilityWindow
+                    ];
+                }
             }
+            native_window.makeKeyAndOrderFront_(nil);
 
             window.0.borrow().move_traffic_light();
             pool.drain();
