@@ -7,7 +7,7 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     Appearance, Entity, MouseButton, MutableAppContext, RenderContext, View, ViewContext,
-    ViewHandle,
+    ViewHandle, WindowKind,
 };
 
 actions!(contacts_status_item, [ToggleContactsPopover]);
@@ -67,11 +67,27 @@ impl ContactsStatusItem {
                         bounds: gpui::WindowBounds::Fixed(RectF::new(origin, size)),
                         titlebar: None,
                         center: false,
-                        level: gpui::WindowLevel::PopUp,
+                        kind: WindowKind::PopUp,
+                        is_movable: false,
                     },
-                    |_| ContactsPopover::new(),
+                    |cx| ContactsPopover::new(cx),
                 );
+                cx.subscribe(&popover, Self::on_popover_event).detach();
                 self.popover = Some(popover);
+            }
+        }
+    }
+
+    fn on_popover_event(
+        &mut self,
+        popover: ViewHandle<ContactsPopover>,
+        event: &contacts_popover::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            contacts_popover::Event::Deactivated => {
+                self.popover.take();
+                cx.remove_window(popover.window_id());
             }
         }
     }

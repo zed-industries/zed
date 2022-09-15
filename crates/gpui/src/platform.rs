@@ -142,7 +142,8 @@ pub struct WindowOptions<'a> {
     pub bounds: WindowBounds,
     pub titlebar: Option<TitlebarOptions<'a>>,
     pub center: bool,
-    pub level: WindowLevel,
+    pub kind: WindowKind,
+    pub is_movable: bool,
 }
 
 #[derive(Debug)]
@@ -167,7 +168,7 @@ impl Default for Appearance {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub enum WindowLevel {
+pub enum WindowKind {
     Normal,
     PopUp,
 }
@@ -283,7 +284,8 @@ impl<'a> Default for WindowOptions<'a> {
                 traffic_light_position: Default::default(),
             }),
             center: false,
-            level: WindowLevel::Normal,
+            kind: WindowKind::Normal,
+            is_movable: true,
         }
     }
 }

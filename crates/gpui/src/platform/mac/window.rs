@@ -12,7 +12,7 @@ use crate::{
         Event, WindowBounds,
     },
     InputHandler, KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseButtonEvent,
-    MouseMovedEvent, Scene, WindowLevel,
+    MouseMovedEvent, Scene, WindowKind,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -54,6 +54,7 @@ use std::{
 const WINDOW_STATE_IVAR: &str = "windowState";
 
 static mut WINDOW_CLASS: *const Class = ptr::null();
+static mut PANEL_CLASS: *const Class = ptr::null();
 static mut VIEW_CLASS: *const Class = ptr::null();
 
 #[allow(non_upper_case_globals)]
@@ -114,50 +115,8 @@ unsafe impl objc::Encode for NSRange {
 
 #[ctor]
 unsafe fn build_classes() {
-    WINDOW_CLASS = {
-        let mut decl = ClassDecl::new("GPUIWindow", class!(NSWindow)).unwrap();
-        decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
-        decl.add_method(sel!(dealloc), dealloc_window as extern "C" fn(&Object, Sel));
-        decl.add_method(
-            sel!(canBecomeMainWindow),
-            yes as extern "C" fn(&Object, Sel) -> BOOL,
-        );
-        decl.add_method(
-            sel!(canBecomeKeyWindow),
-            yes as extern "C" fn(&Object, Sel) -> BOOL,
-        );
-        decl.add_method(
-            sel!(sendEvent:),
-            send_event as extern "C" fn(&Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(windowDidResize:),
-            window_did_resize as extern "C" fn(&Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(windowWillEnterFullScreen:),
-            window_will_enter_fullscreen as extern "C" fn(&Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(windowWillExitFullScreen:),
-            window_will_exit_fullscreen as extern "C" fn(&Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(windowDidBecomeKey:),
-            window_did_change_key_status as extern "C" fn(&Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(windowDidResignKey:),
-            window_did_change_key_status as extern "C" fn(&Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(windowShouldClose:),
-            window_should_close as extern "C" fn(&Object, Sel, id) -> BOOL,
-        );
-        decl.add_method(sel!(close), close_window as extern "C" fn(&Object, Sel));
-        decl.register()
-    };
-
+    WINDOW_CLASS = build_window_class("GPUIWindow", class!(NSWindow));
+    PANEL_CLASS = build_window_class("GPUIPanel", class!(NSPanel));
     VIEW_CLASS = {
         let mut decl = ClassDecl::new("GPUIView", class!(NSView)).unwrap();
         decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
@@ -286,6 +245,50 @@ unsafe fn build_classes() {
     };
 }
 
+unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const Class {
+    let mut decl = ClassDecl::new(name, superclass).unwrap();
+    decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
+    decl.add_method(sel!(dealloc), dealloc_window as extern "C" fn(&Object, Sel));
+    decl.add_method(
+        sel!(canBecomeMainWindow),
+        yes as extern "C" fn(&Object, Sel) -> BOOL,
+    );
+    decl.add_method(
+        sel!(canBecomeKeyWindow),
+        yes as extern "C" fn(&Object, Sel) -> BOOL,
+    );
+    decl.add_method(
+        sel!(sendEvent:),
+        send_event as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
+        sel!(windowDidResize:),
+        window_did_resize as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
+        sel!(windowWillEnterFullScreen:),
+        window_will_enter_fullscreen as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
+        sel!(windowWillExitFullScreen:),
+        window_will_exit_fullscreen as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
+        sel!(windowDidBecomeKey:),
+        window_did_change_key_status as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
+        sel!(windowDidResignKey:),
+        window_did_change_key_status as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
+        sel!(windowShouldClose:),
+        window_should_close as extern "C" fn(&Object, Sel, id) -> BOOL,
+    );
+    decl.add_method(sel!(close), close_window as extern "C" fn(&Object, Sel));
+    decl.register()
+}
+
 pub struct Window(Rc<RefCell<WindowState>>);
 
 ///Used to track what the IME does when we send it a keystroke.
@@ -352,10 +355,21 @@ impl Window {
                     style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
                 }
             } else {
-                style_mask = NSWindowStyleMask::empty();
+                style_mask = NSWindowStyleMask::NSTitledWindowMask
+                    | NSWindowStyleMask::NSFullSizeContentViewWindowMask;
             }
 
-            let native_window: id = msg_send![WINDOW_CLASS, alloc];
+            let native_window: id = match options.kind {
+                WindowKind::Normal => msg_send![WINDOW_CLASS, alloc],
+                WindowKind::PopUp => {
+                    #[allow(non_upper_case_globals)]
+                    const NSWindowStyleMaskNonactivatingPanel: NSWindowStyleMask =
+                        unsafe { NSWindowStyleMask::from_bits_unchecked(1 << 7) };
+
+                    style_mask |= NSWindowStyleMaskNonactivatingPanel;
+                    msg_send![PANEL_CLASS, alloc]
+                }
+            };
             let native_window = native_window.initWithContentRect_styleMask_backing_defer_(
                 RectF::new(Default::default(), vec2f(1024., 768.)).to_ns_rect(),
                 style_mask,
@@ -425,13 +439,17 @@ impl Window {
                 Rc::into_raw(window.0.clone()) as *const c_void,
             );
 
-            if let Some(titlebar) = options.titlebar {
-                if let Some(title) = titlebar.title {
-                    native_window.setTitle_(NSString::alloc(nil).init_str(title));
-                }
-                if titlebar.appears_transparent {
-                    native_window.setTitlebarAppearsTransparent_(YES);
-                }
+            if let Some(title) = options.titlebar.as_ref().and_then(|t| t.title) {
+                native_window.setTitle_(NSString::alloc(nil).init_str(title));
+            }
+
+            native_window.setMovable_(options.is_movable);
+
+            if options
+                .titlebar
+                .map_or(true, |titlebar| titlebar.appears_transparent)
+            {
+                native_window.setTitlebarAppearsTransparent_(YES);
             }
 
             native_window.setAcceptsMouseMovedEvents_(YES);
@@ -458,11 +476,10 @@ impl Window {
             }
 
             native_window.makeKeyAndOrderFront_(nil);
-            let native_level = match options.level {
-                WindowLevel::Normal => NSNormalWindowLevel,
-                WindowLevel::PopUp => NSPopUpWindowLevel,
-            };
-            native_window.setLevel_(native_level);
+            match options.kind {
+                WindowKind::Normal => native_window.setLevel_(NSNormalWindowLevel),
+                WindowKind::PopUp => native_window.setLevel_(NSPopUpWindowLevel),
+            }
 
             window.0.borrow().move_traffic_light();
             pool.drain();
