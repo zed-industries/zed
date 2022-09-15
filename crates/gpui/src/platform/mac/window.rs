@@ -467,7 +467,7 @@ impl Window {
                 owner: native_view
                 userInfo: nil
             ];
-            let _: () = msg_send![native_view, addTrackingArea: tracking_area];
+            let _: () = msg_send![native_view, addTrackingArea: tracking_area.autorelease()];
 
             native_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
             native_view.setWantsBestResolutionOpenGLSurface_(YES);
