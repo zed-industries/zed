@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
 use sum_tree::SumTree;
 use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, ToPoint};
@@ -97,11 +97,25 @@ impl<'a> sum_tree::Dimension<'a, DiffHunkSummary> for HunkBufferEnd {
 }
 
 #[derive(Clone)]
-pub struct BufferDiffSnapshot {
+pub struct BufferDiff {
+    last_buffer_version: clock::Global,
     tree: SumTree<DiffHunk<Anchor>>,
 }
 
-impl BufferDiffSnapshot {
+impl BufferDiff {
+    pub async fn new(head_text: Option<Arc<String>>, buffer: &text::BufferSnapshot) -> BufferDiff {
+        let mut instance = BufferDiff {
+            last_buffer_version: buffer.version().clone(),
+            tree: SumTree::new(),
+        };
+
+        if let Some(head_text) = head_text {
+            instance.update(&*head_text, buffer);
+        }
+
+        instance
+    }
+
     pub fn hunks_in_range<'a>(
         &'a self,
         query_row_range: Range<u32>,
@@ -127,36 +141,11 @@ impl BufferDiffSnapshot {
         })
     }
 
-    #[cfg(test)]
-    fn hunks<'a>(&'a self, text: &'a BufferSnapshot) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
-        self.hunks_in_range(0..u32::MAX, text)
-    }
-}
-
-pub struct BufferDiff {
-    snapshot: BufferDiffSnapshot,
-}
-
-impl BufferDiff {
-    pub fn new(head_text: &Option<String>, buffer: &text::BufferSnapshot) -> BufferDiff {
-        let mut instance = BufferDiff {
-            snapshot: BufferDiffSnapshot {
-                tree: SumTree::new(),
-            },
-        };
-
-        if let Some(head_text) = head_text {
-            instance.update(head_text, buffer);
-        }
-
-        instance
+    pub fn needs_update(&self, buffer: &text::BufferSnapshot) -> bool {
+        buffer.version().changed_since(&self.last_buffer_version)
     }
 
-    pub fn snapshot(&self) -> BufferDiffSnapshot {
-        self.snapshot.clone()
-    }
-
-    pub fn update(&mut self, head_text: &str, buffer: &text::BufferSnapshot) {
+    fn update(&mut self, head_text: &str, buffer: &text::BufferSnapshot) {
         let mut tree = SumTree::new();
 
         let buffer_text = buffer.as_rope().to_string();
@@ -170,7 +159,13 @@ impl BufferDiff {
             }
         }
 
-        self.snapshot.tree = tree;
+        self.tree = tree;
+        self.last_buffer_version = buffer.version().clone();
+    }
+
+    #[cfg(test)]
+    fn hunks<'a>(&'a self, text: &'a BufferSnapshot) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
+        self.hunks_in_range(0..u32::MAX, text)
     }
 
     fn diff<'a>(head: &'a str, current: &'a str) -> Option<GitPatch<'a>> {
@@ -284,7 +279,7 @@ mod tests {
         .unindent();
 
         let mut buffer = Buffer::new(0, 0, buffer_text);
-        let diff = BufferDiff::new(&Some(head_text.clone()), &buffer);
+        let diff = smol::block_on(BufferDiff::new(Some(Arc::new(head_text.clone())), &buffer));
         assert_hunks(&diff, &buffer, &head_text, &[(1..2, "two\n")]);
 
         buffer.edit([(0..0, "point five\n")]);
@@ -298,7 +293,7 @@ mod tests {
         head_text: &str,
         expected_hunks: &[(Range<u32>, &str)],
     ) {
-        let hunks = diff.snapshot.hunks(buffer).collect::<Vec<_>>();
+        let hunks = diff.hunks(buffer).collect::<Vec<_>>();
         assert_eq!(
             hunks.len(),
             expected_hunks.len(),

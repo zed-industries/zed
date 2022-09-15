@@ -734,7 +734,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                                     );
                                 }
 
-                                const GIT_DELAY: Duration = Duration::from_millis(600);
+                                const GIT_DELAY: Duration = Duration::from_millis(10);
                                 let item = item.clone();
                                 pending_git_update.fire_new(
                                     GIT_DELAY,

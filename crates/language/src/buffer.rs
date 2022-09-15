@@ -1,4 +1,4 @@
-use crate::git::{BufferDiff, BufferDiffSnapshot, DiffHunk};
+use crate::git::{BufferDiff, DiffHunk};
 pub use crate::{
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
@@ -48,7 +48,7 @@ pub use lsp::DiagnosticSeverity;
 
 pub struct Buffer {
     text: TextBuffer,
-    head_text: Option<String>,
+    head_text: Option<Arc<String>>,
     git_diff: BufferDiff,
     file: Option<Arc<dyn File>>,
     saved_version: clock::Global,
@@ -77,7 +77,7 @@ pub struct Buffer {
 
 pub struct BufferSnapshot {
     text: text::BufferSnapshot,
-    pub diff_snapshot: BufferDiffSnapshot,
+    pub diff_snapshot: BufferDiff,
     pub(crate) syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: DiagnosticSet,
@@ -347,7 +347,7 @@ impl Buffer {
     ) -> Self {
         Self::build(
             TextBuffer::new(replica_id, cx.model_id() as u64, base_text.into()),
-            head_text.map(|h| h.into()),
+            head_text.map(|h| Arc::new(h.into())),
             Some(file),
         )
     }
@@ -358,7 +358,7 @@ impl Buffer {
         file: Option<Arc<dyn File>>,
     ) -> Result<Self> {
         let buffer = TextBuffer::new(replica_id, message.id, message.base_text);
-        let mut this = Self::build(buffer, message.head_text, file);
+        let mut this = Self::build(buffer, message.head_text.map(|text| Arc::new(text)), file);
         this.text.set_line_ending(proto::deserialize_line_ending(
             proto::LineEnding::from_i32(message.line_ending)
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
@@ -414,14 +414,18 @@ impl Buffer {
         self
     }
 
-    fn build(buffer: TextBuffer, head_text: Option<String>, file: Option<Arc<dyn File>>) -> Self {
+    fn build(
+        buffer: TextBuffer,
+        head_text: Option<Arc<String>>,
+        file: Option<Arc<dyn File>>,
+    ) -> Self {
         let saved_mtime = if let Some(file) = file.as_ref() {
             file.mtime()
         } else {
             UNIX_EPOCH
         };
 
-        let git_diff = BufferDiff::new(&head_text, &buffer);
+        let git_diff = smol::block_on(BufferDiff::new(head_text.clone(), &buffer));
 
         Self {
             saved_mtime,
@@ -462,7 +466,7 @@ impl Buffer {
         BufferSnapshot {
             text,
             syntax,
-            diff_snapshot: self.git_diff.snapshot(),
+            diff_snapshot: self.git_diff.clone(),
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
@@ -650,11 +654,29 @@ impl Buffer {
         task
     }
 
-    pub fn update_git(&mut self) {
-        if let Some(head_text) = &self.head_text {
+    pub fn needs_git_update(&self) -> bool {
+        self.git_diff.needs_update(self)
+    }
+
+    pub fn update_git(&mut self, cx: &mut ModelContext<Self>) {
+        if self.head_text.is_some() {
             let snapshot = self.snapshot();
-            self.git_diff.update(head_text, &snapshot);
+            let head_text = self.head_text.clone();
             self.diff_update_count += 1;
+
+            let buffer_diff = cx
+                .background()
+                .spawn(async move { BufferDiff::new(head_text, &snapshot).await });
+
+            cx.spawn_weak(|this, mut cx| async move {
+                let buffer_diff = buffer_diff.await;
+                if let Some(this) = this.upgrade(&cx) {
+                    this.update(&mut cx, |this, _| {
+                        this.git_diff = buffer_diff;
+                    })
+                }
+            })
+            .detach()
         }
     }
 
