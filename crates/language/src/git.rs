@@ -163,8 +163,9 @@ impl BufferDiff {
         let patch = Self::diff(&head_text, &buffer_text);
 
         if let Some(patch) = patch {
+            let mut divergence = 0;
             for hunk_index in 0..patch.num_hunks() {
-                let hunk = Self::process_patch_hunk(&patch, hunk_index, buffer);
+                let hunk = Self::process_patch_hunk(&patch, hunk_index, buffer, &mut divergence);
                 tree.push(hunk, buffer);
             }
         }
@@ -198,6 +199,7 @@ impl BufferDiff {
         patch: &GitPatch<'a>,
         hunk_index: usize,
         buffer: &text::BufferSnapshot,
+        buffer_row_divergence: &mut i64,
     ) -> DiffHunk<Anchor> {
         let line_item_count = patch.num_lines_in_hunk(hunk_index).unwrap();
         assert!(line_item_count > 0);
@@ -212,41 +214,35 @@ impl BufferDiff {
             let content_offset = line.content_offset() as isize;
             let content_len = line.content().len() as isize;
 
-            match (kind, &mut buffer_row_range, &mut head_byte_range) {
-                (GitDiffLineType::Addition, None, _) => {
-                    //guarenteed to be present for additions
-                    let row = line.new_lineno().unwrap().saturating_sub(1);
-                    buffer_row_range = Some(row..row + 1);
-                }
+            if kind == GitDiffLineType::Addition {
+                *buffer_row_divergence += 1;
+                let row = line.new_lineno().unwrap().saturating_sub(1);
 
-                (GitDiffLineType::Addition, Some(buffer_byte_range), _) => {
-                    let row = line.new_lineno().unwrap().saturating_sub(1);
-                    buffer_byte_range.end = row + 1;
+                match &mut buffer_row_range {
+                    Some(buffer_row_range) => buffer_row_range.end = row + 1,
+                    None => buffer_row_range = Some(row..row + 1),
                 }
-
-                (GitDiffLineType::Deletion, _, None) => {
-                    let end = content_offset + content_len;
-                    head_byte_range = Some(content_offset as usize..end as usize);
-                }
-
-                (GitDiffLineType::Deletion, _, Some(head_byte_range)) => {
-                    let end = content_offset + content_len;
-                    head_byte_range.end = end as usize;
-                }
-
-                _ => {}
             }
 
-            if kind == GitDiffLineType::Deletion && first_deletion_buffer_row.is_none() {
-                //old_lineno is guarenteed to be Some for deletions
-                //libgit gives us line numbers that are 1-indexed but also returns a 0 for some states
-                let row = line.old_lineno().unwrap().saturating_sub(1);
-                first_deletion_buffer_row = Some(row);
+            if kind == GitDiffLineType::Deletion {
+                *buffer_row_divergence -= 1;
+                let end = content_offset + content_len;
+
+                match &mut head_byte_range {
+                    Some(head_byte_range) => head_byte_range.end = end as usize,
+                    None => head_byte_range = Some(content_offset as usize..end as usize),
+                }
+
+                if first_deletion_buffer_row.is_none() {
+                    let old_row = line.old_lineno().unwrap().saturating_sub(1);
+                    let row = old_row as i64 + *buffer_row_divergence;
+                    first_deletion_buffer_row = Some(row as u32);
+                }
             }
         }
 
         //unwrap_or deletion without addition
-        let buffer_byte_range = buffer_row_range.unwrap_or_else(|| {
+        let buffer_row_range = buffer_row_range.unwrap_or_else(|| {
             //we cannot have an addition-less hunk without deletion(s) or else there would be no hunk
             let row = first_deletion_buffer_row.unwrap();
             row..row
@@ -255,8 +251,8 @@ impl BufferDiff {
         //unwrap_or addition without deletion
         let head_byte_range = head_byte_range.unwrap_or(0..0);
 
-        let start = Point::new(buffer_byte_range.start, 0);
-        let end = Point::new(buffer_byte_range.end, 0);
+        let start = Point::new(buffer_row_range.start, 0);
+        let end = Point::new(buffer_row_range.end, 0);
         let buffer_range = buffer.anchor_before(start)..buffer.anchor_before(end);
         DiffHunk {
             buffer_range,
