@@ -1,13 +1,10 @@
 use std::ops::Range;
 
-use sum_tree::{Bias, SumTree};
-use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
+use sum_tree::SumTree;
+use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, ToOffset, ToPoint};
 
 pub use git2 as libgit;
-use libgit::{
-    DiffLine as GitDiffLine, DiffLineType as GitDiffLineType, DiffOptions as GitOptions,
-    Patch as GitPatch,
-};
+use libgit::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
 
 #[derive(Debug, Clone, Copy)]
 pub enum DiffHunkStatus {
@@ -99,40 +96,6 @@ impl<'a> sum_tree::Dimension<'a, DiffHunkSummary> for HunkBufferEnd {
     }
 }
 
-struct HunkLineIter<'a, 'b> {
-    patch: &'a GitPatch<'b>,
-    hunk_index: usize,
-    line_index: usize,
-}
-
-impl<'a, 'b> HunkLineIter<'a, 'b> {
-    fn new(patch: &'a GitPatch<'b>, hunk_index: usize) -> Self {
-        HunkLineIter {
-            patch,
-            hunk_index,
-            line_index: 0,
-        }
-    }
-}
-
-impl<'a, 'b> std::iter::Iterator for HunkLineIter<'a, 'b> {
-    type Item = GitDiffLine<'b>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.line_index >= self.patch.num_lines_in_hunk(self.hunk_index).unwrap() {
-            return None;
-        }
-
-        let line_index = self.line_index;
-        self.line_index += 1;
-        Some(
-            self.patch
-                .line_in_hunk(self.hunk_index, line_index)
-                .unwrap(),
-        )
-    }
-}
-
 #[derive(Clone)]
 pub struct BufferDiffSnapshot {
     tree: SumTree<DiffHunk<Anchor>>,
@@ -171,30 +134,22 @@ impl BufferDiffSnapshot {
 }
 
 pub struct BufferDiff {
-    last_update_version: clock::Global,
     snapshot: BufferDiffSnapshot,
 }
 
 impl BufferDiff {
     pub fn new(head_text: &Option<String>, buffer: &text::BufferSnapshot) -> BufferDiff {
-        let mut tree = SumTree::new();
+        let mut instance = BufferDiff {
+            snapshot: BufferDiffSnapshot {
+                tree: SumTree::new(),
+            },
+        };
 
         if let Some(head_text) = head_text {
-            let buffer_text = buffer.as_rope().to_string();
-            let patch = Self::diff(&head_text, &buffer_text);
-
-            if let Some(patch) = patch {
-                for hunk_index in 0..patch.num_hunks() {
-                    let hunk = Self::process_patch_hunk(&patch, hunk_index, buffer);
-                    tree.push(hunk, buffer);
-                }
-            }
+            instance.update(head_text, buffer);
         }
 
-        BufferDiff {
-            last_update_version: buffer.version().clone(),
-            snapshot: BufferDiffSnapshot { tree },
-        }
+        instance
     }
 
     pub fn snapshot(&self) -> BufferDiffSnapshot {
@@ -214,7 +169,6 @@ impl BufferDiff {
             }
         }
 
-        self.last_update_version = buffer.version().clone();
         self.snapshot.tree = tree;
     }
 
@@ -238,31 +192,6 @@ impl BufferDiff {
                 None
             }
         }
-    }
-
-    fn group_edit_ranges(&self, buffer: &text::BufferSnapshot) -> Vec<Range<u32>> {
-        const EXPAND_BY: u32 = 20;
-        const COMBINE_DISTANCE: u32 = 5;
-
-        // let mut cursor = self.snapshot.tree.cursor::<HunkBufferStart>();
-
-        let mut ranges = Vec::<Range<u32>>::new();
-
-        for edit in buffer.edits_since::<Point>(&self.last_update_version) {
-            let buffer_start = edit.new.start.row.saturating_sub(EXPAND_BY);
-            let buffer_end = (edit.new.end.row + EXPAND_BY).min(buffer.row_count());
-
-            match ranges.last_mut() {
-                Some(last_range) if last_range.end.abs_diff(buffer_end) <= COMBINE_DISTANCE => {
-                    last_range.start = last_range.start.min(buffer_start);
-                    last_range.end = last_range.end.max(buffer_end);
-                }
-
-                _ => ranges.push(buffer_start..buffer_end),
-            }
-        }
-
-        ranges
     }
 
     fn process_patch_hunk<'a>(
