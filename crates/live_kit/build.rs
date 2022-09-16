@@ -1,5 +1,9 @@
 use serde::Deserialize;
-use std::{env, path::PathBuf, process::Command};
+use std::{
+    env,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 const SWIFT_PACKAGE_NAME: &'static str = "LiveKitBridge";
 
@@ -88,20 +92,16 @@ fn link_webrtc_framework(swift_target: &SwiftTarget) {
         "cargo:rustc-link-search=framework={}",
         swift_out_dir_path.display()
     );
+    // Find WebRTC.framework as a sibling of the executable when running tests.
+    println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
 
     let source_path = swift_out_dir_path.join("WebRTC.framework");
-    let target_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("../../../WebRTC.framework");
-    assert!(
-        Command::new("cp")
-            .arg("-r")
-            .args(&[&source_path, &target_path])
-            .status()
-            .unwrap()
-            .success(),
-        "could not copy WebRTC.framework from {:?} to {:?}",
-        source_path,
-        target_path
-    );
+    let deps_dir_path =
+        PathBuf::from(env::var("OUT_DIR").unwrap()).join("../../../deps/WebRTC.framework");
+    let target_dir_path =
+        PathBuf::from(env::var("OUT_DIR").unwrap()).join("../../../WebRTC.framework");
+    copy_dir(&source_path, &deps_dir_path);
+    copy_dir(&source_path, &target_dir_path);
 }
 
 fn get_swift_target() -> SwiftTarget {
@@ -122,6 +122,20 @@ fn get_swift_target() -> SwiftTarget {
 
 fn swift_package_root() -> PathBuf {
     env::current_dir().unwrap().join(SWIFT_PACKAGE_NAME)
+}
+
+fn copy_dir(source: &Path, destination: &Path) {
+    assert!(
+        Command::new("cp")
+            .arg("-r")
+            .args(&[source, destination])
+            .status()
+            .unwrap()
+            .success(),
+        "could not copy {:?} to {:?}",
+        source,
+        destination
+    );
 }
 
 impl SwiftTarget {
