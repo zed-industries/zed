@@ -755,35 +755,34 @@ impl Element for TerminalElement {
         _paint: &mut Self::PaintState,
         cx: &mut gpui::EventContext,
     ) -> bool {
-        match event {
-            Event::KeyDown(KeyDownEvent { keystroke, .. }) => {
-                if !cx.is_parent_view_focused() {
-                    return false;
-                }
-
-                if let Some(view) = self.view.upgrade(cx.app) {
-                    view.update(cx.app, |view, cx| {
-                        view.clear_bel(cx);
-                        view.pause_cursor_blinking(cx);
-                    })
-                }
-
-                self.terminal
-                    .upgrade(cx.app)
-                    .map(|model_handle| {
-                        model_handle.update(cx.app, |term, cx| {
-                            term.try_keystroke(
-                                keystroke,
-                                cx.global::<Settings>()
-                                    .terminal_overrides
-                                    .option_as_meta
-                                    .unwrap_or(false),
-                            )
-                        })
-                    })
-                    .unwrap_or(false)
+        if let Event::KeyDown(KeyDownEvent { keystroke, .. }) = event {
+            if !cx.is_parent_view_focused() {
+                return false;
             }
-            _ => false,
+
+            if let Some(view) = self.view.upgrade(cx.app) {
+                view.update(cx.app, |view, cx| {
+                    view.clear_bel(cx);
+                    view.pause_cursor_blinking(cx);
+                })
+            }
+
+            self.terminal
+                .upgrade(cx.app)
+                .map(|model_handle| {
+                    model_handle.update(cx.app, |term, cx| {
+                        term.try_keystroke(
+                            keystroke,
+                            cx.global::<Settings>()
+                                .terminal_overrides
+                                .option_as_meta
+                                .unwrap_or(false),
+                        )
+                    })
+                })
+                .unwrap_or(false)
+        } else {
+            false
         }
     }
 

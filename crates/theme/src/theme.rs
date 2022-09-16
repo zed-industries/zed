@@ -80,6 +80,7 @@ pub struct TabBar {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub pane_button: Interactive<IconButton>,
+    pub pane_button_container: ContainerStyle,
     pub active_pane: TabStyles,
     pub inactive_pane: TabStyles,
     pub dragged_tab: Tab,
@@ -155,7 +156,6 @@ pub struct Dock {
     pub initial_size_right: f32,
     pub initial_size_bottom: f32,
     pub wash_color: Color,
-    pub flex: f32,
     pub panel: ContainerStyle,
     pub maximized: ContainerStyle,
 }

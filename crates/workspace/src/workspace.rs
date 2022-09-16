@@ -34,7 +34,7 @@ use gpui::{
     RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::LanguageRegistry;
-use log::error;
+use log::{error, warn};
 pub use pane::*;
 pub use pane_group::*;
 use postage::prelude::Stream;
@@ -1784,6 +1784,11 @@ impl Workspace {
         direction: SplitDirection,
         cx: &mut ViewContext<Self>,
     ) -> Option<ViewHandle<Pane>> {
+        if &pane == self.dock_pane() {
+            warn!("Can't split dock pane.");
+            return None;
+        }
+
         pane.read(cx).active_item().map(|item| {
             let new_pane = self.add_pane(cx);
             if let Some(clone) = item.clone_on_split(cx.as_mut()) {
@@ -2679,6 +2684,14 @@ impl View for Workspace {
         if cx.is_self_focused() {
             cx.focus(&self.active_pane);
         }
+    }
+
+    fn keymap_context(&self, _: &AppContext) -> gpui::keymap::Context {
+        let mut keymap = Self::default_keymap_context();
+        if self.active_pane() == self.dock_pane() {
+            keymap.set.insert("Dock".into());
+        }
+        keymap
     }
 }
 

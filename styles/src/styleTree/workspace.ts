@@ -163,13 +163,16 @@ export default function workspace(theme: Theme) {
       initialSizeRight: 640,
       initialSizeBottom: 480,
       wash_color: withOpacity(theme.backgroundColor[500].base, 0.5),
-      flex: 0.5,
       panel: {
-        margin: 4,
+        border: {
+          ...border(theme, "secondary"),
+          width: 1
+        },
       },
       maximized: {
-        margin: 32,
-        border: border(theme, "secondary"),
+        cornerRadius: 10,
+        margin: 24,
+        border: border(theme, "secondary", { "overlay": true }),
         shadow: modalShadow(theme),
       }
     }
