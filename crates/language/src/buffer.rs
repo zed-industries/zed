@@ -662,7 +662,6 @@ impl Buffer {
         if self.head_text.is_some() {
             let snapshot = self.snapshot();
             let head_text = self.head_text.clone();
-            self.diff_update_count += 1;
 
             let buffer_diff = cx
                 .background()
@@ -671,8 +670,10 @@ impl Buffer {
             cx.spawn_weak(|this, mut cx| async move {
                 let buffer_diff = buffer_diff.await;
                 if let Some(this) = this.upgrade(&cx) {
-                    this.update(&mut cx, |this, _| {
+                    this.update(&mut cx, |this, cx| {
                         this.git_diff = buffer_diff;
+                        this.diff_update_count += 1;
+                        cx.notify();
                     })
                 }
             })

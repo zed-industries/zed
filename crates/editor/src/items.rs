@@ -484,7 +484,6 @@ impl Item for Editor {
         self.buffer().update(cx, |multibuffer, cx| {
             multibuffer.update_git(cx);
         });
-        cx.notify();
         Task::ready(Ok(()))
     }
 
