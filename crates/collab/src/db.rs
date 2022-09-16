@@ -448,9 +448,9 @@ impl Db for PostgresDb {
     ) -> Result<(UserId, Option<UserId>)> {
         let mut tx = self.pool.begin().await?;
 
-        let (signup_id, inviting_user_id): (i32, Option<UserId>) = sqlx::query_as(
+        let (signup_id, metrics_id, inviting_user_id): (i32, i32, Option<UserId>) = sqlx::query_as(
             "
-            SELECT id, inviting_user_id
+            SELECT id, metrics_id, inviting_user_id
             FROM signups
             WHERE
                 email_address = $1 AND
@@ -467,9 +467,9 @@ impl Db for PostgresDb {
         let user_id: UserId = sqlx::query_scalar(
             "
             INSERT INTO users
-                (email_address, github_login, admin, invite_count, invite_code)
+                (email_address, github_login, admin, invite_count, invite_code, metrics_id)
             VALUES
-                ($1, $2, 'f', $3, $4)
+                ($1, $2, 'f', $3, $4, $5)
             RETURNING id
             ",
         )
@@ -477,6 +477,7 @@ impl Db for PostgresDb {
         .bind(&user.github_login)
         .bind(&user.invite_count)
         .bind(random_invite_code())
+        .bind(metrics_id)
         .fetch_one(&mut tx)
         .await?;
 

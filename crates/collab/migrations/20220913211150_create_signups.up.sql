@@ -25,3 +25,6 @@ CREATE INDEX "index_signups_on_email_confirmation_sent" ON "signups" ("email_con
 
 ALTER TABLE "users"
     ADD "metrics_id" INTEGER DEFAULT nextval('metrics_id_seq');
+
+UPDATE users
+SET metrics_id = nextval('metrics_id_seq');
