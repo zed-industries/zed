@@ -28,7 +28,7 @@ pub struct SwiftTarget {
     pub paths: SwiftPaths,
 }
 
-const MACOS_TARGET_VERSION: &str = "12";
+const MACOS_TARGET_VERSION: &str = "10.15";
 
 fn main() {
     let swift_target = get_swift_target();
@@ -52,13 +52,7 @@ fn build_bridge(swift_target: &SwiftTarget) {
     if !Command::new("swift")
         .arg("build")
         .args(&["--configuration", &env::var("PROFILE").unwrap()])
-        .args(&[
-            "--triple",
-            &format!(
-                "{}{}",
-                swift_target.target.unversioned_triple, MACOS_TARGET_VERSION
-            ),
-        ])
+        .args(&["--triple", &swift_target.target.triple])
         .current_dir(&swift_package_root)
         .status()
         .unwrap()
@@ -78,10 +72,6 @@ fn build_bridge(swift_target: &SwiftTarget) {
 }
 
 fn link_swift_stdlib(swift_target: &SwiftTarget) {
-    if swift_target.target.libraries_require_rpath {
-        panic!("Libraries require RPath! Change minimum MacOS value to fix.")
-    }
-
     swift_target
         .paths
         .runtime_library_paths
