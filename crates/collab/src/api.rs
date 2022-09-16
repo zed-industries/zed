@@ -1,6 +1,6 @@
 use crate::{
     auth,
-    db::{Invite, NewUserParams, ProjectId, Signup, User, UserId},
+    db::{Invite, NewUserParams, ProjectId, Signup, User, UserId, WaitlistSummary},
     rpc::{self, ResultExt},
     AppState, Error, Result,
 };
@@ -46,6 +46,7 @@ pub fn routes(rpc_server: &Arc<rpc::Server>, state: Arc<AppState>) -> Router<Bod
         .route("/user_activity/counts", get(get_active_user_counts))
         .route("/project_metadata", get(get_project_metadata))
         .route("/signups", post(create_signup))
+        .route("/signups_summary", get(get_waitlist_summary))
         .route("/user_invites", post(create_invite_from_code))
         .route("/unsent_invites", get(get_unsent_invites))
         .route("/sent_invites", post(record_sent_invites))
@@ -437,6 +438,12 @@ async fn create_signup(
 ) -> Result<()> {
     app.db.create_signup(params).await?;
     Ok(())
+}
+
+async fn get_waitlist_summary(
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<Json<WaitlistSummary>> {
+    Ok(Json(app.db.get_waitlist_summary().await?))
 }
 
 #[derive(Deserialize)]

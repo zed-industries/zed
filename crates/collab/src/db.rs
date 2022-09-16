@@ -35,6 +35,7 @@ pub trait Db: Send + Sync {
     async fn create_invite_from_code(&self, code: &str, email_address: &str) -> Result<Invite>;
 
     async fn create_signup(&self, signup: Signup) -> Result<()>;
+    async fn get_waitlist_summary(&self) -> Result<WaitlistSummary>;
     async fn get_unsent_invites(&self, count: usize) -> Result<Vec<Invite>>;
     async fn record_sent_invites(&self, invites: &[Invite]) -> Result<()>;
     async fn create_user_from_invite(
@@ -382,6 +383,26 @@ impl Db for PostgresDb {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    async fn get_waitlist_summary(&self) -> Result<WaitlistSummary> {
+        Ok(sqlx::query_as(
+            "
+            SELECT
+                COUNT(*) as count,
+                COALESCE(SUM(CASE WHEN platform_linux THEN 1 ELSE 0 END), 0) as linux_count,
+                COALESCE(SUM(CASE WHEN platform_mac THEN 1 ELSE 0 END), 0) as mac_count,
+                COALESCE(SUM(CASE WHEN platform_windows THEN 1 ELSE 0 END), 0) as windows_count
+            FROM (
+                SELECT *
+                FROM signups
+                WHERE
+                    NOT email_confirmation_sent
+            ) AS unsent
+            ",
+        )
+        .fetch_one(&self.pool)
+        .await?)
     }
 
     async fn get_unsent_invites(&self, count: usize) -> Result<Vec<Invite>> {
@@ -1630,6 +1651,18 @@ pub struct Signup {
     pub programming_languages: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, FromRow)]
+pub struct WaitlistSummary {
+    #[sqlx(default)]
+    pub count: i64,
+    #[sqlx(default)]
+    pub linux_count: i64,
+    #[sqlx(default)]
+    pub mac_count: i64,
+    #[sqlx(default)]
+    pub windows_count: i64,
+}
+
 #[derive(FromRow, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Invite {
     pub email_address: String,
@@ -1809,6 +1842,10 @@ mod test {
         // signups
 
         async fn create_signup(&self, _signup: Signup) -> Result<()> {
+            unimplemented!()
+        }
+
+        async fn get_waitlist_summary(&self) -> Result<WaitlistSummary> {
             unimplemented!()
         }
 

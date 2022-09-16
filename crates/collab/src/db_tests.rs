@@ -966,14 +966,24 @@ async fn test_signups() {
         db.create_signup(Signup {
             email_address: format!("person-{i}@example.com"),
             platform_mac: true,
-            platform_linux: true,
-            platform_windows: false,
+            platform_linux: i % 2 == 0,
+            platform_windows: i % 4 == 0,
             editor_features: vec!["speed".into()],
             programming_languages: vec!["rust".into(), "c".into()],
         })
         .await
         .unwrap();
     }
+
+    assert_eq!(
+        db.get_waitlist_summary().await.unwrap(),
+        WaitlistSummary {
+            count: 8,
+            mac_count: 8,
+            linux_count: 4,
+            windows_count: 2,
+        }
+    );
 
     // retrieve the next batch of signup emails to send
     let signups_batch1 = db.get_unsent_invites(3).await.unwrap();
@@ -1014,6 +1024,17 @@ async fn test_signups() {
             "person-4@example.com",
             "person-5@example.com"
         ]
+    );
+
+    // the sent invites are excluded from the summary.
+    assert_eq!(
+        db.get_waitlist_summary().await.unwrap(),
+        WaitlistSummary {
+            count: 5,
+            mac_count: 5,
+            linux_count: 2,
+            windows_count: 1,
+        }
     );
 
     // user completes the signup process by providing their
