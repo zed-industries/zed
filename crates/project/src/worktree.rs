@@ -449,7 +449,11 @@ impl LocalWorktree {
             let (file, contents, head_text) = this
                 .update(&mut cx, |t, cx| t.as_local().unwrap().load(&path, cx))
                 .await?;
-            Ok(cx.add_model(|cx| Buffer::from_file(0, contents, head_text, Arc::new(file), cx)))
+            Ok(cx.add_model(|cx| {
+                let mut buffer = Buffer::from_file(0, contents, head_text, Arc::new(file), cx);
+                buffer.update_git(cx);
+                buffer
+            }))
         })
     }
 
