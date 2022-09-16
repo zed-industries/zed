@@ -10,7 +10,7 @@ class LKRoomDelegate: RoomDelegate {
         self.data = data
         self.onDidSubscribeToRemoteVideoTrack = onDidSubscribeToRemoteVideoTrack
     }
-    
+
     func room(_ room: Room, participant: RemoteParticipant, didSubscribe publication: RemoteTrackPublication, track: Track) {
         if track.kind == .video {
             self.onDidSubscribeToRemoteVideoTrack(self.data, Unmanaged.passRetained(track).toOpaque())

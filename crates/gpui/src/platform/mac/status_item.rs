@@ -144,7 +144,7 @@ impl StatusItem {
                 Weak::into_raw(Rc::downgrade(&state)) as *const c_void,
             );
             native_view.setWantsBestResolutionOpenGLSurface_(YES);
-            native_view.setWantsLayer(true);
+            native_view.setWantsLayer(YES);
             let _: () = msg_send![
                 native_view,
                 setLayerContentsRedrawPolicy: NSViewLayerContentsRedrawDuringViewResize
