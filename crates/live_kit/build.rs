@@ -52,7 +52,13 @@ fn build_bridge(swift_target: &SwiftTarget) {
     if !Command::new("swift")
         .arg("build")
         .args(&["--configuration", &env::var("PROFILE").unwrap()])
-        .args(&["--triple", &swift_target.target.unversioned_triple])
+        .args(&[
+            "--triple",
+            &format!(
+                "{}{}",
+                swift_target.target.unversioned_triple, MACOS_TARGET_VERSION
+            ),
+        ])
         .current_dir(&swift_package_root)
         .status()
         .unwrap()
