@@ -573,7 +573,13 @@ impl LocalWorktree {
         let fs = self.fs.clone();
         cx.spawn(|this, mut cx| async move {
             let text = fs.load(&abs_path).await?;
-            let head_text = fs.load_head_text(&abs_path).await;
+
+            let head_text = {
+                let fs = fs.clone();
+                let abs_path = abs_path.clone();
+                let task = async move { fs.load_head_text(&abs_path).await };
+                cx.background().spawn(task).await
+            };
 
             // Eagerly populate the snapshot with an updated entry for the loaded file
             let entry = this
