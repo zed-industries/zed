@@ -170,7 +170,6 @@ export default function workspace(theme: Theme) {
         },
       },
       maximized: {
-        cornerRadius: 10,
         margin: 24,
         border: border(theme, "secondary", { "overlay": true }),
         shadow: modalShadow(theme),
