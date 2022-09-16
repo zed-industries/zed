@@ -1,6 +1,8 @@
 use serde::Deserialize;
 use std::{env, path::PathBuf, process::Command};
 
+const SWIFT_PACKAGE_NAME: &'static str = "LiveKitBridge";
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SwiftTargetInfo {
@@ -42,9 +44,15 @@ fn build_bridge(swift_target: &SwiftTarget) {
         "cargo:rerun-if-changed={}/Package.swift",
         SWIFT_PACKAGE_NAME
     );
+    println!(
+        "cargo:rerun-if-changed={}/Package.resolved",
+        SWIFT_PACKAGE_NAME
+    );
     let swift_package_root = swift_package_root();
     if !Command::new("swift")
-        .args(&["build", "-c", &env::var("PROFILE").unwrap()])
+        .arg("build")
+        .args(&["--configuration", &env::var("PROFILE").unwrap()])
+        .args(&["--triple", &swift_target.target.triple])
         .current_dir(&swift_package_root)
         .status()
         .unwrap()
@@ -115,8 +123,6 @@ fn get_swift_target() -> SwiftTarget {
 
     serde_json::from_slice(&swift_target_info_str).unwrap()
 }
-
-const SWIFT_PACKAGE_NAME: &'static str = "LiveKitBridge";
 
 fn swift_package_root() -> PathBuf {
     env::current_dir().unwrap().join(SWIFT_PACKAGE_NAME)
