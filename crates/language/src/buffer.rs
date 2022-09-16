@@ -425,8 +425,6 @@ impl Buffer {
             UNIX_EPOCH
         };
 
-        let git_diff = smol::block_on(BufferDiff::new(head_text.clone(), &buffer));
-
         Self {
             saved_mtime,
             saved_version: buffer.version(),
@@ -435,7 +433,7 @@ impl Buffer {
             was_dirty_before_starting_transaction: None,
             text: buffer,
             head_text,
-            git_diff,
+            git_diff: BufferDiff::new(),
             file,
             syntax_map: Mutex::new(SyntaxMap::new()),
             parsing_in_background: false,
@@ -659,16 +657,18 @@ impl Buffer {
     }
 
     pub fn update_git(&mut self, cx: &mut ModelContext<Self>) {
-        if self.head_text.is_some() {
+        if let Some(head_text) = &self.head_text {
             let snapshot = self.snapshot();
-            let head_text = self.head_text.clone();
+            let head_text = head_text.clone();
 
-            let buffer_diff = cx
-                .background()
-                .spawn(async move { BufferDiff::new(head_text, &snapshot).await });
+            let mut diff = self.git_diff.clone();
+            let diff = cx.background().spawn(async move {
+                diff.update(&head_text, &snapshot).await;
+                diff
+            });
 
             cx.spawn_weak(|this, mut cx| async move {
-                let buffer_diff = buffer_diff.await;
+                let buffer_diff = diff.await;
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {
                         this.git_diff = buffer_diff;

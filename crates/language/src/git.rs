@@ -1,4 +1,4 @@
-use std::{ops::Range, sync::Arc};
+use std::ops::Range;
 
 use sum_tree::SumTree;
 use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, ToPoint};
@@ -98,22 +98,16 @@ impl<'a> sum_tree::Dimension<'a, DiffHunkSummary> for HunkBufferEnd {
 
 #[derive(Clone)]
 pub struct BufferDiff {
-    last_buffer_version: clock::Global,
+    last_buffer_version: Option<clock::Global>,
     tree: SumTree<DiffHunk<Anchor>>,
 }
 
 impl BufferDiff {
-    pub async fn new(head_text: Option<Arc<String>>, buffer: &text::BufferSnapshot) -> BufferDiff {
-        let mut instance = BufferDiff {
-            last_buffer_version: buffer.version().clone(),
+    pub fn new() -> BufferDiff {
+        BufferDiff {
+            last_buffer_version: None,
             tree: SumTree::new(),
-        };
-
-        if let Some(head_text) = head_text {
-            instance.update(&*head_text, buffer);
         }
-
-        instance
     }
 
     pub fn hunks_in_range<'a>(
@@ -142,10 +136,13 @@ impl BufferDiff {
     }
 
     pub fn needs_update(&self, buffer: &text::BufferSnapshot) -> bool {
-        buffer.version().changed_since(&self.last_buffer_version)
+        match &self.last_buffer_version {
+            Some(last) => buffer.version().changed_since(last),
+            None => true,
+        }
     }
 
-    fn update(&mut self, head_text: &str, buffer: &text::BufferSnapshot) {
+    pub async fn update(&mut self, head_text: &str, buffer: &text::BufferSnapshot) {
         let mut tree = SumTree::new();
 
         let buffer_text = buffer.as_rope().to_string();
@@ -160,7 +157,7 @@ impl BufferDiff {
         }
 
         self.tree = tree;
-        self.last_buffer_version = buffer.version().clone();
+        self.last_buffer_version = Some(buffer.version().clone());
     }
 
     #[cfg(test)]
@@ -279,7 +276,8 @@ mod tests {
         .unindent();
 
         let mut buffer = Buffer::new(0, 0, buffer_text);
-        let diff = smol::block_on(BufferDiff::new(Some(Arc::new(head_text.clone())), &buffer));
+        let mut diff = BufferDiff::new();
+        smol::block_on(diff.update(&head_text, &buffer));
         assert_hunks(&diff, &buffer, &head_text, &[(1..2, "two\n")]);
 
         buffer.edit([(0..0, "point five\n")]);
