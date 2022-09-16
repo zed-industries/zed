@@ -1,4 +1,3 @@
-use super::{geometry::RectFExt, renderer::Renderer};
 use crate::{
     executor,
     geometry::{
@@ -6,25 +5,30 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     keymap::Keystroke,
-    platform::{self, Event, WindowBounds, WindowContext},
+    mac::platform::NSViewLayerContentsRedrawDuringViewResize,
+    platform::{
+        self,
+        mac::{geometry::RectFExt, renderer::Renderer},
+        Event, WindowBounds,
+    },
     InputHandler, KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseButtonEvent,
-    MouseMovedEvent, Scene,
+    MouseMovedEvent, Scene, WindowKind,
 };
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
         CGPoint, NSApplication, NSBackingStoreBuffered, NSScreen, NSView, NSViewHeightSizable,
-        NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowStyleMask,
+        NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
+        NSWindowStyleMask,
     },
     base::{id, nil},
     foundation::{
         NSAutoreleasePool, NSInteger, NSNotFound, NSPoint, NSRect, NSSize, NSString, NSUInteger,
     },
-    quartzcore::AutoresizingMask,
 };
 use core_graphics::display::CGRect;
 use ctor::ctor;
-use foreign_types::ForeignType as _;
+use foreign_types::ForeignTypeRef;
 use objc::{
     class,
     declare::ClassDecl,
@@ -51,7 +55,24 @@ use std::{
 const WINDOW_STATE_IVAR: &str = "windowState";
 
 static mut WINDOW_CLASS: *const Class = ptr::null();
+static mut PANEL_CLASS: *const Class = ptr::null();
 static mut VIEW_CLASS: *const Class = ptr::null();
+
+#[allow(non_upper_case_globals)]
+const NSWindowStyleMaskNonactivatingPanel: NSWindowStyleMask =
+    unsafe { NSWindowStyleMask::from_bits_unchecked(1 << 7) };
+#[allow(non_upper_case_globals)]
+const NSNormalWindowLevel: NSInteger = 0;
+#[allow(non_upper_case_globals)]
+const NSPopUpWindowLevel: NSInteger = 101;
+#[allow(non_upper_case_globals)]
+const NSTrackingMouseMoved: NSUInteger = 0x02;
+#[allow(non_upper_case_globals)]
+const NSTrackingActiveAlways: NSUInteger = 0x80;
+#[allow(non_upper_case_globals)]
+const NSTrackingInVisibleRect: NSUInteger = 0x200;
+#[allow(non_upper_case_globals)]
+const NSWindowAnimationBehaviorUtilityWindow: NSInteger = 4;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -103,55 +124,10 @@ unsafe impl objc::Encode for NSRange {
     }
 }
 
-#[allow(non_upper_case_globals)]
-const NSViewLayerContentsRedrawDuringViewResize: NSInteger = 2;
-
 #[ctor]
 unsafe fn build_classes() {
-    WINDOW_CLASS = {
-        let mut decl = ClassDecl::new("GPUIWindow", class!(NSWindow)).unwrap();
-        decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
-        decl.add_method(sel!(dealloc), dealloc_window as extern "C" fn(&Object, Sel));
-        decl.add_method(
-            sel!(canBecomeMainWindow),
-            yes as extern "C" fn(&Object, Sel) -> BOOL,
-        );
-        decl.add_method(
-            sel!(canBecomeKeyWindow),
-            yes as extern "C" fn(&Object, Sel) -> BOOL,
-        );
-        decl.add_method(
-            sel!(sendEvent:),
-            send_event as extern "C" fn(&Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(windowDidResize:),
-            window_did_resize as extern "C" fn(&Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(windowWillEnterFullScreen:),
-            window_will_enter_fullscreen as extern "C" fn(&Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(windowWillExitFullScreen:),
-            window_will_exit_fullscreen as extern "C" fn(&Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(windowDidBecomeKey:),
-            window_did_change_key_status as extern "C" fn(&Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(windowDidResignKey:),
-            window_did_change_key_status as extern "C" fn(&Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(windowShouldClose:),
-            window_should_close as extern "C" fn(&Object, Sel, id) -> BOOL,
-        );
-        decl.add_method(sel!(close), close_window as extern "C" fn(&Object, Sel));
-        decl.register()
-    };
-
+    WINDOW_CLASS = build_window_class("GPUIWindow", class!(NSWindow));
+    PANEL_CLASS = build_window_class("GPUIPanel", class!(NSPanel));
     VIEW_CLASS = {
         let mut decl = ClassDecl::new("GPUIView", class!(NSView)).unwrap();
         decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
@@ -265,6 +241,10 @@ unsafe fn build_classes() {
             attributed_substring_for_proposed_range
                 as extern "C" fn(&Object, Sel, NSRange, *mut c_void) -> id,
         );
+        decl.add_method(
+            sel!(viewDidChangeEffectiveAppearance),
+            view_did_change_effective_appearance as extern "C" fn(&Object, Sel),
+        );
 
         // Suppress beep on keystrokes with modifier keys.
         decl.add_method(
@@ -274,6 +254,50 @@ unsafe fn build_classes() {
 
         decl.register()
     };
+}
+
+unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const Class {
+    let mut decl = ClassDecl::new(name, superclass).unwrap();
+    decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
+    decl.add_method(sel!(dealloc), dealloc_window as extern "C" fn(&Object, Sel));
+    decl.add_method(
+        sel!(canBecomeMainWindow),
+        yes as extern "C" fn(&Object, Sel) -> BOOL,
+    );
+    decl.add_method(
+        sel!(canBecomeKeyWindow),
+        yes as extern "C" fn(&Object, Sel) -> BOOL,
+    );
+    decl.add_method(
+        sel!(sendEvent:),
+        send_event as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
+        sel!(windowDidResize:),
+        window_did_resize as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
+        sel!(windowWillEnterFullScreen:),
+        window_will_enter_fullscreen as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
+        sel!(windowWillExitFullScreen:),
+        window_will_exit_fullscreen as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
+        sel!(windowDidBecomeKey:),
+        window_did_change_key_status as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
+        sel!(windowDidResignKey:),
+        window_did_change_key_status as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
+        sel!(windowShouldClose:),
+        window_should_close as extern "C" fn(&Object, Sel, id) -> BOOL,
+    );
+    decl.add_method(sel!(close), close_window as extern "C" fn(&Object, Sel));
+    decl.register()
 }
 
 pub struct Window(Rc<RefCell<WindowState>>);
@@ -299,6 +323,7 @@ struct WindowState {
     fullscreen_callback: Option<Box<dyn FnMut(bool)>>,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
+    appearance_changed_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<Box<dyn InputHandler>>,
     pending_key_down: Option<(KeyDownEvent, Option<InsertText>)>,
     performed_key_equivalent: bool,
@@ -306,9 +331,7 @@ struct WindowState {
     executor: Rc<executor::Foreground>,
     scene_to_render: Option<Scene>,
     renderer: Renderer,
-    command_queue: metal::CommandQueue,
     last_fresh_keydown: Option<Keystroke>,
-    layer: id,
     traffic_light_position: Option<Vector2F>,
     previous_modifiers_changed_event: Option<Event>,
     //State tracking what the IME did after the last request
@@ -329,57 +352,58 @@ impl Window {
         executor: Rc<executor::Foreground>,
         fonts: Arc<dyn platform::FontSystem>,
     ) -> Self {
-        const PIXEL_FORMAT: metal::MTLPixelFormat = metal::MTLPixelFormat::BGRA8Unorm;
-
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
 
-            let frame = match options.bounds {
-                WindowBounds::Maximized => RectF::new(Default::default(), vec2f(1024., 768.)),
-                WindowBounds::Fixed(rect) => rect,
-            }
-            .to_ns_rect();
-            let mut style_mask = NSWindowStyleMask::NSClosableWindowMask
-                | NSWindowStyleMask::NSMiniaturizableWindowMask
-                | NSWindowStyleMask::NSResizableWindowMask
-                | NSWindowStyleMask::NSTitledWindowMask;
+            let mut style_mask;
+            if let Some(titlebar) = options.titlebar.as_ref() {
+                style_mask = NSWindowStyleMask::NSClosableWindowMask
+                    | NSWindowStyleMask::NSMiniaturizableWindowMask
+                    | NSWindowStyleMask::NSResizableWindowMask
+                    | NSWindowStyleMask::NSTitledWindowMask;
 
-            if options.titlebar_appears_transparent {
-                style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
+                if titlebar.appears_transparent {
+                    style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
+                }
+            } else {
+                style_mask = NSWindowStyleMask::NSTitledWindowMask
+                    | NSWindowStyleMask::NSFullSizeContentViewWindowMask;
             }
 
-            let native_window: id = msg_send![WINDOW_CLASS, alloc];
+            let native_window: id = match options.kind {
+                WindowKind::Normal => msg_send![WINDOW_CLASS, alloc],
+                WindowKind::PopUp => {
+                    style_mask |= NSWindowStyleMaskNonactivatingPanel;
+                    msg_send![PANEL_CLASS, alloc]
+                }
+            };
             let native_window = native_window.initWithContentRect_styleMask_backing_defer_(
-                frame,
+                RectF::new(Default::default(), vec2f(1024., 768.)).to_ns_rect(),
                 style_mask,
                 NSBackingStoreBuffered,
                 NO,
             );
             assert!(!native_window.is_null());
 
-            if matches!(options.bounds, WindowBounds::Maximized) {
-                let screen = native_window.screen();
-                native_window.setFrame_display_(screen.visibleFrame(), YES);
+            let screen = native_window.screen();
+            match options.bounds {
+                WindowBounds::Maximized => {
+                    native_window.setFrame_display_(screen.visibleFrame(), YES);
+                }
+                WindowBounds::Fixed(top_left_bounds) => {
+                    let frame = screen.visibleFrame();
+                    let bottom_left_bounds = RectF::new(
+                        vec2f(
+                            top_left_bounds.origin_x(),
+                            frame.size.height as f32
+                                - top_left_bounds.origin_y()
+                                - top_left_bounds.height(),
+                        ),
+                        top_left_bounds.size(),
+                    );
+                    native_window.setFrame_display_(bottom_left_bounds.to_ns_rect(), YES);
+                }
             }
-
-            let device: metal::Device = if let Some(device) = metal::Device::system_default() {
-                device
-            } else {
-                log::error!("unable to access a compatible graphics device");
-                std::process::exit(1);
-            };
-
-            let layer: id = msg_send![class!(CAMetalLayer), layer];
-            let _: () = msg_send![layer, setDevice: device.as_ptr()];
-            let _: () = msg_send![layer, setPixelFormat: PIXEL_FORMAT];
-            let _: () = msg_send![layer, setAllowsNextDrawableTimeout: NO];
-            let _: () = msg_send![layer, setNeedsDisplayOnBoundsChange: YES];
-            let _: () = msg_send![layer, setPresentsWithTransaction: YES];
-            let _: () = msg_send![
-                layer,
-                setAutoresizingMask: AutoresizingMask::WIDTH_SIZABLE
-                    | AutoresizingMask::HEIGHT_SIZABLE
-            ];
 
             let native_view: id = msg_send![VIEW_CLASS, alloc];
             let native_view = NSView::init(native_view);
@@ -394,22 +418,19 @@ impl Window {
                 close_callback: None,
                 activate_callback: None,
                 fullscreen_callback: None,
+                appearance_changed_callback: None,
                 input_handler: None,
                 pending_key_down: None,
                 performed_key_equivalent: false,
                 synthetic_drag_counter: 0,
                 executor,
                 scene_to_render: Default::default(),
-                renderer: Renderer::new(
-                    device.clone(),
-                    PIXEL_FORMAT,
-                    get_scale_factor(native_window),
-                    fonts,
-                ),
-                command_queue: device.new_command_queue(),
+                renderer: Renderer::new(true, fonts),
                 last_fresh_keydown: None,
-                layer,
-                traffic_light_position: options.traffic_light_position,
+                traffic_light_position: options
+                    .titlebar
+                    .as_ref()
+                    .and_then(|titlebar| titlebar.traffic_light_position),
                 previous_modifiers_changed_event: None,
                 ime_state: ImeState::None,
                 ime_text: None,
@@ -425,13 +446,28 @@ impl Window {
                 Rc::into_raw(window.0.clone()) as *const c_void,
             );
 
-            if let Some(title) = options.title.as_ref() {
+            if let Some(title) = options.titlebar.as_ref().and_then(|t| t.title) {
                 native_window.setTitle_(NSString::alloc(nil).init_str(title));
             }
-            if options.titlebar_appears_transparent {
+
+            native_window.setMovable_(options.is_movable as BOOL);
+
+            if options
+                .titlebar
+                .map_or(true, |titlebar| titlebar.appears_transparent)
+            {
                 native_window.setTitlebarAppearsTransparent_(YES);
             }
-            native_window.setAcceptsMouseMovedEvents_(YES);
+
+            let tracking_area: id = msg_send![class!(NSTrackingArea), alloc];
+            let _: () = msg_send![
+                tracking_area,
+                initWithRect: NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.))
+                options: NSTrackingMouseMoved | NSTrackingActiveAlways | NSTrackingInVisibleRect
+                owner: native_view
+                userInfo: nil
+            ];
+            let _: () = msg_send![native_view, addTrackingArea: tracking_area.autorelease()];
 
             native_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
             native_view.setWantsBestResolutionOpenGLSurface_(YES);
@@ -450,7 +486,24 @@ impl Window {
             native_window.setContentView_(native_view.autorelease());
             native_window.makeFirstResponder_(native_view);
 
-            native_window.center();
+            if options.center {
+                native_window.center();
+            }
+
+            match options.kind {
+                WindowKind::Normal => native_window.setLevel_(NSNormalWindowLevel),
+                WindowKind::PopUp => {
+                    native_window.setLevel_(NSPopUpWindowLevel);
+                    let _: () = msg_send![
+                        native_window,
+                        setAnimationBehavior: NSWindowAnimationBehaviorUtilityWindow
+                    ];
+                    native_window.setCollectionBehavior_(
+                        NSWindowCollectionBehavior::NSWindowCollectionBehaviorCanJoinAllSpaces |
+                        NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenAuxiliary
+                    );
+                }
+            }
             native_window.makeKeyAndOrderFront_(nil);
 
             window.0.borrow().move_traffic_light();
@@ -637,11 +690,13 @@ impl platform::Window for Window {
             })
             .detach();
     }
-}
 
-impl platform::WindowContext for Window {
-    fn size(&self) -> Vector2F {
-        self.0.as_ref().borrow().size()
+    fn bounds(&self) -> RectF {
+        self.0.as_ref().borrow().bounds()
+    }
+
+    fn content_size(&self) -> Vector2F {
+        self.0.as_ref().borrow().content_size()
     }
 
     fn scale_factor(&self) -> f32 {
@@ -654,6 +709,17 @@ impl platform::WindowContext for Window {
 
     fn titlebar_height(&self) -> f32 {
         self.0.as_ref().borrow().titlebar_height()
+    }
+
+    fn appearance(&self) -> crate::Appearance {
+        unsafe {
+            let appearance: id = msg_send![self.0.borrow().native_window, effectiveAppearance];
+            crate::Appearance::from_native(appearance)
+        }
+    }
+
+    fn on_appearance_changed(&mut self, callback: Box<dyn FnMut()>) {
+        self.0.borrow_mut().appearance_changed_callback = Some(callback);
     }
 }
 
@@ -701,10 +767,25 @@ impl WindowState {
             }
         }
     }
-}
 
-impl platform::WindowContext for WindowState {
-    fn size(&self) -> Vector2F {
+    fn bounds(&self) -> RectF {
+        unsafe {
+            let screen_frame = self.native_window.screen().visibleFrame();
+            let window_frame = NSWindow::frame(self.native_window);
+            let origin = vec2f(
+                window_frame.origin.x as f32,
+                (window_frame.origin.y - screen_frame.size.height - window_frame.size.height)
+                    as f32,
+            );
+            let size = vec2f(
+                window_frame.size.width as f32,
+                window_frame.size.height as f32,
+            );
+            RectF::new(origin, size)
+        }
+    }
+
+    fn content_size(&self) -> Vector2F {
         let NSSize { width, height, .. } =
             unsafe { NSView::frame(self.native_window.contentView()) }.size;
         vec2f(width as f32, height as f32)
@@ -781,7 +862,8 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
     let mut window_state_borrow = window_state.as_ref().borrow_mut();
 
-    let event = unsafe { Event::from_native(native_event, Some(window_state_borrow.size().y())) };
+    let event =
+        unsafe { Event::from_native(native_event, Some(window_state_borrow.content_size().y())) };
 
     if let Some(event) = event {
         if key_equivalent {
@@ -873,7 +955,8 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let weak_window_state = Rc::downgrade(&window_state);
     let mut window_state_borrow = window_state.as_ref().borrow_mut();
 
-    let event = unsafe { Event::from_native(native_event, Some(window_state_borrow.size().y())) };
+    let event =
+        unsafe { Event::from_native(native_event, Some(window_state_borrow.content_size().y())) };
     if let Some(event) = event {
         match &event {
             Event::MouseMoved(
@@ -992,16 +1075,30 @@ fn window_fullscreen_changed(this: &Object, is_fullscreen: bool) {
 }
 
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
-    let is_active = if selector == sel!(windowDidBecomeKey:) {
-        true
-    } else if selector == sel!(windowDidResignKey:) {
-        false
-    } else {
-        unreachable!();
-    };
-
     let window_state = unsafe { get_window_state(this) };
-    let executor = window_state.as_ref().borrow().executor.clone();
+    let window_state_borrow = window_state.borrow();
+    let is_active = unsafe { window_state_borrow.native_window.isKeyWindow() == YES };
+
+    // When opening a pop-up while the application isn't active, Cocoa sends a spurious
+    // `windowDidBecomeKey` message to the previous key window even though that window
+    // isn't actually key. This causes a bug if the application is later activated while
+    // the pop-up is still open, making it impossible to activate the previous key window
+    // even if the pop-up gets closed. The only way to activate it again is to de-activate
+    // the app and re-activate it, which is a pretty bad UX.
+    // The following code detects the spurious event and invokes `resignKeyWindow`:
+    // in theory, we're not supposed to invoke this method manually but it balances out
+    // the spurious `becomeKeyWindow` event and helps us work around that bug.
+    if selector == sel!(windowDidBecomeKey:) {
+        if !is_active {
+            unsafe {
+                let _: () = msg_send![window_state_borrow.native_window, resignKeyWindow];
+                return;
+            }
+        }
+    }
+
+    let executor = window_state_borrow.executor.clone();
+    drop(window_state_borrow);
     executor
         .spawn(async move {
             let mut window_state_borrow = window_state.as_ref().borrow_mut();
@@ -1049,7 +1146,7 @@ extern "C" fn close_window(this: &Object, _: Sel) {
 extern "C" fn make_backing_layer(this: &Object, _: Sel) -> id {
     let window_state = unsafe { get_window_state(this) };
     let window_state = window_state.as_ref().borrow();
-    window_state.layer
+    window_state.renderer.layer().as_ptr() as id
 }
 
 extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
@@ -1058,14 +1155,20 @@ extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
 
     unsafe {
         let scale_factor = window_state_borrow.scale_factor() as f64;
-        let size = window_state_borrow.size();
+        let size = window_state_borrow.content_size();
         let drawable_size: NSSize = NSSize {
             width: size.x() as f64 * scale_factor,
             height: size.y() as f64 * scale_factor,
         };
 
-        let _: () = msg_send![window_state_borrow.layer, setContentsScale: scale_factor];
-        let _: () = msg_send![window_state_borrow.layer, setDrawableSize: drawable_size];
+        let _: () = msg_send![
+            window_state_borrow.renderer.layer(),
+            setContentsScale: scale_factor
+        ];
+        let _: () = msg_send![
+            window_state_borrow.renderer.layer(),
+            setDrawableSize: drawable_size
+        ];
     }
 
     if let Some(mut callback) = window_state_borrow.resize_callback.take() {
@@ -1079,7 +1182,7 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     let window_state = unsafe { get_window_state(this) };
     let window_state_borrow = window_state.as_ref().borrow();
 
-    if window_state_borrow.size() == vec2f(size.width as f32, size.height as f32) {
+    if window_state_borrow.content_size() == vec2f(size.width as f32, size.height as f32) {
         return;
     }
 
@@ -1094,7 +1197,10 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     };
 
     unsafe {
-        let _: () = msg_send![window_state_borrow.layer, setDrawableSize: drawable_size];
+        let _: () = msg_send![
+            window_state_borrow.renderer.layer(),
+            setDrawableSize: drawable_size
+        ];
     }
 
     drop(window_state_borrow);
@@ -1110,25 +1216,8 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     unsafe {
         let window_state = get_window_state(this);
         let mut window_state = window_state.as_ref().borrow_mut();
-
         if let Some(scene) = window_state.scene_to_render.take() {
-            let drawable: &metal::MetalDrawableRef = msg_send![window_state.layer, nextDrawable];
-            let command_queue = window_state.command_queue.clone();
-            let command_buffer = command_queue.new_command_buffer();
-
-            let size = window_state.size();
-            let scale_factor = window_state.scale_factor();
-
-            window_state.renderer.render(
-                &scene,
-                size * scale_factor,
-                command_buffer,
-                drawable.texture(),
-            );
-
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
-            drawable.present();
+            window_state.renderer.render(&scene);
         };
     }
 }
@@ -1298,6 +1387,18 @@ extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
         let mut borrow = state.borrow_mut();
         borrow.ime_state = ImeState::Continue;
         borrow.ime_text.take();
+    }
+}
+
+extern "C" fn view_did_change_effective_appearance(this: &Object, _: Sel) {
+    unsafe {
+        let state = get_window_state(this);
+        let mut state_borrow = state.as_ref().borrow_mut();
+        if let Some(mut callback) = state_borrow.appearance_changed_callback.take() {
+            drop(state_borrow);
+            callback();
+            state.borrow_mut().appearance_changed_callback = Some(callback);
+        }
     }
 }
 

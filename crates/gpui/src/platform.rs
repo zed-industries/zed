@@ -39,6 +39,11 @@ pub trait Platform: Send + Sync {
     fn fonts(&self) -> Arc<dyn FontSystem>;
 
     fn activate(&self, ignoring_other_apps: bool);
+    fn hide(&self);
+    fn hide_other_apps(&self);
+    fn unhide_other_apps(&self);
+    fn quit(&self);
+
     fn open_window(
         &self,
         id: usize,
@@ -46,10 +51,8 @@ pub trait Platform: Send + Sync {
         executor: Rc<executor::Foreground>,
     ) -> Box<dyn Window>;
     fn key_window_id(&self) -> Option<usize>;
-    fn hide(&self);
-    fn hide_other_apps(&self);
-    fn unhide_other_apps(&self);
-    fn quit(&self);
+
+    fn add_status_item(&self) -> Box<dyn Window>;
 
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
@@ -107,7 +110,7 @@ pub trait InputHandler {
     fn rect_for_range(&self, range_utf16: Range<usize>) -> Option<RectF>;
 }
 
-pub trait Window: WindowContext {
+pub trait Window {
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn on_event(&mut self, callback: Box<dyn FnMut(Event) -> bool>);
     fn on_active_status_change(&mut self, callback: Box<dyn FnMut(bool)>);
@@ -124,21 +127,50 @@ pub trait Window: WindowContext {
     fn minimize(&self);
     fn zoom(&self);
     fn toggle_full_screen(&self);
-}
 
-pub trait WindowContext {
-    fn size(&self) -> Vector2F;
+    fn bounds(&self) -> RectF;
+    fn content_size(&self) -> Vector2F;
     fn scale_factor(&self) -> f32;
     fn titlebar_height(&self) -> f32;
     fn present_scene(&mut self, scene: Scene);
+    fn appearance(&self) -> Appearance;
+    fn on_appearance_changed(&mut self, callback: Box<dyn FnMut()>);
 }
 
 #[derive(Debug)]
 pub struct WindowOptions<'a> {
     pub bounds: WindowBounds,
+    pub titlebar: Option<TitlebarOptions<'a>>,
+    pub center: bool,
+    pub kind: WindowKind,
+    pub is_movable: bool,
+}
+
+#[derive(Debug)]
+pub struct TitlebarOptions<'a> {
     pub title: Option<&'a str>,
-    pub titlebar_appears_transparent: bool,
+    pub appears_transparent: bool,
     pub traffic_light_position: Option<Vector2F>,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum Appearance {
+    Light,
+    VibrantLight,
+    Dark,
+    VibrantDark,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Self::Light
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum WindowKind {
+    Normal,
+    PopUp,
 }
 
 #[derive(Debug)]
@@ -168,17 +200,17 @@ pub enum CursorStyle {
     IBeam,
 }
 
+impl Default for CursorStyle {
+    fn default() -> Self {
+        Self::Arrow
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AppVersion {
     major: usize,
     minor: usize,
     patch: usize,
-}
-
-impl Default for CursorStyle {
-    fn default() -> Self {
-        Self::Arrow
-    }
 }
 
 impl FromStr for AppVersion {
@@ -247,9 +279,14 @@ impl<'a> Default for WindowOptions<'a> {
     fn default() -> Self {
         Self {
             bounds: WindowBounds::Maximized,
-            title: Default::default(),
-            titlebar_appears_transparent: Default::default(),
-            traffic_light_position: Default::default(),
+            titlebar: Some(TitlebarOptions {
+                title: Default::default(),
+                appears_transparent: Default::default(),
+                traffic_light_position: Default::default(),
+            }),
+            center: false,
+            kind: WindowKind::Normal,
+            is_movable: true,
         }
     }
 }

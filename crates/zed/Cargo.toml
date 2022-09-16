@@ -27,6 +27,7 @@ context_menu = { path = "../context_menu" }
 client = { path = "../client" }
 clock = { path = "../clock" }
 contacts_panel = { path = "../contacts_panel" }
+contacts_status_item = { path = "../contacts_status_item" }
 diagnostics = { path = "../diagnostics" }
 editor = { path = "../editor" }
 file_finder = { path = "../file_finder" }

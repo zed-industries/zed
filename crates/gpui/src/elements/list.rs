@@ -659,7 +659,7 @@ mod tests {
 
     #[crate::test(self)]
     fn test_layout(cx: &mut crate::MutableAppContext) {
-        let mut presenter = cx.build_presenter(0, 0.);
+        let mut presenter = cx.build_presenter(0, 0., Default::default());
         let (_, view) = cx.add_window(Default::default(), |_| TestView);
         let constraint = SizeConstraint::new(vec2f(0., 0.), vec2f(100., 40.));
 
@@ -759,7 +759,7 @@ mod tests {
             .unwrap_or(10);
 
         let (_, view) = cx.add_window(Default::default(), |_| TestView);
-        let mut presenter = cx.build_presenter(0, 0.);
+        let mut presenter = cx.build_presenter(0, 0., Default::default());
         let mut next_id = 0;
         let elements = Rc::new(RefCell::new(
             (0..rng.gen_range(0..=20))

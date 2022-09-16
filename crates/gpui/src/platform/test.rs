@@ -1,6 +1,9 @@
 use super::{AppVersion, CursorStyle, WindowBounds};
 use crate::{
-    geometry::vector::{vec2f, Vector2F},
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
     keymap, Action, ClipboardItem,
 };
 use anyhow::{anyhow, Result};
@@ -120,6 +123,14 @@ impl super::Platform for Platform {
 
     fn activate(&self, _ignoring_other_apps: bool) {}
 
+    fn hide(&self) {}
+
+    fn hide_other_apps(&self) {}
+
+    fn unhide_other_apps(&self) {}
+
+    fn quit(&self) {}
+
     fn open_window(
         &self,
         _: usize,
@@ -136,13 +147,9 @@ impl super::Platform for Platform {
         None
     }
 
-    fn hide(&self) {}
-
-    fn hide_other_apps(&self) {}
-
-    fn unhide_other_apps(&self) {}
-
-    fn quit(&self) {}
+    fn add_status_item(&self) -> Box<dyn crate::Window> {
+        Box::new(Window::new(vec2f(24., 24.)))
+    }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
         *self.current_clipboard_item.lock() = Some(item);
@@ -224,24 +231,6 @@ impl super::Dispatcher for Dispatcher {
     }
 }
 
-impl super::WindowContext for Window {
-    fn size(&self) -> Vector2F {
-        self.size
-    }
-
-    fn scale_factor(&self) -> f32 {
-        self.scale_factor
-    }
-
-    fn titlebar_height(&self) -> f32 {
-        24.
-    }
-
-    fn present_scene(&mut self, scene: crate::Scene) {
-        self.current_scene = Some(scene);
-    }
-}
-
 impl super::Window for Window {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
@@ -296,6 +285,32 @@ impl super::Window for Window {
     fn zoom(&self) {}
 
     fn toggle_full_screen(&self) {}
+
+    fn bounds(&self) -> RectF {
+        RectF::new(Default::default(), self.size)
+    }
+
+    fn content_size(&self) -> Vector2F {
+        self.size
+    }
+
+    fn scale_factor(&self) -> f32 {
+        self.scale_factor
+    }
+
+    fn titlebar_height(&self) -> f32 {
+        24.
+    }
+
+    fn present_scene(&mut self, scene: crate::Scene) {
+        self.current_scene = Some(scene);
+    }
+
+    fn appearance(&self) -> crate::Appearance {
+        crate::Appearance::Light
+    }
+
+    fn on_appearance_changed(&mut self, _: Box<dyn FnMut()>) {}
 }
 
 pub fn platform() -> Platform {

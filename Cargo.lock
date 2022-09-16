@@ -663,9 +663,9 @@ checksum = "14c189c53d098945499cdfa7ecc63567cf3886b3332b312a5b4585d8d3a6a610"
 
 [[package]]
 name = "bytes"
-version = "1.1.0"
+version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4872d67bab6358e59559027aa3b9157c53d9358c51423c17554809a8858e0f8"
+checksum = "ec8a7b6a70fde80372154c65702f00a0f56f3e1c36abbc6c440484be248856db"
 
 [[package]]
 name = "bzip2-sys"
@@ -748,6 +748,34 @@ dependencies = [
  "once_cell",
  "rustix",
  "winx",
+]
+
+[[package]]
+name = "capture"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bindgen",
+ "block",
+ "byteorder",
+ "bytes",
+ "cocoa",
+ "core-foundation",
+ "core-graphics",
+ "foreign-types",
+ "futures",
+ "gpui",
+ "hmac 0.12.1",
+ "jwt",
+ "live_kit",
+ "log",
+ "media",
+ "objc",
+ "parking_lot 0.11.2",
+ "postage",
+ "serde",
+ "sha2 0.10.2",
+ "simplelog",
 ]
 
 [[package]]
@@ -1076,6 +1104,30 @@ dependencies = [
 
 [[package]]
 name = "contacts_panel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "collections",
+ "editor",
+ "futures",
+ "fuzzy",
+ "gpui",
+ "language",
+ "log",
+ "menu",
+ "picker",
+ "postage",
+ "project",
+ "serde",
+ "settings",
+ "theme",
+ "util",
+ "workspace",
+]
+
+[[package]]
+name = "contacts_status_item"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -2213,6 +2265,7 @@ dependencies = [
  "image",
  "lazy_static",
  "log",
+ "media",
  "metal",
  "num_cpus",
  "objc",
@@ -2723,6 +2776,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41ee439ee368ba4a77ac70d04f14015415af8600d6c894dc1f11bd79758c57d5"
 
 [[package]]
+name = "jwt"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6204285f77fe7d9784db3fdc449ecce1a0114927a51d5a41c4c7a292011c015f"
+dependencies = [
+ "base64",
+ "crypto-common",
+ "digest 0.10.3",
+ "hmac 0.12.1",
+ "serde",
+ "serde_json",
+ "sha2 0.10.2",
+]
+
+[[package]]
 name = "kernel32-sys"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2893,6 +2961,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "live_kit"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "core-foundation",
+ "core-graphics",
+ "futures",
+ "media",
+ "parking_lot 0.11.2",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "lock_api"
 version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3006,6 +3088,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "658646b21e0b72f7866c7038ab086d3d5e1cd6271f060fd37defb241949d0582"
 dependencies = [
  "digest 0.10.3",
+]
+
+[[package]]
+name = "media"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bindgen",
+ "block",
+ "bytes",
+ "core-foundation",
+ "foreign-types",
+ "metal",
+ "objc",
 ]
 
 [[package]]
@@ -7050,6 +7146,7 @@ dependencies = [
  "collections",
  "command_palette",
  "contacts_panel",
+ "contacts_status_item",
  "context_menu",
  "ctor",
  "diagnostics",

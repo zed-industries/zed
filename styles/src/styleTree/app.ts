@@ -3,6 +3,7 @@ import chatPanel from "./chatPanel";
 import { text } from "./components";
 import contactFinder from "./contactFinder";
 import contactsPanel from "./contactsPanel";
+import contactsPopover from "./contactsPopover";
 import commandPalette from "./commandPalette";
 import editor from "./editor";
 import projectPanel from "./projectPanel";
@@ -34,6 +35,7 @@ export default function app(theme: Theme): Object {
     commandPalette: commandPalette(theme),
     projectPanel: projectPanel(theme),
     chatPanel: chatPanel(theme),
+    contactsPopover: contactsPopover(theme),
     contactsPanel: contactsPanel(theme),
     contactFinder: contactFinder(theme),
     search: search(theme),

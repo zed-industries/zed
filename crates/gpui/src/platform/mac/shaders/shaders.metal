@@ -263,6 +263,54 @@ fragment float4 image_fragment(
     return quad_sdf(input);
 }
 
+vertex QuadFragmentInput surface_vertex(
+    uint unit_vertex_id [[vertex_id]],
+    uint image_id [[instance_id]],
+    constant float2 *unit_vertices [[buffer(GPUISurfaceVertexInputIndexVertices)]],
+    constant GPUISurface *images [[buffer(GPUISurfaceVertexInputIndexSurfaces)]],
+    constant float2 *viewport_size [[buffer(GPUISurfaceVertexInputIndexViewportSize)]],
+    constant float2 *atlas_size [[buffer(GPUISurfaceVertexInputIndexAtlasSize)]]
+) {
+    float2 unit_vertex = unit_vertices[unit_vertex_id];
+    GPUISurface image = images[image_id];
+    float2 position = unit_vertex * image.target_size + image.origin;
+    float4 device_position = to_device_position(position, *viewport_size);
+    float2 atlas_position = (unit_vertex * image.source_size) / *atlas_size;
+
+    return QuadFragmentInput {
+        device_position,
+        atlas_position,
+        image.origin,
+        image.target_size,
+        float4(0.),
+        0.,
+        0.,
+        0.,
+        0.,
+        float4(0.),
+        0.,
+    };
+}
+
+fragment float4 surface_fragment(
+    QuadFragmentInput input [[stage_in]],
+    texture2d<float> y_atlas [[ texture(GPUISurfaceFragmentInputIndexYAtlas) ]],
+    texture2d<float> cb_cr_atlas [[ texture(GPUISurfaceFragmentInputIndexCbCrAtlas) ]]
+) {
+    constexpr sampler atlas_sampler(mag_filter::linear, min_filter::linear);
+    const float4x4 ycbcrToRGBTransform = float4x4(
+        float4(+1.0000f, +1.0000f, +1.0000f, +0.0000f),
+        float4(+0.0000f, -0.3441f, +1.7720f, +0.0000f),
+        float4(+1.4020f, -0.7141f, +0.0000f, +0.0000f),
+        float4(-0.7010f, +0.5291f, -0.8860f, +1.0000f)
+    );
+    float4 ycbcr = float4(y_atlas.sample(atlas_sampler, input.atlas_position).r,
+                          cb_cr_atlas.sample(atlas_sampler, input.atlas_position).rg, 1.0);
+
+    input.background_color = ycbcrToRGBTransform * ycbcr;
+    return quad_sdf(input);
+}
+
 struct PathAtlasVertexOutput {
     float4 position [[position]];
     float2 st_position;

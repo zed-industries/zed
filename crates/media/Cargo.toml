@@ -1,0 +1,20 @@
+[package]
+name = "media"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/media.rs"
+doctest = false
+
+[dependencies]
+anyhow = "1.0"
+block = "0.1"
+bytes = "1.2"
+core-foundation = "0.9.3"
+foreign-types = "0.3"
+metal = "0.21.0"
+objc = "0.2"
+
+[build-dependencies]
+bindgen = "0.59.2"
