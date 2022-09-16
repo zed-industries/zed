@@ -18,7 +18,8 @@ use block::ConcreteBlock;
 use cocoa::{
     appkit::{
         CGPoint, NSApplication, NSBackingStoreBuffered, NSScreen, NSView, NSViewHeightSizable,
-        NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowStyleMask,
+        NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
+        NSWindowStyleMask,
     },
     base::{id, nil},
     foundation::{
@@ -497,6 +498,10 @@ impl Window {
                         native_window,
                         setAnimationBehavior: NSWindowAnimationBehaviorUtilityWindow
                     ];
+                    native_window.setCollectionBehavior_(
+                        NSWindowCollectionBehavior::NSWindowCollectionBehaviorCanJoinAllSpaces |
+                        NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenAuxiliary
+                    );
                 }
             }
             native_window.makeKeyAndOrderFront_(nil);
