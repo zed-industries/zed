@@ -1077,7 +1077,7 @@ fn window_fullscreen_changed(this: &Object, is_fullscreen: bool) {
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let window_state_borrow = window_state.borrow();
-    let is_active = unsafe { window_state_borrow.native_window.isKeyWindow() as bool };
+    let is_active = unsafe { window_state_borrow.native_window.isKeyWindow() == YES };
 
     // When opening a pop-up while the application isn't active, Cocoa sends a spurious
     // `windowDidBecomeKey` message to the previous key window even though that window
