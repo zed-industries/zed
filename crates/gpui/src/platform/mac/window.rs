@@ -1074,10 +1074,29 @@ fn window_fullscreen_changed(this: &Object, is_fullscreen: bool) {
     }
 }
 
-extern "C" fn window_did_change_key_status(this: &Object, _: Sel, _: id) {
+extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let window_state_borrow = window_state.borrow();
     let is_active = unsafe { window_state_borrow.native_window.isKeyWindow() };
+
+    // When opening a pop-up while the application isn't active, Cocoa sends a spurious
+    // `windowDidBecomeKey` message to the previous key window even though that window
+    // isn't actually key. This causes a bug if the application is later activated while
+    // the pop-up is still open, making it impossible to activate the previous key window
+    // even if the pop-up gets closed. The only way to activate it again is to de-activate
+    // the app and re-activate it, which is a pretty bad UX.
+    // The following code detects the spurious event and invokes `resignKeyWindow`:
+    // in theory, we're not supposed to invoke this method manually but it balances out
+    // the spurious `becomeKeyWindow` event and helps us work around that bug.
+    if selector == sel!(windowDidBecomeKey:) {
+        if !is_active {
+            unsafe {
+                let _: () = msg_send![window_state_borrow.native_window, resignKeyWindow];
+                return;
+            }
+        }
+    }
+
     let executor = window_state_borrow.executor.clone();
     drop(window_state_borrow);
     executor
