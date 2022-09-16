@@ -541,27 +541,30 @@ impl Server {
 
     pub async fn invite_code_redeemed(
         self: &Arc<Self>,
-        code: &str,
+        inviter_id: UserId,
         invitee_id: UserId,
     ) -> Result<()> {
-        let user = self.app_state.db.get_user_for_invite_code(code).await?;
-        let store = self.store().await;
-        let invitee_contact = store.contact_for_user(invitee_id, true);
-        for connection_id in store.connection_ids_for_user(user.id) {
-            self.peer.send(
-                connection_id,
-                proto::UpdateContacts {
-                    contacts: vec![invitee_contact.clone()],
-                    ..Default::default()
-                },
-            )?;
-            self.peer.send(
-                connection_id,
-                proto::UpdateInviteInfo {
-                    url: format!("{}{}", self.app_state.invite_link_prefix, code),
-                    count: user.invite_count as u32,
-                },
-            )?;
+        if let Some(user) = self.app_state.db.get_user_by_id(inviter_id).await? {
+            if let Some(code) = &user.invite_code {
+                let store = self.store().await;
+                let invitee_contact = store.contact_for_user(invitee_id, true);
+                for connection_id in store.connection_ids_for_user(inviter_id) {
+                    self.peer.send(
+                        connection_id,
+                        proto::UpdateContacts {
+                            contacts: vec![invitee_contact.clone()],
+                            ..Default::default()
+                        },
+                    )?;
+                    self.peer.send(
+                        connection_id,
+                        proto::UpdateInviteInfo {
+                            url: format!("{}{}", self.app_state.invite_link_prefix, &code),
+                            count: user.invite_count as u32,
+                        },
+                    )?;
+                }
+            }
         }
         Ok(())
     }

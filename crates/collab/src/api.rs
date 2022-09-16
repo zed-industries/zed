@@ -1,6 +1,6 @@
 use crate::{
     auth,
-    db::{ProjectId, Signup, SignupInvite, SignupRedemption, User, UserId},
+    db::{Invite, NewUserParams, ProjectId, Signup, User, UserId},
     rpc::{self, ResultExt},
     AppState, Error, Result,
 };
@@ -46,9 +46,9 @@ pub fn routes(rpc_server: &Arc<rpc::Server>, state: Arc<AppState>) -> Router<Bod
         .route("/user_activity/counts", get(get_active_user_counts))
         .route("/project_metadata", get(get_project_metadata))
         .route("/signups", post(create_signup))
-        .route("/signup/redeem", post(redeem_signup))
-        .route("/signups_invites", get(get_signup_invites))
-        .route("/signups_invites_sent", post(record_signup_invites_sent))
+        .route("/user_invites", post(create_invite_from_code))
+        .route("/unsent_invites", get(get_unsent_invites))
+        .route("/sent_invites", post(record_sent_invites))
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(state))
@@ -113,9 +113,9 @@ async fn get_users(
 #[derive(Deserialize, Debug)]
 struct CreateUserParams {
     github_login: String,
-    invite_code: Option<String>,
-    email_address: Option<String>,
-    admin: bool,
+    email_address: String,
+    email_confirmation_code: Option<String>,
+    invite_count: i32,
 }
 
 async fn create_user(
@@ -123,29 +123,38 @@ async fn create_user(
     Extension(app): Extension<Arc<AppState>>,
     Extension(rpc_server): Extension<Arc<rpc::Server>>,
 ) -> Result<Json<User>> {
-    let user_id = if let Some(invite_code) = params.invite_code {
-        let invitee_id = app
-            .db
-            .redeem_invite_code(
-                &invite_code,
-                &params.github_login,
-                params.email_address.as_deref(),
+    let (user_id, inviter_id) =
+        // Creating a user via the normal signup process
+        if let Some(email_confirmation_code) = params.email_confirmation_code {
+            app.db
+                .create_user_from_invite(
+                    &Invite {
+                        email_address: params.email_address,
+                        email_confirmation_code,
+                    },
+                    NewUserParams {
+                        github_login: params.github_login,
+                        invite_count: params.invite_count,
+                    },
+                )
+                .await?
+        }
+        // Creating a user as an admin
+        else {
+            (
+                app.db
+                    .create_user(&params.github_login, &params.email_address, false)
+                    .await?,
+                None,
             )
-            .await?;
+        };
+
+    if let Some(inviter_id) = inviter_id {
         rpc_server
-            .invite_code_redeemed(&invite_code, invitee_id)
+            .invite_code_redeemed(inviter_id, user_id)
             .await
             .trace_err();
-        invitee_id
-    } else {
-        app.db
-            .create_user(
-                &params.github_login,
-                params.email_address.as_deref(),
-                params.admin,
-            )
-            .await?
-    };
+    }
 
     let user = app
         .db
@@ -175,7 +184,9 @@ async fn update_user(
     }
 
     if let Some(invite_count) = params.invite_count {
-        app.db.set_invite_count(user_id, invite_count).await?;
+        app.db
+            .set_invite_count_for_user(user_id, invite_count)
+            .await?;
         rpc_server.invite_count_updated(user_id).await.trace_err();
     }
 
@@ -428,30 +439,39 @@ async fn create_signup(
     Ok(())
 }
 
-async fn redeem_signup(
-    Json(redemption): Json<SignupRedemption>,
-    Extension(app): Extension<Arc<AppState>>,
-) -> Result<()> {
-    app.db.redeem_signup(redemption).await?;
-    Ok(())
+#[derive(Deserialize)]
+pub struct CreateInviteFromCodeParams {
+    invite_code: String,
+    email_address: String,
 }
 
-async fn record_signup_invites_sent(
-    Json(params): Json<Vec<SignupInvite>>,
+async fn create_invite_from_code(
+    Json(params): Json<CreateInviteFromCodeParams>,
     Extension(app): Extension<Arc<AppState>>,
-) -> Result<()> {
-    app.db.record_signup_invites_sent(&params).await?;
-    Ok(())
+) -> Result<Json<Invite>> {
+    Ok(Json(
+        app.db
+            .create_invite_from_code(&params.invite_code, &params.email_address)
+            .await?,
+    ))
 }
 
 #[derive(Deserialize)]
-pub struct GetSignupInvitesParams {
+pub struct GetUnsentInvitesParams {
     pub count: usize,
 }
 
-async fn get_signup_invites(
-    Query(params): Query<GetSignupInvitesParams>,
+async fn get_unsent_invites(
+    Query(params): Query<GetUnsentInvitesParams>,
     Extension(app): Extension<Arc<AppState>>,
-) -> Result<Json<Vec<SignupInvite>>> {
-    Ok(Json(app.db.get_signup_invites(params.count).await?))
+) -> Result<Json<Vec<Invite>>> {
+    Ok(Json(app.db.get_unsent_invites(params.count).await?))
+}
+
+async fn record_sent_invites(
+    Json(params): Json<Vec<Invite>>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<()> {
+    app.db.record_sent_invites(&params).await?;
+    Ok(())
 }

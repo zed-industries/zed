@@ -1,5 +1,5 @@
 use crate::{
-    db::{tests::TestDb, ProjectId, UserId},
+    db::{ProjectId, TestDb, UserId},
     rpc::{Executor, Server, Store},
     AppState,
 };
@@ -4640,7 +4640,10 @@ async fn test_random_collaboration(
 
     let mut server = TestServer::start(cx.foreground(), cx.background()).await;
     let db = server.app_state.db.clone();
-    let host_user_id = db.create_user("host", None, false).await.unwrap();
+    let host_user_id = db
+        .create_user("host", "host@example.com", false)
+        .await
+        .unwrap();
     let mut available_guests = vec![
         "guest-1".to_string(),
         "guest-2".to_string(),
@@ -4649,7 +4652,10 @@ async fn test_random_collaboration(
     ];
 
     for username in &available_guests {
-        let guest_user_id = db.create_user(username, None, false).await.unwrap();
+        let guest_user_id = db
+            .create_user(username, &format!("{username}@example.com"), false)
+            .await
+            .unwrap();
         assert_eq!(*username, format!("guest-{}", guest_user_id));
         server
             .app_state
@@ -5157,7 +5163,7 @@ impl TestServer {
         } else {
             self.app_state
                 .db
-                .create_user(name, None, false)
+                .create_user(name, &format!("{name}@example.com"), false)
                 .await
                 .unwrap()
         };

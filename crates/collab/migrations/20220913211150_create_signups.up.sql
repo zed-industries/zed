@@ -8,16 +8,18 @@ CREATE TABLE IF NOT EXISTS "signups" (
     "metrics_id" INTEGER NOT NULL DEFAULT nextval('metrics_id_seq'),
     "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "user_id" INTEGER REFERENCES users (id),
+    "inviting_user_id" INTEGER REFERENCES users (id),
 
     "platform_mac" BOOLEAN NOT NULL,
     "platform_linux" BOOLEAN NOT NULL,
     "platform_windows" BOOLEAN NOT NULL,
     "platform_unknown" BOOLEAN NOT NULL,
 
-    "editor_features" VARCHAR[] NOT NULL,
-    "programming_languages" VARCHAR[] NOT NULL
+    "editor_features" VARCHAR[],
+    "programming_languages" VARCHAR[]
 );
 
+CREATE INDEX "index_users_on_email_address" ON "users" ("email_address");
 CREATE UNIQUE INDEX "index_signups_on_email_address" ON "signups" ("email_address");
 CREATE INDEX "index_signups_on_email_confirmation_sent" ON "signups" ("email_confirmation_sent");
 
