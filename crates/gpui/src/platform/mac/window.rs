@@ -459,10 +459,9 @@ impl Window {
             }
 
             let tracking_area: id = msg_send![class!(NSTrackingArea), alloc];
-            let rect = NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.));
             let _: () = msg_send![
                 tracking_area,
-                initWithRect: rect
+                initWithRect: NSRect::new(NSPoint::new(0., 0.), NSSize::new(0., 0.))
                 options: NSTrackingMouseMoved | NSTrackingActiveAlways | NSTrackingInVisibleRect
                 owner: native_view
                 userInfo: nil
