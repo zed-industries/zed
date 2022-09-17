@@ -30,7 +30,7 @@ use futures::{
 };
 
 use mappings::mouse::{
-    alt_scroll, mouse_button_report, mouse_moved_report, mouse_point, mouse_side, scroll_report,
+    alt_scroll, grid_point, mouse_button_report, mouse_moved_report, mouse_side, scroll_report,
 };
 use modal::deploy_modal;
 
@@ -616,7 +616,7 @@ impl Terminal {
             }
             InternalEvent::UpdateSelection(position) => {
                 if let Some(mut selection) = term.selection.take() {
-                    let point = mouse_point(
+                    let point = grid_point(
                         *position,
                         self.last_content.size,
                         term.grid().display_offset(),
@@ -809,18 +809,27 @@ impl Terminal {
     }
 
     pub fn mouse_move(&mut self, e: &MouseMovedEvent, origin: Vector2F) {
-        let position = e.position.sub(origin);
+        if self.mouse_mode(e.shift) {
+            let position = e.position.sub(origin);
 
-        let point = mouse_point(
-            position,
-            self.last_content.size,
-            self.last_content.display_offset,
-        );
-        let side = mouse_side(position, self.last_content.size);
+            let point = grid_point(
+                position,
+                self.last_content.size,
+                self.last_content.display_offset,
+            );
+            let side = mouse_side(position, self.last_content.size);
 
-        if self.mouse_changed(point, side) && self.mouse_mode(e.shift) {
-            if let Some(bytes) = mouse_moved_report(point, e, self.last_content.mode) {
-                self.pty_tx.notify(bytes);
+            if self.mouse_changed(point, side) {
+                if let Some(bytes) = mouse_moved_report(point, e, self.last_content.mode) {
+                    self.pty_tx.notify(bytes);
+                }
+            }
+        } else {
+            if let Some(link) = cell_for_mouse(e.position, &self.last_content)
+                .cell
+                .hyperlink()
+            {
+                link.uri()
             }
         }
     }
@@ -867,7 +876,7 @@ impl Terminal {
 
     pub fn mouse_down(&mut self, e: &DownRegionEvent, origin: Vector2F) {
         let position = e.position.sub(origin);
-        let point = mouse_point(
+        let point = grid_point(
             position,
             self.last_content.size,
             self.last_content.display_offset,
@@ -890,7 +899,7 @@ impl Terminal {
         let position = e.position.sub(origin);
 
         if !self.mouse_mode(e.shift) {
-            let point = mouse_point(
+            let point = grid_point(
                 position,
                 self.last_content.size,
                 self.last_content.display_offset,
@@ -918,7 +927,7 @@ impl Terminal {
     pub fn mouse_up(&mut self, e: &UpRegionEvent, origin: Vector2F) {
         let position = e.position.sub(origin);
         if self.mouse_mode(e.shift) {
-            let point = mouse_point(
+            let point = grid_point(
                 position,
                 self.last_content.size,
                 self.last_content.display_offset,
@@ -941,7 +950,7 @@ impl Terminal {
 
         if let Some(scroll_lines) = self.determine_scroll_lines(e, mouse_mode) {
             if mouse_mode {
-                let point = mouse_point(
+                let point = grid_point(
                     e.position.sub(origin),
                     self.last_content.size,
                     self.last_content.display_offset,
@@ -1046,24 +1055,6 @@ fn make_selection(range: &RangeInclusive<Point>) -> Selection {
     selection
 }
 
-/// Copied from alacritty/src/display/hint.rs HintMatches::visible_regex_matches()
-/// Iterate over all visible regex matches.
-// fn visible_search_matches<'a, T>(
-//     term: &'a Term<T>,
-//     regex: &'a RegexSearch,
-// ) -> impl Iterator<Item = Match> + 'a {
-//     let viewport_start = Line(-(term.grid().display_offset() as i32));
-//     let viewport_end = viewport_start + term.bottommost_line();
-//     let mut start = term.line_search_left(Point::new(viewport_start, Column(0)));
-//     let mut end = term.line_search_right(Point::new(viewport_end, Column(0)));
-//     start.line = start.line.max(viewport_start - MAX_SEARCH_LINES);
-//     end.line = end.line.min(viewport_end + MAX_SEARCH_LINES);
-
-//     RegexIter::new(start, end, AlacDirection::Right, term, regex)
-//         .skip_while(move |rm| rm.end().line < viewport_start)
-//         .take_while(move |rm| rm.start().line <= viewport_end)
-// }
-
 fn all_search_matches<'a, T>(
     term: &'a Term<T>,
     regex: &'a RegexSearch,
@@ -1074,20 +1065,56 @@ fn all_search_matches<'a, T>(
 }
 
 fn cell_for_mouse<'a>(pos: Vector2F, content: &'a TerminalContent) -> &'a IndexedCell {
-    fn pos_to_viewport(pos: Vector2F, size: TerminalSize) -> Point {
-        Point {
-            line: Line((pos.x() / size.cell_width()) as i32),
-            column: Column((pos.y() / size.line_height()) as usize),
+    let point = Point {
+        line: Line((pos.x() / content.size.cell_width()) as i32),
+        column: Column((pos.y() / content.size.line_height()) as usize),
+    };
+
+    debug_assert!(point.line.0.is_positive() || point.line.0 == 0);
+    &content.cells[(point.line.0 as usize * content.size.columns() + point.column.0)]
+}
+
+fn open_uri(uri: String) {
+    // MacOS command is 'open'
+    pub fn spawn_daemon<I, S>(
+        program: &str,
+        args: I,
+        master_fd: RawFd,
+        shell_pid: u32,
+    ) -> io::Result<()>
+    where
+        I: IntoIterator<Item = S> + Copy,
+        S: AsRef<OsStr>,
+    {
+        let mut command = Command::new(program);
+        command
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        if let Ok(cwd) = foreground_process_path(master_fd, shell_pid) {
+            command.current_dir(cwd);
+        }
+        unsafe {
+            command
+                .pre_exec(|| {
+                    match libc::fork() {
+                        -1 => return Err(io::Error::last_os_error()),
+                        0 => (),
+                        _ => libc::_exit(0),
+                    }
+
+                    if libc::setsid() == -1 {
+                        return Err(io::Error::last_os_error());
+                    }
+
+                    Ok(())
+                })
+                .spawn()?
+                .wait()
+                .map(|_| ())
         }
     }
-
-    fn cell_for_pos<'a>(point: Point, content: &'a TerminalContent) -> &'a IndexedCell {
-        dbg!(point.line.0, content.size.columns(), point.column.0);
-        debug_assert!(point.line.0.is_positive() || point.line.0 == 0);
-        &content.cells[(point.line.0 as usize * content.size.columns() + point.column.0)]
-    }
-
-    cell_for_pos(pos_to_viewport(pos, content.size), &content)
 }
 
 #[cfg(test)]
