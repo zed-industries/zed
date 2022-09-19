@@ -1,6 +1,6 @@
 use super::{ItemHandle, SplitDirection};
 use crate::{
-    dock::{icon_for_dock_anchor, MoveDock, ToggleDock},
+    dock::{icon_for_dock_anchor, AnchorDockBottom, AnchorDockRight, ExpandDock, HideDock},
     toolbar::Toolbar,
     Item, NewFile, NewSearch, NewTerminal, WeakItemHandle, Workspace,
 };
@@ -1014,9 +1014,9 @@ impl Pane {
                 action.position,
                 AnchorCorner::TopRight,
                 vec![
-                    ContextMenuItem::item("Anchor Dock Right", MoveDock(DockAnchor::Right)),
-                    ContextMenuItem::item("Anchor Dock Bottom", MoveDock(DockAnchor::Bottom)),
-                    ContextMenuItem::item("Expand Dock", MoveDock(DockAnchor::Expanded)),
+                    ContextMenuItem::item("Anchor Dock Right", AnchorDockRight),
+                    ContextMenuItem::item("Anchor Dock Bottom", AnchorDockBottom),
+                    ContextMenuItem::item("Expand Dock", ExpandDock),
                 ],
                 cx,
             );
@@ -1095,6 +1095,7 @@ impl Pane {
                             Self::render_tab(
                                 &item,
                                 pane,
+                                ix == 0,
                                 detail,
                                 hovered,
                                 Self::tab_overlay_color(hovered, theme.as_ref(), cx),
@@ -1139,6 +1140,7 @@ impl Pane {
                                 Self::render_tab(
                                     &dragged_item.item,
                                     dragged_item.pane.clone(),
+                                    false,
                                     detail,
                                     false,
                                     None,
@@ -1220,6 +1222,7 @@ impl Pane {
     fn render_tab<V: View>(
         item: &Box<dyn ItemHandle>,
         pane: WeakViewHandle<Pane>,
+        first: bool,
         detail: Option<usize>,
         hovered: bool,
         overlay: Option<Color>,
@@ -1227,6 +1230,10 @@ impl Pane {
         cx: &mut RenderContext<V>,
     ) -> ElementBox {
         let title = item.tab_content(detail, &tab_style, cx);
+        let mut container = tab_style.container.clone();
+        if first {
+            container.border.left = false;
+        }
 
         let mut tab = Flex::row()
             .with_child(
@@ -1307,7 +1314,7 @@ impl Pane {
                 .boxed(),
             )
             .contained()
-            .with_style(tab_style.container);
+            .with_style(container);
 
         if let Some(overlay) = overlay {
             tab = tab.with_overlay_color(overlay);
@@ -1405,7 +1412,7 @@ impl View for Pane {
                                                             2,
                                                             "icons/split_12.svg",
                                                             cx,
-                                                            |position| DeployNewMenu { position },
+                                                            |position| DeploySplitMenu { position },
                                                         )
                                                     }),
                                             )
@@ -1415,11 +1422,13 @@ impl View for Pane {
                                                     3,
                                                     "icons/x_mark_thin_8.svg",
                                                     cx,
-                                                    |_| ToggleDock,
+                                                    |_| HideDock,
                                                 )
                                             }))
                                             .contained()
-                                            .with_style(theme.workspace.tab_bar.container)
+                                            .with_style(
+                                                theme.workspace.tab_bar.pane_button_container,
+                                            )
                                             .flex(1., false)
                                             .boxed(),
                                     )

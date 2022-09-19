@@ -309,8 +309,7 @@
             "cmd-shift-p": "command_palette::Toggle",
             "cmd-shift-m": "diagnostics::Deploy",
             "cmd-shift-e": "project_panel::ToggleFocus",
-            "cmd-alt-s": "workspace::SaveAll",
-            "shift-escape": "workspace::ActivateOrHideDock"
+            "cmd-alt-s": "workspace::SaveAll"
         }
     },
     // Bindings from Sublime Text
@@ -394,8 +393,22 @@
     {
         "context": "Workspace",
         "bindings": {
+            "shift-escape": "dock::FocusDock",
             "cmd-shift-c": "contacts_panel::ToggleFocus",
             "cmd-shift-b": "workspace::ToggleRightSidebar"
+        }
+    },
+    {
+        "bindings": {
+            "cmd-shift-k cmd-shift-right": "dock::AnchorDockRight",
+            "cmd-shift-k cmd-shift-down": "dock::AnchorDockBottom",
+            "cmd-shift-k cmd-shift-up": "dock::ExpandDock"
+        }
+    },
+    {
+        "context": "Dock",
+        "bindings": {
+            "shift-escape": "dock::HideDock"
         }
     },
     {
