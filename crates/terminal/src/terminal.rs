@@ -14,7 +14,7 @@ use alacritty_terminal::{
     selection::{Selection, SelectionRange, SelectionType},
     sync::FairMutex,
     term::{
-        cell::Cell,
+        cell::{Cell, Hyperlink},
         color::Rgb,
         search::{Match, RegexIter, RegexSearch},
         RenderableCursor, TermMode,
@@ -36,13 +36,17 @@ use modal::deploy_modal;
 
 use procinfo::LocalProcessInfo;
 use settings::{AlternateScroll, Settings, Shell, TerminalBlink};
+use util::ResultExt;
 
 use std::{
+    cmp::min,
     collections::{HashMap, VecDeque},
     fmt::Display,
+    io,
     ops::{Deref, RangeInclusive, Sub},
-    os::unix::prelude::AsRawFd,
+    os::unix::{prelude::AsRawFd, process::CommandExt},
     path::PathBuf,
+    process::Command,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -374,6 +378,7 @@ impl TerminalBuilder {
             foreground_process_info: None,
             breadcrumb_text: String::new(),
             scroll_px: 0.,
+            last_hovered_hyperlink: None,
         };
 
         Ok(TerminalBuilder {
@@ -488,6 +493,7 @@ pub struct Terminal {
     pub matches: Vec<RangeInclusive<Point>>,
     last_content: TerminalContent,
     last_synced: Instant,
+    last_hovered_hyperlink: Option<Hyperlink>,
     sync_task: Option<Task<()>>,
     selection_head: Option<Point>,
     breadcrumb_text: String,
@@ -809,9 +815,10 @@ impl Terminal {
     }
 
     pub fn mouse_move(&mut self, e: &MouseMovedEvent, origin: Vector2F) {
-        if self.mouse_mode(e.shift) {
-            let position = e.position.sub(origin);
+        self.last_hovered_hyperlink = None;
+        let position = e.position.sub(origin);
 
+        if self.mouse_mode(e.shift) {
             let point = grid_point(
                 position,
                 self.last_content.size,
@@ -824,13 +831,10 @@ impl Terminal {
                     self.pty_tx.notify(bytes);
                 }
             }
-        } else {
-            if let Some(link) = cell_for_mouse(e.position, &self.last_content)
+        } else if e.cmd {
+            self.last_hovered_hyperlink = cell_for_mouse(e.position, &self.last_content)
                 .cell
-                .hyperlink()
-            {
-                link.uri()
-            }
+                .hyperlink();
         }
     }
 
@@ -897,29 +901,34 @@ impl Terminal {
 
     pub fn left_click(&mut self, e: &ClickRegionEvent, origin: Vector2F) {
         let position = e.position.sub(origin);
-
         if !self.mouse_mode(e.shift) {
-            let point = grid_point(
-                position,
-                self.last_content.size,
-                self.last_content.display_offset,
-            );
-            let side = mouse_side(position, self.last_content.size);
+            if e.cmd {
+                if let Some(link) = cell_for_mouse(position, &self.last_content).hyperlink() {
+                    open_uri(link.uri()).log_err();
+                }
+            } else {
+                let point = grid_point(
+                    position,
+                    self.last_content.size,
+                    self.last_content.display_offset,
+                );
+                let side = mouse_side(position, self.last_content.size);
 
-            let selection_type = match e.click_count {
-                0 => return, //This is a release
-                1 => Some(SelectionType::Simple),
-                2 => Some(SelectionType::Semantic),
-                3 => Some(SelectionType::Lines),
-                _ => None,
-            };
+                let selection_type = match e.click_count {
+                    0 => return, //This is a release
+                    1 => Some(SelectionType::Simple),
+                    2 => Some(SelectionType::Semantic),
+                    3 => Some(SelectionType::Lines),
+                    _ => None,
+                };
 
-            let selection =
-                selection_type.map(|selection_type| Selection::new(selection_type, point, side));
+                let selection = selection_type
+                    .map(|selection_type| Selection::new(selection_type, point, side));
 
-            if let Some(sel) = selection {
-                self.events
-                    .push_back(InternalEvent::SetSelection(Some((sel, point))));
+                if let Some(sel) = selection {
+                    self.events
+                        .push_back(InternalEvent::SetSelection(Some((sel, point))));
+                }
             }
         }
     }
@@ -1065,55 +1074,40 @@ fn all_search_matches<'a, T>(
 }
 
 fn cell_for_mouse<'a>(pos: Vector2F, content: &'a TerminalContent) -> &'a IndexedCell {
-    let point = Point {
-        line: Line((pos.x() / content.size.cell_width()) as i32),
-        column: Column((pos.y() / content.size.line_height()) as usize),
-    };
+    let col = min(
+        (pos.x() / content.size.cell_width()) as usize,
+        content.size.columns() - 1,
+    ) as usize;
+    let line = min(
+        (pos.y() / content.size.line_height()) as usize,
+        content.size.screen_lines() - 1,
+    ) as usize;
 
-    debug_assert!(point.line.0.is_positive() || point.line.0 == 0);
-    &content.cells[(point.line.0 as usize * content.size.columns() + point.column.0)]
+    &content.cells[(line * content.size.columns() + col)]
 }
 
-fn open_uri(uri: String) {
-    // MacOS command is 'open'
-    pub fn spawn_daemon<I, S>(
-        program: &str,
-        args: I,
-        master_fd: RawFd,
-        shell_pid: u32,
-    ) -> io::Result<()>
-    where
-        I: IntoIterator<Item = S> + Copy,
-        S: AsRef<OsStr>,
-    {
-        let mut command = Command::new(program);
+fn open_uri(uri: &str) -> Result<(), std::io::Error> {
+    let mut command = Command::new("open");
+    command.arg(uri);
+
+    unsafe {
         command
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        if let Ok(cwd) = foreground_process_path(master_fd, shell_pid) {
-            command.current_dir(cwd);
-        }
-        unsafe {
-            command
-                .pre_exec(|| {
-                    match libc::fork() {
-                        -1 => return Err(io::Error::last_os_error()),
-                        0 => (),
-                        _ => libc::_exit(0),
-                    }
+            .pre_exec(|| {
+                match libc::fork() {
+                    -1 => return Err(io::Error::last_os_error()),
+                    0 => (),
+                    _ => libc::_exit(0),
+                }
 
-                    if libc::setsid() == -1 {
-                        return Err(io::Error::last_os_error());
-                    }
+                if libc::setsid() == -1 {
+                    return Err(io::Error::last_os_error());
+                }
 
-                    Ok(())
-                })
-                .spawn()?
-                .wait()
-                .map(|_| ())
-        }
+                Ok(())
+            })
+            .spawn()?
+            .wait()
+            .map(|_| ())
     }
 }
 
@@ -1145,9 +1139,9 @@ mod tests {
 
             let (content, cells) = TerminalTestContext::create_terminal_content(size, &mut rng);
 
-            for i in 0..viewport_cells {
+            for i in 0..(viewport_cells - 1) {
                 let i = i as usize;
-                for j in 0..viewport_cells {
+                for j in 0..(viewport_cells - 1) {
                     let j = j as usize;
                     let min_row = i as f32 * cell_size;
                     let max_row = (i + 1) as f32 * cell_size;
@@ -1159,9 +1153,26 @@ mod tests {
                         rng.gen_range(min_col..max_col),
                     );
 
-                    assert_eq!(cell_for_mouse(mouse_pos, &content).c, cells[i][j]);
+                    assert_eq!(cell_for_mouse(mouse_pos, &content).c, cells[j][i]);
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_mouse_to_cell_clamp() {
+        let mut rng = thread_rng();
+
+        let size = crate::TerminalSize {
+            cell_width: 10.,
+            line_height: 10.,
+            height: 100.,
+            width: 100.,
+        };
+
+        let (content, cells) = TerminalTestContext::create_terminal_content(size, &mut rng);
+
+        assert_eq!(cell_for_mouse(vec2f(-10., -10.), &content).c, cells[0][0]);
+        assert_eq!(cell_for_mouse(vec2f(1000., 1000.), &content).c, cells[9][9]);
     }
 }
