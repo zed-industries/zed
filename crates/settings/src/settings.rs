@@ -66,13 +66,13 @@ pub struct EditorSettings {
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
 pub struct GitGutterConfig {
-    pub files_included: GitGutterLevel,
+    pub files_included: GitFilesIncluded,
     pub debounce_delay_millis: Option<u64>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum GitGutterLevel {
+pub enum GitFilesIncluded {
     #[default]
     All,
     OnlyTracked,

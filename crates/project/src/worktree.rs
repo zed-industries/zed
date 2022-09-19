@@ -32,6 +32,7 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
+use settings::Settings;
 use smol::channel::{self, Sender};
 use std::{
     any::Any,
@@ -571,14 +572,33 @@ impl LocalWorktree {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
+
+        let files_included = cx
+            .global::<Settings>()
+            .editor_overrides
+            .git_gutter
+            .unwrap_or_default()
+            .files_included;
+
         cx.spawn(|this, mut cx| async move {
             let text = fs.load(&abs_path).await?;
 
-            let head_text = {
+            let head_text = if matches!(
+                files_included,
+                settings::GitFilesIncluded::All | settings::GitFilesIncluded::OnlyTracked
+            ) {
                 let fs = fs.clone();
                 let abs_path = abs_path.clone();
                 let task = async move { fs.load_head_text(&abs_path).await };
-                cx.background().spawn(task).await
+                let results = cx.background().spawn(task).await;
+
+                if files_included == settings::GitFilesIncluded::All {
+                    results.or_else(|| Some(text.clone()))
+                } else {
+                    results
+                }
+            } else {
+                None
             };
 
             // Eagerly populate the snapshot with an updated entry for the loaded file
