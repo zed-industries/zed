@@ -4452,6 +4452,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "room"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "gpui",
+ "project",
+ "workspace",
+]
+
+[[package]]
 name = "roxmltree"
 version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
