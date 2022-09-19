@@ -30,7 +30,6 @@ pub fn routes(rpc_server: &Arc<rpc::Server>, state: Arc<AppState>) -> Router<Bod
             put(update_user).delete(destroy_user).get(get_user),
         )
         .route("/users/:id/access_tokens", post(create_access_token))
-        .route("/bulk_users", post(create_users))
         .route("/users_with_no_invites", get(get_users_with_no_invites))
         .route("/invite_codes/:code", get(get_user_for_invite_code))
         .route("/panic", post(trace_panic))
@@ -212,42 +211,6 @@ async fn get_user(
         .await?
         .ok_or_else(|| Error::Http(StatusCode::NOT_FOUND, "User not found".to_string()))?;
     Ok(Json(user))
-}
-
-#[derive(Deserialize)]
-struct CreateUsersParams {
-    users: Vec<CreateUsersEntry>,
-}
-
-#[derive(Deserialize)]
-struct CreateUsersEntry {
-    github_login: String,
-    email_address: String,
-    invite_count: usize,
-}
-
-async fn create_users(
-    Json(params): Json<CreateUsersParams>,
-    Extension(app): Extension<Arc<AppState>>,
-) -> Result<Json<Vec<User>>> {
-    let user_ids = app
-        .db
-        .create_users(
-            params
-                .users
-                .into_iter()
-                .map(|params| {
-                    (
-                        params.github_login,
-                        params.email_address,
-                        params.invite_count,
-                    )
-                })
-                .collect(),
-        )
-        .await?;
-    let users = app.db.get_users_by_ids(user_ids).await?;
-    Ok(Json(users))
 }
 
 #[derive(Debug, Deserialize)]

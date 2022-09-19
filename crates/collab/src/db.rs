@@ -6,7 +6,7 @@ use collections::HashMap;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 pub use sqlx::postgres::PgPoolOptions as DbOptions;
-use sqlx::{types::Uuid, FromRow, QueryBuilder, Row};
+use sqlx::{types::Uuid, FromRow, QueryBuilder};
 use std::{cmp, ops::Range, time::Duration};
 use time::{OffsetDateTime, PrimitiveDateTime};
 
@@ -19,7 +19,6 @@ pub trait Db: Send + Sync {
         admin: bool,
     ) -> Result<UserId>;
     async fn get_all_users(&self, page: u32, limit: u32) -> Result<Vec<User>>;
-    async fn create_users(&self, users: Vec<(String, String, usize)>) -> Result<Vec<UserId>>;
     async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>>;
     async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>>;
     async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>>;
@@ -223,41 +222,6 @@ impl Db for PostgresDb {
             .bind((page * limit) as i32)
             .fetch_all(&self.pool)
             .await?)
-    }
-
-    async fn create_users(&self, users: Vec<(String, String, usize)>) -> Result<Vec<UserId>> {
-        let mut query = QueryBuilder::new(
-            "INSERT INTO users (github_login, email_address, admin, invite_code, invite_count)",
-        );
-        query.push_values(
-            users,
-            |mut query, (github_login, email_address, invite_count)| {
-                query
-                    .push_bind(github_login)
-                    .push_bind(email_address)
-                    .push_bind(false)
-                    .push_bind(random_invite_code())
-                    .push_bind(invite_count as i32);
-            },
-        );
-        query.push(
-            "
-            ON CONFLICT (github_login) DO UPDATE SET
-                github_login = excluded.github_login,
-                invite_count = excluded.invite_count,
-                invite_code = CASE WHEN users.invite_code IS NULL
-                                   THEN excluded.invite_code
-                                   ELSE users.invite_code
-                              END
-            RETURNING id
-            ",
-        );
-
-        let rows = query.build().fetch_all(&self.pool).await?;
-        Ok(rows
-            .into_iter()
-            .filter_map(|row| row.try_get::<UserId, _>(0).ok())
-            .collect())
     }
 
     async fn fuzzy_search_users(&self, name_query: &str, limit: u32) -> Result<Vec<User>> {
@@ -1786,10 +1750,6 @@ mod test {
         }
 
         async fn get_all_users(&self, _page: u32, _limit: u32) -> Result<Vec<User>> {
-            unimplemented!()
-        }
-
-        async fn create_users(&self, _users: Vec<(String, String, usize)>) -> Result<Vec<UserId>> {
             unimplemented!()
         }
 
