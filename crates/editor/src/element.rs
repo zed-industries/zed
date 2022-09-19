@@ -1477,7 +1477,7 @@ impl Element for EditorElement {
 
         let diff_hunks = snapshot
             .buffer_snapshot
-            .diff_hunks_in_range(start_row..end_row)
+            .git_diff_hunks_in_range(start_row..end_row)
             .collect();
 
         let mut max_visible_line_width = 0.0;
