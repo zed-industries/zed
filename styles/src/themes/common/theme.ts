@@ -78,6 +78,7 @@ export default interface Theme {
     // Hacks for elements on top of the editor
     on500: BackgroundColorSet;
     ok: BackgroundColorSet;
+    on500Ok: BackgroundColorSet;
     error: BackgroundColorSet;
     on500Error: BackgroundColorSet;
     warning: BackgroundColorSet;

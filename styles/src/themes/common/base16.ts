@@ -113,6 +113,11 @@ export function createTheme(
       hovered: sample(ramps.blue, 0.1),
       active: sample(ramps.blue, 0.15),
     },
+    on500Ok: {
+      base: sample(ramps.green, 0.05),
+      hovered: sample(ramps.green, 0.1),
+      active: sample(ramps.green, 0.15)
+    }
   };
 
   const borderColor = {

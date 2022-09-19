@@ -490,6 +490,7 @@ pub struct Editor {
     pub document_highlight_write_background: Color,
     pub diff_background_deleted: Color,
     pub diff_background_inserted: Color,
+    pub diff_background_modified: Color,
     pub line_number: Color,
     pub line_number_active: Color,
     pub guest_selections: Vec<SelectionStyle>,
