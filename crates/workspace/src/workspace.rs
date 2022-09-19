@@ -734,18 +734,41 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                                     );
                                 }
 
-                                const GIT_DELAY: Duration = Duration::from_millis(10);
+                                let debounce_delay = cx
+                                    .global::<Settings>()
+                                    .editor_overrides
+                                    .git_gutter
+                                    .unwrap_or_default()
+                                    .debounce_delay_millis;
                                 let item = item.clone();
-                                pending_git_update.fire_new(
-                                    GIT_DELAY,
-                                    workspace,
-                                    cx,
-                                    |project, mut cx| async move {
-                                        cx.update(|cx| item.update_git(project, cx))
-                                            .await
-                                            .log_err();
-                                    },
-                                );
+
+                                if let Some(delay) = debounce_delay {
+                                    const MIN_GIT_DELAY: u64 = 50;
+
+                                    let delay = delay.max(MIN_GIT_DELAY);
+                                    let duration = Duration::from_millis(delay);
+
+                                    pending_git_update.fire_new(
+                                        duration,
+                                        workspace,
+                                        cx,
+                                        |project, mut cx| async move {
+                                            cx.update(|cx| item.update_git(project, cx))
+                                                .await
+                                                .log_err();
+                                        },
+                                    );
+                                } else {
+                                    let project = workspace.project().downgrade();
+                                    cx.spawn_weak(|_, mut cx| async move {
+                                        if let Some(project) = project.upgrade(&cx) {
+                                            cx.update(|cx| item.update_git(project, cx))
+                                                .await
+                                                .log_err();
+                                        }
+                                    })
+                                    .detach();
+                                }
                             }
 
                             _ => {}

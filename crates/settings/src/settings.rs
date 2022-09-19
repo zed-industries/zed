@@ -60,6 +60,22 @@ pub struct EditorSettings {
     pub preferred_line_length: Option<u32>,
     pub format_on_save: Option<FormatOnSave>,
     pub enable_language_server: Option<bool>,
+    pub git_gutter: Option<GitGutterConfig>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
+pub struct GitGutterConfig {
+    pub files_included: GitGutterLevel,
+    pub debounce_delay_millis: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GitGutterLevel {
+    #[default]
+    All,
+    OnlyTracked,
+    None,
 }
 
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -237,6 +253,7 @@ impl Settings {
                 preferred_line_length: required(defaults.editor.preferred_line_length),
                 format_on_save: required(defaults.editor.format_on_save),
                 enable_language_server: required(defaults.editor.enable_language_server),
+                git_gutter: defaults.editor.git_gutter,
             },
             editor_overrides: Default::default(),
             terminal_defaults: Default::default(),
@@ -360,6 +377,7 @@ impl Settings {
                 preferred_line_length: Some(80),
                 format_on_save: Some(FormatOnSave::LanguageServer),
                 enable_language_server: Some(true),
+                git_gutter: Default::default(),
             },
             editor_overrides: Default::default(),
             terminal_defaults: Default::default(),
