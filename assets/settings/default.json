@@ -74,6 +74,10 @@
     "hard_tabs": false,
     // How many columns a tab should occupy.
     "tab_size": 4,
+    // Git gutter behavior configuration. Remove this item to disable git gutters entirely.
+    "git_gutter": {
+        "files_included": "all"
+    },
     // Settings specific to the terminal
     "terminal": {
         // What shell to use when opening a terminal. May take 3 values: 

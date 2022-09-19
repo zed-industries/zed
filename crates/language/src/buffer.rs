@@ -46,10 +46,16 @@ pub use {tree_sitter_rust, tree_sitter_typescript};
 
 pub use lsp::DiagnosticSeverity;
 
+struct GitDiffStatus {
+    diff: git::BufferDiff,
+    update_in_progress: bool,
+    update_requested: bool,
+}
+
 pub struct Buffer {
     text: TextBuffer,
     head_text: Option<Arc<String>>,
-    git_diff: git::BufferDiff,
+    git_diff_status: GitDiffStatus,
     file: Option<Arc<dyn File>>,
     saved_version: clock::Global,
     saved_version_fingerprint: String,
@@ -77,7 +83,7 @@ pub struct Buffer {
 
 pub struct BufferSnapshot {
     text: text::BufferSnapshot,
-    pub git_diff_snapshot: git::BufferDiff,
+    pub git_diff: git::BufferDiff,
     pub(crate) syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: DiagnosticSet,
@@ -433,7 +439,11 @@ impl Buffer {
             was_dirty_before_starting_transaction: None,
             text: buffer,
             head_text,
-            git_diff: git::BufferDiff::new(),
+            git_diff_status: GitDiffStatus {
+                diff: git::BufferDiff::new(),
+                update_in_progress: false,
+                update_requested: false,
+            },
             file,
             syntax_map: Mutex::new(SyntaxMap::new()),
             parsing_in_background: false,
@@ -464,7 +474,7 @@ impl Buffer {
         BufferSnapshot {
             text,
             syntax,
-            git_diff_snapshot: self.git_diff.clone(),
+            git_diff: self.git_diff_status.diff.clone(),
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
@@ -653,15 +663,20 @@ impl Buffer {
     }
 
     pub fn needs_git_update(&self) -> bool {
-        self.git_diff.needs_update(self)
+        self.git_diff_status.diff.needs_update(self)
     }
 
     pub fn update_git(&mut self, cx: &mut ModelContext<Self>) {
+        if self.git_diff_status.update_in_progress {
+            self.git_diff_status.update_requested = true;
+            return;
+        }
+
         if let Some(head_text) = &self.head_text {
             let snapshot = self.snapshot();
             let head_text = head_text.clone();
 
-            let mut diff = self.git_diff.clone();
+            let mut diff = self.git_diff_status.diff.clone();
             let diff = cx.background().spawn(async move {
                 diff.update(&head_text, &snapshot).await;
                 diff
@@ -671,9 +686,14 @@ impl Buffer {
                 let buffer_diff = diff.await;
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {
-                        this.git_diff = buffer_diff;
+                        this.git_diff_status.diff = buffer_diff;
                         this.git_diff_update_count += 1;
                         cx.notify();
+
+                        this.git_diff_status.update_in_progress = false;
+                        if this.git_diff_status.update_requested {
+                            this.update_git(cx);
+                        }
                     })
                 }
             })
@@ -2195,7 +2215,7 @@ impl BufferSnapshot {
         &'a self,
         query_row_range: Range<u32>,
     ) -> impl 'a + Iterator<Item = git::DiffHunk<u32>> {
-        self.git_diff_snapshot.hunks_in_range(query_row_range, self)
+        self.git_diff.hunks_in_range(query_row_range, self)
     }
 
     pub fn diagnostics_in_range<'a, T, O>(
@@ -2275,7 +2295,7 @@ impl Clone for BufferSnapshot {
     fn clone(&self) -> Self {
         Self {
             text: self.text.clone(),
-            git_diff_snapshot: self.git_diff_snapshot.clone(),
+            git_diff: self.git_diff.clone(),
             syntax: self.syntax.clone(),
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
