@@ -43,7 +43,7 @@ use std::{
     collections::{HashMap, VecDeque},
     fmt::Display,
     io,
-    ops::{Deref, RangeInclusive, Sub},
+    ops::{Deref, Range, RangeInclusive, Sub},
     os::unix::{prelude::AsRawFd, process::CommandExt},
     path::PathBuf,
     process::Command,
@@ -493,7 +493,7 @@ pub struct Terminal {
     pub matches: Vec<RangeInclusive<Point>>,
     last_content: TerminalContent,
     last_synced: Instant,
-    last_hovered_hyperlink: Option<Hyperlink>,
+    last_hovered_hyperlink: Option<(Hyperlink, Range<Point>)>,
     sync_task: Option<Task<()>>,
     selection_head: Option<Point>,
     breadcrumb_text: String,
@@ -832,7 +832,7 @@ impl Terminal {
                 }
             }
         } else if e.cmd {
-            self.last_hovered_hyperlink = cell_for_mouse(e.position, &self.last_content)
+            let hyperlink = cell_for_mouse(e.position, &self.last_content)
                 .cell
                 .hyperlink();
         }
