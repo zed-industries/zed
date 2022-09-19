@@ -545,10 +545,19 @@ impl EditorElement {
             }
         }
 
+        let (inserted_color, modified_color, deleted_color) = {
+            let editor = &cx.global::<Settings>().theme.editor;
+            (
+                editor.diff_background_inserted,
+                editor.diff_background_modified,
+                editor.diff_background_deleted,
+            )
+        };
+
         for hunk in &layout.diff_hunks {
             let color = match hunk.status() {
-                DiffHunkStatus::Added => Color::green(),
-                DiffHunkStatus::Modified => Color::blue(),
+                DiffHunkStatus::Added => inserted_color,
+                DiffHunkStatus::Modified => modified_color,
 
                 //TODO: This rendering is entirely a horrible hack
                 DiffHunkStatus::Removed => {
@@ -565,7 +574,7 @@ impl EditorElement {
 
                     cx.scene.push_quad(Quad {
                         bounds: highlight_bounds,
-                        background: Some(Color::red()),
+                        background: Some(deleted_color),
                         border: Border::new(0., Color::transparent_black()),
                         corner_radius: 1. * line_height,
                     });
