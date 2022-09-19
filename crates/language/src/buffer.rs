@@ -1,4 +1,4 @@
-use crate::git::{BufferDiff, DiffHunk};
+use crate::git;
 pub use crate::{
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
@@ -49,7 +49,7 @@ pub use lsp::DiagnosticSeverity;
 pub struct Buffer {
     text: TextBuffer,
     head_text: Option<Arc<String>>,
-    git_diff: BufferDiff,
+    git_diff: git::BufferDiff,
     file: Option<Arc<dyn File>>,
     saved_version: clock::Global,
     saved_version_fingerprint: String,
@@ -69,7 +69,7 @@ pub struct Buffer {
     diagnostics_update_count: usize,
     diagnostics_timestamp: clock::Lamport,
     file_update_count: usize,
-    diff_update_count: usize,
+    git_diff_update_count: usize,
     completion_triggers: Vec<String>,
     completion_triggers_timestamp: clock::Lamport,
     deferred_ops: OperationQueue<Operation>,
@@ -77,13 +77,13 @@ pub struct Buffer {
 
 pub struct BufferSnapshot {
     text: text::BufferSnapshot,
-    pub diff_snapshot: BufferDiff,
+    pub git_diff_snapshot: git::BufferDiff,
     pub(crate) syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: DiagnosticSet,
     diagnostics_update_count: usize,
     file_update_count: usize,
-    diff_update_count: usize,
+    git_diff_update_count: usize,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     selections_update_count: usize,
     language: Option<Arc<Language>>,
@@ -433,7 +433,7 @@ impl Buffer {
             was_dirty_before_starting_transaction: None,
             text: buffer,
             head_text,
-            git_diff: BufferDiff::new(),
+            git_diff: git::BufferDiff::new(),
             file,
             syntax_map: Mutex::new(SyntaxMap::new()),
             parsing_in_background: false,
@@ -448,7 +448,7 @@ impl Buffer {
             diagnostics_update_count: 0,
             diagnostics_timestamp: Default::default(),
             file_update_count: 0,
-            diff_update_count: 0,
+            git_diff_update_count: 0,
             completion_triggers: Default::default(),
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
@@ -464,13 +464,13 @@ impl Buffer {
         BufferSnapshot {
             text,
             syntax,
-            diff_snapshot: self.git_diff.clone(),
+            git_diff_snapshot: self.git_diff.clone(),
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
             diagnostics_update_count: self.diagnostics_update_count,
             file_update_count: self.file_update_count,
-            diff_update_count: self.diff_update_count,
+            git_diff_update_count: self.git_diff_update_count,
             language: self.language.clone(),
             parse_count: self.parse_count,
             selections_update_count: self.selections_update_count,
@@ -672,7 +672,7 @@ impl Buffer {
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {
                         this.git_diff = buffer_diff;
-                        this.diff_update_count += 1;
+                        this.git_diff_update_count += 1;
                         cx.notify();
                     })
                 }
@@ -705,8 +705,8 @@ impl Buffer {
         self.file_update_count
     }
 
-    pub fn diff_update_count(&self) -> usize {
-        self.diff_update_count
+    pub fn git_diff_update_count(&self) -> usize {
+        self.git_diff_update_count
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -2191,11 +2191,11 @@ impl BufferSnapshot {
             })
     }
 
-    pub fn diff_hunks_in_range<'a>(
+    pub fn git_diff_hunks_in_range<'a>(
         &'a self,
         query_row_range: Range<u32>,
-    ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
-        self.diff_snapshot.hunks_in_range(query_row_range, self)
+    ) -> impl 'a + Iterator<Item = git::DiffHunk<u32>> {
+        self.git_diff_snapshot.hunks_in_range(query_row_range, self)
     }
 
     pub fn diagnostics_in_range<'a, T, O>(
@@ -2246,8 +2246,8 @@ impl BufferSnapshot {
         self.file_update_count
     }
 
-    pub fn diff_update_count(&self) -> usize {
-        self.diff_update_count
+    pub fn git_diff_update_count(&self) -> usize {
+        self.git_diff_update_count
     }
 }
 
@@ -2275,7 +2275,7 @@ impl Clone for BufferSnapshot {
     fn clone(&self) -> Self {
         Self {
             text: self.text.clone(),
-            diff_snapshot: self.diff_snapshot.clone(),
+            git_diff_snapshot: self.git_diff_snapshot.clone(),
             syntax: self.syntax.clone(),
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
@@ -2283,7 +2283,7 @@ impl Clone for BufferSnapshot {
             selections_update_count: self.selections_update_count,
             diagnostics_update_count: self.diagnostics_update_count,
             file_update_count: self.file_update_count,
-            diff_update_count: self.diff_update_count,
+            git_diff_update_count: self.git_diff_update_count,
             language: self.language.clone(),
             parse_count: self.parse_count,
         }
