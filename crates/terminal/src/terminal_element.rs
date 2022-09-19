@@ -427,6 +427,16 @@ impl TerminalElement {
                         position: e.position,
                     });
                 }
+            })
+            .on_move(move |event, cx| {
+                if cx.is_parent_view_focused() {
+                    if let Some(conn_handle) = connection.upgrade(cx.app) {
+                        conn_handle.update(cx.app, |terminal, cx| {
+                            terminal.mouse_move(&event, origin);
+                            cx.notify();
+                        })
+                    }
+                }
             });
 
         // Mouse mode handlers:
@@ -473,21 +483,6 @@ impl TerminalElement {
                         },
                     ),
                 )
-        }
-        //Mouse move manages both dragging and motion events
-        if mode.intersects(TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION) {
-            region = region
-                //TODO: This does not fire on right-mouse-down-move events.
-                .on_move(move |event, cx| {
-                    if cx.is_parent_view_focused() {
-                        if let Some(conn_handle) = connection.upgrade(cx.app) {
-                            conn_handle.update(cx.app, |terminal, cx| {
-                                terminal.mouse_move(&event, origin);
-                                cx.notify();
-                            })
-                        }
-                    }
-                })
         }
 
         cx.scene.push_mouse_region(region);

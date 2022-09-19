@@ -83,6 +83,11 @@ const DEBUG_TERMINAL_HEIGHT: f32 = 30.;
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
 
+/// Copied from alacritty's ui_config.rs
+const URL_REGEX: &str =
+    "(ipfs:|ipns:|magnet:|mailto:|gemini:|gopher:|https:|http:|news:|file:|git:|ssh:|ftp:)\
+                         [^\u{0000}-\u{001F}\u{007F}-\u{009F}<>\"\\s{-}\\^⟨⟩`]+";
+
 ///Upward flowing events, for changing the title and such
 #[derive(Clone, Copy, Debug)]
 pub enum Event {
@@ -105,6 +110,7 @@ enum InternalEvent {
     ScrollToPoint(Point),
     SetSelection(Option<(Selection, Point)>),
     UpdateSelection(Vector2F),
+    HyperlinkHover(Vector2F),
     Copy,
 }
 
@@ -643,6 +649,16 @@ impl Terminal {
                 }
             }
             InternalEvent::ScrollToPoint(point) => term.scroll_to_point(*point),
+            InternalEvent::HyperlinkHover(position) => {
+                let point = grid_point(
+                    *position,
+                    self.last_content.size,
+                    term.grid().display_offset(),
+                );
+                let side = mouse_side(*position, self.last_content.size);
+
+                println!("Hyperlink hover")
+            }
         }
     }
 
@@ -817,7 +833,6 @@ impl Terminal {
     pub fn mouse_move(&mut self, e: &MouseMovedEvent, origin: Vector2F) {
         self.last_hovered_hyperlink = None;
         let position = e.position.sub(origin);
-
         if self.mouse_mode(e.shift) {
             let point = grid_point(
                 position,
@@ -832,9 +847,39 @@ impl Terminal {
                 }
             }
         } else if e.cmd {
-            let hyperlink = cell_for_mouse(e.position, &self.last_content)
-                .cell
-                .hyperlink();
+            let content_index = content_index_for_mouse(position, &self.last_content);
+            let link = self.last_content.cells[content_index].hyperlink();
+
+            if link.is_some() {
+                let mut min_index = content_index;
+                loop {
+                    if self.last_content.cells[min_index - 1].hyperlink() == link {
+                        min_index = min_index - 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                let mut max_index = content_index;
+                loop {
+                    if self.last_content.cells[max_index + 1].hyperlink() == link {
+                        max_index = max_index + 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                self.last_hovered_hyperlink = link.map(|link| {
+                    (
+                        link,
+                        self.last_content.cells[min_index].point
+                            ..self.last_content.cells[max_index].point,
+                    )
+                });
+            } else {
+                self.events
+                    .push_back(InternalEvent::HyperlinkHover(position));
+            }
         }
     }
 
@@ -903,7 +948,12 @@ impl Terminal {
         let position = e.position.sub(origin);
         if !self.mouse_mode(e.shift) {
             if e.cmd {
-                if let Some(link) = cell_for_mouse(position, &self.last_content).hyperlink() {
+                if let Some(link) = self.last_content.cells
+                    [content_index_for_mouse(position, &self.last_content)]
+                .hyperlink()
+                {
+                    dbg!(&link);
+                    dbg!(&self.last_hovered_hyperlink);
                     open_uri(link.uri()).log_err();
                 }
             } else {
@@ -1073,7 +1123,7 @@ fn all_search_matches<'a, T>(
     RegexIter::new(start, end, AlacDirection::Right, term, regex)
 }
 
-fn cell_for_mouse<'a>(pos: Vector2F, content: &'a TerminalContent) -> &'a IndexedCell {
+fn content_index_for_mouse<'a>(pos: Vector2F, content: &'a TerminalContent) -> usize {
     let col = min(
         (pos.x() / content.size.cell_width()) as usize,
         content.size.columns() - 1,
@@ -1083,7 +1133,7 @@ fn cell_for_mouse<'a>(pos: Vector2F, content: &'a TerminalContent) -> &'a Indexe
         content.size.screen_lines() - 1,
     ) as usize;
 
-    &content.cells[(line * content.size.columns() + col)]
+    line * content.size.columns() + col
 }
 
 fn open_uri(uri: &str) -> Result<(), std::io::Error> {
@@ -1116,7 +1166,7 @@ mod tests {
     use gpui::geometry::vector::vec2f;
     use rand::{thread_rng, Rng};
 
-    use crate::cell_for_mouse;
+    use crate::content_index_for_mouse;
 
     use self::terminal_test_context::TerminalTestContext;
 
@@ -1153,7 +1203,10 @@ mod tests {
                         rng.gen_range(min_col..max_col),
                     );
 
-                    assert_eq!(cell_for_mouse(mouse_pos, &content).c, cells[j][i]);
+                    assert_eq!(
+                        content.cells[content_index_for_mouse(mouse_pos, &content)].c,
+                        cells[j][i]
+                    );
                 }
             }
         }
@@ -1172,7 +1225,13 @@ mod tests {
 
         let (content, cells) = TerminalTestContext::create_terminal_content(size, &mut rng);
 
-        assert_eq!(cell_for_mouse(vec2f(-10., -10.), &content).c, cells[0][0]);
-        assert_eq!(cell_for_mouse(vec2f(1000., 1000.), &content).c, cells[9][9]);
+        assert_eq!(
+            content.cells[content_index_for_mouse(vec2f(-10., -10.), &content)].c,
+            cells[0][0]
+        );
+        assert_eq!(
+            content.cells[content_index_for_mouse(vec2f(1000., 1000.), &content)].c,
+            cells[9][9]
+        );
     }
 }
