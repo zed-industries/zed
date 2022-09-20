@@ -1575,17 +1575,20 @@ impl Editor {
         let start;
         let end;
         let mode;
+        let auto_scroll;
         match click_count {
             1 => {
                 start = buffer.anchor_before(position.to_point(&display_map));
                 end = start.clone();
                 mode = SelectMode::Character;
+                auto_scroll = true;
             }
             2 => {
                 let range = movement::surrounding_word(&display_map, position);
                 start = buffer.anchor_before(range.start.to_point(&display_map));
                 end = buffer.anchor_before(range.end.to_point(&display_map));
                 mode = SelectMode::Word(start.clone()..end.clone());
+                auto_scroll = true;
             }
             3 => {
                 let position = display_map
@@ -1599,15 +1602,17 @@ impl Editor {
                 start = buffer.anchor_before(line_start);
                 end = buffer.anchor_before(next_line_start);
                 mode = SelectMode::Line(start.clone()..end.clone());
+                auto_scroll = true;
             }
             _ => {
                 start = buffer.anchor_before(0);
                 end = buffer.anchor_before(buffer.len());
                 mode = SelectMode::All;
+                auto_scroll = false;
             }
         }
 
-        self.change_selections(Some(Autoscroll::Newest), cx, |s| {
+        self.change_selections(auto_scroll.then(|| Autoscroll::Newest), cx, |s| {
             if !add {
                 s.clear_disjoint();
             } else if click_count > 1 {
