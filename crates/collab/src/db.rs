@@ -458,21 +458,29 @@ impl Db for PostgresDb {
     ) -> Result<(UserId, Option<UserId>)> {
         let mut tx = self.pool.begin().await?;
 
-        let (signup_id, metrics_id, inviting_user_id): (i32, i32, Option<UserId>) = sqlx::query_as(
+        let (signup_id, metrics_id, existing_user_id, inviting_user_id): (
+            i32,
+            i32,
+            Option<UserId>,
+            Option<UserId>,
+        ) = sqlx::query_as(
             "
-            SELECT id, metrics_id, inviting_user_id
+            SELECT id, metrics_id, user_id, inviting_user_id
             FROM signups
             WHERE
                 email_address = $1 AND
-                email_confirmation_code = $2 AND
-                user_id is NULL
+                email_confirmation_code = $2
             ",
         )
         .bind(&invite.email_address)
         .bind(&invite.email_confirmation_code)
         .fetch_optional(&mut tx)
         .await?
-        .ok_or_else(|| anyhow!("no such invite"))?;
+        .ok_or_else(|| Error::Http(StatusCode::NOT_FOUND, "no such invite".to_string()))?;
+
+        if existing_user_id.is_some() {
+            Err(Error::Http(StatusCode::UNPROCESSABLE_ENTITY, "invitation already redeemed".to_string()))?;
+        }
 
         let user_id: UserId = sqlx::query_scalar(
             "
