@@ -3996,6 +3996,7 @@ dependencies = [
  "fsevent",
  "futures",
  "fuzzy",
+ "git2",
  "gpui",
  "ignore",
  "language",

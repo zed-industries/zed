@@ -4538,7 +4538,7 @@ impl Project {
             })
             .detach();
         }
-
+        
         let push_strong_handle = {
             let worktree = worktree.read(cx);
             self.is_shared() || worktree.is_visible() || worktree.is_remote()
