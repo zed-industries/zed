@@ -14,7 +14,7 @@ use alacritty_terminal::{
     selection::{Selection, SelectionRange, SelectionType},
     sync::FairMutex,
     term::{
-        cell::{Cell, Hyperlink},
+        cell::Cell,
         color::Rgb,
         search::{Match, RegexIter, RegexSearch},
         RenderableCursor, TermMode,
@@ -43,7 +43,7 @@ use std::{
     collections::{HashMap, VecDeque},
     fmt::Display,
     io,
-    ops::{Deref, Range, RangeInclusive, Sub},
+    ops::{Deref, RangeInclusive, Sub},
     os::unix::{prelude::AsRawFd, process::CommandExt},
     path::PathBuf,
     process::Command,
@@ -77,16 +77,14 @@ pub fn init(cx: &mut MutableAppContext) {
 ///Scroll multiplier that is set to 3 by default. This will be removed when I
 ///Implement scroll bars.
 const SCROLL_MULTIPLIER: f32 = 4.;
-// const MAX_SEARCH_LINES: usize = 100;
+const MAX_SEARCH_LINES: usize = 100;
 const DEBUG_TERMINAL_WIDTH: f32 = 500.;
 const DEBUG_TERMINAL_HEIGHT: f32 = 30.;
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
 
 /// Copied from alacritty's ui_config.rs
-const URL_REGEX: &str =
-    "(ipfs:|ipns:|magnet:|mailto:|gemini:|gopher:|https:|http:|news:|file:|git:|ssh:|ftp:)\
-                         [^\u{0000}-\u{001F}\u{007F}-\u{009F}<>\"\\s{-}\\^⟨⟩`]+";
+static URL_REGEX: RegexSearch = RegexSearch::new("(ipfs:|ipns:|magnet:|mailto:|gemini:|gopher:|https:|http:|news:|file:|git:|ssh:|ftp:)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>\"\\s{-}\\^⟨⟩`]+").unwrap();
 
 ///Upward flowing events, for changing the title and such
 #[derive(Clone, Copy, Debug)]
@@ -500,7 +498,7 @@ pub struct Terminal {
     pub matches: Vec<RangeInclusive<Point>>,
     last_content: TerminalContent,
     last_synced: Instant,
-    last_hovered_hyperlink: Option<(Hyperlink, Range<Point>)>,
+    last_hovered_hyperlink: Option<(String, RangeInclusive<Point>)>,
     sync_task: Option<Task<()>>,
     selection_head: Option<Point>,
     breadcrumb_text: String,
@@ -651,14 +649,23 @@ impl Terminal {
             }
             InternalEvent::ScrollToPoint(point) => term.scroll_to_point(*point),
             InternalEvent::Hyperlink(position, open) => {
+                self.last_hovered_hyperlink = None;
+
                 let point = grid_point(
                     *position,
                     self.last_content.size,
                     term.grid().display_offset(),
                 );
-                let side = mouse_side(*position, self.last_content.size);
 
-                println!("Hyperlink hover | click ")
+                if let Some(url_match) = regex_match_at(term, point, &URL_REGEX) {
+                    let url = term.bounds_to_string(*url_match.start(), *url_match.end());
+
+                    if *open {
+                        open_uri(&url).log_err();
+                    } else {
+                        self.last_hovered_hyperlink = Some((url, url_match));
+                    }
+                }
             }
         }
     }
@@ -872,9 +879,9 @@ impl Terminal {
 
                 self.last_hovered_hyperlink = link.map(|link| {
                     (
-                        link,
+                        link.uri().to_owned(),
                         self.last_content.cells[min_index].point
-                            ..self.last_content.cells[max_index].point,
+                            ..=self.last_content.cells[max_index].point,
                     )
                 });
             } else {
@@ -1110,6 +1117,30 @@ impl Drop for Terminal {
 
 impl Entity for Terminal {
     type Event = Event;
+}
+
+/// Based on alacritty/src/display/hint.rs > regex_match_at
+/// Retrieve the match, if the specified point is inside the content matching the regex.
+fn regex_match_at<T>(term: &Term<T>, point: Point, regex: &RegexSearch) -> Option<Match> {
+    visible_regex_match_iter(term, regex).find(|rm| rm.contains(&point))
+}
+
+/// Copied from alacritty/src/display/hint.rs:
+/// Iterate over all visible regex matches.
+pub fn visible_regex_match_iter<'a, T>(
+    term: &'a Term<T>,
+    regex: &'a RegexSearch,
+) -> impl Iterator<Item = Match> + 'a {
+    let viewport_start = Line(-(term.grid().display_offset() as i32));
+    let viewport_end = viewport_start + term.bottommost_line();
+    let mut start = term.line_search_left(Point::new(viewport_start, Column(0)));
+    let mut end = term.line_search_right(Point::new(viewport_end, Column(0)));
+    start.line = start.line.max(viewport_start - MAX_SEARCH_LINES);
+    end.line = end.line.min(viewport_end + MAX_SEARCH_LINES);
+
+    RegexIter::new(start, end, AlacDirection::Right, term, regex)
+        .skip_while(move |rm| rm.end().line < viewport_start)
+        .take_while(move |rm| rm.start().line <= viewport_end)
 }
 
 fn make_selection(range: &RangeInclusive<Point>) -> Selection {
