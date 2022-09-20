@@ -112,9 +112,11 @@ async fn get_users(
 
 #[derive(Deserialize, Debug)]
 struct CreateUserParams {
+    github_user_id: i32,
     github_login: String,
     email_address: String,
     email_confirmation_code: Option<String>,
+    #[serde(default)]
     invite_count: i32,
 }
 
@@ -123,6 +125,11 @@ async fn create_user(
     Extension(app): Extension<Arc<AppState>>,
     Extension(rpc_server): Extension<Arc<rpc::Server>>,
 ) -> Result<Json<User>> {
+    let user = NewUserParams {
+        github_login: params.github_login,
+        github_user_id: params.github_user_id,
+        invite_count: params.invite_count,
+    };
     let (user_id, inviter_id) =
         // Creating a user via the normal signup process
         if let Some(email_confirmation_code) = params.email_confirmation_code {
@@ -132,10 +139,7 @@ async fn create_user(
                         email_address: params.email_address,
                         email_confirmation_code,
                     },
-                    NewUserParams {
-                        github_login: params.github_login,
-                        invite_count: params.invite_count,
-                    },
+                    user,
                 )
                 .await?
         }
@@ -143,7 +147,7 @@ async fn create_user(
         else {
             (
                 app.db
-                    .create_user(&params.github_login, &params.email_address, false)
+                    .create_user(&params.email_address, false, user)
                     .await?,
                 None,
             )

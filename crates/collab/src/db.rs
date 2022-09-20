@@ -14,9 +14,9 @@ use time::{OffsetDateTime, PrimitiveDateTime};
 pub trait Db: Send + Sync {
     async fn create_user(
         &self,
-        github_login: &str,
         email_address: &str,
         admin: bool,
+        params: NewUserParams,
     ) -> Result<UserId>;
     async fn get_all_users(&self, page: u32, limit: u32) -> Result<Vec<User>>;
     async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>>;
@@ -196,19 +196,20 @@ impl Db for PostgresDb {
 
     async fn create_user(
         &self,
-        github_login: &str,
         email_address: &str,
         admin: bool,
+        params: NewUserParams,
     ) -> Result<UserId> {
         let query = "
-            INSERT INTO users (github_login, email_address, admin)
-            VALUES ($1, $2, $3)
+            INSERT INTO users (email_address, github_login, github_user_id, admin)
+            VALUES ($1, $2, $3, $4)
             ON CONFLICT (github_login) DO UPDATE SET github_login = excluded.github_login
             RETURNING id
         ";
         Ok(sqlx::query_scalar(query)
-            .bind(github_login)
             .bind(email_address)
+            .bind(params.github_login)
+            .bind(params.github_user_id)
             .bind(admin)
             .fetch_one(&self.pool)
             .await
@@ -431,14 +432,15 @@ impl Db for PostgresDb {
         let user_id: UserId = sqlx::query_scalar(
             "
             INSERT INTO users
-                (email_address, github_login, admin, invite_count, invite_code, metrics_id)
+                (email_address, github_login, github_user_id, admin, invite_count, invite_code, metrics_id)
             VALUES
-                ($1, $2, 'f', $3, $4, $5)
+                ($1, $2, $3, 'f', $4, $5, $6)
             RETURNING id
             ",
         )
         .bind(&invite.email_address)
         .bind(&user.github_login)
+        .bind(&user.github_user_id)
         .bind(&user.invite_count)
         .bind(random_invite_code())
         .bind(metrics_id)
@@ -1508,6 +1510,7 @@ id_type!(UserId);
 pub struct User {
     pub id: UserId,
     pub github_login: String,
+    pub github_user_id: i32,
     pub email_address: Option<String>,
     pub admin: bool,
     pub invite_code: Option<String>,
@@ -1637,6 +1640,7 @@ pub struct Invite {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NewUserParams {
     pub github_login: String,
+    pub github_user_id: i32,
     pub invite_count: i32,
 }
 
@@ -1719,16 +1723,16 @@ mod test {
     impl Db for FakeDb {
         async fn create_user(
             &self,
-            github_login: &str,
             email_address: &str,
             admin: bool,
+            params: NewUserParams,
         ) -> Result<UserId> {
             self.background.simulate_random_delay().await;
 
             let mut users = self.users.lock();
             if let Some(user) = users
                 .values()
-                .find(|user| user.github_login == github_login)
+                .find(|user| user.github_login == params.github_login)
             {
                 Ok(user.id)
             } else {
@@ -1737,7 +1741,8 @@ mod test {
                     user_id,
                     User {
                         id: user_id,
-                        github_login: github_login.to_string(),
+                        github_login: params.github_login,
+                        github_user_id: params.github_user_id,
                         email_address: Some(email_address.to_string()),
                         admin,
                         invite_code: None,

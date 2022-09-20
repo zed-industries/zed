@@ -1,5 +1,5 @@
 use crate::{
-    db::{ProjectId, TestDb, UserId},
+    db::{NewUserParams, ProjectId, TestDb, UserId},
     rpc::{Executor, Server, Store},
     AppState,
 };
@@ -4641,7 +4641,15 @@ async fn test_random_collaboration(
     let mut server = TestServer::start(cx.foreground(), cx.background()).await;
     let db = server.app_state.db.clone();
     let host_user_id = db
-        .create_user("host", "host@example.com", false)
+        .create_user(
+            "host@example.com",
+            false,
+            NewUserParams {
+                github_login: "host".into(),
+                github_user_id: 0,
+                invite_count: 0,
+            },
+        )
         .await
         .unwrap();
     let mut available_guests = vec![
@@ -4651,9 +4659,17 @@ async fn test_random_collaboration(
         "guest-4".to_string(),
     ];
 
-    for username in &available_guests {
+    for (ix, username) in available_guests.iter().enumerate() {
         let guest_user_id = db
-            .create_user(username, &format!("{username}@example.com"), false)
+            .create_user(
+                &format!("{username}@example.com"),
+                false,
+                NewUserParams {
+                    github_login: username.into(),
+                    github_user_id: ix as i32,
+                    invite_count: 0,
+                },
+            )
             .await
             .unwrap();
         assert_eq!(*username, format!("guest-{}", guest_user_id));
@@ -5163,7 +5179,11 @@ impl TestServer {
         } else {
             self.app_state
                 .db
-                .create_user(name, &format!("{name}@example.com"), false)
+                .create_user(&format!("{name}@example.com"), false, NewUserParams {
+                    github_login: name.into(),
+                    github_user_id: 0,
+                    invite_count: 0,
+                })
                 .await
                 .unwrap()
         };

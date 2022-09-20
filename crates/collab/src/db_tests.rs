@@ -12,10 +12,54 @@ async fn test_get_users_by_ids() {
     ] {
         let db = test_db.db();
 
-        let user1 = db.create_user("u1", "u1@example.com", false).await.unwrap();
-        let user2 = db.create_user("u2", "u2@example.com", false).await.unwrap();
-        let user3 = db.create_user("u3", "u3@example.com", false).await.unwrap();
-        let user4 = db.create_user("u4", "u4@example.com", false).await.unwrap();
+        let user1 = db
+            .create_user(
+                "u1@example.com",
+                false,
+                NewUserParams {
+                    github_login: "u1".into(),
+                    github_user_id: 1,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap();
+        let user2 = db
+            .create_user(
+                "u2@example.com",
+                false,
+                NewUserParams {
+                    github_login: "u2".into(),
+                    github_user_id: 2,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap();
+        let user3 = db
+            .create_user(
+                "u3@example.com",
+                false,
+                NewUserParams {
+                    github_login: "u3".into(),
+                    github_user_id: 3,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap();
+        let user4 = db
+            .create_user(
+                "u4@example.com",
+                false,
+                NewUserParams {
+                    github_login: "u4".into(),
+                    github_user_id: 4,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap();
 
         assert_eq!(
             db.get_users_by_ids(vec![user1, user2, user3, user4])
@@ -25,6 +69,7 @@ async fn test_get_users_by_ids() {
                 User {
                     id: user1,
                     github_login: "u1".to_string(),
+                    github_user_id: 1,
                     email_address: Some("u1@example.com".to_string()),
                     admin: false,
                     ..Default::default()
@@ -32,6 +77,7 @@ async fn test_get_users_by_ids() {
                 User {
                     id: user2,
                     github_login: "u2".to_string(),
+                    github_user_id: 2,
                     email_address: Some("u2@example.com".to_string()),
                     admin: false,
                     ..Default::default()
@@ -39,6 +85,7 @@ async fn test_get_users_by_ids() {
                 User {
                     id: user3,
                     github_login: "u3".to_string(),
+                    github_user_id: 3,
                     email_address: Some("u3@example.com".to_string()),
                     admin: false,
                     ..Default::default()
@@ -46,6 +93,7 @@ async fn test_get_users_by_ids() {
                 User {
                     id: user4,
                     github_login: "u4".to_string(),
+                    github_user_id: 4,
                     email_address: Some("u4@example.com".to_string()),
                     admin: false,
                     ..Default::default()
@@ -60,7 +108,18 @@ async fn test_worktree_extensions() {
     let test_db = TestDb::postgres().await;
     let db = test_db.db();
 
-    let user = db.create_user("u1", "u1@example.com", false).await.unwrap();
+    let user = db
+        .create_user(
+            "u1@example.com",
+            false,
+            NewUserParams {
+                github_login: "u1".into(),
+                github_user_id: 0,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap();
     let project = db.register_project(user).await.unwrap();
 
     db.update_worktree_extensions(project, 100, Default::default())
@@ -120,9 +179,42 @@ async fn test_user_activity() {
     let test_db = TestDb::postgres().await;
     let db = test_db.db();
 
-    let user_1 = db.create_user("u1", "u1@example.com", false).await.unwrap();
-    let user_2 = db.create_user("u2", "u2@example.com", false).await.unwrap();
-    let user_3 = db.create_user("u3", "u3@example.com", false).await.unwrap();
+    let user_1 = db
+        .create_user(
+            "u1@example.com",
+            false,
+            NewUserParams {
+                github_login: "u1".into(),
+                github_user_id: 0,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap();
+    let user_2 = db
+        .create_user(
+            "u2@example.com",
+            false,
+            NewUserParams {
+                github_login: "u2".into(),
+                github_user_id: 0,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap();
+    let user_3 = db
+        .create_user(
+            "u3@example.com",
+            false,
+            NewUserParams {
+                github_login: "u3".into(),
+                github_user_id: 0,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap();
     let project_1 = db.register_project(user_1).await.unwrap();
     db.update_worktree_extensions(
         project_1,
@@ -340,7 +432,18 @@ async fn test_recent_channel_messages() {
         TestDb::fake(build_background_executor()),
     ] {
         let db = test_db.db();
-        let user = db.create_user("u", "u@example.com", false).await.unwrap();
+        let user = db
+            .create_user(
+                "u@example.com",
+                false,
+                NewUserParams {
+                    github_login: "u".into(),
+                    github_user_id: 1,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap();
         let org = db.create_org("org", "org").await.unwrap();
         let channel = db.create_org_channel(org, "channel").await.unwrap();
         for i in 0..10 {
@@ -373,7 +476,18 @@ async fn test_channel_message_nonces() {
         TestDb::fake(build_background_executor()),
     ] {
         let db = test_db.db();
-        let user = db.create_user("u", "u@example.com", false).await.unwrap();
+        let user = db
+            .create_user(
+                "user@example.com",
+                false,
+                NewUserParams {
+                    github_login: "user".into(),
+                    github_user_id: 1,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap();
         let org = db.create_org("org", "org").await.unwrap();
         let channel = db.create_org_channel(org, "channel").await.unwrap();
 
@@ -404,7 +518,18 @@ async fn test_channel_message_nonces() {
 async fn test_create_access_tokens() {
     let test_db = TestDb::postgres().await;
     let db = test_db.db();
-    let user = db.create_user("u1", "u1@example.com", false).await.unwrap();
+    let user = db
+        .create_user(
+            "u1@example.com",
+            false,
+            NewUserParams {
+                github_login: "u1".into(),
+                github_user_id: 1,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap();
 
     db.create_access_token_hash(user, "h1", 3).await.unwrap();
     db.create_access_token_hash(user, "h2", 3).await.unwrap();
@@ -443,7 +568,7 @@ fn test_fuzzy_like_string() {
 async fn test_fuzzy_search_users() {
     let test_db = TestDb::postgres().await;
     let db = test_db.db();
-    for github_login in [
+    for (i, github_login) in [
         "California",
         "colorado",
         "oregon",
@@ -451,10 +576,21 @@ async fn test_fuzzy_search_users() {
         "florida",
         "delaware",
         "rhode-island",
-    ] {
-        db.create_user(github_login, &format!("{github_login}@example.com"), false)
-            .await
-            .unwrap();
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        db.create_user(
+            &format!("{github_login}@example.com"),
+            false,
+            NewUserParams {
+                github_login: github_login.into(),
+                github_user_id: i as i32,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap();
     }
 
     assert_eq!(
@@ -484,9 +620,42 @@ async fn test_add_contacts() {
     ] {
         let db = test_db.db();
 
-        let user_1 = db.create_user("u1", "u1@example.com", false).await.unwrap();
-        let user_2 = db.create_user("u2", "u2@example.com", false).await.unwrap();
-        let user_3 = db.create_user("u3", "u3@example.com", false).await.unwrap();
+        let user_1 = db
+            .create_user(
+                "u1@example.com",
+                false,
+                NewUserParams {
+                    github_login: "u1".into(),
+                    github_user_id: 0,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap();
+        let user_2 = db
+            .create_user(
+                "u2@example.com",
+                false,
+                NewUserParams {
+                    github_login: "u2".into(),
+                    github_user_id: 1,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap();
+        let user_3 = db
+            .create_user(
+                "u3@example.com",
+                false,
+                NewUserParams {
+                    github_login: "u3".into(),
+                    github_user_id: 2,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap();
 
         // User starts with no contacts
         assert_eq!(
@@ -700,7 +869,18 @@ async fn test_add_contacts() {
 async fn test_invite_codes() {
     let postgres = TestDb::postgres().await;
     let db = postgres.db();
-    let user1 = db.create_user("u1", "u1@example.com", false).await.unwrap();
+    let user1 = db
+        .create_user(
+            "u1@example.com",
+            false,
+            NewUserParams {
+                github_login: "u1".into(),
+                github_user_id: 0,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap();
 
     // Initially, user 1 has no invite code
     assert_eq!(db.get_invite_code_for_user(user1).await.unwrap(), None);
@@ -724,6 +904,7 @@ async fn test_invite_codes() {
             &user2_invite,
             NewUserParams {
                 github_login: "user2".into(),
+                github_user_id: 2,
                 invite_count: 7,
             },
         )
@@ -773,6 +954,7 @@ async fn test_invite_codes() {
             &user3_invite,
             NewUserParams {
                 github_login: "user-3".into(),
+                github_user_id: 3,
                 invite_count: 3,
             },
         )
@@ -837,6 +1019,7 @@ async fn test_invite_codes() {
             &user4_invite,
             NewUserParams {
                 github_login: "user-4".into(),
+                github_user_id: 4,
                 invite_count: 5,
             },
         )
@@ -983,6 +1166,7 @@ async fn test_signups() {
             },
             NewUserParams {
                 github_login: "person-0".into(),
+                github_user_id: 0,
                 invite_count: 5,
             },
         )
@@ -1002,6 +1186,7 @@ async fn test_signups() {
         },
         NewUserParams {
             github_login: "some-other-github_account".into(),
+            github_user_id: 1,
             invite_count: 5,
         },
     )
@@ -1016,6 +1201,7 @@ async fn test_signups() {
         },
         NewUserParams {
             github_login: "person-1".into(),
+            github_user_id: 2,
             invite_count: 5,
         },
     )
