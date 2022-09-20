@@ -110,7 +110,7 @@ enum InternalEvent {
     ScrollToPoint(Point),
     SetSelection(Option<(Selection, Point)>),
     UpdateSelection(Vector2F),
-    HyperlinkHover(Vector2F),
+    Hyperlink(Vector2F, bool),
     Copy,
 }
 
@@ -649,7 +649,7 @@ impl Terminal {
                 }
             }
             InternalEvent::ScrollToPoint(point) => term.scroll_to_point(*point),
-            InternalEvent::HyperlinkHover(position) => {
+            InternalEvent::Hyperlink(position, _hover) => {
                 let point = grid_point(
                     *position,
                     self.last_content.size,
@@ -657,7 +657,7 @@ impl Terminal {
                 );
                 let side = mouse_side(*position, self.last_content.size);
 
-                println!("Hyperlink hover")
+                println!("Hyperlink hover | click ")
             }
         }
     }
@@ -878,7 +878,7 @@ impl Terminal {
                 });
             } else {
                 self.events
-                    .push_back(InternalEvent::HyperlinkHover(position));
+                    .push_back(InternalEvent::Hyperlink(position, false));
             }
         }
     }
@@ -955,6 +955,9 @@ impl Terminal {
                     dbg!(&link);
                     dbg!(&self.last_hovered_hyperlink);
                     open_uri(link.uri()).log_err();
+                } else {
+                    self.events
+                        .push_back(InternalEvent::Hyperlink(position, true));
                 }
             } else {
                 let point = grid_point(
