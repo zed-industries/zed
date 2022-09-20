@@ -1404,7 +1404,7 @@ impl Server {
         let users = match query.len() {
             0 => vec![],
             1 | 2 => db
-                .get_user_by_github_login(&query)
+                .get_user_by_github_account(&query, None)
                 .await?
                 .into_iter()
                 .collect(),

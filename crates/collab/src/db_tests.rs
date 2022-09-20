@@ -104,6 +104,64 @@ async fn test_get_users_by_ids() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_get_user_by_github_account() {
+    for test_db in [
+        TestDb::postgres().await,
+        TestDb::fake(build_background_executor()),
+    ] {
+        let db = test_db.db();
+        let user_id1 = db
+            .create_user(
+                "user1@example.com",
+                false,
+                NewUserParams {
+                    github_login: "login1".into(),
+                    github_user_id: 101,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap();
+        let user_id2 = db
+            .create_user(
+                "user2@example.com",
+                false,
+                NewUserParams {
+                    github_login: "login2".into(),
+                    github_user_id: 102,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap();
+
+        let user = db
+            .get_user_by_github_account("login1", None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(user.id, user_id1);
+        assert_eq!(&user.github_login, "login1");
+        assert_eq!(user.github_user_id, 101);
+
+        assert!(db
+            .get_user_by_github_account("non-existent-login", None)
+            .await
+            .unwrap()
+            .is_none());
+
+        let user = db
+            .get_user_by_github_account("the-new-login2", Some(102))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(user.id, user_id2);
+        assert_eq!(&user.github_login, "the-new-login2");
+        assert_eq!(user.github_user_id, 102);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_worktree_extensions() {
     let test_db = TestDb::postgres().await;
     let db = test_db.db();

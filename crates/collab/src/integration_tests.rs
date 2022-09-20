@@ -5173,17 +5173,25 @@ impl TestServer {
         });
 
         let http = FakeHttpClient::with_404_response();
-        let user_id = if let Ok(Some(user)) = self.app_state.db.get_user_by_github_login(name).await
+        let user_id = if let Ok(Some(user)) = self
+            .app_state
+            .db
+            .get_user_by_github_account(name, None)
+            .await
         {
             user.id
         } else {
             self.app_state
                 .db
-                .create_user(&format!("{name}@example.com"), false, NewUserParams {
-                    github_login: name.into(),
-                    github_user_id: 0,
-                    invite_count: 0,
-                })
+                .create_user(
+                    &format!("{name}@example.com"),
+                    false,
+                    NewUserParams {
+                        github_login: name.into(),
+                        github_user_id: 0,
+                        invite_count: 0,
+                    },
+                )
                 .await
                 .unwrap()
         };

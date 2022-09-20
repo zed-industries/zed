@@ -25,10 +25,7 @@ use tracing::instrument;
 pub fn routes(rpc_server: &Arc<rpc::Server>, state: Arc<AppState>) -> Router<Body> {
     Router::new()
         .route("/users", get(get_users).post(create_user))
-        .route(
-            "/users/:id",
-            put(update_user).delete(destroy_user).get(get_user),
-        )
+        .route("/users/:id", put(update_user).delete(destroy_user))
         .route("/users/:id/access_tokens", post(create_access_token))
         .route("/users_with_no_invites", get(get_users_with_no_invites))
         .route("/invite_codes/:code", get(get_user_for_invite_code))
@@ -90,6 +87,8 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
 
 #[derive(Debug, Deserialize)]
 struct GetUsersQueryParams {
+    github_user_id: Option<i32>,
+    github_login: Option<String>,
     query: Option<String>,
     page: Option<u32>,
     limit: Option<u32>,
@@ -99,6 +98,14 @@ async fn get_users(
     Query(params): Query<GetUsersQueryParams>,
     Extension(app): Extension<Arc<AppState>>,
 ) -> Result<Json<Vec<User>>> {
+    if let Some(github_login) = &params.github_login {
+        let user = app
+            .db
+            .get_user_by_github_account(github_login, params.github_user_id)
+            .await?;
+        return Ok(Json(Vec::from_iter(user)));
+    }
+
     let limit = params.limit.unwrap_or(100);
     let users = if let Some(query) = params.query {
         app.db.fuzzy_search_users(&query, limit).await?
@@ -203,18 +210,6 @@ async fn destroy_user(
 ) -> Result<()> {
     app.db.destroy_user(UserId(user_id)).await?;
     Ok(())
-}
-
-async fn get_user(
-    Path(login): Path<String>,
-    Extension(app): Extension<Arc<AppState>>,
-) -> Result<Json<User>> {
-    let user = app
-        .db
-        .get_user_by_github_login(&login)
-        .await?
-        .ok_or_else(|| Error::Http(StatusCode::NOT_FOUND, "User not found".to_string()))?;
-    Ok(Json(user))
 }
 
 #[derive(Debug, Deserialize)]
@@ -351,22 +346,24 @@ struct CreateAccessTokenResponse {
 }
 
 async fn create_access_token(
-    Path(login): Path<String>,
+    Path(user_id): Path<UserId>,
     Query(params): Query<CreateAccessTokenQueryParams>,
     Extension(app): Extension<Arc<AppState>>,
 ) -> Result<Json<CreateAccessTokenResponse>> {
-    //     request.require_token().await?;
-
     let user = app
         .db
-        .get_user_by_github_login(&login)
+        .get_user_by_id(user_id)
         .await?
         .ok_or_else(|| anyhow!("user not found"))?;
 
     let mut user_id = user.id;
     if let Some(impersonate) = params.impersonate {
         if user.admin {
-            if let Some(impersonated_user) = app.db.get_user_by_github_login(&impersonate).await? {
+            if let Some(impersonated_user) = app
+                .db
+                .get_user_by_github_account(&impersonate, None)
+                .await?
+            {
                 user_id = impersonated_user.id;
             } else {
                 return Err(Error::Http(

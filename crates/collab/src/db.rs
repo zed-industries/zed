@@ -23,7 +23,11 @@ pub trait Db: Send + Sync {
     async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>>;
     async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>>;
     async fn get_users_with_no_invites(&self, invited_by_another_user: bool) -> Result<Vec<User>>;
-    async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>>;
+    async fn get_user_by_github_account(
+        &self,
+        github_login: &str,
+        github_user_id: Option<i32>,
+    ) -> Result<Option<User>>;
     async fn set_user_is_admin(&self, id: UserId, is_admin: bool) -> Result<()>;
     async fn set_user_connected_once(&self, id: UserId, connected_once: bool) -> Result<()>;
     async fn destroy_user(&self, id: UserId) -> Result<()>;
@@ -274,12 +278,53 @@ impl Db for PostgresDb {
         Ok(sqlx::query_as(&query).fetch_all(&self.pool).await?)
     }
 
-    async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
-        let query = "SELECT * FROM users WHERE github_login = $1 LIMIT 1";
-        Ok(sqlx::query_as(query)
+    async fn get_user_by_github_account(
+        &self,
+        github_login: &str,
+        github_user_id: Option<i32>,
+    ) -> Result<Option<User>> {
+        if let Some(github_user_id) = github_user_id {
+            let mut user = sqlx::query_as::<_, User>(
+                "
+                UPDATE users
+                SET github_login = $1
+                WHERE github_user_id = $2
+                RETURNING *
+                ",
+            )
+            .bind(github_login)
+            .bind(github_user_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+            if user.is_none() {
+                user = sqlx::query_as::<_, User>(
+                    "
+                    UPDATE users
+                    SET github_user_id = $1
+                    WHERE github_login = $2
+                    RETURNING *
+                    ",
+                )
+                .bind(github_user_id)
+                .bind(github_login)
+                .fetch_optional(&self.pool)
+                .await?;
+            }
+
+            Ok(user)
+        } else {
+            Ok(sqlx::query_as(
+                "
+                SELECT * FROM users
+                WHERE github_login = $1
+                LIMIT 1
+                ",
+            )
             .bind(github_login)
             .fetch_optional(&self.pool)
             .await?)
+        }
     }
 
     async fn set_user_is_admin(&self, id: UserId, is_admin: bool) -> Result<()> {
@@ -1777,14 +1822,32 @@ mod test {
             unimplemented!()
         }
 
-        async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
+        async fn get_user_by_github_account(
+            &self,
+            github_login: &str,
+            github_user_id: Option<i32>,
+        ) -> Result<Option<User>> {
             self.background.simulate_random_delay().await;
-            Ok(self
-                .users
-                .lock()
-                .values()
-                .find(|user| user.github_login == github_login)
-                .cloned())
+            if let Some(github_user_id) = github_user_id {
+                for user in self.users.lock().values_mut() {
+                    if user.github_user_id == github_user_id {
+                        user.github_login = github_login.into();
+                        return Ok(Some(user.clone()));
+                    }
+                    if user.github_login == github_login {
+                        user.github_user_id = github_user_id;
+                        return Ok(Some(user.clone()));
+                    }
+                }
+                Ok(None)
+            } else {
+                Ok(self
+                    .users
+                    .lock()
+                    .values()
+                    .find(|user| user.github_login == github_login)
+                    .cloned())
+            }
         }
 
         async fn set_user_is_admin(&self, _id: UserId, _is_admin: bool) -> Result<()> {
