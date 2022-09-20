@@ -7,8 +7,8 @@ CREATE TABLE IF NOT EXISTS "signups" (
     "email_confirmation_sent" BOOLEAN NOT NULL,
     "metrics_id" INTEGER NOT NULL DEFAULT nextval('metrics_id_seq'),
     "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "user_id" INTEGER REFERENCES users (id),
-    "inviting_user_id" INTEGER REFERENCES users (id),
+    "user_id" INTEGER REFERENCES users (id) ON DELETE CASCADE,
+    "inviting_user_id" INTEGER REFERENCES users (id) ON DELETE SET NULL,
 
     "platform_mac" BOOLEAN NOT NULL,
     "platform_linux" BOOLEAN NOT NULL,
