@@ -110,6 +110,7 @@ enum InternalEvent {
     ScrollToPoint(Point),
     SetSelection(Option<(Selection, Point)>),
     UpdateSelection(Vector2F),
+    // Adjusted mouse position, should open
     Hyperlink(Vector2F, bool),
     Copy,
 }
@@ -649,7 +650,7 @@ impl Terminal {
                 }
             }
             InternalEvent::ScrollToPoint(point) => term.scroll_to_point(*point),
-            InternalEvent::Hyperlink(position, _hover) => {
+            InternalEvent::Hyperlink(position, open) => {
                 let point = grid_point(
                     *position,
                     self.last_content.size,
