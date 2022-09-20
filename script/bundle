@@ -2,4 +2,4 @@
 
 set -e
 
-echo $MACOS_CERTIFICATE | base64 --decode > /tmp/zed-certificate.p12
+echo $MACOS_CERTIFICATE_PASSWORD > /tmp/cert-password.txt
