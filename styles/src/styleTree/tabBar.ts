@@ -36,7 +36,7 @@ export default function tabBar(colorScheme: ColorScheme) {
   const activePaneActiveTab = {
     ...tab,
     background: background(elevation.top),
-    text: text(elevation.top, "sans", "base", "active", { size: "sm" }),
+    text: text(elevation.top, "sans", { size: "sm" }),
     border: {
       ...tab.border,
       bottom: false
@@ -52,7 +52,7 @@ export default function tabBar(colorScheme: ColorScheme) {
   const inactivePaneActiveTab = {
     ...tab,
     background: background(layer),
-    text: text(layer, "sans", "base", "active", { size: "sm" }),
+    text: text(layer, "sans", "base", "variant", { size: "sm" }),
     border: {
       ...tab.border,
       bottom: false
