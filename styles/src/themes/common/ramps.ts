@@ -143,11 +143,67 @@ function elevation(ramps: RampSet, isLight: boolean, shadow?: Shadow): Elevation
   return {
     ramps,
 
-    bottom: topLayer(ramps, isLight),
+    bottom: bottomLayer(ramps, isLight),
     middle: middleLayer(ramps, isLight),
     top: topLayer(ramps, isLight),
 
     shadow,
+  };
+}
+
+function bottomLayer(ramps: RampSet, isLight: boolean): Layer {
+  let defaultStyle: Style = {
+    background: ramps.neutral(0.25).hex(),
+    border: ramps.neutral(0.6).hex(),
+    foreground: ramps.neutral(1).hex(),
+  };
+
+  let variantStyle: Style = {
+    background: ramps.neutral(0.3).hex(),
+    border: ramps.neutral(0.6).hex(),
+    foreground: ramps.neutral(0.8).hex(),
+  };
+
+  let hoveredStyle: Style = {
+    background: ramps.neutral(0.4).hex(),
+    border: ramps.neutral(1.0).hex(),
+    foreground: ramps.neutral(0.9).hex(),
+  };
+
+  let pressedStyle: Style = {
+    background: ramps.neutral(0.55).hex(),
+    border: ramps.neutral(0.9).hex(),
+    foreground: ramps.neutral(0.9).hex(),
+  };
+
+  let activeStyle: Style = {
+    background: ramps.neutral(0.8).hex(),
+    border: ramps.neutral(0.8).hex(),
+    foreground: ramps.neutral(0.1).hex(),
+  };
+
+  let disabledStyle: Style = {
+    background: ramps.neutral(0.25).hex(),
+    border: ramps.neutral(1).hex(),
+    foreground: ramps.neutral(0.9).hex(),
+  };
+
+  let styleSet: StyleSet = {
+    default: defaultStyle,
+    variant: variantStyle,
+    hovered: hoveredStyle,
+    pressed: pressedStyle,
+    active: activeStyle,
+    disabled: disabledStyle,
+  };
+
+  return {
+    base: styleSet,
+    on: styleSet,
+    info: styleSet,
+    positive: styleSet,
+    warning: styleSet,
+    negative: styleSet
   };
 }
 

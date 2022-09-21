@@ -16,9 +16,9 @@ import tooltip from "./tooltip";
 import terminal from "./terminal";
 import { ColorScheme } from "../themes/common/colorScheme";
 
-export const panel = {
-  padding: { top: 12, bottom: 12 },
-};
+// export const panel = {
+//   padding: { top: 12, bottom: 12 },
+// };
 
 export default function app(colorScheme: ColorScheme): Object {
   return {
@@ -38,7 +38,7 @@ export default function app(colorScheme: ColorScheme): Object {
     contactFinder: contactFinder(colorScheme),
     search: search(colorScheme),
     breadcrumbs: {
-      ...text(colorScheme.lowest.top, "sans", "base", "variant"),
+      ...text(colorScheme.lowest.top, "sans"),
       padding: {
         left: 6,
       },

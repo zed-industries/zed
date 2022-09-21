@@ -12,7 +12,7 @@ import tabBar from "./tabBar";
 
 export default function workspace(colorScheme: ColorScheme) {
   const elevation = colorScheme.lowest;
-  const layer = elevation.middle;
+  const layer = elevation.bottom;
   const titlebarPadding = 6;
 
   return {
@@ -117,20 +117,20 @@ export default function workspace(colorScheme: ColorScheme) {
     },
     toolbar: {
       height: 34,
-      background: background(layer),
-      border: border(layer, "base", "variant", { bottom: true }),
+      background: background(elevation.top),
+      border: border(elevation.top, "base", "variant", { bottom: true }),
       itemSpacing: 8,
       navButton: {
-        color: foreground(layer, "on"),
+        color: foreground(elevation.top, "on"),
         iconWidth: 12,
         buttonWidth: 24,
         cornerRadius: 6,
         hover: {
-          color: foreground(layer, "on", "hovered"),
-          background: background(layer, "on", "hovered"),
+          color: foreground(elevation.top, "on", "hovered"),
+          background: background(elevation.top, "on", "hovered"),
         },
         disabled: {
-          color: foreground(layer, "on", "disabled"),
+          color: foreground(elevation.top, "on", "disabled"),
         },
       },
       padding: { left: 8, right: 8, top: 4, bottom: 4 },

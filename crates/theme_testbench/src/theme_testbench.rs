@@ -92,176 +92,32 @@ impl ThemeTestbench {
     ) -> Container {
         Flex::column()
             .with_child(
-                Flex::row()
-                    .with_child(Self::render_button(
-                        0,
-                        layer_index,
-                        "base",
-                        &layer.base,
-                        None,
-                        cx,
-                    ))
-                    .with_child(Self::render_button(
-                        1,
-                        layer_index,
-                        "active",
-                        &layer.base,
-                        Some(|style_set| &style_set.active),
-                        cx,
-                    ))
-                    .with_child(Self::render_button(
-                        2,
-                        layer_index,
-                        "disabled",
-                        &layer.base,
-                        Some(|style_set| &style_set.disabled),
-                        cx,
-                    ))
+                Self::render_button_set(0, layer_index, "base", &layer.base, cx)
                     .flex(1., false)
                     .boxed(),
             )
             .with_child(
-                Flex::row()
-                    .with_child(Self::render_button(
-                        3,
-                        layer_index,
-                        "on",
-                        &layer.on,
-                        None,
-                        cx,
-                    ))
-                    .with_child(Self::render_button(
-                        4,
-                        layer_index,
-                        "active",
-                        &layer.on,
-                        Some(|style_set| &style_set.active),
-                        cx,
-                    ))
-                    .with_child(Self::render_button(
-                        5,
-                        layer_index,
-                        "disabled",
-                        &layer.on,
-                        Some(|style_set| &style_set.disabled),
-                        cx,
-                    ))
+                Self::render_button_set(1, layer_index, "on", &layer.on, cx)
                     .flex(1., false)
                     .boxed(),
             )
             .with_child(
-                Flex::row()
-                    .with_child(Self::render_button(
-                        6,
-                        layer_index,
-                        "info",
-                        &layer.info,
-                        None,
-                        cx,
-                    ))
-                    .with_child(Self::render_button(
-                        7,
-                        layer_index,
-                        "active",
-                        &layer.info,
-                        Some(|style_set| &style_set.active),
-                        cx,
-                    ))
-                    .with_child(Self::render_button(
-                        8,
-                        layer_index,
-                        "disabled",
-                        &layer.info,
-                        Some(|style_set| &style_set.disabled),
-                        cx,
-                    ))
+                Self::render_button_set(2, layer_index, "info", &layer.info, cx)
                     .flex(1., false)
                     .boxed(),
             )
             .with_child(
-                Flex::row()
-                    .with_child(Self::render_button(
-                        9,
-                        layer_index,
-                        "positive",
-                        &layer.positive,
-                        None,
-                        cx,
-                    ))
-                    .with_child(Self::render_button(
-                        10,
-                        layer_index,
-                        "active",
-                        &layer.positive,
-                        Some(|style_set| &style_set.active),
-                        cx,
-                    ))
-                    .with_child(Self::render_button(
-                        11,
-                        layer_index,
-                        "disabled",
-                        &layer.positive,
-                        Some(|style_set| &style_set.disabled),
-                        cx,
-                    ))
+                Self::render_button_set(3, layer_index, "positive", &layer.positive, cx)
                     .flex(1., false)
                     .boxed(),
             )
             .with_child(
-                Flex::row()
-                    .with_child(Self::render_button(
-                        12,
-                        layer_index,
-                        "warning",
-                        &layer.warning,
-                        None,
-                        cx,
-                    ))
-                    .with_child(Self::render_button(
-                        13,
-                        layer_index,
-                        "active",
-                        &layer.warning,
-                        Some(|style_set| &style_set.active),
-                        cx,
-                    ))
-                    .with_child(Self::render_button(
-                        14,
-                        layer_index,
-                        "disabled",
-                        &layer.warning,
-                        Some(|style_set| &style_set.disabled),
-                        cx,
-                    ))
+                Self::render_button_set(4, layer_index, "warning", &layer.warning, cx)
                     .flex(1., false)
                     .boxed(),
             )
             .with_child(
-                Flex::row()
-                    .with_child(Self::render_button(
-                        15,
-                        layer_index,
-                        "negative",
-                        &layer.negative,
-                        None,
-                        cx,
-                    ))
-                    .with_child(Self::render_button(
-                        16,
-                        layer_index,
-                        "active",
-                        &layer.negative,
-                        Some(|style_set| &style_set.active),
-                        cx,
-                    ))
-                    .with_child(Self::render_button(
-                        17,
-                        layer_index,
-                        "disabled",
-                        &layer.negative,
-                        Some(|style_set| &style_set.disabled),
-                        cx,
-                    ))
+                Self::render_button_set(5, layer_index, "negative", &layer.negative, cx)
                     .flex(1., false)
                     .boxed(),
             )
@@ -276,6 +132,48 @@ impl ThemeTestbench {
                 background_color: Some(layer.base.default.background),
                 ..Default::default()
             })
+    }
+
+    fn render_button_set(
+        set_index: usize,
+        layer_index: usize,
+        set_name: &'static str,
+        style_set: &StyleSet,
+        cx: &mut RenderContext<'_, Self>,
+    ) -> Flex {
+        Flex::row()
+            .with_child(Self::render_button(
+                set_index * 4,
+                layer_index,
+                set_name,
+                &style_set,
+                None,
+                cx,
+            ))
+            .with_child(Self::render_button(
+                set_index * 4 + 1,
+                layer_index,
+                "variant",
+                &style_set,
+                Some(|style_set| &style_set.variant),
+                cx,
+            ))
+            .with_child(Self::render_button(
+                set_index * 4 + 2,
+                layer_index,
+                "active",
+                &style_set,
+                Some(|style_set| &style_set.active),
+                cx,
+            ))
+            .with_child(Self::render_button(
+                set_index * 4 + 3,
+                layer_index,
+                "disabled",
+                &style_set,
+                Some(|style_set| &style_set.disabled),
+                cx,
+            ))
     }
 
     fn render_button(

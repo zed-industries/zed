@@ -12,7 +12,7 @@ export default function tabBar(colorScheme: ColorScheme) {
     height,
     background: background(layer),
     border: border(layer, {
-      left: true,
+      right: true,
       bottom: true,
       overlay: true,
     }),
@@ -22,7 +22,7 @@ export default function tabBar(colorScheme: ColorScheme) {
     iconDirty: foreground(layer, "info"),
     iconWidth: 8,
     spacing: 8,
-    text: text(layer, "sans", { size: "sm" }),
+    text: text(layer, "sans", "base", "variant", { size: "sm" }),
     padding: {
       left: 8,
       right: 8,
@@ -46,13 +46,13 @@ export default function tabBar(colorScheme: ColorScheme) {
   const inactivePaneInactiveTab = {
     ...tab,
     background: background(layer),
-    text: text(layer, "sans", { size: "sm" }),
+    text: text(layer, "sans", "base", "variant", { size: "sm" }),
   };
 
   const inactivePaneActiveTab = {
     ...tab,
-    background: background(layer),
-    text: text(layer, "sans", "base", "variant", { size: "sm" }),
+    background: background(elevation.top),
+    text: text(elevation.top, "sans", "base", "variant", { size: "sm" }),
     border: {
       ...tab.border,
       bottom: false
@@ -70,11 +70,6 @@ export default function tabBar(colorScheme: ColorScheme) {
     height,
     background: background(layer),
     dropTargetOverlayColor: withOpacity(foreground(layer), 0.6),
-    border: border(layer, {
-      left: true,
-      bottom: true,
-      overlay: true,
-    }),
     activePane: {
       activeTab: activePaneActiveTab,
       inactiveTab: tab,

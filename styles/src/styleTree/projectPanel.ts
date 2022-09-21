@@ -1,11 +1,10 @@
 import { ColorScheme } from "../themes/common/colorScheme";
-import { panel } from "./app";
 import { background, foreground, text } from "./components";
 
 export default function projectPanel(colorScheme: ColorScheme) {
   let layer = colorScheme.lowest.middle;
   return {
-    ...panel,
+    background: background(layer),
     padding: { left: 12, right: 12, top: 6, bottom: 6 },
     indentWidth: 8,
     entry: {

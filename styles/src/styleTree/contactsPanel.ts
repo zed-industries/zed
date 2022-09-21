@@ -1,5 +1,4 @@
 import { ColorScheme } from "../themes/common/colorScheme";
-import { panel } from "./app";
 import {
   background,
   border,
@@ -49,8 +48,8 @@ export default function contactsPanel(colorScheme: ColorScheme) {
   };
 
   return {
-    ...panel,
-    padding: { top: panel.padding.top, bottom: 0 },
+    background: background(layer),
+    padding: { top: 12, bottom: 0 },
     userQueryEditor: {
       background: background(layer, "on"),
       cornerRadius: 6,
