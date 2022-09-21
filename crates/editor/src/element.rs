@@ -567,7 +567,7 @@ impl EditorElement {
                     let start_y = row as f32 * line_height + offset - scroll_top;
                     let end_y = start_y + line_height;
 
-                    let width = 0.4 * line_height;
+                    let width = 0.275 * line_height;
                     let highlight_origin = bounds.origin() + vec2f(-width, start_y);
                     let highlight_size = vec2f(width * 2., end_y - start_y);
                     let highlight_bounds = RectF::new(highlight_origin, highlight_size);
@@ -589,7 +589,7 @@ impl EditorElement {
             let start_y = start_row as f32 * line_height - scroll_top;
             let end_y = end_row as f32 * line_height - scroll_top;
 
-            let width = 0.22 * line_height;
+            let width = 0.12 * line_height;
             let highlight_origin = bounds.origin() + vec2f(-width, start_y);
             let highlight_size = vec2f(width * 2., end_y - start_y);
             let highlight_bounds = RectF::new(highlight_origin, highlight_size);
@@ -598,7 +598,7 @@ impl EditorElement {
                 bounds: highlight_bounds,
                 background: Some(color),
                 border: Border::new(0., Color::transparent_black()),
-                corner_radius: 0.2 * line_height,
+                corner_radius: 0.05 * line_height,
             });
         }
 
