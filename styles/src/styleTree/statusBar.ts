@@ -1,8 +1,9 @@
-import Theme from "../themes/common/theme";
-import { backgroundColor, border, iconColor, text } from "./components";
-import { workspaceBackground } from "./workspace";
+import { ColorScheme } from "../themes/common/colorScheme";
+import { background, border, foreground, text } from "./components";
 
-export default function statusBar(theme: Theme) {
+export default function statusBar(colorScheme: ColorScheme) {
+  let layer = colorScheme.lowest.bottom;
+
   const statusContainer = {
     cornerRadius: 6,
     padding: { top: 3, bottom: 3, left: 6, right: 6 },
@@ -22,70 +23,70 @@ export default function statusBar(theme: Theme) {
       left: 6,
       right: 6,
     },
-    border: border(theme, "primary", { top: true, overlay: true }),
-    cursorPosition: text(theme, "sans", "secondary"),
-    autoUpdateProgressMessage: text(theme, "sans", "secondary"),
-    autoUpdateDoneMessage: text(theme, "sans", "secondary"),
+    border: border(layer, { top: true, overlay: true }),
+    cursorPosition: text(layer, "sans"),
+    autoUpdateProgressMessage: text(layer, "sans"),
+    autoUpdateDoneMessage: text(layer, "sans"),
     lspStatus: {
       ...diagnosticStatusContainer,
       iconSpacing: 4,
       iconWidth: 14,
       height: 18,
-      message: text(theme, "sans", "secondary"),
-      iconColor: iconColor(theme, "muted"),
+      message: text(layer, "sans"),
+      iconColor: foreground(layer),
       hover: {
-        message: text(theme, "sans", "primary"),
-        iconColor: iconColor(theme, "primary"),
-        background: backgroundColor(theme, 300, "hovered"),
+        message: text(layer, "sans"),
+        iconColor: foreground(layer),
+        background: background(layer),
       },
     },
     diagnosticMessage: {
-      ...text(theme, "sans", "secondary"),
-      hover: text(theme, "sans", "active"),
+      ...text(layer, "sans"),
+      hover: text(layer, "sans", "base", "hovered"),
     },
     feedback: {
-      ...text(theme, "sans", "secondary"),
-      hover: text(theme, "sans", "active"),
+      ...text(layer, "sans"),
+      hover: text(layer, "sans"),
     },
     diagnosticSummary: {
       height: 16,
       iconWidth: 16,
       iconSpacing: 2,
       summarySpacing: 6,
-      text: text(theme, "sans", "primary", { size: "sm" }),
-      iconColorOk: iconColor(theme, "muted"),
-      iconColorWarning: iconColor(theme, "warning"),
-      iconColorError: iconColor(theme, "error"),
+      text: text(layer, "sans", { size: "sm" }),
+      iconColorOk: foreground(layer, "positive"),
+      iconColorWarning: foreground(layer, "warning"),
+      iconColorError: foreground(layer, "negative"),
       containerOk: {
         cornerRadius: 6,
         padding: { top: 3, bottom: 3, left: 7, right: 7 },
       },
       containerWarning: {
         ...diagnosticStatusContainer,
-        background: backgroundColor(theme, "warning"),
-        border: border(theme, "warning"),
+        background: background(layer, "warning"),
+        border: border(layer, "warning"),
       },
       containerError: {
         ...diagnosticStatusContainer,
-        background: backgroundColor(theme, "error"),
-        border: border(theme, "error"),
+        background: background(layer, "negative"),
+        border: border(layer, "negative"),
       },
       hover: {
-        iconColorOk: iconColor(theme, "active"),
+        iconColorOk: foreground(layer, "on"),
         containerOk: {
           cornerRadius: 6,
           padding: { top: 3, bottom: 3, left: 7, right: 7 },
-          background: backgroundColor(theme, 300, "hovered"),
+          background: background(layer, "on", "hovered"),
         },
         containerWarning: {
           ...diagnosticStatusContainer,
-          background: backgroundColor(theme, "warning", "hovered"),
-          border: border(theme, "warning"),
+          background: background(layer, "warning", "hovered"),
+          border: border(layer, "warning", "hovered"),
         },
         containerError: {
           ...diagnosticStatusContainer,
-          background: backgroundColor(theme, "error", "hovered"),
-          border: border(theme, "error"),
+          background: background(layer, "negative", "hovered"),
+          border: border(layer, "negative", "hovered"),
         },
       },
     },
@@ -95,22 +96,22 @@ export default function statusBar(theme: Theme) {
       item: {
         ...statusContainer,
         iconSize: 16,
-        iconColor: iconColor(theme, "muted"),
+        iconColor: foreground(layer),
         hover: {
-          iconColor: iconColor(theme, "active"),
-          background: backgroundColor(theme, 300, "hovered"),
+          iconColor: foreground(layer, "base", "hovered"),
+          background: background(layer, "base", "hovered"),
         },
         active: {
-          iconColor: iconColor(theme, "active"),
-          background: backgroundColor(theme, 300, "active"),
+          iconColor: foreground(layer, "base", "active"),
+          background: background(layer, "base", "active"),
         },
       },
       badge: {
         cornerRadius: 3,
         padding: 2,
         margin: { bottom: -1, right: -1 },
-        border: { width: 1, color: workspaceBackground(theme) },
-        background: iconColor(theme, "feature"),
+        border: border(layer),
+        background: background(layer),
       },
     },
   };

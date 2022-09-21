@@ -1,5 +1,5 @@
 import chroma from "chroma-js";
-import { colorRamp, createTheme } from "./common/base16";
+import { colorRamp, createColorScheme } from "./common/ramps";
 
 const name = "rosé-pine";
 
@@ -24,4 +24,4 @@ const ramps = {
   magenta: colorRamp(chroma("#AB6FE9")),
 };
 
-export const dark = createTheme(`${name}`, false, ramps);
+export const dark = createColorScheme(`${name}`, false, ramps);

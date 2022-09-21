@@ -1,14 +1,15 @@
-import Theme from "../themes/common/theme";
-import { text, backgroundColor, border } from "./components";
+import { ColorScheme } from "../themes/common/colorScheme";
+import { text, border, background } from "./components";
 
-export default function commandPalette(theme: Theme) {
+export default function commandPalette(colorScheme: ColorScheme) {
+  let layer = colorScheme.highest.bottom;
   return {
     keystrokeSpacing: 8,
     key: {
-      text: text(theme, "mono", "secondary", { size: "xs" }),
+      text: text(layer, "mono", { size: "xs" }),
       cornerRadius: 4,
-      background: backgroundColor(theme, "on300"),
-      border: border(theme, "secondary"),
+      background: background(layer, "on"),
+      border: border(layer),
       padding: {
         top: 2,
         bottom: 2,
@@ -19,7 +20,7 @@ export default function commandPalette(theme: Theme) {
         left: 2,
       },
       active: {
-        text: text(theme, "mono", "active", { size: "xs" }),
+        text: text(layer, "mono", "on", "active", { size: "xs" }),
       },
     },
   };

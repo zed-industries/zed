@@ -1,5 +1,3 @@
-import Theme from "../themes/common/theme";
-import chatPanel from "./chatPanel";
 import { text } from "./components";
 import contactFinder from "./contactFinder";
 import contactsPanel from "./contactsPanel";
@@ -16,38 +14,38 @@ import contactNotification from "./contactNotification";
 import updateNotification from "./updateNotification";
 import tooltip from "./tooltip";
 import terminal from "./terminal";
+import { ColorScheme } from "../themes/common/colorScheme";
 
 export const panel = {
   padding: { top: 12, bottom: 12 },
 };
 
-export default function app(theme: Theme): Object {
+export default function app(colorScheme: ColorScheme): Object {
   return {
     meta: {
-      name: theme.name,
-      isLight: theme.isLight
+      name: colorScheme.name,
+      isLight: colorScheme.isLight
     },
-    picker: picker(theme),
-    workspace: workspace(theme),
-    contextMenu: contextMenu(theme),
-    editor: editor(theme),
-    projectDiagnostics: projectDiagnostics(theme),
-    commandPalette: commandPalette(theme),
-    projectPanel: projectPanel(theme),
-    chatPanel: chatPanel(theme),
-    contactsPopover: contactsPopover(theme),
-    contactsPanel: contactsPanel(theme),
-    contactFinder: contactFinder(theme),
-    search: search(theme),
+    picker: picker(colorScheme),
+    workspace: workspace(colorScheme),
+    contextMenu: contextMenu(colorScheme),
+    editor: editor(colorScheme),
+    projectDiagnostics: projectDiagnostics(colorScheme),
+    commandPalette: commandPalette(colorScheme),
+    projectPanel: projectPanel(colorScheme),
+    contactsPopover: contactsPopover(colorScheme),
+    contactsPanel: contactsPanel(colorScheme),
+    contactFinder: contactFinder(colorScheme),
+    search: search(colorScheme),
     breadcrumbs: {
-      ...text(theme, "sans", "secondary"),
+      ...text(colorScheme.lowest.top, "sans", "base", "variant"),
       padding: {
         left: 6,
       },
     },
-    contactNotification: contactNotification(theme),
-    updateNotification: updateNotification(theme),
-    tooltip: tooltip(theme),
-    terminal: terminal(theme),
+    contactNotification: contactNotification(colorScheme),
+    updateNotification: updateNotification(colorScheme),
+    tooltip: tooltip(colorScheme),
+    terminal: terminal(colorScheme.lowest),
   };
 }

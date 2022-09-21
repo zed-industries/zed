@@ -1,45 +1,46 @@
-import Theme from "../themes/common/theme";
+import { ColorScheme } from "../themes/common/colorScheme";
 import {
-  backgroundColor,
+  background,
   border,
   borderColor,
-  popoverShadow,
   text,
 } from "./components";
 
-export default function contextMenu(theme: Theme) {
+export default function contextMenu(colorScheme: ColorScheme) {
+  let elevation = colorScheme.middle;
+  let layer = elevation.bottom;
   return {
-    background: backgroundColor(theme, 300, "base"),
+    background: background(layer),
     cornerRadius: 6,
     padding: 6,
-    shadow: popoverShadow(theme),
-    border: border(theme, "primary"),
+    shadow: elevation.shadow,
+    border: border(layer),
     keystrokeMargin: 30,
     item: {
       iconSpacing: 8,
       iconWidth: 14,
       padding: { left: 4, right: 4, top: 2, bottom: 2 },
       cornerRadius: 6,
-      label: text(theme, "sans", "primary", { size: "sm" }),
+      label: text(layer, "sans", { size: "sm" }),
       keystroke: {
-        ...text(theme, "sans", "muted", { size: "sm", weight: "bold" }),
+        ...text(layer, "sans", "base", "variant", { size: "sm", weight: "bold" }),
         padding: { left: 3, right: 3 },
       },
       hover: {
-        background: backgroundColor(theme, 300, "hovered"),
-        text: text(theme, "sans", "primary", { size: "sm" }),
+        background: background(layer, "base", "hovered"),
+        text: text(layer, "sans", "base", "hovered", { size: "sm" }),
       },
       active: {
-        background: backgroundColor(theme, 300, "active"),
-        text: text(theme, "sans", "active", { size: "sm" }),
+        background: background(layer, "base", "active"),
+        text: text(layer, "sans", "base", "active", { size: "sm" }),
       },
       activeHover: {
-        background: backgroundColor(theme, 300, "hovered"),
-        text: text(theme, "sans", "active", { size: "sm" }),
+        background: background(layer, "base", "active"),
+        text: text(layer, "sans", "base", "active", { size: "sm" }),
       },
     },
     separator: {
-      background: borderColor(theme, "primary"),
+      background: borderColor(layer),
       margin: { top: 2, bottom: 2 },
     },
   };

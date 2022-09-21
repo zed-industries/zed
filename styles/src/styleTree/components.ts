@@ -1,30 +1,89 @@
-import Theme, { BackgroundColorSet } from "../themes/common/theme";
 import { fontFamilies, fontSizes, FontWeight } from "../common";
+import { Layer, Styles, StyleSets } from "../themes/common/colorScheme";
 
-export type TextColor = keyof Theme["textColor"];
+export function background(layer: Layer, styleSet?: StyleSets, style?: Styles): string {
+  return layer[styleSet ?? "base"][style ?? "default"].background;
+}
+export function borderColor(layer: Layer, styleSet?: StyleSets, style?: Styles): string {
+  return layer[styleSet ?? "base"][style ?? "default"].border;
+}
+export function foreground(layer: Layer, styleSet?: StyleSets, style?: Styles): string {
+  return layer[styleSet ?? "base"][style ?? "default"].foreground;
+}
+
+
+interface Text {
+  family: keyof typeof fontFamilies,
+  color: string,
+  size: number,
+  weight?: FontWeight,
+  underline?: boolean,
+}
+
+interface TextProperties {
+  size?: keyof typeof fontSizes;
+  weight?: FontWeight;
+  underline?: boolean;
+}
+
 export function text(
-  theme: Theme,
+  layer: Layer,
   fontFamily: keyof typeof fontFamilies,
-  color: TextColor,
-  properties?: {
-    size?: keyof typeof fontSizes;
-    weight?: FontWeight;
-    underline?: boolean;
-  }
+  styleSet: StyleSets,
+  style: Styles,
+  properties?: TextProperties
+): Text;
+export function text(
+  layer: Layer,
+  fontFamily: keyof typeof fontFamilies,
+  styleSet: StyleSets,
+  properties?: TextProperties): Text;
+export function text(
+  layer: Layer,
+  fontFamily: keyof typeof fontFamilies,
+  properties?: TextProperties): Text;
+export function text(
+  layer: Layer,
+  fontFamily: keyof typeof fontFamilies,
+  styleSetOrProperties?: StyleSets | TextProperties,
+  styleOrProperties?: Styles | TextProperties,
+  properties?: TextProperties
 ) {
+  let styleSet: StyleSets = "base";
+  let style: Styles = "default";
+
+  if (typeof styleSetOrProperties === "string") {
+    styleSet = styleSetOrProperties
+  } else if (styleSetOrProperties !== undefined) {
+    properties = styleSetOrProperties;
+  }
+
+  if (typeof styleOrProperties === "string") {
+    style = styleOrProperties;
+  } else if (styleOrProperties !== undefined) {
+    properties = styleOrProperties;
+  }
+
   let size = fontSizes[properties?.size || "sm"];
   return {
     family: fontFamilies[fontFamily],
-    color: theme.textColor[color],
+    color: layer[styleSet][style].foreground,
     ...properties,
     size,
   };
 }
-export function textColor(theme: Theme, color: TextColor) {
-  return theme.textColor[color];
+
+
+export interface Border {
+  color: string,
+  width: number,
+  top?: boolean;
+  bottom?: boolean;
+  left?: boolean;
+  right?: boolean;
+  overlay?: boolean;
 }
 
-export type BorderColor = keyof Theme["borderColor"];
 export interface BorderOptions {
   width?: number;
   top?: boolean;
@@ -33,72 +92,46 @@ export interface BorderOptions {
   right?: boolean;
   overlay?: boolean;
 }
+
 export function border(
-  theme: Theme,
-  color: BorderColor,
+  layer: Layer,
+  styleSet: StyleSets,
+  style: Styles,
   options?: BorderOptions
-) {
+): Border;
+export function border(
+  layer: Layer,
+  styleSet: StyleSets,
+  options?: BorderOptions
+): Border;
+export function border(
+  layer: Layer,
+  options?: BorderOptions
+): Border;
+export function border(
+  layer: Layer,
+  styleSetOrOptions?: StyleSets | BorderOptions,
+  styleOrOptions?: Styles | BorderOptions,
+  options?: BorderOptions
+): Border {
+  let styleSet: StyleSets = "base";
+  let style: Styles = "default";
+
+  if (typeof styleSetOrOptions === "string") {
+    styleSet = styleSetOrOptions
+  } else if (styleSetOrOptions !== undefined) {
+    options = styleSetOrOptions;
+  }
+
+  if (typeof styleOrOptions === "string") {
+    style = styleOrOptions;
+  } else if (styleOrOptions !== undefined) {
+    options = styleOrOptions;
+  }
+
   return {
-    color: borderColor(theme, color),
+    color: layer[styleSet][style].border,
     width: 1,
     ...options,
-  };
-}
-export function borderColor(theme: Theme, color: BorderColor) {
-  return theme.borderColor[color];
-}
-
-export type IconColor = keyof Theme["iconColor"];
-export function iconColor(theme: Theme, color: IconColor) {
-  return theme.iconColor[color];
-}
-
-export type PlayerIndex = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
-export interface Player {
-  selection: {
-    cursor: string;
-    selection: string;
-  };
-}
-export function player(theme: Theme, playerNumber: PlayerIndex): Player {
-  return {
-    selection: {
-      cursor: theme.player[playerNumber].cursorColor,
-      selection: theme.player[playerNumber].selectionColor,
-    },
-  };
-}
-
-export type BackgroundColor = keyof Theme["backgroundColor"];
-export type BackgroundState = keyof BackgroundColorSet;
-export function backgroundColor(
-  theme: Theme,
-  name: BackgroundColor,
-  state?: BackgroundState
-): string {
-  return theme.backgroundColor[name][state || "base"];
-}
-
-export function modalShadow(theme: Theme) {
-  return {
-    blur: 16,
-    color: theme.shadow,
-    offset: [0, 2],
-  };
-}
-
-export function popoverShadow(theme: Theme) {
-  return {
-    blur: 4,
-    color: theme.shadow,
-    offset: [1, 2],
-  };
-}
-
-export function draggedShadow(theme: Theme) {
-  return {
-    blur: 6,
-    color: theme.shadow,
-    offset: [1, 2],
   };
 }

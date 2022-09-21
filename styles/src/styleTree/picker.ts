@@ -1,15 +1,15 @@
-import Theme from "../themes/common/theme";
+import { ColorScheme } from "../themes/common/colorScheme";
 import {
-  backgroundColor,
+  background,
   border,
-  player,
-  modalShadow,
   text,
 } from "./components";
 
-export default function picker(theme: Theme) {
+export default function picker(colorScheme: ColorScheme) {
+  let elevation = colorScheme.highest;
+  let layer = elevation.middle;
   return {
-    background: backgroundColor(theme, 300),
+    background: background(layer),
     cornerRadius: 8,
     padding: 8,
     item: {
@@ -20,19 +20,19 @@ export default function picker(theme: Theme) {
         top: 4,
       },
       cornerRadius: 8,
-      text: text(theme, "sans", "secondary"),
-      highlightText: text(theme, "sans", "feature", { weight: "bold" }),
+      text: text(layer, "sans"),
+      highlightText: text(layer, "sans", { weight: "bold" }),
       active: {
-        background: backgroundColor(theme, 300, "active"),
-        text: text(theme, "sans", "active"),
+        background: background(layer, "base", "active"),
+        text: text(layer, "sans", "base", "active"),
       },
       hover: {
-        background: backgroundColor(theme, 300, "hovered"),
+        background: background(layer, "base", "hovered"),
       },
     },
-    border: border(theme, "primary"),
+    border: border(layer),
     empty: {
-      text: text(theme, "sans", "muted"),
+      text: text(layer, "sans"),
       padding: {
         bottom: 4,
         left: 12,
@@ -41,12 +41,12 @@ export default function picker(theme: Theme) {
       },
     },
     inputEditor: {
-      background: backgroundColor(theme, 500),
+      background: background(layer, "on"),
       cornerRadius: 8,
-      placeholderText: text(theme, "sans", "placeholder"),
-      selection: player(theme, 1).selection,
-      text: text(theme, "mono", "primary"),
-      border: border(theme, "secondary"),
+      placeholderText: text(layer, "sans", "on", "disabled"),
+      selection: colorScheme.players[0],
+      text: text(layer, "mono", "on"),
+      border: border(layer, "on"),
       padding: {
         bottom: 7,
         left: 16,
@@ -54,6 +54,6 @@ export default function picker(theme: Theme) {
         top: 7,
       },
     },
-    shadow: modalShadow(theme),
+    shadow: elevation.shadow,
   };
 }

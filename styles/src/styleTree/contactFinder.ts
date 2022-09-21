@@ -1,18 +1,19 @@
-import Theme from "../themes/common/theme";
 import picker from "./picker";
-import { backgroundColor, iconColor } from "./components";
+import { ColorScheme } from "../themes/common/colorScheme";
+import { background, foreground } from "./components";
 
-export default function contactFinder(theme: Theme) {
+export default function contactFinder(colorScheme: ColorScheme) {
+  let layer = colorScheme.middle.bottom;
   const contactButton = {
-    background: backgroundColor(theme, 100),
-    color: iconColor(theme, "primary"),
+    background: background(layer),
+    color: foreground(layer),
     iconWidth: 8,
     buttonWidth: 16,
     cornerRadius: 8,
   };
 
   return {
-    ...picker(theme),
+    ...picker(colorScheme),
     rowHeight: 28,
     contactAvatar: {
       cornerRadius: 10,
@@ -26,13 +27,13 @@ export default function contactFinder(theme: Theme) {
     contactButton: {
       ...contactButton,
       hover: {
-        background: backgroundColor(theme, 100, "hovered"),
+        background: background(layer, "base", "hovered"),
       },
     },
     disabledContactButton: {
       ...contactButton,
-      background: backgroundColor(theme, 100),
-      color: iconColor(theme, "muted"),
+      background: background(layer, "base", "disabled"),
+      color: foreground(layer, "base", "disabled"),
     },
   };
 }

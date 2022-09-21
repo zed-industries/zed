@@ -165,18 +165,12 @@ impl View for TerminalContainer {
         "Terminal"
     }
 
-    fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
-        let child_view = match &self.content {
+    fn render(&mut self, _cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
+        match &self.content {
             TerminalContainerContent::Connected(connected) => ChildView::new(connected),
             TerminalContainerContent::Error(error) => ChildView::new(error),
-        };
-        if self.modal {
-            let settings = cx.global::<Settings>();
-            let container_style = settings.theme.terminal.modal_container;
-            child_view.contained().with_style(container_style).boxed()
-        } else {
-            child_view.boxed()
         }
+        .boxed()
     }
 
     fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {

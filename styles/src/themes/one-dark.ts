@@ -1,5 +1,5 @@
 import chroma from "chroma-js";
-import { colorRamp, createTheme } from "./common/base16";
+import { colorRamp, createColorScheme } from "./common/ramps";
 
 const name = "one";
 const author = "Chris Kempson (http://chriskempson.com)";
@@ -44,4 +44,4 @@ const ramps = {
   magenta: colorRamp(chroma(base0F)),
 };
 
-export const dark = createTheme(`${name}-dark`, false, ramps);
+export const dark = createColorScheme(`${name}-dark`, false, ramps);

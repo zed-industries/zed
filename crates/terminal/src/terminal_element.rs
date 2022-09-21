@@ -149,7 +149,6 @@ impl LayoutRect {
 pub struct TerminalElement {
     terminal: WeakModelHandle<Terminal>,
     view: WeakViewHandle<TerminalView>,
-    modal: bool,
     focused: bool,
     cursor_visible: bool,
 }
@@ -158,14 +157,12 @@ impl TerminalElement {
     pub fn new(
         view: WeakViewHandle<TerminalView>,
         terminal: WeakModelHandle<Terminal>,
-        modal: bool,
         focused: bool,
         cursor_visible: bool,
     ) -> TerminalElement {
         TerminalElement {
             view,
             terminal,
-            modal,
             focused,
             cursor_visible,
         }
@@ -179,7 +176,6 @@ impl TerminalElement {
         terminal_theme: &TerminalStyle,
         text_layout_cache: &TextLayoutCache,
         font_cache: &FontCache,
-        modal: bool,
     ) -> (Vec<LayoutCell>, Vec<LayoutRect>) {
         let mut cells = vec![];
         let mut rects = vec![];
@@ -218,7 +214,7 @@ impl TerminalElement {
                                     cur_rect = Some(LayoutRect::new(
                                         Point::new(line_index as i32, cell.point.column.0 as i32),
                                         1,
-                                        convert_color(&bg, &terminal_theme.colors, modal),
+                                        convert_color(&bg, &terminal_theme),
                                     ));
                                 }
                             }
@@ -227,7 +223,7 @@ impl TerminalElement {
                                 cur_rect = Some(LayoutRect::new(
                                     Point::new(line_index as i32, cell.point.column.0 as i32),
                                     1,
-                                    convert_color(&bg, &terminal_theme.colors, modal),
+                                    convert_color(&bg, &terminal_theme),
                                 ));
                             }
                         }
@@ -244,7 +240,6 @@ impl TerminalElement {
                             terminal_theme,
                             text_style,
                             font_cache,
-                            modal,
                         );
 
                         let layout_cell = text_layout_cache.layout_str(
@@ -303,10 +298,9 @@ impl TerminalElement {
         style: &TerminalStyle,
         text_style: &TextStyle,
         font_cache: &FontCache,
-        modal: bool,
     ) -> RunStyle {
         let flags = indexed.cell.flags;
-        let fg = convert_color(&fg, &style.colors, modal);
+        let fg = convert_color(&fg, &style);
 
         let underline = flags
             .intersects(Flags::ALL_UNDERLINES)
@@ -562,11 +556,7 @@ impl Element for TerminalElement {
             Default::default()
         };
 
-        let background_color = if self.modal {
-            terminal_theme.colors.modal_background
-        } else {
-            terminal_theme.colors.background
-        };
+        let background_color = terminal_theme.background;
         let terminal_handle = self.terminal.upgrade(cx).unwrap();
 
         terminal_handle.update(cx.app, |terminal, cx| {
@@ -601,7 +591,6 @@ impl Element for TerminalElement {
             &terminal_theme,
             cx.text_layout_cache,
             cx.font_cache(),
-            self.modal,
         );
 
         //Layout cursor. Rectangle is used for IME, so we should lay it out even
@@ -614,9 +603,9 @@ impl Element for TerminalElement {
                 let str_trxt = cursor_char.to_string();
 
                 let color = if self.focused {
-                    terminal_theme.colors.background
+                    terminal_theme.background
                 } else {
-                    terminal_theme.colors.foreground
+                    terminal_theme.foreground
                 };
 
                 cx.text_layout_cache.layout_str(
@@ -649,7 +638,7 @@ impl Element for TerminalElement {
                         cursor_position,
                         block_width,
                         dimensions.line_height,
-                        terminal_theme.colors.cursor,
+                        terminal_theme.cursor,
                         shape,
                         Some(cursor_text),
                     )

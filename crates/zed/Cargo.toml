@@ -19,7 +19,6 @@ activity_indicator = { path = "../activity_indicator" }
 assets = { path = "../assets" }
 auto_update = { path = "../auto_update" }
 breadcrumbs = { path = "../breadcrumbs" }
-chat_panel = { path = "../chat_panel" }
 cli = { path = "../cli" }
 collections = { path = "../collections" }
 command_palette = { path = "../command_palette" }

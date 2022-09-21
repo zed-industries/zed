@@ -569,7 +569,7 @@ impl Terminal {
             InternalEvent::ColorRequest(index, format) => {
                 let color = term.colors()[*index].unwrap_or_else(|| {
                     let term_style = &cx.global::<Settings>().theme.terminal;
-                    to_alac_rgb(get_color_at_index(index, &term_style.colors))
+                    to_alac_rgb(get_color_at_index(index, &term_style))
                 });
                 self.write_to_pty(format(color))
             }

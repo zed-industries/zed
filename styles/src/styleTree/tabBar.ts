@@ -1,39 +1,42 @@
-import Theme from "../themes/common/theme";
+import { ColorScheme } from "../themes/common/colorScheme";
 import { withOpacity } from "../utils/color";
-import { iconColor, text, border, backgroundColor, draggedShadow } from "./components";
+import { text, border, background, foreground } from "./components";
 
-export default function tabBar(theme: Theme) {
+export default function tabBar(colorScheme: ColorScheme) {
   const height = 32;
+
+  let elevation = colorScheme.lowest;
+  let layer = elevation.middle;
 
   const tab = {
     height,
-    background: backgroundColor(theme, 300),
-    border: border(theme, "primary", {
+    background: background(layer),
+    border: border(layer, {
       left: true,
       bottom: true,
       overlay: true,
     }),
-    iconClose: iconColor(theme, "muted"),
-    iconCloseActive: iconColor(theme, "active"),
-    iconConflict: iconColor(theme, "warning"),
-    iconDirty: iconColor(theme, "info"),
+    iconClose: foreground(layer),
+    iconCloseActive: foreground(layer, "base", "active"),
+    iconConflict: foreground(layer, "warning"),
+    iconDirty: foreground(layer, "info"),
     iconWidth: 8,
     spacing: 8,
-    text: text(theme, "sans", "secondary", { size: "sm" }),
+    text: text(layer, "sans", { size: "sm" }),
     padding: {
       left: 8,
       right: 8,
     },
     description: {
       margin: { left: 6, top: 1 },
-      ...text(theme, "sans", "muted", { size: "2xs" })
+      ...text(layer, "sans", "base", "variant", { size: "2xs" })
     }
   };
 
   const activePaneActiveTab = {
     ...tab,
-    background: backgroundColor(theme, 500),
-    text: text(theme, "sans", "active", { size: "sm" }),
+    background: background(elevation.top),
+    text: text(elevation.top, "sans", "base", "active", { size: "sm" }),
     border: {
       ...tab.border,
       bottom: false
@@ -42,14 +45,14 @@ export default function tabBar(theme: Theme) {
 
   const inactivePaneInactiveTab = {
     ...tab,
-    background: backgroundColor(theme, 300),
-    text: text(theme, "sans", "muted", { size: "sm" }),
+    background: background(layer),
+    text: text(layer, "sans", { size: "sm" }),
   };
 
   const inactivePaneActiveTab = {
     ...tab,
-    background: backgroundColor(theme, 500),
-    text: text(theme, "sans", "secondary", { size: "sm" }),
+    background: background(layer),
+    text: text(layer, "sans", "base", "active", { size: "sm" }),
     border: {
       ...tab.border,
       bottom: false
@@ -59,15 +62,16 @@ export default function tabBar(theme: Theme) {
   const draggedTab = {
     ...activePaneActiveTab,
     background: withOpacity(tab.background, 0.8),
-    border: undefined as any, // Remove border
-    shadow: draggedShadow(theme),
+    border: undefined as any,
+    shadow: elevation.above.shadow,
   }
 
   return {
     height,
-    background: backgroundColor(theme, 300),
-    dropTargetOverlayColor: withOpacity(theme.textColor.muted, 0.6),
-    border: border(theme, "primary", {
+    background: background(layer),
+    dropTargetOverlayColor: withOpacity(foreground(layer), 0.6),
+    border: border(layer, {
+      left: true,
       bottom: true,
       overlay: true,
     }),
@@ -81,11 +85,11 @@ export default function tabBar(theme: Theme) {
     },
     draggedTab,
     paneButton: {
-      color: iconColor(theme, "secondary"),
+      color: foreground(layer),
       iconWidth: 12,
       buttonWidth: activePaneActiveTab.height,
       hover: {
-        color: iconColor(theme, "active"),
+        color: foreground(layer, "base", "hovered"),
       },
     },
     paneButtonContainer: {

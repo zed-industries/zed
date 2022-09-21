@@ -3,7 +3,7 @@
  **/
 
 import chroma from "chroma-js";
-import { colorRamp, createTheme } from "./common/base16";
+import { colorRamp, createColorScheme } from "./common/ramps";
 
 /**
  * Theme Name
@@ -56,14 +56,14 @@ const ramps = {
 };
 
 /**
- * Theme Variants
+ * Color Scheme Variants
  *
  * Currently we only support (and require) dark and light themes
  * Eventually you will be able to have only a light or dark theme,
  * and define other variants here.
  *
- * createTheme([name], [isLight], [arrayOfRamps])
+ * createColorScheme([name], [isLight], [arrayOfRamps])
  **/
 
-export const dark = createTheme(`${name}-dark`, false, ramps);
-export const light = createTheme(`${name}-light`, true, ramps);
+export const dark = createColorScheme(`${name}-dark`, false, ramps);
+export const light = createColorScheme(`${name}-light`, true, ramps);

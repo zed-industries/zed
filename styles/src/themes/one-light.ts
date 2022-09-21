@@ -1,5 +1,5 @@
 import chroma from "chroma-js";
-import { colorRamp, createTheme } from "./common/base16";
+import { colorRamp, createColorScheme } from "./common/ramps";
 
 const name = "one";
 const author = "Daniel Pfeifer (http://github.com/purpleKarrot)";
@@ -44,4 +44,4 @@ const ramps = {
   magenta: colorRamp(chroma(base0F)),
 };
 
-export const light = createTheme(`${name}-light`, true, ramps);
+export const light = createColorScheme(`${name}-light`, true, ramps);

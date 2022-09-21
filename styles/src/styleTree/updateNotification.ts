@@ -1,29 +1,30 @@
-import Theme from "../themes/common/theme";
-import { iconColor, text } from "./components";
+import { ColorScheme } from "../themes/common/colorScheme";
+import { foreground, text } from "./components";
 
 const headerPadding = 8;
 
-export default function updateNotification(theme: Theme): Object {
+export default function updateNotification(colorScheme: ColorScheme): Object {
+  let layer = colorScheme.middle.middle;
   return {
     message: {
-      ...text(theme, "sans", "primary", { size: "xs" }),
+      ...text(layer, "sans", { size: "xs" }),
       margin: { left: headerPadding, right: headerPadding },
     },
     actionMessage: {
-      ...text(theme, "sans", "secondary", { size: "xs" }),
+      ...text(layer, "sans", { size: "xs" }),
       margin: { left: headerPadding, top: 6, bottom: 6 },
       hover: {
-        color: theme.textColor["active"],
+        color: foreground(layer, "base", "hovered"),
       },
     },
     dismissButton: {
-      color: iconColor(theme, "secondary"),
+      color: foreground(layer),
       iconWidth: 8,
       iconHeight: 8,
       buttonWidth: 8,
       buttonHeight: 8,
       hover: {
-        color: iconColor(theme, "primary"),
+        color: foreground(layer, "base", "hovered"),
       },
     },
   };
