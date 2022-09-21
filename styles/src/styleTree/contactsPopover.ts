@@ -1,8 +1,8 @@
-import Theme from "../themes/common/theme";
-import { backgroundColor } from "./components";
+import { ColorScheme } from "../themes/common/colorScheme";
+import { background } from "./components";
 
-export default function workspace(theme: Theme) {
+export default function workspace(colorScheme: ColorScheme) {
   return {
-    background: backgroundColor(theme, 300),
+    background: background(colorScheme.lowest.middle),
   }
 }
