@@ -589,7 +589,7 @@ impl EditorElement {
             let start_y = start_row as f32 * line_height - scroll_top;
             let end_y = end_row as f32 * line_height - scroll_top;
 
-            let width = 0.12 * line_height;
+            let width = 0.16 * line_height;
             let highlight_origin = bounds.origin() + vec2f(-width, start_y);
             let highlight_size = vec2f(width * 2., end_y - start_y);
             let highlight_bounds = RectF::new(highlight_origin, highlight_size);
