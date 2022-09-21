@@ -1,9 +1,10 @@
 use super::installation::{latest_github_release, GitHubLspBinaryVersion};
 use anyhow::{anyhow, Result};
+use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use client::http::HttpClient;
 use collections::HashMap;
-use futures::StreamExt;
+use futures::{io::BufReader, StreamExt};
 use language::{LanguageServerName, LspAdapter};
 use serde_json::json;
 use smol::fs::{self, File};
@@ -27,7 +28,7 @@ impl LspAdapter for JsonLspAdapter {
         http: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release = latest_github_release("zed-industries/json-language-server", http).await?;
-        let asset_name = format!("json-language-server-darwin-{}", consts::ARCH);
+        let asset_name = format!("json-language-server-darwin-{}.gz", consts::ARCH);
         let asset = release
             .assets
             .iter()
@@ -52,13 +53,15 @@ impl LspAdapter for JsonLspAdapter {
             version.name,
             consts::ARCH
         ));
+
         if fs::metadata(&destination_path).await.is_err() {
             let mut response = http
                 .get(&version.url, Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading release: {}", err))?;
+            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
             let mut file = File::create(&destination_path).await?;
-            futures::io::copy(response.body_mut(), &mut file).await?;
+            futures::io::copy(decompressed_bytes, &mut file).await?;
             fs::set_permissions(
                 &destination_path,
                 <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
