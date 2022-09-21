@@ -1563,7 +1563,7 @@ id_type!(UserId);
 pub struct User {
     pub id: UserId,
     pub github_login: String,
-    pub github_user_id: i32,
+    pub github_user_id: Option<i32>,
     pub email_address: Option<String>,
     pub admin: bool,
     pub invite_code: Option<String>,
@@ -1795,7 +1795,7 @@ mod test {
                     User {
                         id: user_id,
                         github_login: params.github_login,
-                        github_user_id: params.github_user_id,
+                        github_user_id: Some(params.github_user_id),
                         email_address: Some(email_address.to_string()),
                         admin,
                         invite_code: None,
@@ -1838,12 +1838,12 @@ mod test {
             self.background.simulate_random_delay().await;
             if let Some(github_user_id) = github_user_id {
                 for user in self.users.lock().values_mut() {
-                    if user.github_user_id == github_user_id {
+                    if user.github_user_id == Some(github_user_id) {
                         user.github_login = github_login.into();
                         return Ok(Some(user.clone()));
                     }
                     if user.github_login == github_login {
-                        user.github_user_id = github_user_id;
+                        user.github_user_id = Some(github_user_id);
                         return Ok(Some(user.clone()));
                     }
                 }

@@ -69,7 +69,7 @@ async fn test_get_users_by_ids() {
                 User {
                     id: user1,
                     github_login: "u1".to_string(),
-                    github_user_id: 1,
+                    github_user_id: Some(1),
                     email_address: Some("u1@example.com".to_string()),
                     admin: false,
                     ..Default::default()
@@ -77,7 +77,7 @@ async fn test_get_users_by_ids() {
                 User {
                     id: user2,
                     github_login: "u2".to_string(),
-                    github_user_id: 2,
+                    github_user_id: Some(2),
                     email_address: Some("u2@example.com".to_string()),
                     admin: false,
                     ..Default::default()
@@ -85,7 +85,7 @@ async fn test_get_users_by_ids() {
                 User {
                     id: user3,
                     github_login: "u3".to_string(),
-                    github_user_id: 3,
+                    github_user_id: Some(3),
                     email_address: Some("u3@example.com".to_string()),
                     admin: false,
                     ..Default::default()
@@ -93,7 +93,7 @@ async fn test_get_users_by_ids() {
                 User {
                     id: user4,
                     github_login: "u4".to_string(),
-                    github_user_id: 4,
+                    github_user_id: Some(4),
                     email_address: Some("u4@example.com".to_string()),
                     admin: false,
                     ..Default::default()
@@ -142,7 +142,7 @@ async fn test_get_user_by_github_account() {
             .unwrap();
         assert_eq!(user.id, user_id1);
         assert_eq!(&user.github_login, "login1");
-        assert_eq!(user.github_user_id, 101);
+        assert_eq!(user.github_user_id, Some(101));
 
         assert!(db
             .get_user_by_github_account("non-existent-login", None)
@@ -157,7 +157,7 @@ async fn test_get_user_by_github_account() {
             .unwrap();
         assert_eq!(user.id, user_id2);
         assert_eq!(&user.github_login, "the-new-login2");
-        assert_eq!(user.github_user_id, 102);
+        assert_eq!(user.github_user_id, Some(102));
     }
 }
 
