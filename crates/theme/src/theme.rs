@@ -2,7 +2,7 @@ mod theme_registry;
 
 use gpui::{
     color::Color,
-    elements::{ContainerStyle, ImageStyle, LabelStyle, TooltipStyle},
+    elements::{ContainerStyle, ImageStyle, LabelStyle, Shadow, TooltipStyle},
     fonts::{HighlightStyle, TextStyle},
     Border, MouseState,
 };
@@ -32,6 +32,7 @@ pub struct Theme {
     pub update_notification: UpdateNotification,
     pub tooltip: TooltipStyle,
     pub terminal: TerminalStyle,
+    pub color_scheme: ColorScheme,
 }
 
 #[derive(Deserialize, Default, Clone)]
@@ -727,4 +728,73 @@ pub struct TerminalStyle {
     pub dim_white: Color,
     pub bright_foreground: Color,
     pub dim_foreground: Color,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct ColorScheme {
+    pub name: String,
+    pub is_light: bool,
+
+    pub lowest: Elevation,
+    pub middle: Elevation,
+    pub highest: Elevation,
+
+    pub players: Vec<Player>,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct Elevation {
+    pub ramps: RampSet,
+
+    pub bottom: Layer,
+    pub middle: Layer,
+    pub top: Layer,
+
+    pub shadow: Option<Shadow>,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct Player {
+    pub cursor: Color,
+    pub selection: Color,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct RampSet {
+    pub neutral: Vec<Color>,
+    pub red: Vec<Color>,
+    pub orange: Vec<Color>,
+    pub yellow: Vec<Color>,
+    pub green: Vec<Color>,
+    pub cyan: Vec<Color>,
+    pub blue: Vec<Color>,
+    pub violet: Vec<Color>,
+    pub magenta: Vec<Color>,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct Layer {
+    pub base: StyleSet,
+    pub on: StyleSet,
+    pub info: StyleSet,
+    pub positive: StyleSet,
+    pub warning: StyleSet,
+    pub negative: StyleSet,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct StyleSet {
+    pub default: Style,
+    pub variant: Style,
+    pub active: Style,
+    pub disabled: Style,
+    pub hovered: Style,
+    pub pressed: Style,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct Style {
+    pub background: Color,
+    pub border: Color,
+    pub foreground: Color,
 }

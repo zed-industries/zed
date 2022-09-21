@@ -133,8 +133,8 @@ export default function editor(colorScheme: ColorScheme) {
   return {
     textColor: syntax.primary.color,
     background: background(layer),
-    activeLineBackground: elevation.ramps.neutral(0.29).hex(),
-    highlightedLineBackground: elevation.ramps.neutral(0.18).hex(),
+    activeLineBackground: background(layer, "base", "variant"),
+    highlightedLineBackground: background(layer, "base", "variant"),
     codeActions: {
       indicator: foreground(layer, "base", "variant"),
       verticalScale: 0.618

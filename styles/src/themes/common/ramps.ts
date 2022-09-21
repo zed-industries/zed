@@ -123,14 +123,14 @@ function evenSamples(min: number, max: number): number[] {
 function resampleSet(ramps: RampSet, samples: number[]): RampSet {
   return {
     neutral: resample(ramps.neutral, samples),
-    red: resample(ramps.neutral, samples),
-    orange: resample(ramps.neutral, samples),
-    yellow: resample(ramps.neutral, samples),
-    green: resample(ramps.neutral, samples),
-    cyan: resample(ramps.neutral, samples),
-    blue: resample(ramps.neutral, samples),
-    violet: resample(ramps.neutral, samples),
-    magenta: resample(ramps.neutral, samples),
+    red: resample(ramps.red, samples),
+    orange: resample(ramps.orange, samples),
+    yellow: resample(ramps.yellow, samples),
+    green: resample(ramps.green, samples),
+    cyan: resample(ramps.cyan, samples),
+    blue: resample(ramps.blue, samples),
+    violet: resample(ramps.violet, samples),
+    magenta: resample(ramps.magenta, samples),
   }
 }
 
@@ -140,37 +140,70 @@ function resample(scale: Scale, samples: number[]): Scale {
 }
 
 function elevation(ramps: RampSet, isLight: boolean, shadow?: Shadow): Elevation {
-  let style: Style = {
-    background: ramps.neutral(0.25).hex(),
-    border: ramps.neutral(0.9).hex(),
+  return {
+    ramps,
+
+    bottom: topLayer(ramps, isLight),
+    middle: topLayer(ramps, isLight),
+    top: topLayer(ramps, isLight),
+
+    shadow,
+  };
+}
+
+function topLayer(ramps: RampSet, isLight: boolean): Layer {
+  let defaultStyle: Style = {
+    background: ramps.neutral(0).hex(),
+    border: ramps.neutral(0.7).hex(),
     foreground: ramps.neutral(1).hex(),
   };
 
-  let styleSet: StyleSet = {
-    default: style,
-    variant: style,
-    active: style,
-    disabled: style,
-    hovered: style,
-    pressed: style,
+  let variantStyle: Style = {
+    background: ramps.neutral(0.2).hex(),
+    border: ramps.neutral(0.6).hex(),
+    foreground: ramps.neutral(0.8).hex(),
   };
 
-  let layer: Layer = {
+
+  let hoveredStyle: Style = {
+    background: ramps.neutral(0.4).hex(),
+    border: ramps.neutral(1.0).hex(),
+    foreground: ramps.neutral(0.9).hex(),
+  };
+
+  let pressedStyle: Style = {
+    background: ramps.neutral(0.55).hex(),
+    border: ramps.neutral(0.9).hex(),
+    foreground: ramps.neutral(0.9).hex(),
+  };
+
+  let activeStyle: Style = {
+    background: ramps.neutral(0.8).hex(),
+    border: ramps.neutral(0.8).hex(),
+    foreground: ramps.neutral(0.1).hex(),
+  };
+
+  let disabledStyle: Style = {
+    background: ramps.neutral(0.25).hex(),
+    border: ramps.neutral(1).hex(),
+    foreground: ramps.neutral(0.9).hex(),
+  };
+
+  let styleSet: StyleSet = {
+    default: defaultStyle,
+    variant: variantStyle,
+    hovered: hoveredStyle,
+    pressed: pressedStyle,
+    active: activeStyle,
+    disabled: disabledStyle,
+  };
+
+  return {
     base: styleSet,
     on: styleSet,
     info: styleSet,
     positive: styleSet,
     warning: styleSet,
     negative: styleSet
-  };
-
-  return {
-    ramps,
-
-    bottom: layer,
-    middle: layer,
-    top: layer,
-
-    shadow,
   };
 }

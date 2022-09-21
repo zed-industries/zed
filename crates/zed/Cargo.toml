@@ -50,6 +50,7 @@ text = { path = "../text" }
 terminal = { path = "../terminal" }
 theme = { path = "../theme" }
 theme_selector = { path = "../theme_selector" }
+theme_testbench = { path = "../theme_testbench" }
 util = { path = "../util" }
 vim = { path = "../vim" }
 workspace = { path = "../workspace" }

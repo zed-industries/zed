@@ -119,6 +119,7 @@ fn main() {
         search::init(cx);
         vim::init(cx);
         terminal::init(cx);
+        theme_testbench::init(cx);
 
         let db = cx.background().block(db);
         cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
