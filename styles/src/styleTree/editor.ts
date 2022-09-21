@@ -60,9 +60,9 @@ export default function editor(theme: Theme) {
       indicator: iconColor(theme, "secondary"),
       verticalScale: 0.618
     },
-    diffBackgroundDeleted: theme.ramps.red(0.3).hex(),
-    diffBackgroundInserted: theme.ramps.green(0.3).hex(),
-    diffBackgroundModified: theme.ramps.blue(0.3).hex(),
+    diffBackgroundDeleted: theme.iconColor.error,
+    diffBackgroundInserted: theme.iconColor.ok,
+    diffBackgroundModified: theme.iconColor.warning,
     documentHighlightReadBackground: theme.editor.highlight.occurrence,
     documentHighlightWriteBackground: theme.editor.highlight.activeOccurrence,
     errorColor: theme.textColor.error,
