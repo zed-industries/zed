@@ -6,7 +6,8 @@ use crate::{
     },
     json::{self, json},
     presenter::MeasurementContext,
-    ElementBox, RenderContext, ScrollWheelEvent, View,
+    scene::ScrollWheelRegionEvent,
+    ElementBox, MouseRegion, RenderContext, ScrollWheelEvent, View,
 };
 use json::ToJson;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -50,6 +51,7 @@ pub struct UniformList {
     padding_top: f32,
     padding_bottom: f32,
     get_width_from_item: Option<usize>,
+    view_id: usize,
 }
 
 impl UniformList {
@@ -77,6 +79,7 @@ impl UniformList {
             padding_top: 0.,
             padding_bottom: 0.,
             get_width_from_item: None,
+            view_id: cx.handle().id(),
         }
     }
 
@@ -96,7 +99,7 @@ impl UniformList {
     }
 
     fn scroll(
-        &self,
+        state: UniformListState,
         _: Vector2F,
         mut delta: Vector2F,
         precise: bool,
@@ -107,7 +110,7 @@ impl UniformList {
             delta *= 20.;
         }
 
-        let mut state = self.state.0.borrow_mut();
+        let mut state = state.0.borrow_mut();
         state.scroll_top = (state.scroll_top - delta.y()).max(0.0).min(scroll_max);
         cx.notify();
 
@@ -283,6 +286,28 @@ impl Element for UniformList {
     ) -> Self::PaintState {
         cx.scene.push_layer(Some(bounds));
 
+        cx.scene.push_mouse_region(
+            MouseRegion::new::<Self>(self.view_id, 0, bounds).on_scroll({
+                let scroll_max = layout.scroll_max;
+                let state = self.state.clone();
+                move |ScrollWheelRegionEvent {
+                          platform_event:
+                              ScrollWheelEvent {
+                                  position,
+                                  delta,
+                                  precise,
+                                  ..
+                              },
+                          ..
+                      },
+                      cx| {
+                    if !Self::scroll(state.clone(), position, delta, precise, scroll_max, cx) {
+                        cx.propogate_event();
+                    }
+                }
+            }),
+        );
+
         let mut item_origin = bounds.origin()
             - vec2f(
                 0.,
@@ -300,7 +325,7 @@ impl Element for UniformList {
     fn dispatch_event(
         &mut self,
         event: &Event,
-        bounds: RectF,
+        _: RectF,
         _: RectF,
         layout: &mut Self::LayoutState,
         _: &mut Self::PaintState,
@@ -309,20 +334,6 @@ impl Element for UniformList {
         let mut handled = false;
         for item in &mut layout.items {
             handled = item.dispatch_event(event, cx) || handled;
-        }
-
-        if let Event::ScrollWheel(ScrollWheelEvent {
-            position,
-            delta,
-            precise,
-            ..
-        }) = event
-        {
-            if bounds.contains_point(*position)
-                && self.scroll(*position, *delta, *precise, layout.scroll_max, cx)
-            {
-                handled = true;
-            }
         }
 
         handled
