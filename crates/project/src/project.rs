@@ -1,4 +1,5 @@
 pub mod fs;
+mod git_repository;
 mod ignore;
 mod lsp_command;
 pub mod search;
