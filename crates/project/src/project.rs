@@ -364,6 +364,22 @@ impl ProjectEntryId {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormatTrigger {
+    Save,
+    Manual,
+}
+
+impl FormatTrigger {
+    fn from_proto(value: i32) -> FormatTrigger {
+        match value {
+            0 => FormatTrigger::Save,
+            1 => FormatTrigger::Manual,
+            _ => FormatTrigger::Save,
+        }
+    }
+}
+
 impl Project {
     pub fn init(client: &Arc<Client>) {
         client.add_model_message_handler(Self::handle_request_join_project);
@@ -3047,6 +3063,7 @@ impl Project {
         &self,
         buffers: HashSet<ModelHandle<Buffer>>,
         push_to_history: bool,
+        trigger: FormatTrigger,
         cx: &mut ModelContext<Project>,
     ) -> Task<Result<ProjectTransaction>> {
         let mut local_buffers = Vec::new();
@@ -3076,6 +3093,7 @@ impl Project {
                 let response = client
                     .request(proto::FormatBuffers {
                         project_id,
+                        trigger: trigger as i32,
                         buffer_ids: remote_buffers
                             .iter()
                             .map(|buffer| buffer.read_with(&cx, |buffer, _| buffer.remote_id()))
@@ -3092,18 +3110,22 @@ impl Project {
             }
 
             for (buffer, buffer_abs_path, language_server) in local_buffers {
-                let (format_on_save, tab_size) = buffer.read_with(&cx, |buffer, cx| {
+                let (format_on_save, formatter, tab_size) = buffer.read_with(&cx, |buffer, cx| {
                     let settings = cx.global::<Settings>();
                     let language_name = buffer.language().map(|language| language.name());
                     (
                         settings.format_on_save(language_name.as_deref()),
+                        settings.formatter(language_name.as_deref()),
                         settings.tab_size(language_name.as_deref()),
                     )
                 });
 
-                let transaction = match format_on_save {
-                    settings::FormatOnSave::Off => continue,
-                    settings::FormatOnSave::LanguageServer => Self::format_via_lsp(
+                if trigger == FormatTrigger::Save && !format_on_save {
+                    continue;
+                }
+
+                let transaction = match formatter {
+                    settings::Formatter::LanguageServer => Self::format_via_lsp(
                         &this,
                         &buffer,
                         &buffer_abs_path,
@@ -3113,7 +3135,8 @@ impl Project {
                     )
                     .await
                     .context("failed to format via language server")?,
-                    settings::FormatOnSave::External { command, arguments } => {
+
+                    settings::Formatter::External { command, arguments } => {
                         Self::format_via_external_command(
                             &buffer,
                             &buffer_abs_path,
@@ -5296,7 +5319,8 @@ impl Project {
                         .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?,
                 );
             }
-            Ok::<_, anyhow::Error>(this.format(buffers, false, cx))
+            let trigger = FormatTrigger::from_proto(envelope.payload.trigger);
+            Ok::<_, anyhow::Error>(this.format(buffers, false, trigger, cx))
         })?;
 
         let project_transaction = format.await?;

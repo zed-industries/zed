@@ -36,7 +36,7 @@ use project::{
 use rand::prelude::*;
 use rpc::PeerId;
 use serde_json::json;
-use settings::{FormatOnSave, Settings};
+use settings::{Formatter, Settings};
 use sqlx::types::time::OffsetDateTime;
 use std::{
     cell::RefCell,
@@ -1990,6 +1990,8 @@ async fn test_reloading_buffer_manually(cx_a: &mut TestAppContext, cx_b: &mut Te
 
 #[gpui::test(iterations = 10)]
 async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    use project::FormatTrigger;
+
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -2042,7 +2044,12 @@ async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
 
     project_b
         .update(cx_b, |project, cx| {
-            project.format(HashSet::from_iter([buffer_b.clone()]), true, cx)
+            project.format(
+                HashSet::from_iter([buffer_b.clone()]),
+                true,
+                FormatTrigger::Save,
+                cx,
+            )
         })
         .await
         .unwrap();
@@ -2055,7 +2062,7 @@ async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
     // host's configuration is honored as opposed to using the guest's settings.
     cx_a.update(|cx| {
         cx.update_global(|settings: &mut Settings, _| {
-            settings.editor_defaults.format_on_save = Some(FormatOnSave::External {
+            settings.editor_defaults.formatter = Some(Formatter::External {
                 command: "awk".to_string(),
                 arguments: vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()],
             });
@@ -2063,7 +2070,12 @@ async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
     });
     project_b
         .update(cx_b, |project, cx| {
-            project.format(HashSet::from_iter([buffer_b.clone()]), true, cx)
+            project.format(
+                HashSet::from_iter([buffer_b.clone()]),
+                true,
+                FormatTrigger::Save,
+                cx,
+            )
         })
         .await
         .unwrap();
