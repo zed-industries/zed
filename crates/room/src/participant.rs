@@ -1,15 +1,19 @@
 use client::User;
-use gpui::{ModelHandle, ViewHandle};
+use gpui::ModelHandle;
 use project::Project;
-use workspace::Workspace;
+
+pub enum Location {
+    Project { project_id: usize },
+    External,
+}
 
 pub struct LocalParticipant {
     user: User,
-    workspaces: Vec<ViewHandle<Workspace>>,
+    projects: Vec<ModelHandle<Project>>,
 }
 
 pub struct RemoteParticipant {
     user: User,
-    workspaces: Vec<ViewHandle<Workspace>>,
-    active_workspace_id: usize,
+    projects: Vec<ModelHandle<Project>>,
+    location: Location,
 }

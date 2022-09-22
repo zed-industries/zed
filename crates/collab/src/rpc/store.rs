@@ -7,10 +7,13 @@ use std::{mem, path::PathBuf, str, time::Duration};
 use time::OffsetDateTime;
 use tracing::instrument;
 
+pub type RoomId = u64;
+
 #[derive(Default, Serialize)]
 pub struct Store {
     connections: BTreeMap<ConnectionId, ConnectionState>,
     connections_by_user_id: BTreeMap<UserId, HashSet<ConnectionId>>,
+    rooms: BTreeMap<RoomId, Room>,
     projects: BTreeMap<ProjectId, Project>,
     #[serde(skip)]
     channels: BTreeMap<ChannelId, Channel>,
@@ -23,6 +26,17 @@ struct ConnectionState {
     projects: BTreeSet<ProjectId>,
     requested_projects: HashSet<ProjectId>,
     channels: HashSet<ChannelId>,
+}
+
+#[derive(Serialize)]
+struct Room {
+    participants: HashMap<ConnectionId, Participant>,
+}
+
+#[derive(Serialize)]
+struct Participant {
+    user_id: UserId,
+    shared_projects: HashSet<ProjectId>,
 }
 
 #[derive(Serialize)]

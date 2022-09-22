@@ -61,6 +61,42 @@ fn init_logger() {
 }
 
 #[gpui::test(iterations = 10)]
+async fn test_share_project_in_room(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    client_a
+        .fs
+        .insert_tree(
+            "/a",
+            json!({
+                ".gitignore": "ignored-dir",
+                "a.txt": "a-contents",
+                "b.txt": "b-contents",
+                "ignored-dir": {
+                    "c.txt": "",
+                    "d.txt": "",
+                }
+            }),
+        )
+        .await;
+
+    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let project_id = project_a.update(cx_a, |project, cx| project.share(cx)).await.unwrap();
+
+
+}
+
+#[gpui::test(iterations = 10)]
 async fn test_share_project(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,

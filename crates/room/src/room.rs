@@ -1,17 +1,25 @@
 mod participant;
 
 use anyhow::Result;
-use client::Client;
-use gpui::ModelHandle;
+use client::{Client, PeerId};
+use gpui::{Entity, ModelHandle};
 use participant::{LocalParticipant, RemoteParticipant};
 use project::Project;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
+
+pub enum Event {
+    PeerChangedActiveProject,
+}
 
 pub struct Room {
     id: u64,
     local_participant: LocalParticipant,
-    remote_participants: Vec<RemoteParticipant>,
+    remote_participants: HashMap<PeerId, RemoteParticipant>,
     client: Arc<Client>,
+}
+
+impl Entity for Room {
+    type Event = Event;
 }
 
 impl Room {
@@ -27,11 +35,18 @@ impl Room {
         todo!()
     }
 
-    pub async fn share(&mut self) -> Result<()> {
+    pub async fn share_project(&mut self, project: ModelHandle<Project>) -> Result<()> {
         todo!()
     }
 
-    pub async fn unshare(&mut self) -> Result<()> {
+    pub async fn unshare_project(&mut self, project: ModelHandle<Project>) -> Result<()> {
+        todo!()
+    }
+
+    pub async fn set_active_project(
+        &mut self,
+        project: Option<&ModelHandle<Project>>,
+    ) -> Result<()> {
         todo!()
     }
 

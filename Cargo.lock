@@ -4459,7 +4459,6 @@ dependencies = [
  "client",
  "gpui",
  "project",
- "workspace",
 ]
 
 [[package]]
