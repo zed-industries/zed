@@ -2,8 +2,8 @@ use gpui::{
     actions,
     color::Color,
     elements::{
-        Canvas, ConstrainedBox, Container, ContainerStyle, ElementBox, Flex, Label, Margin,
-        MouseEventHandler, Padding, ParentElement,
+        Canvas, Container, ContainerStyle, ElementBox, Flex, Label, Margin, MouseEventHandler,
+        Padding, ParentElement,
     },
     fonts::TextStyle,
     Border, Element, Entity, MutableAppContext, Quad, RenderContext, View, ViewContext,
@@ -97,27 +97,32 @@ impl ThemeTestbench {
                     .boxed(),
             )
             .with_child(
-                Self::render_button_set(1, layer_index, "on", &layer.on, cx)
+                Self::render_button_set(1, layer_index, "variant", &layer.variant, cx)
                     .flex(1., false)
                     .boxed(),
             )
             .with_child(
-                Self::render_button_set(2, layer_index, "info", &layer.info, cx)
+                Self::render_button_set(2, layer_index, "on", &layer.on, cx)
                     .flex(1., false)
                     .boxed(),
             )
             .with_child(
-                Self::render_button_set(3, layer_index, "positive", &layer.positive, cx)
+                Self::render_button_set(3, layer_index, "info", &layer.info, cx)
                     .flex(1., false)
                     .boxed(),
             )
             .with_child(
-                Self::render_button_set(4, layer_index, "warning", &layer.warning, cx)
+                Self::render_button_set(4, layer_index, "positive", &layer.positive, cx)
                     .flex(1., false)
                     .boxed(),
             )
             .with_child(
-                Self::render_button_set(5, layer_index, "negative", &layer.negative, cx)
+                Self::render_button_set(5, layer_index, "warning", &layer.warning, cx)
+                    .flex(1., false)
+                    .boxed(),
+            )
+            .with_child(
+                Self::render_button_set(6, layer_index, "negative", &layer.negative, cx)
                     .flex(1., false)
                     .boxed(),
             )
@@ -153,21 +158,13 @@ impl ThemeTestbench {
             .with_child(Self::render_button(
                 set_index * 4 + 1,
                 layer_index,
-                "variant",
-                &style_set,
-                Some(|style_set| &style_set.variant),
-                cx,
-            ))
-            .with_child(Self::render_button(
-                set_index * 4 + 2,
-                layer_index,
                 "active",
                 &style_set,
                 Some(|style_set| &style_set.active),
                 cx,
             ))
             .with_child(Self::render_button(
-                set_index * 4 + 3,
+                set_index * 4 + 2,
                 layer_index,
                 "disabled",
                 &style_set,

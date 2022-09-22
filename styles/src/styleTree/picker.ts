@@ -23,11 +23,11 @@ export default function picker(colorScheme: ColorScheme) {
       text: text(layer, "sans"),
       highlightText: text(layer, "sans", { weight: "bold" }),
       active: {
-        background: background(layer, "base", "active"),
-        text: text(layer, "sans", "base", "active"),
+        background: background(layer, "active"),
+        text: text(layer, "sans", "active"),
       },
       hover: {
-        background: background(layer, "base", "hovered"),
+        background: background(layer, "hovered"),
       },
     },
     border: border(layer),

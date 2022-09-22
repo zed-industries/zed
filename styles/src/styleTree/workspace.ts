@@ -72,8 +72,8 @@ export default function workspace(colorScheme: ColorScheme) {
       },
       border: border(layer, { bottom: true, overlay: true }),
       signInPrompt: {
-        background: background(layer, "on", "default"),
-        border: border(layer, "on", "default"),
+        background: background(layer, "on"),
+        border: border(layer, "on"),
         cornerRadius: 6,
         margin: {
           top: 1,
@@ -118,7 +118,7 @@ export default function workspace(colorScheme: ColorScheme) {
     toolbar: {
       height: 34,
       background: background(elevation.top),
-      border: border(elevation.top, "base", "variant", { bottom: true }),
+      border: border(elevation.top, "variant", { bottom: true }),
       itemSpacing: 8,
       navButton: {
         color: foreground(elevation.top, "on"),
@@ -136,7 +136,7 @@ export default function workspace(colorScheme: ColorScheme) {
       padding: { left: 8, right: 8, top: 4, bottom: 4 },
     },
     breadcrumbs: {
-      ...text(layer, "mono", "on", "variant"),
+      ...text(layer, "mono", "variant"),
       padding: { left: 6 },
     },
     disconnectedOverlay: {

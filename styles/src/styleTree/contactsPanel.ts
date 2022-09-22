@@ -91,8 +91,8 @@ export default function contactsPanel(colorScheme: ColorScheme) {
         right: sidePadding,
       },
       active: {
-        ...text(layer, "mono", "base", "active", { size: "sm" }),
-        background: background(layer, "base", "active"),
+        ...text(layer, "mono", "active", { size: "sm" }),
+        background: background(layer, "active"),
       },
     },
     contactRow: {
@@ -101,17 +101,17 @@ export default function contactsPanel(colorScheme: ColorScheme) {
         right: sidePadding,
       },
       active: {
-        background: background(layer, "base", "active"),
+        background: background(layer, "active"),
       },
     },
     treeBranch: {
       color: borderColor(layer),
       width: 1,
       hover: {
-        color: borderColor(layer, "base", "hovered"),
+        color: borderColor(layer, "hovered"),
       },
       active: {
-        color: borderColor(layer, "base", "active"),
+        color: borderColor(layer, "active"),
       },
     },
     contactAvatar: {
@@ -128,7 +128,7 @@ export default function contactsPanel(colorScheme: ColorScheme) {
     contactButton: {
       ...contactButton,
       hover: {
-        background: background(layer, "base", "hovered"),
+        background: background(layer, "hovered"),
       },
     },
     disabledButton: {
@@ -144,10 +144,10 @@ export default function contactsPanel(colorScheme: ColorScheme) {
         ...text(layer, "mono", { size: "sm" }),
       },
       hover: {
-        background: background(layer, "base", "hovered"),
+        background: background(layer, "hovered"),
       },
       active: {
-        background: background(layer, "base", "active"),
+        background: background(layer, "active"),
       },
     },
     inviteRow: {
@@ -158,7 +158,7 @@ export default function contactsPanel(colorScheme: ColorScheme) {
       border: border(layer, { top: true }),
       text: text(layer, "sans", { size: "sm" }),
       hover: {
-        text: text(layer, "sans", "base", "hovered", { size: "sm" }),
+        text: text(layer, "sans", "hovered", { size: "sm" }),
       },
     },
   };

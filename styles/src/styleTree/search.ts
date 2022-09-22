@@ -10,9 +10,9 @@ export default function search(colorScheme: ColorScheme) {
     cornerRadius: 8,
     minWidth: 200,
     maxWidth: 500,
-    placeholderText: text(layer, "mono", "base", "disabled"),
+    placeholderText: text(layer, "mono", "disabled"),
     selection: colorScheme.players[0],
-    text: text(layer, "mono", "base", "active"),
+    text: text(layer, "mono", "active"),
     border: border(layer),
     margin: {
       right: 12,
@@ -65,7 +65,7 @@ export default function search(colorScheme: ColorScheme) {
       border: border(layer, "negative"),
     },
     matchIndex: {
-      ...text(layer, "mono", "on", "variant"),
+      ...text(layer, "mono", "variant"),
       padding: 6,
     },
     optionButtonGroup: {

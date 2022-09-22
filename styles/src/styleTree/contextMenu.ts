@@ -23,20 +23,20 @@ export default function contextMenu(colorScheme: ColorScheme) {
       cornerRadius: 6,
       label: text(layer, "sans", { size: "sm" }),
       keystroke: {
-        ...text(layer, "sans", "base", "variant", { size: "sm", weight: "bold" }),
+        ...text(layer, "sans", "variant", { size: "sm", weight: "bold" }),
         padding: { left: 3, right: 3 },
       },
       hover: {
-        background: background(layer, "base", "hovered"),
-        text: text(layer, "sans", "base", "hovered", { size: "sm" }),
+        background: background(layer, "hovered"),
+        text: text(layer, "sans", "hovered", { size: "sm" }),
       },
       active: {
-        background: background(layer, "base", "active"),
-        text: text(layer, "sans", "base", "active", { size: "sm" }),
+        background: background(layer, "active"),
+        text: text(layer, "sans", "active", { size: "sm" }),
       },
       activeHover: {
-        background: background(layer, "base", "active"),
-        text: text(layer, "sans", "base", "active", { size: "sm" }),
+        background: background(layer, "active"),
+        text: text(layer, "sans", "active", { size: "sm" }),
       },
     },
     separator: {

@@ -8,6 +8,6 @@ export default function projectDiagnostics(colorScheme: ColorScheme) {
     tabIconSpacing: 4,
     tabIconWidth: 13,
     tabSummarySpacing: 10,
-    emptyMessage: text(layer, "sans", "base", "variant", { size: "md" }),
+    emptyMessage: text(layer, "sans", "variant", { size: "md" }),
   };
 }

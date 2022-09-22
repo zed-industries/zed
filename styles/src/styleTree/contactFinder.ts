@@ -27,13 +27,13 @@ export default function contactFinder(colorScheme: ColorScheme) {
     contactButton: {
       ...contactButton,
       hover: {
-        background: background(layer, "base", "hovered"),
+        background: background(layer, "hovered"),
       },
     },
     disabledContactButton: {
       ...contactButton,
-      background: background(layer, "base", "disabled"),
-      color: foreground(layer, "base", "disabled"),
+      background: background(layer, "disabled"),
+      color: foreground(layer, "disabled"),
     },
   };
 }

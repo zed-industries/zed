@@ -47,6 +47,7 @@ export interface Shadow {
 export type StyleSets = keyof Layer;
 export interface Layer {
   base: StyleSet,
+  variant: StyleSet,
   on: StyleSet,
   info: StyleSet,
   positive: StyleSet,
@@ -69,7 +70,6 @@ export interface RampSet {
 export type Styles = keyof StyleSet;
 export interface StyleSet {
   default: Style,
-  variant: Style,
   active: Style,
   disabled: Style,
   hovered: Style,

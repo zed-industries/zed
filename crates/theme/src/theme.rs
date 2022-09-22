@@ -775,6 +775,7 @@ pub struct RampSet {
 #[derive(Clone, Deserialize, Default)]
 pub struct Layer {
     pub base: StyleSet,
+    pub variant: StyleSet,
     pub on: StyleSet,
     pub info: StyleSet,
     pub positive: StyleSet,
@@ -785,7 +786,6 @@ pub struct Layer {
 #[derive(Clone, Deserialize, Default)]
 pub struct StyleSet {
     pub default: Style,
-    pub variant: Style,
     pub active: Style,
     pub disabled: Style,
     pub hovered: Style,

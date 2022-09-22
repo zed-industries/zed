@@ -17,12 +17,12 @@ export default function projectPanel(colorScheme: ColorScheme) {
         background: background(layer, "on", "hovered"),
       },
       active: {
-        background: background(layer, "base", "active"),
-        text: text(layer, "mono", "base", "active", { size: "sm" }),
+        background: background(layer, "active"),
+        text: text(layer, "mono", "active", { size: "sm" }),
       },
       activeHover: {
-        background: background(layer, "base", "hovered"),
-        text: text(layer, "mono", "base", "active", { size: "sm" }),
+        background: background(layer, "hovered"),
+        text: text(layer, "mono", "active", { size: "sm" }),
       },
     },
     cutEntryFade: 0.4,

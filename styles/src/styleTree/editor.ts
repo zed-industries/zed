@@ -133,10 +133,10 @@ export default function editor(colorScheme: ColorScheme) {
   return {
     textColor: syntax.primary.color,
     background: background(layer),
-    activeLineBackground: background(layer, "base", "variant"),
-    highlightedLineBackground: background(layer, "base", "variant"),
+    activeLineBackground: background(layer, "variant"),
+    highlightedLineBackground: background(layer, "variant"),
     codeActions: {
-      indicator: foreground(layer, "base", "variant"),
+      indicator: foreground(layer, "variant"),
       verticalScale: 0.618
     },
     diffBackgroundDeleted: background(layer, "negative"),
@@ -147,7 +147,7 @@ export default function editor(colorScheme: ColorScheme) {
     gutterBackground: background(layer),
     gutterPaddingFactor: 3.5,
     lineNumber: foreground(layer),
-    lineNumberActive: foreground(layer, "base", "active"),
+    lineNumberActive: foreground(layer, "active"),
     renameFade: 0.6,
     unnecessaryCodeFade: 0.5,
     selection: colorScheme.players[0],
@@ -169,7 +169,7 @@ export default function editor(colorScheme: ColorScheme) {
       item: autocompleteItem,
       hoveredItem: {
         ...autocompleteItem,
-        background: background(elevation.above.top, "base", "hovered"),
+        background: background(elevation.above.top, "hovered"),
       },
       margin: {
         left: -14,
@@ -177,7 +177,7 @@ export default function editor(colorScheme: ColorScheme) {
       matchHighlight: elevation.above.ramps.blue(0.5).hex(),
       selectedItem: {
         ...autocompleteItem,
-        background: background(elevation.above.top, "base", "active"),
+        background: background(elevation.above.top, "active"),
       },
     },
     diagnosticHeader: {

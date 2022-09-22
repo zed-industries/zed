@@ -17,19 +17,19 @@ export default function tabBar(colorScheme: ColorScheme) {
       overlay: true,
     }),
     iconClose: foreground(layer),
-    iconCloseActive: foreground(layer, "base", "active"),
+    iconCloseActive: foreground(layer, "active"),
     iconConflict: foreground(layer, "warning"),
     iconDirty: foreground(layer, "info"),
     iconWidth: 8,
     spacing: 8,
-    text: text(layer, "sans", "base", "variant", { size: "sm" }),
+    text: text(layer, "sans", "variant", { size: "sm" }),
     padding: {
       left: 8,
       right: 8,
     },
     description: {
       margin: { left: 6, top: 1 },
-      ...text(layer, "sans", "base", "variant", { size: "2xs" })
+      ...text(layer, "sans", "variant", { size: "2xs" })
     }
   };
 
@@ -46,13 +46,13 @@ export default function tabBar(colorScheme: ColorScheme) {
   const inactivePaneInactiveTab = {
     ...tab,
     background: background(layer),
-    text: text(layer, "sans", "base", "variant", { size: "sm" }),
+    text: text(layer, "sans", "variant", { size: "sm" }),
   };
 
   const inactivePaneActiveTab = {
     ...tab,
     background: background(elevation.top),
-    text: text(elevation.top, "sans", "base", "variant", { size: "sm" }),
+    text: text(elevation.top, "sans", "variant", { size: "sm" }),
     border: {
       ...tab.border,
       bottom: false
@@ -84,7 +84,7 @@ export default function tabBar(colorScheme: ColorScheme) {
       iconWidth: 12,
       buttonWidth: activePaneActiveTab.height,
       hover: {
-        color: foreground(layer, "base", "hovered"),
+        color: foreground(layer, "hovered"),
       },
     },
     paneButtonContainer: {

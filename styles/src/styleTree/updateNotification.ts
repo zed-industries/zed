@@ -14,7 +14,7 @@ export default function updateNotification(colorScheme: ColorScheme): Object {
       ...text(layer, "sans", { size: "xs" }),
       margin: { left: headerPadding, top: 6, bottom: 6 },
       hover: {
-        color: foreground(layer, "base", "hovered"),
+        color: foreground(layer, "hovered"),
       },
     },
     dismissButton: {
@@ -24,7 +24,7 @@ export default function updateNotification(colorScheme: ColorScheme): Object {
       buttonWidth: 8,
       buttonHeight: 8,
       hover: {
-        color: foreground(layer, "base", "hovered"),
+        color: foreground(layer, "hovered"),
       },
     },
   };

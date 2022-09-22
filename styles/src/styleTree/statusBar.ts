@@ -42,7 +42,7 @@ export default function statusBar(colorScheme: ColorScheme) {
     },
     diagnosticMessage: {
       ...text(layer, "sans"),
-      hover: text(layer, "sans", "base", "hovered"),
+      hover: text(layer, "sans", "hovered"),
     },
     feedback: {
       ...text(layer, "sans"),
@@ -98,12 +98,12 @@ export default function statusBar(colorScheme: ColorScheme) {
         iconSize: 16,
         iconColor: foreground(layer),
         hover: {
-          iconColor: foreground(layer, "base", "hovered"),
-          background: background(layer, "base", "hovered"),
+          iconColor: foreground(layer, "hovered"),
+          background: background(layer, "hovered"),
         },
         active: {
-          iconColor: foreground(layer, "base", "active"),
-          background: background(layer, "base", "active"),
+          iconColor: foreground(layer, "active"),
+          background: background(layer, "active"),
         },
       },
       badge: {
