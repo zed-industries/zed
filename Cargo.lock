@@ -1040,6 +1040,7 @@ dependencies = [
  "prometheus",
  "rand 0.8.5",
  "reqwest",
+ "room",
  "rpc",
  "scrypt",
  "serde",

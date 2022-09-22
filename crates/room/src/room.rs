@@ -35,11 +35,11 @@ impl Room {
         todo!()
     }
 
-    pub async fn share_project(&mut self, project: ModelHandle<Project>) -> Result<()> {
+    pub async fn publish_project(&mut self, project: ModelHandle<Project>) -> Result<()> {
         todo!()
     }
 
-    pub async fn unshare_project(&mut self, project: ModelHandle<Project>) -> Result<()> {
+    pub async fn unpublish_project(&mut self, project: ModelHandle<Project>) -> Result<()> {
         todo!()
     }
 

@@ -90,10 +90,15 @@ async fn test_share_project_in_room(
         )
         .await;
 
+    let room_a = Room::create(client_a.clone()).await.unwrap();
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = project_a.update(cx_a, |project, cx| project.share(cx)).await.unwrap();
+    // room.publish_project(project_a.clone()).await.unwrap();
 
-
+    let incoming_calls_b = client_b.user_store.incoming_calls();
+    let user_b_joined = room_a.invite(client_b.user_id().unwrap());
+    let call_b = incoming_calls_b.next().await.unwrap();
+    let room_b = Room::join(call_b.room_id, client_b.clone()).await.unwrap();
+    user_b_joined.await.unwrap();
 }
 
 #[gpui::test(iterations = 10)]
@@ -5468,9 +5473,6 @@ impl TestClient {
             .unwrap();
         worktree
             .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
-            .await;
-        project
-            .update(cx, |project, _| project.next_remote_id())
             .await;
         (project, worktree.read_with(cx, |tree, _| tree.id()))
     }
