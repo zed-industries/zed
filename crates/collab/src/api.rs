@@ -396,12 +396,17 @@ async fn get_user_for_invite_code(
     Ok(Json(app.db.get_user_for_invite_code(&code).await?))
 }
 
+#[derive(Serialize)]
+struct CreateSignupResponse {
+    metrics_id: i32,
+}
+
 async fn create_signup(
     Json(params): Json<Signup>,
     Extension(app): Extension<Arc<AppState>>,
-) -> Result<()> {
-    app.db.create_signup(params).await?;
-    Ok(())
+) -> Result<Json<CreateSignupResponse>> {
+    let metrics_id = app.db.create_signup(params).await?;
+    Ok(Json(CreateSignupResponse { metrics_id }))
 }
 
 async fn get_waitlist_summary(

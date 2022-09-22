@@ -1139,17 +1139,20 @@ async fn test_signups() {
     let db = postgres.db();
 
     // people sign up on the waitlist
+    let mut signup_metric_ids = Vec::new();
     for i in 0..8 {
-        db.create_signup(Signup {
-            email_address: format!("person-{i}@example.com"),
-            platform_mac: true,
-            platform_linux: i % 2 == 0,
-            platform_windows: i % 4 == 0,
-            editor_features: vec!["speed".into()],
-            programming_languages: vec!["rust".into(), "c".into()],
-        })
-        .await
-        .unwrap();
+        signup_metric_ids.push(
+            db.create_signup(Signup {
+                email_address: format!("person-{i}@example.com"),
+                platform_mac: true,
+                platform_linux: i % 2 == 0,
+                platform_windows: i % 4 == 0,
+                editor_features: vec!["speed".into()],
+                programming_languages: vec!["rust".into(), "c".into()],
+            })
+            .await
+            .unwrap(),
+        );
     }
 
     assert_eq!(
@@ -1235,6 +1238,7 @@ async fn test_signups() {
     assert_eq!(user.github_login, "person-0");
     assert_eq!(user.email_address.as_deref(), Some("person-0@example.com"));
     assert_eq!(user.invite_count, 5);
+    assert_eq!(user.metrics_id, signup_metric_ids[0]);
 
     // cannot redeem the same signup again.
     db.create_user_from_invite(

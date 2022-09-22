@@ -37,7 +37,7 @@ pub trait Db: Send + Sync {
     async fn get_user_for_invite_code(&self, code: &str) -> Result<User>;
     async fn create_invite_from_code(&self, code: &str, email_address: &str) -> Result<Invite>;
 
-    async fn create_signup(&self, signup: Signup) -> Result<()>;
+    async fn create_signup(&self, signup: Signup) -> Result<i32>;
     async fn get_waitlist_summary(&self) -> Result<WaitlistSummary>;
     async fn get_unsent_invites(&self, count: usize) -> Result<Vec<Invite>>;
     async fn record_sent_invites(&self, invites: &[Invite]) -> Result<()>;
@@ -364,8 +364,8 @@ impl Db for PostgresDb {
 
     // signups
 
-    async fn create_signup(&self, signup: Signup) -> Result<()> {
-        sqlx::query(
+    async fn create_signup(&self, signup: Signup) -> Result<i32> {
+        Ok(sqlx::query_scalar(
             "
             INSERT INTO signups
             (
@@ -381,6 +381,7 @@ impl Db for PostgresDb {
             )
             VALUES
                 ($1, $2, 'f', $3, $4, $5, 'f', $6, $7)
+            RETURNING id
             ",
         )
         .bind(&signup.email_address)
@@ -390,9 +391,8 @@ impl Db for PostgresDb {
         .bind(&signup.platform_windows)
         .bind(&signup.editor_features)
         .bind(&signup.programming_languages)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+        .fetch_one(&self.pool)
+        .await?)
     }
 
     async fn get_waitlist_summary(&self) -> Result<WaitlistSummary> {
@@ -479,7 +479,10 @@ impl Db for PostgresDb {
         .ok_or_else(|| Error::Http(StatusCode::NOT_FOUND, "no such invite".to_string()))?;
 
         if existing_user_id.is_some() {
-            Err(Error::Http(StatusCode::UNPROCESSABLE_ENTITY, "invitation already redeemed".to_string()))?;
+            Err(Error::Http(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invitation already redeemed".to_string(),
+            ))?;
         }
 
         let user_id: UserId = sqlx::query_scalar(
@@ -1564,6 +1567,7 @@ pub struct User {
     pub id: UserId,
     pub github_login: String,
     pub github_user_id: Option<i32>,
+    pub metrics_id: i32,
     pub email_address: Option<String>,
     pub admin: bool,
     pub invite_code: Option<String>,
@@ -1789,7 +1793,8 @@ mod test {
             {
                 Ok(user.id)
             } else {
-                let user_id = UserId(post_inc(&mut *self.next_user_id.lock()));
+                let id = post_inc(&mut *self.next_user_id.lock());
+                let user_id = UserId(id);
                 users.insert(
                     user_id,
                     User {
@@ -1797,6 +1802,7 @@ mod test {
                         github_login: params.github_login,
                         github_user_id: Some(params.github_user_id),
                         email_address: Some(email_address.to_string()),
+                        metrics_id: id + 100,
                         admin,
                         invite_code: None,
                         invite_count: 0,
@@ -1878,7 +1884,7 @@ mod test {
 
         // signups
 
-        async fn create_signup(&self, _signup: Signup) -> Result<()> {
+        async fn create_signup(&self, _signup: Signup) -> Result<i32> {
             unimplemented!()
         }
 
