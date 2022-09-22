@@ -85,6 +85,14 @@ export function text(
 ) {
   let style = getStyle(layer, styleSetStyleOrProperties, styleOrProperties);
   let size = fontSizes[properties?.size || "sm"];
+
+  if (typeof styleSetStyleOrProperties === "object") {
+    properties = styleSetStyleOrProperties;
+  }
+  if (typeof styleOrProperties === "object") {
+    properties = styleOrProperties;
+  }
+
   return {
     family: fontFamilies[fontFamily],
     color: style.foreground,
@@ -140,6 +148,13 @@ export function border(
   properties?: BorderProperties
 ): Border {
   let style = getStyle(layer, styleSetStyleOrProperties, styleOrProperties);
+
+  if (typeof styleSetStyleOrProperties === "object") {
+    properties = styleSetStyleOrProperties;
+  }
+  if (typeof styleOrProperties === "object") {
+    properties = styleOrProperties;
+  }
 
   return {
     color: style.border,

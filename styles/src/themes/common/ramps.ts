@@ -1,5 +1,5 @@
 import chroma, { Color, Scale } from "chroma-js";
-import { ColorScheme, Elevation, Layer, Player, RampSet, Shadow, Style, StyleSet } from "./colorScheme";
+import { ColorScheme, Elevation, Layer, Player, RampSet, Shadow, Style, Styles, StyleSet } from "./colorScheme";
 
 export function colorRamp(color: Color): Scale {
   let hue = color.hsl()[0];
@@ -151,34 +151,67 @@ function elevation(ramps: RampSet, isLight: boolean, shadow?: Shadow): Elevation
   };
 }
 
-function bottomLayer(ramps: RampSet, isLight: boolean): Layer {
-  let baseSet: StyleSet = {
-    default: {
-      background: ramps.neutral(0.15).hex(),
-      border: ramps.neutral(0.2).hex(),
-      foreground: ramps.neutral(1).hex(),
-    },
-    hovered: {
-      background: ramps.neutral(0.25).hex(),
-      border: ramps.neutral(1.0).hex(),
-      foreground: ramps.neutral(0.9).hex(),
-    },
-    pressed: {
-      background: ramps.neutral(0.55).hex(),
-      border: ramps.neutral(0.9).hex(),
-      foreground: ramps.neutral(0.9).hex(),
-    },
-    active: {
-      background: ramps.neutral(0.8).hex(),
-      border: ramps.neutral(0.8).hex(),
-      foreground: ramps.neutral(0.1).hex(),
-    },
-    disabled: {
-      background: ramps.neutral(0.25).hex(),
-      border: ramps.neutral(1).hex(),
-      foreground: ramps.neutral(0.9).hex(),
-    },
+interface StyleColors {
+  default: number | Color,
+  hovered: number | Color,
+  pressed: number | Color,
+  active: number | Color,
+  disabled: number | Color,
+}
+function buildStyleSet(ramp: Scale, styleDefinitions: {
+  background: StyleColors,
+  border: StyleColors,
+  foreground: StyleColors,
+}): StyleSet {
+  function colorString(indexOrColor: number | Color): string {
+    if (typeof indexOrColor === "number") {
+      return ramp(indexOrColor).hex();
+    } else {
+      return indexOrColor.hex();
+    }
   }
+
+  function buildStyle(style: Styles): Style {
+    return {
+      background: colorString(styleDefinitions.background[style]),
+      border: colorString(styleDefinitions.border[style]),
+      foreground: colorString(styleDefinitions.foreground[style]),
+    }
+  }
+
+  return {
+    default: buildStyle("default"),
+    hovered: buildStyle("hovered"),
+    pressed: buildStyle("pressed"),
+    active: buildStyle("active"),
+    disabled: buildStyle("disabled"),
+  }
+}
+
+function bottomLayer(ramps: RampSet, isLight: boolean): Layer {
+  let baseSet = buildStyleSet(ramps.neutral, {
+    background: {
+      default: 0.15,
+      hovered: 0.25,
+      pressed: 0.55,
+      active: 0.8,
+      disabled: 0.25,
+    },
+    border: {
+      default: 0.2,
+      hovered: 1.0,
+      pressed: 0.9,
+      active: 0.8,
+      disabled: 1,
+    },
+    foreground: {
+      default: 1,
+      hovered: 0.9,
+      pressed: 0.9,
+      active: 0.1,
+      disabled: 0.9,
+    },
+  });
 
   let onSet: StyleSet = {
     default: {
@@ -212,12 +245,6 @@ function bottomLayer(ramps: RampSet, isLight: boolean): Layer {
     background: ramps.neutral(0.2).hex(),
     border: ramps.neutral(0.25).hex(),
     foreground: ramps.neutral(1).hex(),
-  };
-
-  let variantStyle: Style = {
-    background: ramps.neutral(0.3).hex(),
-    border: ramps.neutral(0.6).hex(),
-    foreground: ramps.neutral(0.8).hex(),
   };
 
   let hoveredStyle: Style = {
@@ -268,12 +295,6 @@ function middleLayer(ramps: RampSet, isLight: boolean): Layer {
     background: ramps.neutral(0.2).hex(),
     border: ramps.neutral(0.4).hex(),
     foreground: ramps.neutral(1).hex(),
-  };
-
-  let variantStyle: Style = {
-    background: ramps.neutral(0.3).hex(),
-    border: ramps.neutral(0.6).hex(),
-    foreground: ramps.neutral(0.8).hex(),
   };
 
   let hoveredStyle: Style = {

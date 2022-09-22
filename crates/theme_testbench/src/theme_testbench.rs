@@ -148,7 +148,7 @@ impl ThemeTestbench {
     ) -> Flex {
         Flex::row()
             .with_child(Self::render_button(
-                set_index * 4,
+                set_index * 6,
                 layer_index,
                 set_name,
                 &style_set,
@@ -156,7 +156,23 @@ impl ThemeTestbench {
                 cx,
             ))
             .with_child(Self::render_button(
-                set_index * 4 + 1,
+                set_index * 6 + 1,
+                layer_index,
+                "hovered",
+                &style_set,
+                Some(|style_set| &style_set.hovered),
+                cx,
+            ))
+            .with_child(Self::render_button(
+                set_index * 6 + 2,
+                layer_index,
+                "pressed",
+                &style_set,
+                Some(|style_set| &style_set.pressed),
+                cx,
+            ))
+            .with_child(Self::render_button(
+                set_index * 6 + 3,
                 layer_index,
                 "active",
                 &style_set,
@@ -164,7 +180,7 @@ impl ThemeTestbench {
                 cx,
             ))
             .with_child(Self::render_button(
-                set_index * 4 + 2,
+                set_index * 6 + 4,
                 layer_index,
                 "disabled",
                 &style_set,

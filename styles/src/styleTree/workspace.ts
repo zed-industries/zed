@@ -118,7 +118,7 @@ export default function workspace(colorScheme: ColorScheme) {
     toolbar: {
       height: 34,
       background: background(elevation.top),
-      border: border(elevation.top, "variant", { bottom: true }),
+      border: border(elevation.top, { bottom: true }),
       itemSpacing: 8,
       navButton: {
         color: foreground(elevation.top, "on"),
