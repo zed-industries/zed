@@ -4535,10 +4535,11 @@ impl Project {
         if worktree.read(cx).is_local() {
             cx.subscribe(worktree, |this, worktree, event, cx| match event {
                 worktree::Event::UpdatedEntries => this.update_local_worktree_buffers(worktree, cx),
+                worktree::Event::UpdatedGitRepositories(_) => todo!(),
             })
             .detach();
         }
-        
+
         let push_strong_handle = {
             let worktree = worktree.read(cx);
             self.is_shared() || worktree.is_visible() || worktree.is_remote()

@@ -18,6 +18,7 @@ use futures::{
     Stream, StreamExt,
 };
 use fuzzy::CharBag;
+use git2::Repository;
 use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task,
@@ -27,7 +28,7 @@ use language::{
     Buffer, DiagnosticEntry, LineEnding, PointUtf16, Rope,
 };
 use lazy_static::lazy_static;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
@@ -41,6 +42,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt,
     future::Future,
+    mem,
     ops::{Deref, DerefMut},
     os::unix::prelude::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
@@ -52,6 +54,7 @@ use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
 use util::{ResultExt, TryFutureExt};
 
 lazy_static! {
+    static ref DOT_GIT: &'static OsStr = OsStr::new(".git");
     static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");
 }
 
@@ -101,6 +104,24 @@ pub struct Snapshot {
     is_complete: bool,
 }
 
+//
+
+// 'GitResolver'
+// File paths <-> Repository Paths  -> git_repository_path() -> First .git in an ancestor in a path
+// Repository Paths <-> Repository Pointers -> git_repository_open()
+// fs.watch()  ^
+//
+// Folder: where all the git magic happens
+// .git IT
+// OR it can be a file that points somewhere else
+
+// 1. Walk through the file tree, looking for .git files or folders
+// 2. When we discover them, open and save a libgit2 pointer to the repository
+// 2a. Use git_repository_path() to start a watch on the repository (if not already watched)
+//
+// File paths -> Git repository == Ancestor check (is there a .git in an ancestor folder)
+// Git repository -> Files == Descendent check (subtracting out any intersecting .git folders)
+
 #[derive(Clone)]
 pub struct LocalSnapshot {
     abs_path: Arc<Path>,
@@ -113,9 +134,10 @@ pub struct LocalSnapshot {
 }
 
 #[derive(Clone)]
-pub(crate) struct GitRepositoryState {
+pub struct GitRepositoryState {
     content_path: Arc<Path>,
     git_dir_path: Arc<Path>,
+    scan_id: usize,
     repository: Arc<Mutex<git2::Repository>>,
 }
 
@@ -1299,9 +1321,32 @@ impl LocalSnapshot {
     pub fn extension_counts(&self) -> &HashMap<OsString, usize> {
         &self.extension_counts
     }
-    
+
     pub(crate) fn git_repository_for_file_path(&self, path: &Path) -> Option<GitRepositoryState> {
+        for repository in self.git_repositories.iter().rev() {
+            if path.starts_with(&repository.content_path) {
+                return Some(repository.clone());
+            }
+        }
         None
+    }
+
+    pub(crate) fn git_repository_for_git_data(&self, path: &Path) -> Option<GitRepositoryState> {
+        for repository in self.git_repositories.iter() {
+            if path.starts_with(&repository.git_dir_path) {
+                return Some(repository.clone());
+            }
+        }
+        None
+    }
+
+    pub(crate) fn does_git_repository_track_file_path(
+        &self,
+        repo: &GitRepositoryState,
+        file_path: &Path,
+    ) -> bool {
+        self.git_repository_for_file_path(file_path)
+            .map_or(false, |r| r.content_path == repo.content_path)
     }
 
     #[cfg(test)]
@@ -1400,6 +1445,25 @@ impl LocalSnapshot {
                         "error loading .gitignore file {:?} - {:?}",
                         &entry.path,
                         error
+                    );
+                }
+            }
+        } else if entry.path.file_name() == Some(&DOT_GIT) {
+            let abs_path = self.abs_path.join(&entry.path);
+            let content_path: Arc<Path> = entry.path.parent().unwrap().into();
+            if let Err(ix) = self
+                .git_repositories
+                .binary_search_by_key(&&content_path, |repo| &repo.content_path)
+            {
+                if let Some(repository) = Repository::open(&abs_path).log_err() {
+                    self.git_repositories.insert(
+                        ix,
+                        GitRepositoryState {
+                            content_path,
+                            git_dir_path: repository.path().into(),
+                            scan_id: self.scan_id,
+                            repository: Arc::new(Mutex::new(repository)),
+                        },
                     );
                 }
             }
@@ -1548,6 +1612,14 @@ impl LocalSnapshot {
                 .get_mut(abs_parent_path.as_path())
             {
                 *scan_id = self.snapshot.scan_id;
+            }
+        } else if path.file_name() == Some(&DOT_GIT) {
+            let parent_path = path.parent().unwrap();
+            if let Ok(ix) = self
+                .git_repositories
+                .binary_search_by_key(&parent_path, |repo| repo.content_path.as_ref())
+            {
+                self.git_repositories[ix].scan_id = self.snapshot.scan_id;
             }
         }
     }
@@ -2423,6 +2495,7 @@ impl BackgroundScanner {
         self.snapshot.lock().removed_entry_ids.clear();
 
         self.update_ignore_statuses().await;
+        self.update_git_repositories().await;
         true
     }
 
@@ -2486,6 +2559,16 @@ impl BackgroundScanner {
                 }
             })
             .await;
+    }
+
+    async fn update_git_repositories(&self) {
+        let mut snapshot = self.snapshot();
+        let mut git_repositories = mem::take(&mut snapshot.git_repositories);
+        git_repositories.retain(|git_repository| {
+            let dot_git_path = git_repository.content_path.join(&*DOT_GIT);
+            snapshot.entry_for_path(dot_git_path).is_some()
+        });
+        snapshot.git_repositories = git_repositories;
     }
 
     async fn update_ignore_status(&self, job: UpdateIgnoreStatusJob, snapshot: &LocalSnapshot) {
@@ -3060,7 +3143,7 @@ mod tests {
             assert!(tree.entry_for_path(".git").unwrap().is_ignored);
         });
     }
-    
+
     #[gpui::test]
     async fn test_git_repository_for_path(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.background());
@@ -3068,7 +3151,9 @@ mod tests {
             "/root",
             json!({
                 "dir1": {
-                    ".git": {},
+                    ".git": {
+                        "HEAD": "abc"
+                    },
                     "deps": {
                         "dep1": {
                             ".git": {},
@@ -3097,22 +3182,39 @@ mod tests {
             &mut cx.to_async(),
         )
         .await
-        .unwrap();    
-        
+        .unwrap();
+
         cx.foreground().run_until_parked();
-        
+
         tree.read_with(cx, |tree, cx| {
             let tree = tree.as_local().unwrap();
-            
-            assert!(tree.git_repository_for_file_path("c.txt".as_ref()).is_none());
 
-            let repo1 = tree.git_repository_for_file_path("dir1/src/b.txt".as_ref()).unwrap().lock();
-            assert_eq!(repo1.content_path.as_ref(), Path::new("dir1"));
-            assert_eq!(repo1.git_dir_path.as_ref(), Path::new("dir1/.git"));
+            assert!(tree
+                .git_repository_for_file_path("c.txt".as_ref())
+                .is_none());
 
-            let repo2 = tree.git_repository_for_file_path("dir1/deps/dep1/src/a.txt".as_ref()).unwrap().lock();
-            assert_eq!(repo2.content_path.as_ref(), Path::new("dir1/deps/dep1"));
-            assert_eq!(repo2.git_dir_path.as_ref(), Path::new("dir1/deps/dep1/.git"));
+            let repo = tree
+                .git_repository_for_file_path("dir1/src/b.txt".as_ref())
+                .unwrap();
+
+            // Need to update the file system for anything involving git
+            // Goal: Make this test pass
+            // Up Next: Invalidating git repos!
+            assert_eq!(repo.content_path.as_ref(), Path::new("dir1"));
+            assert_eq!(repo.git_dir_path.as_ref(), Path::new("dir1/.git"));
+
+            let repo = tree
+                .git_repository_for_file_path("dir1/deps/dep1/src/a.txt".as_ref())
+                .unwrap();
+
+            assert_eq!(repo.content_path.as_ref(), Path::new("dir1/deps/dep1"));
+            assert_eq!( repo = tree    .git_repository_for_git_data("dir/.git/HEAD".as_ref())
+                .unwrap();
+            assert_eq!(repo.content_path.as_ref(), Path::new("dir1/deps/dep1"));
+
+            assert!(tree.does_git_repository_track_file_path(&repo, "dir1/src/b.txt".as_ref()));
+            assert!(!tree
+                .does_git_repository_track_file_path(&repo, "dir1/deps/dep1/src/a.txt".as_ref()));
         });
     }
 
