@@ -287,7 +287,7 @@ impl Element for UniformList {
         cx.scene.push_layer(Some(bounds));
 
         cx.scene.push_mouse_region(
-            MouseRegion::new::<Self>(self.view_id, 0, bounds).on_scroll({
+            MouseRegion::new::<Self>(self.view_id, 0, visible_bounds).on_scroll({
                 let scroll_max = layout.scroll_max;
                 let state = self.state.clone();
                 move |ScrollWheelRegionEvent {
