@@ -72,8 +72,8 @@ export default function workspace(colorScheme: ColorScheme) {
       },
       border: border(layer, { bottom: true, overlay: true }),
       signInPrompt: {
-        background: background(layer),
-        border: border(layer),
+        background: background(layer, "on", "default"),
+        border: border(layer, "on", "default"),
         cornerRadius: 6,
         margin: {
           top: 1,
