@@ -5196,7 +5196,7 @@ impl TestServer {
                 .unwrap()
         };
         let client_name = name.to_string();
-        let mut client = Client::new(http.clone());
+        let mut client = cx.read(|cx| Client::new(http.clone(), cx));
         let server = self.server.clone();
         let db = self.app_state.db.clone();
         let connection_killers = self.connection_killers.clone();

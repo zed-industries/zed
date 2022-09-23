@@ -32,6 +32,7 @@ thiserror = "1.0.29"
 time = { version = "0.3", features = ["serde", "serde-well-known"] }
 tiny_http = "0.8"
 url = "2.2"
+serde = { version = "*", features = ["derive"] }
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }

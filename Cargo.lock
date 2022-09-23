@@ -955,6 +955,7 @@ dependencies = [
  "postage",
  "rand 0.8.5",
  "rpc",
+ "serde",
  "smol",
  "sum_tree",
  "thiserror",

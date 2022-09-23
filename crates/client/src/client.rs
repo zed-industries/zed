@@ -3,6 +3,7 @@ pub mod test;
 
 pub mod channel;
 pub mod http;
+pub mod telemetry;
 pub mod user;
 
 use anyhow::{anyhow, Context, Result};
@@ -13,8 +14,9 @@ use async_tungstenite::tungstenite::{
 };
 use futures::{future::LocalBoxFuture, FutureExt, SinkExt, StreamExt, TryStreamExt};
 use gpui::{
-    actions, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, AsyncAppContext,
-    Entity, ModelContext, ModelHandle, MutableAppContext, Task, View, ViewContext, ViewHandle,
+    actions, serde_json::Value, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle,
+    AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
+    MutableAppContext, Task, View, ViewContext, ViewHandle,
 };
 use http::HttpClient;
 use lazy_static::lazy_static;
@@ -31,6 +33,7 @@ use std::{
     sync::{Arc, Weak},
     time::{Duration, Instant},
 };
+use telemetry::Telemetry;
 use thiserror::Error;
 use url::Url;
 use util::{ResultExt, TryFutureExt};
@@ -63,6 +66,7 @@ pub struct Client {
     id: usize,
     peer: Arc<Peer>,
     http: Arc<dyn HttpClient>,
+    telemetry: Arc<Telemetry>,
     state: RwLock<ClientState>,
 
     #[allow(clippy::type_complexity)]
@@ -232,10 +236,11 @@ impl Drop for Subscription {
 }
 
 impl Client {
-    pub fn new(http: Arc<dyn HttpClient>) -> Arc<Self> {
+    pub fn new(http: Arc<dyn HttpClient>, cx: &AppContext) -> Arc<Self> {
         Arc::new(Self {
             id: 0,
             peer: Peer::new(),
+            telemetry: Telemetry::new(http.clone(), cx),
             http,
             state: Default::default(),
 
@@ -595,6 +600,9 @@ impl Client {
         if credentials.is_none() && try_keychain {
             credentials = read_credentials_from_keychain(cx);
             read_from_keychain = credentials.is_some();
+            if read_from_keychain {
+                self.log_event("read_credentials_from_keychain", Default::default());
+            }
         }
         if credentials.is_none() {
             let mut status_rx = self.status();
@@ -878,6 +886,7 @@ impl Client {
     ) -> Task<Result<Credentials>> {
         let platform = cx.platform();
         let executor = cx.background();
+        let telemetry = self.telemetry.clone();
         executor.clone().spawn(async move {
             // Generate a pair of asymmetric encryption keys. The public key will be used by the
             // zed server to encrypt the user's access token, so that it can'be intercepted by
@@ -956,6 +965,8 @@ impl Client {
                 .context("failed to decrypt access token")?;
             platform.activate(true);
 
+            telemetry.log_event("authenticate_with_browser", Default::default());
+
             Ok(Credentials {
                 user_id: user_id.parse()?,
                 access_token,
@@ -1019,6 +1030,10 @@ impl Client {
     ) -> Result<()> {
         log::debug!("rpc respond. client_id:{}. name:{}", self.id, T::NAME);
         self.peer.respond_with_error(receipt, error)
+    }
+
+    pub fn log_event(&self, kind: &str, properties: Value) {
+        self.telemetry.log_event(kind, properties)
     }
 }
 
@@ -1085,7 +1100,7 @@ mod tests {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
-        let client = Client::new(FakeHttpClient::with_404_response());
+        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
         let server = FakeServer::for_client(user_id, &client, cx).await;
         let mut status = client.status();
         assert!(matches!(
@@ -1124,7 +1139,7 @@ mod tests {
 
         let auth_count = Arc::new(Mutex::new(0));
         let dropped_auth_count = Arc::new(Mutex::new(0));
-        let client = Client::new(FakeHttpClient::with_404_response());
+        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
         client.override_authenticate({
             let auth_count = auth_count.clone();
             let dropped_auth_count = dropped_auth_count.clone();
@@ -1173,7 +1188,7 @@ mod tests {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
-        let client = Client::new(FakeHttpClient::with_404_response());
+        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
         let (done_tx1, mut done_rx1) = smol::channel::unbounded();
@@ -1219,7 +1234,7 @@ mod tests {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
-        let client = Client::new(FakeHttpClient::with_404_response());
+        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
         let model = cx.add_model(|_| Model::default());
@@ -1247,7 +1262,7 @@ mod tests {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
-        let client = Client::new(FakeHttpClient::with_404_response());
+        let client = cx.update(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
         let model = cx.add_model(|_| Model::default());

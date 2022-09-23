@@ -2804,7 +2804,7 @@ mod tests {
         .await;
 
         let http_client = FakeHttpClient::with_404_response();
-        let client = Client::new(http_client);
+        let client = cx.read(|cx| Client::new(http_client, cx));
 
         let tree = Worktree::local(
             client,
@@ -2866,8 +2866,7 @@ mod tests {
         fs.insert_symlink("/root/lib/a/lib", "..".into()).await;
         fs.insert_symlink("/root/lib/b/lib", "..".into()).await;
 
-        let http_client = FakeHttpClient::with_404_response();
-        let client = Client::new(http_client);
+        let client = cx.read(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
         let tree = Worktree::local(
             client,
             Arc::from(Path::new("/root")),
@@ -2945,8 +2944,7 @@ mod tests {
         }));
         let dir = parent_dir.path().join("tree");
 
-        let http_client = FakeHttpClient::with_404_response();
-        let client = Client::new(http_client.clone());
+        let client = cx.read(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
 
         let tree = Worktree::local(
             client,
@@ -3016,8 +3014,7 @@ mod tests {
             "ignored-dir": {}
         }));
 
-        let http_client = FakeHttpClient::with_404_response();
-        let client = Client::new(http_client.clone());
+        let client = cx.read(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
 
         let tree = Worktree::local(
             client,
@@ -3064,8 +3061,7 @@ mod tests {
 
     #[gpui::test(iterations = 30)]
     async fn test_create_directory(cx: &mut TestAppContext) {
-        let http_client = FakeHttpClient::with_404_response();
-        let client = Client::new(http_client.clone());
+        let client = cx.read(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(

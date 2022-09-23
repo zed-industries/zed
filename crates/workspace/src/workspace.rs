@@ -856,7 +856,7 @@ impl AppState {
         let fs = project::FakeFs::new(cx.background().clone());
         let languages = Arc::new(LanguageRegistry::test());
         let http_client = client::test::FakeHttpClient::with_404_response();
-        let client = Client::new(http_client.clone());
+        let client = Client::new(http_client.clone(), cx);
         let project_store = cx.add_model(|_| ProjectStore::new(project::Db::open_fake()));
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
         let themes = ThemeRegistry::new((), cx.font_cache().clone());

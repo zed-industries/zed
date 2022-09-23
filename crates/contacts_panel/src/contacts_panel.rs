@@ -1216,7 +1216,7 @@ mod tests {
 
         let languages = Arc::new(LanguageRegistry::test());
         let http_client = FakeHttpClient::with_404_response();
-        let client = Client::new(http_client.clone());
+        let client = cx.read(|cx| Client::new(http_client.clone(), cx));
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
         let project_store = cx.add_model(|_| ProjectStore::new(project::Db::open_fake()));
         let server = FakeServer::for_client(current_user_id, &client, cx).await;

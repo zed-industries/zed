@@ -196,6 +196,14 @@ impl super::Platform for Platform {
             patch: 0,
         })
     }
+
+    fn os_version(&self) -> Result<AppVersion> {
+        Ok(AppVersion {
+            major: 1,
+            minor: 0,
+            patch: 0,
+        })
+    }
 }
 
 impl Window {
