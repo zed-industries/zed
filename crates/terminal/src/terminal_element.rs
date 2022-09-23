@@ -237,7 +237,7 @@ impl TerminalElement {
                 //Layout current cell text
                 {
                     let cell_text = &cell.c.to_string();
-                    if cell_text != " " {
+                    if !is_blank(&cell) {
                         let cell_style = TerminalElement::cell_style(
                             &cell,
                             fg,
@@ -257,8 +257,8 @@ impl TerminalElement {
                             Point::new(line_index as i32, cell.point.column.0 as i32),
                             layout_cell,
                         ))
-                    }
-                };
+                    };
+                }
             }
 
             if cur_rect.is_some() {
@@ -308,7 +308,7 @@ impl TerminalElement {
         let flags = indexed.cell.flags;
         let fg = convert_color(&fg, &style.colors, modal);
 
-        let underline = flags
+        let mut underline = flags
             .intersects(Flags::ALL_UNDERLINES)
             .then(|| Underline {
                 color: Some(fg),
@@ -316,6 +316,13 @@ impl TerminalElement {
                 thickness: OrderedFloat(1.),
             })
             .unwrap_or_default();
+
+        if indexed.cell.hyperlink().is_some() {
+            underline.squiggly = true;
+            if underline.thickness == OrderedFloat(0.) {
+                underline.thickness = OrderedFloat(1.);
+            }
+        }
 
         let mut properties = Properties::new();
         if indexed
@@ -569,6 +576,7 @@ impl Element for TerminalElement {
             cursor_char,
             selection,
             cursor,
+            last_hovered_hyperlink,
             ..
         } = &terminal_handle.read(cx).last_content;
 
@@ -822,6 +830,29 @@ impl Element for TerminalElement {
 
         Some(layout.cursor.as_ref()?.bounding_rect(origin))
     }
+}
+
+fn is_blank(cell: &IndexedCell) -> bool {
+    if cell.c != ' ' {
+        return false;
+    }
+
+    if cell.bg != AnsiColor::Named(NamedColor::Background) {
+        return false;
+    }
+
+    if cell.hyperlink().is_some() {
+        return false;
+    }
+
+    if cell
+        .flags
+        .intersects(Flags::ALL_UNDERLINES | Flags::INVERSE | Flags::STRIKEOUT)
+    {
+        return false;
+    }
+
+    return true;
 }
 
 fn to_highlighted_range_lines(

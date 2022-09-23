@@ -387,7 +387,6 @@ impl TerminalBuilder {
             foreground_process_info: None,
             breadcrumb_text: String::new(),
             scroll_px: 0.,
-            last_hovered_hyperlink: None,
         };
 
         Ok(TerminalBuilder {
@@ -474,6 +473,7 @@ pub struct TerminalContent {
     cursor: RenderableCursor,
     cursor_char: char,
     size: TerminalSize,
+    last_hovered_hyperlink: Option<(String, RangeInclusive<Point>)>,
 }
 
 impl Default for TerminalContent {
@@ -490,6 +490,7 @@ impl Default for TerminalContent {
             },
             cursor_char: Default::default(),
             size: Default::default(),
+            last_hovered_hyperlink: None,
         }
     }
 }
@@ -502,7 +503,6 @@ pub struct Terminal {
     pub matches: Vec<RangeInclusive<Point>>,
     last_content: TerminalContent,
     last_synced: Instant,
-    last_hovered_hyperlink: Option<(String, RangeInclusive<Point>)>,
     sync_task: Option<Task<()>>,
     selection_head: Option<Point>,
     breadcrumb_text: String,
@@ -653,7 +653,7 @@ impl Terminal {
             }
             InternalEvent::ScrollToPoint(point) => term.scroll_to_point(*point),
             InternalEvent::Hyperlink(position, open) => {
-                self.last_hovered_hyperlink = None;
+                self.last_content.last_hovered_hyperlink = None;
 
                 let point = grid_point(
                     *position,
@@ -663,12 +663,11 @@ impl Terminal {
 
                 if let Some(url_match) = regex_match_at(term, point, &URL_REGEX) {
                     let url = term.bounds_to_string(*url_match.start(), *url_match.end());
-                    dbg!(&url, &url_match, open);
 
                     if *open {
                         open_uri(&url).log_err();
                     } else {
-                        self.last_hovered_hyperlink = Some((url, url_match));
+                        self.last_content.last_hovered_hyperlink = Some((url, url_match));
                     }
                 }
             }
@@ -779,11 +778,11 @@ impl Terminal {
             self.process_terminal_event(&e, &mut terminal, cx)
         }
 
-        self.last_content = Self::make_content(&terminal, self.last_content.size);
+        self.last_content = Self::make_content(&terminal, &self.last_content);
         self.last_synced = Instant::now();
     }
 
-    fn make_content(term: &Term<ZedListener>, last_size: TerminalSize) -> TerminalContent {
+    fn make_content(term: &Term<ZedListener>, last_content: &TerminalContent) -> TerminalContent {
         let content = term.renderable_content();
         TerminalContent {
             cells: content
@@ -806,7 +805,8 @@ impl Terminal {
             selection: content.selection,
             cursor: content.cursor,
             cursor_char: term.grid()[content.cursor.point].c,
-            size: last_size,
+            size: last_content.size,
+            last_hovered_hyperlink: last_content.last_hovered_hyperlink.clone(),
         }
     }
 
@@ -844,7 +844,7 @@ impl Terminal {
     }
 
     pub fn mouse_move(&mut self, e: &MouseMovedEvent, origin: Vector2F) {
-        self.last_hovered_hyperlink = None;
+        self.last_content.last_hovered_hyperlink = None;
         let position = e.position.sub(origin);
         if self.mouse_mode(e.shift) {
             let point = grid_point(
@@ -882,7 +882,7 @@ impl Terminal {
                     }
                 }
 
-                self.last_hovered_hyperlink = link.map(|link| {
+                self.last_content.last_hovered_hyperlink = link.map(|link| {
                     (
                         link.uri().to_owned(),
                         self.last_content.cells[min_index].point
