@@ -34,6 +34,7 @@ use project::{
     DiagnosticSummary, Project, ProjectPath, ProjectStore, WorktreeId,
 };
 use rand::prelude::*;
+use room::Room;
 use rpc::PeerId;
 use serde_json::json;
 use settings::{Formatter, Settings};
@@ -90,14 +91,24 @@ async fn test_share_project_in_room(
         )
         .await;
 
-    let room_a = Room::create(client_a.clone()).await.unwrap();
+    let room_a = cx_a
+        .update(|cx| Room::create(client_a.clone(), cx))
+        .await
+        .unwrap();
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
     // room.publish_project(project_a.clone()).await.unwrap();
 
-    let incoming_calls_b = client_b.user_store.incoming_calls();
-    let user_b_joined = room_a.invite(client_b.user_id().unwrap());
+    let mut incoming_calls_b = client_b
+        .user_store
+        .read_with(cx_b, |user, _| user.incoming_calls());
+    let user_b_joined = room_a.update(cx_a, |room, cx| {
+        room.invite(client_b.user_id().unwrap(), cx)
+    });
     let call_b = incoming_calls_b.next().await.unwrap();
-    let room_b = Room::join(call_b.room_id, client_b.clone()).await.unwrap();
+    let room_b = cx_b
+        .update(|cx| Room::join(call_b.room_id, client_b.clone(), cx))
+        .await
+        .unwrap();
     user_b_joined.await.unwrap();
 }
 

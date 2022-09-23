@@ -151,6 +151,7 @@ impl Server {
 
         server
             .add_request_handler(Server::ping)
+            .add_request_handler(Server::create_room)
             .add_request_handler(Server::register_project)
             .add_request_handler(Server::unregister_project)
             .add_request_handler(Server::join_project)
@@ -590,6 +591,16 @@ impl Server {
         response: Response<proto::Ping>,
     ) -> Result<()> {
         response.send(proto::Ack {})?;
+        Ok(())
+    }
+
+    async fn create_room(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::CreateRoom>,
+        response: Response<proto::CreateRoom>,
+    ) -> Result<()> {
+        let room_id = self.store().await.create_room(request.sender_id)?;
+        response.send(proto::CreateRoomResponse { id: room_id })?;
         Ok(())
     }
 

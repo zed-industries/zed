@@ -6,6 +6,7 @@ use serde::Serialize;
 use std::{mem, path::PathBuf, str, time::Duration};
 use time::OffsetDateTime;
 use tracing::instrument;
+use util::post_inc;
 
 pub type RoomId = u64;
 
@@ -13,7 +14,8 @@ pub type RoomId = u64;
 pub struct Store {
     connections: BTreeMap<ConnectionId, ConnectionState>,
     connections_by_user_id: BTreeMap<UserId, HashSet<ConnectionId>>,
-    rooms: BTreeMap<RoomId, Room>,
+    next_room_id: RoomId,
+    rooms: BTreeMap<RoomId, proto::Room>,
     projects: BTreeMap<ProjectId, Project>,
     #[serde(skip)]
     channels: BTreeMap<ChannelId, Channel>,
@@ -23,20 +25,10 @@ pub struct Store {
 struct ConnectionState {
     user_id: UserId,
     admin: bool,
+    rooms: BTreeSet<RoomId>,
     projects: BTreeSet<ProjectId>,
     requested_projects: HashSet<ProjectId>,
     channels: HashSet<ChannelId>,
-}
-
-#[derive(Serialize)]
-struct Room {
-    participants: HashMap<ConnectionId, Participant>,
-}
-
-#[derive(Serialize)]
-struct Participant {
-    user_id: UserId,
-    shared_projects: HashSet<ProjectId>,
 }
 
 #[derive(Serialize)]
@@ -148,6 +140,7 @@ impl Store {
             ConnectionState {
                 user_id,
                 admin,
+                rooms: Default::default(),
                 projects: Default::default(),
                 requested_projects: Default::default(),
                 channels: Default::default(),
@@ -333,6 +326,29 @@ impl Store {
         }
 
         metadata
+    }
+
+    pub fn create_room(&mut self, creator_connection_id: ConnectionId) -> Result<RoomId> {
+        let connection = self
+            .connections
+            .get_mut(&creator_connection_id)
+            .ok_or_else(|| anyhow!("no such connection"))?;
+        let mut room = proto::Room::default();
+        room.participants.push(proto::Participant {
+            user_id: connection.user_id.to_proto(),
+            peer_id: creator_connection_id.0,
+            project_ids: Default::default(),
+            location: Some(proto::ParticipantLocation {
+                variant: Some(proto::participant_location::Variant::External(
+                    proto::participant_location::External {},
+                )),
+            }),
+        });
+
+        let room_id = post_inc(&mut self.next_room_id);
+        self.rooms.insert(room_id, room);
+        connection.rooms.insert(room_id);
+        Ok(room_id)
     }
 
     pub fn register_project(

@@ -1,6 +1,7 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+pub mod call;
 pub mod channel;
 pub mod http;
 pub mod user;

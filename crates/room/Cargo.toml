@@ -10,6 +10,7 @@ doctest = false
 [features]
 test-support = [
     "client/test-support",
+    "collections/test-support",
     "gpui/test-support",
     "project/test-support",
 ]
@@ -17,10 +18,12 @@ test-support = [
 [dependencies]
 anyhow = "1.0.38"
 client = { path = "../client" }
+collections = { path = "../collections" }
 gpui = { path = "../gpui" }
 project = { path = "../project" }
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }
+collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
