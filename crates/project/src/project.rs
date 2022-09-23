@@ -40,7 +40,7 @@ use postage::watch;
 use rand::prelude::*;
 use search::SearchQuery;
 use serde::Serialize;
-use settings::Settings;
+use settings::{FormatOnSave, Formatter, Settings};
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
 use std::{
@@ -3120,12 +3120,11 @@ impl Project {
                     )
                 });
 
-                if trigger == FormatTrigger::Save && !format_on_save {
-                    continue;
-                }
+                let transaction = match (formatter, format_on_save) {
+                    (_, FormatOnSave::Off) if trigger == FormatTrigger::Save => continue,
 
-                let transaction = match formatter {
-                    settings::Formatter::LanguageServer => Self::format_via_lsp(
+                    (Formatter::LanguageServer, FormatOnSave::On | FormatOnSave::Off)
+                    | (_, FormatOnSave::LanguageServer) => Self::format_via_lsp(
                         &this,
                         &buffer,
                         &buffer_abs_path,
@@ -3136,7 +3135,11 @@ impl Project {
                     .await
                     .context("failed to format via language server")?,
 
-                    settings::Formatter::External { command, arguments } => {
+                    (
+                        Formatter::External { command, arguments },
+                        FormatOnSave::On | FormatOnSave::Off,
+                    )
+                    | (_, FormatOnSave::External { command, arguments }) => {
                         Self::format_via_external_command(
                             &buffer,
                             &buffer_abs_path,
