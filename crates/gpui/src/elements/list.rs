@@ -5,8 +5,8 @@ use crate::{
     },
     json::json,
     presenter::MeasurementContext,
-    DebugContext, Element, ElementBox, ElementRc, Event, EventContext, LayoutContext, PaintContext,
-    RenderContext, ScrollWheelEvent, SizeConstraint, View, ViewContext,
+    DebugContext, Element, ElementBox, ElementRc, Event, EventContext, LayoutContext, MouseRegion,
+    PaintContext, RenderContext, SizeConstraint, View, ViewContext,
 };
 use std::{cell::RefCell, collections::VecDeque, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
@@ -263,6 +263,22 @@ impl Element for List {
     ) {
         cx.scene.push_layer(Some(bounds));
 
+        cx.scene
+            .push_mouse_region(MouseRegion::new::<Self>(10, 0, bounds).on_scroll({
+                let state = self.state.clone();
+                let height = bounds.height();
+                let scroll_top = scroll_top.clone();
+                move |e, cx| {
+                    state.0.borrow_mut().scroll(
+                        &scroll_top,
+                        height,
+                        e.platform_event.delta,
+                        e.platform_event.precise,
+                        cx,
+                    )
+                }
+            }));
+
         let state = &mut *self.state.0.borrow_mut();
         for (mut element, origin) in state.visible_elements(bounds, scroll_top) {
             element.paint(origin, visible_bounds, cx);
@@ -311,20 +327,6 @@ impl Element for List {
         new_items.push_tree(cursor.suffix(&()), &());
         drop(cursor);
         state.items = new_items;
-
-        if let Event::ScrollWheel(ScrollWheelEvent {
-            position,
-            delta,
-            precise,
-            ..
-        }) = event
-        {
-            if bounds.contains_point(*position)
-                && state.scroll(scroll_top, bounds.height(), *delta, *precise, cx)
-            {
-                handled = true;
-            }
-        }
 
         handled
     }
@@ -527,7 +529,7 @@ impl StateInner {
         mut delta: Vector2F,
         precise: bool,
         cx: &mut EventContext,
-    ) -> bool {
+    ) {
         if !precise {
             delta *= 20.;
         }
@@ -554,9 +556,6 @@ impl StateInner {
             let visible_range = self.visible_range(height, scroll_top);
             self.scroll_handler.as_mut().unwrap()(visible_range, cx);
         }
-        cx.notify();
-
-        true
     }
 
     fn scroll_top(&self, logical_scroll_top: &ListOffset) -> f32 {
@@ -659,7 +658,7 @@ mod tests {
 
     #[crate::test(self)]
     fn test_layout(cx: &mut crate::MutableAppContext) {
-        let mut presenter = cx.build_presenter(0, 0.);
+        let mut presenter = cx.build_presenter(0, 0., Default::default());
         let (_, view) = cx.add_window(Default::default(), |_| TestView);
         let constraint = SizeConstraint::new(vec2f(0., 0.), vec2f(100., 40.));
 
@@ -759,7 +758,7 @@ mod tests {
             .unwrap_or(10);
 
         let (_, view) = cx.add_window(Default::default(), |_| TestView);
-        let mut presenter = cx.build_presenter(0, 0.);
+        let mut presenter = cx.build_presenter(0, 0., Default::default());
         let mut next_id = 0;
         let elements = Rc::new(RefCell::new(
             (0..rng.gen_range(0..=20))

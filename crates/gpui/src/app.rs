@@ -9,8 +9,8 @@ use crate::{
     platform::{self, KeyDownEvent, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
     util::post_inc,
-    AssetCache, AssetSource, ClipboardItem, FontCache, InputHandler, MouseButton, MouseRegionId,
-    PathPromptOptions, TextLayoutCache,
+    Appearance, AssetCache, AssetSource, ClipboardItem, FontCache, InputHandler, MouseButton,
+    MouseRegionId, PathPromptOptions, TextLayoutCache,
 };
 pub use action::*;
 use anyhow::{anyhow, Context, Result};
@@ -579,6 +579,7 @@ impl TestAppContext {
                 hovered_region_ids: Default::default(),
                 clicked_region_ids: None,
                 refreshing: false,
+                appearance: Appearance::Light,
             };
             f(view, &mut render_cx)
         })
@@ -1243,6 +1244,10 @@ impl MutableAppContext {
             .map_or(false, |window| window.is_fullscreen)
     }
 
+    pub fn window_bounds(&self, window_id: usize) -> RectF {
+        self.presenters_and_platform_windows[&window_id].1.bounds()
+    }
+
     pub fn render_view(&mut self, params: RenderParams) -> Result<ElementBox> {
         let window_id = params.window_id;
         let view_id = params.view_id;
@@ -1260,6 +1265,7 @@ impl MutableAppContext {
         &mut self,
         window_id: usize,
         titlebar_height: f32,
+        appearance: Appearance,
     ) -> HashMap<usize, ElementBox> {
         self.start_frame();
         #[allow(clippy::needless_collect)]
@@ -1287,6 +1293,7 @@ impl MutableAppContext {
                         hovered_region_ids: Default::default(),
                         clicked_region_ids: None,
                         refreshing: false,
+                        appearance,
                     })
                     .unwrap(),
                 )
@@ -1920,46 +1927,61 @@ impl MutableAppContext {
                 },
             );
             root_view.update(this, |view, cx| view.on_focus_in(cx.handle().into(), cx));
-            this.open_platform_window(window_id, window_options);
+
+            let window =
+                this.cx
+                    .platform
+                    .open_window(window_id, window_options, this.foreground.clone());
+            this.register_platform_window(window_id, window);
 
             (window_id, root_view)
         })
     }
 
-    pub fn replace_root_view<T, F>(&mut self, window_id: usize, build_root_view: F) -> ViewHandle<T>
+    pub fn add_status_bar_item<T, F>(&mut self, build_root_view: F) -> (usize, ViewHandle<T>)
     where
         T: View,
         F: FnOnce(&mut ViewContext<T>) -> T,
     {
         self.update(|this| {
+            let window_id = post_inc(&mut this.next_window_id);
             let root_view = this
                 .build_and_insert_view(window_id, ParentId::Root, |cx| Some(build_root_view(cx)))
                 .unwrap();
-            let window = this.cx.windows.get_mut(&window_id).unwrap();
-            window.root_view = root_view.clone().into();
-            window.focused_view_id = Some(root_view.id());
-            root_view
+            this.cx.windows.insert(
+                window_id,
+                Window {
+                    root_view: root_view.clone().into(),
+                    focused_view_id: Some(root_view.id()),
+                    is_active: false,
+                    invalidation: None,
+                    is_fullscreen: false,
+                },
+            );
+            root_view.update(this, |view, cx| view.on_focus_in(cx.handle().into(), cx));
+
+            let status_item = this.cx.platform.add_status_item();
+            this.register_platform_window(window_id, status_item);
+
+            (window_id, root_view)
         })
     }
 
-    pub fn remove_window(&mut self, window_id: usize) {
-        self.cx.windows.remove(&window_id);
-        self.presenters_and_platform_windows.remove(&window_id);
-        self.flush_effects();
-    }
-
-    fn open_platform_window(&mut self, window_id: usize, window_options: WindowOptions) {
-        let mut window =
-            self.cx
-                .platform
-                .open_window(window_id, window_options, self.foreground.clone());
-        let presenter = Rc::new(RefCell::new(
-            self.build_presenter(window_id, window.titlebar_height()),
-        ));
+    fn register_platform_window(
+        &mut self,
+        window_id: usize,
+        mut window: Box<dyn platform::Window>,
+    ) {
+        let presenter = Rc::new(RefCell::new(self.build_presenter(
+            window_id,
+            window.titlebar_height(),
+            window.appearance(),
+        )));
 
         {
             let mut app = self.upgrade();
             let presenter = Rc::downgrade(&presenter);
+
             window.on_event(Box::new(move |event| {
                 app.update(|cx| {
                     if let Some(presenter) = presenter.upgrade() {
@@ -2005,24 +2027,59 @@ impl MutableAppContext {
             }));
         }
 
+        {
+            let mut app = self.upgrade();
+            window.on_appearance_changed(Box::new(move || app.update(|cx| cx.refresh_windows())));
+        }
+
         window.set_input_handler(Box::new(WindowInputHandler {
             app: self.upgrade().0,
             window_id,
         }));
 
-        let scene =
-            presenter
-                .borrow_mut()
-                .build_scene(window.size(), window.scale_factor(), false, self);
+        let scene = presenter.borrow_mut().build_scene(
+            window.content_size(),
+            window.scale_factor(),
+            false,
+            self,
+        );
         window.present_scene(scene);
         self.presenters_and_platform_windows
             .insert(window_id, (presenter.clone(), window));
     }
 
-    pub fn build_presenter(&mut self, window_id: usize, titlebar_height: f32) -> Presenter {
+    pub fn replace_root_view<T, F>(&mut self, window_id: usize, build_root_view: F) -> ViewHandle<T>
+    where
+        T: View,
+        F: FnOnce(&mut ViewContext<T>) -> T,
+    {
+        self.update(|this| {
+            let root_view = this
+                .build_and_insert_view(window_id, ParentId::Root, |cx| Some(build_root_view(cx)))
+                .unwrap();
+            let window = this.cx.windows.get_mut(&window_id).unwrap();
+            window.root_view = root_view.clone().into();
+            window.focused_view_id = Some(root_view.id());
+            root_view
+        })
+    }
+
+    pub fn remove_window(&mut self, window_id: usize) {
+        self.cx.windows.remove(&window_id);
+        self.presenters_and_platform_windows.remove(&window_id);
+        self.flush_effects();
+    }
+
+    pub fn build_presenter(
+        &mut self,
+        window_id: usize,
+        titlebar_height: f32,
+        appearance: Appearance,
+    ) -> Presenter {
         Presenter::new(
             window_id,
             titlebar_height,
+            appearance,
             self.cx.font_cache.clone(),
             TextLayoutCache::new(self.cx.platform.fonts()),
             self.assets.clone(),
@@ -2360,9 +2417,13 @@ impl MutableAppContext {
             {
                 {
                     let mut presenter = presenter.borrow_mut();
-                    presenter.invalidate(&mut invalidation, self);
-                    let scene =
-                        presenter.build_scene(window.size(), window.scale_factor(), false, self);
+                    presenter.invalidate(&mut invalidation, window.appearance(), self);
+                    let scene = presenter.build_scene(
+                        window.content_size(),
+                        window.scale_factor(),
+                        false,
+                        self,
+                    );
                     window.present_scene(scene);
                 }
                 self.presenters_and_platform_windows
@@ -2424,9 +2485,11 @@ impl MutableAppContext {
             let mut presenter = presenter.borrow_mut();
             presenter.refresh(
                 invalidation.as_mut().unwrap_or(&mut Default::default()),
+                window.appearance(),
                 self,
             );
-            let scene = presenter.build_scene(window.size(), window.scale_factor(), true, self);
+            let scene =
+                presenter.build_scene(window.content_size(), window.scale_factor(), true, self);
             window.present_scene(scene);
         }
         self.presenters_and_platform_windows = presenters;
@@ -3698,6 +3761,10 @@ impl<'a, T: View> ViewContext<'a, T> {
         self.app.toggle_window_full_screen(self.window_id)
     }
 
+    pub fn window_bounds(&self) -> RectF {
+        self.app.window_bounds(self.window_id)
+    }
+
     pub fn prompt(
         &self,
         level: PromptLevel,
@@ -4028,8 +4095,9 @@ pub struct RenderParams {
     pub view_id: usize,
     pub titlebar_height: f32,
     pub hovered_region_ids: HashSet<MouseRegionId>,
-    pub clicked_region_ids: Option<(Vec<MouseRegionId>, MouseButton)>,
+    pub clicked_region_ids: Option<(HashSet<MouseRegionId>, MouseButton)>,
     pub refreshing: bool,
+    pub appearance: Appearance,
 }
 
 pub struct RenderContext<'a, T: View> {
@@ -4037,9 +4105,10 @@ pub struct RenderContext<'a, T: View> {
     pub(crate) view_id: usize,
     pub(crate) view_type: PhantomData<T>,
     pub(crate) hovered_region_ids: HashSet<MouseRegionId>,
-    pub(crate) clicked_region_ids: Option<(Vec<MouseRegionId>, MouseButton)>,
+    pub(crate) clicked_region_ids: Option<(HashSet<MouseRegionId>, MouseButton)>,
     pub app: &'a mut MutableAppContext,
     pub titlebar_height: f32,
+    pub appearance: Appearance,
     pub refreshing: bool,
 }
 
@@ -4060,6 +4129,7 @@ impl<'a, V: View> RenderContext<'a, V> {
             hovered_region_ids: params.hovered_region_ids.clone(),
             clicked_region_ids: params.clicked_region_ids.clone(),
             refreshing: params.refreshing,
+            appearance: params.appearance,
         }
     }
 
@@ -4076,10 +4146,7 @@ impl<'a, V: View> RenderContext<'a, V> {
     }
 
     pub fn mouse_state<Tag: 'static>(&self, region_id: usize) -> MouseState {
-        let region_id = MouseRegionId {
-            view_id: self.view_id,
-            discriminant: (TypeId::of::<Tag>(), region_id),
-        };
+        let region_id = MouseRegionId::new::<Tag>(self.view_id, region_id);
         MouseState {
             hovered: self.hovered_region_ids.contains(&region_id),
             clicked: self.clicked_region_ids.as_ref().and_then(|(ids, button)| {
@@ -4092,9 +4159,10 @@ impl<'a, V: View> RenderContext<'a, V> {
         }
     }
 
-    pub fn element_state<Tag: 'static, T: 'static + Default>(
+    pub fn element_state<Tag: 'static, T: 'static>(
         &mut self,
         element_id: usize,
+        initial: T,
     ) -> ElementStateHandle<T> {
         let id = ElementStateId {
             view_id: self.view_id(),
@@ -4104,8 +4172,15 @@ impl<'a, V: View> RenderContext<'a, V> {
         self.cx
             .element_states
             .entry(id)
-            .or_insert_with(|| Box::new(T::default()));
+            .or_insert_with(|| Box::new(initial));
         ElementStateHandle::new(id, self.frame_count, &self.cx.ref_counts)
+    }
+
+    pub fn default_element_state<Tag: 'static, T: 'static + Default>(
+        &mut self,
+        element_id: usize,
+    ) -> ElementStateHandle<T> {
+        self.element_state::<Tag, T>(element_id, T::default())
     }
 }
 
@@ -5229,6 +5304,10 @@ impl<T: 'static> ElementStateHandle<T> {
         }
     }
 
+    pub fn id(&self) -> ElementStateId {
+        self.id
+    }
+
     pub fn read<'a>(&self, cx: &'a AppContext) -> &'a T {
         cx.element_states
             .get(&self.id)
@@ -6032,12 +6111,12 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+            fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+                enum Handler {}
                 let mouse_down_count = self.mouse_down_count.clone();
-                EventHandler::new(Empty::new().boxed())
-                    .on_mouse_down(move |_| {
+                MouseEventHandler::<Handler>::new(0, cx, |_, _| Empty::new().boxed())
+                    .on_down(MouseButton::Left, move |_, _| {
                         mouse_down_count.fetch_add(1, SeqCst);
-                        true
                     })
                     .boxed()
             }

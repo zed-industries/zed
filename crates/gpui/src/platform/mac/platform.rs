@@ -1,4 +1,6 @@
-use super::{event::key_to_native, BoolExt as _, Dispatcher, FontSystem, Window};
+use super::{
+    event::key_to_native, status_item::StatusItem, BoolExt as _, Dispatcher, FontSystem, Window,
+};
 use crate::{
     executor, keymap,
     platform::{self, CursorStyle},
@@ -49,6 +51,9 @@ use time::UtcOffset;
 
 #[allow(non_upper_case_globals)]
 const NSUTF8StringEncoding: NSUInteger = 4;
+
+#[allow(non_upper_case_globals)]
+pub const NSViewLayerContentsRedrawDuringViewResize: NSInteger = 2;
 
 const MAC_PLATFORM_IVAR: &str = "platform";
 static mut APP_CLASS: *const Class = ptr::null();
@@ -439,23 +444,6 @@ impl platform::Platform for MacPlatform {
         }
     }
 
-    fn open_window(
-        &self,
-        id: usize,
-        options: platform::WindowOptions,
-        executor: Rc<executor::Foreground>,
-    ) -> Box<dyn platform::Window> {
-        Box::new(Window::open(id, options, executor, self.fonts()))
-    }
-
-    fn key_window_id(&self) -> Option<usize> {
-        Window::key_window_id()
-    }
-
-    fn fonts(&self) -> Arc<dyn platform::FontSystem> {
-        self.fonts.clone()
-    }
-
     fn hide(&self) {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
@@ -495,6 +483,27 @@ impl platform::Platform for MacPlatform {
             let app = NSApplication::sharedApplication(nil);
             let _: () = msg_send![app, terminate: nil];
         }
+    }
+
+    fn open_window(
+        &self,
+        id: usize,
+        options: platform::WindowOptions,
+        executor: Rc<executor::Foreground>,
+    ) -> Box<dyn platform::Window> {
+        Box::new(Window::open(id, options, executor, self.fonts()))
+    }
+
+    fn key_window_id(&self) -> Option<usize> {
+        Window::key_window_id()
+    }
+
+    fn add_status_item(&self) -> Box<dyn platform::Window> {
+        Box::new(StatusItem::add(self.fonts()))
+    }
+
+    fn fonts(&self) -> Arc<dyn platform::FontSystem> {
+        self.fonts.clone()
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
@@ -681,6 +690,7 @@ impl platform::Platform for MacPlatform {
             let cursor: id = match style {
                 CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
                 CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
+                CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
                 CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
                 CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
             };

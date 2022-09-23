@@ -5,14 +5,15 @@ use gpui::{
 };
 use serde::Deserialize;
 use settings::Settings;
-use std::{cell::RefCell, rc::Rc};
-use theme::Theme;
+use std::rc::Rc;
 
 pub trait SidebarItem: View {
     fn should_activate_item_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
         false
     }
-    fn should_show_badge(&self, cx: &AppContext) -> bool;
+    fn should_show_badge(&self, _: &AppContext) -> bool {
+        false
+    }
     fn contains_focused_view(&self, _: &AppContext) -> bool {
         false
     }
@@ -53,18 +54,25 @@ impl From<&dyn SidebarItemHandle> for AnyViewHandle {
 }
 
 pub struct Sidebar {
-    side: Side,
+    sidebar_side: SidebarSide,
     items: Vec<Item>,
     is_open: bool,
     active_item_ix: usize,
-    actual_width: Rc<RefCell<f32>>,
-    custom_width: Rc<RefCell<f32>>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
-pub enum Side {
+pub enum SidebarSide {
     Left,
     Right,
+}
+
+impl SidebarSide {
+    fn to_resizable_side(self) -> Side {
+        match self {
+            Self::Left => Side::Right,
+            Self::Right => Side::Left,
+        }
+    }
 }
 
 struct Item {
@@ -80,21 +88,19 @@ pub struct SidebarButtons {
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct ToggleSidebarItem {
-    pub side: Side,
+    pub sidebar_side: SidebarSide,
     pub item_index: usize,
 }
 
 impl_actions!(workspace, [ToggleSidebarItem]);
 
 impl Sidebar {
-    pub fn new(side: Side) -> Self {
+    pub fn new(sidebar_side: SidebarSide) -> Self {
         Self {
-            side,
+            sidebar_side,
             items: Default::default(),
             active_item_ix: 0,
             is_open: false,
-            actual_width: Rc::new(RefCell::new(260.)),
-            custom_width: Rc::new(RefCell::new(260.)),
         }
     }
 
@@ -171,38 +177,6 @@ impl Sidebar {
             None
         }
     }
-
-    fn render_resize_handle(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
-        let actual_width = self.actual_width.clone();
-        let custom_width = self.custom_width.clone();
-        let side = self.side;
-        MouseEventHandler::new::<Self, _, _>(side as usize, cx, |_, _| {
-            Empty::new()
-                .contained()
-                .with_style(theme.workspace.sidebar_resize_handle)
-                .boxed()
-        })
-        .with_padding(Padding {
-            left: 4.,
-            right: 4.,
-            ..Default::default()
-        })
-        .with_cursor_style(CursorStyle::ResizeLeftRight)
-        .on_down(MouseButton::Left, |_, _| {}) // This prevents the mouse down event from being propagated elsewhere
-        .on_drag(MouseButton::Left, move |e, cx| {
-            let delta = e.position.x() - e.prev_mouse_position.x();
-            let prev_width = *actual_width.borrow();
-            *custom_width.borrow_mut() = 0f32
-                .max(match side {
-                    Side::Left => prev_width + delta,
-                    Side::Right => prev_width - delta,
-                })
-                .round();
-
-            cx.notify();
-        })
-        .boxed()
-    }
 }
 
 impl Entity for Sidebar {
@@ -215,31 +189,20 @@ impl View for Sidebar {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = cx.global::<Settings>().theme.clone();
         if let Some(active_item) = self.active_item() {
-            let mut container = Flex::row();
-            if matches!(self.side, Side::Right) {
-                container.add_child(self.render_resize_handle(&theme, cx));
-            }
-
-            container.add_child(
-                Hook::new(
-                    ChildView::new(active_item.to_any())
-                        .constrained()
-                        .with_max_width(*self.custom_width.borrow())
-                        .boxed(),
+            enum ResizeHandleTag {}
+            let style = &cx.global::<Settings>().theme.workspace.sidebar;
+            ChildView::new(active_item.to_any())
+                .contained()
+                .with_style(style.container)
+                .with_resize_handle::<ResizeHandleTag, _>(
+                    self.sidebar_side as usize,
+                    self.sidebar_side.to_resizable_side(),
+                    4.,
+                    style.initial_size,
+                    cx,
                 )
-                .on_after_layout({
-                    let actual_width = self.actual_width.clone();
-                    move |size, _| *actual_width.borrow_mut() = size.x()
-                })
-                .flex(1., false)
-                .boxed(),
-            );
-            if matches!(self.side, Side::Left) {
-                container.add_child(self.render_resize_handle(&theme, cx));
-            }
-            container.boxed()
+                .boxed()
         } else {
             Empty::new().boxed()
         }
@@ -271,10 +234,10 @@ impl View for SidebarButtons {
         let badge_style = theme.badge;
         let active_ix = sidebar.active_item_ix;
         let is_open = sidebar.is_open;
-        let side = sidebar.side;
-        let group_style = match side {
-            Side::Left => theme.group_left,
-            Side::Right => theme.group_right,
+        let sidebar_side = sidebar.sidebar_side;
+        let group_style = match sidebar_side {
+            SidebarSide::Left => theme.group_left,
+            SidebarSide::Right => theme.group_right,
         };
 
         #[allow(clippy::needless_collect)]
@@ -288,10 +251,10 @@ impl View for SidebarButtons {
             .with_children(items.into_iter().enumerate().map(
                 |(ix, (icon_path, tooltip, item_view))| {
                     let action = ToggleSidebarItem {
-                        side,
+                        sidebar_side,
                         item_index: ix,
                     };
-                    MouseEventHandler::new::<Self, _, _>(ix, cx, move |state, cx| {
+                    MouseEventHandler::<Self>::new(ix, cx, move |state, cx| {
                         let is_active = is_open && ix == active_ix;
                         let style = item_style.style_for(state, is_active);
                         Stack::new()

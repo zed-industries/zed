@@ -59,13 +59,7 @@ export default function tabBar(theme: Theme) {
   const draggedTab = {
     ...activePaneActiveTab,
     background: withOpacity(tab.background, 0.8),
-    border: {
-      ...tab.border,
-      top: false,
-      left: false,
-      right: false,
-      bottom: false,
-    },
+    border: undefined as any, // Remove border
     shadow: draggedShadow(theme),
   }
 
@@ -74,7 +68,6 @@ export default function tabBar(theme: Theme) {
     background: backgroundColor(theme, 300),
     dropTargetOverlayColor: withOpacity(theme.textColor.muted, 0.6),
     border: border(theme, "primary", {
-      left: true,
       bottom: true,
       overlay: true,
     }),
@@ -89,15 +82,18 @@ export default function tabBar(theme: Theme) {
     draggedTab,
     paneButton: {
       color: iconColor(theme, "secondary"),
-      border: {
-        ...tab.border,
-      },
       iconWidth: 12,
       buttonWidth: activePaneActiveTab.height,
       hover: {
         color: iconColor(theme, "active"),
-        background: backgroundColor(theme, 300),
       },
     },
+    paneButtonContainer: {
+      background: tab.background,
+      border: {
+        ...tab.border,
+        right: false,
+      }
+    }
   }
 }

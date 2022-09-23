@@ -3,9 +3,9 @@
 ///
 /// This may cause issues when you're trying to write tests that use workspace focus to add items at
 /// specific locations.
+pub mod dock;
 pub mod pane;
 pub mod pane_group;
-pub mod programs;
 pub mod searchable;
 pub mod sidebar;
 mod status_bar;
@@ -18,6 +18,7 @@ use client::{
 };
 use clock::ReplicaId;
 use collections::{hash_map, HashMap, HashSet};
+use dock::{DefaultItemFactory, Dock, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
 use futures::{channel::oneshot, FutureExt};
 use gpui::{
@@ -33,16 +34,15 @@ use gpui::{
     RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::LanguageRegistry;
-use log::error;
+use log::{error, warn};
 pub use pane::*;
 pub use pane_group::*;
 use postage::prelude::Stream;
-use programs::ProgramManager;
 use project::{fs, Fs, Project, ProjectEntryId, ProjectPath, ProjectStore, Worktree, WorktreeId};
 use searchable::SearchableItemHandle;
 use serde::Deserialize;
-use settings::{Autosave, Settings};
-use sidebar::{Side, Sidebar, SidebarButtons, ToggleSidebarItem};
+use settings::{Autosave, DockAnchor, Settings};
+use sidebar::{Sidebar, SidebarButtons, SidebarSide, ToggleSidebarItem};
 use smallvec::SmallVec;
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
@@ -146,10 +146,8 @@ impl_internal_actions!(
 impl_actions!(workspace, [ToggleProjectOnline, ActivatePane]);
 
 pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
-    // Initialize the program manager immediately
-    cx.set_global(ProgramManager::new());
-
     pane::init(cx);
+    dock::init(cx);
 
     cx.add_global_action(open);
     cx.add_global_action({
@@ -217,10 +215,10 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
         workspace.activate_next_pane(cx)
     });
     cx.add_action(|workspace: &mut Workspace, _: &ToggleLeftSidebar, cx| {
-        workspace.toggle_sidebar(Side::Left, cx);
+        workspace.toggle_sidebar(SidebarSide::Left, cx);
     });
     cx.add_action(|workspace: &mut Workspace, _: &ToggleRightSidebar, cx| {
-        workspace.toggle_sidebar(Side::Right, cx);
+        workspace.toggle_sidebar(SidebarSide::Right, cx);
     });
     cx.add_action(Workspace::activate_pane_at_index);
 
@@ -265,6 +263,7 @@ pub struct AppState {
     pub fs: Arc<dyn fs::Fs>,
     pub build_window_options: fn() -> WindowOptions<'static>,
     pub initialize_workspace: fn(&mut Workspace, &Arc<AppState>, &mut ViewContext<Workspace>),
+    pub default_item_factory: DefaultItemFactory,
 }
 
 #[derive(Eq, PartialEq, Hash)]
@@ -870,11 +869,13 @@ impl AppState {
             project_store,
             initialize_workspace: |_, _, _| {},
             build_window_options: Default::default,
+            default_item_factory: |_, _| unimplemented!(),
         })
     }
 }
 
 pub enum Event {
+    DockAnchorChanged,
     PaneAdded(ViewHandle<Pane>),
     ContactRequestedJoin(u64),
 }
@@ -892,7 +893,9 @@ pub struct Workspace {
     panes: Vec<ViewHandle<Pane>>,
     panes_by_item: HashMap<usize, WeakViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
+    last_active_center_pane: Option<ViewHandle<Pane>>,
     status_bar: ViewHandle<StatusBar>,
+    dock: Dock,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: ModelHandle<Project>,
     leader_state: LeaderState,
@@ -922,7 +925,11 @@ enum FollowerItem {
 }
 
 impl Workspace {
-    pub fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        project: ModelHandle<Project>,
+        dock_default_factory: DefaultItemFactory,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         cx.observe_fullscreen(|_, _, cx| cx.notify()).detach();
 
         cx.observe_window_activation(Self::on_window_activation_changed)
@@ -949,14 +956,14 @@ impl Workspace {
         })
         .detach();
 
-        let pane = cx.add_view(Pane::new);
-        let pane_id = pane.id();
-        cx.subscribe(&pane, move |this, _, event, cx| {
+        let center_pane = cx.add_view(|cx| Pane::new(None, cx));
+        let pane_id = center_pane.id();
+        cx.subscribe(&center_pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
         })
         .detach();
-        cx.focus(&pane);
-        cx.emit(Event::PaneAdded(pane.clone()));
+        cx.focus(&center_pane);
+        cx.emit(Event::PaneAdded(center_pane.clone()));
 
         let fs = project.read(cx).fs().clone();
         let user_store = project.read(cx).user_store();
@@ -978,33 +985,44 @@ impl Workspace {
             }
         });
 
-        let weak_self = cx.weak_handle();
+        let handle = cx.handle();
+        let weak_handle = cx.weak_handle();
 
-        cx.emit_global(WorkspaceCreated(weak_self.clone()));
+        cx.emit_global(WorkspaceCreated(weak_handle.clone()));
 
-        let left_sidebar = cx.add_view(|_| Sidebar::new(Side::Left));
-        let right_sidebar = cx.add_view(|_| Sidebar::new(Side::Right));
+        let dock = Dock::new(cx, dock_default_factory);
+        let dock_pane = dock.pane().clone();
+
+        let left_sidebar = cx.add_view(|_| Sidebar::new(SidebarSide::Left));
+        let right_sidebar = cx.add_view(|_| Sidebar::new(SidebarSide::Right));
         let left_sidebar_buttons = cx.add_view(|cx| SidebarButtons::new(left_sidebar.clone(), cx));
+        let toggle_dock = cx.add_view(|cx| ToggleDockButton::new(handle, cx));
         let right_sidebar_buttons =
             cx.add_view(|cx| SidebarButtons::new(right_sidebar.clone(), cx));
         let status_bar = cx.add_view(|cx| {
-            let mut status_bar = StatusBar::new(&pane.clone(), cx);
+            let mut status_bar = StatusBar::new(&center_pane.clone(), cx);
             status_bar.add_left_item(left_sidebar_buttons, cx);
             status_bar.add_right_item(right_sidebar_buttons, cx);
+            status_bar.add_right_item(toggle_dock, cx);
             status_bar
         });
 
         cx.update_default_global::<DragAndDrop<Workspace>, _, _>(|drag_and_drop, _| {
-            drag_and_drop.register_container(weak_self.clone());
+            drag_and_drop.register_container(weak_handle.clone());
         });
 
         let mut this = Workspace {
             modal: None,
-            weak_self,
-            center: PaneGroup::new(pane.clone()),
-            panes: vec![pane.clone()],
+            weak_self: weak_handle,
+            center: PaneGroup::new(center_pane.clone()),
+            dock,
+            // When removing an item, the last element remaining in this array
+            // is used to find where focus should fallback to. As such, the order
+            // of these two variables is important.
+            panes: vec![dock_pane, center_pane.clone()],
             panes_by_item: Default::default(),
-            active_pane: pane.clone(),
+            active_pane: center_pane.clone(),
+            last_active_center_pane: Some(center_pane.clone()),
             status_bar,
             notifications: Default::default(),
             client,
@@ -1078,6 +1096,7 @@ impl Workspace {
                         app_state.fs.clone(),
                         cx,
                     ),
+                    app_state.default_item_factory,
                     cx,
                 );
                 (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
@@ -1459,24 +1478,31 @@ impl Workspace {
         }
     }
 
-    pub fn toggle_sidebar(&mut self, side: Side, cx: &mut ViewContext<Self>) {
-        let sidebar = match side {
-            Side::Left => &mut self.left_sidebar,
-            Side::Right => &mut self.right_sidebar,
+    pub fn toggle_sidebar(&mut self, sidebar_side: SidebarSide, cx: &mut ViewContext<Self>) {
+        let sidebar = match sidebar_side {
+            SidebarSide::Left => &mut self.left_sidebar,
+            SidebarSide::Right => &mut self.right_sidebar,
         };
-        sidebar.update(cx, |sidebar, cx| {
-            sidebar.set_open(!sidebar.is_open(), cx);
+        let open = sidebar.update(cx, |sidebar, cx| {
+            let open = !sidebar.is_open();
+            sidebar.set_open(open, cx);
+            open
         });
+
+        if open {
+            Dock::hide_on_sidebar_shown(self, sidebar_side, cx);
+        }
+
         cx.focus_self();
         cx.notify();
     }
 
     pub fn toggle_sidebar_item(&mut self, action: &ToggleSidebarItem, cx: &mut ViewContext<Self>) {
-        let sidebar = match action.side {
-            Side::Left => &mut self.left_sidebar,
-            Side::Right => &mut self.right_sidebar,
+        let sidebar = match action.sidebar_side {
+            SidebarSide::Left => &mut self.left_sidebar,
+            SidebarSide::Right => &mut self.right_sidebar,
         };
-        let active_item = sidebar.update(cx, |sidebar, cx| {
+        let active_item = sidebar.update(cx, move |sidebar, cx| {
             if sidebar.is_open() && sidebar.active_item_ix() == action.item_index {
                 sidebar.set_open(false, cx);
                 None
@@ -1486,7 +1512,10 @@ impl Workspace {
                 sidebar.active_item().cloned()
             }
         });
+
         if let Some(active_item) = active_item {
+            Dock::hide_on_sidebar_shown(self, action.sidebar_side, cx);
+
             if active_item.is_focused(cx) {
                 cx.focus_self();
             } else {
@@ -1500,13 +1529,13 @@ impl Workspace {
 
     pub fn toggle_sidebar_item_focus(
         &mut self,
-        side: Side,
+        sidebar_side: SidebarSide,
         item_index: usize,
         cx: &mut ViewContext<Self>,
     ) {
-        let sidebar = match side {
-            Side::Left => &mut self.left_sidebar,
-            Side::Right => &mut self.right_sidebar,
+        let sidebar = match sidebar_side {
+            SidebarSide::Left => &mut self.left_sidebar,
+            SidebarSide::Right => &mut self.right_sidebar,
         };
         let active_item = sidebar.update(cx, |sidebar, cx| {
             sidebar.set_open(true, cx);
@@ -1514,6 +1543,8 @@ impl Workspace {
             sidebar.active_item().cloned()
         });
         if let Some(active_item) = active_item {
+            Dock::hide_on_sidebar_shown(self, sidebar_side, cx);
+
             if active_item.is_focused(cx) {
                 cx.focus_self();
             } else {
@@ -1529,7 +1560,7 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
-        let pane = cx.add_view(Pane::new);
+        let pane = cx.add_view(|cx| Pane::new(None, cx));
         let pane_id = pane.id();
         cx.subscribe(&pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
@@ -1682,6 +1713,15 @@ impl Workspace {
                 status_bar.set_active_pane(&self.active_pane, cx);
             });
             self.active_item_path_changed(cx);
+
+            if &pane == self.dock_pane() {
+                Dock::show(self, cx);
+            } else {
+                self.last_active_center_pane = Some(pane.clone());
+                if self.dock.is_anchored_at(DockAnchor::Expanded) {
+                    Dock::hide(self, cx);
+                }
+            }
             cx.notify();
         }
 
@@ -1701,21 +1741,19 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(pane) = self.pane(pane_id) {
+            let is_dock = &pane == self.dock.pane();
             match event {
-                pane::Event::Split(direction) => {
+                pane::Event::Split(direction) if !is_dock => {
                     self.split_pane(pane, *direction, cx);
                 }
-                pane::Event::Remove => {
-                    self.remove_pane(pane, cx);
-                }
-                pane::Event::Focused => {
-                    self.handle_pane_focused(pane, cx);
-                }
+                pane::Event::Remove if !is_dock => self.remove_pane(pane, cx),
+                pane::Event::Remove if is_dock => Dock::hide(self, cx),
+                pane::Event::Focused => self.handle_pane_focused(pane, cx),
                 pane::Event::ActivateItem { local } => {
                     if *local {
                         self.unfollow(&pane, cx);
                     }
-                    if pane == self.active_pane {
+                    if &pane == self.active_pane() {
                         self.active_item_path_changed(cx);
                     }
                 }
@@ -1733,8 +1771,9 @@ impl Workspace {
                         }
                     }
                 }
+                _ => {}
             }
-        } else {
+        } else if self.dock.visible_pane().is_none() {
             error!("pane {} not found", pane_id);
         }
     }
@@ -1745,6 +1784,11 @@ impl Workspace {
         direction: SplitDirection,
         cx: &mut ViewContext<Self>,
     ) -> Option<ViewHandle<Pane>> {
+        if &pane == self.dock_pane() {
+            warn!("Can't split dock pane.");
+            return None;
+        }
+
         pane.read(cx).active_item().map(|item| {
             let new_pane = self.add_pane(cx);
             if let Some(clone) = item.clone_on_split(cx.as_mut()) {
@@ -1765,6 +1809,10 @@ impl Workspace {
             for removed_item in pane.read(cx).items() {
                 self.panes_by_item.remove(&removed_item.id());
             }
+            if self.last_active_center_pane == Some(pane) {
+                self.last_active_center_pane = None;
+            }
+
             cx.notify();
         } else {
             self.active_item_path_changed(cx);
@@ -1781,6 +1829,10 @@ impl Workspace {
 
     pub fn active_pane(&self) -> &ViewHandle<Pane> {
         &self.active_pane
+    }
+
+    pub fn dock_pane(&self) -> &ViewHandle<Pane> {
+        self.dock.pane()
     }
 
     fn project_remote_id_changed(&mut self, remote_id: Option<u64>, cx: &mut ViewContext<Self>) {
@@ -1975,8 +2027,9 @@ impl Workspace {
             theme.workspace.titlebar.container
         };
 
+        enum TitleBar {}
         ConstrainedBox::new(
-            MouseEventHandler::new::<Self, _, _>(0, cx, |_, cx| {
+            MouseEventHandler::<TitleBar>::new(0, cx, |_, cx| {
                 Container::new(
                     Stack::new()
                         .with_child(
@@ -2105,7 +2158,7 @@ impl Workspace {
             None
         } else {
             Some(
-                MouseEventHandler::new::<Authenticate, _, _>(0, cx, |state, _| {
+                MouseEventHandler::<Authenticate>::new(0, cx, |state, _| {
                     let style = theme
                         .workspace
                         .titlebar
@@ -2165,7 +2218,7 @@ impl Workspace {
             .boxed();
 
         if let Some((peer_id, peer_github_login)) = peer {
-            MouseEventHandler::new::<ToggleFollow, _, _>(replica_id.into(), cx, move |_, _| content)
+            MouseEventHandler::<ToggleFollow>::new(replica_id.into(), cx, move |_, _| content)
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, cx| {
                     cx.dispatch_action(ToggleFollow(peer_id))
@@ -2191,7 +2244,7 @@ impl Workspace {
         if self.project.read(cx).is_read_only() {
             enum DisconnectedOverlay {}
             Some(
-                MouseEventHandler::new::<DisconnectedOverlay, _, _>(0, cx, |_, cx| {
+                MouseEventHandler::<DisconnectedOverlay>::new(0, cx, |_, cx| {
                     let theme = &cx.global::<Settings>().theme;
                     Label::new(
                         "Your connection to the remote project has been lost.".to_string(),
@@ -2202,6 +2255,7 @@ impl Workspace {
                     .with_style(theme.workspace.disconnected_overlay.container)
                     .boxed()
                 })
+                .with_cursor_style(CursorStyle::Arrow)
                 .capture_all()
                 .boxed(),
             )
@@ -2557,14 +2611,28 @@ impl View for Workspace {
                                         },
                                     )
                                     .with_child(
-                                        FlexItem::new(self.center.render(
-                                            &theme,
-                                            &self.follower_states_by_leader,
-                                            self.project.read(cx).collaborators(),
-                                        ))
+                                        FlexItem::new(
+                                            Flex::column()
+                                                .with_child(
+                                                    FlexItem::new(self.center.render(
+                                                        &theme,
+                                                        &self.follower_states_by_leader,
+                                                        self.project.read(cx).collaborators(),
+                                                    ))
+                                                    .flex(1., true)
+                                                    .boxed(),
+                                                )
+                                                .with_children(self.dock.render(
+                                                    &theme,
+                                                    DockAnchor::Bottom,
+                                                    cx,
+                                                ))
+                                                .boxed(),
+                                        )
                                         .flex(1., true)
                                         .boxed(),
                                     )
+                                    .with_children(self.dock.render(&theme, DockAnchor::Right, cx))
                                     .with_children(
                                         if self.right_sidebar.read(cx).active_item().is_some() {
                                             Some(
@@ -2578,15 +2646,27 @@ impl View for Workspace {
                                     )
                                     .boxed()
                             })
-                            .with_children(self.modal.as_ref().map(|m| {
-                                ChildView::new(m)
-                                    .contained()
-                                    .with_style(theme.workspace.modal)
-                                    .aligned()
-                                    .top()
-                                    .boxed()
-                            }))
-                            .with_children(self.render_notifications(&theme.workspace))
+                            .with_child(
+                                Overlay::new(
+                                    Stack::new()
+                                        .with_children(self.dock.render(
+                                            &theme,
+                                            DockAnchor::Expanded,
+                                            cx,
+                                        ))
+                                        .with_children(self.modal.as_ref().map(|m| {
+                                            ChildView::new(m)
+                                                .contained()
+                                                .with_style(theme.workspace.modal)
+                                                .aligned()
+                                                .top()
+                                                .boxed()
+                                        }))
+                                        .with_children(self.render_notifications(&theme.workspace))
+                                        .boxed(),
+                                )
+                                .boxed(),
+                            )
                             .flex(1.0, true)
                             .boxed(),
                     )
@@ -2604,6 +2684,14 @@ impl View for Workspace {
         if cx.is_self_focused() {
             cx.focus(&self.active_pane);
         }
+    }
+
+    fn keymap_context(&self, _: &AppContext) -> gpui::keymap::Context {
+        let mut keymap = Self::default_keymap_context();
+        if self.active_pane() == self.dock_pane() {
+            keymap.set.insert("Dock".into());
+        }
+        keymap
     }
 }
 
@@ -2785,10 +2873,10 @@ pub fn open_paths(
                     cx,
                 );
                 new_project = Some(project.clone());
-                let mut workspace = Workspace::new(project, cx);
+                let mut workspace = Workspace::new(project, app_state.default_item_factory, cx);
                 (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
                 if contains_directory {
-                    workspace.toggle_sidebar(Side::Left, cx);
+                    workspace.toggle_sidebar(SidebarSide::Left, cx);
                 }
                 workspace
             })
@@ -2846,6 +2934,7 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
                 app_state.fs.clone(),
                 cx,
             ),
+            app_state.default_item_factory,
             cx,
         );
         (app_state.initialize_workspace)(&mut workspace, app_state, cx);
@@ -2858,10 +2947,19 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
 mod tests {
     use std::cell::Cell;
 
+    use crate::sidebar::SidebarItem;
+
     use super::*;
     use gpui::{executor::Deterministic, ModelHandle, TestAppContext, ViewContext};
     use project::{FakeFs, Project, ProjectEntryId};
     use serde_json::json;
+
+    pub fn default_item_factory(
+        _workspace: &mut Workspace,
+        _cx: &mut ViewContext<Workspace>,
+    ) -> Box<dyn ItemHandle> {
+        unimplemented!();
+    }
 
     #[gpui::test]
     async fn test_tab_disambiguation(cx: &mut TestAppContext) {
@@ -2870,7 +2968,8 @@ mod tests {
 
         let fs = FakeFs::new(cx.background());
         let project = Project::test(fs, [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        let (_, workspace) =
+            cx.add_window(|cx| Workspace::new(project.clone(), default_item_factory, cx));
 
         // Adding an item with no ambiguity renders the tab without detail.
         let item1 = cx.add_view(&workspace, |_| {
@@ -2934,7 +3033,8 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["root1".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        let (window_id, workspace) =
+            cx.add_window(|cx| Workspace::new(project.clone(), default_item_factory, cx));
         let worktree_id = project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
@@ -3030,7 +3130,8 @@ mod tests {
         fs.insert_tree("/root", json!({ "one": "" })).await;
 
         let project = Project::test(fs, ["root".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        let (window_id, workspace) =
+            cx.add_window(|cx| Workspace::new(project.clone(), default_item_factory, cx));
 
         // When there are no dirty items, there's nothing to do.
         let item1 = cx.add_view(&workspace, |_| TestItem::new());
@@ -3070,7 +3171,8 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (window_id, workspace) =
+            cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
 
         let item1 = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
@@ -3165,7 +3267,8 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (window_id, workspace) =
+            cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
 
         // Create several workspace items with single project entries, and two
         // workspace items with multiple project entries.
@@ -3266,7 +3369,8 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (window_id, workspace) =
+            cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
 
         let item = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
@@ -3383,7 +3487,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, default_item_factory, cx));
 
         let item = cx.add_view(&workspace, |_| {
             let mut item = TestItem::new();
@@ -3635,4 +3739,6 @@ mod tests {
             vec![ItemEvent::UpdateTab, ItemEvent::Edit]
         }
     }
+
+    impl SidebarItem for TestItem {}
 }

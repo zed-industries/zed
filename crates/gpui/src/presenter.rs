@@ -8,13 +8,14 @@ use crate::{
     platform::{CursorStyle, Event},
     scene::{
         ClickRegionEvent, CursorRegion, DownOutRegionEvent, DownRegionEvent, DragRegionEvent,
-        HoverRegionEvent, MouseRegionEvent, MoveRegionEvent, UpOutRegionEvent, UpRegionEvent,
+        HoverRegionEvent, MouseRegionEvent, MoveRegionEvent, ScrollWheelRegionEvent,
+        UpOutRegionEvent, UpRegionEvent,
     },
     text_layout::TextLayoutCache,
-    Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox, Entity,
-    FontSystem, ModelHandle, MouseButton, MouseMovedEvent, MouseRegion, MouseRegionId, ParentId,
-    ReadModel, ReadView, RenderContext, RenderParams, Scene, UpgradeModelHandle, UpgradeViewHandle,
-    View, ViewHandle, WeakModelHandle, WeakViewHandle,
+    Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, Appearance, AssetCache, ElementBox,
+    Entity, FontSystem, ModelHandle, MouseButton, MouseMovedEvent, MouseRegion, MouseRegionId,
+    ParentId, ReadModel, ReadView, RenderContext, RenderParams, Scene, UpgradeModelHandle,
+    UpgradeViewHandle, View, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use collections::{HashMap, HashSet};
 use pathfinder_geometry::vector::{vec2f, Vector2F};
@@ -36,16 +37,18 @@ pub struct Presenter {
     asset_cache: Arc<AssetCache>,
     last_mouse_moved_event: Option<Event>,
     hovered_region_ids: HashSet<MouseRegionId>,
-    clicked_regions: Vec<MouseRegion>,
+    clicked_region_ids: HashSet<MouseRegionId>,
     clicked_button: Option<MouseButton>,
     mouse_position: Vector2F,
     titlebar_height: f32,
+    appearance: Appearance,
 }
 
 impl Presenter {
     pub fn new(
         window_id: usize,
         titlebar_height: f32,
+        appearance: Appearance,
         font_cache: Arc<FontCache>,
         text_layout_cache: TextLayoutCache,
         asset_cache: Arc<AssetCache>,
@@ -53,7 +56,7 @@ impl Presenter {
     ) -> Self {
         Self {
             window_id,
-            rendered_views: cx.render_views(window_id, titlebar_height),
+            rendered_views: cx.render_views(window_id, titlebar_height, appearance),
             cursor_regions: Default::default(),
             mouse_regions: Default::default(),
             font_cache,
@@ -61,19 +64,22 @@ impl Presenter {
             asset_cache,
             last_mouse_moved_event: None,
             hovered_region_ids: Default::default(),
-            clicked_regions: Vec::new(),
+            clicked_region_ids: Default::default(),
             clicked_button: None,
             mouse_position: vec2f(0., 0.),
             titlebar_height,
+            appearance,
         }
     }
 
     pub fn invalidate(
         &mut self,
         invalidation: &mut WindowInvalidation,
+        appearance: Appearance,
         cx: &mut MutableAppContext,
     ) {
         cx.start_frame();
+        self.appearance = appearance;
         for view_id in &invalidation.removed {
             invalidation.updated.remove(view_id);
             self.rendered_views.remove(view_id);
@@ -86,24 +92,24 @@ impl Presenter {
                     view_id: *view_id,
                     titlebar_height: self.titlebar_height,
                     hovered_region_ids: self.hovered_region_ids.clone(),
-                    clicked_region_ids: self.clicked_button.map(|button| {
-                        (
-                            self.clicked_regions
-                                .iter()
-                                .filter_map(MouseRegion::id)
-                                .collect(),
-                            button,
-                        )
-                    }),
+                    clicked_region_ids: self
+                        .clicked_button
+                        .map(|button| (self.clicked_region_ids.clone(), button)),
                     refreshing: false,
+                    appearance,
                 })
                 .unwrap(),
             );
         }
     }
 
-    pub fn refresh(&mut self, invalidation: &mut WindowInvalidation, cx: &mut MutableAppContext) {
-        self.invalidate(invalidation, cx);
+    pub fn refresh(
+        &mut self,
+        invalidation: &mut WindowInvalidation,
+        appearance: Appearance,
+        cx: &mut MutableAppContext,
+    ) {
+        self.invalidate(invalidation, appearance, cx);
         for (view_id, view) in &mut self.rendered_views {
             if !invalidation.updated.contains(view_id) {
                 *view = cx
@@ -112,16 +118,11 @@ impl Presenter {
                         view_id: *view_id,
                         titlebar_height: self.titlebar_height,
                         hovered_region_ids: self.hovered_region_ids.clone(),
-                        clicked_region_ids: self.clicked_button.map(|button| {
-                            (
-                                self.clicked_regions
-                                    .iter()
-                                    .filter_map(MouseRegion::id)
-                                    .collect(),
-                                button,
-                            )
-                        }),
+                        clicked_region_ids: self
+                            .clicked_button
+                            .map(|button| (self.clicked_region_ids.clone(), button)),
                         refreshing: true,
+                        appearance,
                     })
                     .unwrap();
             }
@@ -184,16 +185,11 @@ impl Presenter {
             view_stack: Vec::new(),
             refreshing,
             hovered_region_ids: self.hovered_region_ids.clone(),
-            clicked_region_ids: self.clicked_button.map(|button| {
-                (
-                    self.clicked_regions
-                        .iter()
-                        .filter_map(MouseRegion::id)
-                        .collect(),
-                    button,
-                )
-            }),
+            clicked_region_ids: self
+                .clicked_button
+                .map(|button| (self.clicked_region_ids.clone(), button)),
             titlebar_height: self.titlebar_height,
+            appearance: self.appearance,
             window_size,
             app: cx,
         }
@@ -235,6 +231,7 @@ impl Presenter {
     ) -> bool {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
             let mut events_to_send = Vec::new();
+            let mut invalidated_views: HashSet<usize> = Default::default();
 
             // 1. Allocate the correct set of GPUI events generated from the platform events
             //  -> These are usually small: [Mouse Down] or [Mouse up, Click] or [Mouse Moved, Mouse Dragged?]
@@ -248,16 +245,23 @@ impl Presenter {
 
                     // If there is already clicked_button stored, don't replace it.
                     if self.clicked_button.is_none() {
-                        self.clicked_regions = self
+                        self.clicked_region_ids = self
                             .mouse_regions
                             .iter()
                             .filter_map(|(region, _)| {
-                                region
-                                    .bounds
-                                    .contains_point(e.position)
-                                    .then(|| region.clone())
+                                if region.bounds.contains_point(e.position) {
+                                    Some(region.id())
+                                } else {
+                                    None
+                                }
                             })
                             .collect();
+
+                        // Clicked status is used when rendering views via the RenderContext.
+                        // So when it changes, these views need to be rerendered
+                        for clicked_region_id in self.clicked_region_ids.iter() {
+                            invalidated_views.insert(clicked_region_id.view_id());
+                        }
                         self.clicked_button = Some(e.button);
                     }
 
@@ -341,6 +345,12 @@ impl Presenter {
 
                     self.last_mouse_moved_event = Some(event.clone());
                 }
+                Event::ScrollWheel(e) => {
+                    events_to_send.push(MouseRegionEvent::ScrollWheel(ScrollWheelRegionEvent {
+                        region: Default::default(),
+                        platform_event: e.clone(),
+                    }))
+                }
 
                 _ => {}
             }
@@ -349,7 +359,6 @@ impl Presenter {
                 self.mouse_position = position;
             }
 
-            let mut invalidated_views: HashSet<usize> = Default::default();
             let mut any_event_handled = false;
             // 2. Process the raw mouse events into region events
             for mut region_event in events_to_send {
@@ -375,23 +384,21 @@ impl Presenter {
                                 top_most_depth = Some(depth);
                             }
 
-                            if let Some(region_id) = region.id() {
-                                // This unwrap relies on short circuiting boolean expressions
-                                // The right side of the && is only executed when contains_mouse
-                                // is true, and we know above that when contains_mouse is true
-                                // top_most_depth is set
-                                if contains_mouse && depth == top_most_depth.unwrap() {
-                                    //Ensure that hover entrance events aren't sent twice
-                                    if self.hovered_region_ids.insert(region_id) {
-                                        valid_regions.push(region.clone());
-                                        invalidated_views.insert(region.view_id);
-                                    }
-                                } else {
-                                    // Ensure that hover exit events aren't sent twice
-                                    if self.hovered_region_ids.remove(&region_id) {
-                                        valid_regions.push(region.clone());
-                                        invalidated_views.insert(region.view_id);
-                                    }
+                            // This unwrap relies on short circuiting boolean expressions
+                            // The right side of the && is only executed when contains_mouse
+                            // is true, and we know above that when contains_mouse is true
+                            // top_most_depth is set
+                            if contains_mouse && depth == top_most_depth.unwrap() {
+                                //Ensure that hover entrance events aren't sent twice
+                                if self.hovered_region_ids.insert(region.id()) {
+                                    valid_regions.push(region.clone());
+                                    invalidated_views.insert(region.id().view_id());
+                                }
+                            } else {
+                                // Ensure that hover exit events aren't sent twice
+                                if self.hovered_region_ids.remove(&region.id()) {
+                                    valid_regions.push(region.clone());
+                                    invalidated_views.insert(region.id().view_id());
                                 }
                             }
                         }
@@ -404,21 +411,30 @@ impl Presenter {
                             .unwrap_or(false)
                         {
                             // Clear clicked regions and clicked button
-                            let clicked_regions =
-                                std::mem::replace(&mut self.clicked_regions, Vec::new());
+                            let clicked_region_ids =
+                                std::mem::replace(&mut self.clicked_region_ids, Default::default());
+                            // Clicked status is used when rendering views via the RenderContext.
+                            // So when it changes, these views need to be rerendered
+                            for clicked_region_id in clicked_region_ids.iter() {
+                                invalidated_views.insert(clicked_region_id.view_id());
+                            }
                             self.clicked_button = None;
 
                             // Find regions which still overlap with the mouse since the last MouseDown happened
-                            for clicked_region in clicked_regions.into_iter().rev() {
-                                if clicked_region.bounds.contains_point(e.position) {
-                                    valid_regions.push(clicked_region);
+                            for (mouse_region, _) in self.mouse_regions.iter().rev() {
+                                if clicked_region_ids.contains(&mouse_region.id()) {
+                                    if mouse_region.bounds.contains_point(self.mouse_position) {
+                                        valid_regions.push(mouse_region.clone());
+                                    }
                                 }
                             }
                         }
                     }
                     MouseRegionEvent::Drag(_) => {
-                        for clicked_region in self.clicked_regions.iter().rev() {
-                            valid_regions.push(clicked_region.clone());
+                        for (mouse_region, _) in self.mouse_regions.iter().rev() {
+                            if self.clicked_region_ids.contains(&mouse_region.id()) {
+                                valid_regions.push(mouse_region.clone());
+                            }
                         }
                     }
 
@@ -447,18 +463,18 @@ impl Presenter {
 
                     region_event.set_region(valid_region.bounds);
                     if let MouseRegionEvent::Hover(e) = &mut region_event {
-                        e.started = valid_region
-                            .id()
-                            .map(|region_id| hovered_region_ids.contains(&region_id))
-                            .unwrap_or(false)
+                        e.started = hovered_region_ids.contains(&valid_region.id())
                     }
-                    // Handle Down events if the MouseRegion has a Click handler. This makes the api more intuitive as you would
+                    // Handle Down events if the MouseRegion has a Click or Drag handler. This makes the api more intuitive as you would
                     // not expect a MouseRegion to be transparent to Down events if it also has a Click handler.
                     // This behavior can be overridden by adding a Down handler that calls cx.propogate_event
                     if let MouseRegionEvent::Down(e) = &region_event {
                         if valid_region
                             .handlers
                             .contains_handler(MouseRegionEvent::click_disc(), Some(e.button))
+                            || valid_region
+                                .handlers
+                                .contains_handler(MouseRegionEvent::drag_disc(), Some(e.button))
                         {
                             event_cx.handled = true;
                         }
@@ -466,8 +482,10 @@ impl Presenter {
 
                     if let Some(callback) = valid_region.handlers.get(&region_event.handler_key()) {
                         event_cx.handled = true;
-                        event_cx.invalidated_views.insert(valid_region.view_id);
-                        event_cx.with_current_view(valid_region.view_id, {
+                        event_cx
+                            .invalidated_views
+                            .insert(valid_region.id().view_id());
+                        event_cx.with_current_view(valid_region.id().view_id(), {
                             let region_event = region_event.clone();
                             |cx| {
                                 callback(region_event, cx);
@@ -545,8 +563,9 @@ pub struct LayoutContext<'a> {
     pub refreshing: bool,
     pub window_size: Vector2F,
     titlebar_height: f32,
+    appearance: Appearance,
     hovered_region_ids: HashSet<MouseRegionId>,
-    clicked_region_ids: Option<(Vec<MouseRegionId>, MouseButton)>,
+    clicked_region_ids: Option<(HashSet<MouseRegionId>, MouseButton)>,
 }
 
 impl<'a> LayoutContext<'a> {
@@ -619,6 +638,7 @@ impl<'a> LayoutContext<'a> {
                 hovered_region_ids: self.hovered_region_ids.clone(),
                 clicked_region_ids: self.clicked_region_ids.clone(),
                 refreshing: self.refreshing,
+                appearance: self.appearance,
             };
             f(view, &mut render_cx)
         })

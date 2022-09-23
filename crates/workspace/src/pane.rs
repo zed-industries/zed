@@ -1,5 +1,9 @@
 use super::{ItemHandle, SplitDirection};
-use crate::{toolbar::Toolbar, Item, NewFile, NewSearch, NewTerminal, WeakItemHandle, Workspace};
+use crate::{
+    dock::{icon_for_dock_anchor, AnchorDockBottom, AnchorDockRight, ExpandDock, HideDock},
+    toolbar::Toolbar,
+    Item, NewFile, NewSearch, NewTerminal, WeakItemHandle, Workspace,
+};
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use context_menu::{ContextMenu, ContextMenuItem};
@@ -15,13 +19,13 @@ use gpui::{
     },
     impl_actions, impl_internal_actions,
     platform::{CursorStyle, NavigationDirection},
-    AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, EventContext,
+    Action, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, EventContext,
     ModelHandle, MouseButton, MutableAppContext, PromptLevel, Quad, RenderContext, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
-use settings::{Autosave, Settings};
+use settings::{Autosave, DockAnchor, Settings};
 use std::{any::Any, cell::RefCell, cmp, mem, path::Path, rc::Rc};
 use theme::Theme;
 use util::ResultExt;
@@ -77,12 +81,26 @@ pub struct DeploySplitMenu {
 }
 
 #[derive(Clone, PartialEq)]
+pub struct DeployDockMenu {
+    position: Vector2F,
+}
+
+#[derive(Clone, PartialEq)]
 pub struct DeployNewMenu {
     position: Vector2F,
 }
 
 impl_actions!(pane, [GoBack, GoForward, ActivateItem]);
-impl_internal_actions!(pane, [CloseItem, DeploySplitMenu, DeployNewMenu, MoveItem]);
+impl_internal_actions!(
+    pane,
+    [
+        CloseItem,
+        DeploySplitMenu,
+        DeployNewMenu,
+        DeployDockMenu,
+        MoveItem
+    ]
+);
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
@@ -141,6 +159,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx));
     cx.add_action(Pane::deploy_split_menu);
     cx.add_action(Pane::deploy_new_menu);
+    cx.add_action(Pane::deploy_dock_menu);
     cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
         Pane::reopen_closed_item(workspace, cx).detach();
     });
@@ -168,6 +187,7 @@ pub fn init(cx: &mut MutableAppContext) {
     });
 }
 
+#[derive(Debug)]
 pub enum Event {
     Focused,
     ActivateItem { local: bool },
@@ -185,7 +205,8 @@ pub struct Pane {
     autoscroll: bool,
     nav_history: Rc<RefCell<NavHistory>>,
     toolbar: ViewHandle<Toolbar>,
-    context_menu: ViewHandle<ContextMenu>,
+    tab_bar_context_menu: ViewHandle<ContextMenu>,
+    docked: Option<DockAnchor>,
 }
 
 pub struct ItemNavHistory {
@@ -235,7 +256,7 @@ pub enum ReorderBehavior {
 }
 
 impl Pane {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(docked: Option<DockAnchor>, cx: &mut ViewContext<Self>) -> Self {
         let handle = cx.weak_handle();
         let context_menu = cx.add_view(ContextMenu::new);
         Self {
@@ -253,12 +274,22 @@ impl Pane {
                 pane: handle.clone(),
             })),
             toolbar: cx.add_view(|_| Toolbar::new(handle)),
-            context_menu,
+            tab_bar_context_menu: context_menu,
+            docked,
         }
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.is_active
     }
 
     pub fn set_active(&mut self, is_active: bool, cx: &mut ViewContext<Self>) {
         self.is_active = is_active;
+        cx.notify();
+    }
+
+    pub fn set_docked(&mut self, docked: Option<DockAnchor>, cx: &mut ViewContext<Self>) {
+        self.docked = docked;
         cx.notify();
     }
 
@@ -675,7 +706,7 @@ impl Pane {
         pane: ViewHandle<Pane>,
         item_id_to_close: usize,
         cx: &mut ViewContext<Workspace>,
-    ) -> Task<Result<bool>> {
+    ) -> Task<Result<()>> {
         Self::close_items(workspace, pane, cx, move |view_id| {
             view_id == item_id_to_close
         })
@@ -686,7 +717,7 @@ impl Pane {
         pane: ViewHandle<Pane>,
         cx: &mut ViewContext<Workspace>,
         should_close: impl 'static + Fn(usize) -> bool,
-    ) -> Task<Result<bool>> {
+    ) -> Task<Result<()>> {
         let project = workspace.project().clone();
 
         // Find the items to close.
@@ -759,7 +790,7 @@ impl Pane {
             }
 
             pane.update(&mut cx, |_, cx| cx.notify());
-            Ok(true)
+            Ok(())
         })
     }
 
@@ -962,9 +993,10 @@ impl Pane {
     }
 
     fn deploy_split_menu(&mut self, action: &DeploySplitMenu, cx: &mut ViewContext<Self>) {
-        self.context_menu.update(cx, |menu, cx| {
+        self.tab_bar_context_menu.update(cx, |menu, cx| {
             menu.show(
                 action.position,
+                AnchorCorner::TopRight,
                 vec![
                     ContextMenuItem::item("Split Right", SplitRight),
                     ContextMenuItem::item("Split Left", SplitLeft),
@@ -976,10 +1008,26 @@ impl Pane {
         });
     }
 
-    fn deploy_new_menu(&mut self, action: &DeployNewMenu, cx: &mut ViewContext<Self>) {
-        self.context_menu.update(cx, |menu, cx| {
+    fn deploy_dock_menu(&mut self, action: &DeployDockMenu, cx: &mut ViewContext<Self>) {
+        self.tab_bar_context_menu.update(cx, |menu, cx| {
             menu.show(
                 action.position,
+                AnchorCorner::TopRight,
+                vec![
+                    ContextMenuItem::item("Anchor Dock Right", AnchorDockRight),
+                    ContextMenuItem::item("Anchor Dock Bottom", AnchorDockBottom),
+                    ContextMenuItem::item("Expand Dock", ExpandDock),
+                ],
+                cx,
+            );
+        });
+    }
+
+    fn deploy_new_menu(&mut self, action: &DeployNewMenu, cx: &mut ViewContext<Self>) {
+        self.tab_bar_context_menu.update(cx, |menu, cx| {
+            menu.show(
+                action.position,
+                AnchorCorner::TopRight,
                 vec![
                     ContextMenuItem::item("New File", NewFile),
                     ContextMenuItem::item("New Terminal", NewTerminal),
@@ -1004,7 +1052,7 @@ impl Pane {
         });
     }
 
-    fn render_tab_bar(&mut self, cx: &mut RenderContext<Self>) -> impl Element {
+    fn render_tabs(&mut self, cx: &mut RenderContext<Self>) -> impl Element {
         let theme = cx.global::<Settings>().theme.clone();
         let filler_index = self.items.len();
 
@@ -1012,7 +1060,7 @@ impl Pane {
         enum Tab {}
         enum Filler {}
         let pane = cx.handle();
-        MouseEventHandler::new::<Tabs, _, _>(0, cx, |_, cx| {
+        MouseEventHandler::<Tabs>::new(0, cx, |_, cx| {
             let autoscroll = if mem::take(&mut self.autoscroll) {
                 Some(self.active_item_index)
             } else {
@@ -1033,7 +1081,7 @@ impl Pane {
                 let tab_active = ix == self.active_item_index;
 
                 row.add_child({
-                    MouseEventHandler::new::<Tab, _, _>(ix, cx, {
+                    MouseEventHandler::<Tab>::new(ix, cx, {
                         let item = item.clone();
                         let pane = pane.clone();
                         let detail = detail.clone();
@@ -1047,6 +1095,7 @@ impl Pane {
                             Self::render_tab(
                                 &item,
                                 pane,
+                                ix == 0,
                                 detail,
                                 hovered,
                                 Self::tab_overlay_color(hovered, theme.as_ref(), cx),
@@ -1091,6 +1140,7 @@ impl Pane {
                                 Self::render_tab(
                                     &dragged_item.item,
                                     dragged_item.pane.clone(),
+                                    false,
                                     detail,
                                     false,
                                     None,
@@ -1108,7 +1158,7 @@ impl Pane {
             // the filler
             let filler_style = theme.workspace.tab_bar.tab_style(pane_active, false);
             row.add_child(
-                MouseEventHandler::new::<Filler, _, _>(0, cx, |mouse_state, cx| {
+                MouseEventHandler::<Filler>::new(0, cx, |mouse_state, cx| {
                     let mut filler = Empty::new()
                         .contained()
                         .with_style(filler_style.container)
@@ -1172,6 +1222,7 @@ impl Pane {
     fn render_tab<V: View>(
         item: &Box<dyn ItemHandle>,
         pane: WeakViewHandle<Pane>,
+        first: bool,
         detail: Option<usize>,
         hovered: bool,
         overlay: Option<Color>,
@@ -1179,6 +1230,10 @@ impl Pane {
         cx: &mut RenderContext<V>,
     ) -> ElementBox {
         let title = item.tab_content(detail, &tab_style, cx);
+        let mut container = tab_style.container.clone();
+        if first {
+            container.border.left = false;
+        }
 
         let mut tab = Flex::row()
             .with_child(
@@ -1230,17 +1285,13 @@ impl Pane {
                         let item_id = item.id();
                         enum TabCloseButton {}
                         let icon = Svg::new("icons/x_mark_thin_8.svg");
-                        MouseEventHandler::new::<TabCloseButton, _, _>(
-                            item_id,
-                            cx,
-                            |mouse_state, _| {
-                                if mouse_state.hovered {
-                                    icon.with_color(tab_style.icon_close_active).boxed()
-                                } else {
-                                    icon.with_color(tab_style.icon_close).boxed()
-                                }
-                            },
-                        )
+                        MouseEventHandler::<TabCloseButton>::new(item_id, cx, |mouse_state, _| {
+                            if mouse_state.hovered {
+                                icon.with_color(tab_style.icon_close_active).boxed()
+                            } else {
+                                icon.with_color(tab_style.icon_close).boxed()
+                            }
+                        })
                         .with_padding(Padding::uniform(4.))
                         .with_cursor_style(CursorStyle::PointingHand)
                         .on_click(MouseButton::Left, {
@@ -1263,7 +1314,7 @@ impl Pane {
                 .boxed(),
             )
             .contained()
-            .with_style(tab_style.container);
+            .with_style(container);
 
         if let Some(overlay) = overlay {
             tab = tab.with_overlay_color(overlay);
@@ -1316,120 +1367,123 @@ impl View for Pane {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        enum SplitIcon {}
-
         let this = cx.handle();
+
+        enum MouseNavigationHandler {}
 
         Stack::new()
             .with_child(
-                EventHandler::new(if let Some(active_item) = self.active_item() {
-                    Flex::column()
-                        .with_child({
-                            let mut tab_row = Flex::row()
-                                .with_child(self.render_tab_bar(cx).flex(1., true).named("tabs"));
+                MouseEventHandler::<MouseNavigationHandler>::new(0, cx, |_, cx| {
+                    if let Some(active_item) = self.active_item() {
+                        Flex::column()
+                            .with_child({
+                                let mut tab_row = Flex::row()
+                                    .with_child(self.render_tabs(cx).flex(1.0, true).named("tabs"));
 
-                            if self.is_active {
-                                tab_row.add_children([
-                                    MouseEventHandler::new::<SplitIcon, _, _>(
-                                        0,
-                                        cx,
-                                        |mouse_state, cx| {
-                                            let theme =
-                                                &cx.global::<Settings>().theme.workspace.tab_bar;
-                                            let style =
-                                                theme.pane_button.style_for(mouse_state, false);
-                                            Svg::new("icons/plus_12.svg")
-                                                .with_color(style.color)
-                                                .constrained()
-                                                .with_width(style.icon_width)
-                                                .aligned()
-                                                .contained()
-                                                .with_style(style.container)
-                                                .constrained()
-                                                .with_width(style.button_width)
-                                                .with_height(style.button_width)
-                                                .aligned()
-                                                .boxed()
-                                        },
+                                // Render pane buttons
+                                let theme = cx.global::<Settings>().theme.clone();
+                                if self.is_active {
+                                    tab_row.add_child(
+                                        Flex::row()
+                                            // New menu
+                                            .with_child(tab_bar_button(
+                                                0,
+                                                "icons/plus_12.svg",
+                                                cx,
+                                                |position| DeployNewMenu { position },
+                                            ))
+                                            .with_child(
+                                                self.docked
+                                                    .map(|anchor| {
+                                                        // Add the dock menu button if this pane is a dock
+                                                        let dock_icon =
+                                                            icon_for_dock_anchor(anchor);
+
+                                                        tab_bar_button(
+                                                            1,
+                                                            dock_icon,
+                                                            cx,
+                                                            |position| DeployDockMenu { position },
+                                                        )
+                                                    })
+                                                    .unwrap_or_else(|| {
+                                                        // Add the split menu if this pane is not a dock
+                                                        tab_bar_button(
+                                                            2,
+                                                            "icons/split_12.svg",
+                                                            cx,
+                                                            |position| DeploySplitMenu { position },
+                                                        )
+                                                    }),
+                                            )
+                                            // Add the close dock button if this pane is a dock
+                                            .with_children(self.docked.map(|_| {
+                                                tab_bar_button(
+                                                    3,
+                                                    "icons/x_mark_thin_8.svg",
+                                                    cx,
+                                                    |_| HideDock,
+                                                )
+                                            }))
+                                            .contained()
+                                            .with_style(
+                                                theme.workspace.tab_bar.pane_button_container,
+                                            )
+                                            .flex(1., false)
+                                            .boxed(),
                                     )
-                                    .with_cursor_style(CursorStyle::PointingHand)
-                                    .on_down(MouseButton::Left, |e, cx| {
-                                        cx.dispatch_action(DeployNewMenu {
-                                            position: e.position,
-                                        });
-                                    })
-                                    .boxed(),
-                                    MouseEventHandler::new::<SplitIcon, _, _>(
-                                        1,
-                                        cx,
-                                        |mouse_state, cx| {
-                                            let theme =
-                                                &cx.global::<Settings>().theme.workspace.tab_bar;
-                                            let style =
-                                                theme.pane_button.style_for(mouse_state, false);
-                                            Svg::new("icons/split_12.svg")
-                                                .with_color(style.color)
-                                                .constrained()
-                                                .with_width(style.icon_width)
-                                                .aligned()
-                                                .contained()
-                                                .with_style(style.container)
-                                                .constrained()
-                                                .with_width(style.button_width)
-                                                .with_height(style.button_width)
-                                                .aligned()
-                                                .boxed()
-                                        },
-                                    )
-                                    .with_cursor_style(CursorStyle::PointingHand)
-                                    .on_down(MouseButton::Left, |e, cx| {
-                                        cx.dispatch_action(DeploySplitMenu {
-                                            position: e.position,
-                                        });
-                                    })
-                                    .boxed(),
-                                ])
-                            }
+                                }
 
-                            tab_row
-                                .constrained()
-                                .with_height(cx.global::<Settings>().theme.workspace.tab_bar.height)
-                                .named("tab bar")
-                        })
-                        .with_child(ChildView::new(&self.toolbar).boxed())
-                        .with_child(ChildView::new(active_item).flex(1., true).boxed())
-                        .boxed()
-                } else {
-                    enum EmptyPane {}
-                    let theme = cx.global::<Settings>().theme.clone();
-
-                    MouseEventHandler::new::<EmptyPane, _, _>(0, cx, |_, _| {
-                        Empty::new()
-                            .contained()
-                            .with_background_color(theme.workspace.background)
+                                tab_row
+                                    .constrained()
+                                    .with_height(theme.workspace.tab_bar.height)
+                                    .contained()
+                                    .with_style(theme.workspace.tab_bar.container)
+                                    .flex(1., false)
+                                    .named("tab bar")
+                            })
+                            .with_child(ChildView::new(&self.toolbar).expanded().boxed())
+                            .with_child(ChildView::new(active_item).flex(1., true).boxed())
                             .boxed()
-                    })
-                    .on_down(MouseButton::Left, |_, cx| {
-                        cx.focus_parent_view();
-                    })
-                    .boxed()
-                })
-                .on_navigate_mouse_down(move |direction, cx| {
-                    let this = this.clone();
-                    match direction {
-                        NavigationDirection::Back => {
-                            cx.dispatch_action(GoBack { pane: Some(this) })
-                        }
-                        NavigationDirection::Forward => {
-                            cx.dispatch_action(GoForward { pane: Some(this) })
-                        }
-                    }
+                    } else {
+                        enum EmptyPane {}
+                        let theme = cx.global::<Settings>().theme.clone();
 
-                    true
+                        MouseEventHandler::<EmptyPane>::new(0, cx, |_, _| {
+                            Empty::new()
+                                .contained()
+                                .with_background_color(theme.workspace.background)
+                                .boxed()
+                        })
+                        .on_down(MouseButton::Left, |_, cx| {
+                            cx.focus_parent_view();
+                        })
+                        .on_up(MouseButton::Left, {
+                            let pane = this.clone();
+                            move |_, cx: &mut EventContext| Pane::handle_dropped_item(&pane, 0, cx)
+                        })
+                        .boxed()
+                    }
+                })
+                .on_down(MouseButton::Navigate(NavigationDirection::Back), {
+                    let this = this.clone();
+                    move |_, cx| {
+                        cx.dispatch_action(GoBack {
+                            pane: Some(this.clone()),
+                        });
+                    }
+                })
+                .on_down(MouseButton::Navigate(NavigationDirection::Forward), {
+                    let this = this.clone();
+                    move |_, cx| {
+                        cx.dispatch_action(GoForward {
+                            pane: Some(this.clone()),
+                        })
+                    }
                 })
                 .boxed(),
             )
-            .with_child(ChildView::new(&self.context_menu).boxed())
+            .with_child(ChildView::new(&self.tab_bar_context_menu).boxed())
             .named("pane")
     }
 
@@ -1449,6 +1503,36 @@ impl View for Pane {
         }
         cx.emit(Event::Focused);
     }
+}
+
+fn tab_bar_button<A: Action>(
+    index: usize,
+    icon: &'static str,
+    cx: &mut RenderContext<Pane>,
+    action_builder: impl 'static + Fn(Vector2F) -> A,
+) -> ElementBox {
+    enum TabBarButton {}
+
+    MouseEventHandler::<TabBarButton>::new(index, cx, |mouse_state, cx| {
+        let theme = &cx.global::<Settings>().theme.workspace.tab_bar;
+        let style = theme.pane_button.style_for(mouse_state, false);
+        Svg::new(icon)
+            .with_color(style.color)
+            .constrained()
+            .with_width(style.icon_width)
+            .aligned()
+            .constrained()
+            .with_width(style.button_width)
+            .with_height(style.button_width)
+            // .aligned()
+            .boxed()
+    })
+    .with_cursor_style(CursorStyle::PointingHand)
+    .on_click(MouseButton::Left, move |e, cx| {
+        cx.dispatch_action(action_builder(e.region.lower_right()));
+    })
+    .flex(1., false)
+    .boxed()
 }
 
 impl ItemNavHistory {
@@ -1566,7 +1650,8 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (_, workspace) =
+            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // 1. Add with a destination index
@@ -1654,7 +1739,8 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (_, workspace) =
+            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // 1. Add with a destination index
@@ -1730,7 +1816,8 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project, cx));
+        let (_, workspace) =
+            cx.add_window(|cx| Workspace::new(project, |_, _| unimplemented!(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // singleton view

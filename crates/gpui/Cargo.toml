@@ -3,6 +3,7 @@ authors = ["Nathan Sobo <nathansobo@gmail.com>"]
 edition = "2021"
 name = "gpui"
 version = "0.1.0"
+description = "A GPU-accelerated UI framework"
 
 [lib]
 path = "src/gpui.rs"
@@ -59,6 +60,7 @@ png = "0.16"
 simplelog = "0.9"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+media = { path = "../media" }
 anyhow = "1"
 block = "0.1"
 cocoa = "0.24"

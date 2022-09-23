@@ -21,7 +21,7 @@ impl View for FeedbackLink {
     }
 
     fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> gpui::ElementBox {
-        MouseEventHandler::new::<Self, _, _>(0, cx, |state, cx| {
+        MouseEventHandler::<Self>::new(0, cx, |state, cx| {
             let theme = &cx.global::<Settings>().theme;
             let theme = &theme.workspace.status_bar.feedback;
             Text::new(

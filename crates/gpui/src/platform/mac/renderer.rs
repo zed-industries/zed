@@ -8,16 +8,26 @@ use crate::{
     platform,
     scene::{Glyph, Icon, Image, ImageGlyph, Layer, Quad, Scene, Shadow, Underline},
 };
-use cocoa::foundation::NSUInteger;
+use cocoa::{
+    base::{NO, YES},
+    foundation::NSUInteger,
+    quartzcore::AutoresizingMask,
+};
+use core_foundation::base::TCFType;
+use foreign_types::ForeignTypeRef;
 use log::warn;
-use metal::{MTLPixelFormat, MTLResourceOptions, NSRange};
+use media::core_video::{self, CVMetalTextureCache};
+use metal::{CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
+use objc::{self, msg_send, sel, sel_impl};
 use shaders::ToFloat2 as _;
-use std::{collections::HashMap, ffi::c_void, iter::Peekable, mem, sync::Arc, vec};
+use std::{collections::HashMap, ffi::c_void, iter::Peekable, mem, ptr, sync::Arc, vec};
 
 const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
 const INSTANCE_BUFFER_SIZE: usize = 8192 * 1024; // This is an arbitrary decision. There's probably a more optimal value.
 
 pub struct Renderer {
+    layer: metal::MetalLayer,
+    command_queue: CommandQueue,
     sprite_cache: SpriteCache,
     image_cache: ImageCache,
     path_atlases: AtlasAllocator,
@@ -25,10 +35,12 @@ pub struct Renderer {
     shadow_pipeline_state: metal::RenderPipelineState,
     sprite_pipeline_state: metal::RenderPipelineState,
     image_pipeline_state: metal::RenderPipelineState,
+    surface_pipeline_state: metal::RenderPipelineState,
     path_atlas_pipeline_state: metal::RenderPipelineState,
     underline_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     instances: metal::Buffer,
+    cv_texture_cache: core_video::CVMetalTextureCache,
 }
 
 struct PathSprite {
@@ -37,13 +49,37 @@ struct PathSprite {
     shader_data: shaders::GPUISprite,
 }
 
+pub struct Surface {
+    pub bounds: RectF,
+    pub image_buffer: core_video::CVImageBuffer,
+}
+
 impl Renderer {
-    pub fn new(
-        device: metal::Device,
-        pixel_format: metal::MTLPixelFormat,
-        scale_factor: f32,
-        fonts: Arc<dyn platform::FontSystem>,
-    ) -> Self {
+    pub fn new(is_opaque: bool, fonts: Arc<dyn platform::FontSystem>) -> Self {
+        const PIXEL_FORMAT: MTLPixelFormat = MTLPixelFormat::BGRA8Unorm;
+
+        let device: metal::Device = if let Some(device) = metal::Device::system_default() {
+            device
+        } else {
+            log::error!("unable to access a compatible graphics device");
+            std::process::exit(1);
+        };
+
+        let layer = metal::MetalLayer::new();
+        layer.set_device(&device);
+        layer.set_pixel_format(PIXEL_FORMAT);
+        layer.set_presents_with_transaction(true);
+        layer.set_opaque(is_opaque);
+        unsafe {
+            let _: () = msg_send![&*layer, setAllowsNextDrawableTimeout: NO];
+            let _: () = msg_send![&*layer, setNeedsDisplayOnBoundsChange: YES];
+            let _: () = msg_send![
+                &*layer,
+                setAutoresizingMask: AutoresizingMask::WIDTH_SIZABLE
+                    | AutoresizingMask::HEIGHT_SIZABLE
+            ];
+        }
+
         let library = device
             .new_library_with_data(SHADERS_METALLIB)
             .expect("error building metal library");
@@ -66,13 +102,8 @@ impl Renderer {
             MTLResourceOptions::StorageModeManaged,
         );
 
-        let sprite_cache = SpriteCache::new(
-            device.clone(),
-            vec2i(1024, 768),
-            scale_factor,
-            fonts.clone(),
-        );
-        let image_cache = ImageCache::new(device.clone(), vec2i(1024, 768), scale_factor, fonts);
+        let sprite_cache = SpriteCache::new(device.clone(), vec2i(1024, 768), 1., fonts.clone());
+        let image_cache = ImageCache::new(device.clone(), vec2i(1024, 768), 1., fonts);
         let path_atlases =
             AtlasAllocator::new(device.clone(), build_path_atlas_texture_descriptor());
         let quad_pipeline_state = build_pipeline_state(
@@ -81,7 +112,7 @@ impl Renderer {
             "quad",
             "quad_vertex",
             "quad_fragment",
-            pixel_format,
+            PIXEL_FORMAT,
         );
         let shadow_pipeline_state = build_pipeline_state(
             &device,
@@ -89,7 +120,7 @@ impl Renderer {
             "shadow",
             "shadow_vertex",
             "shadow_fragment",
-            pixel_format,
+            PIXEL_FORMAT,
         );
         let sprite_pipeline_state = build_pipeline_state(
             &device,
@@ -97,7 +128,7 @@ impl Renderer {
             "sprite",
             "sprite_vertex",
             "sprite_fragment",
-            pixel_format,
+            PIXEL_FORMAT,
         );
         let image_pipeline_state = build_pipeline_state(
             &device,
@@ -105,7 +136,15 @@ impl Renderer {
             "image",
             "image_vertex",
             "image_fragment",
-            pixel_format,
+            PIXEL_FORMAT,
+        );
+        let surface_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "surface",
+            "surface_vertex",
+            "surface_fragment",
+            PIXEL_FORMAT,
         );
         let path_atlas_pipeline_state = build_path_atlas_pipeline_state(
             &device,
@@ -121,9 +160,12 @@ impl Renderer {
             "underline",
             "underline_vertex",
             "underline_fragment",
-            pixel_format,
+            PIXEL_FORMAT,
         );
+        let cv_texture_cache = CVMetalTextureCache::new(device.as_ptr()).unwrap();
         Self {
+            layer,
+            command_queue: device.new_command_queue(),
             sprite_cache,
             image_cache,
             path_atlases,
@@ -131,20 +173,26 @@ impl Renderer {
             shadow_pipeline_state,
             sprite_pipeline_state,
             image_pipeline_state,
+            surface_pipeline_state,
             path_atlas_pipeline_state,
             underline_pipeline_state,
             unit_vertices,
             instances,
+            cv_texture_cache,
         }
     }
 
-    pub fn render(
-        &mut self,
-        scene: &Scene,
-        drawable_size: Vector2F,
-        command_buffer: &metal::CommandBufferRef,
-        output: &metal::TextureRef,
-    ) {
+    pub fn layer(&self) -> &metal::MetalLayerRef {
+        &*self.layer
+    }
+
+    pub fn render(&mut self, scene: &Scene) {
+        let layer = self.layer.clone();
+        let drawable_size = layer.drawable_size();
+        let drawable = layer.next_drawable().unwrap();
+        let command_queue = self.command_queue.clone();
+        let command_buffer = command_queue.new_command_buffer();
+
         self.sprite_cache.set_scale_factor(scene.scale_factor());
         self.image_cache.set_scale_factor(scene.scale_factor());
 
@@ -155,15 +203,19 @@ impl Renderer {
             scene,
             path_sprites,
             &mut offset,
-            drawable_size,
+            vec2f(drawable_size.width as f32, drawable_size.height as f32),
             command_buffer,
-            output,
+            drawable.texture(),
         );
         self.instances.did_modify_range(NSRange {
             location: 0,
             length: offset as NSUInteger,
         });
         self.image_cache.finish_frame();
+
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+        drawable.present();
     }
 
     fn render_path_atlases(
@@ -312,7 +364,8 @@ impl Renderer {
         color_attachment.set_texture(Some(output));
         color_attachment.set_load_action(metal::MTLLoadAction::Clear);
         color_attachment.set_store_action(metal::MTLStoreAction::Store);
-        color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., 1.));
+        let alpha = if self.layer.is_opaque() { 1. } else { 0. };
+        color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., alpha));
         let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
 
         command_encoder.set_viewport(metal::MTLViewport {
@@ -367,6 +420,13 @@ impl Renderer {
             self.render_images(
                 layer.images(),
                 layer.image_glyphs(),
+                scale_factor,
+                offset,
+                drawable_size,
+                command_encoder,
+            );
+            self.render_surfaces(
+                layer.surfaces(),
                 scale_factor,
                 offset,
                 drawable_size,
@@ -764,6 +824,111 @@ impl Renderer {
                 6,
                 images.len() as u64,
             );
+            *offset = next_offset;
+        }
+    }
+
+    fn render_surfaces(
+        &mut self,
+        surfaces: &[Surface],
+        scale_factor: f32,
+        offset: &mut usize,
+        drawable_size: Vector2F,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) {
+        if surfaces.is_empty() {
+            return;
+        }
+
+        command_encoder.set_render_pipeline_state(&self.surface_pipeline_state);
+        command_encoder.set_vertex_buffer(
+            shaders::GPUISurfaceVertexInputIndex_GPUISurfaceVertexInputIndexVertices as u64,
+            Some(&self.unit_vertices),
+            0,
+        );
+        command_encoder.set_vertex_bytes(
+            shaders::GPUISurfaceVertexInputIndex_GPUISurfaceVertexInputIndexViewportSize as u64,
+            mem::size_of::<shaders::vector_float2>() as u64,
+            [drawable_size.to_float2()].as_ptr() as *const c_void,
+        );
+
+        for surface in surfaces {
+            let origin = surface.bounds.origin() * scale_factor;
+            let source_size = vec2i(
+                surface.image_buffer.width() as i32,
+                surface.image_buffer.height() as i32,
+            );
+            let target_size = surface.bounds.size() * scale_factor;
+
+            assert_eq!(
+                surface.image_buffer.pixel_format_type(),
+                core_video::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+            );
+
+            let y_texture = self
+                .cv_texture_cache
+                .create_texture_from_image(
+                    surface.image_buffer.as_concrete_TypeRef(),
+                    ptr::null(),
+                    MTLPixelFormat::R8Unorm,
+                    surface.image_buffer.plane_width(0),
+                    surface.image_buffer.plane_height(0),
+                    0,
+                )
+                .unwrap();
+            let cb_cr_texture = self
+                .cv_texture_cache
+                .create_texture_from_image(
+                    surface.image_buffer.as_concrete_TypeRef(),
+                    ptr::null(),
+                    MTLPixelFormat::RG8Unorm,
+                    surface.image_buffer.plane_width(1),
+                    surface.image_buffer.plane_height(1),
+                    1,
+                )
+                .unwrap();
+
+            align_offset(offset);
+            let next_offset = *offset + mem::size_of::<shaders::GPUISurface>();
+            assert!(
+                next_offset <= INSTANCE_BUFFER_SIZE,
+                "instance buffer exhausted"
+            );
+
+            command_encoder.set_vertex_buffer(
+                shaders::GPUISurfaceVertexInputIndex_GPUISurfaceVertexInputIndexSurfaces as u64,
+                Some(&self.instances),
+                *offset as u64,
+            );
+            command_encoder.set_vertex_bytes(
+                shaders::GPUISurfaceVertexInputIndex_GPUISurfaceVertexInputIndexAtlasSize as u64,
+                mem::size_of::<shaders::vector_float2>() as u64,
+                [source_size.to_float2()].as_ptr() as *const c_void,
+            );
+            command_encoder.set_fragment_texture(
+                shaders::GPUISurfaceFragmentInputIndex_GPUISurfaceFragmentInputIndexYAtlas as u64,
+                Some(y_texture.as_texture_ref()),
+            );
+            command_encoder.set_fragment_texture(
+                shaders::GPUISurfaceFragmentInputIndex_GPUISurfaceFragmentInputIndexCbCrAtlas
+                    as u64,
+                Some(cb_cr_texture.as_texture_ref()),
+            );
+
+            unsafe {
+                let buffer_contents = (self.instances.contents() as *mut u8).add(*offset)
+                    as *mut shaders::GPUISurface;
+                std::ptr::write(
+                    buffer_contents,
+                    shaders::GPUISurface {
+                        origin: origin.to_float2(),
+                        target_size: target_size.to_float2(),
+                        source_size: source_size.to_float2(),
+                    },
+                );
+            }
+
+            command_encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, 6);
             *offset = next_offset;
         }
     }

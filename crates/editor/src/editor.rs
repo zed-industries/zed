@@ -682,7 +682,7 @@ impl CompletionsMenu {
                     let completion = &completions[mat.candidate_id];
                     let item_ix = start_ix + ix;
                     items.push(
-                        MouseEventHandler::new::<CompletionTag, _, _>(
+                        MouseEventHandler::<CompletionTag>::new(
                             mat.candidate_id,
                             cx,
                             |state, _| {
@@ -830,7 +830,7 @@ impl CodeActionsMenu {
                 for (ix, action) in actions[range].iter().enumerate() {
                     let item_ix = start_ix + ix;
                     items.push(
-                        MouseEventHandler::new::<ActionTag, _, _>(item_ix, cx, |state, _| {
+                        MouseEventHandler::<ActionTag>::new(item_ix, cx, |state, _| {
                             let item_style = if item_ix == selected_item {
                                 style.autocomplete.selected_item
                             } else if state.hovered {
@@ -1575,17 +1575,20 @@ impl Editor {
         let start;
         let end;
         let mode;
+        let auto_scroll;
         match click_count {
             1 => {
                 start = buffer.anchor_before(position.to_point(&display_map));
                 end = start.clone();
                 mode = SelectMode::Character;
+                auto_scroll = true;
             }
             2 => {
                 let range = movement::surrounding_word(&display_map, position);
                 start = buffer.anchor_before(range.start.to_point(&display_map));
                 end = buffer.anchor_before(range.end.to_point(&display_map));
                 mode = SelectMode::Word(start.clone()..end.clone());
+                auto_scroll = true;
             }
             3 => {
                 let position = display_map
@@ -1599,15 +1602,17 @@ impl Editor {
                 start = buffer.anchor_before(line_start);
                 end = buffer.anchor_before(next_line_start);
                 mode = SelectMode::Line(start.clone()..end.clone());
+                auto_scroll = true;
             }
             _ => {
                 start = buffer.anchor_before(0);
                 end = buffer.anchor_before(buffer.len());
                 mode = SelectMode::All;
+                auto_scroll = false;
             }
         }
 
-        self.change_selections(Some(Autoscroll::Newest), cx, |s| {
+        self.change_selections(auto_scroll.then(|| Autoscroll::Newest), cx, |s| {
             if !add {
                 s.clear_disjoint();
             } else if click_count > 1 {
@@ -2735,7 +2740,7 @@ impl Editor {
         if self.available_code_actions.is_some() {
             enum Tag {}
             Some(
-                MouseEventHandler::new::<Tag, _, _>(0, cx, |_, _| {
+                MouseEventHandler::<Tag>::new(0, cx, |_, _| {
                     Svg::new("icons/bolt_8.svg")
                         .with_color(style.code_actions.indicator)
                         .boxed()
@@ -7100,7 +7105,7 @@ mod tests {
     fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
         cx.set_global(Settings::test(cx));
         use workspace::Item;
-        let (_, pane) = cx.add_window(Default::default(), Pane::new);
+        let (_, pane) = cx.add_window(Default::default(), |cx| Pane::new(None, cx));
         let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
 
         cx.add_view(&pane, |cx| {
@@ -7826,7 +7831,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_delete_to_beginning_of_line(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
         cx.set_state("one «two threeˇ» four");
         cx.update_editor(|editor, cx| {
             editor.delete_to_beginning_of_line(&DeleteToBeginningOfLine, cx);
@@ -7974,7 +7979,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_newline_below(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
         cx.update(|cx| {
             cx.update_global::<Settings, _, _>(|settings, _| {
                 settings.editor_overrides.tab_size = Some(NonZeroU32::new(4).unwrap());
@@ -8050,7 +8055,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_tab(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
         cx.update(|cx| {
             cx.update_global::<Settings, _, _>(|settings, _| {
                 settings.editor_overrides.tab_size = Some(NonZeroU32::new(3).unwrap());
@@ -8081,7 +8086,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_tab_on_blank_line_auto_indents(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
         let language = Arc::new(
             Language::new(
                 LanguageConfig::default(),
@@ -8139,7 +8144,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
 
         cx.set_state(indoc! {"
               «oneˇ» «twoˇ»
@@ -8208,7 +8213,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_indent_outdent_with_hard_tabs(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
         cx.update(|cx| {
             cx.update_global::<Settings, _, _>(|settings, _| {
                 settings.editor_overrides.hard_tabs = Some(true);
@@ -8416,7 +8421,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_backspace(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
 
         // Basic backspace
         cx.set_state(indoc! {"
@@ -8463,7 +8468,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_delete(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
 
         cx.set_state(indoc! {"
             onˇe two three
@@ -8800,7 +8805,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_clipboard(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
 
         cx.set_state("«one✅ ˇ»two «three ˇ»four «five ˇ»six ");
         cx.update_editor(|e, cx| e.cut(&Cut, cx));
@@ -8876,7 +8881,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_paste_multiline(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
         let language = Arc::new(Language::new(
             LanguageConfig::default(),
             Some(tree_sitter_rust::language()),
@@ -9305,7 +9310,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_select_next(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
         cx.set_state("abc\nˇabc abc\ndefabc\nabc");
 
         cx.update_editor(|e, cx| e.select_next(&SelectNext::default(), cx));

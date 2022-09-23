@@ -20,6 +20,10 @@ use crate::{
 pub const HOVER_DELAY_MILLIS: u64 = 350;
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
+pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
+pub const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
+pub const HOVER_POPOVER_GAP: f32 = 10.;
+
 #[derive(Clone, PartialEq)]
 pub struct HoverAt {
     pub point: Option<DisplayPoint>,
@@ -312,7 +316,7 @@ pub struct InfoPopover {
 
 impl InfoPopover {
     pub fn render(&self, style: &EditorStyle, cx: &mut RenderContext<Editor>) -> ElementBox {
-        MouseEventHandler::new::<InfoPopover, _, _>(0, cx, |_, cx| {
+        MouseEventHandler::<InfoPopover>::new(0, cx, |_, cx| {
             let mut flex = Flex::new(Axis::Vertical).scrollable::<HoverBlock, _>(1, None, cx);
             flex.extend(self.contents.iter().map(|content| {
                 let project = self.project.read(cx);
@@ -350,10 +354,11 @@ impl InfoPopover {
                 .with_style(style.hover_popover.container)
                 .boxed()
         })
+        .on_move(|_, _| {})
         .with_cursor_style(CursorStyle::Arrow)
         .with_padding(Padding {
-            bottom: 5.,
-            top: 5.,
+            bottom: HOVER_POPOVER_GAP,
+            top: HOVER_POPOVER_GAP,
             ..Default::default()
         })
         .boxed()
@@ -383,13 +388,19 @@ impl DiagnosticPopover {
 
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
 
-        MouseEventHandler::new::<DiagnosticPopover, _, _>(0, cx, |_, _| {
+        MouseEventHandler::<DiagnosticPopover>::new(0, cx, |_, _| {
             Text::new(self.local_diagnostic.diagnostic.message.clone(), text_style)
                 .with_soft_wrap(true)
                 .contained()
                 .with_style(container_style)
                 .boxed()
         })
+        .with_padding(Padding {
+            top: HOVER_POPOVER_GAP,
+            bottom: HOVER_POPOVER_GAP,
+            ..Default::default()
+        })
+        .on_move(|_, _| {})
         .on_click(MouseButton::Left, |_, cx| {
             cx.dispatch_action(GoToDiagnostic)
         })

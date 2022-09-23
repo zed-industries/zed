@@ -776,7 +776,8 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(project.clone(), cx));
+        let (_, workspace) =
+            cx.add_window(|cx| Workspace::new(project.clone(), |_, _| unimplemented!(), cx));
 
         // Create some diagnostics
         project.update(cx, |project, cx| {
@@ -1149,7 +1150,7 @@ mod tests {
         editor: &ViewHandle<Editor>,
         cx: &mut MutableAppContext,
     ) -> Vec<(u32, String)> {
-        let mut presenter = cx.build_presenter(editor.id(), 0.);
+        let mut presenter = cx.build_presenter(editor.id(), 0., Default::default());
         let mut cx = presenter.build_layout_context(Default::default(), false, cx);
         cx.render(editor, |editor, cx| {
             let snapshot = editor.snapshot(cx);

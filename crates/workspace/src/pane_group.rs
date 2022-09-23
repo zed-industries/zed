@@ -38,6 +38,10 @@ impl PaneGroup {
         }
     }
 
+    /// Returns:
+    /// - Ok(true) if it found and removed a pane
+    /// - Ok(false) if it found but did not remove the pane
+    /// - Err(_) if it did not find the pane
     pub fn remove(&mut self, pane: &ViewHandle<Pane>) -> Result<bool> {
         match &mut self.root {
             Member::Pane(_) => Ok(false),

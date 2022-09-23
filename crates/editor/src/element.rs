@@ -5,7 +5,9 @@ use super::{
 };
 use crate::{
     display_map::{BlockStyle, DisplaySnapshot, TransformBlock},
-    hover_popover::HoverAt,
+    hover_popover::{
+        HoverAt, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
+    },
     link_go_to_definition::{
         CmdShiftChanged, GoToFetchedDefinition, GoToFetchedTypeDefinition, UpdateGoToDefinitionLink,
     },
@@ -28,7 +30,7 @@ use gpui::{
     text_layout::{self, Line, RunStyle, TextLayoutCache},
     AppContext, Axis, Border, CursorRegion, Element, ElementBox, Event, EventContext,
     LayoutContext, ModifiersChangedEvent, MouseButton, MouseButtonEvent, MouseMovedEvent,
-    MutableAppContext, PaintContext, Quad, Scene, ScrollWheelEvent, SizeConstraint, ViewContext,
+    MouseRegion, MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext,
     WeakViewHandle,
 };
 use json::json;
@@ -41,11 +43,8 @@ use std::{
     fmt::Write,
     iter,
     ops::Range,
+    sync::Arc,
 };
-
-const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
-const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
-const HOVER_POPOVER_GAP: f32 = 10.;
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -76,9 +75,10 @@ impl SelectionLayout {
     }
 }
 
+#[derive(Clone)]
 pub struct EditorElement {
     view: WeakViewHandle<Editor>,
-    style: EditorStyle,
+    style: Arc<EditorStyle>,
     cursor_shape: CursorShape,
 }
 
@@ -90,7 +90,7 @@ impl EditorElement {
     ) -> Self {
         Self {
             view,
-            style,
+            style: Arc::new(style),
             cursor_shape,
         }
     }
@@ -110,8 +110,98 @@ impl EditorElement {
         self.update_view(cx, |view, cx| view.snapshot(cx))
     }
 
+    fn attach_mouse_handlers(
+        view: &WeakViewHandle<Editor>,
+        position_map: &Arc<PositionMap>,
+        visible_bounds: RectF,
+        text_bounds: RectF,
+        gutter_bounds: RectF,
+        bounds: RectF,
+        cx: &mut PaintContext,
+    ) {
+        enum EditorElementMouseHandlers {}
+        cx.scene.push_mouse_region(
+            MouseRegion::new::<EditorElementMouseHandlers>(view.id(), view.id(), visible_bounds)
+                .on_down(MouseButton::Left, {
+                    let position_map = position_map.clone();
+                    move |e, cx| {
+                        if !Self::mouse_down(
+                            e.platform_event,
+                            position_map.as_ref(),
+                            text_bounds,
+                            gutter_bounds,
+                            cx,
+                        ) {
+                            cx.propogate_event();
+                        }
+                    }
+                })
+                .on_down(MouseButton::Right, {
+                    let position_map = position_map.clone();
+                    move |e, cx| {
+                        if !Self::mouse_right_down(
+                            e.position,
+                            position_map.as_ref(),
+                            text_bounds,
+                            cx,
+                        ) {
+                            cx.propogate_event();
+                        }
+                    }
+                })
+                .on_up(MouseButton::Left, {
+                    let view = view.clone();
+                    let position_map = position_map.clone();
+                    move |e, cx| {
+                        if !Self::mouse_up(
+                            view.clone(),
+                            e.position,
+                            e.cmd,
+                            e.shift,
+                            position_map.as_ref(),
+                            text_bounds,
+                            cx,
+                        ) {
+                            cx.propogate_event()
+                        }
+                    }
+                })
+                .on_drag(MouseButton::Left, {
+                    let view = view.clone();
+                    let position_map = position_map.clone();
+                    move |e, cx| {
+                        if !Self::mouse_dragged(
+                            view.clone(),
+                            e.platform_event,
+                            position_map.as_ref(),
+                            text_bounds,
+                            cx,
+                        ) {
+                            cx.propogate_event()
+                        }
+                    }
+                })
+                .on_move({
+                    let position_map = position_map.clone();
+                    move |e, cx| {
+                        if !Self::mouse_moved(e.platform_event, &position_map, text_bounds, cx) {
+                            cx.propogate_event()
+                        }
+                    }
+                })
+                .on_scroll({
+                    let position_map = position_map.clone();
+                    move |e, cx| {
+                        if !Self::scroll(e.position, e.delta, e.precise, &position_map, bounds, cx)
+                        {
+                            cx.propogate_event()
+                        }
+                    }
+                }),
+        );
+    }
+
     fn mouse_down(
-        &self,
         MouseButtonEvent {
             position,
             ctrl,
@@ -121,18 +211,18 @@ impl EditorElement {
             mut click_count,
             ..
         }: MouseButtonEvent,
-        layout: &mut LayoutState,
-        paint: &mut PaintState,
+        position_map: &PositionMap,
+        text_bounds: RectF,
+        gutter_bounds: RectF,
         cx: &mut EventContext,
     ) -> bool {
-        if paint.gutter_bounds.contains_point(position) {
+        if gutter_bounds.contains_point(position) {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
-        } else if !paint.text_bounds.contains_point(position) {
+        } else if !text_bounds.contains_point(position) {
             return false;
         }
 
-        let snapshot = self.snapshot(cx.app);
-        let (position, target_position) = paint.point_for_position(&snapshot, layout, position);
+        let (position, target_position) = position_map.point_for_position(text_bounds, position);
 
         if shift && alt {
             cx.dispatch_action(Select(SelectPhase::BeginColumnar {
@@ -156,33 +246,31 @@ impl EditorElement {
     }
 
     fn mouse_right_down(
-        &self,
         position: Vector2F,
-        layout: &mut LayoutState,
-        paint: &mut PaintState,
+        position_map: &PositionMap,
+        text_bounds: RectF,
         cx: &mut EventContext,
     ) -> bool {
-        if !paint.text_bounds.contains_point(position) {
+        if !text_bounds.contains_point(position) {
             return false;
         }
 
-        let snapshot = self.snapshot(cx.app);
-        let (point, _) = paint.point_for_position(&snapshot, layout, position);
+        let (point, _) = position_map.point_for_position(text_bounds, position);
 
         cx.dispatch_action(DeployMouseContextMenu { position, point });
         true
     }
 
     fn mouse_up(
-        &self,
+        view: WeakViewHandle<Editor>,
         position: Vector2F,
         cmd: bool,
         shift: bool,
-        layout: &mut LayoutState,
-        paint: &mut PaintState,
+        position_map: &PositionMap,
+        text_bounds: RectF,
         cx: &mut EventContext,
     ) -> bool {
-        let view = self.view(cx.app.as_ref());
+        let view = view.upgrade(cx.app).unwrap().read(cx.app);
         let end_selection = view.has_pending_selection();
         let pending_nonempty_selections = view.has_pending_nonempty_selection();
 
@@ -190,9 +278,8 @@ impl EditorElement {
             cx.dispatch_action(Select(SelectPhase::End));
         }
 
-        if !pending_nonempty_selections && cmd && paint.text_bounds.contains_point(position) {
-            let (point, target_point) =
-                paint.point_for_position(&self.snapshot(cx), layout, position);
+        if !pending_nonempty_selections && cmd && text_bounds.contains_point(position) {
+            let (point, target_point) = position_map.point_for_position(text_bounds, position);
 
             if point == target_point {
                 if shift {
@@ -209,22 +296,21 @@ impl EditorElement {
     }
 
     fn mouse_dragged(
-        &self,
+        view: WeakViewHandle<Editor>,
         MouseMovedEvent {
             cmd,
             shift,
             position,
             ..
         }: MouseMovedEvent,
-        layout: &mut LayoutState,
-        paint: &mut PaintState,
+        position_map: &PositionMap,
+        text_bounds: RectF,
         cx: &mut EventContext,
     ) -> bool {
         // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
         // Don't trigger hover popover if mouse is hovering over context menu
-        let point = if paint.text_bounds.contains_point(position) {
-            let (point, target_point) =
-                paint.point_for_position(&self.snapshot(cx), layout, position);
+        let point = if text_bounds.contains_point(position) {
+            let (point, target_point) = position_map.point_for_position(text_bounds, position);
             if point == target_point {
                 Some(point)
             } else {
@@ -240,14 +326,13 @@ impl EditorElement {
             shift_held: shift,
         });
 
-        let view = self.view(cx.app);
+        let view = view.upgrade(cx.app).unwrap().read(cx.app);
         if view.has_pending_selection() {
-            let rect = paint.text_bounds;
             let mut scroll_delta = Vector2F::zero();
 
-            let vertical_margin = layout.line_height.min(rect.height() / 3.0);
-            let top = rect.origin_y() + vertical_margin;
-            let bottom = rect.lower_left().y() - vertical_margin;
+            let vertical_margin = position_map.line_height.min(text_bounds.height() / 3.0);
+            let top = text_bounds.origin_y() + vertical_margin;
+            let bottom = text_bounds.lower_left().y() - vertical_margin;
             if position.y() < top {
                 scroll_delta.set_y(-scale_vertical_mouse_autoscroll_delta(top - position.y()))
             }
@@ -255,9 +340,9 @@ impl EditorElement {
                 scroll_delta.set_y(scale_vertical_mouse_autoscroll_delta(position.y() - bottom))
             }
 
-            let horizontal_margin = layout.line_height.min(rect.width() / 3.0);
-            let left = rect.origin_x() + horizontal_margin;
-            let right = rect.upper_right().x() - horizontal_margin;
+            let horizontal_margin = position_map.line_height.min(text_bounds.width() / 3.0);
+            let left = text_bounds.origin_x() + horizontal_margin;
+            let right = text_bounds.upper_right().x() - horizontal_margin;
             if position.x() < left {
                 scroll_delta.set_x(-scale_horizontal_mouse_autoscroll_delta(
                     left - position.x(),
@@ -269,14 +354,14 @@ impl EditorElement {
                 ))
             }
 
-            let snapshot = self.snapshot(cx.app);
-            let (position, target_position) = paint.point_for_position(&snapshot, layout, position);
+            let (position, target_position) =
+                position_map.point_for_position(text_bounds, position);
 
             cx.dispatch_action(Select(SelectPhase::Update {
                 position,
                 goal_column: target_position.column(),
-                scroll_position: (snapshot.scroll_position() + scroll_delta)
-                    .clamp(Vector2F::zero(), layout.scroll_max),
+                scroll_position: (position_map.snapshot.scroll_position() + scroll_delta)
+                    .clamp(Vector2F::zero(), position_map.scroll_max),
             }));
 
             cx.dispatch_action(HoverAt { point });
@@ -288,22 +373,20 @@ impl EditorElement {
     }
 
     fn mouse_moved(
-        &self,
         MouseMovedEvent {
             cmd,
             shift,
             position,
             ..
         }: MouseMovedEvent,
-        layout: &LayoutState,
-        paint: &PaintState,
+        position_map: &PositionMap,
+        text_bounds: RectF,
         cx: &mut EventContext,
     ) -> bool {
         // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
         // Don't trigger hover popover if mouse is hovering over context menu
-        let point = if paint.text_bounds.contains_point(position) {
-            let (point, target_point) =
-                paint.point_for_position(&self.snapshot(cx), layout, position);
+        let point = if text_bounds.contains_point(position) {
+            let (point, target_point) = position_map.point_for_position(text_bounds, position);
             if point == target_point {
                 Some(point)
             } else {
@@ -318,23 +401,6 @@ impl EditorElement {
             cmd_held: cmd,
             shift_held: shift,
         });
-
-        if paint
-            .context_menu_bounds
-            .map_or(false, |context_menu_bounds| {
-                context_menu_bounds.contains_point(position)
-            })
-        {
-            return false;
-        }
-
-        if paint
-            .hover_popover_bounds
-            .iter()
-            .any(|hover_bounds| hover_bounds.contains_point(position))
-        {
-            return false;
-        }
 
         cx.dispatch_action(HoverAt { point });
         true
@@ -349,28 +415,27 @@ impl EditorElement {
     }
 
     fn scroll(
-        &self,
         position: Vector2F,
         mut delta: Vector2F,
         precise: bool,
-        layout: &mut LayoutState,
-        paint: &mut PaintState,
+        position_map: &PositionMap,
+        bounds: RectF,
         cx: &mut EventContext,
     ) -> bool {
-        if !paint.bounds.contains_point(position) {
+        if !bounds.contains_point(position) {
             return false;
         }
 
-        let snapshot = self.snapshot(cx.app);
-        let max_glyph_width = layout.em_width;
+        let max_glyph_width = position_map.em_width;
         if !precise {
-            delta *= vec2f(max_glyph_width, layout.line_height);
+            delta *= vec2f(max_glyph_width, position_map.line_height);
         }
 
-        let scroll_position = snapshot.scroll_position();
+        let scroll_position = position_map.snapshot.scroll_position();
         let x = (scroll_position.x() * max_glyph_width - delta.x()) / max_glyph_width;
-        let y = (scroll_position.y() * layout.line_height - delta.y()) / layout.line_height;
-        let scroll_position = vec2f(x, y).clamp(Vector2F::zero(), layout.scroll_max);
+        let y =
+            (scroll_position.y() * position_map.line_height - delta.y()) / position_map.line_height;
+        let scroll_position = vec2f(x, y).clamp(Vector2F::zero(), position_map.scroll_max);
 
         cx.dispatch_action(Scroll(scroll_position));
 
@@ -385,7 +450,8 @@ impl EditorElement {
         cx: &mut PaintContext,
     ) {
         let bounds = gutter_bounds.union_rect(text_bounds);
-        let scroll_top = layout.snapshot.scroll_position().y() * layout.line_height;
+        let scroll_top =
+            layout.position_map.snapshot.scroll_position().y() * layout.position_map.line_height;
         let editor = self.view(cx.app);
         cx.scene.push_quad(Quad {
             bounds: gutter_bounds,
@@ -414,11 +480,12 @@ impl EditorElement {
                 if !contains_non_empty_selection {
                     let origin = vec2f(
                         bounds.origin_x(),
-                        bounds.origin_y() + (layout.line_height * *start_row as f32) - scroll_top,
+                        bounds.origin_y() + (layout.position_map.line_height * *start_row as f32)
+                            - scroll_top,
                     );
                     let size = vec2f(
                         bounds.width(),
-                        layout.line_height * (end_row - start_row + 1) as f32,
+                        layout.position_map.line_height * (end_row - start_row + 1) as f32,
                     );
                     cx.scene.push_quad(Quad {
                         bounds: RectF::new(origin, size),
@@ -432,12 +499,13 @@ impl EditorElement {
             if let Some(highlighted_rows) = &layout.highlighted_rows {
                 let origin = vec2f(
                     bounds.origin_x(),
-                    bounds.origin_y() + (layout.line_height * highlighted_rows.start as f32)
+                    bounds.origin_y()
+                        + (layout.position_map.line_height * highlighted_rows.start as f32)
                         - scroll_top,
                 );
                 let size = vec2f(
                     bounds.width(),
-                    layout.line_height * highlighted_rows.len() as f32,
+                    layout.position_map.line_height * highlighted_rows.len() as f32,
                 );
                 cx.scene.push_quad(Quad {
                     bounds: RectF::new(origin, size),
@@ -456,23 +524,30 @@ impl EditorElement {
         layout: &mut LayoutState,
         cx: &mut PaintContext,
     ) {
-        let scroll_top = layout.snapshot.scroll_position().y() * layout.line_height;
+        let scroll_top =
+            layout.position_map.snapshot.scroll_position().y() * layout.position_map.line_height;
         for (ix, line) in layout.line_number_layouts.iter().enumerate() {
             if let Some(line) = line {
                 let line_origin = bounds.origin()
                     + vec2f(
                         bounds.width() - line.width() - layout.gutter_padding,
-                        ix as f32 * layout.line_height - (scroll_top % layout.line_height),
+                        ix as f32 * layout.position_map.line_height
+                            - (scroll_top % layout.position_map.line_height),
                     );
-                line.paint(line_origin, visible_bounds, layout.line_height, cx);
+                line.paint(
+                    line_origin,
+                    visible_bounds,
+                    layout.position_map.line_height,
+                    cx,
+                );
             }
         }
 
         if let Some((row, indicator)) = layout.code_actions_indicator.as_mut() {
             let mut x = bounds.width() - layout.gutter_padding;
-            let mut y = *row as f32 * layout.line_height - scroll_top;
+            let mut y = *row as f32 * layout.position_map.line_height - scroll_top;
             x += ((layout.gutter_padding + layout.gutter_margin) - indicator.size().x()) / 2.;
-            y += (layout.line_height - indicator.size().y()) / 2.;
+            y += (layout.position_map.line_height - indicator.size().y()) / 2.;
             indicator.paint(bounds.origin() + vec2f(x, y), visible_bounds, cx);
         }
     }
@@ -482,17 +557,17 @@ impl EditorElement {
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut LayoutState,
-        paint: &mut PaintState,
         cx: &mut PaintContext,
     ) {
         let view = self.view(cx.app);
         let style = &self.style;
         let local_replica_id = view.replica_id(cx);
-        let scroll_position = layout.snapshot.scroll_position();
+        let scroll_position = layout.position_map.snapshot.scroll_position();
         let start_row = scroll_position.y() as u32;
-        let scroll_top = scroll_position.y() * layout.line_height;
-        let end_row = ((scroll_top + bounds.height()) / layout.line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
-        let max_glyph_width = layout.em_width;
+        let scroll_top = scroll_position.y() * layout.position_map.line_height;
+        let end_row =
+            ((scroll_top + bounds.height()) / layout.position_map.line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
+        let max_glyph_width = layout.position_map.em_width;
         let scroll_left = scroll_position.x() * max_glyph_width;
         let content_origin = bounds.origin() + vec2f(layout.gutter_margin, 0.);
 
@@ -514,7 +589,7 @@ impl EditorElement {
                 end_row,
                 *color,
                 0.,
-                0.15 * layout.line_height,
+                0.15 * layout.position_map.line_height,
                 layout,
                 content_origin,
                 scroll_top,
@@ -527,7 +602,7 @@ impl EditorElement {
         let mut cursors = SmallVec::<[Cursor; 32]>::new();
         for (replica_id, selections) in &layout.selections {
             let selection_style = style.replica_selection_style(*replica_id);
-            let corner_radius = 0.15 * layout.line_height;
+            let corner_radius = 0.15 * layout.position_map.line_height;
 
             for selection in selections {
                 self.paint_highlighted_range(
@@ -548,50 +623,52 @@ impl EditorElement {
                 if view.show_local_cursors() || *replica_id != local_replica_id {
                     let cursor_position = selection.head;
                     if (start_row..end_row).contains(&cursor_position.row()) {
-                        let cursor_row_layout =
-                            &layout.line_layouts[(cursor_position.row() - start_row) as usize];
+                        let cursor_row_layout = &layout.position_map.line_layouts
+                            [(cursor_position.row() - start_row) as usize];
                         let cursor_column = cursor_position.column() as usize;
 
                         let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
                         let mut block_width =
                             cursor_row_layout.x_for_index(cursor_column + 1) - cursor_character_x;
                         if block_width == 0.0 {
-                            block_width = layout.em_width;
+                            block_width = layout.position_map.em_width;
                         }
+                        let block_text = if let CursorShape::Block = self.cursor_shape {
+                            layout
+                                .position_map
+                                .snapshot
+                                .chars_at(cursor_position)
+                                .next()
+                                .and_then(|character| {
+                                    let font_id =
+                                        cursor_row_layout.font_for_index(cursor_column)?;
+                                    let text = character.to_string();
 
-                        let block_text =
-                            if let CursorShape::Block = self.cursor_shape {
-                                layout.snapshot.chars_at(cursor_position).next().and_then(
-                                    |character| {
-                                        let font_id =
-                                            cursor_row_layout.font_for_index(cursor_column)?;
-                                        let text = character.to_string();
-
-                                        Some(cx.text_layout_cache.layout_str(
-                                            &text,
-                                            cursor_row_layout.font_size(),
-                                            &[(
-                                                text.len(),
-                                                RunStyle {
-                                                    font_id,
-                                                    color: style.background,
-                                                    underline: Default::default(),
-                                                },
-                                            )],
-                                        ))
-                                    },
-                                )
-                            } else {
-                                None
-                            };
+                                    Some(cx.text_layout_cache.layout_str(
+                                        &text,
+                                        cursor_row_layout.font_size(),
+                                        &[(
+                                            text.len(),
+                                            RunStyle {
+                                                font_id,
+                                                color: style.background,
+                                                underline: Default::default(),
+                                            },
+                                        )],
+                                    ))
+                                })
+                        } else {
+                            None
+                        };
 
                         let x = cursor_character_x - scroll_left;
-                        let y = cursor_position.row() as f32 * layout.line_height - scroll_top;
+                        let y = cursor_position.row() as f32 * layout.position_map.line_height
+                            - scroll_top;
                         cursors.push(Cursor {
                             color: selection_style.cursor,
                             block_width,
                             origin: vec2f(x, y),
-                            line_height: layout.line_height,
+                            line_height: layout.position_map.line_height,
                             shape: self.cursor_shape,
                             block_text,
                         });
@@ -602,13 +679,16 @@ impl EditorElement {
 
         if let Some(visible_text_bounds) = bounds.intersection(visible_bounds) {
             // Draw glyphs
-            for (ix, line) in layout.line_layouts.iter().enumerate() {
+            for (ix, line) in layout.position_map.line_layouts.iter().enumerate() {
                 let row = start_row + ix as u32;
                 line.paint(
                     content_origin
-                        + vec2f(-scroll_left, row as f32 * layout.line_height - scroll_top),
+                        + vec2f(
+                            -scroll_left,
+                            row as f32 * layout.position_map.line_height - scroll_top,
+                        ),
                     visible_text_bounds,
-                    layout.line_height,
+                    layout.position_map.line_height,
                     cx,
                 );
             }
@@ -622,9 +702,10 @@ impl EditorElement {
 
         if let Some((position, context_menu)) = layout.context_menu.as_mut() {
             cx.scene.push_stacking_context(None);
-            let cursor_row_layout = &layout.line_layouts[(position.row() - start_row) as usize];
+            let cursor_row_layout =
+                &layout.position_map.line_layouts[(position.row() - start_row) as usize];
             let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_left;
-            let y = (position.row() + 1) as f32 * layout.line_height - scroll_top;
+            let y = (position.row() + 1) as f32 * layout.position_map.line_height - scroll_top;
             let mut list_origin = content_origin + vec2f(x, y);
             let list_width = context_menu.size().x();
             let list_height = context_menu.size().y();
@@ -636,7 +717,7 @@ impl EditorElement {
             }
 
             if list_origin.y() + list_height > bounds.max_y() {
-                list_origin.set_y(list_origin.y() - layout.line_height - list_height);
+                list_origin.set_y(list_origin.y() - layout.position_map.line_height - list_height);
             }
 
             context_menu.paint(
@@ -645,8 +726,6 @@ impl EditorElement {
                 cx,
             );
 
-            paint.context_menu_bounds = Some(RectF::new(list_origin, context_menu.size()));
-
             cx.scene.pop_stacking_context();
         }
 
@@ -654,21 +733,20 @@ impl EditorElement {
             cx.scene.push_stacking_context(None);
 
             // This is safe because we check on layout whether the required row is available
-            let hovered_row_layout = &layout.line_layouts[(position.row() - start_row) as usize];
+            let hovered_row_layout =
+                &layout.position_map.line_layouts[(position.row() - start_row) as usize];
 
             // Minimum required size: Take the first popover, and add 1.5 times the minimum popover
             // height. This is the size we will use to decide whether to render popovers above or below
             // the hovered line.
             let first_size = hover_popovers[0].size();
-            let height_to_reserve =
-                first_size.y() + 1.5 * MIN_POPOVER_LINE_HEIGHT as f32 * layout.line_height;
+            let height_to_reserve = first_size.y()
+                + 1.5 * MIN_POPOVER_LINE_HEIGHT as f32 * layout.position_map.line_height;
 
             // Compute Hovered Point
             let x = hovered_row_layout.x_for_index(position.column() as usize) - scroll_left;
-            let y = position.row() as f32 * layout.line_height - scroll_top;
+            let y = position.row() as f32 * layout.position_map.line_height - scroll_top;
             let hovered_point = content_origin + vec2f(x, y);
-
-            paint.hover_popover_bounds.clear();
 
             if hovered_point.y() - height_to_reserve > 0.0 {
                 // There is enough space above. Render popovers above the hovered point
@@ -688,16 +766,11 @@ impl EditorElement {
                         cx,
                     );
 
-                    paint.hover_popover_bounds.push(
-                        RectF::new(popover_origin, hover_popover.size())
-                            .dilate(Vector2F::new(0., 5.)),
-                    );
-
                     current_y = popover_origin.y() - HOVER_POPOVER_GAP;
                 }
             } else {
                 // There is not enough space above. Render popovers below the hovered point
-                let mut current_y = hovered_point.y() + layout.line_height;
+                let mut current_y = hovered_point.y() + layout.position_map.line_height;
                 for hover_popover in hover_popovers {
                     let size = hover_popover.size();
                     let mut popover_origin = vec2f(hovered_point.x(), current_y);
@@ -711,11 +784,6 @@ impl EditorElement {
                         popover_origin,
                         RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
                         cx,
-                    );
-
-                    paint.hover_popover_bounds.push(
-                        RectF::new(popover_origin, hover_popover.size())
-                            .dilate(Vector2F::new(0., 5.)),
                     );
 
                     current_y = popover_origin.y() + size.y() + HOVER_POPOVER_GAP;
@@ -753,14 +821,16 @@ impl EditorElement {
 
             let highlighted_range = HighlightedRange {
                 color,
-                line_height: layout.line_height,
+                line_height: layout.position_map.line_height,
                 corner_radius,
-                start_y: content_origin.y() + row_range.start as f32 * layout.line_height
+                start_y: content_origin.y()
+                    + row_range.start as f32 * layout.position_map.line_height
                     - scroll_top,
                 lines: row_range
                     .into_iter()
                     .map(|row| {
-                        let line_layout = &layout.line_layouts[(row - start_row) as usize];
+                        let line_layout =
+                            &layout.position_map.line_layouts[(row - start_row) as usize];
                         HighlightedRangeLine {
                             start_x: if row == range.start.row() {
                                 content_origin.x()
@@ -793,13 +863,16 @@ impl EditorElement {
         layout: &mut LayoutState,
         cx: &mut PaintContext,
     ) {
-        let scroll_position = layout.snapshot.scroll_position();
-        let scroll_left = scroll_position.x() * layout.em_width;
-        let scroll_top = scroll_position.y() * layout.line_height;
+        let scroll_position = layout.position_map.snapshot.scroll_position();
+        let scroll_left = scroll_position.x() * layout.position_map.em_width;
+        let scroll_top = scroll_position.y() * layout.position_map.line_height;
 
         for block in &mut layout.blocks {
-            let mut origin =
-                bounds.origin() + vec2f(0., block.row as f32 * layout.line_height - scroll_top);
+            let mut origin = bounds.origin()
+                + vec2f(
+                    0.,
+                    block.row as f32 * layout.position_map.line_height - scroll_top,
+                );
             if !matches!(block.style, BlockStyle::Sticky) {
                 origin += vec2f(-scroll_left, 0.);
             }
@@ -1048,7 +1121,7 @@ impl EditorElement {
 
                         enum JumpIcon {}
                         cx.render(&editor, |_, cx| {
-                            MouseEventHandler::new::<JumpIcon, _, _>(*key, cx, |state, _| {
+                            MouseEventHandler::<JumpIcon>::new(*key, cx, |state, _| {
                                 let style = style.jump_icon.style_for(state, false);
                                 Svg::new("icons/arrow_up_right_8.svg")
                                     .with_color(style.color)
@@ -1181,7 +1254,7 @@ impl EditorElement {
 
 impl Element for EditorElement {
     type LayoutState = LayoutState;
-    type PaintState = PaintState;
+    type PaintState = ();
 
     fn layout(
         &mut self,
@@ -1483,22 +1556,24 @@ impl Element for EditorElement {
         (
             size,
             LayoutState {
-                size,
-                scroll_max,
+                position_map: Arc::new(PositionMap {
+                    size,
+                    scroll_max,
+                    line_layouts,
+                    line_height,
+                    em_width,
+                    em_advance,
+                    snapshot,
+                }),
                 gutter_size,
                 gutter_padding,
                 text_size,
                 gutter_margin,
-                snapshot,
                 active_rows,
                 highlighted_rows,
                 highlighted_ranges,
-                line_layouts,
                 line_number_layouts,
                 blocks,
-                line_height,
-                em_width,
-                em_advance,
                 selections,
                 context_menu,
                 code_actions_indicator,
@@ -1522,19 +1597,21 @@ impl Element for EditorElement {
             layout.text_size,
         );
 
-        let mut paint_state = PaintState {
-            bounds,
-            gutter_bounds,
+        Self::attach_mouse_handlers(
+            &self.view,
+            &layout.position_map,
+            visible_bounds,
             text_bounds,
-            context_menu_bounds: None,
-            hover_popover_bounds: Default::default(),
-        };
+            gutter_bounds,
+            bounds,
+            cx,
+        );
 
         self.paint_background(gutter_bounds, text_bounds, layout, cx);
         if layout.gutter_size.x() > 0. {
             self.paint_gutter(gutter_bounds, visible_bounds, layout, cx);
         }
-        self.paint_text(text_bounds, visible_bounds, layout, &mut paint_state, cx);
+        self.paint_text(text_bounds, visible_bounds, layout, cx);
 
         if !layout.blocks.is_empty() {
             cx.scene.push_layer(Some(bounds));
@@ -1543,8 +1620,6 @@ impl Element for EditorElement {
         }
 
         cx.scene.pop_layer();
-
-        paint_state
     }
 
     fn dispatch_event(
@@ -1552,78 +1627,15 @@ impl Element for EditorElement {
         event: &Event,
         _: RectF,
         _: RectF,
-        layout: &mut LayoutState,
-        paint: &mut PaintState,
+        _: &mut LayoutState,
+        _: &mut (),
         cx: &mut EventContext,
     ) -> bool {
-        if let Some((_, context_menu)) = &mut layout.context_menu {
-            if context_menu.dispatch_event(event, cx) {
-                return true;
-            }
+        if let Event::ModifiersChanged(event) = event {
+            self.modifiers_changed(*event, cx);
         }
 
-        if let Some((_, indicator)) = &mut layout.code_actions_indicator {
-            if indicator.dispatch_event(event, cx) {
-                return true;
-            }
-        }
-
-        if let Some((_, popover_elements)) = &mut layout.hover_popovers {
-            for popover_element in popover_elements.iter_mut() {
-                if popover_element.dispatch_event(event, cx) {
-                    return true;
-                }
-            }
-        }
-
-        for block in &mut layout.blocks {
-            if block.element.dispatch_event(event, cx) {
-                return true;
-            }
-        }
-
-        match event {
-            &Event::MouseDown(
-                event @ MouseButtonEvent {
-                    button: MouseButton::Left,
-                    ..
-                },
-            ) => self.mouse_down(event, layout, paint, cx),
-
-            &Event::MouseDown(MouseButtonEvent {
-                button: MouseButton::Right,
-                position,
-                ..
-            }) => self.mouse_right_down(position, layout, paint, cx),
-
-            &Event::MouseUp(MouseButtonEvent {
-                button: MouseButton::Left,
-                position,
-                cmd,
-                shift,
-                ..
-            }) => self.mouse_up(position, cmd, shift, layout, paint, cx),
-
-            Event::MouseMoved(
-                event @ MouseMovedEvent {
-                    pressed_button: Some(MouseButton::Left),
-                    ..
-                },
-            ) => self.mouse_dragged(*event, layout, paint, cx),
-
-            Event::ScrollWheel(ScrollWheelEvent {
-                position,
-                delta,
-                precise,
-                ..
-            }) => self.scroll(*position, *delta, *precise, layout, paint, cx),
-
-            &Event::ModifiersChanged(event) => self.modifiers_changed(event, cx),
-
-            &Event::MouseMoved(event) => self.mouse_moved(event, layout, paint, cx),
-
-            _ => false,
-        }
+        false
     }
 
     fn rect_for_text_range(
@@ -1640,26 +1652,34 @@ impl Element for EditorElement {
             layout.text_size,
         );
         let content_origin = text_bounds.origin() + vec2f(layout.gutter_margin, 0.);
-        let scroll_position = layout.snapshot.scroll_position();
+        let scroll_position = layout.position_map.snapshot.scroll_position();
         let start_row = scroll_position.y() as u32;
-        let scroll_top = scroll_position.y() * layout.line_height;
-        let scroll_left = scroll_position.x() * layout.em_width;
+        let scroll_top = scroll_position.y() * layout.position_map.line_height;
+        let scroll_left = scroll_position.x() * layout.position_map.em_width;
 
-        let range_start =
-            OffsetUtf16(range_utf16.start).to_display_point(&layout.snapshot.display_snapshot);
+        let range_start = OffsetUtf16(range_utf16.start)
+            .to_display_point(&layout.position_map.snapshot.display_snapshot);
         if range_start.row() < start_row {
             return None;
         }
 
         let line = layout
+            .position_map
             .line_layouts
             .get((range_start.row() - start_row) as usize)?;
         let range_start_x = line.x_for_index(range_start.column() as usize);
-        let range_start_y = range_start.row() as f32 * layout.line_height;
+        let range_start_y = range_start.row() as f32 * layout.position_map.line_height;
         Some(RectF::new(
-            content_origin + vec2f(range_start_x, range_start_y + layout.line_height)
+            content_origin
+                + vec2f(
+                    range_start_x,
+                    range_start_y + layout.position_map.line_height,
+                )
                 - vec2f(scroll_left, scroll_top),
-            vec2f(layout.em_width, layout.line_height),
+            vec2f(
+                layout.position_map.em_width,
+                layout.position_map.line_height,
+            ),
         ))
     }
 
@@ -1678,26 +1698,66 @@ impl Element for EditorElement {
 }
 
 pub struct LayoutState {
-    size: Vector2F,
-    scroll_max: Vector2F,
+    position_map: Arc<PositionMap>,
     gutter_size: Vector2F,
     gutter_padding: f32,
     gutter_margin: f32,
     text_size: Vector2F,
-    snapshot: EditorSnapshot,
     active_rows: BTreeMap<u32, bool>,
     highlighted_rows: Option<Range<u32>>,
-    line_layouts: Vec<text_layout::Line>,
     line_number_layouts: Vec<Option<text_layout::Line>>,
     blocks: Vec<BlockLayout>,
-    line_height: f32,
-    em_width: f32,
-    em_advance: f32,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
     selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
     context_menu: Option<(DisplayPoint, ElementBox)>,
     code_actions_indicator: Option<(u32, ElementBox)>,
     hover_popovers: Option<(DisplayPoint, Vec<ElementBox>)>,
+}
+
+pub struct PositionMap {
+    size: Vector2F,
+    line_height: f32,
+    scroll_max: Vector2F,
+    em_width: f32,
+    em_advance: f32,
+    line_layouts: Vec<text_layout::Line>,
+    snapshot: EditorSnapshot,
+}
+
+impl PositionMap {
+    /// Returns two display points:
+    /// 1. The nearest *valid* position in the editor
+    /// 2. An unclipped, potentially *invalid* position that maps directly to
+    ///    the given pixel position.
+    fn point_for_position(
+        &self,
+        text_bounds: RectF,
+        position: Vector2F,
+    ) -> (DisplayPoint, DisplayPoint) {
+        let scroll_position = self.snapshot.scroll_position();
+        let position = position - text_bounds.origin();
+        let y = position.y().max(0.0).min(self.size.y());
+        let x = position.x() + (scroll_position.x() * self.em_width);
+        let row = (y / self.line_height + scroll_position.y()) as u32;
+        let (column, x_overshoot) = if let Some(line) = self
+            .line_layouts
+            .get(row as usize - scroll_position.y() as usize)
+        {
+            if let Some(ix) = line.index_for_x(x) {
+                (ix as u32, 0.0)
+            } else {
+                (line.len() as u32, 0f32.max(x - line.width()))
+            }
+        } else {
+            (0, x)
+        };
+
+        let mut target_point = DisplayPoint::new(row, column);
+        let point = self.snapshot.clip_point(target_point, Bias::Left);
+        *target_point.column_mut() += (x_overshoot / self.em_advance) as u32;
+
+        (point, target_point)
+    }
 }
 
 struct BlockLayout {
@@ -1735,51 +1795,6 @@ fn layout_line(
             },
         )],
     )
-}
-
-pub struct PaintState {
-    bounds: RectF,
-    gutter_bounds: RectF,
-    text_bounds: RectF,
-    context_menu_bounds: Option<RectF>,
-    hover_popover_bounds: Vec<RectF>,
-}
-
-impl PaintState {
-    /// Returns two display points:
-    /// 1. The nearest *valid* position in the editor
-    /// 2. An unclipped, potentially *invalid* position that maps directly to
-    ///    the given pixel position.
-    fn point_for_position(
-        &self,
-        snapshot: &EditorSnapshot,
-        layout: &LayoutState,
-        position: Vector2F,
-    ) -> (DisplayPoint, DisplayPoint) {
-        let scroll_position = snapshot.scroll_position();
-        let position = position - self.text_bounds.origin();
-        let y = position.y().max(0.0).min(layout.size.y());
-        let x = position.x() + (scroll_position.x() * layout.em_width);
-        let row = (y / layout.line_height + scroll_position.y()) as u32;
-        let (column, x_overshoot) = if let Some(line) = layout
-            .line_layouts
-            .get(row as usize - scroll_position.y() as usize)
-        {
-            if let Some(ix) = line.index_for_x(x) {
-                (ix as u32, 0.0)
-            } else {
-                (line.len() as u32, 0f32.max(x - line.width()))
-            }
-        } else {
-            (0, x)
-        };
-
-        let mut target_point = DisplayPoint::new(row, column);
-        let point = snapshot.clip_point(target_point, Bias::Left);
-        *target_point.column_mut() += (x_overshoot / layout.em_advance) as u32;
-
-        (point, target_point)
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -2044,7 +2059,7 @@ mod tests {
 
         let layouts = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
-            let mut presenter = cx.build_presenter(window_id, 30.);
+            let mut presenter = cx.build_presenter(window_id, 30., Default::default());
             let layout_cx = presenter.build_layout_context(Vector2F::zero(), false, cx);
             element.layout_line_numbers(0..6, &Default::default(), &snapshot, &layout_cx)
         });
@@ -2083,14 +2098,14 @@ mod tests {
         );
 
         let mut scene = Scene::new(1.0);
-        let mut presenter = cx.build_presenter(window_id, 30.);
+        let mut presenter = cx.build_presenter(window_id, 30., Default::default());
         let mut layout_cx = presenter.build_layout_context(Vector2F::zero(), false, cx);
         let (size, mut state) = element.layout(
             SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
             &mut layout_cx,
         );
 
-        assert_eq!(state.line_layouts.len(), 4);
+        assert_eq!(state.position_map.line_layouts.len(), 4);
         assert_eq!(
             state
                 .line_number_layouts

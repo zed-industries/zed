@@ -85,7 +85,7 @@ impl<D: PickerDelegate> View for Picker<D> {
                             let selected_ix = delegate.read(cx).selected_index();
                             range.end = cmp::min(range.end, delegate.read(cx).match_count());
                             items.extend(range.map(move |ix| {
-                                MouseEventHandler::new::<D, _, _>(ix, cx, |state, cx| {
+                                MouseEventHandler::<D>::new(ix, cx, |state, cx| {
                                     delegate
                                         .read(cx)
                                         .render_match(ix, state, ix == selected_ix, cx)
