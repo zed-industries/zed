@@ -351,6 +351,45 @@ impl Store {
         Ok(room_id)
     }
 
+    pub fn call(
+        &mut self,
+        room_id: RoomId,
+        from_connection_id: ConnectionId,
+        to_user_id: UserId,
+    ) -> Result<(UserId, Vec<ConnectionId>, proto::Room)> {
+        let from_user_id = self.user_id_for_connection(from_connection_id)?;
+        let to_connection_ids = self.connection_ids_for_user(to_user_id).collect::<Vec<_>>();
+        let room = self
+            .rooms
+            .get_mut(&room_id)
+            .ok_or_else(|| anyhow!("no such room"))?;
+        anyhow::ensure!(
+            room.participants
+                .iter()
+                .any(|participant| participant.peer_id == from_connection_id.0),
+            "no such room"
+        );
+        anyhow::ensure!(
+            room.pending_calls_to_user_ids
+                .iter()
+                .all(|user_id| UserId::from_proto(*user_id) != to_user_id),
+            "cannot call the same user more than once"
+        );
+        room.pending_calls_to_user_ids.push(to_user_id.to_proto());
+
+        Ok((from_user_id, to_connection_ids, room.clone()))
+    }
+
+    pub fn call_failed(&mut self, room_id: RoomId, to_user_id: UserId) -> Result<proto::Room> {
+        let room = self
+            .rooms
+            .get_mut(&room_id)
+            .ok_or_else(|| anyhow!("no such room"))?;
+        room.pending_calls_to_user_ids
+            .retain(|user_id| UserId::from_proto(*user_id) != to_user_id);
+        Ok(room.clone())
+    }
+
     pub fn register_project(
         &mut self,
         host_connection_id: ConnectionId,

@@ -152,6 +152,7 @@ impl Server {
         server
             .add_request_handler(Server::ping)
             .add_request_handler(Server::create_room)
+            .add_request_handler(Server::call)
             .add_request_handler(Server::register_project)
             .add_request_handler(Server::unregister_project)
             .add_request_handler(Server::join_project)
@@ -602,6 +603,68 @@ impl Server {
         let room_id = self.store().await.create_room(request.sender_id)?;
         response.send(proto::CreateRoomResponse { id: room_id })?;
         Ok(())
+    }
+
+    async fn call(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::Call>,
+        response: Response<proto::Call>,
+    ) -> Result<()> {
+        let to_user_id = UserId::from_proto(request.payload.to_user_id);
+        let room_id = request.payload.room_id;
+        let (from_user_id, receiver_ids, room) =
+            self.store()
+                .await
+                .call(room_id, request.sender_id, to_user_id)?;
+        for participant in &room.participants {
+            self.peer
+                .send(
+                    ConnectionId(participant.peer_id),
+                    proto::RoomUpdated {
+                        room: Some(room.clone()),
+                    },
+                )
+                .trace_err();
+        }
+
+        let mut calls = receiver_ids
+            .into_iter()
+            .map(|receiver_id| {
+                self.peer.request(
+                    receiver_id,
+                    proto::IncomingCall {
+                        room_id,
+                        from_user_id: from_user_id.to_proto(),
+                        participant_user_ids: room.participants.iter().map(|p| p.user_id).collect(),
+                    },
+                )
+            })
+            .collect::<FuturesUnordered<_>>();
+
+        while let Some(call_response) = calls.next().await {
+            match call_response.as_ref() {
+                Ok(_) => {
+                    response.send(proto::Ack {})?;
+                    return Ok(());
+                }
+                Err(_) => {
+                    call_response.trace_err();
+                }
+            }
+        }
+
+        let room = self.store().await.call_failed(room_id, to_user_id)?;
+        for participant in &room.participants {
+            self.peer
+                .send(
+                    ConnectionId(participant.peer_id),
+                    proto::RoomUpdated {
+                        room: Some(room.clone()),
+                    },
+                )
+                .trace_err();
+        }
+        Err(anyhow!("failed to ring call recipient"))?
     }
 
     async fn register_project(

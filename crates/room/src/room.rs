@@ -12,6 +12,11 @@ pub enum Event {
     PeerChangedActiveProject,
 }
 
+pub enum CallResponse {
+    Accepted,
+    Rejected,
+}
+
 pub struct Room {
     id: u64,
     local_participant: LocalParticipant,
@@ -43,7 +48,7 @@ impl Room {
             let response = client.request(proto::JoinRoom { id }).await?;
             let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
             let room = cx.add_model(|cx| Self::new(id, client, cx));
-            room.update(&mut cx, |room, cx| room.refresh(room_proto, cx))?;
+            room.update(&mut cx, |room, cx| room.apply_update(room_proto, cx))?;
             Ok(room)
         })
     }
@@ -59,7 +64,7 @@ impl Room {
         }
     }
 
-    fn refresh(&mut self, room: proto::Room, cx: &mut ModelContext<Self>) -> Result<()> {
+    fn apply_update(&mut self, room: proto::Room, cx: &mut ModelContext<Self>) -> Result<()> {
         for participant in room.participants {
             self.remote_participants.insert(
                 PeerId(participant.peer_id),
@@ -70,11 +75,22 @@ impl Room {
                 },
             );
         }
+        cx.notify();
         Ok(())
     }
 
-    pub fn invite(&mut self, user_id: u64, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        todo!()
+    pub fn call(&mut self, to_user_id: u64, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        let client = self.client.clone();
+        let room_id = self.id;
+        cx.foreground().spawn(async move {
+            client
+                .request(proto::Call {
+                    room_id,
+                    to_user_id,
+                })
+                .await?;
+            Ok(())
+        })
     }
 
     pub async fn publish_project(&mut self, project: ModelHandle<Project>) -> Result<()> {

@@ -5,7 +5,7 @@ use anyhow::{anyhow, Context, Result};
 use collections::{hash_map::Entry, BTreeSet, HashMap, HashSet};
 use futures::{channel::mpsc, future, AsyncReadExt, Future, Stream, StreamExt};
 use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
-use postage::{broadcast, sink::Sink, watch};
+use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
 use std::sync::{Arc, Weak};
 use util::TryFutureExt as _;
@@ -68,7 +68,7 @@ pub struct UserStore {
     outgoing_contact_requests: Vec<Arc<User>>,
     pending_contact_requests: HashMap<u64, usize>,
     invite_info: Option<InviteInfo>,
-    incoming_calls: broadcast::Sender<Call>,
+    incoming_calls: Vec<mpsc::UnboundedSender<Call>>,
     client: Weak<Client>,
     http: Arc<dyn HttpClient>,
     _maintain_contacts: Task<()>,
@@ -118,8 +118,8 @@ impl UserStore {
             client.add_message_handler(cx.handle(), Self::handle_update_contacts),
             client.add_message_handler(cx.handle(), Self::handle_update_invite_info),
             client.add_message_handler(cx.handle(), Self::handle_show_contacts),
+            client.add_request_handler(cx.handle(), Self::handle_incoming_call),
         ];
-        let (incoming_calls, _) = broadcast::channel(32);
         Self {
             users: Default::default(),
             current_user: current_user_rx,
@@ -127,7 +127,7 @@ impl UserStore {
             incoming_contact_requests: Default::default(),
             outgoing_contact_requests: Default::default(),
             invite_info: None,
-            incoming_calls,
+            incoming_calls: Default::default(),
             client: Arc::downgrade(&client),
             update_contacts_tx,
             http,
@@ -148,7 +148,7 @@ impl UserStore {
                         Status::Connected { .. } => {
                             if let Some((this, user_id)) = this.upgrade(&cx).zip(client.user_id()) {
                                 let user = this
-                                    .update(&mut cx, |this, cx| this.fetch_user(user_id, cx))
+                                    .update(&mut cx, |this, cx| this.get_user(user_id, cx))
                                     .log_err()
                                     .await;
                                 current_user_tx.send(user).await.ok();
@@ -199,12 +199,41 @@ impl UserStore {
         Ok(())
     }
 
+    async fn handle_incoming_call(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::IncomingCall>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::Ack> {
+        let call = Call {
+            room_id: envelope.payload.room_id,
+            participants: this
+                .update(&mut cx, |this, cx| {
+                    this.get_users(envelope.payload.participant_user_ids, cx)
+                })
+                .await?,
+            from: this
+                .update(&mut cx, |this, cx| {
+                    this.get_user(envelope.payload.from_user_id, cx)
+                })
+                .await?,
+        };
+        this.update(&mut cx, |this, _| {
+            this.incoming_calls
+                .retain(|tx| tx.unbounded_send(call.clone()).is_ok());
+        });
+
+        Ok(proto::Ack {})
+    }
+
     pub fn invite_info(&self) -> Option<&InviteInfo> {
         self.invite_info.as_ref()
     }
 
-    pub fn incoming_calls(&self) -> impl 'static + Stream<Item = Call> {
-        self.incoming_calls.subscribe()
+    pub fn incoming_calls(&mut self) -> impl 'static + Stream<Item = Call> {
+        let (tx, rx) = mpsc::unbounded();
+        self.incoming_calls.push(tx);
+        rx
     }
 
     async fn handle_update_contacts(
@@ -266,9 +295,7 @@ impl UserStore {
                     for request in message.incoming_requests {
                         incoming_requests.push({
                             let user = this
-                                .update(&mut cx, |this, cx| {
-                                    this.fetch_user(request.requester_id, cx)
-                                })
+                                .update(&mut cx, |this, cx| this.get_user(request.requester_id, cx))
                                 .await?;
                             (user, request.should_notify)
                         });
@@ -277,7 +304,7 @@ impl UserStore {
                     let mut outgoing_requests = Vec::new();
                     for requested_user_id in message.outgoing_requests {
                         outgoing_requests.push(
-                            this.update(&mut cx, |this, cx| this.fetch_user(requested_user_id, cx))
+                            this.update(&mut cx, |this, cx| this.get_user(requested_user_id, cx))
                                 .await?,
                         );
                     }
@@ -518,19 +545,37 @@ impl UserStore {
 
     pub fn get_users(
         &mut self,
-        mut user_ids: Vec<u64>,
+        user_ids: Vec<u64>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
-        user_ids.retain(|id| !self.users.contains_key(id));
-        if user_ids.is_empty() {
-            Task::ready(Ok(()))
-        } else {
-            let load = self.load_users(proto::GetUsers { user_ids }, cx);
-            cx.foreground().spawn(async move {
-                load.await?;
-                Ok(())
+    ) -> Task<Result<Vec<Arc<User>>>> {
+        let mut user_ids_to_fetch = user_ids.clone();
+        user_ids_to_fetch.retain(|id| !self.users.contains_key(id));
+
+        cx.spawn(|this, mut cx| async move {
+            if !user_ids_to_fetch.is_empty() {
+                this.update(&mut cx, |this, cx| {
+                    this.load_users(
+                        proto::GetUsers {
+                            user_ids: user_ids_to_fetch,
+                        },
+                        cx,
+                    )
+                })
+                .await?;
+            }
+
+            this.read_with(&cx, |this, _| {
+                user_ids
+                    .iter()
+                    .map(|user_id| {
+                        this.users
+                            .get(user_id)
+                            .cloned()
+                            .ok_or_else(|| anyhow!("user {} not found", user_id))
+                    })
+                    .collect()
             })
-        }
+        })
     }
 
     pub fn fuzzy_search_users(
@@ -541,7 +586,7 @@ impl UserStore {
         self.load_users(proto::FuzzySearchUsers { query }, cx)
     }
 
-    pub fn fetch_user(
+    pub fn get_user(
         &mut self,
         user_id: u64,
         cx: &mut ModelContext<Self>,
@@ -621,7 +666,7 @@ impl Contact {
     ) -> Result<Self> {
         let user = user_store
             .update(cx, |user_store, cx| {
-                user_store.fetch_user(contact.user_id, cx)
+                user_store.get_user(contact.user_id, cx)
             })
             .await?;
         let mut projects = Vec::new();
@@ -630,9 +675,7 @@ impl Contact {
             for participant_id in project.guests {
                 guests.insert(
                     user_store
-                        .update(cx, |user_store, cx| {
-                            user_store.fetch_user(participant_id, cx)
-                        })
+                        .update(cx, |user_store, cx| user_store.get_user(participant_id, cx))
                         .await?,
                 );
             }

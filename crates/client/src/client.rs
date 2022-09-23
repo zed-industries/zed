@@ -422,6 +422,29 @@ impl Client {
         }
     }
 
+    pub fn add_request_handler<M, E, H, F>(
+        self: &Arc<Self>,
+        model: ModelHandle<E>,
+        handler: H,
+    ) -> Subscription
+    where
+        M: RequestMessage,
+        E: Entity,
+        H: 'static
+            + Send
+            + Sync
+            + Fn(ModelHandle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+        F: 'static + Future<Output = Result<M::Response>>,
+    {
+        self.add_message_handler(model, move |handle, envelope, this, cx| {
+            Self::respond_to_request(
+                envelope.receipt(),
+                handler(handle, envelope, this.clone(), cx),
+                this,
+            )
+        })
+    }
+
     pub fn add_view_message_handler<M, E, H, F>(self: &Arc<Self>, handler: H)
     where
         M: EntityMessage,

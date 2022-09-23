@@ -100,16 +100,16 @@ async fn test_share_project_in_room(
 
     let mut incoming_calls_b = client_b
         .user_store
-        .read_with(cx_b, |user, _| user.incoming_calls());
-    let user_b_joined = room_a.update(cx_a, |room, cx| {
-        room.invite(client_b.user_id().unwrap(), cx)
-    });
+        .update(cx_b, |user, _| user.incoming_calls());
+    room_a
+        .update(cx_a, |room, cx| room.call(client_b.user_id().unwrap(), cx))
+        .await
+        .unwrap();
     let call_b = incoming_calls_b.next().await.unwrap();
     let room_b = cx_b
         .update(|cx| Room::join(call_b.room_id, client_b.clone(), cx))
         .await
         .unwrap();
-    user_b_joined.await.unwrap();
 }
 
 #[gpui::test(iterations = 10)]
@@ -512,7 +512,7 @@ async fn test_cancel_join_request(
     let user_b = client_a
         .user_store
         .update(cx_a, |store, cx| {
-            store.fetch_user(client_b.user_id().unwrap(), cx)
+            store.get_user(client_b.user_id().unwrap(), cx)
         })
         .await
         .unwrap();

@@ -16,7 +16,8 @@ message Envelope {
         JoinRoom join_room = 10;
         JoinRoomResponse join_room_response = 11;
         Call call = 12;
-        CallResponse call_response = 13;
+        IncomingCall incoming_call = 1000;
+        RespondToCall respond_to_call = 13;
         RoomUpdated room_updated = 14;
 
         RegisterProject register_project = 15;
@@ -149,6 +150,7 @@ message JoinRoomResponse {
 
 message Room {
     repeated Participant participants = 1;
+    repeated uint64 pending_calls_to_user_ids = 2;
 }
 
 message Participant {
@@ -171,9 +173,21 @@ message ParticipantLocation {
     message External {}
 }
 
-message Call {}
+message Call {
+    uint64 room_id = 1;
+    uint64 to_user_id = 2;
+}
 
-message CallResponse {}
+message IncomingCall {
+    uint64 room_id = 1;
+    uint64 from_user_id = 2;
+    repeated uint64 participant_user_ids = 3;
+}
+
+message RespondToCall {
+    uint64 room_id = 1;
+    bool accept = 2;
+}
 
 message RoomUpdated {
     Room room = 1;

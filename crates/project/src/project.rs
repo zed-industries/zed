@@ -4744,7 +4744,7 @@ impl Project {
         } else {
             let user_store = this.read_with(&cx, |this, _| this.user_store.clone());
             let user = user_store
-                .update(&mut cx, |store, cx| store.fetch_user(user_id, cx))
+                .update(&mut cx, |store, cx| store.get_user(user_id, cx))
                 .await?;
             this.update(&mut cx, |_, cx| cx.emit(Event::ContactRequestedJoin(user)));
         }
@@ -4828,7 +4828,7 @@ impl Project {
         let user = this
             .update(&mut cx, |this, cx| {
                 this.user_store.update(cx, |user_store, cx| {
-                    user_store.fetch_user(envelope.payload.requester_id, cx)
+                    user_store.get_user(envelope.payload.requester_id, cx)
                 })
             })
             .await?;
@@ -6258,7 +6258,7 @@ impl Collaborator {
         cx: &mut AsyncAppContext,
     ) -> impl Future<Output = Result<Self>> {
         let user = user_store.update(cx, |user_store, cx| {
-            user_store.fetch_user(message.user_id, cx)
+            user_store.get_user(message.user_id, cx)
         });
 
         async move {
