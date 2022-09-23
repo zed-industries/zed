@@ -64,6 +64,7 @@ use crate::mappings::{
     colors::{get_color_at_index, to_alac_rgb},
     keys::to_esc_str,
 };
+use lazy_static::lazy_static;
 
 ///Initialize and register all of our action handlers
 pub fn init(cx: &mut MutableAppContext) {
@@ -83,8 +84,11 @@ const DEBUG_TERMINAL_HEIGHT: f32 = 30.;
 const DEBUG_CELL_WIDTH: f32 = 5.;
 const DEBUG_LINE_HEIGHT: f32 = 5.;
 
-/// Copied from alacritty's ui_config.rs
-static URL_REGEX: RegexSearch = RegexSearch::new("(ipfs:|ipns:|magnet:|mailto:|gemini:|gopher:|https:|http:|news:|file:|git:|ssh:|ftp:)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>\"\\s{-}\\^⟨⟩`]+").unwrap();
+// Regex Copied from alacritty's ui_config.rs
+
+lazy_static! {
+    static ref URL_REGEX: RegexSearch = RegexSearch::new("(ipfs:|ipns:|magnet:|mailto:|gemini:|gopher:|https:|http:|news:|file:|git:|ssh:|ftp:)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>\"\\s{-}\\^⟨⟩`]+").unwrap();
+}
 
 ///Upward flowing events, for changing the title and such
 #[derive(Clone, Copy, Debug)]
@@ -659,6 +663,7 @@ impl Terminal {
 
                 if let Some(url_match) = regex_match_at(term, point, &URL_REGEX) {
                     let url = term.bounds_to_string(*url_match.start(), *url_match.end());
+                    dbg!(&url, &url_match, open);
 
                     if *open {
                         open_uri(&url).log_err();
@@ -956,12 +961,8 @@ impl Terminal {
         let position = e.position.sub(origin);
         if !self.mouse_mode(e.shift) {
             if e.cmd {
-                if let Some(link) = self.last_content.cells
-                    [content_index_for_mouse(position, &self.last_content)]
-                .hyperlink()
-                {
-                    dbg!(&link);
-                    dbg!(&self.last_hovered_hyperlink);
+                let mouse_cell_index = content_index_for_mouse(position, &self.last_content);
+                if let Some(link) = self.last_content.cells[mouse_cell_index].hyperlink() {
                     open_uri(link.uri()).log_err();
                 } else {
                     self.events

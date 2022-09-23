@@ -29,6 +29,8 @@ shellexpand = "2.1.0"
 libc = "0.2"
 anyhow = "1"
 thiserror = "1.0"
+lazy_static = "1.4.0"
+
 
 
 [dev-dependencies]
