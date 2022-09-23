@@ -420,9 +420,15 @@ message ReloadBuffersResponse {
     ProjectTransaction transaction = 1;
 }
 
+enum FormatTrigger {
+    Save = 0;
+    Manual = 1;
+}
+
 message FormatBuffers {
     uint64 project_id = 1;
-    repeated uint64 buffer_ids = 2;
+    FormatTrigger trigger = 2;
+    repeated uint64 buffer_ids = 3;
 }
 
 message FormatBuffersResponse {

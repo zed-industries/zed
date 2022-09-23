@@ -93,6 +93,7 @@
             "cmd-shift-down": "editor::SelectToEnd",
             "cmd-a": "editor::SelectAll",
             "cmd-l": "editor::SelectLine",
+            "cmd-shift-i": "editor::Format",
             "cmd-shift-left": [
                 "editor::SelectToBeginningOfLine",
                 {
