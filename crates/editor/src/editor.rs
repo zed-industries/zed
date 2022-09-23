@@ -5180,10 +5180,18 @@ impl Editor {
 
     fn format(&mut self, _: &Format, cx: &mut ViewContext<'_, Self>) -> Option<Task<Result<()>>> {
         let project = match &self.project {
-            Some(project) => project,
+            Some(project) => project.clone(),
             None => return None,
         };
 
+        Some(self.perform_format(project, cx))
+    }
+
+    fn perform_format(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ViewContext<'_, Self>,
+    ) -> Task<Result<()>> {
         let buffer = self.buffer().clone();
         let buffers = buffer.read(cx).all_buffers();
 
@@ -5192,7 +5200,7 @@ impl Editor {
             project.format(buffers, true, FormatTrigger::Manual, cx)
         });
 
-        Some(cx.spawn(|_, mut cx| async move {
+        cx.spawn(|_, mut cx| async move {
             let transaction = futures::select_biased! {
                 _ = timeout => {
                     log::warn!("timed out waiting for formatting");
@@ -5212,7 +5220,7 @@ impl Editor {
             });
 
             Ok(())
-        }))
+        })
     }
 
     fn restart_language_server(&mut self, _: &RestartLanguageServer, cx: &mut ViewContext<Self>) {
@@ -10281,6 +10289,87 @@ mod tests {
             .await;
         cx.foreground().start_waiting();
         save.await.unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+
+        let mut language = Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        );
+        let mut fake_servers = language
+            .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }))
+            .await;
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_file("/file.rs", Default::default()).await;
+
+        let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+        project.update(cx, |project, _| project.languages().add(Arc::new(language)));
+        let buffer = project
+            .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
+            .await
+            .unwrap();
+
+        cx.foreground().start_waiting();
+        let fake_server = fake_servers.next().await.unwrap();
+
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let (_, editor) = cx.add_window(|cx| build_editor(buffer, cx));
+        editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+
+        let format = editor.update(cx, |editor, cx| editor.perform_format(project.clone(), cx));
+        fake_server
+            .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path("/file.rs").unwrap()
+                );
+                assert_eq!(params.options.tab_size, 4);
+                Ok(Some(vec![lsp::TextEdit::new(
+                    lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
+                    ", ".to_string(),
+                )]))
+            })
+            .next()
+            .await;
+        cx.foreground().start_waiting();
+        format.await.unwrap();
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "one, two\nthree\n"
+        );
+
+        editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+        // Ensure we don't lock if formatting hangs.
+        fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path("/file.rs").unwrap()
+            );
+            futures::future::pending::<()>().await;
+            unreachable!()
+        });
+        let format = editor.update(cx, |editor, cx| editor.perform_format(project, cx));
+        cx.foreground().advance_clock(super::FORMAT_TIMEOUT);
+        cx.foreground().start_waiting();
+        format.await.unwrap();
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "one\ntwo\nthree\n"
+        );
     }
 
     #[gpui::test]
