@@ -362,7 +362,9 @@ impl View for TerminalView {
     }
 
     fn on_focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        self.terminal.read(cx).focus_out();
+        self.terminal.update(cx, |terminal, _| {
+            terminal.focus_out();
+        });
         cx.notify();
     }
 

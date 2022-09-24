@@ -384,6 +384,7 @@ impl TerminalBuilder {
             foreground_process_info: None,
             breadcrumb_text: String::new(),
             scroll_px: 0.,
+            last_mouse_position: None,
         };
 
         Ok(TerminalBuilder {
@@ -496,7 +497,10 @@ pub struct Terminal {
     pty_tx: Notifier,
     term: Arc<FairMutex<Term<ZedListener>>>,
     events: VecDeque<InternalEvent>,
+    /// This is only used for mouse mode cell change detection
     last_mouse: Option<(Point, AlacDirection)>,
+    /// This is only used for terminal hyperlink checking
+    last_mouse_position: Option<Vector2F>,
     pub matches: Vec<RangeInclusive<Point>>,
     last_content: TerminalContent,
     last_synced: Instant,
@@ -813,7 +817,8 @@ impl Terminal {
         }
     }
 
-    pub fn focus_out(&self) {
+    pub fn focus_out(&mut self) {
+        self.last_mouse_position = None;
         if self.last_content.mode.contains(TermMode::FOCUS_IN_OUT) {
             self.write_to_pty("\x1b[O".to_string());
         }
@@ -843,6 +848,7 @@ impl Terminal {
     pub fn mouse_move(&mut self, e: &MouseMovedEvent, origin: Vector2F) {
         self.last_content.last_hovered_hyperlink = None;
         let position = e.position.sub(origin);
+        self.last_mouse_position = Some(position);
         if self.mouse_mode(e.shift) {
             let point = grid_point(
                 position,
@@ -857,9 +863,14 @@ impl Terminal {
                 }
             }
         } else if e.cmd {
+            self.fill_hyperlink(Some(position));
+        }
+    }
+
+    fn fill_hyperlink(&mut self, position: Option<Vector2F>) {
+        if let Some(position) = position {
             let content_index = content_index_for_mouse(position, &self.last_content);
             let link = self.last_content.cells[content_index].hyperlink();
-
             if link.is_some() {
                 let mut min_index = content_index;
                 loop {
@@ -895,6 +906,7 @@ impl Terminal {
 
     pub fn mouse_drag(&mut self, e: DragRegionEvent, origin: Vector2F) {
         let position = e.position.sub(origin);
+        self.last_mouse_position = Some(position);
 
         if !self.mouse_mode(e.shift) {
             // Alacritty has the same ordering, of first updating the selection
@@ -1045,6 +1057,17 @@ impl Terminal {
                     self.events.push_back(InternalEvent::Scroll(scroll));
                 }
             }
+        }
+    }
+
+    pub fn refresh_hyperlink(&mut self, cmd: bool) -> bool {
+        self.last_content.last_hovered_hyperlink = None;
+
+        if cmd {
+            self.fill_hyperlink(self.last_mouse_position);
+            true
+        } else {
+            false
         }
     }
 
