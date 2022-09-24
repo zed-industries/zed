@@ -37,7 +37,7 @@ pub trait Db: Send + Sync {
     async fn get_user_for_invite_code(&self, code: &str) -> Result<User>;
     async fn create_invite_from_code(&self, code: &str, email_address: &str) -> Result<Invite>;
 
-    async fn create_signup(&self, signup: Signup) -> Result<i32>;
+    async fn create_signup(&self, signup: Signup) -> Result<()>;
     async fn get_waitlist_summary(&self) -> Result<WaitlistSummary>;
     async fn get_unsent_invites(&self, count: usize) -> Result<Vec<Invite>>;
     async fn record_sent_invites(&self, invites: &[Invite]) -> Result<()>;
@@ -45,7 +45,7 @@ pub trait Db: Send + Sync {
         &self,
         invite: &Invite,
         user: NewUserParams,
-    ) -> Result<(UserId, Option<UserId>)>;
+    ) -> Result<(UserId, Option<UserId>, String)>;
 
     /// Registers a new project for the given user.
     async fn register_project(&self, host_user_id: UserId) -> Result<ProjectId>;
@@ -364,8 +364,8 @@ impl Db for PostgresDb {
 
     // signups
 
-    async fn create_signup(&self, signup: Signup) -> Result<i32> {
-        Ok(sqlx::query_scalar(
+    async fn create_signup(&self, signup: Signup) -> Result<()> {
+        sqlx::query(
             "
             INSERT INTO signups
             (
@@ -377,10 +377,11 @@ impl Db for PostgresDb {
                 platform_windows,
                 platform_unknown,
                 editor_features,
-                programming_languages
+                programming_languages,
+                device_id
             )
             VALUES
-                ($1, $2, 'f', $3, $4, $5, 'f', $6, $7)
+                ($1, $2, 'f', $3, $4, $5, 'f', $6, $7, $8)
             RETURNING id
             ",
         )
@@ -391,8 +392,10 @@ impl Db for PostgresDb {
         .bind(&signup.platform_windows)
         .bind(&signup.editor_features)
         .bind(&signup.programming_languages)
-        .fetch_one(&self.pool)
-        .await?)
+        .bind(&signup.device_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     async fn get_waitlist_summary(&self) -> Result<WaitlistSummary> {
@@ -455,17 +458,17 @@ impl Db for PostgresDb {
         &self,
         invite: &Invite,
         user: NewUserParams,
-    ) -> Result<(UserId, Option<UserId>)> {
+    ) -> Result<(UserId, Option<UserId>, String)> {
         let mut tx = self.pool.begin().await?;
 
-        let (signup_id, metrics_id, existing_user_id, inviting_user_id): (
-            i32,
+        let (signup_id, existing_user_id, inviting_user_id, device_id): (
             i32,
             Option<UserId>,
             Option<UserId>,
+            String,
         ) = sqlx::query_as(
             "
-            SELECT id, metrics_id, user_id, inviting_user_id
+            SELECT id, user_id, inviting_user_id, device_id
             FROM signups
             WHERE
                 email_address = $1 AND
@@ -488,9 +491,9 @@ impl Db for PostgresDb {
         let user_id: UserId = sqlx::query_scalar(
             "
             INSERT INTO users
-                (email_address, github_login, github_user_id, admin, invite_count, invite_code, metrics_id)
+            (email_address, github_login, github_user_id, admin, invite_count, invite_code)
             VALUES
-                ($1, $2, $3, 'f', $4, $5, $6)
+            ($1, $2, $3, 'f', $4, $5)
             RETURNING id
             ",
         )
@@ -499,7 +502,6 @@ impl Db for PostgresDb {
         .bind(&user.github_user_id)
         .bind(&user.invite_count)
         .bind(random_invite_code())
-        .bind(metrics_id)
         .fetch_one(&mut tx)
         .await?;
 
@@ -550,7 +552,7 @@ impl Db for PostgresDb {
         }
 
         tx.commit().await?;
-        Ok((user_id, inviting_user_id))
+        Ok((user_id, inviting_user_id, device_id))
     }
 
     // invite codes
@@ -1567,7 +1569,6 @@ pub struct User {
     pub id: UserId,
     pub github_login: String,
     pub github_user_id: Option<i32>,
-    pub metrics_id: i32,
     pub email_address: Option<String>,
     pub admin: bool,
     pub invite_code: Option<String>,
@@ -1674,6 +1675,7 @@ pub struct Signup {
     pub platform_linux: bool,
     pub editor_features: Vec<String>,
     pub programming_languages: Vec<String>,
+    pub device_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, FromRow)]
@@ -1802,7 +1804,6 @@ mod test {
                         github_login: params.github_login,
                         github_user_id: Some(params.github_user_id),
                         email_address: Some(email_address.to_string()),
-                        metrics_id: id + 100,
                         admin,
                         invite_code: None,
                         invite_count: 0,
@@ -1884,7 +1885,7 @@ mod test {
 
         // signups
 
-        async fn create_signup(&self, _signup: Signup) -> Result<i32> {
+        async fn create_signup(&self, _signup: Signup) -> Result<()> {
             unimplemented!()
         }
 
@@ -1904,7 +1905,7 @@ mod test {
             &self,
             _invite: &Invite,
             _user: NewUserParams,
-        ) -> Result<(UserId, Option<UserId>)> {
+        ) -> Result<(UserId, Option<UserId>, String)> {
             unimplemented!()
         }
 

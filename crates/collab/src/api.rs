@@ -127,44 +127,52 @@ struct CreateUserParams {
     invite_count: i32,
 }
 
+#[derive(Serialize, Debug)]
+struct CreateUserResponse {
+    user: User,
+    signup_device_id: Option<String>,
+}
+
 async fn create_user(
     Json(params): Json<CreateUserParams>,
     Extension(app): Extension<Arc<AppState>>,
     Extension(rpc_server): Extension<Arc<rpc::Server>>,
-) -> Result<Json<User>> {
+) -> Result<Json<CreateUserResponse>> {
     let user = NewUserParams {
         github_login: params.github_login,
         github_user_id: params.github_user_id,
         invite_count: params.invite_count,
     };
-    let (user_id, inviter_id) =
-        // Creating a user via the normal signup process
-        if let Some(email_confirmation_code) = params.email_confirmation_code {
-            app.db
-                .create_user_from_invite(
-                    &Invite {
-                        email_address: params.email_address,
-                        email_confirmation_code,
-                    },
-                    user,
-                )
-                .await?
-        }
-        // Creating a user as an admin
-        else {
-            (
-                app.db
-                    .create_user(&params.email_address, false, user)
-                    .await?,
-                None,
+    let user_id;
+    let signup_device_id;
+    // Creating a user via the normal signup process
+    if let Some(email_confirmation_code) = params.email_confirmation_code {
+        let result = app
+            .db
+            .create_user_from_invite(
+                &Invite {
+                    email_address: params.email_address,
+                    email_confirmation_code,
+                },
+                user,
             )
-        };
-
-    if let Some(inviter_id) = inviter_id {
-        rpc_server
-            .invite_code_redeemed(inviter_id, user_id)
-            .await
-            .trace_err();
+            .await?;
+        user_id = result.0;
+        signup_device_id = Some(result.2);
+        if let Some(inviter_id) = result.1 {
+            rpc_server
+                .invite_code_redeemed(inviter_id, user_id)
+                .await
+                .trace_err();
+        }
+    }
+    // Creating a user as an admin
+    else {
+        user_id = app
+            .db
+            .create_user(&params.email_address, false, user)
+            .await?;
+        signup_device_id = None;
     }
 
     let user = app
@@ -173,7 +181,10 @@ async fn create_user(
         .await?
         .ok_or_else(|| anyhow!("couldn't find the user we just created"))?;
 
-    Ok(Json(user))
+    Ok(Json(CreateUserResponse {
+        user,
+        signup_device_id,
+    }))
 }
 
 #[derive(Deserialize)]
@@ -396,17 +407,12 @@ async fn get_user_for_invite_code(
     Ok(Json(app.db.get_user_for_invite_code(&code).await?))
 }
 
-#[derive(Serialize)]
-struct CreateSignupResponse {
-    metrics_id: i32,
-}
-
 async fn create_signup(
     Json(params): Json<Signup>,
     Extension(app): Extension<Arc<AppState>>,
-) -> Result<Json<CreateSignupResponse>> {
-    let metrics_id = app.db.create_signup(params).await?;
-    Ok(Json(CreateSignupResponse { metrics_id }))
+) -> Result<()> {
+    app.db.create_signup(params).await?;
+    Ok(())
 }
 
 async fn get_waitlist_summary(

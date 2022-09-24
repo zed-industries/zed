@@ -14,9 +14,11 @@ use async_tungstenite::tungstenite::{
 };
 use futures::{future::LocalBoxFuture, FutureExt, SinkExt, StreamExt, TryStreamExt};
 use gpui::{
-    actions, serde_json::Value, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle,
-    AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
-    MutableAppContext, Task, View, ViewContext, ViewHandle,
+    actions,
+    serde_json::{json, Value},
+    AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, AppContext,
+    AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task, View, ViewContext,
+    ViewHandle,
 };
 use http::HttpClient;
 use lazy_static::lazy_static;
@@ -52,13 +54,29 @@ lazy_static! {
 
 pub const ZED_SECRET_CLIENT_TOKEN: &str = "618033988749894";
 
-actions!(client, [Authenticate]);
+actions!(client, [Authenticate, TestTelemetry]);
 
-pub fn init(rpc: Arc<Client>, cx: &mut MutableAppContext) {
-    cx.add_global_action(move |_: &Authenticate, cx| {
-        let rpc = rpc.clone();
-        cx.spawn(|cx| async move { rpc.authenticate_and_connect(true, &cx).log_err().await })
+pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
+    cx.add_global_action({
+        let client = client.clone();
+        move |_: &Authenticate, cx| {
+            let client = client.clone();
+            cx.spawn(
+                |cx| async move { client.authenticate_and_connect(true, &cx).log_err().await },
+            )
             .detach();
+        }
+    });
+    cx.add_global_action({
+        let client = client.clone();
+        move |_: &TestTelemetry, _| {
+            client.log_event(
+                "test_telemetry",
+                json!({
+                    "test_property": "test_value"
+                }),
+            )
+        }
     });
 }
 
