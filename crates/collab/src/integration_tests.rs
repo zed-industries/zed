@@ -74,7 +74,11 @@ async fn test_share_project_in_room(
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
+        .make_contacts(vec![
+            (&client_a, cx_a),
+            (&client_b, cx_b),
+            (&client_c, cx_c),
+        ])
         .await;
 
     client_a
@@ -166,8 +170,8 @@ async fn test_share_project_in_room(
             pending: vec!["user_c".to_string()]
         }
     );
-    let _call_c = incoming_call_c.next().await.unwrap().unwrap();
 
+    let _call_c = incoming_call_c.next().await.unwrap().unwrap();
     client_c
         .user_store
         .update(cx_c, |user, _| user.decline_call())
