@@ -385,6 +385,8 @@ impl TerminalBuilder {
             breadcrumb_text: String::new(),
             scroll_px: 0.,
             last_mouse_position: None,
+            next_link_id: 0,
+            selection_phase: SelectionPhase::Ended,
         };
 
         Ok(TerminalBuilder {
@@ -471,7 +473,7 @@ pub struct TerminalContent {
     cursor: RenderableCursor,
     cursor_char: char,
     size: TerminalSize,
-    last_hovered_hyperlink: Option<(String, RangeInclusive<Point>)>,
+    last_hovered_hyperlink: Option<(String, RangeInclusive<Point>, usize)>,
 }
 
 impl Default for TerminalContent {
@@ -493,6 +495,12 @@ impl Default for TerminalContent {
     }
 }
 
+#[derive(PartialEq, Eq)]
+pub enum SelectionPhase {
+    Selecting,
+    Ended,
+}
+
 pub struct Terminal {
     pty_tx: Notifier,
     term: Arc<FairMutex<Term<ZedListener>>>,
@@ -511,6 +519,8 @@ pub struct Terminal {
     shell_fd: u32,
     foreground_process_info: Option<LocalProcessInfo>,
     scroll_px: f32,
+    next_link_id: usize,
+    selection_phase: SelectionPhase,
 }
 
 impl Terminal {
@@ -654,7 +664,7 @@ impl Terminal {
             }
             InternalEvent::ScrollToPoint(point) => term.scroll_to_point(*point),
             InternalEvent::Hyperlink(position, open) => {
-                self.last_content.last_hovered_hyperlink = None;
+                let prev_hyperlink = self.last_content.last_hovered_hyperlink.take();
 
                 let point = grid_point(
                     *position,
@@ -668,11 +678,35 @@ impl Terminal {
                     if *open {
                         open_uri(&url).log_err();
                     } else {
-                        self.last_content.last_hovered_hyperlink = Some((url, url_match));
+                        self.update_hyperlink(prev_hyperlink, url, url_match);
                     }
                 }
             }
         }
+    }
+
+    fn update_hyperlink(
+        &mut self,
+        prev_hyperlink: Option<(String, RangeInclusive<Point>, usize)>,
+        url: String,
+        url_match: RangeInclusive<Point>,
+    ) {
+        if let Some(prev_hyperlink) = prev_hyperlink {
+            if prev_hyperlink.0 == url && prev_hyperlink.1 == url_match {
+                self.last_content.last_hovered_hyperlink = Some((url, url_match, prev_hyperlink.2));
+            } else {
+                self.last_content.last_hovered_hyperlink =
+                    Some((url, url_match, self.next_link_id()));
+            }
+        } else {
+            self.last_content.last_hovered_hyperlink = Some((url, url_match, self.next_link_id()));
+        }
+    }
+
+    fn next_link_id(&mut self) -> usize {
+        let res = self.next_link_id;
+        self.next_link_id = self.next_link_id.wrapping_add(1);
+        res
     }
 
     pub fn last_content(&self) -> &TerminalContent {
@@ -846,7 +880,8 @@ impl Terminal {
     }
 
     pub fn mouse_move(&mut self, e: &MouseMovedEvent, origin: Vector2F) {
-        self.last_content.last_hovered_hyperlink = None;
+        let prev_hyperlink = self.last_content.last_hovered_hyperlink.take();
+
         let position = e.position.sub(origin);
         self.last_mouse_position = Some(position);
         if self.mouse_mode(e.shift) {
@@ -862,19 +897,26 @@ impl Terminal {
                     self.pty_tx.notify(bytes);
                 }
             }
-        } else if e.cmd {
-            self.fill_hyperlink(Some(position));
+        } else {
+            self.fill_hyperlink(Some(position), prev_hyperlink);
         }
     }
 
-    fn fill_hyperlink(&mut self, position: Option<Vector2F>) {
-        if let Some(position) = position {
+    fn fill_hyperlink(
+        &mut self,
+        position: Option<Vector2F>,
+        prev_hyperlink: Option<(String, RangeInclusive<Point>, usize)>,
+    ) {
+        if self.selection_phase == SelectionPhase::Selecting {
+            self.last_content.last_hovered_hyperlink = None;
+        } else if let Some(position) = position {
             let content_index = content_index_for_mouse(position, &self.last_content);
             let link = self.last_content.cells[content_index].hyperlink();
             if link.is_some() {
                 let mut min_index = content_index;
                 loop {
-                    if self.last_content.cells[min_index - 1].hyperlink() == link {
+                    if min_index >= 1 && self.last_content.cells[min_index - 1].hyperlink() == link
+                    {
                         min_index = min_index - 1;
                     } else {
                         break;
@@ -882,21 +924,24 @@ impl Terminal {
                 }
 
                 let mut max_index = content_index;
+                let len = self.last_content.cells.len();
                 loop {
-                    if self.last_content.cells[max_index + 1].hyperlink() == link {
+                    if max_index < len - 1
+                        && self.last_content.cells[max_index + 1].hyperlink() == link
+                    {
                         max_index = max_index + 1;
                     } else {
                         break;
                     }
                 }
 
-                self.last_content.last_hovered_hyperlink = link.map(|link| {
-                    (
-                        link.uri().to_owned(),
-                        self.last_content.cells[min_index].point
-                            ..=self.last_content.cells[max_index].point,
-                    )
-                });
+                if let Some(link) = link {
+                    let url = link.uri().to_owned();
+                    let url_match = self.last_content.cells[min_index].point
+                        ..=self.last_content.cells[max_index].point;
+
+                    self.update_hyperlink(prev_hyperlink, url, url_match);
+                };
             } else {
                 self.events
                     .push_back(InternalEvent::Hyperlink(position, false));
@@ -909,6 +954,7 @@ impl Terminal {
         self.last_mouse_position = Some(position);
 
         if !self.mouse_mode(e.shift) {
+            self.selection_phase = SelectionPhase::Selecting;
             // Alacritty has the same ordering, of first updating the selection
             // then scrolling 15ms later
             self.events
@@ -969,7 +1015,9 @@ impl Terminal {
     pub fn left_click(&mut self, e: &ClickRegionEvent, origin: Vector2F) {
         let position = e.position.sub(origin);
         if !self.mouse_mode(e.shift) {
-            if e.cmd {
+            if self.last_content.last_hovered_hyperlink.is_some()
+                && self.last_content.selection.is_none()
+            {
                 let mouse_cell_index = content_index_for_mouse(position, &self.last_content);
                 if let Some(link) = self.last_content.cells[mouse_cell_index].hyperlink() {
                     open_uri(link.uri()).log_err();
@@ -1021,6 +1069,7 @@ impl Terminal {
             // so let's do that here
             self.copy();
         }
+        self.selection_phase = SelectionPhase::Ended;
         self.last_mouse = None;
     }
 
@@ -1061,10 +1110,10 @@ impl Terminal {
     }
 
     pub fn refresh_hyperlink(&mut self, cmd: bool) -> bool {
-        self.last_content.last_hovered_hyperlink = None;
+        let prev_hyperlink = self.last_content.last_hovered_hyperlink.take();
 
         if cmd {
-            self.fill_hyperlink(self.last_mouse_position);
+            self.fill_hyperlink(self.last_mouse_position, prev_hyperlink);
             true
         } else {
             false

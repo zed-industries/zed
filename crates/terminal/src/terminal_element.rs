@@ -7,7 +7,7 @@ use alacritty_terminal::{
 use editor::{Cursor, CursorShape, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     color::Color,
-    elements::{Overlay, Tooltip},
+    elements::{Empty, Overlay},
     fonts::{HighlightStyle, Properties, Style::Italic, TextStyle, Underline, Weight},
     geometry::{
         rect::RectF,
@@ -15,7 +15,7 @@ use gpui::{
     },
     serde_json::json,
     text_layout::{Line, RunStyle},
-    Axis, Element, ElementBox, Event, EventContext, FontCache, KeyDownEvent, ModelContext,
+    Element, ElementBox, Event, EventContext, FontCache, KeyDownEvent, ModelContext,
     ModifiersChangedEvent, MouseButton, MouseRegion, PaintContext, Quad, SizeConstraint,
     TextLayoutCache, WeakModelHandle, WeakViewHandle,
 };
@@ -324,7 +324,6 @@ impl TerminalElement {
             .unwrap_or_default();
 
         if indexed.cell.hyperlink().is_some() {
-            underline.squiggly = true;
             if underline.thickness == OrderedFloat(0.) {
                 underline.thickness = OrderedFloat(1.);
             }
@@ -594,51 +593,34 @@ impl Element for TerminalElement {
         };
         let terminal_handle = self.terminal.upgrade(cx).unwrap();
 
-        let (last_hovered_hyperlink, last_mouse) =
-            terminal_handle.update(cx.app, |terminal, cx| {
-                terminal.set_size(dimensions);
-                terminal.try_sync(cx);
-                (
-                    terminal.last_content.last_hovered_hyperlink.clone(),
-                    terminal.last_mouse_position,
-                )
-            });
+        let last_hovered_hyperlink = terminal_handle.update(cx.app, |terminal, cx| {
+            terminal.set_size(dimensions);
+            terminal.try_sync(cx);
+            terminal.last_content.last_hovered_hyperlink.clone()
+        });
 
         let view_handle = self.view.clone();
-        let hyperlink_tooltip = last_hovered_hyperlink.and_then(|(uri, _)| {
-            last_mouse.and_then(|last_mouse| {
-                view_handle.upgrade(cx).map(|handle| {
-                    let mut tooltip = cx.render(&handle, |_, cx| {
-                        // TODO: Use the correct dynamic line height
-                        // let mut collapsed_tooltip = Tooltip::render_tooltip(
-                        //     uri.clone(),
-                        //     tooltip_style.clone(),
-                        //     None,
-                        //     false,
-                        // )
-                        // .boxed();
+        let hyperlink_tooltip = last_hovered_hyperlink.and_then(|(uri, _, id)| {
+            // last_mouse.and_then(|_last_mouse| {
+            view_handle.upgrade(cx).map(|handle| {
+                let mut tooltip = cx.render(&handle, |_, cx| {
+                    Overlay::new(
+                        Empty::new()
+                            .contained()
+                            .constrained()
+                            .with_width(dimensions.width())
+                            .with_height(dimensions.height())
+                            .with_tooltip::<TerminalElement, _>(id, uri, None, tooltip_style, cx)
+                            .boxed(),
+                    )
+                    .with_position_mode(gpui::elements::OverlayPositionMode::Local)
+                    .boxed()
+                });
 
-                        Overlay::new(
-                            Tooltip::render_tooltip(uri, tooltip_style, None, false)
-                                .constrained()
-                                .with_height(text_style.line_height(cx.font_cache()))
-                                // .dynamically(move |constraint, cx| {
-                                //     SizeConstraint::strict_along(
-                                //         Axis::Vertical,
-                                //         collapsed_tooltip.layout(constraint, cx).y(),
-                                //     )
-                                // })
-                                .boxed(),
-                        )
-                        .with_fit_mode(gpui::elements::OverlayFitMode::SwitchAnchor)
-                        .with_anchor_position(last_mouse)
-                        .boxed()
-                    });
-
-                    tooltip.layout(SizeConstraint::new(Vector2F::zero(), cx.window_size), cx);
-                    tooltip
-                })
+                tooltip.layout(SizeConstraint::new(Vector2F::zero(), cx.window_size), cx);
+                tooltip
             })
+            // })
         });
 
         let TerminalContent {
@@ -672,7 +654,7 @@ impl Element for TerminalElement {
             self.modal,
             last_hovered_hyperlink
                 .as_ref()
-                .map(|(_, range)| (link_style, range)),
+                .map(|(_, range, _)| (link_style, range)),
         );
 
         //Layout cursor. Rectangle is used for IME, so we should lay it out even
@@ -822,12 +804,7 @@ impl Element for TerminalElement {
             }
 
             if let Some(element) = &mut layout.hyperlink_tooltip {
-                element.paint(
-                    visible_bounds.lower_left()
-                        - vec2f(-layout.size.cell_width, layout.size.line_height),
-                    visible_bounds,
-                    cx,
-                )
+                element.paint(origin, visible_bounds, cx)
             }
         });
     }
