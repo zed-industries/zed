@@ -14,6 +14,7 @@ pub struct Overlay {
     anchor_position: Option<Vector2F>,
     anchor_corner: AnchorCorner,
     fit_mode: OverlayFitMode,
+    position_mode: OverlayPositionMode,
     hoverable: bool,
 }
 
@@ -22,6 +23,12 @@ pub enum OverlayFitMode {
     SnapToWindow,
     SwitchAnchor,
     None,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum OverlayPositionMode {
+    Window,
+    Local,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -73,6 +80,7 @@ impl Overlay {
             anchor_position: None,
             anchor_corner: AnchorCorner::TopLeft,
             fit_mode: OverlayFitMode::None,
+            position_mode: OverlayPositionMode::Window,
             hoverable: false,
         }
     }
@@ -89,6 +97,11 @@ impl Overlay {
 
     pub fn with_fit_mode(mut self, fit_mode: OverlayFitMode) -> Self {
         self.fit_mode = fit_mode;
+        self
+    }
+
+    pub fn with_position_mode(mut self, position_mode: OverlayPositionMode) -> Self {
+        self.position_mode = position_mode;
         self
     }
 
@@ -123,8 +136,20 @@ impl Element for Overlay {
         size: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) {
-        let anchor_position = self.anchor_position.unwrap_or_else(|| bounds.origin());
-        let mut bounds = self.anchor_corner.get_bounds(anchor_position, *size);
+        let (anchor_position, mut bounds) = match self.position_mode {
+            OverlayPositionMode::Window => {
+                let anchor_position = self.anchor_position.unwrap_or_else(|| bounds.origin());
+                let bounds = self.anchor_corner.get_bounds(anchor_position, *size);
+                (anchor_position, bounds)
+            }
+            OverlayPositionMode::Local => {
+                let anchor_position = self.anchor_position.unwrap_or_default();
+                let bounds = self
+                    .anchor_corner
+                    .get_bounds(bounds.origin() + anchor_position, *size);
+                (anchor_position, bounds)
+            }
+        };
 
         match self.fit_mode {
             OverlayFitMode::SnapToWindow => {

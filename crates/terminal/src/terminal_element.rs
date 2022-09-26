@@ -7,15 +7,17 @@ use alacritty_terminal::{
 use editor::{Cursor, CursorShape, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     color::Color,
-    fonts::{Properties, Style::Italic, TextStyle, Underline, Weight},
+    elements::{Empty, Overlay},
+    fonts::{HighlightStyle, Properties, Style::Italic, TextStyle, Underline, Weight},
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
     serde_json::json,
     text_layout::{Line, RunStyle},
-    Element, Event, EventContext, FontCache, KeyDownEvent, ModelContext, MouseButton, MouseRegion,
-    PaintContext, Quad, TextLayoutCache, WeakModelHandle, WeakViewHandle,
+    Element, ElementBox, Event, EventContext, FontCache, KeyDownEvent, ModelContext,
+    ModifiersChangedEvent, MouseButton, MouseRegion, PaintContext, Quad, SizeConstraint,
+    TextLayoutCache, WeakModelHandle, WeakViewHandle,
 };
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
@@ -42,6 +44,7 @@ pub struct LayoutState {
     size: TerminalSize,
     mode: TermMode,
     display_offset: usize,
+    hyperlink_tooltip: Option<ElementBox>,
 }
 
 ///Helper struct for converting data between alacritty's cursor points, and displayed cursor points
@@ -180,6 +183,7 @@ impl TerminalElement {
         text_layout_cache: &TextLayoutCache,
         font_cache: &FontCache,
         modal: bool,
+        hyperlink: Option<(HighlightStyle, &RangeInclusive<Point>)>,
     ) -> (Vec<LayoutCell>, Vec<LayoutRect>) {
         let mut cells = vec![];
         let mut rects = vec![];
@@ -237,7 +241,7 @@ impl TerminalElement {
                 //Layout current cell text
                 {
                     let cell_text = &cell.c.to_string();
-                    if cell_text != " " {
+                    if !is_blank(&cell) {
                         let cell_style = TerminalElement::cell_style(
                             &cell,
                             fg,
@@ -245,6 +249,7 @@ impl TerminalElement {
                             text_style,
                             font_cache,
                             modal,
+                            hyperlink,
                         );
 
                         let layout_cell = text_layout_cache.layout_str(
@@ -257,8 +262,8 @@ impl TerminalElement {
                             Point::new(line_index as i32, cell.point.column.0 as i32),
                             layout_cell,
                         ))
-                    }
-                };
+                    };
+                }
             }
 
             if cur_rect.is_some() {
@@ -304,11 +309,12 @@ impl TerminalElement {
         text_style: &TextStyle,
         font_cache: &FontCache,
         modal: bool,
+        hyperlink: Option<(HighlightStyle, &RangeInclusive<Point>)>,
     ) -> RunStyle {
         let flags = indexed.cell.flags;
         let fg = convert_color(&fg, &style.colors, modal);
 
-        let underline = flags
+        let mut underline = flags
             .intersects(Flags::ALL_UNDERLINES)
             .then(|| Underline {
                 color: Some(fg),
@@ -316,6 +322,12 @@ impl TerminalElement {
                 thickness: OrderedFloat(1.),
             })
             .unwrap_or_default();
+
+        if indexed.cell.hyperlink().is_some() {
+            if underline.thickness == OrderedFloat(0.) {
+                underline.thickness = OrderedFloat(1.);
+            }
+        }
 
         let mut properties = Properties::new();
         if indexed
@@ -332,11 +344,25 @@ impl TerminalElement {
             .select_font(text_style.font_family_id, &properties)
             .unwrap_or(text_style.font_id);
 
-        RunStyle {
+        let mut result = RunStyle {
             color: fg,
             font_id,
             underline,
+        };
+
+        if let Some((style, range)) = hyperlink {
+            if range.contains(&indexed.point) {
+                if let Some(underline) = style.underline {
+                    result.underline = underline;
+                }
+
+                if let Some(color) = style.color {
+                    result.color = color;
+                }
+            }
         }
+
+        result
     }
 
     fn generic_button_handler<E>(
@@ -366,7 +392,7 @@ impl TerminalElement {
     ) {
         let connection = self.terminal;
 
-        let mut region = MouseRegion::new::<Self>(view_id, view_id, visible_bounds);
+        let mut region = MouseRegion::new::<Self>(view_id, 0, visible_bounds);
 
         // Terminal Emulator controlled behavior:
         region = region
@@ -428,6 +454,16 @@ impl TerminalElement {
                     });
                 }
             })
+            .on_move(move |event, cx| {
+                if cx.is_parent_view_focused() {
+                    if let Some(conn_handle) = connection.upgrade(cx.app) {
+                        conn_handle.update(cx.app, |terminal, cx| {
+                            terminal.mouse_move(&event, origin);
+                            cx.notify();
+                        })
+                    }
+                }
+            })
             .on_scroll(TerminalElement::generic_button_handler(
                 connection,
                 origin,
@@ -481,21 +517,6 @@ impl TerminalElement {
                     ),
                 )
         }
-        //Mouse move manages both dragging and motion events
-        if mode.intersects(TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION) {
-            region = region
-                //TODO: This does not fire on right-mouse-down-move events.
-                .on_move(move |event, cx| {
-                    if cx.is_parent_view_focused() {
-                        if let Some(conn_handle) = connection.upgrade(cx.app) {
-                            conn_handle.update(cx.app, |terminal, cx| {
-                                terminal.mouse_move(&event, origin);
-                                cx.notify();
-                            })
-                        }
-                    }
-                })
-        }
 
         cx.scene.push_mouse_region(region);
     }
@@ -547,6 +568,9 @@ impl Element for TerminalElement {
 
         //Setup layout information
         let terminal_theme = settings.theme.terminal.clone(); //TODO: Try to minimize this clone.
+        let link_style = settings.theme.editor.link_definition;
+        let tooltip_style = settings.theme.tooltip.clone();
+
         let text_style = TerminalElement::make_text_style(font_cache, settings);
         let selection_color = settings.theme.editor.selection.selection;
         let match_color = settings.theme.search.match_background;
@@ -569,9 +593,34 @@ impl Element for TerminalElement {
         };
         let terminal_handle = self.terminal.upgrade(cx).unwrap();
 
-        terminal_handle.update(cx.app, |terminal, cx| {
+        let last_hovered_hyperlink = terminal_handle.update(cx.app, |terminal, cx| {
             terminal.set_size(dimensions);
-            terminal.try_sync(cx)
+            terminal.try_sync(cx);
+            terminal.last_content.last_hovered_hyperlink.clone()
+        });
+
+        let view_handle = self.view.clone();
+        let hyperlink_tooltip = last_hovered_hyperlink.and_then(|(uri, _, id)| {
+            // last_mouse.and_then(|_last_mouse| {
+            view_handle.upgrade(cx).map(|handle| {
+                let mut tooltip = cx.render(&handle, |_, cx| {
+                    Overlay::new(
+                        Empty::new()
+                            .contained()
+                            .constrained()
+                            .with_width(dimensions.width())
+                            .with_height(dimensions.height())
+                            .with_tooltip::<TerminalElement, _>(id, uri, None, tooltip_style, cx)
+                            .boxed(),
+                    )
+                    .with_position_mode(gpui::elements::OverlayPositionMode::Local)
+                    .boxed()
+                });
+
+                tooltip.layout(SizeConstraint::new(Vector2F::zero(), cx.window_size), cx);
+                tooltip
+            })
+            // })
         });
 
         let TerminalContent {
@@ -581,8 +630,9 @@ impl Element for TerminalElement {
             cursor_char,
             selection,
             cursor,
+            last_hovered_hyperlink,
             ..
-        } = &terminal_handle.read(cx).last_content;
+        } = { &terminal_handle.read(cx).last_content };
 
         // searches, highlights to a single range representations
         let mut relative_highlighted_ranges = Vec::new();
@@ -602,6 +652,9 @@ impl Element for TerminalElement {
             cx.text_layout_cache,
             cx.font_cache(),
             self.modal,
+            last_hovered_hyperlink
+                .as_ref()
+                .map(|(_, range, _)| (link_style, range)),
         );
 
         //Layout cursor. Rectangle is used for IME, so we should lay it out even
@@ -633,10 +686,11 @@ impl Element for TerminalElement {
                 )
             };
 
+            let focused = self.focused;
             TerminalElement::shape_cursor(cursor_point, dimensions, &cursor_text).map(
                 move |(cursor_position, block_width)| {
                     let shape = match cursor.shape {
-                        AlacCursorShape::Block if !self.focused => CursorShape::Hollow,
+                        AlacCursorShape::Block if !focused => CursorShape::Hollow,
                         AlacCursorShape::Block => CursorShape::Block,
                         AlacCursorShape::Underline => CursorShape::Underscore,
                         AlacCursorShape::Beam => CursorShape::Bar,
@@ -669,6 +723,7 @@ impl Element for TerminalElement {
                 relative_highlighted_ranges,
                 mode: *mode,
                 display_offset: *display_offset,
+                hyperlink_tooltip,
             },
         )
     }
@@ -691,7 +746,11 @@ impl Element for TerminalElement {
 
             cx.scene.push_cursor_region(gpui::CursorRegion {
                 bounds,
-                style: gpui::CursorStyle::IBeam,
+                style: if layout.hyperlink_tooltip.is_some() {
+                    gpui::CursorStyle::PointingHand
+                } else {
+                    gpui::CursorStyle::IBeam
+                },
             });
 
             cx.paint_layer(clip_bounds, |cx| {
@@ -743,6 +802,10 @@ impl Element for TerminalElement {
                     })
                 }
             }
+
+            if let Some(element) = &mut layout.hyperlink_tooltip {
+                element.paint(origin, visible_bounds, cx)
+            }
         });
     }
 
@@ -779,6 +842,18 @@ impl Element for TerminalElement {
                                 .unwrap_or(false),
                         )
                     })
+                })
+                .unwrap_or(false)
+        } else if let Event::ModifiersChanged(ModifiersChangedEvent { cmd, .. }) = event {
+            self.terminal
+                .upgrade(cx.app)
+                .map(|model_handle| {
+                    if model_handle.update(cx.app, |term, _| term.refresh_hyperlink(*cmd)) {
+                        cx.notify();
+                        true
+                    } else {
+                        false
+                    }
                 })
                 .unwrap_or(false)
         } else {
@@ -822,6 +897,29 @@ impl Element for TerminalElement {
 
         Some(layout.cursor.as_ref()?.bounding_rect(origin))
     }
+}
+
+fn is_blank(cell: &IndexedCell) -> bool {
+    if cell.c != ' ' {
+        return false;
+    }
+
+    if cell.bg != AnsiColor::Named(NamedColor::Background) {
+        return false;
+    }
+
+    if cell.hyperlink().is_some() {
+        return false;
+    }
+
+    if cell
+        .flags
+        .intersects(Flags::ALL_UNDERLINES | Flags::INVERSE | Flags::STRIKEOUT)
+    {
+        return false;
+    }
+
+    return true;
 }
 
 fn to_highlighted_range_lines(

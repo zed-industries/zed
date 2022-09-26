@@ -36,10 +36,10 @@ struct TooltipState {
 #[derive(Clone, Deserialize, Default)]
 pub struct TooltipStyle {
     #[serde(flatten)]
-    container: ContainerStyle,
-    text: TextStyle,
+    pub container: ContainerStyle,
+    pub text: TextStyle,
     keystroke: KeystrokeStyle,
-    max_text_width: f32,
+    pub max_text_width: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -126,7 +126,7 @@ impl Tooltip {
         }
     }
 
-    fn render_tooltip(
+    pub fn render_tooltip(
         text: String,
         style: TooltipStyle,
         action: Option<Box<dyn Action>>,
