@@ -153,6 +153,7 @@ impl Server {
             .add_request_handler(Server::ping)
             .add_request_handler(Server::create_room)
             .add_request_handler(Server::join_room)
+            .add_message_handler(Server::leave_room)
             .add_request_handler(Server::call)
             .add_message_handler(Server::decline_call)
             .add_request_handler(Server::register_project)
@@ -623,6 +624,14 @@ impl Server {
         response.send(proto::JoinRoomResponse {
             room: Some(room.clone()),
         })?;
+        self.room_updated(room);
+        Ok(())
+    }
+
+    async fn leave_room(self: Arc<Server>, message: TypedEnvelope<proto::LeaveRoom>) -> Result<()> {
+        let room_id = message.payload.id;
+        let mut store = self.store().await;
+        let room = store.leave_room(room_id, message.sender_id)?;
         self.room_updated(room);
         Ok(())
     }

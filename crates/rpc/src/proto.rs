@@ -131,6 +131,7 @@ messages!(
     (JoinRoomResponse, Foreground),
     (LeaveChannel, Foreground),
     (LeaveProject, Foreground),
+    (LeaveRoom, Foreground),
     (OpenBufferById, Background),
     (OpenBufferByPath, Background),
     (OpenBufferForSymbol, Background),

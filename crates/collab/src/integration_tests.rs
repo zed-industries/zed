@@ -62,7 +62,7 @@ fn init_logger() {
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_share_project_in_room(
+async fn test_basic_calls(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
@@ -111,6 +111,7 @@ async fn test_share_project_in_room(
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
     // room.publish_project(project_a.clone()).await.unwrap();
 
+    // Call user B from client A.
     let mut incoming_call_b = client_b
         .user_store
         .update(cx_b, |user, _| user.incoming_call());
@@ -128,6 +129,7 @@ async fn test_share_project_in_room(
         }
     );
 
+    // User B receives the call and joins the room.
     let call_b = incoming_call_b.next().await.unwrap().unwrap();
     let room_b = cx_b
         .update(|cx| Room::join(&call_b, client_b.clone(), cx))
@@ -151,11 +153,12 @@ async fn test_share_project_in_room(
         }
     );
 
+    // Call user C from client B.
     let mut incoming_call_c = client_c
         .user_store
         .update(cx_c, |user, _| user.incoming_call());
-    room_a
-        .update(cx_a, |room, cx| room.call(client_c.user_id().unwrap(), cx))
+    room_b
+        .update(cx_b, |room, cx| room.call(client_c.user_id().unwrap(), cx))
         .await
         .unwrap();
 
@@ -175,6 +178,7 @@ async fn test_share_project_in_room(
         }
     );
 
+    // User C receives the call, but declines it.
     let _call_c = incoming_call_c.next().await.unwrap().unwrap();
     client_c
         .user_store
@@ -194,6 +198,17 @@ async fn test_share_project_in_room(
         participants(&room_b, &client_b, cx_b).await,
         RoomParticipants {
             remote: vec!["user_a".to_string()],
+            pending: Default::default()
+        }
+    );
+
+    // User A leaves the room.
+    cx_a.update(|_| drop(room_a));
+    deterministic.run_until_parked();
+    assert_eq!(
+        participants(&room_b, &client_b, cx_b).await,
+        RoomParticipants {
+            remote: Default::default(),
             pending: Default::default()
         }
     );

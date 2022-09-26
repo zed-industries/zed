@@ -38,7 +38,7 @@ struct ConnectionState {
 
 #[derive(Copy, Clone, Eq, PartialEq, Serialize)]
 enum RoomState {
-    Joined,
+    Joined { room_id: RoomId },
     Calling { room_id: RoomId },
 }
 
@@ -370,13 +370,13 @@ impl Store {
 
         let room_id = post_inc(&mut self.next_room_id);
         self.rooms.insert(room_id, room);
-        user_connection_state.room = Some(RoomState::Joined);
+        user_connection_state.room = Some(RoomState::Joined { room_id });
         Ok(room_id)
     }
 
     pub fn join_room(
         &mut self,
-        room_id: u64,
+        room_id: RoomId,
         connection_id: ConnectionId,
     ) -> Result<(&proto::Room, Vec<ConnectionId>)> {
         let connection = self
@@ -417,9 +417,42 @@ impl Store {
                 )),
             }),
         });
-        user_connection_state.room = Some(RoomState::Joined);
+        user_connection_state.room = Some(RoomState::Joined { room_id });
 
         Ok((room, recipient_connection_ids))
+    }
+
+    pub fn leave_room(
+        &mut self,
+        room_id: RoomId,
+        connection_id: ConnectionId,
+    ) -> Result<&proto::Room> {
+        let connection = self
+            .connections
+            .get_mut(&connection_id)
+            .ok_or_else(|| anyhow!("no such connection"))?;
+        let user_id = connection.user_id;
+
+        let mut user_connection_state = self
+            .connections_by_user_id
+            .get_mut(&user_id)
+            .ok_or_else(|| anyhow!("no such connection"))?;
+        anyhow::ensure!(
+            user_connection_state
+                .room
+                .map_or(false, |room| room == RoomState::Joined { room_id }),
+            "cannot leave a room before joining it"
+        );
+
+        let room = self
+            .rooms
+            .get_mut(&room_id)
+            .ok_or_else(|| anyhow!("no such room"))?;
+        room.participants
+            .retain(|participant| participant.peer_id != connection_id.0);
+        user_connection_state.room = None;
+
+        Ok(room)
     }
 
     pub fn call(

@@ -15,6 +15,7 @@ message Envelope {
         CreateRoomResponse create_room_response = 9;
         JoinRoom join_room = 10;
         JoinRoomResponse join_room_response = 11;
+        LeaveRoom leave_room = 1002;
         Call call = 12;
         IncomingCall incoming_call = 1000;
         CancelCall cancel_call = 1001;
@@ -147,6 +148,10 @@ message JoinRoom {
 
 message JoinRoomResponse {
     Room room = 1;
+}
+
+message LeaveRoom {
+    uint64 id = 1;
 }
 
 message Room {

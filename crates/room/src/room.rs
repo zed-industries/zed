@@ -31,6 +31,19 @@ impl Entity for Room {
 }
 
 impl Room {
+    fn new(id: u64, client: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
+        Self {
+            id,
+            local_participant: LocalParticipant {
+                projects: Default::default(),
+            },
+            remote_participants: Default::default(),
+            pending_user_ids: Default::default(),
+            _subscriptions: vec![client.add_message_handler(cx.handle(), Self::handle_room_updated)],
+            client,
+        }
+    }
+
     pub fn create(
         client: Arc<Client>,
         cx: &mut MutableAppContext,
@@ -54,19 +67,6 @@ impl Room {
             room.update(&mut cx, |room, cx| room.apply_room_update(room_proto, cx))?;
             Ok(room)
         })
-    }
-
-    fn new(id: u64, client: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
-        Self {
-            id,
-            local_participant: LocalParticipant {
-                projects: Default::default(),
-            },
-            remote_participants: Default::default(),
-            pending_user_ids: Default::default(),
-            _subscriptions: vec![client.add_message_handler(cx.handle(), Self::handle_room_updated)],
-            client,
-        }
     }
 
     pub fn remote_participants(&self) -> &HashMap<PeerId, RemoteParticipant> {
@@ -146,5 +146,11 @@ impl Room {
 
     pub async fn unmute(&mut self) -> Result<()> {
         todo!()
+    }
+}
+
+impl Drop for Room {
+    fn drop(&mut self) {
+        let _ = self.client.send(proto::LeaveRoom { id: self.id });
     }
 }
