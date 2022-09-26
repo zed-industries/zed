@@ -4459,6 +4459,7 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
+ "futures",
  "gpui",
  "project",
 ]

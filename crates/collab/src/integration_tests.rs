@@ -86,7 +86,7 @@ async fn test_basic_calls(
         .await
         .unwrap();
     assert_eq!(
-        participants(&room_a, &client_a, cx_a).await,
+        room_participants(&room_a, &client_a, cx_a).await,
         RoomParticipants {
             remote: Default::default(),
             pending: Default::default()
@@ -104,7 +104,7 @@ async fn test_basic_calls(
 
     deterministic.run_until_parked();
     assert_eq!(
-        participants(&room_a, &client_a, cx_a).await,
+        room_participants(&room_a, &client_a, cx_a).await,
         RoomParticipants {
             remote: Default::default(),
             pending: vec!["user_b".to_string()]
@@ -121,14 +121,14 @@ async fn test_basic_calls(
 
     deterministic.run_until_parked();
     assert_eq!(
-        participants(&room_a, &client_a, cx_a).await,
+        room_participants(&room_a, &client_a, cx_a).await,
         RoomParticipants {
             remote: vec!["user_b".to_string()],
             pending: Default::default()
         }
     );
     assert_eq!(
-        participants(&room_b, &client_b, cx_b).await,
+        room_participants(&room_b, &client_b, cx_b).await,
         RoomParticipants {
             remote: vec!["user_a".to_string()],
             pending: Default::default()
@@ -146,14 +146,14 @@ async fn test_basic_calls(
 
     deterministic.run_until_parked();
     assert_eq!(
-        participants(&room_a, &client_a, cx_a).await,
+        room_participants(&room_a, &client_a, cx_a).await,
         RoomParticipants {
             remote: vec!["user_b".to_string()],
             pending: vec!["user_c".to_string()]
         }
     );
     assert_eq!(
-        participants(&room_b, &client_b, cx_b).await,
+        room_participants(&room_b, &client_b, cx_b).await,
         RoomParticipants {
             remote: vec!["user_a".to_string()],
             pending: vec!["user_c".to_string()]
@@ -170,14 +170,14 @@ async fn test_basic_calls(
 
     deterministic.run_until_parked();
     assert_eq!(
-        participants(&room_a, &client_a, cx_a).await,
+        room_participants(&room_a, &client_a, cx_a).await,
         RoomParticipants {
             remote: vec!["user_b".to_string()],
             pending: Default::default()
         }
     );
     assert_eq!(
-        participants(&room_b, &client_b, cx_b).await,
+        room_participants(&room_b, &client_b, cx_b).await,
         RoomParticipants {
             remote: vec!["user_a".to_string()],
             pending: Default::default()
@@ -185,61 +185,90 @@ async fn test_basic_calls(
     );
 
     // User A leaves the room.
-    cx_a.update(|_| drop(room_a));
+    room_a.update(cx_a, |room, cx| room.leave(cx)).unwrap();
     deterministic.run_until_parked();
     assert_eq!(
-        participants(&room_b, &client_b, cx_b).await,
+        room_participants(&room_a, &client_a, cx_a).await,
         RoomParticipants {
             remote: Default::default(),
             pending: Default::default()
         }
     );
-
-    #[derive(Debug, Eq, PartialEq)]
-    struct RoomParticipants {
-        remote: Vec<String>,
-        pending: Vec<String>,
-    }
-
-    async fn participants(
-        room: &ModelHandle<Room>,
-        client: &TestClient,
-        cx: &mut TestAppContext,
-    ) -> RoomParticipants {
-        let remote_users = room.update(cx, |room, cx| {
-            room.remote_participants()
-                .values()
-                .map(|participant| {
-                    client
-                        .user_store
-                        .update(cx, |users, cx| users.get_user(participant.user_id, cx))
-                })
-                .collect::<Vec<_>>()
-        });
-        let remote_users = futures::future::try_join_all(remote_users).await.unwrap();
-        let pending_users = room.update(cx, |room, cx| {
-            room.pending_user_ids()
-                .iter()
-                .map(|user_id| {
-                    client
-                        .user_store
-                        .update(cx, |users, cx| users.get_user(*user_id, cx))
-                })
-                .collect::<Vec<_>>()
-        });
-        let pending_users = futures::future::try_join_all(pending_users).await.unwrap();
-
+    assert_eq!(
+        room_participants(&room_b, &client_b, cx_b).await,
         RoomParticipants {
-            remote: remote_users
-                .into_iter()
-                .map(|user| user.github_login.clone())
-                .collect(),
-            pending: pending_users
-                .into_iter()
-                .map(|user| user.github_login.clone())
-                .collect(),
+            remote: Default::default(),
+            pending: Default::default()
         }
-    }
+    );
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_leaving_room_on_disconnection(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    let room_a = cx_a
+        .update(|cx| Room::create(client_a.clone(), cx))
+        .await
+        .unwrap();
+
+    // Call user B from client A.
+    let mut incoming_call_b = client_b
+        .user_store
+        .update(cx_b, |user, _| user.incoming_call());
+    room_a
+        .update(cx_a, |room, cx| room.call(client_b.user_id().unwrap(), cx))
+        .await
+        .unwrap();
+
+    // User B receives the call and joins the room.
+    let call_b = incoming_call_b.next().await.unwrap().unwrap();
+    let room_b = cx_b
+        .update(|cx| Room::join(&call_b, client_b.clone(), cx))
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert_eq!(
+        room_participants(&room_a, &client_a, cx_a).await,
+        RoomParticipants {
+            remote: vec!["user_b".to_string()],
+            pending: Default::default()
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, &client_b, cx_b).await,
+        RoomParticipants {
+            remote: vec!["user_a".to_string()],
+            pending: Default::default()
+        }
+    );
+
+    server.disconnect_client(client_a.current_user_id(cx_a));
+    cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
+    assert_eq!(
+        room_participants(&room_a, &client_a, cx_a).await,
+        RoomParticipants {
+            remote: Default::default(),
+            pending: Default::default()
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, &client_b, cx_b).await,
+        RoomParticipants {
+            remote: Default::default(),
+            pending: Default::default()
+        }
+    );
 }
 
 #[gpui::test(iterations = 10)]
@@ -6168,4 +6197,50 @@ fn channel_messages(channel: &Channel) -> Vec<(String, String, bool)> {
             )
         })
         .collect()
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct RoomParticipants {
+    remote: Vec<String>,
+    pending: Vec<String>,
+}
+
+async fn room_participants(
+    room: &ModelHandle<Room>,
+    client: &TestClient,
+    cx: &mut TestAppContext,
+) -> RoomParticipants {
+    let remote_users = room.update(cx, |room, cx| {
+        room.remote_participants()
+            .values()
+            .map(|participant| {
+                client
+                    .user_store
+                    .update(cx, |users, cx| users.get_user(participant.user_id, cx))
+            })
+            .collect::<Vec<_>>()
+    });
+    let remote_users = futures::future::try_join_all(remote_users).await.unwrap();
+    let pending_users = room.update(cx, |room, cx| {
+        room.pending_user_ids()
+            .iter()
+            .map(|user_id| {
+                client
+                    .user_store
+                    .update(cx, |users, cx| users.get_user(*user_id, cx))
+            })
+            .collect::<Vec<_>>()
+    });
+    let pending_users = futures::future::try_join_all(pending_users).await.unwrap();
+
+    RoomParticipants {
+        remote: remote_users
+            .into_iter()
+            .map(|user| user.github_login.clone())
+            .collect(),
+        pending: pending_users
+            .into_iter()
+            .map(|user| user.github_login.clone())
+            .collect(),
+    }
 }

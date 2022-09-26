@@ -3,6 +3,7 @@ mod participant;
 use anyhow::{anyhow, Result};
 use client::{call::Call, proto, Client, PeerId, TypedEnvelope};
 use collections::HashMap;
+use futures::StreamExt;
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use participant::{LocalParticipant, ParticipantLocation, RemoteParticipant};
 use project::Project;
@@ -12,13 +13,9 @@ pub enum Event {
     PeerChangedActiveProject,
 }
 
-pub enum CallResponse {
-    Accepted,
-    Rejected,
-}
-
 pub struct Room {
     id: u64,
+    status: RoomStatus,
     local_participant: LocalParticipant,
     remote_participants: HashMap<PeerId, RemoteParticipant>,
     pending_user_ids: Vec<u64>,
@@ -32,8 +29,24 @@ impl Entity for Room {
 
 impl Room {
     fn new(id: u64, client: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
+        let mut client_status = client.status();
+        cx.spawn_weak(|this, mut cx| async move {
+            let is_connected = client_status
+                .next()
+                .await
+                .map_or(false, |s| s.is_connected());
+            // Even if we're initially connected, any future change of the status means we momentarily disconnected.
+            if !is_connected || client_status.next().await.is_some() {
+                if let Some(this) = this.upgrade(&cx) {
+                    let _ = this.update(&mut cx, |this, cx| this.leave(cx));
+                }
+            }
+        })
+        .detach();
+
         Self {
             id,
+            status: RoomStatus::Online,
             local_participant: LocalParticipant {
                 projects: Default::default(),
             },
@@ -67,6 +80,18 @@ impl Room {
             room.update(&mut cx, |room, cx| room.apply_room_update(room_proto, cx))?;
             Ok(room)
         })
+    }
+
+    pub fn leave(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
+        if self.status.is_offline() {
+            return Err(anyhow!("room is offline"));
+        }
+
+        self.status = RoomStatus::Offline;
+        self.remote_participants.clear();
+        self.client.send(proto::LeaveRoom { id: self.id })?;
+        cx.notify();
+        Ok(())
     }
 
     pub fn remote_participants(&self) -> &HashMap<PeerId, RemoteParticipant> {
@@ -112,6 +137,10 @@ impl Room {
     }
 
     pub fn call(&mut self, to_user_id: u64, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        if self.status.is_offline() {
+            return Task::ready(Err(anyhow!("room is offline")));
+        }
+
         let client = self.client.clone();
         let room_id = self.id;
         cx.foreground().spawn(async move {
@@ -125,32 +154,58 @@ impl Room {
         })
     }
 
-    pub async fn publish_project(&mut self, project: ModelHandle<Project>) -> Result<()> {
+    pub fn publish_project(&mut self, project: ModelHandle<Project>) -> Task<Result<()>> {
+        if self.status.is_offline() {
+            return Task::ready(Err(anyhow!("room is offline")));
+        }
+
         todo!()
     }
 
-    pub async fn unpublish_project(&mut self, project: ModelHandle<Project>) -> Result<()> {
+    pub fn unpublish_project(&mut self, project: ModelHandle<Project>) -> Task<Result<()>> {
+        if self.status.is_offline() {
+            return Task::ready(Err(anyhow!("room is offline")));
+        }
+
         todo!()
     }
 
-    pub async fn set_active_project(
+    pub fn set_active_project(
         &mut self,
         project: Option<&ModelHandle<Project>>,
-    ) -> Result<()> {
+    ) -> Task<Result<()>> {
+        if self.status.is_offline() {
+            return Task::ready(Err(anyhow!("room is offline")));
+        }
+
         todo!()
     }
 
-    pub async fn mute(&mut self) -> Result<()> {
+    pub fn mute(&mut self) -> Task<Result<()>> {
+        if self.status.is_offline() {
+            return Task::ready(Err(anyhow!("room is offline")));
+        }
+
         todo!()
     }
 
-    pub async fn unmute(&mut self) -> Result<()> {
+    pub fn unmute(&mut self) -> Task<Result<()>> {
+        if self.status.is_offline() {
+            return Task::ready(Err(anyhow!("room is offline")));
+        }
+
         todo!()
     }
 }
 
-impl Drop for Room {
-    fn drop(&mut self) {
-        let _ = self.client.send(proto::LeaveRoom { id: self.id });
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum RoomStatus {
+    Online,
+    Offline,
+}
+
+impl RoomStatus {
+    fn is_offline(&self) -> bool {
+        matches!(self, RoomStatus::Offline)
     }
 }

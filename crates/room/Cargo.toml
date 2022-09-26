@@ -16,11 +16,13 @@ test-support = [
 ]
 
 [dependencies]
-anyhow = "1.0.38"
 client = { path = "../client" }
 collections = { path = "../collections" }
 gpui = { path = "../gpui" }
 project = { path = "../project" }
+
+anyhow = "1.0.38"
+futures = "0.3"
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }

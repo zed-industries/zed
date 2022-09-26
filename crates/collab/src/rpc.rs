@@ -528,6 +528,13 @@ impl Server {
                 }
             }
 
+            if let Some(room) = removed_connection
+                .room_id
+                .and_then(|room_id| store.room(room_id))
+            {
+                self.room_updated(room);
+            }
+
             removed_user_id = removed_connection.user_id;
         };
 

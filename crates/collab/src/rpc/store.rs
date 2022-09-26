@@ -13,7 +13,7 @@ pub type RoomId = u64;
 #[derive(Default, Serialize)]
 pub struct Store {
     connections: BTreeMap<ConnectionId, ConnectionState>,
-    connections_by_user_id: BTreeMap<UserId, UserConnectionState>,
+    connected_users: BTreeMap<UserId, ConnectedUser>,
     next_room_id: RoomId,
     rooms: BTreeMap<RoomId, proto::Room>,
     projects: BTreeMap<ProjectId, Project>,
@@ -22,9 +22,9 @@ pub struct Store {
 }
 
 #[derive(Default, Serialize)]
-struct UserConnectionState {
+struct ConnectedUser {
     connection_ids: HashSet<ConnectionId>,
-    room: Option<RoomState>,
+    active_call: Option<CallState>,
 }
 
 #[derive(Serialize)]
@@ -37,9 +37,9 @@ struct ConnectionState {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Serialize)]
-enum RoomState {
-    Joined { room_id: RoomId },
-    Calling { room_id: RoomId },
+struct CallState {
+    room_id: RoomId,
+    joined: bool,
 }
 
 #[derive(Serialize)]
@@ -89,6 +89,7 @@ pub struct RemovedConnectionState {
     pub hosted_projects: HashMap<ProjectId, Project>,
     pub guest_project_ids: HashSet<ProjectId>,
     pub contact_ids: HashSet<UserId>,
+    pub room_id: Option<RoomId>,
 }
 
 pub struct LeftProject {
@@ -156,7 +157,7 @@ impl Store {
                 channels: Default::default(),
             },
         );
-        self.connections_by_user_id
+        self.connected_users
             .entry(user_id)
             .or_default()
             .connection_ids
@@ -196,10 +197,32 @@ impl Store {
             }
         }
 
-        let user_connection_state = self.connections_by_user_id.get_mut(&user_id).unwrap();
-        user_connection_state.connection_ids.remove(&connection_id);
-        if user_connection_state.connection_ids.is_empty() {
-            self.connections_by_user_id.remove(&user_id);
+        let connected_user = self.connected_users.get_mut(&user_id).unwrap();
+        connected_user.connection_ids.remove(&connection_id);
+        if let Some(active_call) = connected_user.active_call.as_ref() {
+            if let Some(room) = self.rooms.get_mut(&active_call.room_id) {
+                let prev_participant_count = room.participants.len();
+                room.participants
+                    .retain(|participant| participant.peer_id != connection_id.0);
+                if prev_participant_count == room.participants.len() {
+                    if connected_user.connection_ids.is_empty() {
+                        room.pending_user_ids
+                            .retain(|pending_user_id| *pending_user_id != user_id.to_proto());
+                        result.room_id = Some(active_call.room_id);
+                        connected_user.active_call = None;
+                    }
+                } else {
+                    result.room_id = Some(active_call.room_id);
+                    connected_user.active_call = None;
+                }
+            } else {
+                tracing::error!("disconnected user claims to be in a room that does not exist");
+                connected_user.active_call = None;
+            }
+        }
+
+        if connected_user.connection_ids.is_empty() {
+            self.connected_users.remove(&user_id);
         }
 
         self.connections.remove(&connection_id).unwrap();
@@ -247,7 +270,7 @@ impl Store {
         &self,
         user_id: UserId,
     ) -> impl Iterator<Item = ConnectionId> + '_ {
-        self.connections_by_user_id
+        self.connected_users
             .get(&user_id)
             .into_iter()
             .map(|state| &state.connection_ids)
@@ -257,7 +280,7 @@ impl Store {
 
     pub fn is_user_online(&self, user_id: UserId) -> bool {
         !self
-            .connections_by_user_id
+            .connected_users
             .get(&user_id)
             .unwrap_or(&Default::default())
             .connection_ids
@@ -308,7 +331,7 @@ impl Store {
     }
 
     pub fn project_metadata_for_user(&self, user_id: UserId) -> Vec<proto::ProjectMetadata> {
-        let user_connection_state = self.connections_by_user_id.get(&user_id);
+        let user_connection_state = self.connected_users.get(&user_id);
         let project_ids = user_connection_state.iter().flat_map(|state| {
             state
                 .connection_ids
@@ -347,13 +370,13 @@ impl Store {
             .connections
             .get_mut(&creator_connection_id)
             .ok_or_else(|| anyhow!("no such connection"))?;
-        let user_connection_state = self
-            .connections_by_user_id
+        let connected_user = self
+            .connected_users
             .get_mut(&connection.user_id)
             .ok_or_else(|| anyhow!("no such connection"))?;
         anyhow::ensure!(
-            user_connection_state.room.is_none(),
-            "cannot participate in more than one room at once"
+            connected_user.active_call.is_none(),
+            "can't create a room with an active call"
         );
 
         let mut room = proto::Room::default();
@@ -370,7 +393,10 @@ impl Store {
 
         let room_id = post_inc(&mut self.next_room_id);
         self.rooms.insert(room_id, room);
-        user_connection_state.room = Some(RoomState::Joined { room_id });
+        connected_user.active_call = Some(CallState {
+            room_id,
+            joined: true,
+        });
         Ok(room_id)
     }
 
@@ -386,15 +412,15 @@ impl Store {
         let user_id = connection.user_id;
         let recipient_connection_ids = self.connection_ids_for_user(user_id).collect::<Vec<_>>();
 
-        let mut user_connection_state = self
-            .connections_by_user_id
+        let mut connected_user = self
+            .connected_users
             .get_mut(&user_id)
             .ok_or_else(|| anyhow!("no such connection"))?;
         anyhow::ensure!(
-            user_connection_state
-                .room
-                .map_or(true, |room| room == RoomState::Calling { room_id }),
-            "cannot participate in more than one room at once"
+            connected_user
+                .active_call
+                .map_or(false, |call| call.room_id == room_id && !call.joined),
+            "not being called on this room"
         );
 
         let room = self
@@ -417,7 +443,10 @@ impl Store {
                 )),
             }),
         });
-        user_connection_state.room = Some(RoomState::Joined { room_id });
+        connected_user.active_call = Some(CallState {
+            room_id,
+            joined: true,
+        });
 
         Ok((room, recipient_connection_ids))
     }
@@ -433,14 +462,14 @@ impl Store {
             .ok_or_else(|| anyhow!("no such connection"))?;
         let user_id = connection.user_id;
 
-        let mut user_connection_state = self
-            .connections_by_user_id
+        let mut connected_user = self
+            .connected_users
             .get_mut(&user_id)
             .ok_or_else(|| anyhow!("no such connection"))?;
         anyhow::ensure!(
-            user_connection_state
-                .room
-                .map_or(false, |room| room == RoomState::Joined { room_id }),
+            connected_user
+                .active_call
+                .map_or(false, |call| call.room_id == room_id && call.joined),
             "cannot leave a room before joining it"
         );
 
@@ -450,26 +479,32 @@ impl Store {
             .ok_or_else(|| anyhow!("no such room"))?;
         room.participants
             .retain(|participant| participant.peer_id != connection_id.0);
-        user_connection_state.room = None;
+        connected_user.active_call = None;
 
         Ok(room)
+    }
+
+    pub fn room(&self, room_id: RoomId) -> Option<&proto::Room> {
+        self.rooms.get(&room_id)
     }
 
     pub fn call(
         &mut self,
         room_id: RoomId,
         from_connection_id: ConnectionId,
-        to_user_id: UserId,
+        recipient_id: UserId,
     ) -> Result<(UserId, Vec<ConnectionId>, &proto::Room)> {
         let from_user_id = self.user_id_for_connection(from_connection_id)?;
 
-        let to_connection_ids = self.connection_ids_for_user(to_user_id).collect::<Vec<_>>();
-        let mut to_user_connection_state = self
-            .connections_by_user_id
-            .get_mut(&to_user_id)
+        let recipient_connection_ids = self
+            .connection_ids_for_user(recipient_id)
+            .collect::<Vec<_>>();
+        let mut recipient = self
+            .connected_users
+            .get_mut(&recipient_id)
             .ok_or_else(|| anyhow!("no such connection"))?;
         anyhow::ensure!(
-            to_user_connection_state.room.is_none(),
+            recipient.active_call.is_none(),
             "recipient is already on another call"
         );
 
@@ -486,22 +521,27 @@ impl Store {
         anyhow::ensure!(
             room.pending_user_ids
                 .iter()
-                .all(|user_id| UserId::from_proto(*user_id) != to_user_id),
+                .all(|user_id| UserId::from_proto(*user_id) != recipient_id),
             "cannot call the same user more than once"
         );
-        room.pending_user_ids.push(to_user_id.to_proto());
-        to_user_connection_state.room = Some(RoomState::Calling { room_id });
+        room.pending_user_ids.push(recipient_id.to_proto());
+        recipient.active_call = Some(CallState {
+            room_id,
+            joined: false,
+        });
 
-        Ok((from_user_id, to_connection_ids, room))
+        Ok((from_user_id, recipient_connection_ids, room))
     }
 
     pub fn call_failed(&mut self, room_id: RoomId, to_user_id: UserId) -> Result<&proto::Room> {
-        let mut to_user_connection_state = self
-            .connections_by_user_id
+        let mut recipient = self
+            .connected_users
             .get_mut(&to_user_id)
             .ok_or_else(|| anyhow!("no such connection"))?;
-        anyhow::ensure!(to_user_connection_state.room == Some(RoomState::Calling { room_id }));
-        to_user_connection_state.room = None;
+        anyhow::ensure!(recipient
+            .active_call
+            .map_or(false, |call| call.room_id == room_id && !call.joined));
+        recipient.active_call = None;
         let room = self
             .rooms
             .get_mut(&room_id)
@@ -516,18 +556,17 @@ impl Store {
         recipient_connection_id: ConnectionId,
     ) -> Result<(&proto::Room, Vec<ConnectionId>)> {
         let recipient_user_id = self.user_id_for_connection(recipient_connection_id)?;
-        let mut to_user_connection_state = self
-            .connections_by_user_id
+        let recipient = self
+            .connected_users
             .get_mut(&recipient_user_id)
             .ok_or_else(|| anyhow!("no such connection"))?;
-        if let Some(RoomState::Calling { room_id }) = to_user_connection_state.room {
-            to_user_connection_state.room = None;
+        if let Some(active_call) = recipient.active_call.take() {
             let recipient_connection_ids = self
                 .connection_ids_for_user(recipient_user_id)
                 .collect::<Vec<_>>();
             let room = self
                 .rooms
-                .get_mut(&room_id)
+                .get_mut(&active_call.room_id)
                 .ok_or_else(|| anyhow!("no such room"))?;
             room.pending_user_ids
                 .retain(|user_id| UserId::from_proto(*user_id) != recipient_user_id);
@@ -650,7 +689,7 @@ impl Store {
 
                     for requester_user_id in project.join_requests.keys() {
                         if let Some(requester_user_connection_state) =
-                            self.connections_by_user_id.get_mut(requester_user_id)
+                            self.connected_users.get_mut(requester_user_id)
                         {
                             for requester_connection_id in
                                 &requester_user_connection_state.connection_ids
@@ -1007,14 +1046,14 @@ impl Store {
                 assert!(channel.connection_ids.contains(connection_id));
             }
             assert!(self
-                .connections_by_user_id
+                .connected_users
                 .get(&connection.user_id)
                 .unwrap()
                 .connection_ids
                 .contains(connection_id));
         }
 
-        for (user_id, state) in &self.connections_by_user_id {
+        for (user_id, state) in &self.connected_users {
             for connection_id in &state.connection_ids {
                 assert_eq!(
                     self.connections.get(connection_id).unwrap().user_id,
