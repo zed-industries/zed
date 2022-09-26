@@ -21,7 +21,7 @@ export default function picker(colorScheme: ColorScheme) {
       },
       cornerRadius: 8,
       text: text(layer, "sans"),
-      highlightText: text(layer, "sans", { weight: "bold" }),
+      highlightText: text(layer, "sans", "info", "active", { weight: "bold" }),
       active: {
         background: background(layer, "active"),
         text: text(layer, "sans", "active"),
@@ -32,7 +32,7 @@ export default function picker(colorScheme: ColorScheme) {
     },
     border: border(layer),
     empty: {
-      text: text(layer, "sans"),
+      text: text(layer, "sans", "variant"),
       padding: {
         bottom: 4,
         left: 12,

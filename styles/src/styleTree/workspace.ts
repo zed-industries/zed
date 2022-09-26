@@ -50,7 +50,7 @@ export default function workspace(colorScheme: ColorScheme) {
     titlebar: {
       avatarWidth: 18,
       avatarMargin: 8,
-      height: 33,
+      height: 33, // 32px + 1px for overlaid border
       background: background(layer),
       padding: {
         left: 80,
@@ -72,7 +72,8 @@ export default function workspace(colorScheme: ColorScheme) {
       },
       border: border(layer, { bottom: true, overlay: true }),
       signInPrompt: {
-        background: background(layer, "on"),
+        ...text(layer, "sans", { size: "xs" }),
+        background: background(layer),
         border: border(layer, "on"),
         cornerRadius: 6,
         margin: {
@@ -84,11 +85,10 @@ export default function workspace(colorScheme: ColorScheme) {
           left: 7,
           right: 7,
         },
-        ...text(layer, "sans", { size: "xs" }),
         hover: {
-          ...text(layer, "sans", "on", "hovered", { size: "xs" }),
-          background: background(layer, "on", "hovered"),
-          border: border(layer, "on", "hovered"),
+          ...text(layer, "sans", "hovered", { size: "xs" }),
+          background: background(layer, "hovered"),
+          border: border(layer, "hovered"),
         },
       },
       offlineIcon: {

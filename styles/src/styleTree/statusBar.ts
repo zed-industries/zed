@@ -24,9 +24,9 @@ export default function statusBar(colorScheme: ColorScheme) {
       right: 6,
     },
     border: border(layer, { top: true, overlay: true }),
-    cursorPosition: text(layer, "sans"),
-    autoUpdateProgressMessage: text(layer, "sans"),
-    autoUpdateDoneMessage: text(layer, "sans"),
+    cursorPosition: text(layer, "sans", "variant"),
+    autoUpdateProgressMessage: text(layer, "sans", "variant"),
+    autoUpdateDoneMessage: text(layer, "sans", "variant"),
     lspStatus: {
       ...diagnosticStatusContainer,
       iconSpacing: 4,
@@ -45,11 +45,11 @@ export default function statusBar(colorScheme: ColorScheme) {
       hover: text(layer, "sans", "hovered"),
     },
     feedback: {
-      ...text(layer, "sans"),
-      hover: text(layer, "sans"),
+      ...text(layer, "sans", "variant"),
+      hover: text(layer, "sans", "variant", "hovered"),
     },
     diagnosticSummary: {
-      height: 16,
+      height: 20,
       iconWidth: 16,
       iconSpacing: 2,
       summarySpacing: 6,

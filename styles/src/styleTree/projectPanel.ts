@@ -17,11 +17,11 @@ export default function projectPanel(colorScheme: ColorScheme) {
         background: background(layer, "on", "hovered"),
       },
       active: {
-        background: background(layer, "info", "active"),
+        background: background(layer, "active"),
         text: text(layer, "mono", "active", { size: "sm" }),
       },
       activeHover: {
-        background: background(layer, "info", "hovered"),
+        background: background(layer, "active"),
         text: text(layer, "mono", "active", { size: "sm" }),
       },
     },

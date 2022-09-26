@@ -21,21 +21,17 @@ export function createColorScheme(name: string, isLight: boolean, colorRamps: { 
   if (isLight) {
     for (var rampName in colorRamps) {
       baseRamps[rampName] = chroma
-        .scale((colorRamps[rampName].colors as any)())
-        .domain([1, 0]);
+        .scale(colorRamps[rampName].colors(100).reverse());
     }
     baseRamps.neutral = chroma
-      .scale((colorRamps.neutral.colors as any)())
-      .domain([1, 0]);
+      .scale(colorRamps.neutral.colors(100).reverse());
   } else {
     for (var rampName in colorRamps) {
       baseRamps[rampName] = chroma
-        .scale((colorRamps[rampName].colors as any)())
-        .domain([0, 1]);
+        .scale(colorRamps[rampName].colors(100));
     }
     baseRamps.neutral = chroma
-      .scale((colorRamps.neutral.colors as any)())
-      .domain([0, 1]);
+      .scale(colorRamps.neutral.colors(100));
   }
 
   let baseSet = {
@@ -230,8 +226,8 @@ function bottomLayer(ramps: RampSet, isLight: boolean): Layer {
     },
     foreground: {
       default: 0.7,
-      hovered: 0.7,
-      pressed: 0.7,
+      hovered: 1,
+      pressed: 1,
       active: 0,
       disabled: 0.4,
     },
@@ -264,96 +260,96 @@ function bottomLayer(ramps: RampSet, isLight: boolean): Layer {
   let infoSet = buildStyleSet(ramps.blue, {
     background: {
       default: 0,
-      hovered: 0.15,
-      pressed: 0.25,
-      active: 1,
+      hovered: 0.1,
+      pressed: 0.2,
+      active: 0.4,
       disabled: 0,
     },
     border: {
       default: 0.2,
       hovered: 0.2,
       pressed: 0.2,
-      active: 0.5,
-      disabled: 0.2,
+      active: 0.6,
+      disabled: 0.1,
     },
     foreground: {
-      default: 1,
-      hovered: 1,
-      pressed: 1,
-      active: 0,
-      disabled: 0.4,
+      default: 0.9,
+      hovered: 0.9,
+      pressed: 0.9,
+      active: 0.9,
+      disabled: 0.2,
     },
   });
 
   let positiveSet = buildStyleSet(ramps.green, {
     background: {
       default: 0,
-      hovered: 0.15,
-      pressed: 0.25,
-      active: 1,
+      hovered: 0.1,
+      pressed: 0.2,
+      active: 0.4,
       disabled: 0,
     },
     border: {
       default: 0.2,
       hovered: 0.2,
       pressed: 0.2,
-      active: 0.5,
-      disabled: 0.2,
+      active: 0.6,
+      disabled: 0.1,
     },
     foreground: {
-      default: 1,
-      hovered: 1,
-      pressed: 1,
-      active: 0,
-      disabled: 0.4,
+      default: 0.9,
+      hovered: 0.9,
+      pressed: 0.9,
+      active: 0.9,
+      disabled: 0.2,
     },
   });
 
   let warningSet = buildStyleSet(ramps.yellow, {
     background: {
       default: 0,
-      hovered: 0.15,
-      pressed: 0.25,
-      active: 1,
+      hovered: 0.1,
+      pressed: 0.2,
+      active: 0.4,
       disabled: 0,
     },
     border: {
       default: 0.2,
       hovered: 0.2,
       pressed: 0.2,
-      active: 0.5,
-      disabled: 0.2,
+      active: 0.6,
+      disabled: 0.1,
     },
     foreground: {
-      default: 1,
-      hovered: 1,
-      pressed: 1,
-      active: 0,
-      disabled: 0.4,
+      default: 0.9,
+      hovered: 0.9,
+      pressed: 0.9,
+      active: 0.9,
+      disabled: 0.2,
     },
   });
 
   let negativeSet = buildStyleSet(ramps.red, {
     background: {
       default: 0,
-      hovered: 0.15,
-      pressed: 0.25,
-      active: 1,
+      hovered: 0.1,
+      pressed: 0.2,
+      active: 0.4,
       disabled: 0,
     },
     border: {
-      default: 0.2,
+      default: 0.1,
       hovered: 0.2,
       pressed: 0.2,
-      active: 0.5,
-      disabled: 0.2,
+      active: 0.6,
+      disabled: 0.1,
     },
     foreground: {
-      default: 1,
-      hovered: 1,
-      pressed: 1,
-      active: 0,
-      disabled: 0.4,
+      default: 0.9,
+      hovered: 0.9,
+      pressed: 0.9,
+      active: 0.9,
+      disabled: 0.2,
     },
   });
 
@@ -444,96 +440,96 @@ function middleLayer(ramps: RampSet, isLight: boolean): Layer {
   let infoSet = buildStyleSet(ramps.blue, {
     background: {
       default: 0,
-      hovered: 0.15,
-      pressed: 0.25,
-      active: 1,
+      hovered: 0.1,
+      pressed: 0.2,
+      active: 0.4,
       disabled: 0,
     },
     border: {
       default: 0.2,
       hovered: 0.2,
       pressed: 0.2,
-      active: 0.5,
-      disabled: 0.2,
+      active: 0.6,
+      disabled: 0.1,
     },
     foreground: {
-      default: 1,
-      hovered: 1,
-      pressed: 1,
-      active: 0,
-      disabled: 0.4,
+      default: 0.9,
+      hovered: 0.9,
+      pressed: 0.9,
+      active: 0.9,
+      disabled: 0.2,
     },
   });
 
   let positiveSet = buildStyleSet(ramps.green, {
     background: {
       default: 0,
-      hovered: 0.15,
-      pressed: 0.25,
-      active: 1,
+      hovered: 0.1,
+      pressed: 0.2,
+      active: 0.4,
       disabled: 0,
     },
     border: {
       default: 0.2,
       hovered: 0.2,
       pressed: 0.2,
-      active: 0.5,
-      disabled: 0.2,
+      active: 0.6,
+      disabled: 0.1,
     },
     foreground: {
-      default: 1,
-      hovered: 1,
-      pressed: 1,
-      active: 0,
-      disabled: 0.4,
+      default: 0.9,
+      hovered: 0.9,
+      pressed: 0.9,
+      active: 0.9,
+      disabled: 0.2,
     },
   });
 
   let warningSet = buildStyleSet(ramps.yellow, {
     background: {
       default: 0,
-      hovered: 0.15,
-      pressed: 0.25,
-      active: 1,
+      hovered: 0.1,
+      pressed: 0.2,
+      active: 0.4,
       disabled: 0,
     },
     border: {
       default: 0.2,
       hovered: 0.2,
       pressed: 0.2,
-      active: 0.5,
-      disabled: 0.2,
+      active: 0.6,
+      disabled: 0.1,
     },
     foreground: {
-      default: 1,
-      hovered: 1,
-      pressed: 1,
-      active: 0,
-      disabled: 0.4,
+      default: 0.9,
+      hovered: 0.9,
+      pressed: 0.9,
+      active: 0.9,
+      disabled: 0.2,
     },
   });
 
   let negativeSet = buildStyleSet(ramps.red, {
     background: {
       default: 0,
-      hovered: 0.15,
-      pressed: 0.25,
-      active: 1,
+      hovered: 0.1,
+      pressed: 0.2,
+      active: 0.4,
       disabled: 0,
     },
     border: {
       default: 0.2,
       hovered: 0.2,
       pressed: 0.2,
-      active: 0.5,
-      disabled: 0.2,
+      active: 0.6,
+      disabled: 0.1,
     },
     foreground: {
-      default: 1,
-      hovered: 1,
-      pressed: 1,
-      active: 0,
-      disabled: 0.4,
+      default: 0.9,
+      hovered: 0.9,
+      pressed: 0.9,
+      active: 0.9,
+      disabled: 0.2,
     },
   });
 
@@ -625,96 +621,96 @@ function topLayer(ramps: RampSet, isLight: boolean): Layer {
   let infoSet = buildStyleSet(ramps.blue, {
     background: {
       default: 0,
-      hovered: 0.15,
-      pressed: 0.25,
-      active: 1,
+      hovered: 0.1,
+      pressed: 0.2,
+      active: 0.4,
       disabled: 0,
     },
     border: {
       default: 0.2,
       hovered: 0.2,
       pressed: 0.2,
-      active: 0.5,
-      disabled: 0.2,
+      active: 0.6,
+      disabled: 0.1,
     },
     foreground: {
-      default: 1,
-      hovered: 1,
-      pressed: 1,
-      active: 0,
-      disabled: 0.4,
+      default: 0.9,
+      hovered: 0.9,
+      pressed: 0.9,
+      active: 0.9,
+      disabled: 0.2,
     },
   });
 
   let positiveSet = buildStyleSet(ramps.green, {
     background: {
       default: 0,
-      hovered: 0.15,
-      pressed: 0.25,
-      active: 1,
+      hovered: 0.1,
+      pressed: 0.2,
+      active: 0.4,
       disabled: 0,
     },
     border: {
       default: 0.2,
       hovered: 0.2,
       pressed: 0.2,
-      active: 0.5,
-      disabled: 0.2,
+      active: 0.6,
+      disabled: 0.1,
     },
     foreground: {
-      default: 1,
-      hovered: 1,
-      pressed: 1,
-      active: 0,
-      disabled: 0.4,
+      default: 0.9,
+      hovered: 0.9,
+      pressed: 0.9,
+      active: 0.9,
+      disabled: 0.2,
     },
   });
 
   let warningSet = buildStyleSet(ramps.yellow, {
     background: {
       default: 0,
-      hovered: 0.15,
-      pressed: 0.25,
-      active: 1,
+      hovered: 0.1,
+      pressed: 0.2,
+      active: 0.4,
       disabled: 0,
     },
     border: {
       default: 0.2,
       hovered: 0.2,
       pressed: 0.2,
-      active: 0.5,
-      disabled: 0.2,
+      active: 0.6,
+      disabled: 0.1,
     },
     foreground: {
-      default: 1,
-      hovered: 1,
-      pressed: 1,
-      active: 0,
-      disabled: 0.4,
+      default: 0.9,
+      hovered: 0.9,
+      pressed: 0.9,
+      active: 0.9,
+      disabled: 0.2,
     },
   });
 
   let negativeSet = buildStyleSet(ramps.red, {
     background: {
       default: 0,
-      hovered: 0.15,
-      pressed: 0.25,
-      active: 1,
+      hovered: 0.1,
+      pressed: 0.2,
+      active: 0.4,
       disabled: 0,
     },
     border: {
       default: 0.2,
       hovered: 0.2,
       pressed: 0.2,
-      active: 0.5,
-      disabled: 0.2,
+      active: 0.6,
+      disabled: 0.1,
     },
     foreground: {
-      default: 1,
-      hovered: 1,
-      pressed: 1,
-      active: 0,
-      disabled: 0.4,
+      default: 0.9,
+      hovered: 0.9,
+      pressed: 0.9,
+      active: 0.9,
+      disabled: 0.2,
     },
   });
 
