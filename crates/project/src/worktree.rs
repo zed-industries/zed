@@ -100,7 +100,7 @@ pub struct Snapshot {
 pub struct LocalSnapshot {
     abs_path: Arc<Path>,
     ignores_by_parent_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
-    git_repositories: Vec<Box<dyn GitRepository>>,
+    git_repositories: Vec<GitRepository>,
     removed_entry_ids: HashMap<u64, ProjectEntryId>,
     next_entry_id: Arc<AtomicUsize>,
     snapshot: Snapshot,
@@ -115,7 +115,7 @@ impl Clone for LocalSnapshot {
             git_repositories: self
                 .git_repositories
                 .iter()
-                .map(|repo| repo.boxed_clone())
+                .map(|repo| repo.clone())
                 .collect(),
             removed_entry_ids: self.removed_entry_ids.clone(),
             next_entry_id: self.next_entry_id.clone(),
@@ -157,7 +157,7 @@ struct ShareState {
 
 pub enum Event {
     UpdatedEntries,
-    UpdatedGitRepositories(Vec<Box<dyn GitRepository>>),
+    UpdatedGitRepositories(Vec<GitRepository>),
 }
 
 impl Entity for Worktree {
@@ -1307,53 +1307,35 @@ impl LocalSnapshot {
     }
 
     // Gives the most specific git repository for a given path
-    pub(crate) fn git_repository_for_file_path(
-        &self,
-        path: &Path,
-    ) -> Option<Box<dyn GitRepository>> {
-        let repos = self
-            .git_repositories
-            .iter()
-            .map(|repo| repo.content_path().to_str().unwrap().to_string())
-            .collect::<Vec<String>>();
-        dbg!(repos);
-
+    pub(crate) fn git_repository_for_file_path(&self, path: &Path) -> Option<GitRepository> {
         self.git_repositories
             .iter()
             .rev() //git_repository is ordered lexicographically
-            .find(|repo| repo.is_path_managed_by(path))
-            .map(|repo| repo.boxed_clone())
+            .find(|repo| {
+                repo.is_path_managed_by(&self.abs_path.join(path))
+            })
+            .map(|repo| repo.clone())
     }
 
     //  ~/zed:
     //   - src
     //   - crates
     //   - .git -> /usr/.git
-    pub(crate) fn git_repository_for_git_data(
-        &self,
-        path: &Path,
-    ) -> Option<Box<dyn GitRepository>> {
+    pub(crate) fn git_repository_for_git_data(&self, path: &Path) -> Option<GitRepository> {
         self.git_repositories
             .iter()
-            .find(|repo| repo.is_path_in_git_folder(path))
-            .map(|repo| repo.boxed_clone())
+            .find(|repo| repo.is_path_in_git_folder(&self.abs_path.join(path)))
+            .map(|repo| repo.clone())
     }
 
     pub(crate) fn does_git_repository_track_file_path(
         &self,
-        repo: &Box<dyn GitRepository>,
+        repo: &GitRepository,
         file_path: &Path,
     ) -> bool {
-        // /zed
-        //  - .git
-        //  - a.txt
-        //  - /dep
-        //      - b.txt
-        //      - .git
-
         // Depends on git_repository_for_file_path returning the most specific git repository for a given path
-        self.git_repository_for_file_path(file_path)
-            .map_or(false, |r| &r == repo)
+        self.git_repository_for_file_path(&self.abs_path.join(file_path))
+            .map_or(false, |r| r.git_dir_path() == repo.git_dir_path())
     }
 
     #[cfg(test)]
@@ -1438,7 +1420,6 @@ impl LocalSnapshot {
     }
 
     fn insert_entry(&mut self, mut entry: Entry, fs: &dyn Fs) -> Entry {
-        dbg!(&entry.path);
         if entry.is_file() && entry.path.file_name() == Some(&GITIGNORE) {
             let abs_path = self.abs_path.join(&entry.path);
             match smol::block_on(build_gitignore(&abs_path, fs)) {
@@ -1454,19 +1435,6 @@ impl LocalSnapshot {
                         &entry.path,
                         error
                     );
-                }
-            }
-        } else if entry.path.file_name() == Some(&DOT_GIT) {
-            dbg!(&entry.path);
-
-            let abs_path = self.abs_path.join(&entry.path);
-            let content_path: Arc<Path> = entry.path.parent().unwrap().into();
-            if let Err(ix) = self
-                .git_repositories
-                .binary_search_by_key(&content_path.as_ref(), |repo| repo.content_path())
-            {
-                if let Some(repository) = fs.open_git_repository(&abs_path, &content_path) {
-                    self.git_repositories.insert(ix, repository);
                 }
             }
         }
@@ -1506,6 +1474,7 @@ impl LocalSnapshot {
         parent_path: Arc<Path>,
         entries: impl IntoIterator<Item = Entry>,
         ignore: Option<Arc<Gitignore>>,
+        fs: &dyn Fs,
     ) {
         let mut parent_entry = if let Some(parent_entry) =
             self.entries_by_path.get(&PathKey(parent_path.clone()), &())
@@ -1529,6 +1498,18 @@ impl LocalSnapshot {
             parent_entry.kind = EntryKind::Dir;
         } else {
             unreachable!();
+        }
+
+        if parent_path.file_name() == Some(&DOT_GIT) {
+            let abs_path = self.abs_path.join(&parent_path);
+            if let Err(ix) = self
+                .git_repositories
+                .binary_search_by_key(&abs_path.as_path(), |repo| repo.git_dir_path())
+            {
+                if let Some(repository) = fs.open_git_repository(&abs_path) {
+                    self.git_repositories.insert(ix, repository);
+                }
+            }
         }
 
         let mut entries_by_path_edits = vec![Edit::Insert(parent_entry)];
@@ -2227,7 +2208,6 @@ impl BackgroundScanner {
             if ignore_stack.is_all() {
                 if let Some(mut root_entry) = snapshot.root_entry().cloned() {
                     root_entry.is_ignored = true;
-                    dbg!("scan dirs entry");
                     snapshot.insert_entry(root_entry, self.fs.as_ref());
                 }
             }
@@ -2375,9 +2355,12 @@ impl BackgroundScanner {
             new_entries.push(child_entry);
         }
 
-        self.snapshot
-            .lock()
-            .populate_dir(job.path.clone(), new_entries, new_ignore);
+        self.snapshot.lock().populate_dir(
+            job.path.clone(),
+            new_entries,
+            new_ignore,
+            self.fs.as_ref(),
+        );
         for new_job in new_jobs {
             job.scan_queue.send(new_job).await.unwrap();
         }
@@ -2450,7 +2433,6 @@ impl BackgroundScanner {
                             snapshot.root_char_bag,
                         );
                         fs_entry.is_ignored = ignore_stack.is_all();
-                        dbg!("process_events entry");
                         snapshot.insert_entry(fs_entry, self.fs.as_ref());
 
                         let mut ancestor_inodes = snapshot.ancestor_inodes_for_path(&path);
@@ -3189,8 +3171,6 @@ mod tests {
         tree.read_with(cx, |tree, _cx| {
             let tree = tree.as_local().unwrap();
 
-            dbg!(tree);
-
             assert!(tree
                 .git_repository_for_file_path("c.txt".as_ref())
                 .is_none());
@@ -3202,22 +3182,22 @@ mod tests {
             // Need to update the file system for anything involving git
             // Goal: Make this test pass
             // Up Next: Invalidating git repos!
-            assert_eq!(repo.content_path(), Path::new("dir1"));
-            assert_eq!(repo.git_dir_path(), Path::new("dir1/.git"));
+            assert_eq!(repo.content_path(), root.path().join("dir1").canonicalize().unwrap());
+            assert_eq!(repo.git_dir_path(), root.path().join("dir1/.git").canonicalize().unwrap());
 
             let repo = tree
                 .git_repository_for_file_path("dir1/deps/dep1/src/a.txt".as_ref())
                 .unwrap();
 
-            assert_eq!(repo.content_path(), Path::new("dir1/deps/dep1"));
-            assert_eq!(repo.git_dir_path(), Path::new("dir1/deps/dep1"));
+            assert_eq!(repo.content_path(), root.path().join("dir1/deps/dep1").canonicalize().unwrap());
+            assert_eq!(repo.git_dir_path(), root.path().join("dir1/deps/dep1/.git").canonicalize().unwrap());
 
             let repo = tree
                 .git_repository_for_git_data("dir1/.git/HEAD".as_ref())
                 .unwrap();
 
-            assert_eq!(repo.content_path(), Path::new("dir1"));
-            assert_eq!(repo.git_dir_path(), Path::new("dir1/.git"));
+            assert_eq!(repo.content_path(), root.path().join("dir1").canonicalize().unwrap());
+            assert_eq!(repo.git_dir_path(), root.path().join("dir1/.git").canonicalize().unwrap());
 
             assert!(tree.does_git_repository_track_file_path(&repo, "dir1/src/b.txt".as_ref()));
             assert!(!tree

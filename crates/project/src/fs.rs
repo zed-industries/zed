@@ -22,7 +22,7 @@ use futures::lock::Mutex;
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::{Arc, Weak};
 
-use crate::git_repository::{FakeGitRepository, GitRepository, RealGitRepository};
+use crate::git_repository::GitRepository;
 
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {
@@ -48,11 +48,7 @@ pub trait Fs: Send + Sync {
         path: &Path,
         latency: Duration,
     ) -> Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>>;
-    fn open_git_repository(
-        &self,
-        abs_dotgit_path: &Path,
-        content_path: &Arc<Path>,
-    ) -> Option<Box<dyn GitRepository>>;
+    fn open_git_repository(&self, abs_dotgit_path: &Path) -> Option<GitRepository>;
     fn is_fake(&self) -> bool;
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeFs;
@@ -278,12 +274,8 @@ impl Fs for RealFs {
         })))
     }
 
-    fn open_git_repository(
-        &self,
-        abs_dotgit_path: &Path,
-        content_path: &Arc<Path>,
-    ) -> Option<Box<dyn GitRepository>> {
-        RealGitRepository::open(abs_dotgit_path, content_path)
+    fn open_git_repository(&self, abs_dotgit_path: &Path) -> Option<GitRepository> {
+        GitRepository::open(abs_dotgit_path)
     }
 
     fn is_fake(&self) -> bool {
@@ -901,15 +893,8 @@ impl Fs for FakeFs {
         }))
     }
 
-    fn open_git_repository(
-        &self,
-        abs_dotgit_path: &Path,
-        content_path: &Arc<Path>,
-    ) -> Option<Box<dyn GitRepository>> {
-        Some(Box::new(FakeGitRepository::new(
-            abs_dotgit_path,
-            content_path,
-        )))
+    fn open_git_repository(&self, _: &Path) -> Option<GitRepository> {
+        None
     }
 
     fn is_fake(&self) -> bool {
