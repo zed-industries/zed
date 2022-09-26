@@ -750,6 +750,10 @@ impl platform::Platform for MacPlatform {
         }
     }
 
+    fn os_name(&self) -> &'static str {
+        "macOS"
+    }
+
     fn os_version(&self) -> Result<crate::AppVersion> {
         unsafe {
             let process_info = NSProcessInfo::processInfo(nil);

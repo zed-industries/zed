@@ -197,6 +197,10 @@ impl super::Platform for Platform {
         })
     }
 
+    fn os_name(&self) -> &'static str {
+        "test"
+    }
+
     fn os_version(&self) -> Result<AppVersion> {
         Ok(AppVersion {
             major: 1,
