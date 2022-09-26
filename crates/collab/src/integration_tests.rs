@@ -81,22 +81,6 @@ async fn test_basic_calls(
         ])
         .await;
 
-    client_a
-        .fs
-        .insert_tree(
-            "/a",
-            json!({
-                ".gitignore": "ignored-dir",
-                "a.txt": "a-contents",
-                "b.txt": "b-contents",
-                "ignored-dir": {
-                    "c.txt": "",
-                    "d.txt": "",
-                }
-            }),
-        )
-        .await;
-
     let room_a = cx_a
         .update(|cx| Room::create(client_a.clone(), cx))
         .await
@@ -108,8 +92,6 @@ async fn test_basic_calls(
             pending: Default::default()
         }
     );
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    // room.publish_project(project_a.clone()).await.unwrap();
 
     // Call user B from client A.
     let mut incoming_call_b = client_b
