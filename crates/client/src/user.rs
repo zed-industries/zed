@@ -246,12 +246,8 @@ impl UserStore {
     }
 
     pub fn decline_call(&mut self) -> Result<()> {
-        let mut incoming_call = self.incoming_call.0.borrow_mut();
-        if incoming_call.is_some() {
-            if let Some(client) = self.client.upgrade() {
-                client.send(proto::DeclineCall {})?;
-            }
-            *incoming_call = None;
+        if let Some(client) = self.client.upgrade() {
+            client.send(proto::DeclineCall {})?;
         }
         Ok(())
     }

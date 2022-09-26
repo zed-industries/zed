@@ -118,6 +118,8 @@ async fn test_share_project_in_room(
         .update(cx_a, |room, cx| room.call(client_b.user_id().unwrap(), cx))
         .await
         .unwrap();
+
+    deterministic.run_until_parked();
     assert_eq!(
         participants(&room_a, &client_a, cx_a).await,
         RoomParticipants {
@@ -156,6 +158,8 @@ async fn test_share_project_in_room(
         .update(cx_a, |room, cx| room.call(client_c.user_id().unwrap(), cx))
         .await
         .unwrap();
+
+    deterministic.run_until_parked();
     assert_eq!(
         participants(&room_a, &client_a, cx_a).await,
         RoomParticipants {
