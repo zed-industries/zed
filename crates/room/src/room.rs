@@ -136,7 +136,11 @@ impl Room {
         Ok(())
     }
 
-    pub fn call(&mut self, to_user_id: u64, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn call(
+        &mut self,
+        recipient_user_id: u64,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
         }
@@ -147,7 +151,7 @@ impl Room {
             client
                 .request(proto::Call {
                     room_id,
-                    to_user_id,
+                    recipient_user_id,
                 })
                 .await?;
             Ok(())

@@ -214,7 +214,7 @@ impl UserStore {
                 .await?,
             from: this
                 .update(&mut cx, |this, cx| {
-                    this.get_user(envelope.payload.from_user_id, cx)
+                    this.get_user(envelope.payload.caller_user_id, cx)
                 })
                 .await?,
         };

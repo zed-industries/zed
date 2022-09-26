@@ -66,6 +66,7 @@ async fn test_basic_calls(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
+    cx_b2: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
@@ -111,8 +112,18 @@ async fn test_basic_calls(
         }
     );
 
-    // User B receives the call and joins the room.
+    // User B receives the call.
     let call_b = incoming_call_b.next().await.unwrap().unwrap();
+
+    // User B connects via another client and also receives a ring on the newly-connected client.
+    let client_b2 = server.create_client(cx_b2, "user_b").await;
+    let mut incoming_call_b2 = client_b2
+        .user_store
+        .update(cx_b2, |user, _| user.incoming_call());
+    deterministic.run_until_parked();
+    let _call_b2 = incoming_call_b2.next().await.unwrap().unwrap();
+
+    // User B joins the room using the first client.
     let room_b = cx_b
         .update(|cx| Room::join(&call_b, client_b.clone(), cx))
         .await

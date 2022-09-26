@@ -388,7 +388,11 @@ impl Server {
 
             {
                 let mut store = this.store().await;
-                store.add_connection(connection_id, user_id, user.admin);
+                let incoming_call = store.add_connection(connection_id, user_id, user.admin);
+                if let Some(incoming_call) = incoming_call {
+                    this.peer.send(connection_id, incoming_call)?;
+                }
+
                 this.peer.send(connection_id, store.build_initial_contacts_update(contacts))?;
 
                 if let Some((code, count)) = invite_code {
@@ -648,28 +652,18 @@ impl Server {
         request: TypedEnvelope<proto::Call>,
         response: Response<proto::Call>,
     ) -> Result<()> {
-        let to_user_id = UserId::from_proto(request.payload.to_user_id);
+        let recipient_user_id = UserId::from_proto(request.payload.recipient_user_id);
         let room_id = request.payload.room_id;
         let mut calls = {
             let mut store = self.store().await;
-            let (from_user_id, recipient_connection_ids, room) =
-                store.call(room_id, request.sender_id, to_user_id)?;
+            let (room, recipient_connection_ids, incoming_call) =
+                store.call(room_id, request.sender_id, recipient_user_id)?;
             self.room_updated(room);
             recipient_connection_ids
                 .into_iter()
-                .map(|recipient_id| {
-                    self.peer.request(
-                        recipient_id,
-                        proto::IncomingCall {
-                            room_id,
-                            from_user_id: from_user_id.to_proto(),
-                            participant_user_ids: room
-                                .participants
-                                .iter()
-                                .map(|p| p.user_id)
-                                .collect(),
-                        },
-                    )
+                .map(|recipient_connection_id| {
+                    self.peer
+                        .request(recipient_connection_id, incoming_call.clone())
                 })
                 .collect::<FuturesUnordered<_>>()
         };
@@ -688,7 +682,7 @@ impl Server {
 
         {
             let mut store = self.store().await;
-            let room = store.call_failed(room_id, to_user_id)?;
+            let room = store.call_failed(room_id, recipient_user_id)?;
             self.room_updated(&room);
         }
 

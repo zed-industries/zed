@@ -24,7 +24,7 @@ pub struct Store {
 #[derive(Default, Serialize)]
 struct ConnectedUser {
     connection_ids: HashSet<ConnectionId>,
-    active_call: Option<CallState>,
+    active_call: Option<Call>,
 }
 
 #[derive(Serialize)]
@@ -37,9 +37,10 @@ struct ConnectionState {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Serialize)]
-struct CallState {
-    room_id: RoomId,
-    joined: bool,
+pub struct Call {
+    pub caller_user_id: UserId,
+    pub room_id: RoomId,
+    pub joined: bool,
 }
 
 #[derive(Serialize)]
@@ -146,7 +147,12 @@ impl Store {
     }
 
     #[instrument(skip(self))]
-    pub fn add_connection(&mut self, connection_id: ConnectionId, user_id: UserId, admin: bool) {
+    pub fn add_connection(
+        &mut self,
+        connection_id: ConnectionId,
+        user_id: UserId,
+        admin: bool,
+    ) -> Option<proto::IncomingCall> {
         self.connections.insert(
             connection_id,
             ConnectionState {
@@ -157,11 +163,26 @@ impl Store {
                 channels: Default::default(),
             },
         );
-        self.connected_users
-            .entry(user_id)
-            .or_default()
-            .connection_ids
-            .insert(connection_id);
+        let connected_user = self.connected_users.entry(user_id).or_default();
+        connected_user.connection_ids.insert(connection_id);
+        if let Some(active_call) = connected_user.active_call {
+            if active_call.joined {
+                None
+            } else {
+                let room = self.room(active_call.room_id)?;
+                Some(proto::IncomingCall {
+                    room_id: active_call.room_id,
+                    caller_user_id: active_call.caller_user_id.to_proto(),
+                    participant_user_ids: room
+                        .participants
+                        .iter()
+                        .map(|participant| participant.user_id)
+                        .collect(),
+                })
+            }
+        } else {
+            None
+        }
     }
 
     #[instrument(skip(self))]
@@ -393,7 +414,8 @@ impl Store {
 
         let room_id = post_inc(&mut self.next_room_id);
         self.rooms.insert(room_id, room);
-        connected_user.active_call = Some(CallState {
+        connected_user.active_call = Some(Call {
+            caller_user_id: connection.user_id,
             room_id,
             joined: true,
         });
@@ -412,14 +434,16 @@ impl Store {
         let user_id = connection.user_id;
         let recipient_connection_ids = self.connection_ids_for_user(user_id).collect::<Vec<_>>();
 
-        let mut connected_user = self
+        let connected_user = self
             .connected_users
             .get_mut(&user_id)
             .ok_or_else(|| anyhow!("no such connection"))?;
+        let active_call = connected_user
+            .active_call
+            .as_mut()
+            .ok_or_else(|| anyhow!("not being called"))?;
         anyhow::ensure!(
-            connected_user
-                .active_call
-                .map_or(false, |call| call.room_id == room_id && !call.joined),
+            active_call.room_id == room_id && !active_call.joined,
             "not being called on this room"
         );
 
@@ -443,10 +467,7 @@ impl Store {
                 )),
             }),
         });
-        connected_user.active_call = Some(CallState {
-            room_id,
-            joined: true,
-        });
+        active_call.joined = true;
 
         Ok((room, recipient_connection_ids))
     }
@@ -493,8 +514,8 @@ impl Store {
         room_id: RoomId,
         from_connection_id: ConnectionId,
         recipient_id: UserId,
-    ) -> Result<(UserId, Vec<ConnectionId>, &proto::Room)> {
-        let from_user_id = self.user_id_for_connection(from_connection_id)?;
+    ) -> Result<(&proto::Room, Vec<ConnectionId>, proto::IncomingCall)> {
+        let caller_user_id = self.user_id_for_connection(from_connection_id)?;
 
         let recipient_connection_ids = self
             .connection_ids_for_user(recipient_id)
@@ -525,12 +546,25 @@ impl Store {
             "cannot call the same user more than once"
         );
         room.pending_user_ids.push(recipient_id.to_proto());
-        recipient.active_call = Some(CallState {
+        recipient.active_call = Some(Call {
+            caller_user_id,
             room_id,
             joined: false,
         });
 
-        Ok((from_user_id, recipient_connection_ids, room))
+        Ok((
+            room,
+            recipient_connection_ids,
+            proto::IncomingCall {
+                room_id,
+                caller_user_id: caller_user_id.to_proto(),
+                participant_user_ids: room
+                    .participants
+                    .iter()
+                    .map(|participant| participant.user_id)
+                    .collect(),
+            },
+        ))
     }
 
     pub fn call_failed(&mut self, room_id: RoomId, to_user_id: UserId) -> Result<&proto::Room> {

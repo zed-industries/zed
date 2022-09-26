@@ -181,12 +181,12 @@ message ParticipantLocation {
 
 message Call {
     uint64 room_id = 1;
-    uint64 to_user_id = 2;
+    uint64 recipient_user_id = 2;
 }
 
 message IncomingCall {
     uint64 room_id = 1;
-    uint64 from_user_id = 2;
+    uint64 caller_user_id = 2;
     repeated uint64 participant_user_ids = 3;
 }
 
