@@ -58,7 +58,7 @@ pub struct EditorSettings {
     pub hard_tabs: Option<bool>,
     pub soft_wrap: Option<SoftWrap>,
     pub preferred_line_length: Option<u32>,
-    pub format_on_save: Option<bool>,
+    pub format_on_save: Option<FormatOnSave>,
     pub formatter: Option<Formatter>,
     pub enable_language_server: Option<bool>,
 }
@@ -69,6 +69,17 @@ pub enum SoftWrap {
     None,
     EditorWidth,
     PreferredLineLength,
+}
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FormatOnSave {
+    On,
+    Off,
+    LanguageServer,
+    External {
+        command: String,
+        arguments: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -324,8 +335,8 @@ impl Settings {
         self.language_setting(language, |settings| settings.preferred_line_length)
     }
 
-    pub fn format_on_save(&self, language: Option<&str>) -> bool {
-        self.language_setting(language, |settings| settings.format_on_save)
+    pub fn format_on_save(&self, language: Option<&str>) -> FormatOnSave {
+        self.language_setting(language, |settings| settings.format_on_save.clone())
     }
 
     pub fn formatter(&self, language: Option<&str>) -> Formatter {
@@ -364,7 +375,7 @@ impl Settings {
                 hard_tabs: Some(false),
                 soft_wrap: Some(SoftWrap::None),
                 preferred_line_length: Some(80),
-                format_on_save: Some(true),
+                format_on_save: Some(FormatOnSave::On),
                 formatter: Some(Formatter::LanguageServer),
                 enable_language_server: Some(true),
             },
