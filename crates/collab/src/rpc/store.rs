@@ -384,7 +384,7 @@ impl Store {
             .get_mut(&connection_id)
             .ok_or_else(|| anyhow!("no such connection"))?;
         let user_id = connection.user_id;
-        let recipient_ids = self.connection_ids_for_user(user_id).collect::<Vec<_>>();
+        let recipient_connection_ids = self.connection_ids_for_user(user_id).collect::<Vec<_>>();
 
         let mut user_connection_state = self
             .connections_by_user_id
@@ -402,10 +402,10 @@ impl Store {
             .get_mut(&room_id)
             .ok_or_else(|| anyhow!("no such room"))?;
         anyhow::ensure!(
-            room.pending_calls_to_user_ids.contains(&user_id.to_proto()),
+            room.pending_user_ids.contains(&user_id.to_proto()),
             anyhow!("no such room")
         );
-        room.pending_calls_to_user_ids
+        room.pending_user_ids
             .retain(|pending| *pending != user_id.to_proto());
         room.participants.push(proto::Participant {
             user_id: user_id.to_proto(),
@@ -419,7 +419,7 @@ impl Store {
         });
         user_connection_state.room = Some(RoomState::Joined);
 
-        Ok((room, recipient_ids))
+        Ok((room, recipient_connection_ids))
     }
 
     pub fn call(
@@ -451,12 +451,12 @@ impl Store {
             "no such room"
         );
         anyhow::ensure!(
-            room.pending_calls_to_user_ids
+            room.pending_user_ids
                 .iter()
                 .all(|user_id| UserId::from_proto(*user_id) != to_user_id),
             "cannot call the same user more than once"
         );
-        room.pending_calls_to_user_ids.push(to_user_id.to_proto());
+        room.pending_user_ids.push(to_user_id.to_proto());
         to_user_connection_state.room = Some(RoomState::Calling { room_id });
 
         Ok((from_user_id, to_connection_ids, room))
@@ -473,9 +473,35 @@ impl Store {
             .rooms
             .get_mut(&room_id)
             .ok_or_else(|| anyhow!("no such room"))?;
-        room.pending_calls_to_user_ids
+        room.pending_user_ids
             .retain(|user_id| UserId::from_proto(*user_id) != to_user_id);
         Ok(room)
+    }
+
+    pub fn call_declined(
+        &mut self,
+        recipient_connection_id: ConnectionId,
+    ) -> Result<(&proto::Room, Vec<ConnectionId>)> {
+        let recipient_user_id = self.user_id_for_connection(recipient_connection_id)?;
+        let mut to_user_connection_state = self
+            .connections_by_user_id
+            .get_mut(&recipient_user_id)
+            .ok_or_else(|| anyhow!("no such connection"))?;
+        if let Some(RoomState::Calling { room_id }) = to_user_connection_state.room {
+            to_user_connection_state.room = None;
+            let recipient_connection_ids = self
+                .connection_ids_for_user(recipient_user_id)
+                .collect::<Vec<_>>();
+            let room = self
+                .rooms
+                .get_mut(&room_id)
+                .ok_or_else(|| anyhow!("no such room"))?;
+            room.pending_user_ids
+                .retain(|user_id| UserId::from_proto(*user_id) != recipient_user_id);
+            Ok((room, recipient_connection_ids))
+        } else {
+            Err(anyhow!("user is not being called"))
+        }
     }
 
     pub fn register_project(

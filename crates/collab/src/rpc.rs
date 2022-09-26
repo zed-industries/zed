@@ -154,6 +154,7 @@ impl Server {
             .add_request_handler(Server::create_room)
             .add_request_handler(Server::join_room)
             .add_request_handler(Server::call)
+            .add_message_handler(Server::decline_call)
             .add_request_handler(Server::register_project)
             .add_request_handler(Server::unregister_project)
             .add_request_handler(Server::join_project)
@@ -613,10 +614,10 @@ impl Server {
     ) -> Result<()> {
         let room_id = request.payload.id;
         let mut store = self.store().await;
-        let (room, recipient_ids) = store.join_room(room_id, request.sender_id)?;
-        for receiver_id in recipient_ids {
+        let (room, recipient_connection_ids) = store.join_room(room_id, request.sender_id)?;
+        for recipient_id in recipient_connection_ids {
             self.peer
-                .send(receiver_id, proto::CancelCall {})
+                .send(recipient_id, proto::CancelCall {})
                 .trace_err();
         }
         response.send(proto::JoinRoomResponse {
@@ -635,10 +636,10 @@ impl Server {
         let room_id = request.payload.room_id;
         let mut calls = {
             let mut store = self.store().await;
-            let (from_user_id, recipient_ids, room) =
+            let (from_user_id, recipient_connection_ids, room) =
                 store.call(room_id, request.sender_id, to_user_id)?;
             self.room_updated(room);
-            recipient_ids
+            recipient_connection_ids
                 .into_iter()
                 .map(|recipient_id| {
                     self.peer.request(
@@ -676,6 +677,21 @@ impl Server {
         }
 
         Err(anyhow!("failed to ring call recipient"))?
+    }
+
+    async fn decline_call(
+        self: Arc<Server>,
+        message: TypedEnvelope<proto::DeclineCall>,
+    ) -> Result<()> {
+        let mut store = self.store().await;
+        let (room, recipient_connection_ids) = store.call_declined(message.sender_id)?;
+        for recipient_id in recipient_connection_ids {
+            self.peer
+                .send(recipient_id, proto::CancelCall {})
+                .trace_err();
+        }
+        self.room_updated(room);
+        Ok(())
     }
 
     fn room_updated(&self, room: &proto::Room) {

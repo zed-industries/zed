@@ -151,7 +151,7 @@ message JoinRoomResponse {
 
 message Room {
     repeated Participant participants = 1;
-    repeated uint64 pending_calls_to_user_ids = 2;
+    repeated uint64 pending_user_ids = 2;
 }
 
 message Participant {
@@ -187,9 +187,7 @@ message IncomingCall {
 
 message CancelCall {}
 
-message DeclineCall {
-    uint64 room_id = 1;
-}
+message DeclineCall {}
 
 message RoomUpdated {
     Room room = 1;

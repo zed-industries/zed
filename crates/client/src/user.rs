@@ -245,6 +245,17 @@ impl UserStore {
         self.incoming_call.1.clone()
     }
 
+    pub fn decline_call(&mut self) -> Result<()> {
+        let mut incoming_call = self.incoming_call.0.borrow_mut();
+        if incoming_call.is_some() {
+            if let Some(client) = self.client.upgrade() {
+                client.send(proto::DeclineCall {})?;
+            }
+            *incoming_call = None;
+        }
+        Ok(())
+    }
+
     async fn handle_update_contacts(
         this: ModelHandle<Self>,
         message: TypedEnvelope<proto::UpdateContacts>,

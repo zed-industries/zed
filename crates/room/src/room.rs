@@ -21,6 +21,7 @@ pub struct Room {
     id: u64,
     local_participant: LocalParticipant,
     remote_participants: HashMap<PeerId, RemoteParticipant>,
+    pending_user_ids: Vec<u64>,
     client: Arc<Client>,
     _subscriptions: Vec<client::Subscription>,
 }
@@ -62,6 +63,7 @@ impl Room {
                 projects: Default::default(),
             },
             remote_participants: Default::default(),
+            pending_user_ids: Default::default(),
             _subscriptions: vec![client.add_message_handler(cx.handle(), Self::handle_room_updated)],
             client,
         }
@@ -69,6 +71,10 @@ impl Room {
 
     pub fn remote_participants(&self) -> &HashMap<PeerId, RemoteParticipant> {
         &self.remote_participants
+    }
+
+    pub fn pending_user_ids(&self) -> &[u64] {
+        &self.pending_user_ids
     }
 
     async fn handle_room_updated(
@@ -100,6 +106,7 @@ impl Room {
                 );
             }
         }
+        self.pending_user_ids = room.pending_user_ids;
         cx.notify();
         Ok(())
     }
