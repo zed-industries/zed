@@ -11,6 +11,7 @@ pub trait GitRepository: Send + Sync {
     fn git_dir_path(&self) -> &Path;
     fn last_scan_id(&self) -> usize;
     fn set_scan_id(&mut self, scan_id: usize);
+    fn with_repo(&mut self, f: Box<dyn FnOnce(&mut git2::Repository)>);
 }
 
 #[derive(Clone)]
@@ -70,6 +71,11 @@ impl GitRepository for RealGitRepository {
     fn set_scan_id(&mut self, scan_id: usize) {
         self.last_scan_id = scan_id;
     }
+
+    fn with_repo(&mut self, f: Box<dyn FnOnce(&mut git2::Repository)>) {
+        let mut git2 = self.libgit_repository.lock();
+        f(&mut git2)
+    }
 }
 
 impl PartialEq for &Box<dyn GitRepository> {
@@ -128,5 +134,9 @@ impl GitRepository for FakeGitRepository {
 
     fn set_scan_id(&mut self, scan_id: usize) {
         self.last_scan_id = scan_id;
+    }
+
+    fn with_repo(&mut self, _: Box<dyn FnOnce(&mut git2::Repository)>) {
+        unimplemented!();
     }
 }

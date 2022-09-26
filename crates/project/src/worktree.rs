@@ -26,7 +26,6 @@ use language::{
     proto::{deserialize_version, serialize_line_ending, serialize_version},
     Buffer, DiagnosticEntry, LineEnding, PointUtf16, Rope,
 };
-use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use postage::{
     prelude::{Sink as _, Stream as _},
@@ -50,12 +49,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
-use util::{ResultExt, TryFutureExt};
-
-lazy_static! {
-    static ref DOT_GIT: &'static OsStr = OsStr::new(".git");
-    static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");
-}
+use util::{ResultExt, TryFutureExt, DOT_GIT, GITIGNORE};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
@@ -1317,6 +1311,13 @@ impl LocalSnapshot {
         &self,
         path: &Path,
     ) -> Option<Box<dyn GitRepository>> {
+        let repos = self
+            .git_repositories
+            .iter()
+            .map(|repo| repo.content_path().to_str().unwrap().to_string())
+            .collect::<Vec<String>>();
+        dbg!(repos);
+
         self.git_repositories
             .iter()
             .rev() //git_repository is ordered lexicographically
@@ -1437,6 +1438,7 @@ impl LocalSnapshot {
     }
 
     fn insert_entry(&mut self, mut entry: Entry, fs: &dyn Fs) -> Entry {
+        dbg!(&entry.path);
         if entry.is_file() && entry.path.file_name() == Some(&GITIGNORE) {
             let abs_path = self.abs_path.join(&entry.path);
             match smol::block_on(build_gitignore(&abs_path, fs)) {
@@ -1455,6 +1457,8 @@ impl LocalSnapshot {
                 }
             }
         } else if entry.path.file_name() == Some(&DOT_GIT) {
+            dbg!(&entry.path);
+
             let abs_path = self.abs_path.join(&entry.path);
             let content_path: Arc<Path> = entry.path.parent().unwrap().into();
             if let Err(ix) = self
@@ -2223,6 +2227,7 @@ impl BackgroundScanner {
             if ignore_stack.is_all() {
                 if let Some(mut root_entry) = snapshot.root_entry().cloned() {
                     root_entry.is_ignored = true;
+                    dbg!("scan dirs entry");
                     snapshot.insert_entry(root_entry, self.fs.as_ref());
                 }
             }
@@ -2445,6 +2450,7 @@ impl BackgroundScanner {
                             snapshot.root_char_bag,
                         );
                         fs_entry.is_ignored = ignore_stack.is_all();
+                        dbg!("process_events entry");
                         snapshot.insert_entry(fs_entry, self.fs.as_ref());
 
                         let mut ancestor_inodes = snapshot.ancestor_inodes_for_path(&path);
@@ -3145,49 +3151,45 @@ mod tests {
 
     #[gpui::test]
     async fn test_git_repository_for_path(cx: &mut TestAppContext) {
-        let fs = FakeFs::new(cx.background());
-
-        fs.insert_tree(
-            "/root",
-            json!({
-                "dir1": {
-                    ".git": {
-                        "HEAD": "abc"
-                    },
-                    "deps": {
-                        "dep1": {
-                            ".git": {},
-                            "src": {
-                                "a.txt": ""
-                            }
+        let root = temp_tree(json!({
+            "dir1": {
+                ".git": {},
+                "deps": {
+                    "dep1": {
+                        ".git": {},
+                        "src": {
+                            "a.txt": ""
                         }
-                    },
-                    "src": {
-                        "b.txt": ""
                     }
                 },
-                "c.txt": ""
-            }),
-        )
-        .await;
+                "src": {
+                    "b.txt": ""
+                }
+            },
+            "c.txt": ""
+        }));
 
         let http_client = FakeHttpClient::with_404_response();
         let client = Client::new(http_client);
         let tree = Worktree::local(
             client,
-            Arc::from(Path::new("/root")),
+            root.path(),
             true,
-            fs.clone(),
+            Arc::new(RealFs),
             Default::default(),
             &mut cx.to_async(),
         )
         .await
         .unwrap();
 
-        cx.foreground().run_until_parked();
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+        tree.flush_fs_events(cx).await;
 
-        tree.read_with(cx, |tree, cx| {
+        tree.read_with(cx, |tree, _cx| {
             let tree = tree.as_local().unwrap();
+
+            dbg!(tree);
 
             assert!(tree
                 .git_repository_for_file_path("c.txt".as_ref())

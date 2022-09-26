@@ -54,6 +54,7 @@ toml = "0.5"
 rocksdb = "0.18"
 git2 = { version = "0.15", default-features = false }
 
+
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }
