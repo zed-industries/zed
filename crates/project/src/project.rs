@@ -1,4 +1,3 @@
-mod db;
 pub mod fs;
 mod ignore;
 mod lsp_command;

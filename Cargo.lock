@@ -1505,6 +1505,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "db"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "collections",
+ "gpui",
+ "parking_lot 0.11.2",
+ "rocksdb",
+ "tempdir",
+]
+
+[[package]]
 name = "deflate"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3950,6 +3963,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "db",
  "fsevent",
  "futures",
  "fuzzy",
