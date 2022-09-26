@@ -25,7 +25,7 @@ pub struct Store {
 struct ConnectionState {
     user_id: UserId,
     admin: bool,
-    rooms: BTreeSet<RoomId>,
+    room: Option<RoomId>,
     projects: BTreeSet<ProjectId>,
     requested_projects: HashSet<ProjectId>,
     channels: HashSet<ChannelId>,
@@ -140,7 +140,7 @@ impl Store {
             ConnectionState {
                 user_id,
                 admin,
-                rooms: Default::default(),
+                room: Default::default(),
                 projects: Default::default(),
                 requested_projects: Default::default(),
                 channels: Default::default(),
@@ -333,6 +333,11 @@ impl Store {
             .connections
             .get_mut(&creator_connection_id)
             .ok_or_else(|| anyhow!("no such connection"))?;
+        anyhow::ensure!(
+            connection.room.is_none(),
+            "cannot participate in more than one room at once"
+        );
+
         let mut room = proto::Room::default();
         room.participants.push(proto::Participant {
             user_id: connection.user_id.to_proto(),
@@ -347,8 +352,49 @@ impl Store {
 
         let room_id = post_inc(&mut self.next_room_id);
         self.rooms.insert(room_id, room);
-        connection.rooms.insert(room_id);
+        connection.room = Some(room_id);
         Ok(room_id)
+    }
+
+    pub fn join_room(
+        &mut self,
+        room_id: u64,
+        connection_id: ConnectionId,
+    ) -> Result<(&proto::Room, Vec<ConnectionId>)> {
+        let connection = self
+            .connections
+            .get_mut(&connection_id)
+            .ok_or_else(|| anyhow!("no such connection"))?;
+        anyhow::ensure!(
+            connection.room.is_none(),
+            "cannot participate in more than one room at once"
+        );
+
+        let user_id = connection.user_id;
+        let recipient_ids = self.connection_ids_for_user(user_id).collect::<Vec<_>>();
+
+        let room = self
+            .rooms
+            .get_mut(&room_id)
+            .ok_or_else(|| anyhow!("no such room"))?;
+        anyhow::ensure!(
+            room.pending_calls_to_user_ids.contains(&user_id.to_proto()),
+            anyhow!("no such room")
+        );
+        room.pending_calls_to_user_ids
+            .retain(|pending| *pending != user_id.to_proto());
+        room.participants.push(proto::Participant {
+            user_id: user_id.to_proto(),
+            peer_id: connection_id.0,
+            project_ids: Default::default(),
+            location: Some(proto::ParticipantLocation {
+                variant: Some(proto::participant_location::Variant::External(
+                    proto::participant_location::External {},
+                )),
+            }),
+        });
+
+        Ok((room, recipient_ids))
     }
 
     pub fn call(
@@ -356,7 +402,7 @@ impl Store {
         room_id: RoomId,
         from_connection_id: ConnectionId,
         to_user_id: UserId,
-    ) -> Result<(UserId, Vec<ConnectionId>, proto::Room)> {
+    ) -> Result<(UserId, Vec<ConnectionId>, &proto::Room)> {
         let from_user_id = self.user_id_for_connection(from_connection_id)?;
         let to_connection_ids = self.connection_ids_for_user(to_user_id).collect::<Vec<_>>();
         let room = self
@@ -377,17 +423,17 @@ impl Store {
         );
         room.pending_calls_to_user_ids.push(to_user_id.to_proto());
 
-        Ok((from_user_id, to_connection_ids, room.clone()))
+        Ok((from_user_id, to_connection_ids, room))
     }
 
-    pub fn call_failed(&mut self, room_id: RoomId, to_user_id: UserId) -> Result<proto::Room> {
+    pub fn call_failed(&mut self, room_id: RoomId, to_user_id: UserId) -> Result<&proto::Room> {
         let room = self
             .rooms
             .get_mut(&room_id)
             .ok_or_else(|| anyhow!("no such room"))?;
         room.pending_calls_to_user_ids
             .retain(|user_id| UserId::from_proto(*user_id) != to_user_id);
-        Ok(room.clone())
+        Ok(room)
     }
 
     pub fn register_project(

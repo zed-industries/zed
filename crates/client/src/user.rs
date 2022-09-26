@@ -1,9 +1,8 @@
-use crate::call::Call;
-
 use super::{http::HttpClient, proto, Client, Status, TypedEnvelope};
+use crate::call::Call;
 use anyhow::{anyhow, Context, Result};
 use collections::{hash_map::Entry, BTreeSet, HashMap, HashSet};
-use futures::{channel::mpsc, future, AsyncReadExt, Future, Stream, StreamExt};
+use futures::{channel::mpsc, future, AsyncReadExt, Future, StreamExt};
 use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
 use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
@@ -68,7 +67,7 @@ pub struct UserStore {
     outgoing_contact_requests: Vec<Arc<User>>,
     pending_contact_requests: HashMap<u64, usize>,
     invite_info: Option<InviteInfo>,
-    incoming_calls: Vec<mpsc::UnboundedSender<Call>>,
+    incoming_call: (watch::Sender<Option<Call>>, watch::Receiver<Option<Call>>),
     client: Weak<Client>,
     http: Arc<dyn HttpClient>,
     _maintain_contacts: Task<()>,
@@ -119,6 +118,7 @@ impl UserStore {
             client.add_message_handler(cx.handle(), Self::handle_update_invite_info),
             client.add_message_handler(cx.handle(), Self::handle_show_contacts),
             client.add_request_handler(cx.handle(), Self::handle_incoming_call),
+            client.add_message_handler(cx.handle(), Self::handle_cancel_call),
         ];
         Self {
             users: Default::default(),
@@ -127,7 +127,7 @@ impl UserStore {
             incoming_contact_requests: Default::default(),
             outgoing_contact_requests: Default::default(),
             invite_info: None,
-            incoming_calls: Default::default(),
+            incoming_call: watch::channel(),
             client: Arc::downgrade(&client),
             update_contacts_tx,
             http,
@@ -219,21 +219,30 @@ impl UserStore {
                 .await?,
         };
         this.update(&mut cx, |this, _| {
-            this.incoming_calls
-                .retain(|tx| tx.unbounded_send(call.clone()).is_ok());
+            *this.incoming_call.0.borrow_mut() = Some(call);
         });
 
         Ok(proto::Ack {})
+    }
+
+    async fn handle_cancel_call(
+        this: ModelHandle<Self>,
+        _: TypedEnvelope<proto::CancelCall>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, _| {
+            *this.incoming_call.0.borrow_mut() = None;
+        });
+        Ok(())
     }
 
     pub fn invite_info(&self) -> Option<&InviteInfo> {
         self.invite_info.as_ref()
     }
 
-    pub fn incoming_calls(&mut self) -> impl 'static + Stream<Item = Call> {
-        let (tx, rx) = mpsc::unbounded();
-        self.incoming_calls.push(tx);
-        rx
+    pub fn incoming_call(&self) -> watch::Receiver<Option<Call>> {
+        self.incoming_call.1.clone()
     }
 
     async fn handle_update_contacts(

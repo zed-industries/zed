@@ -98,18 +98,49 @@ async fn test_share_project_in_room(
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
     // room.publish_project(project_a.clone()).await.unwrap();
 
-    let mut incoming_calls_b = client_b
+    let mut incoming_call_b = client_b
         .user_store
-        .update(cx_b, |user, _| user.incoming_calls());
+        .update(cx_b, |user, _| user.incoming_call());
     room_a
         .update(cx_a, |room, cx| room.call(client_b.user_id().unwrap(), cx))
         .await
         .unwrap();
-    let call_b = incoming_calls_b.next().await.unwrap();
+    let call_b = incoming_call_b.next().await.unwrap().unwrap();
     let room_b = cx_b
-        .update(|cx| Room::join(call_b.room_id, client_b.clone(), cx))
+        .update(|cx| Room::join(&call_b, client_b.clone(), cx))
         .await
         .unwrap();
+    assert!(incoming_call_b.next().await.unwrap().is_none());
+    assert_eq!(
+        remote_participants(&room_a, &client_a, cx_a).await,
+        vec!["user_b"]
+    );
+    assert_eq!(
+        remote_participants(&room_b, &client_b, cx_b).await,
+        vec!["user_a"]
+    );
+
+    async fn remote_participants(
+        room: &ModelHandle<Room>,
+        client: &TestClient,
+        cx: &mut TestAppContext,
+    ) -> Vec<String> {
+        let users = room.update(cx, |room, cx| {
+            room.remote_participants()
+                .values()
+                .map(|participant| {
+                    client
+                        .user_store
+                        .update(cx, |users, cx| users.get_user(participant.user_id, cx))
+                })
+                .collect::<Vec<_>>()
+        });
+        let users = futures::future::try_join_all(users).await.unwrap();
+        users
+            .into_iter()
+            .map(|user| user.github_login.clone())
+            .collect()
+    }
 }
 
 #[gpui::test(iterations = 10)]

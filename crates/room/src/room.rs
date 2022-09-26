@@ -1,9 +1,9 @@
 mod participant;
 
 use anyhow::{anyhow, Result};
-use client::{proto, Client, PeerId};
+use client::{call::Call, proto, Client, PeerId, TypedEnvelope};
 use collections::HashMap;
-use gpui::{Entity, ModelContext, ModelHandle, MutableAppContext, Task};
+use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use participant::{LocalParticipant, ParticipantLocation, RemoteParticipant};
 use project::Project;
 use std::sync::Arc;
@@ -22,6 +22,7 @@ pub struct Room {
     local_participant: LocalParticipant,
     remote_participants: HashMap<PeerId, RemoteParticipant>,
     client: Arc<Client>,
+    _subscriptions: Vec<client::Subscription>,
 }
 
 impl Entity for Room {
@@ -40,40 +41,64 @@ impl Room {
     }
 
     pub fn join(
-        id: u64,
+        call: &Call,
         client: Arc<Client>,
         cx: &mut MutableAppContext,
     ) -> Task<Result<ModelHandle<Self>>> {
+        let room_id = call.room_id;
         cx.spawn(|mut cx| async move {
-            let response = client.request(proto::JoinRoom { id }).await?;
+            let response = client.request(proto::JoinRoom { id: room_id }).await?;
             let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
-            let room = cx.add_model(|cx| Self::new(id, client, cx));
-            room.update(&mut cx, |room, cx| room.apply_update(room_proto, cx))?;
+            let room = cx.add_model(|cx| Self::new(room_id, client, cx));
+            room.update(&mut cx, |room, cx| room.apply_room_update(room_proto, cx))?;
             Ok(room)
         })
     }
 
-    fn new(id: u64, client: Arc<Client>, _: &mut ModelContext<Self>) -> Self {
+    fn new(id: u64, client: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
         Self {
             id,
             local_participant: LocalParticipant {
                 projects: Default::default(),
             },
             remote_participants: Default::default(),
+            _subscriptions: vec![client.add_message_handler(cx.handle(), Self::handle_room_updated)],
             client,
         }
     }
 
-    fn apply_update(&mut self, room: proto::Room, cx: &mut ModelContext<Self>) -> Result<()> {
+    pub fn remote_participants(&self) -> &HashMap<PeerId, RemoteParticipant> {
+        &self.remote_participants
+    }
+
+    async fn handle_room_updated(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::RoomUpdated>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let room = envelope
+            .payload
+            .room
+            .ok_or_else(|| anyhow!("invalid room"))?;
+        this.update(&mut cx, |this, cx| this.apply_room_update(room, cx))?;
+        Ok(())
+    }
+
+    fn apply_room_update(&mut self, room: proto::Room, cx: &mut ModelContext<Self>) -> Result<()> {
+        // TODO: compute diff instead of clearing participants
+        self.remote_participants.clear();
         for participant in room.participants {
-            self.remote_participants.insert(
-                PeerId(participant.peer_id),
-                RemoteParticipant {
-                    user_id: participant.user_id,
-                    projects: Default::default(), // TODO: populate projects
-                    location: ParticipantLocation::from_proto(participant.location)?,
-                },
-            );
+            if Some(participant.user_id) != self.client.user_id() {
+                self.remote_participants.insert(
+                    PeerId(participant.peer_id),
+                    RemoteParticipant {
+                        user_id: participant.user_id,
+                        projects: Default::default(), // TODO: populate projects
+                        location: ParticipantLocation::from_proto(participant.location)?,
+                    },
+                );
+            }
         }
         cx.notify();
         Ok(())

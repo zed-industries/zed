@@ -17,7 +17,8 @@ message Envelope {
         JoinRoomResponse join_room_response = 11;
         Call call = 12;
         IncomingCall incoming_call = 1000;
-        RespondToCall respond_to_call = 13;
+        CancelCall cancel_call = 1001;
+        DeclineCall decline_call = 13;
         RoomUpdated room_updated = 14;
 
         RegisterProject register_project = 15;
@@ -184,9 +185,10 @@ message IncomingCall {
     repeated uint64 participant_user_ids = 3;
 }
 
-message RespondToCall {
+message CancelCall {}
+
+message DeclineCall {
     uint64 room_id = 1;
-    bool accept = 2;
 }
 
 message RoomUpdated {
