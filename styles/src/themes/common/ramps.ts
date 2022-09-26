@@ -191,394 +191,536 @@ function buildStyleSet(ramp: Scale, styleDefinitions: {
 function bottomLayer(ramps: RampSet, isLight: boolean): Layer {
   let baseSet = buildStyleSet(ramps.neutral, {
     background: {
-      default: 0.15,
-      hovered: 0.25,
-      pressed: 0.55,
-      active: 0.8,
-      disabled: 0.25,
+      default: 0.16,
+      hovered: 0.31,
+      pressed: 0.41,
+      active: 1,
+      disabled: 0.16,
     },
     border: {
       default: 0.2,
-      hovered: 1.0,
-      pressed: 0.9,
-      active: 0.8,
-      disabled: 1,
+      hovered: 0.2,
+      pressed: 0.2,
+      active: 0.5,
+      disabled: 0.2,
     },
     foreground: {
       default: 1,
-      hovered: 0.9,
-      pressed: 0.9,
-      active: 0.1,
-      disabled: 0.9,
+      hovered: 1,
+      pressed: 1,
+      active: 0,
+      disabled: 0.4,
     },
   });
 
-  let onSet: StyleSet = {
-    default: {
-      background: ramps.neutral(0.15).hex(),
-      border: ramps.neutral(0.2).hex(),
-      foreground: ramps.neutral(1).hex(),
+  let variantSet = buildStyleSet(ramps.neutral, {
+    background: {
+      default: 0.16,
+      hovered: 0.31,
+      pressed: 0.41,
+      active: 1,
+      disabled: 0.16,
     },
-    hovered: {
-      background: ramps.neutral(0.4).hex(),
-      border: ramps.neutral(1.0).hex(),
-      foreground: ramps.neutral(0.9).hex(),
+    border: {
+      default: 0.2,
+      hovered: 0.2,
+      pressed: 0.2,
+      active: 0.5,
+      disabled: 0.2,
     },
-    pressed: {
-      background: ramps.neutral(0.55).hex(),
-      border: ramps.neutral(0.9).hex(),
-      foreground: ramps.neutral(0.9).hex(),
+    foreground: {
+      default: 0.7,
+      hovered: 0.7,
+      pressed: 0.7,
+      active: 0,
+      disabled: 0.4,
     },
-    active: {
-      background: ramps.neutral(0.8).hex(),
-      border: ramps.neutral(0.8).hex(),
-      foreground: ramps.neutral(0.1).hex(),
+  });
+
+  let onSet = buildStyleSet(ramps.neutral, {
+    background: {
+      default: 0.08,
+      hovered: 0.23,
+      pressed: 0.33,
+      active: 1,
+      disabled: 0.08,
     },
-    disabled: {
-      background: ramps.neutral(0.25).hex(),
-      border: ramps.neutral(1).hex(),
-      foreground: ramps.neutral(0.9).hex(),
+    border: {
+      default: 0.2,
+      hovered: 0.2,
+      pressed: 0.2,
+      active: 0.5,
+      disabled: 0.2,
     },
-  }
+    foreground: {
+      default: 1,
+      hovered: 1,
+      pressed: 1,
+      active: 0,
+      disabled: 0.4,
+    },
+  });
 
-  let defaultStyle: Style = {
-    background: ramps.neutral(0.2).hex(),
-    border: ramps.neutral(0.25).hex(),
-    foreground: ramps.neutral(1).hex(),
-  };
+  let infoSet = buildStyleSet(ramps.blue, {
+    background: {
+      default: 0,
+      hovered: 0.15,
+      pressed: 0.25,
+      active: 1,
+      disabled: 0,
+    },
+    border: {
+      default: 0.2,
+      hovered: 0.2,
+      pressed: 0.2,
+      active: 0.5,
+      disabled: 0.2,
+    },
+    foreground: {
+      default: 1,
+      hovered: 1,
+      pressed: 1,
+      active: 0,
+      disabled: 0.4,
+    },
+  });
 
-  let hoveredStyle: Style = {
-    background: ramps.neutral(0.1).hex(),
-    border: ramps.neutral(1.0).hex(),
-    foreground: ramps.neutral(0.9).hex(),
-  };
+  let positiveSet = buildStyleSet(ramps.green, {
+    background: {
+      default: 0,
+      hovered: 0.15,
+      pressed: 0.25,
+      active: 1,
+      disabled: 0,
+    },
+    border: {
+      default: 0.2,
+      hovered: 0.2,
+      pressed: 0.2,
+      active: 0.5,
+      disabled: 0.2,
+    },
+    foreground: {
+      default: 1,
+      hovered: 1,
+      pressed: 1,
+      active: 0,
+      disabled: 0.4,
+    },
+  });
 
-  let pressedStyle: Style = {
-    background: ramps.neutral(0.55).hex(),
-    border: ramps.neutral(0.9).hex(),
-    foreground: ramps.neutral(0.9).hex(),
-  };
+  let warningSet = buildStyleSet(ramps.yellow, {
+    background: {
+      default: 0,
+      hovered: 0.15,
+      pressed: 0.25,
+      active: 1,
+      disabled: 0,
+    },
+    border: {
+      default: 0.2,
+      hovered: 0.2,
+      pressed: 0.2,
+      active: 0.5,
+      disabled: 0.2,
+    },
+    foreground: {
+      default: 1,
+      hovered: 1,
+      pressed: 1,
+      active: 0,
+      disabled: 0.4,
+    },
+  });
 
-  let activeStyle: Style = {
-    background: ramps.neutral(0.8).hex(),
-    border: ramps.neutral(0.8).hex(),
-    foreground: ramps.neutral(0.1).hex(),
-  };
-
-  let disabledStyle: Style = {
-    background: ramps.neutral(0.25).hex(),
-    border: ramps.neutral(1).hex(),
-    foreground: ramps.neutral(0.9).hex(),
-  };
-
-  let styleSet: StyleSet = {
-    default: defaultStyle,
-    hovered: hoveredStyle,
-    pressed: pressedStyle,
-    active: activeStyle,
-    disabled: disabledStyle,
-  };
+  let negativeSet = buildStyleSet(ramps.red, {
+    background: {
+      default: 0,
+      hovered: 0.15,
+      pressed: 0.25,
+      active: 1,
+      disabled: 0,
+    },
+    border: {
+      default: 0.2,
+      hovered: 0.2,
+      pressed: 0.2,
+      active: 0.5,
+      disabled: 0.2,
+    },
+    foreground: {
+      default: 1,
+      hovered: 1,
+      pressed: 1,
+      active: 0,
+      disabled: 0.4,
+    },
+  });
 
   return {
     base: baseSet,
-    variant: styleSet,
+    variant: variantSet,
     on: onSet,
-    info: styleSet,
-    positive: styleSet,
-    warning: styleSet,
-    negative: styleSet
+    info: infoSet,
+    positive: positiveSet,
+    warning: warningSet,
+    negative: negativeSet
   };
 }
 
 function middleLayer(ramps: RampSet, isLight: boolean): Layer {
-  let defaultStyle: Style = {
-    background: ramps.neutral(0.2).hex(),
-    border: ramps.neutral(0.4).hex(),
-    foreground: ramps.neutral(1).hex(),
-  };
-
-  let hoveredStyle: Style = {
-    background: ramps.neutral(0.4).hex(),
-    border: ramps.neutral(1.0).hex(),
-    foreground: ramps.neutral(0.9).hex(),
-  };
-
-  let pressedStyle: Style = {
-    background: ramps.neutral(0.55).hex(),
-    border: ramps.neutral(0.9).hex(),
-    foreground: ramps.neutral(0.9).hex(),
-  };
-
-  let activeStyle: Style = {
-    background: ramps.neutral(0.8).hex(),
-    border: ramps.neutral(0.8).hex(),
-    foreground: ramps.neutral(0.1).hex(),
-  };
-
-  let disabledStyle: Style = {
-    background: ramps.neutral(0.25).hex(),
-    border: ramps.neutral(1).hex(),
-    foreground: ramps.neutral(0.9).hex(),
-  };
-
-  let baseSet: StyleSet = {
-    default: {
-      background: ramps.neutral(0.1).hex(),
-      border: ramps.neutral(0.2).hex(),
-      foreground: ramps.neutral(1).hex(),
+  let baseSet = buildStyleSet(ramps.neutral, {
+    background: {
+      default: 0.08,
+      hovered: 0.23,
+      pressed: 0.33,
+      active: 1,
+      disabled: 0.08,
     },
-    hovered: {
-      background: ramps.neutral(0.4).hex(),
-      border: ramps.neutral(1.0).hex(),
-      foreground: ramps.neutral(0.9).hex(),
+    border: {
+      default: 0.2,
+      hovered: 0.2,
+      pressed: 0.2,
+      active: 0.5,
+      disabled: 0.2,
     },
-    pressed: {
-      background: ramps.neutral(0.55).hex(),
-      border: ramps.neutral(0.9).hex(),
-      foreground: ramps.neutral(0.9).hex(),
+    foreground: {
+      default: 1,
+      hovered: 1,
+      pressed: 1,
+      active: 0,
+      disabled: 0.4,
     },
-    active: {
-      background: ramps.neutral(0.8).hex(),
-      border: ramps.neutral(0.8).hex(),
-      foreground: ramps.neutral(0.1).hex(),
-    },
-    disabled: {
-      background: ramps.neutral(0.25).hex(),
-      border: ramps.neutral(1).hex(),
-      foreground: ramps.neutral(0.9).hex(),
-    },
-  }
+  });
 
-  let styleSet: StyleSet = {
-    default: defaultStyle,
-    hovered: hoveredStyle,
-    pressed: pressedStyle,
-    active: activeStyle,
-    disabled: disabledStyle,
-  };
+  let variantSet = buildStyleSet(ramps.neutral, {
+    background: {
+      default: 0.08,
+      hovered: 0.23,
+      pressed: 0.33,
+      active: 1,
+      disabled: 0.08,
+    },
+    border: {
+      default: 0.2,
+      hovered: 0.2,
+      pressed: 0.2,
+      active: 0.5,
+      disabled: 0.2,
+    },
+    foreground: {
+      default: 0.7,
+      hovered: 0.7,
+      pressed: 0.7,
+      active: 0,
+      disabled: 0.4,
+    },
+  });
+
+  let onSet = buildStyleSet(ramps.neutral, {
+    background: {
+      default: 0,
+      hovered: 0.15,
+      pressed: 0.25,
+      active: 1,
+      disabled: 0,
+    },
+    border: {
+      default: 0.2,
+      hovered: 0.2,
+      pressed: 0.2,
+      active: 0.5,
+      disabled: 0.2,
+    },
+    foreground: {
+      default: 1,
+      hovered: 1,
+      pressed: 1,
+      active: 0,
+      disabled: 0.4,
+    },
+  });
+
+  let infoSet = buildStyleSet(ramps.blue, {
+    background: {
+      default: 0,
+      hovered: 0.15,
+      pressed: 0.25,
+      active: 1,
+      disabled: 0,
+    },
+    border: {
+      default: 0.2,
+      hovered: 0.2,
+      pressed: 0.2,
+      active: 0.5,
+      disabled: 0.2,
+    },
+    foreground: {
+      default: 1,
+      hovered: 1,
+      pressed: 1,
+      active: 0,
+      disabled: 0.4,
+    },
+  });
+
+  let positiveSet = buildStyleSet(ramps.green, {
+    background: {
+      default: 0,
+      hovered: 0.15,
+      pressed: 0.25,
+      active: 1,
+      disabled: 0,
+    },
+    border: {
+      default: 0.2,
+      hovered: 0.2,
+      pressed: 0.2,
+      active: 0.5,
+      disabled: 0.2,
+    },
+    foreground: {
+      default: 1,
+      hovered: 1,
+      pressed: 1,
+      active: 0,
+      disabled: 0.4,
+    },
+  });
+
+  let warningSet = buildStyleSet(ramps.yellow, {
+    background: {
+      default: 0,
+      hovered: 0.15,
+      pressed: 0.25,
+      active: 1,
+      disabled: 0,
+    },
+    border: {
+      default: 0.2,
+      hovered: 0.2,
+      pressed: 0.2,
+      active: 0.5,
+      disabled: 0.2,
+    },
+    foreground: {
+      default: 1,
+      hovered: 1,
+      pressed: 1,
+      active: 0,
+      disabled: 0.4,
+    },
+  });
+
+  let negativeSet = buildStyleSet(ramps.red, {
+    background: {
+      default: 0,
+      hovered: 0.15,
+      pressed: 0.25,
+      active: 1,
+      disabled: 0,
+    },
+    border: {
+      default: 0.2,
+      hovered: 0.2,
+      pressed: 0.2,
+      active: 0.5,
+      disabled: 0.2,
+    },
+    foreground: {
+      default: 1,
+      hovered: 1,
+      pressed: 1,
+      active: 0,
+      disabled: 0.4,
+    },
+  });
 
   return {
     base: baseSet,
-    variant: styleSet,
-    on: styleSet,
-    info: styleSet,
-    positive: styleSet,
-    warning: styleSet,
-    negative: styleSet
+    variant: variantSet,
+    on: onSet,
+    info: infoSet,
+    positive: positiveSet,
+    warning: warningSet,
+    negative: negativeSet
   };
 }
 
 function topLayer(ramps: RampSet, isLight: boolean): Layer {
 
-  let baseSet: StyleSet = {
-    default: {
-      background: ramps.neutral(0).hex(),
-      border: ramps.neutral(0.2).hex(),
-      foreground: ramps.neutral(1).hex(),
+  let baseSet = buildStyleSet(ramps.neutral, {
+    background: {
+      default: 0,
+      hovered: 0.15,
+      pressed: 0.25,
+      active: 1,
+      disabled: 0,
     },
-    hovered: {
-      background: ramps.neutral(0.4).hex(),
-      border: ramps.neutral(1.0).hex(),
-      foreground: ramps.neutral(0.9).hex(),
+    border: {
+      default: 0.2,
+      hovered: 0.2,
+      pressed: 0.2,
+      active: 0.5,
+      disabled: 0.2,
     },
-    pressed: {
-      background: ramps.neutral(0.55).hex(),
-      border: ramps.neutral(0.9).hex(),
-      foreground: ramps.neutral(0.9).hex(),
+    foreground: {
+      default: 1,
+      hovered: 1,
+      pressed: 1,
+      active: 0,
+      disabled: 0.4,
     },
-    active: {
-      background: ramps.neutral(0.8).hex(),
-      border: ramps.neutral(0.8).hex(),
-      foreground: ramps.neutral(0.1).hex(),
-    },
-    disabled: {
-      background: ramps.neutral(0.25).hex(),
-      border: ramps.neutral(1).hex(),
-      foreground: ramps.neutral(0.9).hex(),
-    },
-  }
+  });
 
-  let onSet: StyleSet = {
-    default: {
-      background: ramps.neutral(0.3).hex(),
-      border: ramps.neutral(0.5).hex(),
-      foreground: ramps.neutral(1).hex(),
+  let variantSet = buildStyleSet(ramps.neutral, {
+    background: {
+      default: 0,
+      hovered: 0.15,
+      pressed: 0.25,
+      active: 1,
+      disabled: 0,
     },
-    hovered: {
-      background: ramps.neutral(0.4).hex(),
-      border: ramps.neutral(1.0).hex(),
-      foreground: ramps.neutral(0.9).hex(),
+    border: {
+      default: 0.2,
+      hovered: 0.2,
+      pressed: 0.2,
+      active: 0.5,
+      disabled: 0.2,
     },
-    pressed: {
-      background: ramps.neutral(0.55).hex(),
-      border: ramps.neutral(0.9).hex(),
-      foreground: ramps.neutral(0.9).hex(),
+    foreground: {
+      default: 0.7,
+      hovered: 0.7,
+      pressed: 0.7,
+      active: 0,
+      disabled: 0.4,
     },
-    active: {
-      background: ramps.neutral(0.8).hex(),
-      border: ramps.neutral(0.8).hex(),
-      foreground: ramps.neutral(0.1).hex(),
-    },
-    disabled: {
-      background: ramps.neutral(0.25).hex(),
-      border: ramps.neutral(1).hex(),
-      foreground: ramps.neutral(0.9).hex(),
-    },
-  }
+  });
 
-  let infoSet: StyleSet = {
-    default: {
-      background: ramps.blue(0.3).hex(),
-      border: ramps.blue(0.5).hex(),
-      foreground: ramps.blue(1).hex(),
+  let onSet = buildStyleSet(ramps.neutral, {
+    background: {
+      default: 0.15,
+      hovered: 0.3,
+      pressed: 0.4,
+      active: 1,
+      disabled: 0,
     },
-    hovered: {
-      background: ramps.blue(0.4).hex(),
-      border: ramps.blue(1.0).hex(),
-      foreground: ramps.blue(0.9).hex(),
+    border: {
+      default: 0.2,
+      hovered: 0.2,
+      pressed: 0.2,
+      active: 0.5,
+      disabled: 0.2,
     },
-    pressed: {
-      background: ramps.blue(0.55).hex(),
-      border: ramps.blue(0.9).hex(),
-      foreground: ramps.blue(0.9).hex(),
+    foreground: {
+      default: 1,
+      hovered: 1,
+      pressed: 1,
+      active: 0,
+      disabled: 0.4,
     },
-    active: {
-      background: ramps.blue(0.8).hex(),
-      border: ramps.blue(0.8).hex(),
-      foreground: ramps.blue(0.1).hex(),
-    },
-    disabled: {
-      background: ramps.blue(0.25).hex(),
-      border: ramps.blue(1).hex(),
-      foreground: ramps.blue(0.9).hex(),
-    },
-  }
+  });
 
-  let positiveSet: StyleSet = {
-    default: {
-      background: ramps.green(0.3).hex(),
-      border: ramps.green(0.5).hex(),
-      foreground: ramps.green(1).hex(),
+  let infoSet = buildStyleSet(ramps.blue, {
+    background: {
+      default: 0,
+      hovered: 0.15,
+      pressed: 0.25,
+      active: 1,
+      disabled: 0,
     },
-    hovered: {
-      background: ramps.green(0.4).hex(),
-      border: ramps.green(1.0).hex(),
-      foreground: ramps.green(0.9).hex(),
+    border: {
+      default: 0.2,
+      hovered: 0.2,
+      pressed: 0.2,
+      active: 0.5,
+      disabled: 0.2,
     },
-    pressed: {
-      background: ramps.green(0.55).hex(),
-      border: ramps.green(0.9).hex(),
-      foreground: ramps.green(0.9).hex(),
+    foreground: {
+      default: 1,
+      hovered: 1,
+      pressed: 1,
+      active: 0,
+      disabled: 0.4,
     },
-    active: {
-      background: ramps.green(0.8).hex(),
-      border: ramps.green(0.8).hex(),
-      foreground: ramps.green(0.1).hex(),
-    },
-    disabled: {
-      background: ramps.green(0.25).hex(),
-      border: ramps.green(1).hex(),
-      foreground: ramps.green(0.9).hex(),
-    },
-  }
+  });
 
-  let warningSet: StyleSet = {
-    default: {
-      background: ramps.yellow(0.3).hex(),
-      border: ramps.yellow(0.5).hex(),
-      foreground: ramps.yellow(1).hex(),
+  let positiveSet = buildStyleSet(ramps.green, {
+    background: {
+      default: 0,
+      hovered: 0.15,
+      pressed: 0.25,
+      active: 1,
+      disabled: 0,
     },
-    hovered: {
-      background: ramps.yellow(0.4).hex(),
-      border: ramps.yellow(1.0).hex(),
-      foreground: ramps.yellow(0.9).hex(),
+    border: {
+      default: 0.2,
+      hovered: 0.2,
+      pressed: 0.2,
+      active: 0.5,
+      disabled: 0.2,
     },
-    pressed: {
-      background: ramps.yellow(0.55).hex(),
-      border: ramps.yellow(0.9).hex(),
-      foreground: ramps.yellow(0.9).hex(),
+    foreground: {
+      default: 1,
+      hovered: 1,
+      pressed: 1,
+      active: 0,
+      disabled: 0.4,
     },
-    active: {
-      background: ramps.yellow(0.8).hex(),
-      border: ramps.yellow(0.8).hex(),
-      foreground: ramps.yellow(0.1).hex(),
-    },
-    disabled: {
-      background: ramps.yellow(0.25).hex(),
-      border: ramps.yellow(1).hex(),
-      foreground: ramps.yellow(0.9).hex(),
-    },
-  }
+  });
 
-  let negativeSet: StyleSet = {
-    default: {
-      background: ramps.red(0.3).hex(),
-      border: ramps.red(0.5).hex(),
-      foreground: ramps.red(1).hex(),
+  let warningSet = buildStyleSet(ramps.yellow, {
+    background: {
+      default: 0,
+      hovered: 0.15,
+      pressed: 0.25,
+      active: 1,
+      disabled: 0,
     },
-    hovered: {
-      background: ramps.red(0.4).hex(),
-      border: ramps.red(1.0).hex(),
-      foreground: ramps.red(0.9).hex(),
+    border: {
+      default: 0.2,
+      hovered: 0.2,
+      pressed: 0.2,
+      active: 0.5,
+      disabled: 0.2,
     },
-    pressed: {
-      background: ramps.red(0.55).hex(),
-      border: ramps.red(0.9).hex(),
-      foreground: ramps.red(0.9).hex(),
+    foreground: {
+      default: 1,
+      hovered: 1,
+      pressed: 1,
+      active: 0,
+      disabled: 0.4,
     },
-    active: {
-      background: ramps.red(0.8).hex(),
-      border: ramps.red(0.8).hex(),
-      foreground: ramps.red(0.1).hex(),
+  });
+
+  let negativeSet = buildStyleSet(ramps.red, {
+    background: {
+      default: 0,
+      hovered: 0.15,
+      pressed: 0.25,
+      active: 1,
+      disabled: 0,
     },
-    disabled: {
-      background: ramps.red(0.25).hex(),
-      border: ramps.red(1).hex(),
-      foreground: ramps.red(0.9).hex(),
+    border: {
+      default: 0.2,
+      hovered: 0.2,
+      pressed: 0.2,
+      active: 0.5,
+      disabled: 0.2,
     },
-  }
-
-  let defaultStyle: Style = {
-    background: ramps.neutral(0).hex(),
-    border: ramps.neutral(0.7).hex(),
-    foreground: ramps.neutral(1).hex(),
-  };
-
-  let hoveredStyle: Style = {
-    background: ramps.neutral(0.4).hex(),
-    border: ramps.neutral(1.0).hex(),
-    foreground: ramps.neutral(0.9).hex(),
-  };
-
-  let pressedStyle: Style = {
-    background: ramps.neutral(0.55).hex(),
-    border: ramps.neutral(0.9).hex(),
-    foreground: ramps.neutral(0.9).hex(),
-  };
-
-  let activeStyle: Style = {
-    background: ramps.neutral(0.8).hex(),
-    border: ramps.neutral(0.8).hex(),
-    foreground: ramps.neutral(0.1).hex(),
-  };
-
-  let disabledStyle: Style = {
-    background: ramps.neutral(0.25).hex(),
-    border: ramps.neutral(1).hex(),
-    foreground: ramps.neutral(0.9).hex(),
-  };
-
-  let styleSet: StyleSet = {
-    default: defaultStyle,
-    hovered: hoveredStyle,
-    pressed: pressedStyle,
-    active: activeStyle,
-    disabled: disabledStyle,
-  };
+    foreground: {
+      default: 1,
+      hovered: 1,
+      pressed: 1,
+      active: 0,
+      disabled: 0.4,
+    },
+  });
 
   return {
     base: baseSet,
-    variant: styleSet,
+    variant: variantSet,
     on: onSet,
     info: infoSet,
     positive: positiveSet,
