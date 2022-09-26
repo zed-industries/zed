@@ -9,7 +9,7 @@ export default function projectPanel(colorScheme: ColorScheme) {
     indentWidth: 8,
     entry: {
       height: 24,
-      iconColor: foreground(layer, "on"),
+      iconColor: foreground(layer, "variant"),
       iconSize: 8,
       iconSpacing: 8,
       text: text(layer, "mono", "on", { size: "sm" }),
@@ -17,11 +17,11 @@ export default function projectPanel(colorScheme: ColorScheme) {
         background: background(layer, "on", "hovered"),
       },
       active: {
-        background: background(layer, "active"),
+        background: background(layer, "info", "active"),
         text: text(layer, "mono", "active", { size: "sm" }),
       },
       activeHover: {
-        background: background(layer, "hovered"),
+        background: background(layer, "info", "hovered"),
         text: text(layer, "mono", "active", { size: "sm" }),
       },
     },

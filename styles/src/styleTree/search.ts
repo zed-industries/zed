@@ -12,7 +12,7 @@ export default function search(colorScheme: ColorScheme) {
     maxWidth: 500,
     placeholderText: text(layer, "mono", "disabled"),
     selection: colorScheme.players[0],
-    text: text(layer, "mono", "active"),
+    text: text(layer, "mono", "default"),
     border: border(layer),
     margin: {
       right: 12,
