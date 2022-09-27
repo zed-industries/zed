@@ -136,12 +136,12 @@ export default function workspace(theme: Theme) {
       addParticipantPopover: {
         background: backgroundColor(theme, 300, "base"),
         cornerRadius: 6,
-        padding: 6,
+        padding: { top: 6 },
         shadow: popoverShadow(theme),
         border: border(theme, "primary"),
         margin: { top: -5 },
-        width: 255,
-        height: 200
+        width: 250,
+        height: 300
       }
     },
     toolbar: {

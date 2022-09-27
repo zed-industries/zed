@@ -20,6 +20,7 @@ use workspace::{FollowNextCollaborator, ToggleFollow, Workspace};
 actions!(contacts_titlebar_item, [ToggleAddParticipantPopover]);
 
 pub fn init(cx: &mut MutableAppContext) {
+    add_participant_popover::init(cx);
     cx.add_action(CollabTitlebarItem::toggle_add_participant_popover);
 }
 
@@ -73,8 +74,23 @@ impl CollabTitlebarItem {
         match self.add_participant_popover.take() {
             Some(_) => {}
             None => {
-                let view = cx.add_view(|_| AddParticipantPopover::new());
-                self.add_participant_popover = Some(view);
+                if let Some(workspace) = self.workspace.upgrade(cx) {
+                    let user_store = workspace.read(cx).user_store().clone();
+                    let view = cx.add_view(|cx| AddParticipantPopover::new(user_store, cx));
+                    cx.focus(&view);
+                    cx.subscribe(&view, |this, _, event, cx| {
+                        match event {
+                            add_participant_popover::Event::Dismissed => {
+                                dbg!("dismissed");
+                                this.add_participant_popover = None;
+                            }
+                        }
+
+                        cx.notify();
+                    })
+                    .detach();
+                    self.add_participant_popover = Some(view);
+                }
             }
         }
         cx.notify();
