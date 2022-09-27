@@ -108,6 +108,7 @@ fn main() {
         client::Channel::init(&client);
         client::init(client.clone(), cx);
         command_palette::init(cx);
+        contacts_titlebar_item::init(cx);
         editor::init(cx);
         go_to_line::init(cx);
         file_finder::init(cx);

@@ -16,6 +16,7 @@ export function workspaceBackground(theme: Theme) {
 
 export default function workspace(theme: Theme) {
   const titlebarPadding = 6;
+  const titlebarHeight = 33;
 
   return {
     background: backgroundColor(theme, 300),
@@ -54,7 +55,7 @@ export default function workspace(theme: Theme) {
     titlebar: {
       avatarWidth: 18,
       avatarMargin: 8,
-      height: 33,
+      height: titlebarHeight,
       background: backgroundColor(theme, 100),
       padding: {
         left: 80,
@@ -117,6 +118,16 @@ export default function workspace(theme: Theme) {
           right: 6,
         },
         cornerRadius: 6,
+      },
+      addCollaboratorButton: {
+        cornerRadius: 6,
+        color: iconColor(theme, "secondary"),
+        iconWidth: 8,
+        buttonWidth: 20,
+        hover: {
+          background: backgroundColor(theme, "on300", "hovered"),
+          color: iconColor(theme, "active"),
+        },
       },
     },
     toolbar: {

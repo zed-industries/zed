@@ -87,10 +87,10 @@ impl Room {
             return Err(anyhow!("room is offline"));
         }
 
+        cx.notify();
         self.status = RoomStatus::Offline;
         self.remote_participants.clear();
         self.client.send(proto::LeaveRoom { id: self.id })?;
-        cx.notify();
         Ok(())
     }
 
@@ -178,22 +178,6 @@ impl Room {
         &mut self,
         project: Option<&ModelHandle<Project>>,
     ) -> Task<Result<()>> {
-        if self.status.is_offline() {
-            return Task::ready(Err(anyhow!("room is offline")));
-        }
-
-        todo!()
-    }
-
-    pub fn mute(&mut self) -> Task<Result<()>> {
-        if self.status.is_offline() {
-            return Task::ready(Err(anyhow!("room is offline")));
-        }
-
-        todo!()
-    }
-
-    pub fn unmute(&mut self) -> Task<Result<()>> {
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
         }

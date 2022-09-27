@@ -74,6 +74,7 @@ pub struct Titlebar {
     pub avatar: ImageStyle,
     pub sign_in_prompt: Interactive<ContainedText>,
     pub outdated_warning: ContainedText,
+    pub add_collaborator_button: Interactive<IconButton>,
 }
 
 #[derive(Clone, Deserialize, Default)]

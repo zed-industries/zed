@@ -4,14 +4,26 @@ use gpui::{
     color::Color,
     elements::*,
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
+    impl_internal_actions,
     json::{self, ToJson},
-    Border, CursorStyle, Entity, ImageData, MouseButton, RenderContext, Subscription, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    Border, CursorStyle, Entity, ImageData, MouseButton, MutableAppContext, RenderContext,
+    Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
 use std::{ops::Range, sync::Arc};
 use theme::Theme;
 use workspace::{FollowNextCollaborator, ToggleFollow, Workspace};
+
+impl_internal_actions!(contacts_titlebar_item, [ToggleAddContactsPopover]);
+
+pub fn init(cx: &mut MutableAppContext) {
+    cx.add_action(ContactsTitlebarItem::toggle_add_contacts_popover);
+}
+
+#[derive(Clone, PartialEq)]
+struct ToggleAddContactsPopover {
+    button_rect: RectF,
+}
 
 pub struct ContactsTitlebarItem {
     workspace: WeakViewHandle<Workspace>,
@@ -36,6 +48,7 @@ impl View for ContactsTitlebarItem {
 
         let theme = cx.global::<Settings>().theme.clone();
         Flex::row()
+            .with_children(self.render_toggle_contacts_button(&workspace, &theme, cx))
             .with_children(self.render_collaborators(&workspace, &theme, cx))
             .with_children(self.render_current_user(&workspace, &theme, cx))
             .with_children(self.render_connection_status(&workspace, cx))
@@ -50,6 +63,54 @@ impl ContactsTitlebarItem {
             workspace: workspace.downgrade(),
             _subscriptions: vec![observe_workspace],
         }
+    }
+
+    fn toggle_add_contacts_popover(
+        &mut self,
+        _action: &ToggleAddContactsPopover,
+        _cx: &mut ViewContext<Self>,
+    ) {
+        dbg!("!!!!!!!!!");
+    }
+
+    fn render_toggle_contacts_button(
+        &self,
+        workspace: &ViewHandle<Workspace>,
+        theme: &Theme,
+        cx: &mut RenderContext<Self>,
+    ) -> Option<ElementBox> {
+        if !workspace.read(cx).client().status().borrow().is_connected() {
+            return None;
+        }
+
+        Some(
+            MouseEventHandler::<ToggleAddContactsPopover>::new(0, cx, |state, _| {
+                let style = theme
+                    .workspace
+                    .titlebar
+                    .add_collaborator_button
+                    .style_for(state, false);
+                Svg::new("icons/plus_8.svg")
+                    .with_color(style.color)
+                    .constrained()
+                    .with_width(style.icon_width)
+                    .aligned()
+                    .constrained()
+                    .with_width(style.button_width)
+                    .with_height(style.button_width)
+                    .contained()
+                    .with_style(style.container)
+                    .boxed()
+            })
+            .with_cursor_style(CursorStyle::PointingHand)
+            .on_click(MouseButton::Left, |event, cx| {
+                cx.dispatch_action(ToggleAddContactsPopover {
+                    button_rect: event.region,
+                });
+            })
+            .aligned()
+            .boxed(),
+        )
     }
 
     fn render_collaborators(
