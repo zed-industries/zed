@@ -39,9 +39,9 @@ struct TelemetryState {
 const AMPLITUDE_EVENTS_URL: &'static str = "https://api2.amplitude.com/batch";
 
 lazy_static! {
-    static ref AMPLITUDE_API_KEY: Option<String> = option_env!("AMPLITUDE_API_KEY")
-        .map(|key| key.to_string())
-        .or(std::env::var("AMPLITUDE_API_KEY").ok());
+    static ref AMPLITUDE_API_KEY: Option<String> = std::env::var("ZED_AMPLITUDE_API_KEY")
+        .ok()
+        .or_else(|| option_env!("ZED_AMPLITUDE_API_KEY").map(|key| key.to_string()));
 }
 
 #[derive(Serialize)]
