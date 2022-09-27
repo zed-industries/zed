@@ -13,6 +13,7 @@ pub use client;
 use collections::VecDeque;
 pub use contacts_panel;
 use contacts_panel::ContactsPanel;
+use contacts_titlebar_item::ContactsTitlebarItem;
 pub use editor;
 use editor::{Editor, MultiBuffer};
 use gpui::{
@@ -224,7 +225,8 @@ pub fn initialize_workspace(
     app_state: &Arc<AppState>,
     cx: &mut ViewContext<Workspace>,
 ) {
-    cx.subscribe(&cx.handle(), {
+    let workspace_handle = cx.handle();
+    cx.subscribe(&workspace_handle, {
         move |_, _, event, cx| {
             if let workspace::Event::PaneAdded(pane) = event {
                 pane.update(cx, |pane, cx| {
@@ -277,6 +279,9 @@ pub fn initialize_workspace(
             }
         }));
     });
+
+    let contacts_titlebar_item = cx.add_view(|cx| ContactsTitlebarItem::new(&workspace_handle, cx));
+    workspace.set_titlebar_item(contacts_titlebar_item, cx);
 
     let project_panel = ProjectPanel::new(workspace.project().clone(), cx);
     let contact_panel = cx.add_view(|cx| {

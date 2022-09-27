@@ -13,25 +13,19 @@ mod toolbar;
 mod waiting_room;
 
 use anyhow::{anyhow, Context, Result};
-use client::{
-    proto, Authenticate, Client, Contact, PeerId, Subscription, TypedEnvelope, User, UserStore,
-};
-use clock::ReplicaId;
+use client::{proto, Client, Contact, PeerId, Subscription, TypedEnvelope, UserStore};
 use collections::{hash_map, HashMap, HashSet};
 use dock::{DefaultItemFactory, Dock, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
 use futures::{channel::oneshot, FutureExt};
 use gpui::{
     actions,
-    color::Color,
     elements::*,
-    geometry::{rect::RectF, vector::vec2f, PathBuilder},
     impl_actions, impl_internal_actions,
-    json::{self, ToJson},
     platform::{CursorStyle, WindowOptions},
-    AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Border, Entity, ImageData,
-    ModelContext, ModelHandle, MouseButton, MutableAppContext, PathPromptOptions, PromptLevel,
-    RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
+    MouseButton, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::LanguageRegistry;
 use log::{error, warn};
@@ -53,7 +47,6 @@ use std::{
     fmt,
     future::Future,
     mem,
-    ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
@@ -895,6 +888,7 @@ pub struct Workspace {
     active_pane: ViewHandle<Pane>,
     last_active_center_pane: Option<ViewHandle<Pane>>,
     status_bar: ViewHandle<StatusBar>,
+    titlebar_item: Option<AnyViewHandle>,
     dock: Dock,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: ModelHandle<Project>,
@@ -1024,6 +1018,7 @@ impl Workspace {
             active_pane: center_pane.clone(),
             last_active_center_pane: Some(center_pane.clone()),
             status_bar,
+            titlebar_item: None,
             notifications: Default::default(),
             client,
             remote_entity_subscription: None,
@@ -1066,6 +1061,19 @@ impl Workspace {
 
     pub fn project(&self) -> &ModelHandle<Project> {
         &self.project
+    }
+
+    pub fn client(&self) -> &Arc<Client> {
+        &self.client
+    }
+
+    pub fn set_titlebar_item(
+        &mut self,
+        item: impl Into<AnyViewHandle>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.titlebar_item = Some(item.into());
+        cx.notify();
     }
 
     /// Call the given callback with a workspace whose project is local.
@@ -1968,46 +1976,12 @@ impl Workspace {
         None
     }
 
-    fn render_connection_status(&self, cx: &mut RenderContext<Self>) -> Option<ElementBox> {
-        let theme = &cx.global::<Settings>().theme;
-        match &*self.client.status().borrow() {
-            client::Status::ConnectionError
-            | client::Status::ConnectionLost
-            | client::Status::Reauthenticating { .. }
-            | client::Status::Reconnecting { .. }
-            | client::Status::ReconnectionError { .. } => Some(
-                Container::new(
-                    Align::new(
-                        ConstrainedBox::new(
-                            Svg::new("icons/cloud_slash_12.svg")
-                                .with_color(theme.workspace.titlebar.offline_icon.color)
-                                .boxed(),
-                        )
-                        .with_width(theme.workspace.titlebar.offline_icon.width)
-                        .boxed(),
-                    )
-                    .boxed(),
-                )
-                .with_style(theme.workspace.titlebar.offline_icon.container)
-                .boxed(),
-            ),
-            client::Status::UpgradeRequired => Some(
-                Label::new(
-                    "Please update Zed to collaborate".to_string(),
-                    theme.workspace.titlebar.outdated_warning.text.clone(),
-                )
-                .contained()
-                .with_style(theme.workspace.titlebar.outdated_warning.container)
-                .aligned()
-                .boxed(),
-            ),
-            _ => None,
-        }
+    pub fn is_following(&self, peer_id: PeerId) -> bool {
+        self.follower_states_by_leader.contains_key(&peer_id)
     }
 
     fn render_titlebar(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
         let project = &self.project.read(cx);
-        let replica_id = project.replica_id();
         let mut worktree_root_names = String::new();
         for (i, name) in project.worktree_root_names(cx).enumerate() {
             if i > 0 {
@@ -2029,7 +2003,7 @@ impl Workspace {
 
         enum TitleBar {}
         ConstrainedBox::new(
-            MouseEventHandler::<TitleBar>::new(0, cx, |_, cx| {
+            MouseEventHandler::<TitleBar>::new(0, cx, |_, _| {
                 Container::new(
                     Stack::new()
                         .with_child(
@@ -2038,21 +2012,10 @@ impl Workspace {
                                 .left()
                                 .boxed(),
                         )
-                        .with_child(
-                            Align::new(
-                                Flex::row()
-                                    .with_children(self.render_collaborators(theme, cx))
-                                    .with_children(self.render_current_user(
-                                        self.user_store.read(cx).current_user().as_ref(),
-                                        replica_id,
-                                        theme,
-                                        cx,
-                                    ))
-                                    .with_children(self.render_connection_status(cx))
-                                    .boxed(),
-                            )
-                            .right()
-                            .boxed(),
+                        .with_children(
+                            self.titlebar_item
+                                .as_ref()
+                                .map(|item| ChildView::new(item).aligned().right().boxed()),
                         )
                         .boxed(),
                 )
@@ -2118,125 +2081,6 @@ impl Workspace {
         if is_edited != self.window_edited {
             self.window_edited = is_edited;
             cx.set_window_edited(self.window_edited)
-        }
-    }
-
-    fn render_collaborators(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> Vec<ElementBox> {
-        let mut collaborators = self
-            .project
-            .read(cx)
-            .collaborators()
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        collaborators.sort_unstable_by_key(|collaborator| collaborator.replica_id);
-        collaborators
-            .into_iter()
-            .filter_map(|collaborator| {
-                Some(self.render_avatar(
-                    collaborator.user.avatar.clone()?,
-                    collaborator.replica_id,
-                    Some((collaborator.peer_id, &collaborator.user.github_login)),
-                    theme,
-                    cx,
-                ))
-            })
-            .collect()
-    }
-
-    fn render_current_user(
-        &self,
-        user: Option<&Arc<User>>,
-        replica_id: ReplicaId,
-        theme: &Theme,
-        cx: &mut RenderContext<Self>,
-    ) -> Option<ElementBox> {
-        let status = *self.client.status().borrow();
-        if let Some(avatar) = user.and_then(|user| user.avatar.clone()) {
-            Some(self.render_avatar(avatar, replica_id, None, theme, cx))
-        } else if matches!(status, client::Status::UpgradeRequired) {
-            None
-        } else {
-            Some(
-                MouseEventHandler::<Authenticate>::new(0, cx, |state, _| {
-                    let style = theme
-                        .workspace
-                        .titlebar
-                        .sign_in_prompt
-                        .style_for(state, false);
-                    Label::new("Sign in".to_string(), style.text.clone())
-                        .contained()
-                        .with_style(style.container)
-                        .boxed()
-                })
-                .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(Authenticate))
-                .with_cursor_style(CursorStyle::PointingHand)
-                .aligned()
-                .boxed(),
-            )
-        }
-    }
-
-    fn render_avatar(
-        &self,
-        avatar: Arc<ImageData>,
-        replica_id: ReplicaId,
-        peer: Option<(PeerId, &str)>,
-        theme: &Theme,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
-        let replica_color = theme.editor.replica_selection_style(replica_id).cursor;
-        let is_followed = peer.map_or(false, |(peer_id, _)| {
-            self.follower_states_by_leader.contains_key(&peer_id)
-        });
-        let mut avatar_style = theme.workspace.titlebar.avatar;
-        if is_followed {
-            avatar_style.border = Border::all(1.0, replica_color);
-        }
-        let content = Stack::new()
-            .with_child(
-                Image::new(avatar)
-                    .with_style(avatar_style)
-                    .constrained()
-                    .with_width(theme.workspace.titlebar.avatar_width)
-                    .aligned()
-                    .boxed(),
-            )
-            .with_child(
-                AvatarRibbon::new(replica_color)
-                    .constrained()
-                    .with_width(theme.workspace.titlebar.avatar_ribbon.width)
-                    .with_height(theme.workspace.titlebar.avatar_ribbon.height)
-                    .aligned()
-                    .bottom()
-                    .boxed(),
-            )
-            .constrained()
-            .with_width(theme.workspace.titlebar.avatar_width)
-            .contained()
-            .with_margin_left(theme.workspace.titlebar.avatar_margin)
-            .boxed();
-
-        if let Some((peer_id, peer_github_login)) = peer {
-            MouseEventHandler::<ToggleFollow>::new(replica_id.into(), cx, move |_, _| content)
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, cx| {
-                    cx.dispatch_action(ToggleFollow(peer_id))
-                })
-                .with_tooltip::<ToggleFollow, _>(
-                    peer_id.0 as usize,
-                    if is_followed {
-                        format!("Unfollow {}", peer_github_login)
-                    } else {
-                        format!("Follow {}", peer_github_login)
-                    },
-                    Some(Box::new(FollowNextCollaborator)),
-                    theme.tooltip.clone(),
-                    cx,
-                )
-                .boxed()
-        } else {
-            content
         }
     }
 
@@ -2711,87 +2555,6 @@ impl WorkspaceHandle for ViewHandle<Workspace> {
                 })
             })
             .collect::<Vec<_>>()
-    }
-}
-
-pub struct AvatarRibbon {
-    color: Color,
-}
-
-impl AvatarRibbon {
-    pub fn new(color: Color) -> AvatarRibbon {
-        AvatarRibbon { color }
-    }
-}
-
-impl Element for AvatarRibbon {
-    type LayoutState = ();
-
-    type PaintState = ();
-
-    fn layout(
-        &mut self,
-        constraint: gpui::SizeConstraint,
-        _: &mut gpui::LayoutContext,
-    ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
-        (constraint.max, ())
-    }
-
-    fn paint(
-        &mut self,
-        bounds: gpui::geometry::rect::RectF,
-        _: gpui::geometry::rect::RectF,
-        _: &mut Self::LayoutState,
-        cx: &mut gpui::PaintContext,
-    ) -> Self::PaintState {
-        let mut path = PathBuilder::new();
-        path.reset(bounds.lower_left());
-        path.curve_to(
-            bounds.origin() + vec2f(bounds.height(), 0.),
-            bounds.origin(),
-        );
-        path.line_to(bounds.upper_right() - vec2f(bounds.height(), 0.));
-        path.curve_to(bounds.lower_right(), bounds.upper_right());
-        path.line_to(bounds.lower_left());
-        cx.scene.push_path(path.build(self.color, None));
-    }
-
-    fn dispatch_event(
-        &mut self,
-        _: &gpui::Event,
-        _: RectF,
-        _: RectF,
-        _: &mut Self::LayoutState,
-        _: &mut Self::PaintState,
-        _: &mut gpui::EventContext,
-    ) -> bool {
-        false
-    }
-
-    fn rect_for_text_range(
-        &self,
-        _: Range<usize>,
-        _: RectF,
-        _: RectF,
-        _: &Self::LayoutState,
-        _: &Self::PaintState,
-        _: &gpui::MeasurementContext,
-    ) -> Option<RectF> {
-        None
-    }
-
-    fn debug(
-        &self,
-        bounds: gpui::geometry::rect::RectF,
-        _: &Self::LayoutState,
-        _: &Self::PaintState,
-        _: &gpui::DebugContext,
-    ) -> gpui::json::Value {
-        json::json!({
-            "type": "AvatarRibbon",
-            "bounds": bounds.to_json(),
-            "color": self.color.to_json(),
-        })
     }
 }
 

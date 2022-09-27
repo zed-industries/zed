@@ -12,7 +12,6 @@ test-support = ["client/test-support", "project/test-support", "settings/test-su
 
 [dependencies]
 client = { path = "../client" }
-clock = { path = "../clock" }
 collections = { path = "../collections" }
 context_menu = { path = "../context_menu" }
 drag_and_drop = { path = "../drag_and_drop" }
