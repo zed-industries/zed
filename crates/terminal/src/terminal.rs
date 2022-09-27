@@ -41,7 +41,7 @@ use std::{
     collections::{HashMap, VecDeque},
     fmt::Display,
     io,
-    ops::{Deref, RangeInclusive, Sub},
+    ops::{Deref, Index, RangeInclusive, Sub},
     os::unix::{prelude::AsRawFd, process::CommandExt},
     path::PathBuf,
     process::Command,
@@ -110,7 +110,7 @@ enum InternalEvent {
     SetSelection(Option<(Selection, Point)>),
     UpdateSelection(Vector2F),
     // Adjusted mouse position, should open
-    Hyperlink(Vector2F, bool),
+    FindHyperlink(Vector2F, bool),
     Copy,
 }
 
@@ -617,12 +617,6 @@ impl Terminal {
 
                 self.pty_tx.0.send(Msg::Resize((new_size).into())).ok();
 
-                // When this resize happens
-                // We go from 737px -> 703px height
-                // This means there is 1 less line
-                // that means the delta is 1
-                // That means the selection is rotated by -1
-
                 term.resize(new_size);
             }
             InternalEvent::Clear => {
@@ -631,6 +625,7 @@ impl Terminal {
             }
             InternalEvent::Scroll(scroll) => {
                 term.scroll_display(*scroll);
+                self.refresh_hyperlink();
             }
             InternalEvent::SetSelection(selection) => {
                 term.selection = selection.as_ref().map(|(sel, _)| sel.clone());
@@ -662,19 +657,61 @@ impl Terminal {
                     cx.write_to_clipboard(ClipboardItem::new(txt))
                 }
             }
-            InternalEvent::ScrollToPoint(point) => term.scroll_to_point(*point),
-            InternalEvent::Hyperlink(position, open) => {
+            InternalEvent::ScrollToPoint(point) => {
+                term.scroll_to_point(*point);
+                self.refresh_hyperlink();
+            }
+            InternalEvent::FindHyperlink(position, open) => {
                 let prev_hyperlink = self.last_content.last_hovered_hyperlink.take();
 
                 let point = grid_point(
                     *position,
                     self.last_content.size,
                     term.grid().display_offset(),
-                );
+                )
+                .grid_clamp(term, alacritty_terminal::index::Boundary::Cursor);
 
-                if let Some(url_match) = regex_match_at(term, point, &URL_REGEX) {
+                let link = term.grid().index(point).hyperlink();
+                let found_url = if link.is_some() {
+                    let mut min_index = point;
+                    loop {
+                        let new_min_index =
+                            min_index.sub(term, alacritty_terminal::index::Boundary::Cursor, 1);
+                        if new_min_index == min_index {
+                            break;
+                        } else if term.grid().index(new_min_index).hyperlink() != link {
+                            break;
+                        } else {
+                            min_index = new_min_index
+                        }
+                    }
+
+                    let mut max_index = point;
+                    loop {
+                        let new_max_index =
+                            max_index.add(term, alacritty_terminal::index::Boundary::Cursor, 1);
+                        if new_max_index == max_index {
+                            break;
+                        } else if term.grid().index(new_max_index).hyperlink() != link {
+                            break;
+                        } else {
+                            max_index = new_max_index
+                        }
+                    }
+
+                    let url = link.unwrap().uri().to_owned();
+                    let url_match = min_index..=max_index;
+
+                    Some((url, url_match))
+                } else if let Some(url_match) = regex_match_at(term, point, &URL_REGEX) {
                     let url = term.bounds_to_string(*url_match.start(), *url_match.end());
 
+                    Some((url, url_match))
+                } else {
+                    None
+                };
+
+                if let Some((url, url_match)) = found_url {
                     if *open {
                         open_uri(&url).log_err();
                     } else {
@@ -774,7 +811,8 @@ impl Terminal {
         } else {
             text.replace("\r\n", "\r").replace('\n', "\r")
         };
-        self.input(paste_text)
+
+        self.input(paste_text);
     }
 
     pub fn try_sync(&mut self, cx: &mut ModelContext<Self>) {
@@ -880,8 +918,6 @@ impl Terminal {
     }
 
     pub fn mouse_move(&mut self, e: &MouseMovedEvent, origin: Vector2F) {
-        let prev_hyperlink = self.last_content.last_hovered_hyperlink.take();
-
         let position = e.position.sub(origin);
         self.last_mouse_position = Some(position);
         if self.mouse_mode(e.shift) {
@@ -898,54 +934,16 @@ impl Terminal {
                 }
             }
         } else {
-            self.fill_hyperlink(Some(position), prev_hyperlink);
+            self.hyperlink_from_position(Some(position));
         }
     }
 
-    fn fill_hyperlink(
-        &mut self,
-        position: Option<Vector2F>,
-        prev_hyperlink: Option<(String, RangeInclusive<Point>, usize)>,
-    ) {
+    fn hyperlink_from_position(&mut self, position: Option<Vector2F>) {
         if self.selection_phase == SelectionPhase::Selecting {
             self.last_content.last_hovered_hyperlink = None;
         } else if let Some(position) = position {
-            let content_index = content_index_for_mouse(position, &self.last_content);
-            let link = self.last_content.cells[content_index].hyperlink();
-            if link.is_some() {
-                let mut min_index = content_index;
-                loop {
-                    if min_index >= 1 && self.last_content.cells[min_index - 1].hyperlink() == link
-                    {
-                        min_index = min_index - 1;
-                    } else {
-                        break;
-                    }
-                }
-
-                let mut max_index = content_index;
-                let len = self.last_content.cells.len();
-                loop {
-                    if max_index < len - 1
-                        && self.last_content.cells[max_index + 1].hyperlink() == link
-                    {
-                        max_index = max_index + 1;
-                    } else {
-                        break;
-                    }
-                }
-
-                if let Some(link) = link {
-                    let url = link.uri().to_owned();
-                    let url_match = self.last_content.cells[min_index].point
-                        ..=self.last_content.cells[max_index].point;
-
-                    self.update_hyperlink(prev_hyperlink, url, url_match);
-                };
-            } else {
-                self.events
-                    .push_back(InternalEvent::Hyperlink(position, false));
-            }
+            self.events
+                .push_back(InternalEvent::FindHyperlink(position, false));
         }
     }
 
@@ -1022,7 +1020,7 @@ impl Terminal {
                     open_uri(link.uri()).log_err();
                 } else {
                     self.events
-                        .push_back(InternalEvent::Hyperlink(position, true));
+                        .push_back(InternalEvent::FindHyperlink(position, true));
                 }
             }
 
@@ -1111,15 +1109,8 @@ impl Terminal {
         }
     }
 
-    pub fn refresh_hyperlink(&mut self, cmd: bool) -> bool {
-        let prev_hyperlink = self.last_content.last_hovered_hyperlink.take();
-
-        if cmd {
-            self.fill_hyperlink(self.last_mouse_position, prev_hyperlink);
-            true
-        } else {
-            false
-        }
+    pub fn refresh_hyperlink(&mut self) {
+        self.hyperlink_from_position(self.last_mouse_position);
     }
 
     fn determine_scroll_lines(

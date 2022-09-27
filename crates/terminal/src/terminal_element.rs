@@ -15,9 +15,9 @@ use gpui::{
     },
     serde_json::json,
     text_layout::{Line, RunStyle},
-    Element, ElementBox, Event, EventContext, FontCache, KeyDownEvent, ModelContext,
-    ModifiersChangedEvent, MouseButton, MouseRegion, PaintContext, Quad, SizeConstraint,
-    TextLayoutCache, WeakModelHandle, WeakViewHandle,
+    Element, ElementBox, Event, EventContext, FontCache, KeyDownEvent, ModelContext, MouseButton,
+    MouseRegion, PaintContext, Quad, SizeConstraint, TextLayoutCache, WeakModelHandle,
+    WeakViewHandle,
 };
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
@@ -842,18 +842,6 @@ impl Element for TerminalElement {
                                 .unwrap_or(false),
                         )
                     })
-                })
-                .unwrap_or(false)
-        } else if let Event::ModifiersChanged(ModifiersChangedEvent { cmd, .. }) = event {
-            self.terminal
-                .upgrade(cx.app)
-                .map(|model_handle| {
-                    if model_handle.update(cx.app, |term, _| term.refresh_hyperlink(*cmd)) {
-                        cx.notify();
-                        true
-                    } else {
-                        false
-                    }
                 })
                 .unwrap_or(false)
         } else {
