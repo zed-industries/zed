@@ -521,6 +521,14 @@ fn open_telemetry_log_file(
             let workspace = workspace.upgrade(&cx)?;
             let path = app_state.client.telemetry_log_file_path()?;
             let log = app_state.fs.load(&path).await.log_err()?;
+
+            const MAX_TELEMETRY_LOG_LEN: usize = 5 * 1024 * 1024;
+            let mut start_offset = log.len().saturating_sub(MAX_TELEMETRY_LOG_LEN);
+            if let Some(newline_offset) = log[start_offset..].find('\n') {
+                start_offset += newline_offset + 1;
+            }
+            let log_suffix = &log[start_offset..];
+
             workspace.update(&mut cx, |workspace, cx| {
                 let project = workspace.project().clone();
                 let buffer = project
@@ -534,13 +542,14 @@ fn open_telemetry_log_file(
                             concat!(
                                 "// Zed collects anonymous usage data to help us understand how people are using the app.\n",
                                 "// After the beta release, we'll provide the ability to opt out of this telemetry.\n",
+                                "// Here is the data that has been reported for the current session:\n",
                                 "\n"
                             ),
                         )],
                         None,
                         cx,
                     );
-                    buffer.edit([(buffer.len()..buffer.len(), log)], None, cx);
+                    buffer.edit([(buffer.len()..buffer.len(), log_suffix)], None, cx);
                 });
 
                 let buffer = cx.add_model(|cx| {
