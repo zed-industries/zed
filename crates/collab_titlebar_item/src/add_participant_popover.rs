@@ -298,36 +298,21 @@ impl AddParticipantPopover {
             }
         }
 
-        let current_user = user_store.current_user();
-
         let contacts = user_store.contacts();
         if !contacts.is_empty() {
             // Always put the current user first.
             self.match_candidates.clear();
-            self.match_candidates.reserve(contacts.len());
-            self.match_candidates.push(StringMatchCandidate {
-                id: 0,
-                string: Default::default(),
-                char_bag: Default::default(),
-            });
-            for (ix, contact) in contacts.iter().enumerate() {
-                let candidate = StringMatchCandidate {
-                    id: ix,
-                    string: contact.user.github_login.clone(),
-                    char_bag: contact.user.github_login.chars().collect(),
-                };
-                if current_user
-                    .as_ref()
-                    .map_or(false, |current_user| current_user.id == contact.user.id)
-                {
-                    self.match_candidates[0] = candidate;
-                } else {
-                    self.match_candidates.push(candidate);
-                }
-            }
-            if self.match_candidates[0].string.is_empty() {
-                self.match_candidates.remove(0);
-            }
+            self.match_candidates
+                .extend(
+                    contacts
+                        .iter()
+                        .enumerate()
+                        .map(|(ix, contact)| StringMatchCandidate {
+                            id: ix,
+                            string: contact.user.github_login.clone(),
+                            char_bag: contact.user.github_login.chars().collect(),
+                        }),
+                );
 
             let matches = executor.block(match_strings(
                 &self.match_candidates,

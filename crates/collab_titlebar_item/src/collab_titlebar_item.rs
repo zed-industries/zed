@@ -81,7 +81,6 @@ impl CollabTitlebarItem {
                     cx.subscribe(&view, |this, _, event, cx| {
                         match event {
                             add_participant_popover::Event::Dismissed => {
-                                dbg!("dismissed");
                                 this.add_participant_popover = None;
                             }
                         }

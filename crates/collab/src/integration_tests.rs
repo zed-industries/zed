@@ -3909,78 +3909,122 @@ async fn test_contacts(
         .await;
 
     deterministic.run_until_parked();
-    for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
-        client.user_store.read_with(*cx, |store, _| {
-            assert_eq!(
-                contacts(store),
-                [
-                    ("user_a", true, vec![]),
-                    ("user_b", true, vec![]),
-                    ("user_c", true, vec![])
-                ],
-                "{} has the wrong contacts",
-                client.username
-            )
-        });
-    }
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), true, vec![]),
+            ("user_c".to_string(), true, vec![])
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), true, vec![]),
+            ("user_c".to_string(), true, vec![])
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), true, vec![]),
+            ("user_b".to_string(), true, vec![])
+        ]
+    );
 
     // Share a project as client A.
     client_a.fs.create_dir(Path::new("/a")).await.unwrap();
     let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
 
     deterministic.run_until_parked();
-    for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
-        client.user_store.read_with(*cx, |store, _| {
-            assert_eq!(
-                contacts(store),
-                [
-                    ("user_a", true, vec![("a", vec![])]),
-                    ("user_b", true, vec![]),
-                    ("user_c", true, vec![])
-                ],
-                "{} has the wrong contacts",
-                client.username
-            )
-        });
-    }
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), true, vec![]),
+            ("user_c".to_string(), true, vec![])
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), true, vec![("a".to_string(), vec![])]),
+            ("user_c".to_string(), true, vec![])
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), true, vec![("a".to_string(), vec![])]),
+            ("user_b".to_string(), true, vec![])
+        ]
+    );
 
     let _project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
 
     deterministic.run_until_parked();
-    for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
-        client.user_store.read_with(*cx, |store, _| {
-            assert_eq!(
-                contacts(store),
-                [
-                    ("user_a", true, vec![("a", vec!["user_b"])]),
-                    ("user_b", true, vec![]),
-                    ("user_c", true, vec![])
-                ],
-                "{} has the wrong contacts",
-                client.username
-            )
-        });
-    }
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), true, vec![]),
+            ("user_c".to_string(), true, vec![])
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            (
+                "user_a".to_string(),
+                true,
+                vec![("a".to_string(), vec!["user_b".to_string()])]
+            ),
+            ("user_c".to_string(), true, vec![])
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            (
+                "user_a".to_string(),
+                true,
+                vec![("a".to_string(), vec!["user_b".to_string()])]
+            ),
+            ("user_b".to_string(), true, vec![])
+        ]
+    );
 
     // Add a local project as client B
     client_a.fs.create_dir("/b".as_ref()).await.unwrap();
     let (_project_b, _) = client_b.build_local_project("/b", cx_b).await;
 
     deterministic.run_until_parked();
-    for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
-        client.user_store.read_with(*cx, |store, _| {
-            assert_eq!(
-                contacts(store),
-                [
-                    ("user_a", true, vec![("a", vec!["user_b"])]),
-                    ("user_b", true, vec![("b", vec![])]),
-                    ("user_c", true, vec![])
-                ],
-                "{} has the wrong contacts",
-                client.username
-            )
-        });
-    }
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), true, vec![("b".to_string(), vec![])]),
+            ("user_c".to_string(), true, vec![])
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            (
+                "user_a".to_string(),
+                true,
+                vec![("a".to_string(), vec!["user_b".to_string()])]
+            ),
+            ("user_c".to_string(), true, vec![])
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            (
+                "user_a".to_string(),
+                true,
+                vec![("a".to_string(), vec!["user_b".to_string()])]
+            ),
+            ("user_b".to_string(), true, vec![("b".to_string(), vec![])])
+        ]
+    );
 
     project_a
         .condition(cx_a, |project, _| {
@@ -3990,41 +4034,46 @@ async fn test_contacts(
 
     cx_a.update(move |_| drop(project_a));
     deterministic.run_until_parked();
-    for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
-        client.user_store.read_with(*cx, |store, _| {
-            assert_eq!(
-                contacts(store),
-                [
-                    ("user_a", true, vec![]),
-                    ("user_b", true, vec![("b", vec![])]),
-                    ("user_c", true, vec![])
-                ],
-                "{} has the wrong contacts",
-                client.username
-            )
-        });
-    }
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), true, vec![("b".to_string(), vec![])]),
+            ("user_c".to_string(), true, vec![])
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), true, vec![]),
+            ("user_c".to_string(), true, vec![])
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), true, vec![]),
+            ("user_b".to_string(), true, vec![("b".to_string(), vec![])])
+        ]
+    );
 
     server.disconnect_client(client_c.current_user_id(cx_c));
     server.forbid_connections();
     deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
-    for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b)] {
-        client.user_store.read_with(*cx, |store, _| {
-            assert_eq!(
-                contacts(store),
-                [
-                    ("user_a", true, vec![]),
-                    ("user_b", true, vec![("b", vec![])]),
-                    ("user_c", false, vec![])
-                ],
-                "{} has the wrong contacts",
-                client.username
-            )
-        });
-    }
-    client_c
-        .user_store
-        .read_with(cx_c, |store, _| assert_eq!(contacts(store), []));
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), true, vec![("b".to_string(), vec![])]),
+            ("user_c".to_string(), false, vec![])
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), true, vec![]),
+            ("user_c".to_string(), false, vec![])
+        ]
+    );
+    assert_eq!(contacts(&client_c, cx_c), []);
 
     server.allow_connections();
     client_c
@@ -4033,40 +4082,52 @@ async fn test_contacts(
         .unwrap();
 
     deterministic.run_until_parked();
-    for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
-        client.user_store.read_with(*cx, |store, _| {
-            assert_eq!(
-                contacts(store),
-                [
-                    ("user_a", true, vec![]),
-                    ("user_b", true, vec![("b", vec![])]),
-                    ("user_c", true, vec![])
-                ],
-                "{} has the wrong contacts",
-                client.username
-            )
-        });
-    }
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), true, vec![("b".to_string(), vec![])]),
+            ("user_c".to_string(), true, vec![])
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), true, vec![]),
+            ("user_c".to_string(), true, vec![])
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), true, vec![]),
+            ("user_b".to_string(), true, vec![("b".to_string(), vec![])])
+        ]
+    );
 
     #[allow(clippy::type_complexity)]
-    fn contacts(user_store: &UserStore) -> Vec<(&str, bool, Vec<(&str, Vec<&str>)>)> {
-        user_store
-            .contacts()
-            .iter()
-            .map(|contact| {
-                let projects = contact
-                    .projects
-                    .iter()
-                    .map(|p| {
-                        (
-                            p.visible_worktree_root_names[0].as_str(),
-                            p.guests.iter().map(|p| p.github_login.as_str()).collect(),
-                        )
-                    })
-                    .collect();
-                (contact.user.github_login.as_str(), contact.online, projects)
-            })
-            .collect()
+    fn contacts(
+        client: &TestClient,
+        cx: &TestAppContext,
+    ) -> Vec<(String, bool, Vec<(String, Vec<String>)>)> {
+        client.user_store.read_with(cx, |store, _| {
+            store
+                .contacts()
+                .iter()
+                .map(|contact| {
+                    let projects = contact
+                        .projects
+                        .iter()
+                        .map(|p| {
+                            (
+                                p.visible_worktree_root_names[0].clone(),
+                                p.guests.iter().map(|p| p.github_login.clone()).collect(),
+                            )
+                        })
+                        .collect();
+                    (contact.user.github_login.clone(), contact.online, projects)
+                })
+                .collect()
+        })
     }
 }
 
@@ -4169,18 +4230,18 @@ async fn test_contact_requests(
 
     // User B sees user A as their contact now in all client, and the incoming request from them is removed.
     let contacts_b = client_b.summarize_contacts(cx_b);
-    assert_eq!(contacts_b.current, &["user_a", "user_b"]);
+    assert_eq!(contacts_b.current, &["user_a"]);
     assert_eq!(contacts_b.incoming_requests, &["user_c"]);
     let contacts_b2 = client_b2.summarize_contacts(cx_b2);
-    assert_eq!(contacts_b2.current, &["user_a", "user_b"]);
+    assert_eq!(contacts_b2.current, &["user_a"]);
     assert_eq!(contacts_b2.incoming_requests, &["user_c"]);
 
     // User A sees user B as their contact now in all clients, and the outgoing request to them is removed.
     let contacts_a = client_a.summarize_contacts(cx_a);
-    assert_eq!(contacts_a.current, &["user_a", "user_b"]);
+    assert_eq!(contacts_a.current, &["user_b"]);
     assert!(contacts_a.outgoing_requests.is_empty());
     let contacts_a2 = client_a2.summarize_contacts(cx_a2);
-    assert_eq!(contacts_a2.current, &["user_a", "user_b"]);
+    assert_eq!(contacts_a2.current, &["user_b"]);
     assert!(contacts_a2.outgoing_requests.is_empty());
 
     // Contacts are present upon connecting (tested here via disconnect/reconnect)
@@ -4188,19 +4249,13 @@ async fn test_contact_requests(
     disconnect_and_reconnect(&client_b, cx_b).await;
     disconnect_and_reconnect(&client_c, cx_c).await;
     executor.run_until_parked();
-    assert_eq!(
-        client_a.summarize_contacts(cx_a).current,
-        &["user_a", "user_b"]
-    );
-    assert_eq!(
-        client_b.summarize_contacts(cx_b).current,
-        &["user_a", "user_b"]
-    );
+    assert_eq!(client_a.summarize_contacts(cx_a).current, &["user_b"]);
+    assert_eq!(client_b.summarize_contacts(cx_b).current, &["user_a"]);
     assert_eq!(
         client_b.summarize_contacts(cx_b).incoming_requests,
         &["user_c"]
     );
-    assert_eq!(client_c.summarize_contacts(cx_c).current, &["user_c"]);
+    assert!(client_c.summarize_contacts(cx_c).current.is_empty());
     assert_eq!(
         client_c.summarize_contacts(cx_c).outgoing_requests,
         &["user_b"]
@@ -4219,18 +4274,18 @@ async fn test_contact_requests(
 
     // User B doesn't see user C as their contact, and the incoming request from them is removed.
     let contacts_b = client_b.summarize_contacts(cx_b);
-    assert_eq!(contacts_b.current, &["user_a", "user_b"]);
+    assert_eq!(contacts_b.current, &["user_a"]);
     assert!(contacts_b.incoming_requests.is_empty());
     let contacts_b2 = client_b2.summarize_contacts(cx_b2);
-    assert_eq!(contacts_b2.current, &["user_a", "user_b"]);
+    assert_eq!(contacts_b2.current, &["user_a"]);
     assert!(contacts_b2.incoming_requests.is_empty());
 
     // User C doesn't see user B as their contact, and the outgoing request to them is removed.
     let contacts_c = client_c.summarize_contacts(cx_c);
-    assert_eq!(contacts_c.current, &["user_c"]);
+    assert!(contacts_c.current.is_empty());
     assert!(contacts_c.outgoing_requests.is_empty());
     let contacts_c2 = client_c2.summarize_contacts(cx_c2);
-    assert_eq!(contacts_c2.current, &["user_c"]);
+    assert!(contacts_c2.current.is_empty());
     assert!(contacts_c2.outgoing_requests.is_empty());
 
     // Incoming/outgoing requests are not present upon connecting (tested here via disconnect/reconnect)
@@ -4238,19 +4293,13 @@ async fn test_contact_requests(
     disconnect_and_reconnect(&client_b, cx_b).await;
     disconnect_and_reconnect(&client_c, cx_c).await;
     executor.run_until_parked();
-    assert_eq!(
-        client_a.summarize_contacts(cx_a).current,
-        &["user_a", "user_b"]
-    );
-    assert_eq!(
-        client_b.summarize_contacts(cx_b).current,
-        &["user_a", "user_b"]
-    );
+    assert_eq!(client_a.summarize_contacts(cx_a).current, &["user_b"]);
+    assert_eq!(client_b.summarize_contacts(cx_b).current, &["user_a"]);
     assert!(client_b
         .summarize_contacts(cx_b)
         .incoming_requests
         .is_empty());
-    assert_eq!(client_c.summarize_contacts(cx_c).current, &["user_c"]);
+    assert!(client_c.summarize_contacts(cx_c).current.is_empty());
     assert!(client_c
         .summarize_contacts(cx_c)
         .outgoing_requests
@@ -5654,6 +5703,9 @@ impl TestClient {
             .unwrap();
         worktree
             .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        project
+            .update(cx, |project, _| project.next_remote_id())
             .await;
         (project, worktree.read_with(cx, |tree, _| tree.id()))
     }

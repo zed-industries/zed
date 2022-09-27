@@ -842,10 +842,7 @@ impl Db for PostgresDb {
             .bind(user_id)
             .fetch(&self.pool);
 
-        let mut contacts = vec![Contact::Accepted {
-            user_id,
-            should_notify: false,
-        }];
+        let mut contacts = Vec::new();
         while let Some(row) = rows.next().await {
             let (user_id_a, user_id_b, a_to_b, accepted, should_notify) = row?;
 
@@ -2026,13 +2023,7 @@ pub mod tests {
             let user_3 = db.create_user("user3", None, false).await.unwrap();
 
             // User starts with no contacts
-            assert_eq!(
-                db.get_contacts(user_1).await.unwrap(),
-                vec![Contact::Accepted {
-                    user_id: user_1,
-                    should_notify: false
-                }],
-            );
+            assert_eq!(db.get_contacts(user_1).await.unwrap(), vec![]);
 
             // User requests a contact. Both users see the pending request.
             db.send_contact_request(user_1, user_2).await.unwrap();
@@ -2040,26 +2031,14 @@ pub mod tests {
             assert!(!db.has_contact(user_2, user_1).await.unwrap());
             assert_eq!(
                 db.get_contacts(user_1).await.unwrap(),
-                &[
-                    Contact::Accepted {
-                        user_id: user_1,
-                        should_notify: false
-                    },
-                    Contact::Outgoing { user_id: user_2 }
-                ],
+                &[Contact::Outgoing { user_id: user_2 }],
             );
             assert_eq!(
                 db.get_contacts(user_2).await.unwrap(),
-                &[
-                    Contact::Incoming {
-                        user_id: user_1,
-                        should_notify: true
-                    },
-                    Contact::Accepted {
-                        user_id: user_2,
-                        should_notify: false
-                    },
-                ]
+                &[Contact::Incoming {
+                    user_id: user_1,
+                    should_notify: true
+                }]
             );
 
             // User 2 dismisses the contact request notification without accepting or rejecting.
@@ -2072,16 +2051,10 @@ pub mod tests {
                 .unwrap();
             assert_eq!(
                 db.get_contacts(user_2).await.unwrap(),
-                &[
-                    Contact::Incoming {
-                        user_id: user_1,
-                        should_notify: false
-                    },
-                    Contact::Accepted {
-                        user_id: user_2,
-                        should_notify: false
-                    },
-                ]
+                &[Contact::Incoming {
+                    user_id: user_1,
+                    should_notify: false
+                }]
             );
 
             // User can't accept their own contact request
@@ -2095,31 +2068,19 @@ pub mod tests {
                 .unwrap();
             assert_eq!(
                 db.get_contacts(user_1).await.unwrap(),
-                &[
-                    Contact::Accepted {
-                        user_id: user_1,
-                        should_notify: false
-                    },
-                    Contact::Accepted {
-                        user_id: user_2,
-                        should_notify: true
-                    }
-                ],
+                &[Contact::Accepted {
+                    user_id: user_2,
+                    should_notify: true
+                }],
             );
             assert!(db.has_contact(user_1, user_2).await.unwrap());
             assert!(db.has_contact(user_2, user_1).await.unwrap());
             assert_eq!(
                 db.get_contacts(user_2).await.unwrap(),
-                &[
-                    Contact::Accepted {
-                        user_id: user_1,
-                        should_notify: false,
-                    },
-                    Contact::Accepted {
-                        user_id: user_2,
-                        should_notify: false,
-                    },
-                ]
+                &[Contact::Accepted {
+                    user_id: user_1,
+                    should_notify: false,
+                }]
             );
 
             // Users cannot re-request existing contacts.
@@ -2132,16 +2093,10 @@ pub mod tests {
                 .unwrap_err();
             assert_eq!(
                 db.get_contacts(user_1).await.unwrap(),
-                &[
-                    Contact::Accepted {
-                        user_id: user_1,
-                        should_notify: false
-                    },
-                    Contact::Accepted {
-                        user_id: user_2,
-                        should_notify: true,
-                    },
-                ]
+                &[Contact::Accepted {
+                    user_id: user_2,
+                    should_notify: true,
+                }]
             );
 
             // Users can dismiss notifications of other users accepting their requests.
@@ -2150,16 +2105,10 @@ pub mod tests {
                 .unwrap();
             assert_eq!(
                 db.get_contacts(user_1).await.unwrap(),
-                &[
-                    Contact::Accepted {
-                        user_id: user_1,
-                        should_notify: false
-                    },
-                    Contact::Accepted {
-                        user_id: user_2,
-                        should_notify: false,
-                    },
-                ]
+                &[Contact::Accepted {
+                    user_id: user_2,
+                    should_notify: false,
+                },]
             );
 
             // Users send each other concurrent contact requests and
@@ -2169,10 +2118,6 @@ pub mod tests {
             assert_eq!(
                 db.get_contacts(user_1).await.unwrap(),
                 &[
-                    Contact::Accepted {
-                        user_id: user_1,
-                        should_notify: false
-                    },
                     Contact::Accepted {
                         user_id: user_2,
                         should_notify: false,
@@ -2185,16 +2130,10 @@ pub mod tests {
             );
             assert_eq!(
                 db.get_contacts(user_3).await.unwrap(),
-                &[
-                    Contact::Accepted {
-                        user_id: user_1,
-                        should_notify: false
-                    },
-                    Contact::Accepted {
-                        user_id: user_3,
-                        should_notify: false
-                    }
-                ],
+                &[Contact::Accepted {
+                    user_id: user_1,
+                    should_notify: false
+                }],
             );
 
             // User declines a contact request. Both users see that it is gone.
@@ -2206,29 +2145,17 @@ pub mod tests {
             assert!(!db.has_contact(user_3, user_2).await.unwrap());
             assert_eq!(
                 db.get_contacts(user_2).await.unwrap(),
-                &[
-                    Contact::Accepted {
-                        user_id: user_1,
-                        should_notify: false
-                    },
-                    Contact::Accepted {
-                        user_id: user_2,
-                        should_notify: false
-                    }
-                ]
+                &[Contact::Accepted {
+                    user_id: user_1,
+                    should_notify: false
+                }]
             );
             assert_eq!(
                 db.get_contacts(user_3).await.unwrap(),
-                &[
-                    Contact::Accepted {
-                        user_id: user_1,
-                        should_notify: false
-                    },
-                    Contact::Accepted {
-                        user_id: user_3,
-                        should_notify: false
-                    }
-                ],
+                &[Contact::Accepted {
+                    user_id: user_1,
+                    should_notify: false
+                }],
             );
         }
     }
@@ -2261,29 +2188,17 @@ pub mod tests {
         assert_eq!(invite_count, 1);
         assert_eq!(
             db.get_contacts(user1).await.unwrap(),
-            [
-                Contact::Accepted {
-                    user_id: user1,
-                    should_notify: false
-                },
-                Contact::Accepted {
-                    user_id: user2,
-                    should_notify: true
-                }
-            ]
+            [Contact::Accepted {
+                user_id: user2,
+                should_notify: true
+            }]
         );
         assert_eq!(
             db.get_contacts(user2).await.unwrap(),
-            [
-                Contact::Accepted {
-                    user_id: user1,
-                    should_notify: false
-                },
-                Contact::Accepted {
-                    user_id: user2,
-                    should_notify: false
-                }
-            ]
+            [Contact::Accepted {
+                user_id: user1,
+                should_notify: false
+            }]
         );
 
         // User 3 redeems the invite code and becomes a contact of user 1.
@@ -2297,10 +2212,6 @@ pub mod tests {
             db.get_contacts(user1).await.unwrap(),
             [
                 Contact::Accepted {
-                    user_id: user1,
-                    should_notify: false
-                },
-                Contact::Accepted {
                     user_id: user2,
                     should_notify: true
                 },
@@ -2312,16 +2223,10 @@ pub mod tests {
         );
         assert_eq!(
             db.get_contacts(user3).await.unwrap(),
-            [
-                Contact::Accepted {
-                    user_id: user1,
-                    should_notify: false
-                },
-                Contact::Accepted {
-                    user_id: user3,
-                    should_notify: false
-                },
-            ]
+            [Contact::Accepted {
+                user_id: user1,
+                should_notify: false
+            }]
         );
 
         // Trying to reedem the code for the third time results in an error.
@@ -2347,10 +2252,6 @@ pub mod tests {
             db.get_contacts(user1).await.unwrap(),
             [
                 Contact::Accepted {
-                    user_id: user1,
-                    should_notify: false
-                },
-                Contact::Accepted {
                     user_id: user2,
                     should_notify: true
                 },
@@ -2366,16 +2267,10 @@ pub mod tests {
         );
         assert_eq!(
             db.get_contacts(user4).await.unwrap(),
-            [
-                Contact::Accepted {
-                    user_id: user1,
-                    should_notify: false
-                },
-                Contact::Accepted {
-                    user_id: user4,
-                    should_notify: false
-                },
-            ]
+            [Contact::Accepted {
+                user_id: user1,
+                should_notify: false
+            }]
         );
 
         // An existing user cannot redeem invite codes.
@@ -2704,10 +2599,7 @@ pub mod tests {
 
         async fn get_contacts(&self, id: UserId) -> Result<Vec<Contact>> {
             self.background.simulate_random_delay().await;
-            let mut contacts = vec![Contact::Accepted {
-                user_id: id,
-                should_notify: false,
-            }];
+            let mut contacts = Vec::new();
 
             for contact in self.contacts.lock().iter() {
                 if contact.requester_id == id {
