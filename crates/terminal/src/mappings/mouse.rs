@@ -202,7 +202,7 @@ pub fn mouse_side(pos: Vector2F, cur_size: TerminalSize) -> alacritty_terminal::
     }
 }
 
-pub fn mouse_point(pos: Vector2F, cur_size: TerminalSize, display_offset: usize) -> Point {
+pub fn grid_point(pos: Vector2F, cur_size: TerminalSize, display_offset: usize) -> Point {
     let col = pos.x() / cur_size.cell_width;
     let col = min(GridCol(col as usize), cur_size.last_column());
     let line = pos.y() / cur_size.line_height;
@@ -295,7 +295,7 @@ fn sgr_mouse_report(point: Point, button: u8, pressed: bool) -> String {
 
 #[cfg(test)]
 mod test {
-    use crate::mappings::mouse::mouse_point;
+    use crate::mappings::mouse::grid_point;
 
     #[test]
     fn test_mouse_to_selection() {
@@ -317,7 +317,7 @@ mod test {
         let mouse_pos = gpui::geometry::vector::vec2f(mouse_pos_x, mouse_pos_y);
         let origin = gpui::geometry::vector::vec2f(origin_x, origin_y); //Position of terminal window, 1 'cell' in
         let mouse_pos = mouse_pos - origin;
-        let point = mouse_point(mouse_pos, cur_size, 0);
+        let point = grid_point(mouse_pos, cur_size, 0);
         assert_eq!(
             point,
             alacritty_terminal::index::Point::new(

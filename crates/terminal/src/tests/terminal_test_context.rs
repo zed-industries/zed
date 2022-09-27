@@ -1,9 +1,16 @@
 use std::{path::Path, time::Duration};
 
+use alacritty_terminal::{
+    index::{Column, Line, Point},
+    term::cell::Cell,
+};
 use gpui::{ModelHandle, TestAppContext, ViewHandle};
 
 use project::{Entry, Project, ProjectPath, Worktree};
+use rand::{rngs::ThreadRng, Rng};
 use workspace::{AppState, Workspace};
+
+use crate::{IndexedCell, TerminalContent, TerminalSize};
 
 pub struct TerminalTestContext<'a> {
     pub cx: &'a mut TestAppContext,
@@ -87,6 +94,39 @@ impl<'a> TerminalTestContext<'a> {
             };
             project.update(cx, |project, cx| project.set_active_path(Some(p), cx));
         });
+    }
+
+    pub fn create_terminal_content(
+        size: TerminalSize,
+        rng: &mut ThreadRng,
+    ) -> (TerminalContent, Vec<Vec<char>>) {
+        let mut ic = Vec::new();
+        let mut cells = Vec::new();
+
+        for row in 0..((size.height() / size.line_height()) as usize) {
+            let mut row_vec = Vec::new();
+            for col in 0..((size.width() / size.cell_width()) as usize) {
+                let cell_char = rng.gen();
+                ic.push(IndexedCell {
+                    point: Point::new(Line(row as i32), Column(col)),
+                    cell: Cell {
+                        c: cell_char,
+                        ..Default::default()
+                    },
+                });
+                row_vec.push(cell_char)
+            }
+            cells.push(row_vec)
+        }
+
+        (
+            TerminalContent {
+                cells: ic,
+                size,
+                ..Default::default()
+            },
+            cells,
+        )
     }
 }
 

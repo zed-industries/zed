@@ -6,13 +6,15 @@ use gpui::{
     actions,
     elements::{AnchorCorner, ChildView, ParentElement, Stack},
     geometry::vector::Vector2F,
-    impl_internal_actions,
+    impl_actions, impl_internal_actions,
     keymap::Keystroke,
     AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, Task,
     View, ViewContext, ViewHandle,
 };
+use serde::Deserialize;
 use settings::{Settings, TerminalBlink};
 use smol::Timer;
+use util::ResultExt;
 use workspace::pane;
 
 use crate::{terminal_element::TerminalElement, Event, Terminal};
@@ -27,6 +29,12 @@ pub struct ScrollTerminal(pub i32);
 pub struct DeployContextMenu {
     pub position: Vector2F,
 }
+
+#[derive(Clone, Default, Deserialize, PartialEq)]
+pub struct SendText(String);
+
+#[derive(Clone, Default, Deserialize, PartialEq)]
+pub struct SendKeystroke(String);
 
 actions!(
     terminal,
@@ -43,16 +51,15 @@ actions!(
         SearchTest
     ]
 );
+
+impl_actions!(terminal, [SendText, SendKeystroke]);
+
 impl_internal_actions!(project_panel, [DeployContextMenu]);
 
 pub fn init(cx: &mut MutableAppContext) {
-    //Global binding overrrides
-    cx.add_action(TerminalView::ctrl_c);
-    cx.add_action(TerminalView::up);
-    cx.add_action(TerminalView::down);
-    cx.add_action(TerminalView::escape);
-    cx.add_action(TerminalView::enter);
     //Useful terminal views
+    cx.add_action(TerminalView::send_text);
+    cx.add_action(TerminalView::send_keystroke);
     cx.add_action(TerminalView::deploy_context_menu);
     cx.add_action(TerminalView::copy);
     cx.add_action(TerminalView::paste);
@@ -283,44 +290,26 @@ impl TerminalView {
         }
     }
 
-    ///Synthesize the keyboard event corresponding to 'up'
-    fn up(&mut self, _: &Up, cx: &mut ViewContext<Self>) {
+    fn send_text(&mut self, text: &SendText, cx: &mut ViewContext<Self>) {
         self.clear_bel(cx);
         self.terminal.update(cx, |term, _| {
-            term.try_keystroke(&Keystroke::parse("up").unwrap(), false)
+            term.input(text.0.to_string());
         });
     }
 
-    ///Synthesize the keyboard event corresponding to 'down'
-    fn down(&mut self, _: &Down, cx: &mut ViewContext<Self>) {
-        self.clear_bel(cx);
-        self.terminal.update(cx, |term, _| {
-            term.try_keystroke(&Keystroke::parse("down").unwrap(), false)
-        });
-    }
-
-    ///Synthesize the keyboard event corresponding to 'ctrl-c'
-    fn ctrl_c(&mut self, _: &CtrlC, cx: &mut ViewContext<Self>) {
-        self.clear_bel(cx);
-        self.terminal.update(cx, |term, _| {
-            term.try_keystroke(&Keystroke::parse("ctrl-c").unwrap(), false)
-        });
-    }
-
-    ///Synthesize the keyboard event corresponding to 'escape'
-    fn escape(&mut self, _: &Escape, cx: &mut ViewContext<Self>) {
-        self.clear_bel(cx);
-        self.terminal.update(cx, |term, _| {
-            term.try_keystroke(&Keystroke::parse("escape").unwrap(), false)
-        });
-    }
-
-    ///Synthesize the keyboard event corresponding to 'enter'
-    fn enter(&mut self, _: &Enter, cx: &mut ViewContext<Self>) {
-        self.clear_bel(cx);
-        self.terminal.update(cx, |term, _| {
-            term.try_keystroke(&Keystroke::parse("enter").unwrap(), false)
-        });
+    fn send_keystroke(&mut self, text: &SendKeystroke, cx: &mut ViewContext<Self>) {
+        if let Some(keystroke) = Keystroke::parse(&text.0).log_err() {
+            self.clear_bel(cx);
+            self.terminal.update(cx, |term, cx| {
+                term.try_keystroke(
+                    &keystroke,
+                    cx.global::<Settings>()
+                        .terminal_overrides
+                        .option_as_meta
+                        .unwrap_or(false),
+                );
+            });
+        }
     }
 }
 
@@ -362,7 +351,9 @@ impl View for TerminalView {
     }
 
     fn on_focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        self.terminal.read(cx).focus_out();
+        self.terminal.update(cx, |terminal, _| {
+            terminal.focus_out();
+        });
         cx.notify();
     }
 

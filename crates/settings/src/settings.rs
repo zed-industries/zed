@@ -59,6 +59,7 @@ pub struct EditorSettings {
     pub soft_wrap: Option<SoftWrap>,
     pub preferred_line_length: Option<u32>,
     pub format_on_save: Option<FormatOnSave>,
+    pub formatter: Option<Formatter>,
     pub enable_language_server: Option<bool>,
 }
 
@@ -69,11 +70,21 @@ pub enum SoftWrap {
     EditorWidth,
     PreferredLineLength,
 }
-
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FormatOnSave {
+    On,
     Off,
+    LanguageServer,
+    External {
+        command: String,
+        arguments: Vec<String>,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Formatter {
     LanguageServer,
     External {
         command: String,
@@ -207,6 +218,7 @@ impl Settings {
         font_cache: &FontCache,
         themes: &ThemeRegistry,
     ) -> Self {
+        #[track_caller]
         fn required<T>(value: Option<T>) -> Option<T> {
             assert!(value.is_some(), "missing default setting value");
             value
@@ -236,6 +248,7 @@ impl Settings {
                 soft_wrap: required(defaults.editor.soft_wrap),
                 preferred_line_length: required(defaults.editor.preferred_line_length),
                 format_on_save: required(defaults.editor.format_on_save),
+                formatter: required(defaults.editor.formatter),
                 enable_language_server: required(defaults.editor.enable_language_server),
             },
             editor_overrides: Default::default(),
@@ -326,6 +339,10 @@ impl Settings {
         self.language_setting(language, |settings| settings.format_on_save.clone())
     }
 
+    pub fn formatter(&self, language: Option<&str>) -> Formatter {
+        self.language_setting(language, |settings| settings.formatter.clone())
+    }
+
     pub fn enable_language_server(&self, language: Option<&str>) -> bool {
         self.language_setting(language, |settings| settings.enable_language_server)
     }
@@ -358,7 +375,8 @@ impl Settings {
                 hard_tabs: Some(false),
                 soft_wrap: Some(SoftWrap::None),
                 preferred_line_length: Some(80),
-                format_on_save: Some(FormatOnSave::LanguageServer),
+                format_on_save: Some(FormatOnSave::On),
+                formatter: Some(Formatter::LanguageServer),
                 enable_language_server: Some(true),
             },
             editor_overrides: Default::default(),

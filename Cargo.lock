@@ -5500,11 +5500,14 @@ dependencies = [
  "futures",
  "gpui",
  "itertools",
+ "lazy_static",
  "libc",
  "mio-extras",
  "ordered-float",
  "procinfo",
  "project",
+ "rand 0.8.5",
+ "serde",
  "settings",
  "shellexpand",
  "smallvec",
@@ -7148,7 +7151,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.53.1"
+version = "0.55.0"
 dependencies = [
  "activity_indicator",
  "anyhow",

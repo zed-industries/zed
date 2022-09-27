@@ -1,7 +1,7 @@
 use crate::{
     display_map::ToDisplayPoint, link_go_to_definition::hide_link_definition,
     movement::surrounding_word, Anchor, Autoscroll, Editor, Event, ExcerptId, MultiBuffer,
-    MultiBufferSnapshot, NavigationData, ToPoint as _,
+    MultiBufferSnapshot, NavigationData, ToPoint as _, FORMAT_TIMEOUT,
 };
 use anyhow::{anyhow, Result};
 use futures::FutureExt;
@@ -10,7 +10,7 @@ use gpui::{
     RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
 };
 use language::{Bias, Buffer, File as _, OffsetRangeExt, SelectionGoal};
-use project::{File, Project, ProjectEntryId, ProjectPath};
+use project::{File, FormatTrigger, Project, ProjectEntryId, ProjectPath};
 use rpc::proto::{self, update_view};
 use settings::Settings;
 use smallvec::SmallVec;
@@ -20,7 +20,6 @@ use std::{
     fmt::Write,
     ops::Range,
     path::{Path, PathBuf},
-    time::Duration,
 };
 use text::{Point, Selection};
 use util::TryFutureExt;
@@ -30,7 +29,6 @@ use workspace::{
     ToolbarItemLocation,
 };
 
-pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 pub const MAX_TAB_TITLE_LEN: usize = 24;
 
 impl FollowableItem for Editor {
@@ -406,11 +404,14 @@ impl Item for Editor {
         project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
+        self.report_event("save editor", cx);
+
         let buffer = self.buffer().clone();
         let buffers = buffer.read(cx).all_buffers();
         let mut timeout = cx.background().timer(FORMAT_TIMEOUT).fuse();
-        let format = project.update(cx, |project, cx| project.format(buffers, true, cx));
-        self.report_event("save editor", cx);
+        let format = project.update(cx, |project, cx| {
+            project.format(buffers, true, FormatTrigger::Save, cx)
+        });
         cx.spawn(|_, mut cx| async move {
             let transaction = futures::select_biased! {
                 _ = timeout => {

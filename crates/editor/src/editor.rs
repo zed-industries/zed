@@ -19,6 +19,7 @@ use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
+use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions,
@@ -50,7 +51,7 @@ pub use multi_buffer::{
 };
 use multi_buffer::{MultiBufferChunks, ToOffsetUtf16};
 use ordered_float::OrderedFloat;
-use project::{LocationLink, Project, ProjectPath, ProjectTransaction};
+use project::{FormatTrigger, LocationLink, Project, ProjectPath, ProjectTransaction};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -76,6 +77,8 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
+
+pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Deserialize, PartialEq, Default)]
 pub struct SelectNext {
@@ -205,6 +208,7 @@ actions!(
         OpenExcerpts,
         RestartLanguageServer,
         Hover,
+        Format,
     ]
 );
 
@@ -311,6 +315,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::toggle_code_actions);
     cx.add_action(Editor::open_excerpts);
     cx.add_action(Editor::jump);
+    cx.add_async_action(Editor::format);
     cx.add_action(Editor::restart_language_server);
     cx.add_action(Editor::show_character_palette);
     cx.add_async_action(Editor::confirm_completion);
@@ -1577,17 +1582,20 @@ impl Editor {
         let start;
         let end;
         let mode;
+        let auto_scroll;
         match click_count {
             1 => {
                 start = buffer.anchor_before(position.to_point(&display_map));
                 end = start.clone();
                 mode = SelectMode::Character;
+                auto_scroll = true;
             }
             2 => {
                 let range = movement::surrounding_word(&display_map, position);
                 start = buffer.anchor_before(range.start.to_point(&display_map));
                 end = buffer.anchor_before(range.end.to_point(&display_map));
                 mode = SelectMode::Word(start.clone()..end.clone());
+                auto_scroll = true;
             }
             3 => {
                 let position = display_map
@@ -1601,15 +1609,17 @@ impl Editor {
                 start = buffer.anchor_before(line_start);
                 end = buffer.anchor_before(next_line_start);
                 mode = SelectMode::Line(start.clone()..end.clone());
+                auto_scroll = true;
             }
             _ => {
                 start = buffer.anchor_before(0);
                 end = buffer.anchor_before(buffer.len());
                 mode = SelectMode::All;
+                auto_scroll = false;
             }
         }
 
-        self.change_selections(Some(Autoscroll::Newest), cx, |s| {
+        self.change_selections(auto_scroll.then(|| Autoscroll::Newest), cx, |s| {
             if !add {
                 s.clear_disjoint();
             } else if click_count > 1 {
@@ -5168,6 +5178,51 @@ impl Editor {
     #[cfg(any(test, feature = "test-support"))]
     pub fn pending_rename(&self) -> Option<&RenameState> {
         self.pending_rename.as_ref()
+    }
+
+    fn format(&mut self, _: &Format, cx: &mut ViewContext<'_, Self>) -> Option<Task<Result<()>>> {
+        let project = match &self.project {
+            Some(project) => project.clone(),
+            None => return None,
+        };
+
+        Some(self.perform_format(project, cx))
+    }
+
+    fn perform_format(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ViewContext<'_, Self>,
+    ) -> Task<Result<()>> {
+        let buffer = self.buffer().clone();
+        let buffers = buffer.read(cx).all_buffers();
+
+        let mut timeout = cx.background().timer(FORMAT_TIMEOUT).fuse();
+        let format = project.update(cx, |project, cx| {
+            project.format(buffers, true, FormatTrigger::Manual, cx)
+        });
+
+        cx.spawn(|_, mut cx| async move {
+            let transaction = futures::select_biased! {
+                _ = timeout => {
+                    log::warn!("timed out waiting for formatting");
+                    None
+                }
+                transaction = format.log_err().fuse() => transaction,
+            };
+
+            buffer.update(&mut cx, |buffer, cx| {
+                if let Some(transaction) = transaction {
+                    if !buffer.is_singleton() {
+                        buffer.push_transaction(&transaction.0);
+                    }
+                }
+
+                cx.notify();
+            });
+
+            Ok(())
+        })
     }
 
     fn restart_language_server(&mut self, _: &RestartLanguageServer, cx: &mut ViewContext<Self>) {
@@ -10103,7 +10158,7 @@ mod tests {
             unreachable!()
         });
         let save = cx.update(|cx| editor.save(project.clone(), cx));
-        cx.foreground().advance_clock(items::FORMAT_TIMEOUT);
+        cx.foreground().advance_clock(super::FORMAT_TIMEOUT);
         cx.foreground().start_waiting();
         save.await.unwrap();
         assert_eq!(
@@ -10219,7 +10274,7 @@ mod tests {
             },
         );
         let save = cx.update(|cx| editor.save(project.clone(), cx));
-        cx.foreground().advance_clock(items::FORMAT_TIMEOUT);
+        cx.foreground().advance_clock(super::FORMAT_TIMEOUT);
         cx.foreground().start_waiting();
         save.await.unwrap();
         assert_eq!(
@@ -10255,6 +10310,87 @@ mod tests {
             .await;
         cx.foreground().start_waiting();
         save.await.unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+
+        let mut language = Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        );
+        let mut fake_servers = language
+            .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }))
+            .await;
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_file("/file.rs", Default::default()).await;
+
+        let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+        project.update(cx, |project, _| project.languages().add(Arc::new(language)));
+        let buffer = project
+            .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
+            .await
+            .unwrap();
+
+        cx.foreground().start_waiting();
+        let fake_server = fake_servers.next().await.unwrap();
+
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let (_, editor) = cx.add_window(|cx| build_editor(buffer, cx));
+        editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+
+        let format = editor.update(cx, |editor, cx| editor.perform_format(project.clone(), cx));
+        fake_server
+            .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path("/file.rs").unwrap()
+                );
+                assert_eq!(params.options.tab_size, 4);
+                Ok(Some(vec![lsp::TextEdit::new(
+                    lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
+                    ", ".to_string(),
+                )]))
+            })
+            .next()
+            .await;
+        cx.foreground().start_waiting();
+        format.await.unwrap();
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "one, two\nthree\n"
+        );
+
+        editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+        // Ensure we don't lock if formatting hangs.
+        fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path("/file.rs").unwrap()
+            );
+            futures::future::pending::<()>().await;
+            unreachable!()
+        });
+        let format = editor.update(cx, |editor, cx| editor.perform_format(project, cx));
+        cx.foreground().advance_clock(super::FORMAT_TIMEOUT);
+        cx.foreground().start_waiting();
+        format.await.unwrap();
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "one\ntwo\nthree\n"
+        );
     }
 
     #[gpui::test]
