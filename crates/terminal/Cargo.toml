@@ -30,6 +30,8 @@ libc = "0.2"
 anyhow = "1"
 thiserror = "1.0"
 lazy_static = "1.4.0"
+serde = { version = "1.0", features = ["derive"] }
+
 
 
 

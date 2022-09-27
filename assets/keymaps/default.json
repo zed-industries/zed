@@ -428,17 +428,45 @@
     {
         "context": "Terminal",
         "bindings": {
-            // Overrides for global bindings, remove at your own risk:
-            "up": "terminal::Up",
-            "down": "terminal::Down",
-            "escape": "terminal::Escape",
-            "enter": "terminal::Enter",
-            "ctrl-c": "terminal::CtrlC",
-            // Useful terminal actions:
             "ctrl-cmd-space": "terminal::ShowCharacterPalette",
             "cmd-c": "terminal::Copy",
             "cmd-v": "terminal::Paste",
-            "cmd-k": "terminal::Clear"
+            "cmd-k": "terminal::Clear",
+            // Some nice conveniences
+            "cmd-backspace": [
+                "terminal::SendText",
+                "\u0015"
+            ],
+            "cmd-right": [
+                "terminal::SendText",
+                "\u0005"
+            ],
+            "cmd-left": [
+                "terminal::SendText",
+                "\u0001"
+            ],
+            // There are conflicting bindings for these keys in the global context.
+            // these bindings override them, remove at your own risk:
+            "up": [
+                "terminal::SendKeystroke",
+                "up"
+            ],
+            "down": [
+                "terminal::SendKeystroke",
+                "down"
+            ],
+            "escape": [
+                "terminal::SendKeystroke",
+                "escape"
+            ],
+            "enter": [
+                "terminal::SendKeystroke",
+                "enter"
+            ],
+            "ctrl-c": [
+                "terminal::SendKeystroke",
+                "ctrl-c"
+            ]
         }
     }
 ]

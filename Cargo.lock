@@ -5489,6 +5489,7 @@ dependencies = [
  "procinfo",
  "project",
  "rand 0.8.5",
+ "serde",
  "settings",
  "shellexpand",
  "smallvec",
