@@ -10,15 +10,18 @@ use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::{
+    io::Write,
     mem,
+    path::PathBuf,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use tempfile::NamedTempFile;
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 
 pub struct Telemetry {
-    client: Arc<dyn HttpClient>,
+    http_client: Arc<dyn HttpClient>,
     executor: Arc<Background>,
     session_id: u128,
     state: Mutex<TelemetryState>,
@@ -34,6 +37,7 @@ struct TelemetryState {
     queue: Vec<AmplitudeEvent>,
     next_event_id: usize,
     flush_task: Option<Task<()>>,
+    log_file: Option<NamedTempFile>,
 }
 
 const AMPLITUDE_EVENTS_URL: &'static str = "https://api2.amplitude.com/batch";
@@ -52,10 +56,13 @@ struct AmplitudeEventBatch {
 
 #[derive(Serialize)]
 struct AmplitudeEvent {
+    #[serde(skip_serializing_if = "Option::is_none")]
     user_id: Option<Arc<str>>,
     device_id: Option<Arc<str>>,
     event_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     event_properties: Option<Map<String, Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     user_properties: Option<Map<String, Value>>,
     os_name: &'static str,
     os_version: Option<Arc<str>>,
@@ -80,8 +87,8 @@ const DEBOUNCE_INTERVAL: Duration = Duration::from_secs(30);
 impl Telemetry {
     pub fn new(client: Arc<dyn HttpClient>, cx: &AppContext) -> Arc<Self> {
         let platform = cx.platform();
-        Arc::new(Self {
-            client,
+        let this = Arc::new(Self {
+            http_client: client,
             executor: cx.background().clone(),
             session_id: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -101,9 +108,29 @@ impl Telemetry {
                 queue: Default::default(),
                 flush_task: Default::default(),
                 next_event_id: 0,
+                log_file: None,
                 user_id: None,
             }),
-        })
+        });
+
+        if AMPLITUDE_API_KEY.is_some() {
+            this.executor
+                .spawn({
+                    let this = this.clone();
+                    async move {
+                        if let Some(tempfile) = NamedTempFile::new().log_err() {
+                            this.state.lock().log_file = Some(tempfile);
+                        }
+                    }
+                })
+                .detach();
+        }
+
+        this
+    }
+
+    pub fn log_file_path(&self) -> Option<PathBuf> {
+        Some(self.state.lock().log_file.as_ref()?.path().to_path_buf())
     }
 
     pub fn start(self: &Arc<Self>, db: Arc<Db>) {
@@ -189,23 +216,39 @@ impl Telemetry {
         }
     }
 
-    fn flush(&self) {
+    fn flush(self: &Arc<Self>) {
         let mut state = self.state.lock();
         let events = mem::take(&mut state.queue);
         state.flush_task.take();
+        drop(state);
 
         if let Some(api_key) = AMPLITUDE_API_KEY.as_ref() {
-            let client = self.client.clone();
+            let this = self.clone();
             self.executor
-                .spawn(async move {
-                    let batch = AmplitudeEventBatch { api_key, events };
-                    let body = serde_json::to_vec(&batch).log_err()?;
-                    let request = Request::post(AMPLITUDE_EVENTS_URL)
-                        .body(body.into())
-                        .log_err()?;
-                    client.send(request).await.log_err();
-                    Some(())
-                })
+                .spawn(
+                    async move {
+                        let mut json_bytes = Vec::new();
+
+                        if let Some(file) = &mut this.state.lock().log_file {
+                            let file = file.as_file_mut();
+                            for event in &events {
+                                json_bytes.clear();
+                                serde_json::to_writer(&mut json_bytes, event)?;
+                                file.write_all(&json_bytes)?;
+                                file.write(b"\n")?;
+                            }
+                        }
+
+                        let batch = AmplitudeEventBatch { api_key, events };
+                        json_bytes.clear();
+                        serde_json::to_writer(&mut json_bytes, &batch)?;
+                        let request =
+                            Request::post(AMPLITUDE_EVENTS_URL).body(json_bytes.into())?;
+                        this.http_client.send(request).await?;
+                        Ok(())
+                    }
+                    .log_err(),
+                )
                 .detach();
         }
     }

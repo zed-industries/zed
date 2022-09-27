@@ -33,6 +33,7 @@ use std::{
     convert::TryFrom,
     fmt::Write as _,
     future::Future,
+    path::PathBuf,
     sync::{Arc, Weak},
     time::{Duration, Instant},
 };
@@ -332,10 +333,11 @@ impl Client {
         log::info!("set status on client {}: {:?}", self.id, status);
         let mut state = self.state.write();
         *state.status.0.borrow_mut() = status;
+        let user_id = state.credentials.as_ref().map(|c| c.user_id);
 
         match status {
             Status::Connected { .. } => {
-                self.telemetry.set_user_id(self.user_id());
+                self.telemetry.set_user_id(user_id);
                 state._reconnect_task = None;
             }
             Status::ConnectionLost => {
@@ -364,7 +366,7 @@ impl Client {
                 }));
             }
             Status::SignedOut | Status::UpgradeRequired => {
-                self.telemetry.set_user_id(self.user_id());
+                self.telemetry.set_user_id(user_id);
                 state._reconnect_task.take();
             }
             _ => {}
@@ -1059,6 +1061,10 @@ impl Client {
 
     pub fn report_event(&self, kind: &str, properties: Value) {
         self.telemetry.report_event(kind, properties)
+    }
+
+    pub fn telemetry_log_file_path(&self) -> Option<PathBuf> {
+        self.telemetry.log_file_path()
     }
 }
 
