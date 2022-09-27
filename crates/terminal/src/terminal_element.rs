@@ -453,13 +453,15 @@ impl TerminalElement {
                     }
                 }
             })
-            .on_scroll(TerminalElement::generic_button_handler(
-                connection,
-                origin,
-                move |terminal, origin, e, _cx| {
-                    terminal.scroll_wheel(e, origin);
-                },
-            ));
+            .on_scroll(move |event, cx| {
+                // cx.focus_parent_view();
+                if let Some(conn_handle) = connection.upgrade(cx.app) {
+                    conn_handle.update(cx.app, |terminal, cx| {
+                        terminal.scroll_wheel(event, origin);
+                        cx.notify();
+                    })
+                }
+            });
 
         // Mouse mode handlers:
         // All mouse modes need the extra click handlers
