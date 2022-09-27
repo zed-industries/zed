@@ -96,10 +96,10 @@ export default function statusBar(colorScheme: ColorScheme) {
       item: {
         ...statusContainer,
         iconSize: 16,
-        iconColor: foreground(layer),
+        iconColor: foreground(layer, "variant"),
         hover: {
           iconColor: foreground(layer, "hovered"),
-          background: background(layer, "hovered"),
+          background: background(layer, "variant"),
         },
         active: {
           iconColor: foreground(layer, "active"),
@@ -111,7 +111,7 @@ export default function statusBar(colorScheme: ColorScheme) {
         padding: 2,
         margin: { bottom: -1, right: -1 },
         border: border(layer),
-        background: background(layer),
+        background: background(layer, "info"),
       },
     },
   };

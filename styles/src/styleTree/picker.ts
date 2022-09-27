@@ -7,7 +7,7 @@ import {
 
 export default function picker(colorScheme: ColorScheme) {
   let elevation = colorScheme.highest;
-  let layer = elevation.middle;
+  let layer = elevation.top;
   return {
     background: background(layer),
     cornerRadius: 8,

@@ -3,10 +3,10 @@ import { ColorScheme } from "../themes/common/colorScheme";
 import { background, foreground } from "./components";
 
 export default function contactFinder(colorScheme: ColorScheme) {
-  let layer = colorScheme.middle.bottom;
+  let layer = colorScheme.highest.top;
   const contactButton = {
-    background: background(layer),
-    color: foreground(layer),
+    background: background(layer, "variant"),
+    color: foreground(layer, "variant"),
     iconWidth: 8,
     buttonWidth: 16,
     cornerRadius: 8,
@@ -27,7 +27,7 @@ export default function contactFinder(colorScheme: ColorScheme) {
     contactButton: {
       ...contactButton,
       hover: {
-        background: background(layer, "hovered"),
+        background: background(layer, "variant", "hovered"),
       },
     },
     disabledContactButton: {

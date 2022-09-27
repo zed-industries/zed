@@ -38,7 +38,7 @@ export default function app(colorScheme: ColorScheme): Object {
     contactFinder: contactFinder(colorScheme),
     search: search(colorScheme),
     breadcrumbs: {
-      ...text(colorScheme.lowest.top, "sans"),
+      ...text(colorScheme.lowest.top, "sans", "variant"),
       padding: {
         left: 6,
       },

@@ -2,14 +2,13 @@ import { ColorScheme } from "../themes/common/colorScheme";
 import { text, border, background } from "./components";
 
 export default function commandPalette(colorScheme: ColorScheme) {
-  let layer = colorScheme.highest.bottom;
+  let layer = colorScheme.highest.top;
   return {
     keystrokeSpacing: 8,
     key: {
       text: text(layer, "mono", { size: "xs" }),
       cornerRadius: 4,
       background: background(layer, "on"),
-      border: border(layer),
       padding: {
         top: 2,
         bottom: 2,
@@ -20,7 +19,8 @@ export default function commandPalette(colorScheme: ColorScheme) {
         left: 2,
       },
       active: {
-        text: text(layer, "mono", "on", "active", { size: "xs" }),
+        text: text(layer, "mono", "active", { size: "xs" }),
+        background: background(layer, "on", "active"),
       },
     },
   };
