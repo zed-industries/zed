@@ -10,10 +10,10 @@ use anyhow::{anyhow, Context, Result};
 use assets::Assets;
 use breadcrumbs::Breadcrumbs;
 pub use client;
+use collab_titlebar_item::CollabTitlebarItem;
 use collections::VecDeque;
 pub use contacts_panel;
 use contacts_panel::ContactsPanel;
-use contacts_titlebar_item::ContactsTitlebarItem;
 pub use editor;
 use editor::{Editor, MultiBuffer};
 use gpui::{
@@ -280,8 +280,8 @@ pub fn initialize_workspace(
         }));
     });
 
-    let contacts_titlebar_item = cx.add_view(|cx| ContactsTitlebarItem::new(&workspace_handle, cx));
-    workspace.set_titlebar_item(contacts_titlebar_item, cx);
+    let collab_titlebar_item = cx.add_view(|cx| CollabTitlebarItem::new(&workspace_handle, cx));
+    workspace.set_titlebar_item(collab_titlebar_item, cx);
 
     let project_panel = ProjectPanel::new(workspace.project().clone(), cx);
     let contact_panel = cx.add_view(|cx| {

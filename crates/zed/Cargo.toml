@@ -21,13 +21,13 @@ auto_update = { path = "../auto_update" }
 breadcrumbs = { path = "../breadcrumbs" }
 chat_panel = { path = "../chat_panel" }
 cli = { path = "../cli" }
+collab_titlebar_item = { path = "../collab_titlebar_item" }
 collections = { path = "../collections" }
 command_palette = { path = "../command_palette" }
 context_menu = { path = "../context_menu" }
 client = { path = "../client" }
 clock = { path = "../clock" }
 contacts_panel = { path = "../contacts_panel" }
-contacts_titlebar_item = { path = "../contacts_titlebar_item" }
 contacts_status_item = { path = "../contacts_status_item" }
 diagnostics = { path = "../diagnostics" }
 editor = { path = "../editor" }

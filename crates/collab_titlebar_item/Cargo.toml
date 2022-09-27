@@ -1,10 +1,10 @@
 [package]
-name = "contacts_titlebar_item"
+name = "collab_titlebar_item"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-path = "src/contacts_titlebar_item.rs"
+path = "src/collab_titlebar_item.rs"
 doctest = false
 
 [features]

@@ -1063,6 +1063,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "collab_titlebar_item"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "clock",
+ "collections",
+ "editor",
+ "futures",
+ "fuzzy",
+ "gpui",
+ "log",
+ "postage",
+ "project",
+ "serde",
+ "settings",
+ "theme",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "collections"
 version = "0.1.0"
 dependencies = [
@@ -1142,28 +1164,6 @@ dependencies = [
  "log",
  "menu",
  "picker",
- "postage",
- "project",
- "serde",
- "settings",
- "theme",
- "util",
- "workspace",
-]
-
-[[package]]
-name = "contacts_titlebar_item"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "clock",
- "collections",
- "editor",
- "futures",
- "fuzzy",
- "gpui",
- "log",
  "postage",
  "project",
  "serde",
@@ -7180,11 +7180,11 @@ dependencies = [
  "cli",
  "client",
  "clock",
+ "collab_titlebar_item",
  "collections",
  "command_palette",
  "contacts_panel",
  "contacts_status_item",
- "contacts_titlebar_item",
  "context_menu",
  "ctor",
  "diagnostics",

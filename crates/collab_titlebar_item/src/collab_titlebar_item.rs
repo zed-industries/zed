@@ -14,29 +14,29 @@ use std::{ops::Range, sync::Arc};
 use theme::Theme;
 use workspace::{FollowNextCollaborator, ToggleFollow, Workspace};
 
-impl_internal_actions!(contacts_titlebar_item, [ToggleAddContactsPopover]);
+impl_internal_actions!(contacts_titlebar_item, [ToggleAddParticipantPopover]);
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(ContactsTitlebarItem::toggle_add_contacts_popover);
+    cx.add_action(CollabTitlebarItem::toggle_add_participant_popover);
 }
 
 #[derive(Clone, PartialEq)]
-struct ToggleAddContactsPopover {
+struct ToggleAddParticipantPopover {
     button_rect: RectF,
 }
 
-pub struct ContactsTitlebarItem {
+pub struct CollabTitlebarItem {
     workspace: WeakViewHandle<Workspace>,
     _subscriptions: Vec<Subscription>,
 }
 
-impl Entity for ContactsTitlebarItem {
+impl Entity for CollabTitlebarItem {
     type Event = ();
 }
 
-impl View for ContactsTitlebarItem {
+impl View for CollabTitlebarItem {
     fn ui_name() -> &'static str {
-        "ContactsTitlebarItem"
+        "CollabTitlebarItem"
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
@@ -56,7 +56,7 @@ impl View for ContactsTitlebarItem {
     }
 }
 
-impl ContactsTitlebarItem {
+impl CollabTitlebarItem {
     pub fn new(workspace: &ViewHandle<Workspace>, cx: &mut ViewContext<Self>) -> Self {
         let observe_workspace = cx.observe(workspace, |_, _, cx| cx.notify());
         Self {
@@ -65,9 +65,9 @@ impl ContactsTitlebarItem {
         }
     }
 
-    fn toggle_add_contacts_popover(
+    fn toggle_add_participant_popover(
         &mut self,
-        _action: &ToggleAddContactsPopover,
+        _action: &ToggleAddParticipantPopover,
         _cx: &mut ViewContext<Self>,
     ) {
         dbg!("!!!!!!!!!");
@@ -84,7 +84,7 @@ impl ContactsTitlebarItem {
         }
 
         Some(
-            MouseEventHandler::<ToggleAddContactsPopover>::new(0, cx, |state, _| {
+            MouseEventHandler::<ToggleAddParticipantPopover>::new(0, cx, |state, _| {
                 let style = theme
                     .workspace
                     .titlebar
@@ -104,7 +104,7 @@ impl ContactsTitlebarItem {
             })
             .with_cursor_style(CursorStyle::PointingHand)
             .on_click(MouseButton::Left, |event, cx| {
-                cx.dispatch_action(ToggleAddContactsPopover {
+                cx.dispatch_action(ToggleAddParticipantPopover {
                     button_rect: event.region,
                 });
             })
