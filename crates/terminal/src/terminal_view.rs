@@ -6,11 +6,12 @@ use gpui::{
     actions,
     elements::{AnchorCorner, ChildView, ParentElement, Stack},
     geometry::vector::Vector2F,
-    impl_internal_actions,
+    impl_actions, impl_internal_actions,
     keymap::Keystroke,
     AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, Task,
     View, ViewContext, ViewHandle,
 };
+use serde::Deserialize;
 use settings::{Settings, TerminalBlink};
 use smol::Timer;
 use workspace::pane;
@@ -28,6 +29,9 @@ pub struct DeployContextMenu {
     pub position: Vector2F,
 }
 
+#[derive(Clone, Default, Deserialize, PartialEq)]
+pub struct SendText(String);
+
 actions!(
     terminal,
     [
@@ -43,6 +47,9 @@ actions!(
         SearchTest
     ]
 );
+
+impl_actions!(terminal, [SendText]);
+
 impl_internal_actions!(project_panel, [DeployContextMenu]);
 
 pub fn init(cx: &mut MutableAppContext) {
@@ -53,6 +60,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(TerminalView::escape);
     cx.add_action(TerminalView::enter);
     //Useful terminal views
+    cx.add_action(TerminalView::send_text);
     cx.add_action(TerminalView::deploy_context_menu);
     cx.add_action(TerminalView::copy);
     cx.add_action(TerminalView::paste);
@@ -281,6 +289,13 @@ impl TerminalView {
             self.terminal
                 .update(cx, |terminal, _cx| terminal.paste(item.text()));
         }
+    }
+
+    fn send_text(&mut self, text: &SendText, cx: &mut ViewContext<Self>) {
+        self.clear_bel(cx);
+        self.terminal.update(cx, |term, _| {
+            term.input(text.0.to_string());
+        });
     }
 
     ///Synthesize the keyboard event corresponding to 'up'
