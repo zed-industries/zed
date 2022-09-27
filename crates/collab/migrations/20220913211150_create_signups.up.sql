@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS "signups" (
     "email_confirmation_code" VARCHAR(64) NOT NULL,
     "email_confirmation_sent" BOOLEAN NOT NULL,
     "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "device_id" VARCHAR NOT NULL,
+    "device_id" VARCHAR,
     "user_id" INTEGER REFERENCES users (id) ON DELETE CASCADE,
     "inviting_user_id" INTEGER REFERENCES users (id) ON DELETE SET NULL,
 

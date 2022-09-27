@@ -954,10 +954,14 @@ async fn test_invite_codes() {
 
     // User 2 redeems the invite code and becomes a contact of user 1.
     let user2_invite = db
-        .create_invite_from_code(&invite_code, "u2@example.com")
+        .create_invite_from_code(&invite_code, "u2@example.com", Some("user-2-device-id"))
         .await
         .unwrap();
-    let (user2, inviter, _) = db
+    let NewUserResult {
+        user_id: user2,
+        inviting_user_id,
+        signup_device_id,
+    } = db
         .create_user_from_invite(
             &user2_invite,
             NewUserParams {
@@ -970,7 +974,8 @@ async fn test_invite_codes() {
         .unwrap();
     let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
     assert_eq!(invite_count, 1);
-    assert_eq!(inviter, Some(user1));
+    assert_eq!(inviting_user_id, Some(user1));
+    assert_eq!(signup_device_id.unwrap(), "user-2-device-id");
     assert_eq!(
         db.get_contacts(user1).await.unwrap(),
         [
@@ -1004,10 +1009,14 @@ async fn test_invite_codes() {
 
     // User 3 redeems the invite code and becomes a contact of user 1.
     let user3_invite = db
-        .create_invite_from_code(&invite_code, "u3@example.com")
+        .create_invite_from_code(&invite_code, "u3@example.com", None)
         .await
         .unwrap();
-    let (user3, inviter, _) = db
+    let NewUserResult {
+        user_id: user3,
+        inviting_user_id,
+        signup_device_id,
+    } = db
         .create_user_from_invite(
             &user3_invite,
             NewUserParams {
@@ -1020,7 +1029,8 @@ async fn test_invite_codes() {
         .unwrap();
     let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
     assert_eq!(invite_count, 0);
-    assert_eq!(inviter, Some(user1));
+    assert_eq!(inviting_user_id, Some(user1));
+    assert!(signup_device_id.is_none());
     assert_eq!(
         db.get_contacts(user1).await.unwrap(),
         [
@@ -1057,7 +1067,7 @@ async fn test_invite_codes() {
     );
 
     // Trying to reedem the code for the third time results in an error.
-    db.create_invite_from_code(&invite_code, "u4@example.com")
+    db.create_invite_from_code(&invite_code, "u4@example.com", Some("user-4-device-id"))
         .await
         .unwrap_err();
 
@@ -1069,10 +1079,10 @@ async fn test_invite_codes() {
 
     // User 4 can now redeem the invite code and becomes a contact of user 1.
     let user4_invite = db
-        .create_invite_from_code(&invite_code, "u4@example.com")
+        .create_invite_from_code(&invite_code, "u4@example.com", Some("user-4-device-id"))
         .await
         .unwrap();
-    let (user4, _, _) = db
+    let user4 = db
         .create_user_from_invite(
             &user4_invite,
             NewUserParams {
@@ -1082,7 +1092,8 @@ async fn test_invite_codes() {
             },
         )
         .await
-        .unwrap();
+        .unwrap()
+        .user_id;
 
     let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
     assert_eq!(invite_count, 1);
@@ -1126,7 +1137,7 @@ async fn test_invite_codes() {
     );
 
     // An existing user cannot redeem invite codes.
-    db.create_invite_from_code(&invite_code, "u2@example.com")
+    db.create_invite_from_code(&invite_code, "u2@example.com", Some("user-2-device-id"))
         .await
         .unwrap_err();
     let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
@@ -1147,7 +1158,7 @@ async fn test_signups() {
             platform_windows: i % 4 == 0,
             editor_features: vec!["speed".into()],
             programming_languages: vec!["rust".into(), "c".into()],
-            device_id: format!("device_id_{i}"),
+            device_id: Some(format!("device_id_{i}")),
         })
         .await
         .unwrap();
@@ -1217,7 +1228,11 @@ async fn test_signups() {
 
     // user completes the signup process by providing their
     // github account.
-    let (user_id, inviter_id, signup_device_id) = db
+    let NewUserResult {
+        user_id,
+        inviting_user_id,
+        signup_device_id,
+    } = db
         .create_user_from_invite(
             &Invite {
                 email_address: signups_batch1[0].email_address.clone(),
@@ -1232,11 +1247,11 @@ async fn test_signups() {
         .await
         .unwrap();
     let user = db.get_user_by_id(user_id).await.unwrap().unwrap();
-    assert!(inviter_id.is_none());
+    assert!(inviting_user_id.is_none());
     assert_eq!(user.github_login, "person-0");
     assert_eq!(user.email_address.as_deref(), Some("person-0@example.com"));
     assert_eq!(user.invite_count, 5);
-    assert_eq!(signup_device_id, "device_id_0");
+    assert_eq!(signup_device_id.unwrap(), "device_id_0");
 
     // cannot redeem the same signup again.
     db.create_user_from_invite(

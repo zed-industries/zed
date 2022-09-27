@@ -35,7 +35,12 @@ pub trait Db: Send + Sync {
     async fn set_invite_count_for_user(&self, id: UserId, count: u32) -> Result<()>;
     async fn get_invite_code_for_user(&self, id: UserId) -> Result<Option<(String, u32)>>;
     async fn get_user_for_invite_code(&self, code: &str) -> Result<User>;
-    async fn create_invite_from_code(&self, code: &str, email_address: &str) -> Result<Invite>;
+    async fn create_invite_from_code(
+        &self,
+        code: &str,
+        email_address: &str,
+        device_id: Option<&str>,
+    ) -> Result<Invite>;
 
     async fn create_signup(&self, signup: Signup) -> Result<()>;
     async fn get_waitlist_summary(&self) -> Result<WaitlistSummary>;
@@ -45,7 +50,7 @@ pub trait Db: Send + Sync {
         &self,
         invite: &Invite,
         user: NewUserParams,
-    ) -> Result<(UserId, Option<UserId>, String)>;
+    ) -> Result<NewUserResult>;
 
     /// Registers a new project for the given user.
     async fn register_project(&self, host_user_id: UserId) -> Result<ProjectId>;
@@ -458,14 +463,14 @@ impl Db for PostgresDb {
         &self,
         invite: &Invite,
         user: NewUserParams,
-    ) -> Result<(UserId, Option<UserId>, String)> {
+    ) -> Result<NewUserResult> {
         let mut tx = self.pool.begin().await?;
 
-        let (signup_id, existing_user_id, inviting_user_id, device_id): (
+        let (signup_id, existing_user_id, inviting_user_id, signup_device_id): (
             i32,
             Option<UserId>,
             Option<UserId>,
-            String,
+            Option<String>,
         ) = sqlx::query_as(
             "
             SELECT id, user_id, inviting_user_id, device_id
@@ -552,7 +557,11 @@ impl Db for PostgresDb {
         }
 
         tx.commit().await?;
-        Ok((user_id, inviting_user_id, device_id))
+        Ok(NewUserResult {
+            user_id,
+            inviting_user_id,
+            signup_device_id,
+        })
     }
 
     // invite codes
@@ -625,7 +634,12 @@ impl Db for PostgresDb {
         })
     }
 
-    async fn create_invite_from_code(&self, code: &str, email_address: &str) -> Result<Invite> {
+    async fn create_invite_from_code(
+        &self,
+        code: &str,
+        email_address: &str,
+        device_id: Option<&str>,
+    ) -> Result<Invite> {
         let mut tx = self.pool.begin().await?;
 
         let existing_user: Option<UserId> = sqlx::query_scalar(
@@ -679,10 +693,11 @@ impl Db for PostgresDb {
                 platform_linux,
                 platform_mac,
                 platform_windows,
-                platform_unknown
+                platform_unknown,
+                device_id
             )
             VALUES
-                ($1, $2, 'f', $3, 'f', 'f', 'f', 't')
+                ($1, $2, 'f', $3, 'f', 'f', 'f', 't', $4)
             ON CONFLICT (email_address)
             DO UPDATE SET
                 inviting_user_id = excluded.inviting_user_id
@@ -692,6 +707,7 @@ impl Db for PostgresDb {
         .bind(&email_address)
         .bind(&random_email_confirmation_code())
         .bind(&inviter_id)
+        .bind(&device_id)
         .fetch_one(&mut tx)
         .await?;
 
@@ -1675,7 +1691,7 @@ pub struct Signup {
     pub platform_linux: bool,
     pub editor_features: Vec<String>,
     pub programming_languages: Vec<String>,
-    pub device_id: String,
+    pub device_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, FromRow)]
@@ -1701,6 +1717,13 @@ pub struct NewUserParams {
     pub github_login: String,
     pub github_user_id: i32,
     pub invite_count: i32,
+}
+
+#[derive(Debug)]
+pub struct NewUserResult {
+    pub user_id: UserId,
+    pub inviting_user_id: Option<UserId>,
+    pub signup_device_id: Option<String>,
 }
 
 fn random_invite_code() -> String {
@@ -1905,7 +1928,7 @@ mod test {
             &self,
             _invite: &Invite,
             _user: NewUserParams,
-        ) -> Result<(UserId, Option<UserId>, String)> {
+        ) -> Result<NewUserResult> {
             unimplemented!()
         }
 
@@ -1928,6 +1951,7 @@ mod test {
             &self,
             _code: &str,
             _email_address: &str,
+            _device_id: Option<&str>,
         ) -> Result<Invite> {
             unimplemented!()
         }

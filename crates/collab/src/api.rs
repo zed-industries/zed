@@ -157,9 +157,9 @@ async fn create_user(
                 user,
             )
             .await?;
-        user_id = result.0;
-        signup_device_id = Some(result.2);
-        if let Some(inviter_id) = result.1 {
+        user_id = result.user_id;
+        signup_device_id = result.signup_device_id;
+        if let Some(inviter_id) = result.inviting_user_id {
             rpc_server
                 .invite_code_redeemed(inviter_id, user_id)
                 .await
@@ -425,6 +425,7 @@ async fn get_waitlist_summary(
 pub struct CreateInviteFromCodeParams {
     invite_code: String,
     email_address: String,
+    device_id: Option<String>,
 }
 
 async fn create_invite_from_code(
@@ -433,7 +434,11 @@ async fn create_invite_from_code(
 ) -> Result<Json<Invite>> {
     Ok(Json(
         app.db
-            .create_invite_from_code(&params.invite_code, &params.email_address)
+            .create_invite_from_code(
+                &params.invite_code,
+                &params.email_address,
+                params.device_id.as_deref(),
+            )
             .await?,
     ))
 }
