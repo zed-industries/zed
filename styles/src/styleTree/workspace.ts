@@ -5,6 +5,7 @@ import {
   border,
   iconColor,
   modalShadow,
+  popoverShadow,
   text,
 } from "./components";
 import statusBar from "./statusBar";
@@ -16,7 +17,6 @@ export function workspaceBackground(theme: Theme) {
 
 export default function workspace(theme: Theme) {
   const titlebarPadding = 6;
-  const titlebarHeight = 33;
 
   return {
     background: backgroundColor(theme, 300),
@@ -55,7 +55,7 @@ export default function workspace(theme: Theme) {
     titlebar: {
       avatarWidth: 18,
       avatarMargin: 8,
-      height: titlebarHeight,
+      height: 33,
       background: backgroundColor(theme, 100),
       padding: {
         left: 80,
@@ -119,7 +119,7 @@ export default function workspace(theme: Theme) {
         },
         cornerRadius: 6,
       },
-      addCollaboratorButton: {
+      addParticipantButton: {
         cornerRadius: 6,
         color: iconColor(theme, "secondary"),
         iconWidth: 8,
@@ -129,6 +129,16 @@ export default function workspace(theme: Theme) {
           color: iconColor(theme, "active"),
         },
       },
+      addParticipantPopover: {
+        background: backgroundColor(theme, 300, "base"),
+        cornerRadius: 6,
+        padding: 6,
+        shadow: popoverShadow(theme),
+        border: border(theme, "primary"),
+        margin: { top: -5 },
+        width: 255,
+        height: 200
+      }
     },
     toolbar: {
       height: 34,

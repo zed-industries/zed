@@ -74,7 +74,16 @@ pub struct Titlebar {
     pub avatar: ImageStyle,
     pub sign_in_prompt: Interactive<ContainedText>,
     pub outdated_warning: ContainedText,
-    pub add_collaborator_button: Interactive<IconButton>,
+    pub add_participant_button: Interactive<IconButton>,
+    pub add_participant_popover: AddParticipantPopover,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct AddParticipantPopover {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub height: f32,
+    pub width: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]

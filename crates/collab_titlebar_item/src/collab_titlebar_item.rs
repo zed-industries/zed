@@ -1,10 +1,13 @@
+mod add_participant_popover;
+
+use add_participant_popover::AddParticipantPopover;
 use client::{Authenticate, PeerId};
 use clock::ReplicaId;
 use gpui::{
+    actions,
     color::Color,
     elements::*,
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
-    impl_internal_actions,
     json::{self, ToJson},
     Border, CursorStyle, Entity, ImageData, MouseButton, MutableAppContext, RenderContext,
     Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
@@ -14,19 +17,15 @@ use std::{ops::Range, sync::Arc};
 use theme::Theme;
 use workspace::{FollowNextCollaborator, ToggleFollow, Workspace};
 
-impl_internal_actions!(contacts_titlebar_item, [ToggleAddParticipantPopover]);
+actions!(contacts_titlebar_item, [ToggleAddParticipantPopover]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(CollabTitlebarItem::toggle_add_participant_popover);
 }
 
-#[derive(Clone, PartialEq)]
-struct ToggleAddParticipantPopover {
-    button_rect: RectF,
-}
-
 pub struct CollabTitlebarItem {
     workspace: WeakViewHandle<Workspace>,
+    add_participant_popover: Option<ViewHandle<AddParticipantPopover>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -61,16 +60,24 @@ impl CollabTitlebarItem {
         let observe_workspace = cx.observe(workspace, |_, _, cx| cx.notify());
         Self {
             workspace: workspace.downgrade(),
+            add_participant_popover: None,
             _subscriptions: vec![observe_workspace],
         }
     }
 
     fn toggle_add_participant_popover(
         &mut self,
-        _action: &ToggleAddParticipantPopover,
-        _cx: &mut ViewContext<Self>,
+        _: &ToggleAddParticipantPopover,
+        cx: &mut ViewContext<Self>,
     ) {
-        dbg!("!!!!!!!!!");
+        match self.add_participant_popover.take() {
+            Some(_) => {}
+            None => {
+                let view = cx.add_view(|_| AddParticipantPopover::new());
+                self.add_participant_popover = Some(view);
+            }
+        }
+        cx.notify();
     }
 
     fn render_toggle_contacts_button(
@@ -83,33 +90,47 @@ impl CollabTitlebarItem {
             return None;
         }
 
+        let titlebar = &theme.workspace.titlebar;
+
         Some(
-            MouseEventHandler::<ToggleAddParticipantPopover>::new(0, cx, |state, _| {
-                let style = theme
-                    .workspace
-                    .titlebar
-                    .add_collaborator_button
-                    .style_for(state, false);
-                Svg::new("icons/plus_8.svg")
-                    .with_color(style.color)
-                    .constrained()
-                    .with_width(style.icon_width)
+            Stack::new()
+                .with_child(
+                    MouseEventHandler::<ToggleAddParticipantPopover>::new(0, cx, |state, _| {
+                        let style = titlebar.add_participant_button.style_for(state, false);
+                        Svg::new("icons/plus_8.svg")
+                            .with_color(style.color)
+                            .constrained()
+                            .with_width(style.icon_width)
+                            .aligned()
+                            .constrained()
+                            .with_width(style.button_width)
+                            .with_height(style.button_width)
+                            .contained()
+                            .with_style(style.container)
+                            .boxed()
+                    })
+                    .with_cursor_style(CursorStyle::PointingHand)
+                    .on_click(MouseButton::Left, |_, cx| {
+                        cx.dispatch_action(ToggleAddParticipantPopover);
+                    })
                     .aligned()
-                    .constrained()
-                    .with_width(style.button_width)
-                    .with_height(style.button_width)
-                    .contained()
-                    .with_style(style.container)
+                    .boxed(),
+                )
+                .with_children(self.add_participant_popover.as_ref().map(|popover| {
+                    Overlay::new(
+                        ChildView::new(popover)
+                            .contained()
+                            .with_margin_top(titlebar.height)
+                            .with_margin_right(
+                                -titlebar.add_participant_button.default.button_width,
+                            )
+                            .boxed(),
+                    )
+                    .with_fit_mode(OverlayFitMode::SwitchAnchor)
+                    .with_anchor_corner(AnchorCorner::BottomLeft)
                     .boxed()
-            })
-            .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(MouseButton::Left, |event, cx| {
-                cx.dispatch_action(ToggleAddParticipantPopover {
-                    button_rect: event.region,
-                });
-            })
-            .aligned()
-            .boxed(),
+                }))
+                .boxed(),
         )
     }
 
