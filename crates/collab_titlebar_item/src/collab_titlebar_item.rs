@@ -96,7 +96,9 @@ impl CollabTitlebarItem {
             Stack::new()
                 .with_child(
                     MouseEventHandler::<ToggleAddParticipantPopover>::new(0, cx, |state, _| {
-                        let style = titlebar.add_participant_button.style_for(state, false);
+                        let style = titlebar
+                            .add_participant_button
+                            .style_for(state, self.add_participant_popover.is_some());
                         Svg::new("icons/plus_8.svg")
                             .with_color(style.color)
                             .constrained()

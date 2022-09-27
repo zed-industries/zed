@@ -124,6 +124,10 @@ export default function workspace(theme: Theme) {
         color: iconColor(theme, "secondary"),
         iconWidth: 8,
         buttonWidth: 20,
+        active: {
+          background: backgroundColor(theme, "on300", "active"),
+          color: iconColor(theme, "active"),
+        },
         hover: {
           background: backgroundColor(theme, "on300", "hovered"),
           color: iconColor(theme, "active"),
