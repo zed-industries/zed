@@ -945,6 +945,7 @@ dependencies = [
  "async-recursion",
  "async-tungstenite",
  "collections",
+ "db",
  "futures",
  "gpui",
  "image",
@@ -963,6 +964,7 @@ dependencies = [
  "tiny_http",
  "url",
  "util",
+ "uuid 1.1.2",
 ]
 
 [[package]]
@@ -6346,6 +6348,9 @@ name = "uuid"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd6469f4314d5f1ffec476e05f17cc9a78bc7a27a6a857842170bdf8d6f98d2f"
+dependencies = [
+ "getrandom 0.2.7",
+]
 
 [[package]]
 name = "valuable"

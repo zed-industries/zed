@@ -12,6 +12,7 @@ test-support = ["collections/test-support", "gpui/test-support", "rpc/test-suppo
 
 [dependencies]
 collections = { path = "../collections" }
+db = { path = "../db" }
 gpui = { path = "../gpui" }
 util = { path = "../util" }
 rpc = { path = "../rpc" }
@@ -31,6 +32,7 @@ smol = "1.2.5"
 thiserror = "1.0.29"
 time = { version = "0.3", features = ["serde", "serde-well-known"] }
 tiny_http = "0.8"
+uuid = { version = "1.1.2", features = ["v4"] }
 url = "2.2"
 serde = { version = "*", features = ["derive"] }
 

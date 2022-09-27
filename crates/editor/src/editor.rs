@@ -29,6 +29,7 @@ use gpui::{
     geometry::vector::{vec2f, Vector2F},
     impl_actions, impl_internal_actions,
     platform::CursorStyle,
+    serde_json::json,
     text_layout, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox,
     Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
@@ -1053,6 +1054,7 @@ impl Editor {
         let editor_created_event = EditorCreated(cx.handle());
         cx.emit_global(editor_created_event);
 
+        this.report_event("open editor", cx);
         this
     }
 
@@ -5927,6 +5929,25 @@ impl Editor {
                     ..snapshot.clip_offset_utf16(selection.end, Bias::Right)
             })
             .collect()
+    }
+
+    fn report_event(&self, name: &str, cx: &AppContext) {
+        if let Some((project, file)) = self.project.as_ref().zip(
+            self.buffer
+                .read(cx)
+                .as_singleton()
+                .and_then(|b| b.read(cx).file()),
+        ) {
+            project.read(cx).client().report_event(
+                name,
+                json!({
+                    "file_extension": file
+                        .path()
+                        .extension()
+                        .and_then(|e| e.to_str())
+                }),
+            );
+        }
     }
 }
 

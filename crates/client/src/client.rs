@@ -12,6 +12,7 @@ use async_tungstenite::tungstenite::{
     error::Error as WebsocketError,
     http::{Request, StatusCode},
 };
+use db::Db;
 use futures::{future::LocalBoxFuture, FutureExt, SinkExt, StreamExt, TryStreamExt};
 use gpui::{
     actions,
@@ -70,7 +71,7 @@ pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
     cx.add_global_action({
         let client = client.clone();
         move |_: &TestTelemetry, _| {
-            client.log_event(
+            client.report_event(
                 "test_telemetry",
                 json!({
                     "test_property": "test_value"
@@ -334,6 +335,7 @@ impl Client {
 
         match status {
             Status::Connected { .. } => {
+                self.telemetry.set_user_id(self.user_id());
                 state._reconnect_task = None;
             }
             Status::ConnectionLost => {
@@ -362,6 +364,7 @@ impl Client {
                 }));
             }
             Status::SignedOut | Status::UpgradeRequired => {
+                self.telemetry.set_user_id(self.user_id());
                 state._reconnect_task.take();
             }
             _ => {}
@@ -619,7 +622,7 @@ impl Client {
             credentials = read_credentials_from_keychain(cx);
             read_from_keychain = credentials.is_some();
             if read_from_keychain {
-                self.log_event("read_credentials_from_keychain", Default::default());
+                self.report_event("read credentials from keychain", Default::default());
             }
         }
         if credentials.is_none() {
@@ -983,7 +986,7 @@ impl Client {
                 .context("failed to decrypt access token")?;
             platform.activate(true);
 
-            telemetry.log_event("authenticate_with_browser", Default::default());
+            telemetry.report_event("authenticate with browser", Default::default());
 
             Ok(Credentials {
                 user_id: user_id.parse()?,
@@ -1050,8 +1053,12 @@ impl Client {
         self.peer.respond_with_error(receipt, error)
     }
 
-    pub fn log_event(&self, kind: &str, properties: Value) {
-        self.telemetry.log_event(kind, properties)
+    pub fn start_telemetry(&self, db: Arc<Db>) {
+        self.telemetry.start(db);
+    }
+
+    pub fn report_event(&self, kind: &str, properties: Value) {
+        self.telemetry.report_event(kind, properties)
     }
 }
 

@@ -121,7 +121,6 @@ fn main() {
         vim::init(cx);
         terminal::init(cx);
 
-        let db = cx.background().block(db);
         cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
             .detach();
 
@@ -138,6 +137,10 @@ fn main() {
             move |cx| languages.set_theme(cx.global::<Settings>().theme.clone())
         })
         .detach();
+
+        let db = cx.background().block(db);
+        client.start_telemetry(db.clone());
+        client.report_event("start app", Default::default());
 
         let project_store = cx.add_model(|_| ProjectStore::new(db.clone()));
         let app_state = Arc::new(AppState {
