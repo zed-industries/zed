@@ -429,17 +429,6 @@ impl TerminalElement {
                     },
                 ),
             )
-            // Handle click based selections
-            .on_click(
-                MouseButton::Left,
-                TerminalElement::generic_button_handler(
-                    connection,
-                    origin,
-                    move |terminal, origin, e, _cx| {
-                        terminal.left_click(&e, origin);
-                    },
-                ),
-            )
             // Context menu
             .on_click(MouseButton::Right, move |e, cx| {
                 let mouse_mode = if let Some(conn_handle) = connection.upgrade(cx.app) {

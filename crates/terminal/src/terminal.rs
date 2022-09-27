@@ -53,9 +53,7 @@ use thiserror::Error;
 use gpui::{
     geometry::vector::{vec2f, Vector2F},
     keymap::Keystroke,
-    scene::{
-        ClickRegionEvent, DownRegionEvent, DragRegionEvent, ScrollWheelRegionEvent, UpRegionEvent,
-    },
+    scene::{DownRegionEvent, DragRegionEvent, ScrollWheelRegionEvent, UpRegionEvent},
     ClipboardItem, Entity, ModelContext, MouseButton, MouseMovedEvent, MutableAppContext, Task,
 };
 
@@ -969,8 +967,6 @@ impl Terminal {
 
                 self.events
                     .push_back(InternalEvent::Scroll(AlacScroll::Delta(scroll_lines)));
-                self.events
-                    .push_back(InternalEvent::UpdateSelection(position))
             }
         }
     }
@@ -996,21 +992,18 @@ impl Terminal {
             self.last_content.size,
             self.last_content.display_offset,
         );
-        let side = mouse_side(position, self.last_content.size);
+        // let side = mouse_side(position, self.last_content.size);
 
         if self.mouse_mode(e.shift) {
             if let Some(bytes) = mouse_button_report(point, e, true, self.last_content.mode) {
                 self.pty_tx.notify(bytes);
             }
         } else if e.button == MouseButton::Left {
-            self.events.push_back(InternalEvent::SetSelection(Some((
-                Selection::new(SelectionType::Simple, point, side),
-                point,
-            ))));
+            self.left_click(e, origin)
         }
     }
 
-    pub fn left_click(&mut self, e: &ClickRegionEvent, origin: Vector2F) {
+    pub fn left_click(&mut self, e: &DownRegionEvent, origin: Vector2F) {
         let position = e.position.sub(origin);
         if !self.mouse_mode(e.shift) {
             //Hyperlinks
