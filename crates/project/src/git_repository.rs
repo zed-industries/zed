@@ -56,7 +56,7 @@ impl GitRepository {
         self.last_scan_id = scan_id;
     }
 
-    pub fn with_repo(&mut self, f: Box<dyn FnOnce(&mut git2::Repository)>) {
+    pub fn with_repo<F: FnOnce(&mut git2::Repository)>(&mut self, f: F) {
         let mut git2 = self.libgit_repository.lock();
         f(&mut git2)
     }

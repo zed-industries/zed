@@ -1311,9 +1311,7 @@ impl LocalSnapshot {
         self.git_repositories
             .iter()
             .rev() //git_repository is ordered lexicographically
-            .find(|repo| {
-                repo.is_path_managed_by(&self.abs_path.join(path))
-            })
+            .find(|repo| repo.is_path_managed_by(&self.abs_path.join(path)))
             .map(|repo| repo.clone())
     }
 
@@ -2548,13 +2546,16 @@ impl BackgroundScanner {
     }
 
     async fn update_git_repositories(&self) {
-        let mut snapshot = self.snapshot();
-        let mut git_repositories = mem::take(&mut snapshot.git_repositories);
-        git_repositories.retain(|git_repository| {
-            let dot_git_path = git_repository.content_path().join(&*DOT_GIT);
-            snapshot.entry_for_path(dot_git_path).is_some()
-        });
-        snapshot.git_repositories = git_repositories;
+        let mut snapshot = self.snapshot.lock();
+
+        let new_repos = snapshot
+            .git_repositories
+            .iter()
+            .cloned()
+            .filter(|repo| git2::Repository::open(repo.git_dir_path()).is_ok())
+            .collect();
+
+        snapshot.git_repositories = new_repos;
     }
 
     async fn update_ignore_status(&self, job: UpdateIgnoreStatusJob, snapshot: &LocalSnapshot) {
@@ -3179,29 +3180,58 @@ mod tests {
                 .git_repository_for_file_path("dir1/src/b.txt".as_ref())
                 .unwrap();
 
-            // Need to update the file system for anything involving git
-            // Goal: Make this test pass
-            // Up Next: Invalidating git repos!
-            assert_eq!(repo.content_path(), root.path().join("dir1").canonicalize().unwrap());
-            assert_eq!(repo.git_dir_path(), root.path().join("dir1/.git").canonicalize().unwrap());
+            assert_eq!(
+                repo.content_path(),
+                root.path().join("dir1").canonicalize().unwrap()
+            );
+            assert_eq!(
+                repo.git_dir_path(),
+                root.path().join("dir1/.git").canonicalize().unwrap()
+            );
 
             let repo = tree
                 .git_repository_for_file_path("dir1/deps/dep1/src/a.txt".as_ref())
                 .unwrap();
 
-            assert_eq!(repo.content_path(), root.path().join("dir1/deps/dep1").canonicalize().unwrap());
-            assert_eq!(repo.git_dir_path(), root.path().join("dir1/deps/dep1/.git").canonicalize().unwrap());
+            assert_eq!(
+                repo.content_path(),
+                root.path().join("dir1/deps/dep1").canonicalize().unwrap()
+            );
+            assert_eq!(
+                repo.git_dir_path(),
+                root.path()
+                    .join("dir1/deps/dep1/.git")
+                    .canonicalize()
+                    .unwrap()
+            );
 
             let repo = tree
                 .git_repository_for_git_data("dir1/.git/HEAD".as_ref())
                 .unwrap();
 
-            assert_eq!(repo.content_path(), root.path().join("dir1").canonicalize().unwrap());
-            assert_eq!(repo.git_dir_path(), root.path().join("dir1/.git").canonicalize().unwrap());
+            assert_eq!(
+                repo.content_path(),
+                root.path().join("dir1").canonicalize().unwrap()
+            );
+            assert_eq!(
+                repo.git_dir_path(),
+                root.path().join("dir1/.git").canonicalize().unwrap()
+            );
 
             assert!(tree.does_git_repository_track_file_path(&repo, "dir1/src/b.txt".as_ref()));
             assert!(!tree
                 .does_git_repository_track_file_path(&repo, "dir1/deps/dep1/src/a.txt".as_ref()));
+        });
+
+        std::fs::remove_dir_all(root.path().join("dir1/.git")).unwrap();
+        tree.flush_fs_events(cx).await;
+
+        tree.read_with(cx, |tree, _cx| {
+            let tree = tree.as_local().unwrap();
+
+            assert!(tree
+                .git_repository_for_file_path("dir1/src/b.txt".as_ref())
+                .is_none());
         });
     }
 
