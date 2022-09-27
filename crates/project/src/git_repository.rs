@@ -10,7 +10,7 @@ pub struct GitRepository {
     // Path to the actual .git folder.
     // Note: if .git is a file, this points to the folder indicated by the .git file
     git_dir_path: Arc<Path>,
-    last_scan_id: usize,
+    scan_id: usize,
     libgit_repository: Arc<Mutex<git2::Repository>>,
 }
 
@@ -22,19 +22,19 @@ impl GitRepository {
                 Some(Self {
                     content_path: libgit_repository.workdir()?.into(),
                     git_dir_path: dotgit_path.canonicalize().log_err()?.into(),
-                    last_scan_id: 0,
+                    scan_id: 0,
                     libgit_repository: Arc::new(parking_lot::Mutex::new(libgit_repository)),
                 })
             })
     }
 
-    pub fn is_path_managed_by(&self, path: &Path) -> bool {
+    pub fn manages(&self, path: &Path) -> bool {
         path.canonicalize()
             .map(|path| path.starts_with(&self.content_path))
             .unwrap_or(false)
     }
 
-    pub fn is_path_in_git_folder(&self, path: &Path) -> bool {
+    pub fn in_dot_git(&self, path: &Path) -> bool {
         path.canonicalize()
             .map(|path| path.starts_with(&self.git_dir_path))
             .unwrap_or(false)
@@ -48,12 +48,12 @@ impl GitRepository {
         self.git_dir_path.as_ref()
     }
 
-    pub fn last_scan_id(&self) -> usize {
-        self.last_scan_id
+    pub fn scan_id(&self) -> usize {
+        self.scan_id
     }
 
-    pub fn set_scan_id(&mut self, scan_id: usize) {
-        self.last_scan_id = scan_id;
+    pub(super) fn set_scan_id(&mut self, scan_id: usize) {
+        self.scan_id = scan_id;
     }
 
     pub fn with_repo<F: FnOnce(&mut git2::Repository)>(&mut self, f: F) {

@@ -40,7 +40,6 @@ use std::{
     ffi::{OsStr, OsString},
     fmt,
     future::Future,
-    mem,
     ops::{Deref, DerefMut},
     os::unix::prelude::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
@@ -1307,32 +1306,24 @@ impl LocalSnapshot {
     }
 
     // Gives the most specific git repository for a given path
-    pub(crate) fn git_repository_for_file_path(&self, path: &Path) -> Option<GitRepository> {
+    pub(crate) fn repo_for(&self, path: &Path) -> Option<GitRepository> {
         self.git_repositories
             .iter()
             .rev() //git_repository is ordered lexicographically
-            .find(|repo| repo.is_path_managed_by(&self.abs_path.join(path)))
+            .find(|repo| repo.manages(&self.abs_path.join(path)))
             .map(|repo| repo.clone())
     }
 
-    //  ~/zed:
-    //   - src
-    //   - crates
-    //   - .git -> /usr/.git
-    pub(crate) fn git_repository_for_git_data(&self, path: &Path) -> Option<GitRepository> {
+    pub(crate) fn in_dot_git(&mut self, path: &Path) -> Option<&mut GitRepository> {
         self.git_repositories
-            .iter()
-            .find(|repo| repo.is_path_in_git_folder(&self.abs_path.join(path)))
-            .map(|repo| repo.clone())
+            .iter_mut()
+            .rev() //git_repository is ordered lexicographically
+            .find(|repo| repo.in_dot_git(&self.abs_path.join(path)))
     }
 
-    pub(crate) fn does_git_repository_track_file_path(
-        &self,
-        repo: &GitRepository,
-        file_path: &Path,
-    ) -> bool {
+    pub(crate) fn tracks_filepath(&self, repo: &GitRepository, file_path: &Path) -> bool {
         // Depends on git_repository_for_file_path returning the most specific git repository for a given path
-        self.git_repository_for_file_path(&self.abs_path.join(file_path))
+        self.repo_for(&self.abs_path.join(file_path))
             .map_or(false, |r| r.git_dir_path() == repo.git_dir_path())
     }
 
@@ -2433,6 +2424,11 @@ impl BackgroundScanner {
                         fs_entry.is_ignored = ignore_stack.is_all();
                         snapshot.insert_entry(fs_entry, self.fs.as_ref());
 
+                        let scan_id = snapshot.scan_id;
+                        if let Some(repo) = snapshot.in_dot_git(&abs_path) {
+                            repo.set_scan_id(scan_id);
+                        }
+
                         let mut ancestor_inodes = snapshot.ancestor_inodes_for_path(&path);
                         if metadata.is_dir && !ancestor_inodes.contains(&metadata.inode) {
                             ancestor_inodes.insert(metadata.inode);
@@ -3172,13 +3168,9 @@ mod tests {
         tree.read_with(cx, |tree, _cx| {
             let tree = tree.as_local().unwrap();
 
-            assert!(tree
-                .git_repository_for_file_path("c.txt".as_ref())
-                .is_none());
+            assert!(tree.repo_for("c.txt".as_ref()).is_none());
 
-            let repo = tree
-                .git_repository_for_file_path("dir1/src/b.txt".as_ref())
-                .unwrap();
+            let repo = tree.repo_for("dir1/src/b.txt".as_ref()).unwrap();
 
             assert_eq!(
                 repo.content_path(),
@@ -3189,9 +3181,7 @@ mod tests {
                 root.path().join("dir1/.git").canonicalize().unwrap()
             );
 
-            let repo = tree
-                .git_repository_for_file_path("dir1/deps/dep1/src/a.txt".as_ref())
-                .unwrap();
+            let repo = tree.repo_for("dir1/deps/dep1/src/a.txt".as_ref()).unwrap();
 
             assert_eq!(
                 repo.content_path(),
@@ -3204,23 +3194,23 @@ mod tests {
                     .canonicalize()
                     .unwrap()
             );
+        });
 
-            let repo = tree
-                .git_repository_for_git_data("dir1/.git/HEAD".as_ref())
-                .unwrap();
+        let original_scan_id = tree.read_with(cx, |tree, _cx| {
+            let tree = tree.as_local().unwrap();
+            tree.repo_for("dir1/src/b.txt".as_ref()).unwrap().scan_id()
+        });
 
-            assert_eq!(
-                repo.content_path(),
-                root.path().join("dir1").canonicalize().unwrap()
+        std::fs::write(root.path().join("dir1/.git/random_new_file"), "hello").unwrap();
+        tree.flush_fs_events(cx).await;
+
+        tree.read_with(cx, |tree, _cx| {
+            let tree = tree.as_local().unwrap();
+            let new_scan_id = tree.repo_for("dir1/src/b.txt".as_ref()).unwrap().scan_id();
+            assert_ne!(
+                original_scan_id, new_scan_id,
+                "original {original_scan_id}, new {new_scan_id}"
             );
-            assert_eq!(
-                repo.git_dir_path(),
-                root.path().join("dir1/.git").canonicalize().unwrap()
-            );
-
-            assert!(tree.does_git_repository_track_file_path(&repo, "dir1/src/b.txt".as_ref()));
-            assert!(!tree
-                .does_git_repository_track_file_path(&repo, "dir1/deps/dep1/src/a.txt".as_ref()));
         });
 
         std::fs::remove_dir_all(root.path().join("dir1/.git")).unwrap();
@@ -3229,9 +3219,7 @@ mod tests {
         tree.read_with(cx, |tree, _cx| {
             let tree = tree.as_local().unwrap();
 
-            assert!(tree
-                .git_repository_for_file_path("dir1/src/b.txt".as_ref())
-                .is_none());
+            assert!(tree.repo_for("dir1/src/b.txt".as_ref()).is_none());
         });
     }
 
