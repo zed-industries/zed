@@ -3,8 +3,8 @@ use std::process::Command;
 fn main() {
     println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=10.14");
 
-    if let Ok(api_key) = std::env::var("AMPLITUDE_API_KEY") {
-        println!("cargo:rustc-env=AMPLITUDE_API_KEY={api_key}");
+    if let Ok(api_key) = std::env::var("ZED_AMPLITUDE_API_KEY") {
+        println!("cargo:rustc-env=ZED_AMPLITUDE_API_KEY={api_key}");
     }
 
     let output = Command::new("npm")
