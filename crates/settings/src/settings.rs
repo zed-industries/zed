@@ -32,6 +32,8 @@ pub struct Settings {
     pub default_dock_anchor: DockAnchor,
     pub editor_defaults: EditorSettings,
     pub editor_overrides: EditorSettings,
+    pub journal_defaults: JournalSettings,
+    pub journal_overrides: JournalSettings,
     pub terminal_defaults: TerminalSettings,
     pub terminal_overrides: TerminalSettings,
     pub language_defaults: HashMap<Arc<str>, EditorSettings>,
@@ -99,6 +101,26 @@ pub enum Autosave {
     AfterDelay { milliseconds: u64 },
     OnFocusChange,
     OnWindowChange,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
+pub struct JournalSettings {
+    pub journal_directory: Option<JournalDirectory>,
+    pub hour_format: Option<HourFormat>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum JournalDirectory {
+    AlwaysHome,
+    Always { directory: String },
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HourFormat {
+    Hour12,
+    Hour24,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
@@ -194,6 +216,8 @@ pub struct SettingsFileContent {
     #[serde(flatten)]
     pub editor: EditorSettings,
     #[serde(default)]
+    pub journal: JournalSettings,
+    #[serde(default)]
     pub terminal: TerminalSettings,
     #[serde(default)]
     #[serde(alias = "language_overrides")]
@@ -252,6 +276,8 @@ impl Settings {
                 enable_language_server: required(defaults.editor.enable_language_server),
             },
             editor_overrides: Default::default(),
+            journal_defaults: Default::default(),
+            journal_overrides: Default::default(),
             terminal_defaults: Default::default(),
             terminal_overrides: Default::default(),
             language_defaults: defaults.languages,
@@ -303,6 +329,7 @@ impl Settings {
         }
 
         self.editor_overrides = data.editor;
+        self.journal_overrides = data.journal;
         self.terminal_defaults.font_size = data.terminal.font_size;
         self.terminal_overrides = data.terminal;
         self.language_overrides = data.languages;
@@ -380,6 +407,8 @@ impl Settings {
                 enable_language_server: Some(true),
             },
             editor_overrides: Default::default(),
+            journal_defaults: Default::default(),
+            journal_overrides: Default::default(),
             terminal_defaults: Default::default(),
             terminal_overrides: Default::default(),
             language_defaults: Default::default(),

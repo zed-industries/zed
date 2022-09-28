@@ -74,6 +74,13 @@
     "hard_tabs": false,
     // How many columns a tab should occupy.
     "tab_size": 4,
+    // TODO
+    "journal": {
+        // TODO
+        "journal_directory": "always_home",
+        // TODO
+        "hour_format": "hour12"
+    },
     // Settings specific to the terminal
     "terminal": {
         // What shell to use when opening a terminal. May take 3 values: 

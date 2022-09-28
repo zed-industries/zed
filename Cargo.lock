@@ -2764,6 +2764,7 @@ dependencies = [
  "editor",
  "gpui",
  "log",
+ "settings",
  "util",
  "workspace",
 ]
