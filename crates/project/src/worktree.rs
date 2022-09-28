@@ -100,7 +100,7 @@ pub struct Snapshot {
 pub struct LocalSnapshot {
     abs_path: Arc<Path>,
     ignores_by_parent_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
-    git_repositories: Vec<GitRepository>,
+    git_repositories: Vec<Box<dyn GitRepository>>,
     removed_entry_ids: HashMap<u64, ProjectEntryId>,
     next_entry_id: Arc<AtomicUsize>,
     snapshot: Snapshot,
@@ -115,7 +115,7 @@ impl Clone for LocalSnapshot {
             git_repositories: self
                 .git_repositories
                 .iter()
-                .map(|repo| repo.clone())
+                .map(|repo| repo.boxed_clone())
                 .collect(),
             removed_entry_ids: self.removed_entry_ids.clone(),
             next_entry_id: self.next_entry_id.clone(),
@@ -157,7 +157,7 @@ struct ShareState {
 
 pub enum Event {
     UpdatedEntries,
-    UpdatedGitRepositories(Vec<GitRepository>),
+    UpdatedGitRepositories(Vec<Box<dyn GitRepository>>),
 }
 
 impl Entity for Worktree {
@@ -581,16 +581,13 @@ impl LocalWorktree {
     }
 
     fn list_updated_repos(
-        old_repos: &[GitRepository],
-        new_repos: &[GitRepository],
-    ) -> Vec<GitRepository> {
-        println!("old repos: {:#?}", old_repos);
-        println!("new repos: {:#?}", new_repos);
-
+        old_repos: &[Box<dyn GitRepository>],
+        new_repos: &[Box<dyn GitRepository>],
+    ) -> Vec<Box<dyn GitRepository>> {
         fn diff<'a>(
-            a: &'a [GitRepository],
-            b: &'a [GitRepository],
-            updated: &mut HashMap<&'a Path, GitRepository>,
+            a: &'a [Box<dyn GitRepository>],
+            b: &'a [Box<dyn GitRepository>],
+            updated: &mut HashMap<&'a Path, Box<dyn GitRepository>>,
         ) {
             for a_repo in a {
                 let matched = b.iter().find(|b_repo| {
@@ -599,17 +596,17 @@ impl LocalWorktree {
                 });
 
                 if matched.is_some() {
-                    updated.insert(a_repo.git_dir_path(), a_repo.clone());
+                    updated.insert(a_repo.git_dir_path(), a_repo.boxed_clone());
                 }
             }
         }
 
-        let mut updated = HashMap::<&Path, GitRepository>::default();
+        let mut updated = HashMap::<&Path, Box<dyn GitRepository>>::default();
 
         diff(old_repos, new_repos, &mut updated);
         diff(new_repos, old_repos, &mut updated);
 
-        dbg!(updated.into_values().collect())
+        updated.into_values().collect()
     }
 
     pub fn scan_complete(&self) -> impl Future<Output = ()> {
@@ -1364,23 +1361,22 @@ impl LocalSnapshot {
     }
 
     // Gives the most specific git repository for a given path
-    pub(crate) fn repo_for(&self, path: &Path) -> Option<GitRepository> {
+    pub(crate) fn repo_for(&self, path: &Path) -> Option<Box<dyn GitRepository>> {
         self.git_repositories
             .iter()
             .rev() //git_repository is ordered lexicographically
             .find(|repo| repo.manages(&self.abs_path.join(path)))
-            .map(|repo| repo.clone())
+            .map(|repo| repo.boxed_clone())
     }
 
-    pub(crate) fn in_dot_git(&mut self, path: &Path) -> Option<&mut GitRepository> {
-        println!("chechking {path:?}");
+    pub(crate) fn in_dot_git(&mut self, path: &Path) -> Option<&mut Box<dyn GitRepository>> {
         self.git_repositories
             .iter_mut()
             .rev() //git_repository is ordered lexicographically
             .find(|repo| repo.in_dot_git(&self.abs_path.join(path)))
     }
 
-    pub(crate) fn tracks_filepath(&self, repo: &GitRepository, file_path: &Path) -> bool {
+    pub(crate) fn _tracks_filepath(&self, repo: &dyn GitRepository, file_path: &Path) -> bool {
         // Depends on git_repository_for_file_path returning the most specific git repository for a given path
         self.repo_for(&self.abs_path.join(file_path))
             .map_or(false, |r| r.git_dir_path() == repo.git_dir_path())
@@ -1522,6 +1518,7 @@ impl LocalSnapshot {
         parent_path: Arc<Path>,
         entries: impl IntoIterator<Item = Entry>,
         ignore: Option<Arc<Gitignore>>,
+        fs: &dyn Fs,
     ) {
         let mut parent_entry = if let Some(parent_entry) =
             self.entries_by_path.get(&PathKey(parent_path.clone()), &())
@@ -1553,7 +1550,7 @@ impl LocalSnapshot {
                 .git_repositories
                 .binary_search_by_key(&abs_path.as_path(), |repo| repo.git_dir_path())
             {
-                if let Some(repository) = GitRepository::open(&abs_path) {
+                if let Some(repository) = fs.open_repo(abs_path.as_path()) {
                     self.git_repositories.insert(ix, repository);
                 }
             }
@@ -2402,9 +2399,12 @@ impl BackgroundScanner {
             new_entries.push(child_entry);
         }
 
-        self.snapshot
-            .lock()
-            .populate_dir(job.path.clone(), new_entries, new_ignore);
+        self.snapshot.lock().populate_dir(
+            job.path.clone(),
+            new_entries,
+            new_ignore,
+            self.fs.as_ref(),
+        );
         for new_job in new_jobs {
             job.scan_queue.send(new_job).await.unwrap();
         }
@@ -2602,7 +2602,7 @@ impl BackgroundScanner {
         let new_repos = snapshot
             .git_repositories
             .iter()
-            .cloned()
+            .map(|repo| repo.boxed_clone())
             .filter(|repo| git::libgit::Repository::open(repo.git_dir_path()).is_ok())
             .collect();
 

@@ -672,7 +672,6 @@ impl Buffer {
     }
 
     pub fn git_diff_recalc(&mut self, cx: &mut ModelContext<Self>) {
-        println!("recalc");
         if self.git_diff_status.update_in_progress {
             self.git_diff_status.update_requested = true;
             return;

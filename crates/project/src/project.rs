@@ -4537,7 +4537,6 @@ impl Project {
             cx.subscribe(worktree, |this, worktree, event, cx| match event {
                 worktree::Event::UpdatedEntries => this.update_local_worktree_buffers(worktree, cx),
                 worktree::Event::UpdatedGitRepositories(updated_repos) => {
-                    println!("{updated_repos:#?}");
                     this.update_local_worktree_buffers_git_repos(updated_repos, cx)
                 }
             })
@@ -4649,7 +4648,7 @@ impl Project {
 
     fn update_local_worktree_buffers_git_repos(
         &mut self,
-        repos: &[GitRepository],
+        repos: &[Box<dyn GitRepository>],
         cx: &mut ModelContext<Self>,
     ) {
         //TODO: Produce protos
@@ -4662,18 +4661,15 @@ impl Project {
                 };
                 let path = file.path().clone();
                 let abs_path = file.abs_path(cx);
-                println!("got file");
 
                 let repo = match repos.iter().find(|repo| repo.manages(&abs_path)) {
-                    Some(repo) => repo.clone(),
+                    Some(repo) => repo.boxed_clone(),
                     None => return,
                 };
-                println!("got repo");
 
                 cx.spawn(|_, mut cx| async move {
                     let head_text = repo.load_head_text(&path).await;
                     buffer.update(&mut cx, |buffer, cx| {
-                        println!("got calling update");
                         buffer.update_head_text(head_text, cx);
                     });
                 })

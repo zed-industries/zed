@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use fsevent::EventStream;
 use futures::{future::BoxFuture, Stream, StreamExt};
+use git::repository::{FakeGitRepository, GitRepository, RealGitRepository};
 use language::LineEnding;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::{
@@ -43,6 +44,7 @@ pub trait Fs: Send + Sync {
         path: &Path,
         latency: Duration,
     ) -> Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>>;
+    async fn open_repo(&self, abs_dot_git: &Path) -> Option<Box<dyn GitRepository>>;
     fn is_fake(&self) -> bool;
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeFs;
@@ -234,6 +236,10 @@ impl Fs for RealFs {
             drop(handle);
             vec![]
         })))
+    }
+
+    fn open_repo(&self, abs_dot_git: &Path) -> Option<Box<dyn GitRepository>> {
+        RealGitRepository::open(&abs_dot_git)
     }
 
     fn is_fake(&self) -> bool {
@@ -845,6 +851,10 @@ impl Fs for FakeFs {
                 result
             }
         }))
+    }
+
+    fn open_repo(&self, abs_dot_git: &Path) -> Option<Box<dyn GitRepository>> {
+        Some(FakeGitRepository::open(abs_dot_git.into(), 0))
     }
 
     fn is_fake(&self) -> bool {
