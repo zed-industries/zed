@@ -48,15 +48,20 @@ export default function workspace(colorScheme: ColorScheme) {
     },
     statusBar: statusBar(colorScheme),
     titlebar: {
-      avatarWidth: 18,
-      avatarMargin: 8,
       height: 33, // 32px + 1px for overlaid border
       background: background(layer),
+      border: border(layer, { bottom: true, overlay: true }),
       padding: {
         left: 80,
         right: titlebarPadding,
       },
-      title: text(layer, "sans"),
+
+      // Project
+      title: text(layer, "sans", "variant"),
+
+      // Collaborators
+      avatarWidth: 18,
+      avatarMargin: 8,
       avatar: {
         cornerRadius: 10,
         border: {
@@ -67,30 +72,29 @@ export default function workspace(colorScheme: ColorScheme) {
       avatarRibbon: {
         height: 3,
         width: 12,
-        // TODO: The background for this ideally should be
-        // set with a token, not hardcoded in rust
+        // TODO: Chore: Make avatarRibbon colors driven by the theme rather than being hard coded.
       },
-      border: border(layer, { bottom: true, overlay: true }),
+
+      // Sign in buttom
+      // FlatButton, Variant
       signInPrompt: {
         ...text(layer, "sans", { size: "xs" }),
         background: background(layer),
-        border: border(layer, "on"),
+        border: border(layer),
         cornerRadius: 6,
-        margin: {
-          top: 1,
-        },
         padding: {
           top: 1,
           bottom: 1,
-          left: 7,
-          right: 7,
+          left: 8,
+          right: 8,
         },
         hover: {
           ...text(layer, "sans", "hovered", { size: "xs" }),
           background: background(layer, "hovered"),
-          border: border(layer, "hovered"),
         },
       },
+
+      // Offline Indicator
       offlineIcon: {
         color: foreground(layer, "on"),
         width: 16,
@@ -101,20 +105,23 @@ export default function workspace(colorScheme: ColorScheme) {
           right: 4,
         },
       },
+
+      // Notice that the collaboration server is out of date
       outdatedWarning: {
         ...text(layer, "sans", "warning", { size: "xs" }),
-        background: background(layer, "warning"),
+        background: withOpacity(background(layer, "warning"), 0.3),
         border: border(layer, "warning"),
         margin: {
           left: titlebarPadding,
         },
         padding: {
-          left: 6,
-          right: 6,
+          left: 8,
+          right: 8,
         },
         cornerRadius: 6,
       },
     },
+
     toolbar: {
       height: 34,
       background: background(elevation.top),

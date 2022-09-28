@@ -307,7 +307,7 @@ function bottomLayer(ramps: RampSet, isLight: boolean): Layer {
 
   let warningSet = buildStyleSet(ramps.yellow, {
     background: {
-      default: 0,
+      default: 0.1,
       hovered: 0.1,
       pressed: 0.2,
       active: 0.4,
@@ -321,7 +321,7 @@ function bottomLayer(ramps: RampSet, isLight: boolean): Layer {
       disabled: 0.1,
     },
     foreground: {
-      default: 0.9,
+      default: 0.6,
       hovered: 0.9,
       pressed: 0.9,
       active: 0.9,
