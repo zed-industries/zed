@@ -1,3 +1,4 @@
+mod active_call;
 mod participant;
 
 use anyhow::{anyhow, Result};
