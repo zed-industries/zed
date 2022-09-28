@@ -1,7 +1,7 @@
 use anyhow::Result;
-use git2::{Repository as LibGitRepository, RepositoryOpenFlags as LibGitRepositoryOpenFlags};
+use git2::Repository as LibGitRepository;
 use parking_lot::Mutex;
-use std::{ffi::OsStr, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 use util::ResultExt;
 
 #[derive(Clone)]
@@ -53,21 +53,17 @@ impl GitRepository {
         self.scan_id
     }
 
-    pub(super) fn set_scan_id(&mut self, scan_id: usize) {
+    pub fn set_scan_id(&mut self, scan_id: usize) {
+        println!("setting scan id");
         self.scan_id = scan_id;
     }
 
-    pub fn with_repo<F: FnOnce(&mut git2::Repository)>(&mut self, f: F) {
-        let mut git2 = self.libgit_repository.lock();
-        f(&mut git2)
-    }
-
-    pub async fn load_head_text(&self, file_path: &Path) -> Option<String> {
-        fn logic(repo: &LibGitRepository, file_path: &Path) -> Result<Option<String>> {
+    pub async fn load_head_text(&self, relative_file_path: &Path) -> Option<String> {
+        fn logic(repo: &LibGitRepository, relative_file_path: &Path) -> Result<Option<String>> {
             let object = repo
                 .head()?
                 .peel_to_tree()?
-                .get_path(file_path)?
+                .get_path(relative_file_path)?
                 .to_object(&repo)?;
 
             let content = match object.as_blob() {
@@ -79,7 +75,7 @@ impl GitRepository {
             Ok(Some(head_text))
         }
 
-        match logic(&self.libgit_repository.lock(), file_path) {
+        match logic(&self.libgit_repository.as_ref().lock(), relative_file_path) {
             Ok(value) => return value,
             Err(err) => log::error!("Error loading head text: {:?}", err),
         }

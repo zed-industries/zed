@@ -1,4 +1,3 @@
-use crate::git;
 pub use crate::{
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
@@ -47,14 +46,14 @@ pub use {tree_sitter_rust, tree_sitter_typescript};
 pub use lsp::DiagnosticSeverity;
 
 struct GitDiffStatus {
-    diff: git::BufferDiff,
+    diff: git::diff::BufferDiff,
     update_in_progress: bool,
     update_requested: bool,
 }
 
 pub struct Buffer {
     text: TextBuffer,
-    head_text: Option<Arc<String>>,
+    head_text: Option<String>,
     git_diff_status: GitDiffStatus,
     file: Option<Arc<dyn File>>,
     saved_version: clock::Global,
@@ -83,7 +82,7 @@ pub struct Buffer {
 
 pub struct BufferSnapshot {
     text: text::BufferSnapshot,
-    pub git_diff: git::BufferDiff,
+    pub git_diff: git::diff::BufferDiff,
     pub(crate) syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: DiagnosticSet,
@@ -353,7 +352,7 @@ impl Buffer {
     ) -> Self {
         Self::build(
             TextBuffer::new(replica_id, cx.model_id() as u64, base_text.into()),
-            head_text.map(|h| Arc::new(h.into())),
+            head_text.map(|h| h.into().into_boxed_str().into()),
             Some(file),
         )
     }
@@ -364,7 +363,11 @@ impl Buffer {
         file: Option<Arc<dyn File>>,
     ) -> Result<Self> {
         let buffer = TextBuffer::new(replica_id, message.id, message.base_text);
-        let mut this = Self::build(buffer, message.head_text.map(|text| Arc::new(text)), file);
+        let mut this = Self::build(
+            buffer,
+            message.head_text.map(|text| text.into_boxed_str().into()),
+            file,
+        );
         this.text.set_line_ending(proto::deserialize_line_ending(
             proto::LineEnding::from_i32(message.line_ending)
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
@@ -420,11 +423,7 @@ impl Buffer {
         self
     }
 
-    fn build(
-        buffer: TextBuffer,
-        head_text: Option<Arc<String>>,
-        file: Option<Arc<dyn File>>,
-    ) -> Self {
+    fn build(buffer: TextBuffer, head_text: Option<String>, file: Option<Arc<dyn File>>) -> Self {
         let saved_mtime = if let Some(file) = file.as_ref() {
             file.mtime()
         } else {
@@ -440,7 +439,7 @@ impl Buffer {
             text: buffer,
             head_text,
             git_diff_status: GitDiffStatus {
-                diff: git::BufferDiff::new(),
+                diff: git::diff::BufferDiff::new(),
                 update_in_progress: false,
                 update_requested: false,
             },
@@ -613,7 +612,7 @@ impl Buffer {
                 cx,
             );
         }
-        self.update_git(cx);
+        self.git_diff_recalc(cx);
         cx.emit(Event::Reloaded);
         cx.notify();
     }
@@ -663,9 +662,8 @@ impl Buffer {
         task
     }
 
-    pub fn update_git(&mut self, cx: &mut ModelContext<Self>) {
-        //Grab head text
-
+    pub fn update_head_text(&mut self, head_text: Option<String>, cx: &mut ModelContext<Self>) {
+        self.head_text = head_text;
         self.git_diff_recalc(cx);
     }
 
@@ -674,6 +672,7 @@ impl Buffer {
     }
 
     pub fn git_diff_recalc(&mut self, cx: &mut ModelContext<Self>) {
+        println!("recalc");
         if self.git_diff_status.update_in_progress {
             self.git_diff_status.update_requested = true;
             return;
@@ -2221,7 +2220,7 @@ impl BufferSnapshot {
     pub fn git_diff_hunks_in_range<'a>(
         &'a self,
         query_row_range: Range<u32>,
-    ) -> impl 'a + Iterator<Item = git::DiffHunk<u32>> {
+    ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
         self.git_diff.hunks_in_range(query_row_range, self)
     }
 

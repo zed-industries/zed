@@ -1,10 +1,9 @@
-use crate::{copy_recursive, git_repository::GitRepository, ProjectEntryId, RemoveOptions};
-
 use super::{
     fs::{self, Fs},
     ignore::IgnoreStack,
     DiagnosticSummary,
 };
+use crate::{copy_recursive, ProjectEntryId, RemoveOptions};
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context, Result};
 use client::{proto, Client};
@@ -18,6 +17,8 @@ use futures::{
     Stream, StreamExt,
 };
 use fuzzy::CharBag;
+use git::repository::GitRepository;
+use git::{DOT_GIT, GITIGNORE};
 use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task,
@@ -48,7 +49,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
-use util::{ResultExt, TryFutureExt, DOT_GIT, GITIGNORE};
+use util::{ResultExt, TryFutureExt};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
@@ -523,7 +524,10 @@ impl LocalWorktree {
         match self.scan_state() {
             ScanState::Idle => {
                 let new_snapshot = self.background_snapshot.lock().clone();
-                let updated_repos = self.list_updated_repos(&new_snapshot);
+                let updated_repos = Self::list_updated_repos(
+                    &self.snapshot.git_repositories,
+                    &new_snapshot.git_repositories,
+                );
                 self.snapshot = new_snapshot;
 
                 if let Some(share) = self.share.as_mut() {
@@ -541,7 +545,10 @@ impl LocalWorktree {
                 let is_fake_fs = self.fs.is_fake();
 
                 let new_snapshot = self.background_snapshot.lock().clone();
-                let updated_repos = self.list_updated_repos(&new_snapshot);
+                let updated_repos = Self::list_updated_repos(
+                    &self.snapshot.git_repositories,
+                    &new_snapshot.git_repositories,
+                );
                 self.snapshot = new_snapshot;
 
                 self.poll_task = Some(cx.spawn_weak(|this, mut cx| async move {
@@ -573,16 +580,20 @@ impl LocalWorktree {
         cx.notify();
     }
 
-    fn list_updated_repos(&self, new_snapshot: &LocalSnapshot) -> Vec<GitRepository> {
-        let old_snapshot = &self.snapshot;
+    fn list_updated_repos(
+        old_repos: &[GitRepository],
+        new_repos: &[GitRepository],
+    ) -> Vec<GitRepository> {
+        println!("old repos: {:#?}", old_repos);
+        println!("new repos: {:#?}", new_repos);
 
         fn diff<'a>(
-            a: &'a LocalSnapshot,
-            b: &'a LocalSnapshot,
+            a: &'a [GitRepository],
+            b: &'a [GitRepository],
             updated: &mut HashMap<&'a Path, GitRepository>,
         ) {
-            for a_repo in &a.git_repositories {
-                let matched = b.git_repositories.iter().find(|b_repo| {
+            for a_repo in a {
+                let matched = b.iter().find(|b_repo| {
                     a_repo.git_dir_path() == b_repo.git_dir_path()
                         && a_repo.scan_id() == b_repo.scan_id()
                 });
@@ -595,10 +606,10 @@ impl LocalWorktree {
 
         let mut updated = HashMap::<&Path, GitRepository>::default();
 
-        diff(old_snapshot, new_snapshot, &mut updated);
-        diff(new_snapshot, old_snapshot, &mut updated);
+        diff(old_repos, new_repos, &mut updated);
+        diff(new_repos, old_repos, &mut updated);
 
-        updated.into_values().collect()
+        dbg!(updated.into_values().collect())
     }
 
     pub fn scan_complete(&self) -> impl Future<Output = ()> {
@@ -653,7 +664,7 @@ impl LocalWorktree {
                 settings::GitFilesIncluded::All | settings::GitFilesIncluded::OnlyTracked
             ) {
                 let results = if let Some(repo) = snapshot.repo_for(&abs_path) {
-                    repo.load_head_text(&abs_path).await
+                    repo.load_head_text(&path).await
                 } else {
                     None
                 };
@@ -1362,6 +1373,7 @@ impl LocalSnapshot {
     }
 
     pub(crate) fn in_dot_git(&mut self, path: &Path) -> Option<&mut GitRepository> {
+        println!("chechking {path:?}");
         self.git_repositories
             .iter_mut()
             .rev() //git_repository is ordered lexicographically
@@ -1510,7 +1522,6 @@ impl LocalSnapshot {
         parent_path: Arc<Path>,
         entries: impl IntoIterator<Item = Entry>,
         ignore: Option<Arc<Gitignore>>,
-        fs: &dyn Fs,
     ) {
         let mut parent_entry = if let Some(parent_entry) =
             self.entries_by_path.get(&PathKey(parent_path.clone()), &())
@@ -2391,12 +2402,9 @@ impl BackgroundScanner {
             new_entries.push(child_entry);
         }
 
-        self.snapshot.lock().populate_dir(
-            job.path.clone(),
-            new_entries,
-            new_ignore,
-            self.fs.as_ref(),
-        );
+        self.snapshot
+            .lock()
+            .populate_dir(job.path.clone(), new_entries, new_ignore);
         for new_job in new_jobs {
             job.scan_queue.send(new_job).await.unwrap();
         }
@@ -2595,7 +2603,7 @@ impl BackgroundScanner {
             .git_repositories
             .iter()
             .cloned()
-            .filter(|repo| git2::Repository::open(repo.git_dir_path()).is_ok())
+            .filter(|repo| git::libgit::Repository::open(repo.git_dir_path()).is_ok())
             .collect();
 
         snapshot.git_repositories = new_repos;

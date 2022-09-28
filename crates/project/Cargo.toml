@@ -24,6 +24,7 @@ collections = { path = "../collections" }
 db = { path = "../db" }
 fsevent = { path = "../fsevent" }
 fuzzy = { path = "../fuzzy" }
+git = { path = "../git" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
@@ -52,8 +53,6 @@ smol = "1.2.5"
 thiserror = "1.0.29"
 toml = "0.5"
 rocksdb = "0.18"
-git2 = { version = "0.15", default-features = false }
-
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }

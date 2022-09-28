@@ -1697,6 +1697,7 @@ dependencies = [
  "env_logger",
  "futures",
  "fuzzy",
+ "git",
  "gpui",
  "indoc",
  "itertools",
@@ -2222,6 +2223,23 @@ dependencies = [
  "fallible-iterator",
  "indexmap",
  "stable_deref_trait",
+]
+
+[[package]]
+name = "git"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clock",
+ "git2",
+ "lazy_static",
+ "log",
+ "parking_lot 0.11.2",
+ "smol",
+ "sum_tree",
+ "text",
+ "unindent",
+ "util",
 ]
 
 [[package]]
@@ -2853,7 +2871,7 @@ dependencies = [
  "env_logger",
  "futures",
  "fuzzy",
- "git2",
+ "git",
  "gpui",
  "lazy_static",
  "log",
@@ -3996,7 +4014,7 @@ dependencies = [
  "fsevent",
  "futures",
  "fuzzy",
- "git2",
+ "git",
  "gpui",
  "ignore",
  "language",

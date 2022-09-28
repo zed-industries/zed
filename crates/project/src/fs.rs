@@ -1,11 +1,9 @@
 use anyhow::{anyhow, Result};
 use fsevent::EventStream;
 use futures::{future::BoxFuture, Stream, StreamExt};
-use language::git::libgit::{Repository, RepositoryOpenFlags};
 use language::LineEnding;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::{
-    ffi::OsStr,
     io,
     os::unix::fs::MetadataExt,
     path::{Component, Path, PathBuf},
@@ -21,8 +19,6 @@ use collections::{btree_map, BTreeMap};
 use futures::lock::Mutex;
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::{Arc, Weak};
-
-use crate::git_repository::GitRepository;
 
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {

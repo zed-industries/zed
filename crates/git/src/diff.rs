@@ -259,7 +259,7 @@ mod tests {
     use text::Buffer;
     use unindent::Unindent as _;
 
-    #[gpui::test]
+    #[test]
     fn test_buffer_diff_simple() {
         let head_text = "
             one
@@ -308,8 +308,4 @@ mod tests {
             );
         }
     }
-
-    // use rand::rngs::StdRng;
-    // #[gpui::test(iterations = 100)]
-    // fn test_buffer_diff_random(mut rng: StdRng) {}
 }

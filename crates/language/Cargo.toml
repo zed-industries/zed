@@ -25,6 +25,7 @@ client = { path = "../client" }
 clock = { path = "../clock" }
 collections = { path = "../collections" }
 fuzzy = { path = "../fuzzy" }
+git = { path = "../git" }
 gpui = { path = "../gpui" }
 lsp = { path = "../lsp" }
 rpc = { path = "../rpc" }
@@ -51,7 +52,6 @@ smol = "1.2"
 tree-sitter = "0.20"
 tree-sitter-rust = { version = "*", optional = true }
 tree-sitter-typescript = { version = "*", optional = true }
-git2 = { version = "0.15", default-features = false }
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }

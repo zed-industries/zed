@@ -1,5 +1,4 @@
 pub mod fs;
-mod git_repository;
 mod ignore;
 mod lsp_command;
 pub mod search;
@@ -13,7 +12,7 @@ use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use futures::{future::Shared, AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt};
-use git_repository::GitRepository;
+use git::repository::GitRepository;
 use gpui::{
     AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
     MutableAppContext, Task, UpgradeModelHandle, WeakModelHandle,
@@ -4538,6 +4537,7 @@ impl Project {
             cx.subscribe(worktree, |this, worktree, event, cx| match event {
                 worktree::Event::UpdatedEntries => this.update_local_worktree_buffers(worktree, cx),
                 worktree::Event::UpdatedGitRepositories(updated_repos) => {
+                    println!("{updated_repos:#?}");
                     this.update_local_worktree_buffers_git_repos(updated_repos, cx)
                 }
             })
@@ -4649,24 +4649,35 @@ impl Project {
 
     fn update_local_worktree_buffers_git_repos(
         &mut self,
-        updated_repos: &[GitRepository],
+        repos: &[GitRepository],
         cx: &mut ModelContext<Self>,
     ) {
-        for (buffer_id, buffer) in &self.opened_buffers {
-            if let Some(buffer) = buffer.upgrade(cx) {
-                buffer.update(cx, |buffer, cx| {
-                    let updated = updated_repos.iter().any(|repo| {
-                        buffer
-                            .file()
-                            .and_then(|file| file.as_local())
-                            .map(|file| repo.manages(&file.abs_path(cx)))
-                            .unwrap_or(false)
-                    });
+        //TODO: Produce protos
 
-                    if updated {
-                        buffer.update_git(cx);
-                    }
-                });
+        for (_, buffer) in &self.opened_buffers {
+            if let Some(buffer) = buffer.upgrade(cx) {
+                let file = match buffer.read(cx).file().and_then(|file| file.as_local()) {
+                    Some(file) => file,
+                    None => return,
+                };
+                let path = file.path().clone();
+                let abs_path = file.abs_path(cx);
+                println!("got file");
+
+                let repo = match repos.iter().find(|repo| repo.manages(&abs_path)) {
+                    Some(repo) => repo.clone(),
+                    None => return,
+                };
+                println!("got repo");
+
+                cx.spawn(|_, mut cx| async move {
+                    let head_text = repo.load_head_text(&path).await;
+                    buffer.update(&mut cx, |buffer, cx| {
+                        println!("got calling update");
+                        buffer.update_head_text(head_text, cx);
+                    });
+                })
+                .detach();
             }
         }
     }

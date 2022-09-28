@@ -2,19 +2,12 @@
 pub mod test;
 
 use futures::Future;
-use lazy_static::lazy_static;
 use std::{
     cmp::Ordering,
-    ffi::OsStr,
     ops::AddAssign,
     pin::Pin,
     task::{Context, Poll},
 };
-
-lazy_static! {
-    pub static ref DOT_GIT: &'static OsStr = OsStr::new(".git");
-    pub static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");
-}
 
 pub fn truncate(s: &str, max_chars: usize) -> &str {
     match s.char_indices().nth(max_chars) {

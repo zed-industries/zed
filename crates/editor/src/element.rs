@@ -16,6 +16,7 @@ use crate::{
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
+use git::diff::{DiffHunk, DiffHunkStatus};
 use gpui::{
     color::Color,
     elements::*,
@@ -34,7 +35,6 @@ use gpui::{
     WeakViewHandle,
 };
 use json::json;
-use language::git::{DiffHunk, DiffHunkStatus};
 use language::{Bias, DiagnosticSeverity, OffsetUtf16, Selection};
 use project::ProjectPath;
 use settings::Settings;

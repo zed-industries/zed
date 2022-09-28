@@ -4,13 +4,13 @@ pub use anchor::{Anchor, AnchorRangeExt};
 use anyhow::Result;
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
+use git::diff::DiffHunk;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 pub use language::Completion;
 use language::{
-    char_kind, git::DiffHunk, AutoindentMode, Buffer, BufferChunks, BufferSnapshot, CharKind,
-    Chunk, DiagnosticEntry, Event, File, IndentSize, Language, OffsetRangeExt, Outline,
-    OutlineItem, Selection, ToOffset as _, ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _,
-    TransactionId,
+    char_kind, AutoindentMode, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk,
+    DiagnosticEntry, Event, File, IndentSize, Language, OffsetRangeExt, Outline, OutlineItem,
+    Selection, ToOffset as _, ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId,
 };
 use smallvec::SmallVec;
 use std::{

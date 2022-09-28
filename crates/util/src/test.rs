@@ -2,13 +2,14 @@ mod assertions;
 mod marked_text;
 
 use git2;
-use std::path::{Path, PathBuf};
+use std::{
+    ffi::OsStr,
+    path::{Path, PathBuf},
+};
 use tempdir::TempDir;
 
 pub use assertions::*;
 pub use marked_text::*;
-
-use crate::DOT_GIT;
 
 pub fn temp_tree(tree: serde_json::Value) -> TempDir {
     let dir = TempDir::new("").unwrap();
@@ -28,7 +29,7 @@ fn write_tree(path: &Path, tree: serde_json::Value) {
                 Value::Object(_) => {
                     fs::create_dir(&path).unwrap();
 
-                    if path.file_name() == Some(&DOT_GIT) {
+                    if path.file_name() == Some(&OsStr::new(".git")) {
                         git2::Repository::init(&path.parent().unwrap()).unwrap();
                     }
 
