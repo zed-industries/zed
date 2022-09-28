@@ -14,6 +14,7 @@ mod selection;
 pub mod subscription;
 #[cfg(test)]
 mod tests;
+mod undo_map;
 
 pub use anchor::*;
 use anyhow::Result;
@@ -46,6 +47,7 @@ use std::{
 pub use subscription::*;
 pub use sum_tree::Bias;
 use sum_tree::{FilterCursor, SumTree, TreeMap};
+use undo_map::UndoMap;
 
 lazy_static! {
     static ref CARRIAGE_RETURNS_REGEX: Regex = Regex::new("\r\n|\r").unwrap();
@@ -66,7 +68,7 @@ pub struct Buffer {
     version_barriers: Vec<(clock::Global, barrier::Sender)>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct BufferSnapshot {
     replica_id: ReplicaId,
     remote_id: u64,
@@ -332,44 +334,6 @@ impl History {
                 .extend(self.redo_stack.drain(entry_ix..).rev());
         }
         &self.undo_stack[undo_stack_start_len..]
-    }
-}
-
-#[derive(Clone, Default, Debug)]
-struct UndoMap(HashMap<clock::Local, Vec<(clock::Local, u32)>>);
-
-impl UndoMap {
-    fn insert(&mut self, undo: &UndoOperation) {
-        for (edit_id, count) in &undo.counts {
-            self.0.entry(*edit_id).or_default().push((undo.id, *count));
-        }
-    }
-
-    fn is_undone(&self, edit_id: clock::Local) -> bool {
-        self.undo_count(edit_id) % 2 == 1
-    }
-
-    fn was_undone(&self, edit_id: clock::Local, version: &clock::Global) -> bool {
-        let undo_count = self
-            .0
-            .get(&edit_id)
-            .unwrap_or(&Vec::new())
-            .iter()
-            .filter(|(undo_id, _)| version.observed(*undo_id))
-            .map(|(_, undo_count)| *undo_count)
-            .max()
-            .unwrap_or(0);
-        undo_count % 2 == 1
-    }
-
-    fn undo_count(&self, edit_id: clock::Local) -> u32 {
-        self.0
-            .get(&edit_id)
-            .unwrap_or(&Vec::new())
-            .iter()
-            .map(|(_, undo_count)| *undo_count)
-            .max()
-            .unwrap_or(0)
     }
 }
 
@@ -1216,13 +1180,6 @@ impl Buffer {
 
     pub fn operations(&self) -> &TreeMap<clock::Local, Operation> {
         &self.history.operations
-    }
-
-    pub fn undo_history(&self) -> impl Iterator<Item = (&clock::Local, &[(clock::Local, u32)])> {
-        self.undo_map
-            .0
-            .iter()
-            .map(|(edit_id, undo_counts)| (edit_id, undo_counts.as_slice()))
     }
 
     pub fn undo(&mut self) -> Option<(TransactionId, Operation)> {
