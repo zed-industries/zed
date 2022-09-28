@@ -5,6 +5,8 @@ mod env;
 mod rpc;
 
 #[cfg(test)]
+mod db_tests;
+#[cfg(test)]
 mod integration_tests;
 
 use axum::{body::Body, Router};

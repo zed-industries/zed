@@ -4,7 +4,7 @@ use super::{
 use crate::{
     executor, keymap,
     platform::{self, CursorStyle},
-    Action, ClipboardItem, Event, Menu, MenuItem,
+    Action, AppVersion, ClipboardItem, Event, Menu, MenuItem,
 };
 use anyhow::{anyhow, Result};
 use block::ConcreteBlock;
@@ -16,7 +16,8 @@ use cocoa::{
     },
     base::{id, nil, selector, YES},
     foundation::{
-        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSString, NSUInteger, NSURL,
+        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSProcessInfo, NSString,
+        NSUInteger, NSURL,
     },
 };
 use core_foundation::{
@@ -746,6 +747,22 @@ impl platform::Platform for MacPlatform {
                 let version = str::from_utf8(slice::from_raw_parts(bytes, len)).unwrap();
                 version.parse()
             }
+        }
+    }
+
+    fn os_name(&self) -> &'static str {
+        "macOS"
+    }
+
+    fn os_version(&self) -> Result<crate::AppVersion> {
+        unsafe {
+            let process_info = NSProcessInfo::processInfo(nil);
+            let version = process_info.operatingSystemVersion();
+            Ok(AppVersion {
+                major: version.majorVersion as usize,
+                minor: version.minorVersion as usize,
+                patch: version.patchVersion as usize,
+            })
         }
     }
 }

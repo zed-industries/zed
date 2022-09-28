@@ -404,6 +404,8 @@ impl Item for Editor {
         project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
+        self.report_event("save editor", cx);
+
         let buffer = self.buffer().clone();
         let buffers = buffer.read(cx).all_buffers();
         let mut timeout = cx.background().timer(FORMAT_TIMEOUT).fuse();

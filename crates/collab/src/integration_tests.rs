@@ -1,5 +1,5 @@
 use crate::{
-    db::{tests::TestDb, ProjectId, UserId},
+    db::{NewUserParams, ProjectId, TestDb, UserId},
     rpc::{Executor, Server, Store},
     AppState,
 };
@@ -4652,7 +4652,18 @@ async fn test_random_collaboration(
 
     let mut server = TestServer::start(cx.foreground(), cx.background()).await;
     let db = server.app_state.db.clone();
-    let host_user_id = db.create_user("host", None, false).await.unwrap();
+    let host_user_id = db
+        .create_user(
+            "host@example.com",
+            false,
+            NewUserParams {
+                github_login: "host".into(),
+                github_user_id: 0,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap();
     let mut available_guests = vec![
         "guest-1".to_string(),
         "guest-2".to_string(),
@@ -4660,8 +4671,19 @@ async fn test_random_collaboration(
         "guest-4".to_string(),
     ];
 
-    for username in &available_guests {
-        let guest_user_id = db.create_user(username, None, false).await.unwrap();
+    for (ix, username) in available_guests.iter().enumerate() {
+        let guest_user_id = db
+            .create_user(
+                &format!("{username}@example.com"),
+                false,
+                NewUserParams {
+                    github_login: username.into(),
+                    github_user_id: ix as i32,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap();
         assert_eq!(*username, format!("guest-{}", guest_user_id));
         server
             .app_state
@@ -5163,18 +5185,30 @@ impl TestServer {
         });
 
         let http = FakeHttpClient::with_404_response();
-        let user_id = if let Ok(Some(user)) = self.app_state.db.get_user_by_github_login(name).await
+        let user_id = if let Ok(Some(user)) = self
+            .app_state
+            .db
+            .get_user_by_github_account(name, None)
+            .await
         {
             user.id
         } else {
             self.app_state
                 .db
-                .create_user(name, None, false)
+                .create_user(
+                    &format!("{name}@example.com"),
+                    false,
+                    NewUserParams {
+                        github_login: name.into(),
+                        github_user_id: 0,
+                        invite_count: 0,
+                    },
+                )
                 .await
                 .unwrap()
         };
         let client_name = name.to_string();
-        let mut client = Client::new(http.clone());
+        let mut client = cx.read(|cx| Client::new(http.clone(), cx));
         let server = self.server.clone();
         let db = self.app_state.db.clone();
         let connection_killers = self.connection_killers.clone();

@@ -69,6 +69,8 @@ pub trait Platform: Send + Sync {
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
     fn app_path(&self) -> Result<PathBuf>;
     fn app_version(&self) -> Result<AppVersion>;
+    fn os_name(&self) -> &'static str;
+    fn os_version(&self) -> Result<AppVersion>;
 }
 
 pub(crate) trait ForegroundPlatform {

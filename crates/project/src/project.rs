@@ -1,4 +1,3 @@
-mod db;
 pub mod fs;
 mod ignore;
 mod lsp_command;
@@ -666,7 +665,7 @@ impl Project {
 
         let languages = Arc::new(LanguageRegistry::test());
         let http_client = client::test::FakeHttpClient::with_404_response();
-        let client = client::Client::new(http_client.clone());
+        let client = cx.update(|cx| client::Client::new(http_client.clone(), cx));
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
         let project_store = cx.add_model(|_| ProjectStore::new(Db::open_fake()));
         let project = cx.update(|cx| {
