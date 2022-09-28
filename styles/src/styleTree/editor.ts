@@ -1,5 +1,6 @@
 import { fontWeights } from "../common";
 import { ColorScheme, Elevation, Layer, StyleSets } from "../themes/common/colorScheme";
+import { withOpacity } from "../utils/color";
 import {
   background,
   border,
@@ -133,11 +134,11 @@ export default function editor(colorScheme: ColorScheme) {
   return {
     textColor: syntax.primary.color,
     background: background(layer),
-    activeLineBackground: background(layer, "variant"),
-    highlightedLineBackground: background(layer, "variant"),
+    activeLineBackground: background(layer, "on"),
+    highlightedLineBackground: background(layer, "on"),
     codeActions: {
       indicator: foreground(layer, "variant"),
-      verticalScale: 0.618
+      verticalScale: 0.55
     },
     diffBackgroundDeleted: background(layer, "negative"),
     diffBackgroundInserted: background(layer, "positive"),
@@ -146,8 +147,8 @@ export default function editor(colorScheme: ColorScheme) {
     errorColor: foreground(layer, "negative"),
     gutterBackground: background(layer),
     gutterPaddingFactor: 3.5,
-    lineNumber: foreground(layer),
-    lineNumberActive: foreground(layer, "active"),
+    lineNumber: foreground(layer, "disabled"),
+    lineNumberActive: foreground(layer),
     renameFade: 0.6,
     unnecessaryCodeFade: 0.5,
     selection: colorScheme.players[0],
@@ -164,26 +165,26 @@ export default function editor(colorScheme: ColorScheme) {
       background: background(elevation.above.top),
       cornerRadius: 8,
       padding: 4,
+      margin: {
+        left: -14,
+      },
       border: border(elevation.above.top),
       shadow: elevation.above.shadow,
+      matchHighlight: elevation.above.ramps.blue(0.5).hex(),
       item: autocompleteItem,
       hoveredItem: {
         ...autocompleteItem,
         background: background(elevation.above.top, "hovered"),
       },
-      margin: {
-        left: -14,
-      },
-      matchHighlight: elevation.above.ramps.blue(0.5).hex(),
       selectedItem: {
         ...autocompleteItem,
-        background: background(elevation.above.top, "active"),
+        background: withOpacity(background(elevation.above.top, "active"), 0.2),
       },
     },
     diagnosticHeader: {
       background: background(elevation.middle),
       iconWidthFactor: 1.5,
-      textScaleFactor: 0.857, // NateQ: Will we need dynamic sizing for text? If so let's create tokens for these.
+      textScaleFactor: 0.857,
       border: border(elevation.middle, {
         bottom: true,
         top: true,
