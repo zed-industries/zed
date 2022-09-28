@@ -1,7 +1,7 @@
 use anyhow::Result;
 use git2::{Repository as LibGitRepository, RepositoryOpenFlags as LibGitRepositoryOpenFlags};
 use parking_lot::Mutex;
-use std::{path::Path, sync::Arc, ffi::OsStr};
+use std::{ffi::OsStr, path::Path, sync::Arc};
 use util::ResultExt;
 
 #[derive(Clone)]

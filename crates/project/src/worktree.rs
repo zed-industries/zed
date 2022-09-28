@@ -636,6 +636,7 @@ impl LocalWorktree {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
+        let snapshot = self.snapshot();
 
         let files_included = cx
             .global::<Settings>()
@@ -651,12 +652,11 @@ impl LocalWorktree {
                 files_included,
                 settings::GitFilesIncluded::All | settings::GitFilesIncluded::OnlyTracked
             ) {
-                
-                
-                let fs = fs.clone();
-                let abs_path = abs_path.clone();
-                let opt_future = async move { fs.load_head_text(&abs_path).await };
-                let results = cx.background().spawn(task).await;
+                let results = if let Some(repo) = snapshot.repo_for(&abs_path) {
+                    repo.load_head_text(&abs_path).await
+                } else {
+                    None
+                };
 
                 if files_included == settings::GitFilesIncluded::All {
                     results.or_else(|| Some(text.clone()))

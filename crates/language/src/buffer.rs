@@ -662,10 +662,9 @@ impl Buffer {
         self.file = Some(new_file);
         task
     }
-    
+
     pub fn update_git(&mut self, cx: &mut ModelContext<Self>) {
         //Grab head text
-        
 
         self.git_diff_recalc(cx);
     }
