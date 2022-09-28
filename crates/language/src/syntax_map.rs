@@ -92,6 +92,7 @@ struct SyntaxLayer {
     language: Arc<Language>,
 }
 
+#[derive(Debug)]
 pub struct SyntaxLayerInfo<'a> {
     pub depth: usize,
     pub node: Node<'a>,

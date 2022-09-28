@@ -648,6 +648,7 @@ impl Buffer {
             .layers_for_range(offset..offset, &self.text)
             .last()
             .map(|info| info.language.clone())
+            .or_else(|| self.language.clone())
     }
 
     pub fn parse_count(&self) -> usize {
@@ -1841,6 +1842,7 @@ impl BufferSnapshot {
             .layers_for_range(offset..offset, &self.text)
             .last()
             .map(|info| info.language)
+            .or(self.language.as_ref())
     }
 
     pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {

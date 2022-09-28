@@ -26,6 +26,7 @@ use serde_json::Value;
 use std::{
     any::Any,
     cell::RefCell,
+    fmt::Debug,
     mem,
     ops::Range,
     path::{Path, PathBuf},
@@ -863,6 +864,14 @@ impl Language {
 
     pub fn grammar(&self) -> Option<&Arc<Grammar>> {
         self.grammar.as_ref()
+    }
+}
+
+impl Debug for Language {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Language")
+            .field("name", &self.config.name)
+            .finish()
     }
 }
 
