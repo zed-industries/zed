@@ -1,13 +1,14 @@
 mod participant;
 
 use anyhow::{anyhow, Result};
-use client::{call::Call, proto, Client, PeerId, TypedEnvelope};
+use client::{call::Call, proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use collections::HashMap;
 use futures::StreamExt;
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use participant::{LocalParticipant, ParticipantLocation, RemoteParticipant};
 use project::Project;
 use std::sync::Arc;
+use util::ResultExt;
 
 pub enum Event {
     PeerChangedActiveProject,
@@ -18,9 +19,11 @@ pub struct Room {
     status: RoomStatus,
     local_participant: LocalParticipant,
     remote_participants: HashMap<PeerId, RemoteParticipant>,
-    pending_user_ids: Vec<u64>,
+    pending_users: Vec<Arc<User>>,
     client: Arc<Client>,
+    user_store: ModelHandle<UserStore>,
     _subscriptions: Vec<client::Subscription>,
+    _load_pending_users: Option<Task<()>>,
 }
 
 impl Entity for Room {
@@ -28,7 +31,44 @@ impl Entity for Room {
 }
 
 impl Room {
-    fn new(id: u64, client: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn observe<F>(cx: &mut MutableAppContext, mut callback: F) -> gpui::Subscription
+    where
+        F: 'static + FnMut(Option<ModelHandle<Self>>, &mut MutableAppContext),
+    {
+        cx.observe_default_global::<Option<ModelHandle<Self>>, _>(move |cx| {
+            let room = cx.global::<Option<ModelHandle<Self>>>().clone();
+            callback(room, cx);
+        })
+    }
+
+    pub fn get_or_create(
+        client: &Arc<Client>,
+        user_store: &ModelHandle<UserStore>,
+        cx: &mut MutableAppContext,
+    ) -> Task<Result<ModelHandle<Self>>> {
+        if let Some(room) = cx.global::<Option<ModelHandle<Self>>>() {
+            Task::ready(Ok(room.clone()))
+        } else {
+            let client = client.clone();
+            let user_store = user_store.clone();
+            cx.spawn(|mut cx| async move {
+                let room = cx.update(|cx| Room::create(client, user_store, cx)).await?;
+                cx.update(|cx| cx.set_global(Some(room.clone())));
+                Ok(room)
+            })
+        }
+    }
+
+    pub fn clear(cx: &mut MutableAppContext) {
+        cx.set_global::<Option<ModelHandle<Self>>>(None);
+    }
+
+    fn new(
+        id: u64,
+        client: Arc<Client>,
+        user_store: ModelHandle<UserStore>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         let mut client_status = client.status();
         cx.spawn_weak(|this, mut cx| async move {
             let is_connected = client_status
@@ -51,32 +91,36 @@ impl Room {
                 projects: Default::default(),
             },
             remote_participants: Default::default(),
-            pending_user_ids: Default::default(),
+            pending_users: Default::default(),
             _subscriptions: vec![client.add_message_handler(cx.handle(), Self::handle_room_updated)],
+            _load_pending_users: None,
             client,
+            user_store,
         }
     }
 
     pub fn create(
         client: Arc<Client>,
+        user_store: ModelHandle<UserStore>,
         cx: &mut MutableAppContext,
     ) -> Task<Result<ModelHandle<Self>>> {
         cx.spawn(|mut cx| async move {
             let room = client.request(proto::CreateRoom {}).await?;
-            Ok(cx.add_model(|cx| Self::new(room.id, client, cx)))
+            Ok(cx.add_model(|cx| Self::new(room.id, client, user_store, cx)))
         })
     }
 
     pub fn join(
         call: &Call,
         client: Arc<Client>,
+        user_store: ModelHandle<UserStore>,
         cx: &mut MutableAppContext,
     ) -> Task<Result<ModelHandle<Self>>> {
         let room_id = call.room_id;
         cx.spawn(|mut cx| async move {
             let response = client.request(proto::JoinRoom { id: room_id }).await?;
             let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
-            let room = cx.add_model(|cx| Self::new(room_id, client, cx));
+            let room = cx.add_model(|cx| Self::new(room_id, client, user_store, cx));
             room.update(&mut cx, |room, cx| room.apply_room_update(room_proto, cx))?;
             Ok(room)
         })
@@ -98,8 +142,8 @@ impl Room {
         &self.remote_participants
     }
 
-    pub fn pending_user_ids(&self) -> &[u64] {
-        &self.pending_user_ids
+    pub fn pending_users(&self) -> &[Arc<User>] {
+        &self.pending_users
     }
 
     async fn handle_room_updated(
@@ -131,7 +175,19 @@ impl Room {
                 );
             }
         }
-        self.pending_user_ids = room.pending_user_ids;
+
+        let pending_users = self.user_store.update(cx, move |user_store, cx| {
+            user_store.get_users(room.pending_user_ids, cx)
+        });
+        self._load_pending_users = Some(cx.spawn(|this, mut cx| async move {
+            if let Some(pending_users) = pending_users.await.log_err() {
+                this.update(&mut cx, |this, cx| {
+                    this.pending_users = pending_users;
+                    cx.notify();
+                });
+            }
+        }));
+
         cx.notify();
         Ok(())
     }

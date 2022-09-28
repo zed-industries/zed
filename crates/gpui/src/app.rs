@@ -1519,6 +1519,17 @@ impl MutableAppContext {
         }
     }
 
+    pub fn observe_default_global<G, F>(&mut self, observe: F) -> Subscription
+    where
+        G: Any + Default,
+        F: 'static + FnMut(&mut MutableAppContext),
+    {
+        if !self.has_global::<G>() {
+            self.set_global(G::default());
+        }
+        self.observe_global::<G, F>(observe)
+    }
+
     pub fn observe_release<E, H, F>(&mut self, handle: &H, callback: F) -> Subscription
     where
         E: Entity,

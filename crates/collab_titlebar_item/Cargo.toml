@@ -14,6 +14,7 @@ test-support = [
     "editor/test-support",
     "gpui/test-support",
     "project/test-support",
+    "room/test-support",
     "settings/test-support",
     "util/test-support",
     "workspace/test-support",
@@ -28,6 +29,7 @@ fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 menu = { path = "../menu" }
 project = { path = "../project" }
+room = { path = "../room" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
 util = { path = "../util" }
@@ -44,6 +46,7 @@ collections = { path = "../collections", features = ["test-support"] }
 editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
+room = { path = "../room", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }

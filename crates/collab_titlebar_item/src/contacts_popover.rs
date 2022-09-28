@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use client::{Contact, User, UserStore};
+use client::{Client, Contact, User, UserStore};
 use editor::{Cancel, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
@@ -9,10 +9,11 @@ use gpui::{
     ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
+use room::Room;
 use settings::Settings;
 use theme::IconButton;
 
-impl_internal_actions!(contacts_panel, [ToggleExpanded]);
+impl_internal_actions!(contacts_panel, [ToggleExpanded, Call]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ContactsPopover::clear_filter);
@@ -20,10 +21,16 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ContactsPopover::select_prev);
     cx.add_action(ContactsPopover::confirm);
     cx.add_action(ContactsPopover::toggle_expanded);
+    cx.add_action(ContactsPopover::call);
 }
 
 #[derive(Clone, PartialEq)]
 struct ToggleExpanded(Section);
+
+#[derive(Clone, PartialEq)]
+struct Call {
+    recipient_user_id: u64,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
 enum Section {
@@ -73,18 +80,24 @@ pub enum Event {
 }
 
 pub struct ContactsPopover {
+    room: Option<(ModelHandle<Room>, Subscription)>,
     entries: Vec<ContactEntry>,
     match_candidates: Vec<StringMatchCandidate>,
     list_state: ListState,
+    client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     filter_editor: ViewHandle<Editor>,
     collapsed_sections: Vec<Section>,
     selection: Option<usize>,
-    _maintain_contacts: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl ContactsPopover {
-    pub fn new(user_store: ModelHandle<UserStore>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        client: Arc<Client>,
+        user_store: ModelHandle<UserStore>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let filter_editor = cx.add_view(|cx| {
             let mut editor = Editor::single_line(
                 Some(|theme| theme.contacts_panel.user_query_editor.clone()),
@@ -143,23 +156,50 @@ impl ContactsPopover {
                     cx,
                 ),
                 ContactEntry::Contact(contact) => {
-                    Self::render_contact(&contact.user, &theme.contacts_panel, is_selected)
+                    Self::render_contact(contact, &theme.contacts_panel, is_selected, cx)
                 }
             }
         });
 
+        let mut subscriptions = Vec::new();
+        subscriptions.push(cx.observe(&user_store, |this, _, cx| this.update_entries(cx)));
+
+        let weak_self = cx.weak_handle();
+        subscriptions.push(Room::observe(cx, move |room, cx| {
+            if let Some(this) = weak_self.upgrade(cx) {
+                this.update(cx, |this, cx| this.set_room(room, cx));
+            }
+        }));
+
         let mut this = Self {
+            room: None,
             list_state,
             selection: None,
             collapsed_sections: Default::default(),
             entries: Default::default(),
             match_candidates: Default::default(),
             filter_editor,
-            _maintain_contacts: cx.observe(&user_store, |this, _, cx| this.update_entries(cx)),
+            _subscriptions: subscriptions,
+            client,
             user_store,
         };
         this.update_entries(cx);
         this
+    }
+
+    fn set_room(&mut self, room: Option<ModelHandle<Room>>, cx: &mut ViewContext<Self>) {
+        if let Some(room) = room {
+            let observation = cx.observe(&room, |this, room, cx| this.room_updated(room, cx));
+            self.room = Some((room, observation));
+        } else {
+            self.room = None;
+        }
+
+        cx.notify();
+    }
+
+    fn room_updated(&mut self, room: ModelHandle<Room>, cx: &mut ViewContext<Self>) {
+        cx.notify();
     }
 
     fn clear_filter(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
@@ -357,6 +397,43 @@ impl ContactsPopover {
         cx.notify();
     }
 
+    fn render_active_call(&self, cx: &mut RenderContext<Self>) -> Option<ElementBox> {
+        let (room, _) = self.room.as_ref()?;
+        let theme = &cx.global::<Settings>().theme.contacts_panel;
+
+        Some(
+            Flex::column()
+                .with_children(room.read(cx).pending_users().iter().map(|user| {
+                    Flex::row()
+                        .with_children(user.avatar.clone().map(|avatar| {
+                            Image::new(avatar)
+                                .with_style(theme.contact_avatar)
+                                .aligned()
+                                .left()
+                                .boxed()
+                        }))
+                        .with_child(
+                            Label::new(
+                                user.github_login.clone(),
+                                theme.contact_username.text.clone(),
+                            )
+                            .contained()
+                            .with_style(theme.contact_username.container)
+                            .aligned()
+                            .left()
+                            .flex(1., true)
+                            .boxed(),
+                        )
+                        .constrained()
+                        .with_height(theme.row_height)
+                        .contained()
+                        .with_style(theme.contact_row.default)
+                        .boxed()
+                }))
+                .boxed(),
+        )
+    }
+
     fn render_header(
         section: Section,
         theme: &theme::ContactsPanel,
@@ -412,32 +489,46 @@ impl ContactsPopover {
         .boxed()
     }
 
-    fn render_contact(user: &User, theme: &theme::ContactsPanel, is_selected: bool) -> ElementBox {
-        Flex::row()
-            .with_children(user.avatar.clone().map(|avatar| {
-                Image::new(avatar)
-                    .with_style(theme.contact_avatar)
+    fn render_contact(
+        contact: &Contact,
+        theme: &theme::ContactsPanel,
+        is_selected: bool,
+        cx: &mut RenderContext<Self>,
+    ) -> ElementBox {
+        let user_id = contact.user.id;
+        MouseEventHandler::<Contact>::new(contact.user.id as usize, cx, |_, _| {
+            Flex::row()
+                .with_children(contact.user.avatar.clone().map(|avatar| {
+                    Image::new(avatar)
+                        .with_style(theme.contact_avatar)
+                        .aligned()
+                        .left()
+                        .boxed()
+                }))
+                .with_child(
+                    Label::new(
+                        contact.user.github_login.clone(),
+                        theme.contact_username.text.clone(),
+                    )
+                    .contained()
+                    .with_style(theme.contact_username.container)
                     .aligned()
                     .left()
-                    .boxed()
-            }))
-            .with_child(
-                Label::new(
-                    user.github_login.clone(),
-                    theme.contact_username.text.clone(),
+                    .flex(1., true)
+                    .boxed(),
                 )
+                .constrained()
+                .with_height(theme.row_height)
                 .contained()
-                .with_style(theme.contact_username.container)
-                .aligned()
-                .left()
-                .flex(1., true)
-                .boxed(),
-            )
-            .constrained()
-            .with_height(theme.row_height)
-            .contained()
-            .with_style(*theme.contact_row.style_for(Default::default(), is_selected))
-            .boxed()
+                .with_style(*theme.contact_row.style_for(Default::default(), is_selected))
+                .boxed()
+        })
+        .on_click(MouseButton::Left, move |_, cx| {
+            cx.dispatch_action(Call {
+                recipient_user_id: user_id,
+            })
+        })
+        .boxed()
     }
 
     fn render_contact_request(
@@ -553,6 +644,21 @@ impl ContactsPopover {
             .with_style(*theme.contact_row.style_for(Default::default(), is_selected))
             .boxed()
     }
+
+    fn call(&mut self, action: &Call, cx: &mut ViewContext<Self>) {
+        let client = self.client.clone();
+        let user_store = self.user_store.clone();
+        let recipient_user_id = action.recipient_user_id;
+        cx.spawn_weak(|_, mut cx| async move {
+            let room = cx
+                .update(|cx| Room::get_or_create(&client, &user_store, cx))
+                .await?;
+            room.update(&mut cx, |room, cx| room.call(recipient_user_id, cx))
+                .await?;
+            anyhow::Ok(())
+        })
+        .detach();
+    }
 }
 
 impl Entity for ContactsPopover {
@@ -606,6 +712,7 @@ impl View for ContactsPopover {
                     .with_height(theme.contacts_panel.user_query_editor_height)
                     .boxed(),
             )
+            .with_children(self.render_active_call(cx))
             .with_child(List::new(self.list_state.clone()).flex(1., false).boxed())
             .with_children(
                 self.user_store

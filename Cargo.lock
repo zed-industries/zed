@@ -1078,6 +1078,7 @@ dependencies = [
  "menu",
  "postage",
  "project",
+ "room",
  "serde",
  "settings",
  "theme",
@@ -4461,6 +4462,7 @@ dependencies = [
  "futures",
  "gpui",
  "project",
+ "util",
 ]
 
 [[package]]

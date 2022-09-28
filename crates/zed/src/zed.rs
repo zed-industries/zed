@@ -21,10 +21,11 @@ use gpui::{
     geometry::vector::vec2f,
     impl_actions,
     platform::{WindowBounds, WindowOptions},
-    AssetSource, AsyncAppContext, TitlebarOptions, ViewContext, WindowKind,
+    AssetSource, AsyncAppContext, ModelHandle, TitlebarOptions, ViewContext, WindowKind,
 };
 use language::Rope;
 pub use lsp;
+use postage::watch;
 pub use project::{self, fs};
 use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};

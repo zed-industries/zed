@@ -83,7 +83,7 @@ async fn test_basic_calls(
         .await;
 
     let room_a = cx_a
-        .update(|cx| Room::create(client_a.clone(), cx))
+        .update(|cx| Room::create(client_a.clone(), client_a.user_store.clone(), cx))
         .await
         .unwrap();
     assert_eq!(
@@ -125,7 +125,7 @@ async fn test_basic_calls(
 
     // User B joins the room using the first client.
     let room_b = cx_b
-        .update(|cx| Room::join(&call_b, client_b.clone(), cx))
+        .update(|cx| Room::join(&call_b, client_b.clone(), client_b.user_store.clone(), cx))
         .await
         .unwrap();
     assert!(incoming_call_b.next().await.unwrap().is_none());
@@ -229,7 +229,7 @@ async fn test_leaving_room_on_disconnection(
         .await;
 
     let room_a = cx_a
-        .update(|cx| Room::create(client_a.clone(), cx))
+        .update(|cx| Room::create(client_a.clone(), client_a.user_store.clone(), cx))
         .await
         .unwrap();
 
@@ -245,7 +245,7 @@ async fn test_leaving_room_on_disconnection(
     // User B receives the call and joins the room.
     let call_b = incoming_call_b.next().await.unwrap().unwrap();
     let room_b = cx_b
-        .update(|cx| Room::join(&call_b, client_b.clone(), cx))
+        .update(|cx| Room::join(&call_b, client_b.clone(), client_b.user_store.clone(), cx))
         .await
         .unwrap();
     deterministic.run_until_parked();
@@ -6284,17 +6284,9 @@ async fn room_participants(
             .collect::<Vec<_>>()
     });
     let remote_users = futures::future::try_join_all(remote_users).await.unwrap();
-    let pending_users = room.update(cx, |room, cx| {
-        room.pending_user_ids()
-            .iter()
-            .map(|user_id| {
-                client
-                    .user_store
-                    .update(cx, |users, cx| users.get_user(*user_id, cx))
-            })
-            .collect::<Vec<_>>()
+    let pending_users = room.read_with(cx, |room, _| {
+        room.pending_users().iter().cloned().collect::<Vec<_>>()
     });
-    let pending_users = futures::future::try_join_all(pending_users).await.unwrap();
 
     RoomParticipants {
         remote: remote_users
