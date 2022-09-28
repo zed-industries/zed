@@ -19,7 +19,6 @@ pub struct Theme {
     pub workspace: Workspace,
     pub context_menu: ContextMenu,
     pub chat_panel: ChatPanel,
-    pub contacts_popover: ContactsPopover,
     pub contacts_panel: ContactsPanel,
     pub contact_finder: ContactFinder,
     pub project_panel: ProjectPanel,
@@ -323,11 +322,6 @@ pub struct ContextMenuItem {
 pub struct CommandPalette {
     pub key: Interactive<ContainedLabel>,
     pub keystroke_spacing: f32,
-}
-
-#[derive(Deserialize, Default)]
-pub struct ContactsPopover {
-    pub background: Color,
 }
 
 #[derive(Deserialize, Default)]
