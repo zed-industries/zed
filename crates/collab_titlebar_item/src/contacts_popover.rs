@@ -15,11 +15,11 @@ use theme::IconButton;
 impl_internal_actions!(contacts_panel, [ToggleExpanded]);
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(AddParticipantPopover::clear_filter);
-    cx.add_action(AddParticipantPopover::select_next);
-    cx.add_action(AddParticipantPopover::select_prev);
-    cx.add_action(AddParticipantPopover::confirm);
-    cx.add_action(AddParticipantPopover::toggle_expanded);
+    cx.add_action(ContactsPopover::clear_filter);
+    cx.add_action(ContactsPopover::select_next);
+    cx.add_action(ContactsPopover::select_prev);
+    cx.add_action(ContactsPopover::confirm);
+    cx.add_action(ContactsPopover::toggle_expanded);
 }
 
 #[derive(Clone, PartialEq)]
@@ -72,7 +72,7 @@ pub enum Event {
     Dismissed,
 }
 
-pub struct AddParticipantPopover {
+pub struct ContactsPopover {
     entries: Vec<ContactEntry>,
     match_candidates: Vec<StringMatchCandidate>,
     list_state: ListState,
@@ -83,7 +83,7 @@ pub struct AddParticipantPopover {
     _maintain_contacts: Subscription,
 }
 
-impl AddParticipantPopover {
+impl ContactsPopover {
     pub fn new(user_store: ModelHandle<UserStore>, cx: &mut ViewContext<Self>) -> Self {
         let filter_editor = cx.add_view(|cx| {
             let mut editor = Editor::single_line(
@@ -555,13 +555,13 @@ impl AddParticipantPopover {
     }
 }
 
-impl Entity for AddParticipantPopover {
+impl Entity for ContactsPopover {
     type Event = Event;
 }
 
-impl View for AddParticipantPopover {
+impl View for ContactsPopover {
     fn ui_name() -> &'static str {
-        "AddParticipantPopover"
+        "ContactsPopover"
     }
 
     fn keymap_context(&self, _: &AppContext) -> keymap::Context {
@@ -657,10 +657,10 @@ impl View for AddParticipantPopover {
                     }),
             )
             .contained()
-            .with_style(theme.workspace.titlebar.add_participant_popover.container)
+            .with_style(theme.workspace.titlebar.contacts_popover.container)
             .constrained()
-            .with_width(theme.workspace.titlebar.add_participant_popover.width)
-            .with_height(theme.workspace.titlebar.add_participant_popover.height)
+            .with_width(theme.workspace.titlebar.contacts_popover.width)
+            .with_height(theme.workspace.titlebar.contacts_popover.height)
             .boxed()
     }
 

@@ -73,8 +73,8 @@ pub struct Titlebar {
     pub avatar: ImageStyle,
     pub sign_in_prompt: Interactive<ContainedText>,
     pub outdated_warning: ContainedText,
-    pub add_participant_button: Interactive<IconButton>,
-    pub add_participant_popover: AddParticipantPopover,
+    pub toggle_contacts_button: Interactive<IconButton>,
+    pub contacts_popover: AddParticipantPopover,
 }
 
 #[derive(Clone, Deserialize, Default)]

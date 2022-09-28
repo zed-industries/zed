@@ -1,8 +1,8 @@
-mod add_participant_popover;
+mod contacts_popover;
 
-use add_participant_popover::AddParticipantPopover;
 use client::{Authenticate, PeerId};
 use clock::ReplicaId;
+use contacts_popover::ContactsPopover;
 use gpui::{
     actions,
     color::Color,
@@ -17,16 +17,16 @@ use std::{ops::Range, sync::Arc};
 use theme::Theme;
 use workspace::{FollowNextCollaborator, ToggleFollow, Workspace};
 
-actions!(contacts_titlebar_item, [ToggleAddParticipantPopover]);
+actions!(contacts_titlebar_item, [ToggleContactsPopover]);
 
 pub fn init(cx: &mut MutableAppContext) {
-    add_participant_popover::init(cx);
-    cx.add_action(CollabTitlebarItem::toggle_add_participant_popover);
+    contacts_popover::init(cx);
+    cx.add_action(CollabTitlebarItem::toggle_contacts_popover);
 }
 
 pub struct CollabTitlebarItem {
     workspace: WeakViewHandle<Workspace>,
-    add_participant_popover: Option<ViewHandle<AddParticipantPopover>>,
+    contacts_popover: Option<ViewHandle<ContactsPopover>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -61,34 +61,30 @@ impl CollabTitlebarItem {
         let observe_workspace = cx.observe(workspace, |_, _, cx| cx.notify());
         Self {
             workspace: workspace.downgrade(),
-            add_participant_popover: None,
+            contacts_popover: None,
             _subscriptions: vec![observe_workspace],
         }
     }
 
-    fn toggle_add_participant_popover(
-        &mut self,
-        _: &ToggleAddParticipantPopover,
-        cx: &mut ViewContext<Self>,
-    ) {
-        match self.add_participant_popover.take() {
+    fn toggle_contacts_popover(&mut self, _: &ToggleContactsPopover, cx: &mut ViewContext<Self>) {
+        match self.contacts_popover.take() {
             Some(_) => {}
             None => {
                 if let Some(workspace) = self.workspace.upgrade(cx) {
                     let user_store = workspace.read(cx).user_store().clone();
-                    let view = cx.add_view(|cx| AddParticipantPopover::new(user_store, cx));
+                    let view = cx.add_view(|cx| ContactsPopover::new(user_store, cx));
                     cx.focus(&view);
                     cx.subscribe(&view, |this, _, event, cx| {
                         match event {
-                            add_participant_popover::Event::Dismissed => {
-                                this.add_participant_popover = None;
+                            contacts_popover::Event::Dismissed => {
+                                this.contacts_popover = None;
                             }
                         }
 
                         cx.notify();
                     })
                     .detach();
-                    self.add_participant_popover = Some(view);
+                    self.contacts_popover = Some(view);
                 }
             }
         }
@@ -110,10 +106,10 @@ impl CollabTitlebarItem {
         Some(
             Stack::new()
                 .with_child(
-                    MouseEventHandler::<ToggleAddParticipantPopover>::new(0, cx, |state, _| {
+                    MouseEventHandler::<ToggleContactsPopover>::new(0, cx, |state, _| {
                         let style = titlebar
-                            .add_participant_button
-                            .style_for(state, self.add_participant_popover.is_some());
+                            .toggle_contacts_button
+                            .style_for(state, self.contacts_popover.is_some());
                         Svg::new("icons/plus_8.svg")
                             .with_color(style.color)
                             .constrained()
@@ -128,18 +124,18 @@ impl CollabTitlebarItem {
                     })
                     .with_cursor_style(CursorStyle::PointingHand)
                     .on_click(MouseButton::Left, |_, cx| {
-                        cx.dispatch_action(ToggleAddParticipantPopover);
+                        cx.dispatch_action(ToggleContactsPopover);
                     })
                     .aligned()
                     .boxed(),
                 )
-                .with_children(self.add_participant_popover.as_ref().map(|popover| {
+                .with_children(self.contacts_popover.as_ref().map(|popover| {
                     Overlay::new(
                         ChildView::new(popover)
                             .contained()
                             .with_margin_top(titlebar.height)
                             .with_margin_right(
-                                -titlebar.add_participant_button.default.button_width,
+                                -titlebar.toggle_contacts_button.default.button_width,
                             )
                             .boxed(),
                     )

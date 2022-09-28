@@ -119,7 +119,7 @@ export default function workspace(theme: Theme) {
         },
         cornerRadius: 6,
       },
-      addParticipantButton: {
+      toggleContactsButton: {
         cornerRadius: 6,
         color: iconColor(theme, "secondary"),
         iconWidth: 8,
@@ -133,7 +133,7 @@ export default function workspace(theme: Theme) {
           color: iconColor(theme, "active"),
         },
       },
-      addParticipantPopover: {
+      contactsPopover: {
         background: backgroundColor(theme, 300, "base"),
         cornerRadius: 6,
         padding: { top: 6 },
