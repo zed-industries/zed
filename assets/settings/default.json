@@ -74,11 +74,14 @@
     "hard_tabs": false,
     // How many columns a tab should occupy.
     "tab_size": 4,
-    // TODO
+    // Settings specific to journaling
     "journal": {
-        // TODO
+        // The directory in which the journal entries are created
         "journal_directory": "always_home",
-        // TODO
+        // What format to present the hours in
+        // May take 2 values: 
+        // 1. hour12
+        // 2. hour24
         "hour_format": "hour12"
     },
     // Settings specific to the terminal
