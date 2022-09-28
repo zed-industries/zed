@@ -44,7 +44,7 @@ pub trait Fs: Send + Sync {
         path: &Path,
         latency: Duration,
     ) -> Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>>;
-    async fn open_repo(&self, abs_dot_git: &Path) -> Option<Box<dyn GitRepository>>;
+    fn open_repo(&self, abs_dot_git: &Path) -> Option<Box<dyn GitRepository>>;
     fn is_fake(&self) -> bool;
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeFs;
