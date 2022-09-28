@@ -524,7 +524,7 @@ impl LocalWorktree {
         match self.scan_state() {
             ScanState::Idle => {
                 let new_snapshot = self.background_snapshot.lock().clone();
-                let updated_repos = Self::list_updated_repos(
+                let updated_repos = Self::changed_repos(
                     &self.snapshot.git_repositories,
                     &new_snapshot.git_repositories,
                 );
@@ -545,7 +545,7 @@ impl LocalWorktree {
                 let is_fake_fs = self.fs.is_fake();
 
                 let new_snapshot = self.background_snapshot.lock().clone();
-                let updated_repos = Self::list_updated_repos(
+                let updated_repos = Self::changed_repos(
                     &self.snapshot.git_repositories,
                     &new_snapshot.git_repositories,
                 );
@@ -580,7 +580,7 @@ impl LocalWorktree {
         cx.notify();
     }
 
-    fn list_updated_repos(
+    fn changed_repos(
         old_repos: &[Box<dyn GitRepository>],
         new_repos: &[Box<dyn GitRepository>],
     ) -> Vec<Box<dyn GitRepository>> {
@@ -595,7 +595,7 @@ impl LocalWorktree {
                         && a_repo.scan_id() == b_repo.scan_id()
                 });
 
-                if matched.is_some() {
+                if matched.is_none() {
                     updated.insert(a_repo.git_dir_path(), a_repo.boxed_clone());
                 }
             }
@@ -2955,6 +2955,7 @@ mod tests {
     use anyhow::Result;
     use client::test::FakeHttpClient;
     use fs::RealFs;
+    use git::repository::FakeGitRepository;
     use gpui::{executor::Deterministic, TestAppContext};
     use rand::prelude::*;
     use serde_json::json;
@@ -3276,6 +3277,49 @@ mod tests {
 
             assert!(tree.repo_for("dir1/src/b.txt".as_ref()).is_none());
         });
+    }
+
+    #[test]
+    fn test_changed_repos() {
+        let prev_repos: Vec<Box<dyn GitRepository>> = vec![
+            FakeGitRepository::open(Path::new("/.git"), 0),
+            FakeGitRepository::open(Path::new("/a/.git"), 0),
+            FakeGitRepository::open(Path::new("/a/b/.git"), 0),
+        ];
+
+        let new_repos: Vec<Box<dyn GitRepository>> = vec![
+            FakeGitRepository::open(Path::new("/a/.git"), 1),
+            FakeGitRepository::open(Path::new("/a/b/.git"), 0),
+            FakeGitRepository::open(Path::new("/a/c/.git"), 0),
+        ];
+
+        let res = LocalWorktree::changed_repos(&prev_repos, &new_repos);
+
+        dbg!(&res);
+
+        // Deletion retained
+        assert!(res
+            .iter()
+            .find(|repo| repo.git_dir_path() == Path::new("/.git") && repo.scan_id() == 0)
+            .is_some());
+
+        // Update retained
+        assert!(res
+            .iter()
+            .find(|repo| repo.git_dir_path() == Path::new("/a/.git") && repo.scan_id() == 1)
+            .is_some());
+
+        // Addition retained
+        assert!(res
+            .iter()
+            .find(|repo| repo.git_dir_path() == Path::new("/a/c/.git") && repo.scan_id() == 0)
+            .is_some());
+
+        // Nochange, not retained
+        assert!(res
+            .iter()
+            .find(|repo| repo.git_dir_path() == Path::new("/a/b/.git") && repo.scan_id() == 0)
+            .is_none());
     }
 
     #[gpui::test]
