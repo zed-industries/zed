@@ -12,9 +12,9 @@ export default function projectPanel(colorScheme: ColorScheme) {
       iconColor: foreground(layer, "variant"),
       iconSize: 8,
       iconSpacing: 8,
-      text: text(layer, "mono", "on", { size: "sm" }),
+      text: text(layer, "mono", "variant", { size: "sm" }),
       hover: {
-        background: background(layer, "on", "hovered"),
+        background: background(layer, "variant", "hovered"),
       },
       active: {
         background: background(layer, "active"),
