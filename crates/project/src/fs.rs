@@ -34,7 +34,6 @@ pub trait Fs: Send + Sync {
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>>;
     async fn load(&self, path: &Path) -> Result<String>;
-    async fn load_head_text(&self, path: &Path) -> Option<String>;
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
     async fn is_file(&self, path: &Path) -> bool;
@@ -48,7 +47,6 @@ pub trait Fs: Send + Sync {
         path: &Path,
         latency: Duration,
     ) -> Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>>;
-    fn open_git_repository(&self, abs_dotgit_path: &Path) -> Option<GitRepository>;
     fn is_fake(&self) -> bool;
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeFs;
@@ -168,38 +166,6 @@ impl Fs for RealFs {
         Ok(text)
     }
 
-    async fn load_head_text(&self, path: &Path) -> Option<String> {
-        fn logic(path: &Path) -> Result<Option<String>> {
-            let repo = Repository::open_ext(path, RepositoryOpenFlags::empty(), &[OsStr::new("")])?;
-            assert!(repo.path().ends_with(".git"));
-            let repo_root_path = match repo.path().parent() {
-                Some(root) => root,
-                None => return Ok(None),
-            };
-
-            let relative_path = path.strip_prefix(repo_root_path)?;
-            let object = repo
-                .head()?
-                .peel_to_tree()?
-                .get_path(relative_path)?
-                .to_object(&repo)?;
-
-            let content = match object.as_blob() {
-                Some(blob) => blob.content().to_owned(),
-                None => return Ok(None),
-            };
-
-            let head_text = String::from_utf8(content.to_owned())?;
-            Ok(Some(head_text))
-        }
-
-        match logic(path) {
-            Ok(value) => return value,
-            Err(err) => log::error!("Error loading head text: {:?}", err),
-        }
-        None
-    }
-
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
         let buffer_size = text.summary().len.min(10 * 1024);
         let file = smol::fs::File::create(path).await?;
@@ -272,10 +238,6 @@ impl Fs for RealFs {
             drop(handle);
             vec![]
         })))
-    }
-
-    fn open_git_repository(&self, abs_dotgit_path: &Path) -> Option<GitRepository> {
-        GitRepository::open(abs_dotgit_path)
     }
 
     fn is_fake(&self) -> bool {
@@ -791,10 +753,6 @@ impl Fs for FakeFs {
         entry.file_content(&path).cloned()
     }
 
-    async fn load_head_text(&self, _: &Path) -> Option<String> {
-        None
-    }
-
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
@@ -891,10 +849,6 @@ impl Fs for FakeFs {
                 result
             }
         }))
-    }
-
-    fn open_git_repository(&self, _: &Path) -> Option<GitRepository> {
-        None
     }
 
     fn is_fake(&self) -> bool {

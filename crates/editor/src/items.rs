@@ -478,13 +478,13 @@ impl Item for Editor {
         })
     }
 
-    fn update_git(
+    fn git_diff_recalc(
         &mut self,
         _project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         self.buffer().update(cx, |multibuffer, cx| {
-            multibuffer.update_git(cx);
+            multibuffer.git_diff_recalc(cx);
         });
         Task::ready(Ok(()))
     }

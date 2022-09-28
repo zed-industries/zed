@@ -317,7 +317,7 @@ pub trait Item: View {
         project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>>;
-    fn update_git(
+    fn git_diff_recalc(
         &mut self,
         _project: ModelHandle<Project>,
         _cx: &mut ViewContext<Self>,
@@ -539,7 +539,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
     ) -> Task<Result<()>>;
     fn reload(&self, project: ModelHandle<Project>, cx: &mut MutableAppContext)
         -> Task<Result<()>>;
-    fn update_git(
+    fn git_diff_recalc(
         &self,
         project: ModelHandle<Project>,
         cx: &mut MutableAppContext,
@@ -753,7 +753,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                                         workspace,
                                         cx,
                                         |project, mut cx| async move {
-                                            cx.update(|cx| item.update_git(project, cx))
+                                            cx.update(|cx| item.git_diff_recalc(project, cx))
                                                 .await
                                                 .log_err();
                                         },
@@ -762,7 +762,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                                     let project = workspace.project().downgrade();
                                     cx.spawn_weak(|_, mut cx| async move {
                                         if let Some(project) = project.upgrade(&cx) {
-                                            cx.update(|cx| item.update_git(project, cx))
+                                            cx.update(|cx| item.git_diff_recalc(project, cx))
                                                 .await
                                                 .log_err();
                                         }
@@ -850,12 +850,12 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.update(cx, |item, cx| item.reload(project, cx))
     }
 
-    fn update_git(
+    fn git_diff_recalc(
         &self,
         project: ModelHandle<Project>,
         cx: &mut MutableAppContext,
     ) -> Task<Result<()>> {
-        self.update(cx, |item, cx| item.update_git(project, cx))
+        self.update(cx, |item, cx| item.git_diff_recalc(project, cx))
     }
 
     fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle> {

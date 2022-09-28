@@ -467,7 +467,7 @@ impl LocalWorktree {
                 .await?;
             Ok(cx.add_model(|cx| {
                 let mut buffer = Buffer::from_file(0, contents, head_text, Arc::new(file), cx);
-                buffer.update_git(cx);
+                buffer.git_diff_recalc(cx);
                 buffer
             }))
         })
@@ -522,16 +522,28 @@ impl LocalWorktree {
 
         match self.scan_state() {
             ScanState::Idle => {
-                self.snapshot = self.background_snapshot.lock().clone();
+                let new_snapshot = self.background_snapshot.lock().clone();
+                let updated_repos = self.list_updated_repos(&new_snapshot);
+                self.snapshot = new_snapshot;
+
                 if let Some(share) = self.share.as_mut() {
                     *share.snapshots_tx.borrow_mut() = self.snapshot.clone();
                 }
+
                 cx.emit(Event::UpdatedEntries);
+
+                if !updated_repos.is_empty() {
+                    cx.emit(Event::UpdatedGitRepositories(updated_repos));
+                }
             }
 
             ScanState::Initializing => {
                 let is_fake_fs = self.fs.is_fake();
-                self.snapshot = self.background_snapshot.lock().clone();
+
+                let new_snapshot = self.background_snapshot.lock().clone();
+                let updated_repos = self.list_updated_repos(&new_snapshot);
+                self.snapshot = new_snapshot;
+
                 self.poll_task = Some(cx.spawn_weak(|this, mut cx| async move {
                     if is_fake_fs {
                         #[cfg(any(test, feature = "test-support"))]
@@ -543,7 +555,12 @@ impl LocalWorktree {
                         this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
                     }
                 }));
+
                 cx.emit(Event::UpdatedEntries);
+
+                if !updated_repos.is_empty() {
+                    cx.emit(Event::UpdatedGitRepositories(updated_repos));
+                }
             }
 
             _ => {
@@ -554,6 +571,34 @@ impl LocalWorktree {
         }
 
         cx.notify();
+    }
+
+    fn list_updated_repos(&self, new_snapshot: &LocalSnapshot) -> Vec<GitRepository> {
+        let old_snapshot = &self.snapshot;
+
+        fn diff<'a>(
+            a: &'a LocalSnapshot,
+            b: &'a LocalSnapshot,
+            updated: &mut HashMap<&'a Path, GitRepository>,
+        ) {
+            for a_repo in &a.git_repositories {
+                let matched = b.git_repositories.iter().find(|b_repo| {
+                    a_repo.git_dir_path() == b_repo.git_dir_path()
+                        && a_repo.scan_id() == b_repo.scan_id()
+                });
+
+                if matched.is_some() {
+                    updated.insert(a_repo.git_dir_path(), a_repo.clone());
+                }
+            }
+        }
+
+        let mut updated = HashMap::<&Path, GitRepository>::default();
+
+        diff(old_snapshot, new_snapshot, &mut updated);
+        diff(new_snapshot, old_snapshot, &mut updated);
+
+        updated.into_values().collect()
     }
 
     pub fn scan_complete(&self) -> impl Future<Output = ()> {
@@ -606,9 +651,11 @@ impl LocalWorktree {
                 files_included,
                 settings::GitFilesIncluded::All | settings::GitFilesIncluded::OnlyTracked
             ) {
+                
+                
                 let fs = fs.clone();
                 let abs_path = abs_path.clone();
-                let task = async move { fs.load_head_text(&abs_path).await };
+                let opt_future = async move { fs.load_head_text(&abs_path).await };
                 let results = cx.background().spawn(task).await;
 
                 if files_included == settings::GitFilesIncluded::All {
@@ -1495,7 +1542,7 @@ impl LocalSnapshot {
                 .git_repositories
                 .binary_search_by_key(&abs_path.as_path(), |repo| repo.git_dir_path())
             {
-                if let Some(repository) = fs.open_git_repository(&abs_path) {
+                if let Some(repository) = GitRepository::open(&abs_path) {
                     self.git_repositories.insert(ix, repository);
                 }
             }

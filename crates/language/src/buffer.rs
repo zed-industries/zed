@@ -613,6 +613,7 @@ impl Buffer {
                 cx,
             );
         }
+        self.update_git(cx);
         cx.emit(Event::Reloaded);
         cx.notify();
     }
@@ -661,12 +662,19 @@ impl Buffer {
         self.file = Some(new_file);
         task
     }
+    
+    pub fn update_git(&mut self, cx: &mut ModelContext<Self>) {
+        //Grab head text
+        
 
-    pub fn needs_git_update(&self) -> bool {
+        self.git_diff_recalc(cx);
+    }
+
+    pub fn needs_git_diff_recalc(&self) -> bool {
         self.git_diff_status.diff.needs_update(self)
     }
 
-    pub fn update_git(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn git_diff_recalc(&mut self, cx: &mut ModelContext<Self>) {
         if self.git_diff_status.update_in_progress {
             self.git_diff_status.update_requested = true;
             return;
@@ -692,7 +700,7 @@ impl Buffer {
 
                         this.git_diff_status.update_in_progress = false;
                         if this.git_diff_status.update_requested {
-                            this.update_git(cx);
+                            this.git_diff_recalc(cx);
                         }
                     })
                 }

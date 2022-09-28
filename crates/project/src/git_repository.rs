@@ -1,6 +1,7 @@
-use git2::Repository;
+use anyhow::Result;
+use git2::{Repository as LibGitRepository, RepositoryOpenFlags as LibGitRepositoryOpenFlags};
 use parking_lot::Mutex;
-use std::{path::Path, sync::Arc};
+use std::{path::Path, sync::Arc, ffi::OsStr};
 use util::ResultExt;
 
 #[derive(Clone)]
@@ -11,12 +12,12 @@ pub struct GitRepository {
     // Note: if .git is a file, this points to the folder indicated by the .git file
     git_dir_path: Arc<Path>,
     scan_id: usize,
-    libgit_repository: Arc<Mutex<git2::Repository>>,
+    libgit_repository: Arc<Mutex<LibGitRepository>>,
 }
 
 impl GitRepository {
     pub fn open(dotgit_path: &Path) -> Option<GitRepository> {
-        Repository::open(&dotgit_path)
+        LibGitRepository::open(&dotgit_path)
             .log_err()
             .and_then(|libgit_repository| {
                 Some(Self {
@@ -59,5 +60,40 @@ impl GitRepository {
     pub fn with_repo<F: FnOnce(&mut git2::Repository)>(&mut self, f: F) {
         let mut git2 = self.libgit_repository.lock();
         f(&mut git2)
+    }
+
+    pub async fn load_head_text(&self, file_path: &Path) -> Option<String> {
+        fn logic(repo: &LibGitRepository, file_path: &Path) -> Result<Option<String>> {
+            let object = repo
+                .head()?
+                .peel_to_tree()?
+                .get_path(file_path)?
+                .to_object(&repo)?;
+
+            let content = match object.as_blob() {
+                Some(blob) => blob.content().to_owned(),
+                None => return Ok(None),
+            };
+
+            let head_text = String::from_utf8(content.to_owned())?;
+            Ok(Some(head_text))
+        }
+
+        match logic(&self.libgit_repository.lock(), file_path) {
+            Ok(value) => return value,
+            Err(err) => log::error!("Error loading head text: {:?}", err),
+        }
+        None
+    }
+}
+
+impl std::fmt::Debug for GitRepository {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitRepository")
+            .field("content_path", &self.content_path)
+            .field("git_dir_path", &self.git_dir_path)
+            .field("scan_id", &self.scan_id)
+            .field("libgit_repository", &"LibGitRepository")
+            .finish()
     }
 }

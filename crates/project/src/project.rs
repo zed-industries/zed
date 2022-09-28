@@ -13,6 +13,7 @@ use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use futures::{future::Shared, AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt};
+use git_repository::GitRepository;
 use gpui::{
     AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
     MutableAppContext, Task, UpgradeModelHandle, WeakModelHandle,
@@ -4536,7 +4537,9 @@ impl Project {
         if worktree.read(cx).is_local() {
             cx.subscribe(worktree, |this, worktree, event, cx| match event {
                 worktree::Event::UpdatedEntries => this.update_local_worktree_buffers(worktree, cx),
-                worktree::Event::UpdatedGitRepositories(_) => todo!(),
+                worktree::Event::UpdatedGitRepositories(updated_repos) => {
+                    this.update_local_worktree_buffers_git_repos(updated_repos, cx)
+                }
             })
             .detach();
         }
@@ -4641,6 +4644,30 @@ impl Project {
             self.unregister_buffer_from_language_server(&buffer, old_path, cx);
             self.assign_language_to_buffer(&buffer, cx);
             self.register_buffer_with_language_server(&buffer, cx);
+        }
+    }
+
+    fn update_local_worktree_buffers_git_repos(
+        &mut self,
+        updated_repos: &[GitRepository],
+        cx: &mut ModelContext<Self>,
+    ) {
+        for (buffer_id, buffer) in &self.opened_buffers {
+            if let Some(buffer) = buffer.upgrade(cx) {
+                buffer.update(cx, |buffer, cx| {
+                    let updated = updated_repos.iter().any(|repo| {
+                        buffer
+                            .file()
+                            .and_then(|file| file.as_local())
+                            .map(|file| repo.manages(&file.abs_path(cx)))
+                            .unwrap_or(false)
+                    });
+
+                    if updated {
+                        buffer.update_git(cx);
+                    }
+                });
+            }
         }
     }
 
