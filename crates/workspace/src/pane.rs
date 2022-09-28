@@ -1493,6 +1493,7 @@ impl View for Pane {
                 .last_focused_view
                 .as_ref()
                 .and_then(|handle| handle.upgrade(cx))
+                .filter(|handle| handle.id() != self.tab_bar_context_menu.id())
             {
                 cx.focus(last_focused_view);
             } else {
