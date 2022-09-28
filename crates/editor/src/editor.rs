@@ -9782,7 +9782,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
-        let mut cx = EditorTestContext::new(cx).await;
+        let mut cx = EditorTestContext::new(cx);
 
         let html_language = Arc::new(
             Language::new(
