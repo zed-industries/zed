@@ -6,37 +6,46 @@ export default function tabBar(colorScheme: ColorScheme) {
   const height = 32;
 
   let elevation = colorScheme.lowest;
-  let layer = elevation.middle;
+  let activeLayerActiveTab = elevation.top;
+  let activeLayerInactiveTab = elevation.middle;
+  let inactiveLayerActiveTab = elevation.middle;
+  let inactiveLayerInactiveTab = elevation.bottom;
 
   const tab = {
     height,
-    background: background(layer),
-    border: border(layer, {
+    text: text(activeLayerInactiveTab, "sans", "variant", { size: "sm" }),
+    background: background(activeLayerInactiveTab),
+    border: border(activeLayerInactiveTab, {
       right: true,
       bottom: true,
       overlay: true,
     }),
-    iconClose: foreground(layer),
-    iconCloseActive: foreground(layer, "active"),
-    iconConflict: foreground(layer, "warning"),
-    iconDirty: foreground(layer, "info"),
-    iconWidth: 8,
-    spacing: 8,
-    text: text(layer, "sans", "variant", { size: "sm" }),
     padding: {
       left: 8,
-      right: 8,
+      right: 12,
     },
+    spacing: 8,
+
+    // Close icons
+    iconWidth: 8,
+    iconClose: foreground(activeLayerInactiveTab, "variant"),
+    iconCloseActive: foreground(activeLayerInactiveTab),
+
+    // Indicators
+    iconConflict: foreground(activeLayerInactiveTab, "warning"),
+    iconDirty: foreground(activeLayerInactiveTab, "info"),
+
+    // When two tabs of the same name are open, a label appears next to them
     description: {
-      margin: { left: 6, top: 1 },
-      ...text(layer, "sans", "variant", { size: "2xs" })
+      margin: { left: 8 },
+      ...text(activeLayerInactiveTab, "sans", "disabled", { size: "2xs" })
     }
   };
 
   const activePaneActiveTab = {
     ...tab,
-    background: background(elevation.top),
-    text: text(elevation.top, "sans", { size: "sm" }),
+    background: background(activeLayerActiveTab),
+    text: text(activeLayerActiveTab, "sans", { size: "sm" }),
     border: {
       ...tab.border,
       bottom: false
@@ -45,14 +54,14 @@ export default function tabBar(colorScheme: ColorScheme) {
 
   const inactivePaneInactiveTab = {
     ...tab,
-    background: background(layer),
-    text: text(layer, "sans", "variant", { size: "sm" }),
+    background: background(inactiveLayerInactiveTab),
+    text: text(inactiveLayerInactiveTab, "sans", "variant", { size: "sm" }),
   };
 
   const inactivePaneActiveTab = {
     ...tab,
-    background: background(elevation.top),
-    text: text(elevation.top, "sans", "variant", { size: "sm" }),
+    background: background(inactiveLayerActiveTab),
+    text: text(inactiveLayerActiveTab, "sans", "variant", { size: "sm" }),
     border: {
       ...tab.border,
       bottom: false
@@ -68,8 +77,8 @@ export default function tabBar(colorScheme: ColorScheme) {
 
   return {
     height,
-    background: background(layer),
-    dropTargetOverlayColor: withOpacity(foreground(layer), 0.6),
+    background: background(activeLayerInactiveTab),
+    dropTargetOverlayColor: withOpacity(foreground(activeLayerInactiveTab), 0.6),
     activePane: {
       activeTab: activePaneActiveTab,
       inactiveTab: tab,
@@ -80,11 +89,11 @@ export default function tabBar(colorScheme: ColorScheme) {
     },
     draggedTab,
     paneButton: {
-      color: foreground(layer),
+      color: foreground(activeLayerInactiveTab, "variant"),
       iconWidth: 12,
       buttonWidth: activePaneActiveTab.height,
       hover: {
-        color: foreground(layer, "hovered"),
+        color: foreground(activeLayerInactiveTab, "hovered"),
       },
     },
     paneButtonContainer: {
