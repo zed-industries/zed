@@ -1,7 +1,6 @@
+use crate::UndoOperation;
 use std::cmp;
 use sum_tree::{Bias, SumTree};
-
-use crate::UndoOperation;
 
 #[derive(Copy, Clone, Debug)]
 struct UndoMapEntry {
