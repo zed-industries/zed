@@ -189,16 +189,12 @@ impl ContactsPopover {
 
     fn set_room(&mut self, room: Option<ModelHandle<Room>>, cx: &mut ViewContext<Self>) {
         if let Some(room) = room {
-            let observation = cx.observe(&room, |this, room, cx| this.room_updated(room, cx));
+            let observation = cx.observe(&room, |_, _, cx| cx.notify());
             self.room = Some((room, observation));
         } else {
             self.room = None;
         }
 
-        cx.notify();
-    }
-
-    fn room_updated(&mut self, room: ModelHandle<Room>, cx: &mut ViewContext<Self>) {
         cx.notify();
     }
 

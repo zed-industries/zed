@@ -10,7 +10,7 @@ use anyhow::{anyhow, Context, Result};
 use assets::Assets;
 use breadcrumbs::Breadcrumbs;
 pub use client;
-use collab_titlebar_item::CollabTitlebarItem;
+use collab_ui::CollabTitlebarItem;
 use collections::VecDeque;
 pub use contacts_panel;
 use contacts_panel::ContactsPanel;
@@ -21,11 +21,10 @@ use gpui::{
     geometry::vector::vec2f,
     impl_actions,
     platform::{WindowBounds, WindowOptions},
-    AssetSource, AsyncAppContext, ModelHandle, TitlebarOptions, ViewContext, WindowKind,
+    AssetSource, AsyncAppContext, TitlebarOptions, ViewContext, WindowKind,
 };
 use language::Rope;
 pub use lsp;
-use postage::watch;
 pub use project::{self, fs};
 use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};

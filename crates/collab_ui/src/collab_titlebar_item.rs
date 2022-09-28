@@ -1,5 +1,4 @@
-mod contacts_popover;
-
+use crate::contacts_popover;
 use client::{Authenticate, PeerId};
 use clock::ReplicaId;
 use contacts_popover::ContactsPopover;
@@ -20,7 +19,6 @@ use workspace::{FollowNextCollaborator, ToggleFollow, Workspace};
 actions!(contacts_titlebar_item, [ToggleContactsPopover]);
 
 pub fn init(cx: &mut MutableAppContext) {
-    contacts_popover::init(cx);
     cx.add_action(CollabTitlebarItem::toggle_contacts_popover);
 }
 

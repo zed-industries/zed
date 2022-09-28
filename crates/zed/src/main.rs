@@ -107,7 +107,7 @@ fn main() {
         project::Project::init(&client);
         client::Channel::init(&client);
         client::init(client.clone(), cx);
-        collab_titlebar_item::init(cx);
+        collab_ui::init(cx);
         command_palette::init(cx);
         editor::init(cx);
         go_to_line::init(cx);

@@ -1,10 +1,10 @@
 [package]
-name = "collab_titlebar_item"
+name = "collab_ui"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-path = "src/collab_titlebar_item.rs"
+path = "src/collab_ui.rs"
 doctest = false
 
 [features]

@@ -1063,7 +1063,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "collab_titlebar_item"
+name = "collab_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -7159,7 +7159,7 @@ dependencies = [
  "cli",
  "client",
  "clock",
- "collab_titlebar_item",
+ "collab_ui",
  "collections",
  "command_palette",
  "contacts_panel",

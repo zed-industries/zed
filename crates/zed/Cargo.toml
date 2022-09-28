@@ -21,7 +21,7 @@ auto_update = { path = "../auto_update" }
 breadcrumbs = { path = "../breadcrumbs" }
 chat_panel = { path = "../chat_panel" }
 cli = { path = "../cli" }
-collab_titlebar_item = { path = "../collab_titlebar_item" }
+collab_ui = { path = "../collab_ui" }
 collections = { path = "../collections" }
 command_palette = { path = "../command_palette" }
 context_menu = { path = "../context_menu" }
