@@ -545,12 +545,22 @@ impl EditorElement {
             }
         }
 
-        let (inserted_color, modified_color, deleted_color) = {
+        let (
+            inserted_color,
+            modified_color,
+            deleted_color,
+            width_multiplier,
+            corner_radius,
+            removed_width_mult,
+        ) = {
             let editor = &cx.global::<Settings>().theme.editor;
             (
                 editor.diff_background_inserted,
                 editor.diff_background_modified,
                 editor.diff_background_deleted,
+                editor.diff_indicator_width_multiplier,
+                editor.diff_indicator_corner_radius,
+                editor.removed_diff_width_multiplier,
             )
         };
 
@@ -567,7 +577,7 @@ impl EditorElement {
                     let start_y = row as f32 * line_height + offset - scroll_top;
                     let end_y = start_y + line_height;
 
-                    let width = 0.275 * line_height;
+                    let width = removed_width_mult * line_height;
                     let highlight_origin = bounds.origin() + vec2f(-width, start_y);
                     let highlight_size = vec2f(width * 2., end_y - start_y);
                     let highlight_bounds = RectF::new(highlight_origin, highlight_size);
@@ -589,7 +599,7 @@ impl EditorElement {
             let start_y = start_row as f32 * line_height - scroll_top;
             let end_y = end_row as f32 * line_height - scroll_top;
 
-            let width = 0.16 * line_height;
+            let width = width_multiplier * line_height;
             let highlight_origin = bounds.origin() + vec2f(-width, start_y);
             let highlight_size = vec2f(width * 2., end_y - start_y);
             let highlight_bounds = RectF::new(highlight_origin, highlight_size);
@@ -598,7 +608,7 @@ impl EditorElement {
                 bounds: highlight_bounds,
                 background: Some(color),
                 border: Border::new(0., Color::transparent_black()),
-                corner_radius: 0.05 * line_height,
+                corner_radius: corner_radius * line_height,
             });
         }
 
