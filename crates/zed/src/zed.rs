@@ -217,6 +217,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     );
 
     activity_indicator::init(cx);
+    call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
     settings::KeymapFileContent::load_defaults(cx);
 }
 

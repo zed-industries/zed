@@ -1,7 +1,5 @@
-use std::sync::Arc;
-
 use call::ActiveCall;
-use client::{incoming_call::IncomingCall, Client, UserStore};
+use client::{incoming_call::IncomingCall, UserStore};
 use futures::StreamExt;
 use gpui::{
     elements::*,
@@ -14,7 +12,7 @@ use util::ResultExt;
 
 impl_internal_actions!(incoming_call_notification, [RespondToCall]);
 
-pub fn init(client: Arc<Client>, user_store: ModelHandle<UserStore>, cx: &mut MutableAppContext) {
+pub fn init(user_store: ModelHandle<UserStore>, cx: &mut MutableAppContext) {
     cx.add_action(IncomingCallNotification::respond_to_call);
 
     let mut incoming_call = user_store.read(cx).incoming_call();
@@ -34,13 +32,7 @@ pub fn init(client: Arc<Client>, user_store: ModelHandle<UserStore>, cx: &mut Mu
                         kind: WindowKind::PopUp,
                         is_movable: false,
                     },
-                    |_| {
-                        IncomingCallNotification::new(
-                            incoming_call,
-                            client.clone(),
-                            user_store.clone(),
-                        )
-                    },
+                    |_| IncomingCallNotification::new(incoming_call, user_store.clone()),
                 );
                 notification_window = Some(window_id);
             }
@@ -56,29 +48,18 @@ struct RespondToCall {
 
 pub struct IncomingCallNotification {
     call: IncomingCall,
-    client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
 }
 
 impl IncomingCallNotification {
-    pub fn new(
-        call: IncomingCall,
-        client: Arc<Client>,
-        user_store: ModelHandle<UserStore>,
-    ) -> Self {
-        Self {
-            call,
-            client,
-            user_store,
-        }
+    pub fn new(call: IncomingCall, user_store: ModelHandle<UserStore>) -> Self {
+        Self { call, user_store }
     }
 
     fn respond_to_call(&mut self, action: &RespondToCall, cx: &mut ViewContext<Self>) {
         if action.accept {
             ActiveCall::global(cx)
-                .update(cx, |active_call, cx| {
-                    active_call.join(&self.call, &self.client, &self.user_store, cx)
-                })
+                .update(cx, |active_call, cx| active_call.join(&self.call, cx))
                 .detach_and_log_err(cx);
         } else {
             self.user_store

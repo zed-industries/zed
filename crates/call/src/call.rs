@@ -6,11 +6,16 @@ use client::{incoming_call::IncomingCall, Client, UserStore};
 use gpui::{Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 pub use room::Room;
 use std::sync::Arc;
-use util::ResultExt;
 
-#[derive(Default)]
+pub fn init(client: Arc<Client>, user_store: ModelHandle<UserStore>, cx: &mut MutableAppContext) {
+    let active_call = cx.add_model(|_| ActiveCall::new(client, user_store));
+    cx.set_global(active_call);
+}
+
 pub struct ActiveCall {
     room: Option<ModelHandle<Room>>,
+    client: Arc<Client>,
+    user_store: ModelHandle<UserStore>,
 }
 
 impl Entity for ActiveCall {
@@ -18,68 +23,62 @@ impl Entity for ActiveCall {
 }
 
 impl ActiveCall {
-    pub fn global(cx: &mut MutableAppContext) -> ModelHandle<Self> {
-        if cx.has_global::<ModelHandle<Self>>() {
-            cx.global::<ModelHandle<Self>>().clone()
-        } else {
-            let active_call = cx.add_model(|_| ActiveCall::default());
-            cx.set_global(active_call.clone());
-            active_call
+    fn new(client: Arc<Client>, user_store: ModelHandle<UserStore>) -> Self {
+        Self {
+            room: None,
+            client,
+            user_store,
         }
     }
 
-    pub fn get_or_create(
+    pub fn global(cx: &mut MutableAppContext) -> ModelHandle<Self> {
+        cx.global::<ModelHandle<Self>>().clone()
+    }
+
+    pub fn invite(
         &mut self,
-        client: &Arc<Client>,
-        user_store: &ModelHandle<UserStore>,
+        recipient_user_id: u64,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<ModelHandle<Room>>> {
-        if let Some(room) = self.room.clone() {
-            Task::ready(Ok(room))
-        } else {
-            let client = client.clone();
-            let user_store = user_store.clone();
-            cx.spawn(|this, mut cx| async move {
+    ) -> Task<Result<()>> {
+        let room = self.room.clone();
+
+        let client = self.client.clone();
+        let user_store = self.user_store.clone();
+        cx.spawn(|this, mut cx| async move {
+            let room = if let Some(room) = room {
+                room
+            } else {
                 let room = cx.update(|cx| Room::create(client, user_store, cx)).await?;
                 this.update(&mut cx, |this, cx| {
                     this.room = Some(room.clone());
                     cx.notify();
                 });
-                Ok(room)
-            })
-        }
+                room
+            };
+            room.update(&mut cx, |room, cx| room.call(recipient_user_id, cx))
+                .await?;
+
+            Ok(())
+        })
     }
 
-    pub fn join(
-        &mut self,
-        call: &IncomingCall,
-        client: &Arc<Client>,
-        user_store: &ModelHandle<UserStore>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<ModelHandle<Room>>> {
+    pub fn join(&mut self, call: &IncomingCall, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         if self.room.is_some() {
             return Task::ready(Err(anyhow!("cannot join while on another call")));
         }
 
-        let join = Room::join(call, client.clone(), user_store.clone(), cx);
+        let join = Room::join(call, self.client.clone(), self.user_store.clone(), cx);
         cx.spawn(|this, mut cx| async move {
             let room = join.await?;
             this.update(&mut cx, |this, cx| {
-                this.room = Some(room.clone());
+                this.room = Some(room);
                 cx.notify();
             });
-            Ok(room)
+            Ok(())
         })
     }
 
     pub fn room(&self) -> Option<&ModelHandle<Room>> {
         self.room.as_ref()
-    }
-
-    pub fn clear(&mut self, cx: &mut ModelContext<Self>) {
-        if let Some(room) = self.room.take() {
-            room.update(cx, |room, cx| room.leave(cx)).log_err();
-            cx.notify();
-        }
     }
 }

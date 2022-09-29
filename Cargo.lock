@@ -7154,6 +7154,7 @@ dependencies = [
  "auto_update",
  "backtrace",
  "breadcrumbs",
+ "call",
  "chat_panel",
  "chrono",
  "cli",

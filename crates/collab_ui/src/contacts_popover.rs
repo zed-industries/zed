@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use call::ActiveCall;
-use client::{Client, Contact, User, UserStore};
+use client::{Contact, User, UserStore};
 use editor::{Cancel, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
@@ -84,7 +84,6 @@ pub struct ContactsPopover {
     entries: Vec<ContactEntry>,
     match_candidates: Vec<StringMatchCandidate>,
     list_state: ListState,
-    client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     filter_editor: ViewHandle<Editor>,
     collapsed_sections: Vec<Section>,
@@ -93,11 +92,7 @@ pub struct ContactsPopover {
 }
 
 impl ContactsPopover {
-    pub fn new(
-        client: Arc<Client>,
-        user_store: ModelHandle<UserStore>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
+    pub fn new(user_store: ModelHandle<UserStore>, cx: &mut ViewContext<Self>) -> Self {
         let filter_editor = cx.add_view(|cx| {
             let mut editor = Editor::single_line(
                 Some(|theme| theme.contacts_panel.user_query_editor.clone()),
@@ -182,7 +177,6 @@ impl ContactsPopover {
             match_candidates: Default::default(),
             filter_editor,
             _subscriptions: subscriptions,
-            client,
             user_store,
         };
         this.update_entries(cx);
@@ -633,17 +627,11 @@ impl ContactsPopover {
     }
 
     fn call(&mut self, action: &Call, cx: &mut ViewContext<Self>) {
-        let recipient_user_id = action.recipient_user_id;
-        let room = ActiveCall::global(cx).update(cx, |active_call, cx| {
-            active_call.get_or_create(&self.client, &self.user_store, cx)
-        });
-        cx.spawn_weak(|_, mut cx| async move {
-            let room = room.await?;
-            room.update(&mut cx, |room, cx| room.call(recipient_user_id, cx))
-                .await?;
-            anyhow::Ok(())
-        })
-        .detach();
+        ActiveCall::global(cx)
+            .update(cx, |active_call, cx| {
+                active_call.invite(action.recipient_user_id, cx)
+            })
+            .detach_and_log_err(cx);
     }
 }
 
