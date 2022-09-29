@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use client::{call::Call, Client, UserStore};
+use call::ActiveCall;
+use client::{incoming_call::IncomingCall, Client, UserStore};
 use futures::StreamExt;
 use gpui::{
     elements::*,
@@ -8,7 +9,6 @@ use gpui::{
     impl_internal_actions, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext,
     View, ViewContext, WindowBounds, WindowKind, WindowOptions,
 };
-use room::ActiveCall;
 use settings::Settings;
 use util::ResultExt;
 
@@ -55,13 +55,17 @@ struct RespondToCall {
 }
 
 pub struct IncomingCallNotification {
-    call: Call,
+    call: IncomingCall,
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
 }
 
 impl IncomingCallNotification {
-    pub fn new(call: Call, client: Arc<Client>, user_store: ModelHandle<UserStore>) -> Self {
+    pub fn new(
+        call: IncomingCall,
+        client: Arc<Client>,
+        user_store: ModelHandle<UserStore>,
+    ) -> Self {
         Self {
             call,
             client,

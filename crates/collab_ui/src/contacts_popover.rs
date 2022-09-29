@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use call::ActiveCall;
 use client::{Client, Contact, User, UserStore};
 use editor::{Cancel, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
@@ -9,7 +10,6 @@ use gpui::{
     ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
-use room::ActiveCall;
 use settings::Settings;
 use theme::IconButton;
 

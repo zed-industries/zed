@@ -1,13 +1,9 @@
-mod active_call;
-mod participant;
-
-pub use active_call::ActiveCall;
+use crate::participant::{LocalParticipant, ParticipantLocation, RemoteParticipant};
 use anyhow::{anyhow, Result};
-use client::{call::Call, proto, Client, PeerId, TypedEnvelope, User, UserStore};
+use client::{incoming_call::IncomingCall, proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use collections::HashMap;
 use futures::StreamExt;
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
-use participant::{LocalParticipant, ParticipantLocation, RemoteParticipant};
 use project::Project;
 use std::sync::Arc;
 use util::ResultExt;
@@ -81,7 +77,7 @@ impl Room {
     }
 
     pub fn join(
-        call: &Call,
+        call: &IncomingCall,
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
         cx: &mut MutableAppContext,

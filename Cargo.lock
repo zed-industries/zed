@@ -685,6 +685,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1db59621ec70f09c5e9b597b220c7a2b43611f4710dc03ceb8748637775692c"
 
 [[package]]
+name = "call"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "collections",
+ "futures",
+ "gpui",
+ "project",
+ "util",
+]
+
+[[package]]
 name = "cap-fs-ext"
 version = "0.24.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1019,6 +1032,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "base64",
+ "call",
  "clap 3.2.8",
  "client",
  "collections",
@@ -1040,7 +1054,6 @@ dependencies = [
  "prometheus",
  "rand 0.8.5",
  "reqwest",
- "room",
  "rpc",
  "scrypt",
  "serde",
@@ -1067,6 +1080,7 @@ name = "collab_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "call",
  "client",
  "clock",
  "collections",
@@ -1078,7 +1092,6 @@ dependencies = [
  "menu",
  "postage",
  "project",
- "room",
  "serde",
  "settings",
  "theme",
@@ -4450,19 +4463,6 @@ source = "git+https://github.com/rust-rocksdb/rust-rocksdb?rev=39dc822dde743b2a2
 dependencies = [
  "libc",
  "librocksdb-sys",
-]
-
-[[package]]
-name = "room"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "collections",
- "futures",
- "gpui",
- "project",
- "util",
 ]
 
 [[package]]

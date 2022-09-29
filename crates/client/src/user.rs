@@ -1,5 +1,5 @@
 use super::{http::HttpClient, proto, Client, Status, TypedEnvelope};
-use crate::call::Call;
+use crate::incoming_call::IncomingCall;
 use anyhow::{anyhow, Context, Result};
 use collections::{hash_map::Entry, BTreeSet, HashMap, HashSet};
 use futures::{channel::mpsc, future, AsyncReadExt, Future, StreamExt};
@@ -67,7 +67,10 @@ pub struct UserStore {
     outgoing_contact_requests: Vec<Arc<User>>,
     pending_contact_requests: HashMap<u64, usize>,
     invite_info: Option<InviteInfo>,
-    incoming_call: (watch::Sender<Option<Call>>, watch::Receiver<Option<Call>>),
+    incoming_call: (
+        watch::Sender<Option<IncomingCall>>,
+        watch::Receiver<Option<IncomingCall>>,
+    ),
     client: Weak<Client>,
     http: Arc<dyn HttpClient>,
     _maintain_contacts: Task<()>,
@@ -205,7 +208,7 @@ impl UserStore {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
-        let call = Call {
+        let call = IncomingCall {
             room_id: envelope.payload.room_id,
             participants: this
                 .update(&mut cx, |this, cx| {
@@ -241,7 +244,7 @@ impl UserStore {
         self.invite_info.as_ref()
     }
 
-    pub fn incoming_call(&self) -> watch::Receiver<Option<Call>> {
+    pub fn incoming_call(&self) -> watch::Receiver<Option<IncomingCall>> {
         self.incoming_call.1.clone()
     }
 

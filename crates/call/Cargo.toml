@@ -1,10 +1,10 @@
 [package]
-name = "room"
+name = "call"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-path = "src/room.rs"
+path = "src/call.rs"
 doctest = false
 
 [features]

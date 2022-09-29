@@ -1,7 +1,10 @@
-use crate::Room;
+mod participant;
+mod room;
+
 use anyhow::{anyhow, Result};
-use client::{call::Call, Client, UserStore};
+use client::{incoming_call::IncomingCall, Client, UserStore};
 use gpui::{Entity, ModelContext, ModelHandle, MutableAppContext, Task};
+pub use room::Room;
 use std::sync::Arc;
 use util::ResultExt;
 
@@ -49,7 +52,7 @@ impl ActiveCall {
 
     pub fn join(
         &mut self,
-        call: &Call,
+        call: &IncomingCall,
         client: &Arc<Client>,
         user_store: &ModelHandle<UserStore>,
         cx: &mut ModelContext<Self>,

@@ -5,6 +5,7 @@ use crate::{
 };
 use ::rpc::Peer;
 use anyhow::anyhow;
+use call::Room;
 use client::{
     self, proto, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Connection,
     Credentials, EstablishConnectionError, ProjectMetadata, UserStore, RECEIVE_TIMEOUT,
@@ -34,7 +35,6 @@ use project::{
     DiagnosticSummary, Project, ProjectPath, ProjectStore, WorktreeId,
 };
 use rand::prelude::*;
-use room::Room;
 use rpc::PeerId;
 use serde_json::json;
 use settings::{Formatter, Settings};
