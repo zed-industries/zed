@@ -9,7 +9,7 @@ use gpui::{
     ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
-use room::Room;
+use room::{ActiveCall, Room};
 use settings::Settings;
 use theme::IconButton;
 
@@ -80,7 +80,7 @@ pub enum Event {
 }
 
 pub struct ContactsPopover {
-    room: Option<(ModelHandle<Room>, Subscription)>,
+    room_subscription: Option<Subscription>,
     entries: Vec<ContactEntry>,
     match_candidates: Vec<StringMatchCandidate>,
     list_state: ListState,
@@ -161,18 +161,20 @@ impl ContactsPopover {
             }
         });
 
+        let active_call = ActiveCall::global(cx);
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe(&user_store, |this, _, cx| this.update_entries(cx)));
-
-        let weak_self = cx.weak_handle();
-        subscriptions.push(Room::observe(cx, move |room, cx| {
-            if let Some(this) = weak_self.upgrade(cx) {
-                this.update(cx, |this, cx| this.set_room(room, cx));
+        subscriptions.push(cx.observe(&active_call, |this, active_call, cx| {
+            if let Some(room) = active_call.read(cx).room().cloned() {
+                this.room_subscription = Some(cx.observe(&room, |_, _, cx| cx.notify()));
+            } else {
+                this.room_subscription = None;
             }
+            cx.notify();
         }));
 
         let mut this = Self {
-            room: None,
+            room_subscription: None,
             list_state,
             selection: None,
             collapsed_sections: Default::default(),
@@ -185,17 +187,6 @@ impl ContactsPopover {
         };
         this.update_entries(cx);
         this
-    }
-
-    fn set_room(&mut self, room: Option<ModelHandle<Room>>, cx: &mut ViewContext<Self>) {
-        if let Some(room) = room {
-            let observation = cx.observe(&room, |_, _, cx| cx.notify());
-            self.room = Some((room, observation));
-        } else {
-            self.room = None;
-        }
-
-        cx.notify();
     }
 
     fn clear_filter(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
@@ -394,7 +385,7 @@ impl ContactsPopover {
     }
 
     fn render_active_call(&self, cx: &mut RenderContext<Self>) -> Option<ElementBox> {
-        let (room, _) = self.room.as_ref()?;
+        let room = ActiveCall::global(cx).read(cx).room()?;
         let theme = &cx.global::<Settings>().theme.contacts_panel;
 
         Some(
@@ -642,13 +633,12 @@ impl ContactsPopover {
     }
 
     fn call(&mut self, action: &Call, cx: &mut ViewContext<Self>) {
-        let client = self.client.clone();
-        let user_store = self.user_store.clone();
         let recipient_user_id = action.recipient_user_id;
+        let room = ActiveCall::global(cx).update(cx, |active_call, cx| {
+            active_call.get_or_create(&self.client, &self.user_store, cx)
+        });
         cx.spawn_weak(|_, mut cx| async move {
-            let room = cx
-                .update(|cx| Room::get_or_create(&client, &user_store, cx))
-                .await?;
+            let room = room.await?;
             room.update(&mut cx, |room, cx| room.call(recipient_user_id, cx))
                 .await?;
             anyhow::Ok(())
