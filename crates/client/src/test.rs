@@ -6,7 +6,10 @@ use anyhow::{anyhow, Result};
 use futures::{future::BoxFuture, stream::BoxStream, Future, StreamExt};
 use gpui::{executor, ModelHandle, TestAppContext};
 use parking_lot::Mutex;
-use rpc::{proto, ConnectionId, Peer, Receipt, TypedEnvelope};
+use rpc::{
+    proto::{self, GetPrivateUserInfo, GetPrivateUserInfoResponse},
+    ConnectionId, Peer, Receipt, TypedEnvelope,
+};
 use std::{fmt, rc::Rc, sync::Arc};
 
 pub struct FakeServer {
@@ -93,6 +96,7 @@ impl FakeServer {
             .authenticate_and_connect(false, &cx.to_async())
             .await
             .unwrap();
+
         server
     }
 
@@ -126,26 +130,44 @@ impl FakeServer {
     #[allow(clippy::await_holding_lock)]
     pub async fn receive<M: proto::EnvelopedMessage>(&self) -> Result<TypedEnvelope<M>> {
         self.executor.start_waiting();
-        let message = self
-            .state
-            .lock()
-            .incoming
-            .as_mut()
-            .expect("not connected")
-            .next()
-            .await
-            .ok_or_else(|| anyhow!("other half hung up"))?;
-        self.executor.finish_waiting();
-        let type_name = message.payload_type_name();
-        Ok(*message
-            .into_any()
-            .downcast::<TypedEnvelope<M>>()
-            .unwrap_or_else(|_| {
-                panic!(
-                    "fake server received unexpected message type: {:?}",
-                    type_name
-                );
-            }))
+
+        loop {
+            let message = self
+                .state
+                .lock()
+                .incoming
+                .as_mut()
+                .expect("not connected")
+                .next()
+                .await
+                .ok_or_else(|| anyhow!("other half hung up"))?;
+            self.executor.finish_waiting();
+            let type_name = message.payload_type_name();
+            let message = message.into_any();
+
+            if message.is::<TypedEnvelope<M>>() {
+                return Ok(*message.downcast().unwrap());
+            }
+
+            if message.is::<TypedEnvelope<GetPrivateUserInfo>>() {
+                self.respond(
+                    message
+                        .downcast::<TypedEnvelope<GetPrivateUserInfo>>()
+                        .unwrap()
+                        .receipt(),
+                    GetPrivateUserInfoResponse {
+                        metrics_id: "the-metrics-id".into(),
+                    },
+                )
+                .await;
+                continue;
+            }
+
+            panic!(
+                "fake server received unexpected message type: {:?}",
+                type_name
+            );
+        }
     }
 
     pub async fn respond<T: proto::RequestMessage>(
