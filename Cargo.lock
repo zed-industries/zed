@@ -2765,6 +2765,7 @@ dependencies = [
  "gpui",
  "log",
  "settings",
+ "shellexpand",
  "util",
  "workspace",
 ]

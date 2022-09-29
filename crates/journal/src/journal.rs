@@ -1,8 +1,12 @@
 use chrono::{Datelike, Local, NaiveTime, Timelike};
 use editor::{Autoscroll, Editor};
 use gpui::{actions, MutableAppContext};
-use settings::{HourFormat, JournalDirectory, Settings};
-use std::{fs::OpenOptions, path::PathBuf, str::FromStr, sync::Arc};
+use settings::{HourFormat, Settings};
+use std::{
+    fs::OpenOptions,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::TryFutureExt as _;
 use workspace::AppState;
 
@@ -14,10 +18,10 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
 
 pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     let settings = cx.global::<Settings>();
-    let journal_dir = match journal_dir(&settings.journal_overrides.journal_directory) {
+    let journal_dir = match journal_dir(&settings) {
         Some(journal_dir) => journal_dir,
         None => {
-            log::error!("can't determine home directory");
+            log::error!("Can't determine journal directory");
             return;
         }
     };
@@ -76,17 +80,18 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     .detach();
 }
 
-fn journal_dir(a: &Option<JournalDirectory>) -> Option<PathBuf> {
-    let journal_default_dir = dirs::home_dir()?.join("journal");
+fn journal_dir(settings: &Settings) -> Option<PathBuf> {
+    let journal_dir = settings
+        .journal_overrides
+        .path
+        .as_ref()
+        .unwrap_or(settings.journal_defaults.path.as_ref()?);
 
-    let journal_dir = match a {
-        Some(JournalDirectory::Always { directory }) => {
-            PathBuf::from_str(&directory).unwrap_or(journal_default_dir)
-        }
-        _ => journal_default_dir,
-    };
+    let expanded_journal_dir = shellexpand::full(&journal_dir) //TODO handle this better
+        .ok()
+        .map(|dir| Path::new(&dir.to_string()).to_path_buf().join("journal"));
 
-    Some(journal_dir)
+    return expanded_journal_dir;
 }
 
 fn heading_entry(now: NaiveTime, hour_format: &Option<HourFormat>) -> String {

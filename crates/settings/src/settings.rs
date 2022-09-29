@@ -103,17 +103,19 @@ pub enum Autosave {
     OnWindowChange,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct JournalSettings {
-    pub journal_directory: Option<JournalDirectory>,
+    pub path: Option<String>,
     pub hour_format: Option<HourFormat>,
 }
 
-#[derive(Clone, Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum JournalDirectory {
-    AlwaysHome,
-    Always { directory: String },
+impl Default for JournalSettings {
+    fn default() -> Self {
+        Self {
+            path: Some("~".into()),
+            hour_format: Some(Default::default()),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -121,6 +123,12 @@ pub enum JournalDirectory {
 pub enum HourFormat {
     Hour12,
     Hour24,
+}
+
+impl Default for HourFormat {
+    fn default() -> Self {
+        Self::Hour12
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]

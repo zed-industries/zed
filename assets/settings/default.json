@@ -76,10 +76,10 @@
     "tab_size": 4,
     // Settings specific to journaling
     "journal": {
-        // The directory in which the journal entries are created
-        "journal_directory": "always_home",
-        // What format to present the hours in
-        // May take 2 values: 
+        // The path of the directory where journal entries are stored
+        "path": "~",
+        // What format to display the hours in
+        // May take 2 values:
         // 1. hour12
         // 2. hour24
         "hour_format": "hour12"
