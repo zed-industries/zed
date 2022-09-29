@@ -9,7 +9,7 @@ use gpui::{
     ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
-use room::{ActiveCall, Room};
+use room::ActiveCall;
 use settings::Settings;
 use theme::IconButton;
 
