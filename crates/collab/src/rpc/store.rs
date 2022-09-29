@@ -345,45 +345,9 @@ impl Store {
     pub fn contact_for_user(&self, user_id: UserId, should_notify: bool) -> proto::Contact {
         proto::Contact {
             user_id: user_id.to_proto(),
-            projects: self.project_metadata_for_user(user_id),
             online: self.is_user_online(user_id),
             should_notify,
         }
-    }
-
-    pub fn project_metadata_for_user(&self, user_id: UserId) -> Vec<proto::ProjectMetadata> {
-        let user_connection_state = self.connected_users.get(&user_id);
-        let project_ids = user_connection_state.iter().flat_map(|state| {
-            state
-                .connection_ids
-                .iter()
-                .filter_map(|connection_id| self.connections.get(connection_id))
-                .flat_map(|connection| connection.projects.iter().copied())
-        });
-
-        let mut metadata = Vec::new();
-        for project_id in project_ids {
-            if let Some(project) = self.projects.get(&project_id) {
-                if project.host.user_id == user_id && project.online {
-                    metadata.push(proto::ProjectMetadata {
-                        id: project_id.to_proto(),
-                        visible_worktree_root_names: project
-                            .worktrees
-                            .values()
-                            .filter(|worktree| worktree.visible)
-                            .map(|worktree| worktree.root_name.clone())
-                            .collect(),
-                        guests: project
-                            .guests
-                            .values()
-                            .map(|guest| guest.user_id.to_proto())
-                            .collect(),
-                    });
-                }
-            }
-        }
-
-        metadata
     }
 
     pub fn create_room(&mut self, creator_connection_id: ConnectionId) -> Result<RoomId> {

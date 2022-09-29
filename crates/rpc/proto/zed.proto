@@ -1048,15 +1048,8 @@ message ChannelMessage {
 
 message Contact {
     uint64 user_id = 1;
-    repeated ProjectMetadata projects = 2;
-    bool online = 3;
-    bool should_notify = 4;
-}
-
-message ProjectMetadata {
-    uint64 id = 1;
-    repeated string visible_worktree_root_names = 3;
-    repeated uint64 guests = 4;
+    bool online = 2;
+    bool should_notify = 3;
 }
 
 message WorktreeMetadata {

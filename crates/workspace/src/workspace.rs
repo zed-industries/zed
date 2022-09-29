@@ -10,7 +10,6 @@ pub mod searchable;
 pub mod sidebar;
 mod status_bar;
 mod toolbar;
-mod waiting_room;
 
 use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, Contact, PeerId, Subscription, TypedEnvelope, UserStore};
@@ -58,7 +57,6 @@ use std::{
 use theme::{Theme, ThemeRegistry};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
-use waiting_room::WaitingRoom;
 
 type ProjectItemBuilders = HashMap<
     TypeId,
@@ -164,14 +162,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
         move |_: &NewWindow, cx: &mut MutableAppContext| {
             if let Some(app_state) = app_state.upgrade() {
                 open_new(&app_state, cx)
-            }
-        }
-    });
-    cx.add_global_action({
-        let app_state = Arc::downgrade(&app_state);
-        move |action: &JoinProject, cx: &mut MutableAppContext| {
-            if let Some(app_state) = app_state.upgrade() {
-                join_project(action.contact.clone(), action.project_index, &app_state, cx);
             }
         }
     });
@@ -2661,28 +2651,6 @@ pub fn open_paths(
 
         (workspace, items)
     })
-}
-
-pub fn join_project(
-    contact: Arc<Contact>,
-    project_index: usize,
-    app_state: &Arc<AppState>,
-    cx: &mut MutableAppContext,
-) {
-    let project_id = contact.projects[project_index].id;
-
-    for window_id in cx.window_ids().collect::<Vec<_>>() {
-        if let Some(workspace) = cx.root_view::<Workspace>(window_id) {
-            if workspace.read(cx).project().read(cx).remote_id() == Some(project_id) {
-                cx.activate_window(window_id);
-                return;
-            }
-        }
-    }
-
-    cx.add_window((app_state.build_window_options)(), |cx| {
-        WaitingRoom::new(contact, project_index, app_state.clone(), cx)
-    });
 }
 
 fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {

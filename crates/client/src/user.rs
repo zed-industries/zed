@@ -1,7 +1,7 @@
 use super::{http::HttpClient, proto, Client, Status, TypedEnvelope};
 use crate::incoming_call::IncomingCall;
 use anyhow::{anyhow, Context, Result};
-use collections::{hash_map::Entry, BTreeSet, HashMap, HashSet};
+use collections::{hash_map::Entry, HashMap, HashSet};
 use futures::{channel::mpsc, future, AsyncReadExt, Future, StreamExt};
 use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
 use postage::{sink::Sink, watch};
@@ -40,14 +40,6 @@ impl Eq for User {}
 pub struct Contact {
     pub user: Arc<User>,
     pub online: bool,
-    pub projects: Vec<ProjectMetadata>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ProjectMetadata {
-    pub id: u64,
-    pub visible_worktree_root_names: Vec<String>,
-    pub guests: BTreeSet<Arc<User>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -290,7 +282,6 @@ impl UserStore {
                 let mut user_ids = HashSet::default();
                 for contact in &message.contacts {
                     user_ids.insert(contact.user_id);
-                    user_ids.extend(contact.projects.iter().flat_map(|w| &w.guests).copied());
                 }
                 user_ids.extend(message.incoming_requests.iter().map(|req| req.requester_id));
                 user_ids.extend(message.outgoing_requests.iter());
@@ -688,33 +679,10 @@ impl Contact {
                 user_store.get_user(contact.user_id, cx)
             })
             .await?;
-        let mut projects = Vec::new();
-        for project in contact.projects {
-            let mut guests = BTreeSet::new();
-            for participant_id in project.guests {
-                guests.insert(
-                    user_store
-                        .update(cx, |user_store, cx| user_store.get_user(participant_id, cx))
-                        .await?,
-                );
-            }
-            projects.push(ProjectMetadata {
-                id: project.id,
-                visible_worktree_root_names: project.visible_worktree_root_names.clone(),
-                guests,
-            });
-        }
         Ok(Self {
             user,
             online: contact.online,
-            projects,
         })
-    }
-
-    pub fn non_empty_projects(&self) -> impl Iterator<Item = &ProjectMetadata> {
-        self.projects
-            .iter()
-            .filter(|project| !project.visible_worktree_root_names.is_empty())
     }
 }
 

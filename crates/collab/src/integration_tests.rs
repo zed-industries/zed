@@ -8,7 +8,7 @@ use anyhow::anyhow;
 use call::Room;
 use client::{
     self, proto, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Connection,
-    Credentials, EstablishConnectionError, ProjectMetadata, UserStore, RECEIVE_TIMEOUT,
+    Credentials, EstablishConnectionError, UserStore, RECEIVE_TIMEOUT,
 };
 use collections::{BTreeMap, HashMap, HashSet};
 use editor::{
@@ -729,294 +729,6 @@ async fn test_cancel_join_request(
         &*project_a_events.borrow(),
         &[project::Event::ContactCancelledJoinRequest(user_b)]
     );
-}
-
-#[gpui::test(iterations = 10)]
-async fn test_offline_projects(
-    deterministic: Arc<Deterministic>,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
-    cx_c: &mut TestAppContext,
-) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
-    let client_c = server.create_client(cx_c, "user_c").await;
-    let user_a = UserId::from_proto(client_a.user_id().unwrap());
-    server
-        .make_contacts(vec![
-            (&client_a, cx_a),
-            (&client_b, cx_b),
-            (&client_c, cx_c),
-        ])
-        .await;
-
-    // Set up observers of the project and user stores. Any time either of
-    // these models update, they should be in a consistent state with each
-    // other. There should not be an observable moment where the current
-    // user's contact entry contains a project that does not match one of
-    // the current open projects. That would cause a duplicate entry to be
-    // shown in the contacts panel.
-    let mut subscriptions = vec![];
-    let (window_id, view) = cx_a.add_window(|cx| {
-        subscriptions.push(cx.observe(&client_a.user_store, {
-            let project_store = client_a.project_store.clone();
-            let user_store = client_a.user_store.clone();
-            move |_, _, cx| check_project_list(project_store.clone(), user_store.clone(), cx)
-        }));
-
-        subscriptions.push(cx.observe(&client_a.project_store, {
-            let project_store = client_a.project_store.clone();
-            let user_store = client_a.user_store.clone();
-            move |_, _, cx| check_project_list(project_store.clone(), user_store.clone(), cx)
-        }));
-
-        fn check_project_list(
-            project_store: ModelHandle<ProjectStore>,
-            user_store: ModelHandle<UserStore>,
-            cx: &mut gpui::MutableAppContext,
-        ) {
-            let user_store = user_store.read(cx);
-            for contact in user_store.contacts() {
-                if contact.user.id == user_store.current_user().unwrap().id {
-                    for project in &contact.projects {
-                        let store_contains_project = project_store
-                            .read(cx)
-                            .projects(cx)
-                            .filter_map(|project| project.read(cx).remote_id())
-                            .any(|x| x == project.id);
-
-                        if !store_contains_project {
-                            panic!(
-                                concat!(
-                                    "current user's contact data has a project",
-                                    "that doesn't match any open project {:?}",
-                                ),
-                                project
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
-        EmptyView
-    });
-
-    // Build an offline project with two worktrees.
-    client_a
-        .fs
-        .insert_tree(
-            "/code",
-            json!({
-                "crate1": { "a.rs": "" },
-                "crate2": { "b.rs": "" },
-            }),
-        )
-        .await;
-    let project = cx_a.update(|cx| {
-        Project::local(
-            false,
-            client_a.client.clone(),
-            client_a.user_store.clone(),
-            client_a.project_store.clone(),
-            client_a.language_registry.clone(),
-            client_a.fs.clone(),
-            cx,
-        )
-    });
-    project
-        .update(cx_a, |p, cx| {
-            p.find_or_create_local_worktree("/code/crate1", true, cx)
-        })
-        .await
-        .unwrap();
-    project
-        .update(cx_a, |p, cx| {
-            p.find_or_create_local_worktree("/code/crate2", true, cx)
-        })
-        .await
-        .unwrap();
-    project
-        .update(cx_a, |p, cx| p.restore_state(cx))
-        .await
-        .unwrap();
-
-    // When a project is offline, we still create it on the server but is invisible
-    // to other users.
-    deterministic.run_until_parked();
-    assert!(server
-        .store
-        .lock()
-        .await
-        .project_metadata_for_user(user_a)
-        .is_empty());
-    project.read_with(cx_a, |project, _| {
-        assert!(project.remote_id().is_some());
-        assert!(!project.is_online());
-    });
-    assert!(client_b
-        .user_store
-        .read_with(cx_b, |store, _| { store.contacts()[0].projects.is_empty() }));
-
-    // When the project is taken online, its metadata is sent to the server
-    // and broadcasted to other users.
-    project.update(cx_a, |p, cx| p.set_online(true, cx));
-    deterministic.run_until_parked();
-    let project_id = project.read_with(cx_a, |p, _| p.remote_id()).unwrap();
-    client_b.user_store.read_with(cx_b, |store, _| {
-        assert_eq!(
-            store.contacts()[0].projects,
-            &[ProjectMetadata {
-                id: project_id,
-                visible_worktree_root_names: vec!["crate1".into(), "crate2".into()],
-                guests: Default::default(),
-            }]
-        );
-    });
-
-    // The project is registered again when the host loses and regains connection.
-    server.disconnect_client(user_a);
-    server.forbid_connections();
-    cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
-    assert!(server
-        .store
-        .lock()
-        .await
-        .project_metadata_for_user(user_a)
-        .is_empty());
-    assert!(project.read_with(cx_a, |p, _| p.remote_id().is_none()));
-    assert!(client_b
-        .user_store
-        .read_with(cx_b, |store, _| { store.contacts()[0].projects.is_empty() }));
-
-    server.allow_connections();
-    cx_b.foreground().advance_clock(Duration::from_secs(10));
-    let project_id = project.read_with(cx_a, |p, _| p.remote_id()).unwrap();
-    client_b.user_store.read_with(cx_b, |store, _| {
-        assert_eq!(
-            store.contacts()[0].projects,
-            &[ProjectMetadata {
-                id: project_id,
-                visible_worktree_root_names: vec!["crate1".into(), "crate2".into()],
-                guests: Default::default(),
-            }]
-        );
-    });
-
-    project
-        .update(cx_a, |p, cx| {
-            p.find_or_create_local_worktree("/code/crate3", true, cx)
-        })
-        .await
-        .unwrap();
-    deterministic.run_until_parked();
-    client_b.user_store.read_with(cx_b, |store, _| {
-        assert_eq!(
-            store.contacts()[0].projects,
-            &[ProjectMetadata {
-                id: project_id,
-                visible_worktree_root_names: vec![
-                    "crate1".into(),
-                    "crate2".into(),
-                    "crate3".into()
-                ],
-                guests: Default::default(),
-            }]
-        );
-    });
-
-    // Build another project using a directory which was previously part of
-    // an online project. Restore the project's state from the host's database.
-    let project2_a = cx_a.update(|cx| {
-        Project::local(
-            false,
-            client_a.client.clone(),
-            client_a.user_store.clone(),
-            client_a.project_store.clone(),
-            client_a.language_registry.clone(),
-            client_a.fs.clone(),
-            cx,
-        )
-    });
-    project2_a
-        .update(cx_a, |p, cx| {
-            p.find_or_create_local_worktree("/code/crate3", true, cx)
-        })
-        .await
-        .unwrap();
-    project2_a
-        .update(cx_a, |project, cx| project.restore_state(cx))
-        .await
-        .unwrap();
-
-    // This project is now online, because its directory was previously online.
-    project2_a.read_with(cx_a, |project, _| assert!(project.is_online()));
-    deterministic.run_until_parked();
-    let project2_id = project2_a.read_with(cx_a, |p, _| p.remote_id()).unwrap();
-    client_b.user_store.read_with(cx_b, |store, _| {
-        assert_eq!(
-            store.contacts()[0].projects,
-            &[
-                ProjectMetadata {
-                    id: project_id,
-                    visible_worktree_root_names: vec![
-                        "crate1".into(),
-                        "crate2".into(),
-                        "crate3".into()
-                    ],
-                    guests: Default::default(),
-                },
-                ProjectMetadata {
-                    id: project2_id,
-                    visible_worktree_root_names: vec!["crate3".into()],
-                    guests: Default::default(),
-                }
-            ]
-        );
-    });
-
-    let project2_b = client_b.build_remote_project(&project2_a, cx_a, cx_b).await;
-    let project2_c = cx_c.foreground().spawn(Project::remote(
-        project2_id,
-        client_c.client.clone(),
-        client_c.user_store.clone(),
-        client_c.project_store.clone(),
-        client_c.language_registry.clone(),
-        FakeFs::new(cx_c.background()),
-        cx_c.to_async(),
-    ));
-    deterministic.run_until_parked();
-
-    // Taking a project offline unshares the project, rejects any pending join request and
-    // disconnects existing guests.
-    project2_a.update(cx_a, |project, cx| project.set_online(false, cx));
-    deterministic.run_until_parked();
-    project2_a.read_with(cx_a, |project, _| assert!(!project.is_shared()));
-    project2_b.read_with(cx_b, |project, _| assert!(project.is_read_only()));
-    project2_c.await.unwrap_err();
-
-    client_b.user_store.read_with(cx_b, |store, _| {
-        assert_eq!(
-            store.contacts()[0].projects,
-            &[ProjectMetadata {
-                id: project_id,
-                visible_worktree_root_names: vec![
-                    "crate1".into(),
-                    "crate2".into(),
-                    "crate3".into()
-                ],
-                guests: Default::default(),
-            },]
-        );
-    });
-
-    cx_a.update(|cx| {
-        drop(subscriptions);
-        drop(view);
-        cx.remove_window(window_id);
-    });
 }
 
 #[gpui::test(iterations = 10)]
@@ -3911,24 +3623,15 @@ async fn test_contacts(
     deterministic.run_until_parked();
     assert_eq!(
         contacts(&client_a, cx_a),
-        [
-            ("user_b".to_string(), true, vec![]),
-            ("user_c".to_string(), true, vec![])
-        ]
+        [("user_b".to_string(), true), ("user_c".to_string(), true)]
     );
     assert_eq!(
         contacts(&client_b, cx_b),
-        [
-            ("user_a".to_string(), true, vec![]),
-            ("user_c".to_string(), true, vec![])
-        ]
+        [("user_a".to_string(), true), ("user_c".to_string(), true)]
     );
     assert_eq!(
         contacts(&client_c, cx_c),
-        [
-            ("user_a".to_string(), true, vec![]),
-            ("user_b".to_string(), true, vec![])
-        ]
+        [("user_a".to_string(), true), ("user_b".to_string(), true)]
     );
 
     // Share a project as client A.
@@ -3938,24 +3641,15 @@ async fn test_contacts(
     deterministic.run_until_parked();
     assert_eq!(
         contacts(&client_a, cx_a),
-        [
-            ("user_b".to_string(), true, vec![]),
-            ("user_c".to_string(), true, vec![])
-        ]
+        [("user_b".to_string(), true), ("user_c".to_string(), true)]
     );
     assert_eq!(
         contacts(&client_b, cx_b),
-        [
-            ("user_a".to_string(), true, vec![("a".to_string(), vec![])]),
-            ("user_c".to_string(), true, vec![])
-        ]
+        [("user_a".to_string(), true), ("user_c".to_string(), true)]
     );
     assert_eq!(
         contacts(&client_c, cx_c),
-        [
-            ("user_a".to_string(), true, vec![("a".to_string(), vec![])]),
-            ("user_b".to_string(), true, vec![])
-        ]
+        [("user_a".to_string(), true), ("user_b".to_string(), true)]
     );
 
     let _project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
@@ -3963,32 +3657,15 @@ async fn test_contacts(
     deterministic.run_until_parked();
     assert_eq!(
         contacts(&client_a, cx_a),
-        [
-            ("user_b".to_string(), true, vec![]),
-            ("user_c".to_string(), true, vec![])
-        ]
+        [("user_b".to_string(), true), ("user_c".to_string(), true)]
     );
     assert_eq!(
         contacts(&client_b, cx_b),
-        [
-            (
-                "user_a".to_string(),
-                true,
-                vec![("a".to_string(), vec!["user_b".to_string()])]
-            ),
-            ("user_c".to_string(), true, vec![])
-        ]
+        [("user_a".to_string(), true,), ("user_c".to_string(), true)]
     );
     assert_eq!(
         contacts(&client_c, cx_c),
-        [
-            (
-                "user_a".to_string(),
-                true,
-                vec![("a".to_string(), vec!["user_b".to_string()])]
-            ),
-            ("user_b".to_string(), true, vec![])
-        ]
+        [("user_a".to_string(), true,), ("user_b".to_string(), true)]
     );
 
     // Add a local project as client B
@@ -3998,32 +3675,15 @@ async fn test_contacts(
     deterministic.run_until_parked();
     assert_eq!(
         contacts(&client_a, cx_a),
-        [
-            ("user_b".to_string(), true, vec![("b".to_string(), vec![])]),
-            ("user_c".to_string(), true, vec![])
-        ]
+        [("user_b".to_string(), true), ("user_c".to_string(), true)]
     );
     assert_eq!(
         contacts(&client_b, cx_b),
-        [
-            (
-                "user_a".to_string(),
-                true,
-                vec![("a".to_string(), vec!["user_b".to_string()])]
-            ),
-            ("user_c".to_string(), true, vec![])
-        ]
+        [("user_a".to_string(), true), ("user_c".to_string(), true)]
     );
     assert_eq!(
         contacts(&client_c, cx_c),
-        [
-            (
-                "user_a".to_string(),
-                true,
-                vec![("a".to_string(), vec!["user_b".to_string()])]
-            ),
-            ("user_b".to_string(), true, vec![("b".to_string(), vec![])])
-        ]
+        [("user_a".to_string(), true,), ("user_b".to_string(), true)]
     );
 
     project_a
@@ -4036,24 +3696,15 @@ async fn test_contacts(
     deterministic.run_until_parked();
     assert_eq!(
         contacts(&client_a, cx_a),
-        [
-            ("user_b".to_string(), true, vec![("b".to_string(), vec![])]),
-            ("user_c".to_string(), true, vec![])
-        ]
+        [("user_b".to_string(), true), ("user_c".to_string(), true)]
     );
     assert_eq!(
         contacts(&client_b, cx_b),
-        [
-            ("user_a".to_string(), true, vec![]),
-            ("user_c".to_string(), true, vec![])
-        ]
+        [("user_a".to_string(), true), ("user_c".to_string(), true)]
     );
     assert_eq!(
         contacts(&client_c, cx_c),
-        [
-            ("user_a".to_string(), true, vec![]),
-            ("user_b".to_string(), true, vec![("b".to_string(), vec![])])
-        ]
+        [("user_a".to_string(), true), ("user_b".to_string(), true)]
     );
 
     server.disconnect_client(client_c.current_user_id(cx_c));
@@ -4061,17 +3712,11 @@ async fn test_contacts(
     deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
     assert_eq!(
         contacts(&client_a, cx_a),
-        [
-            ("user_b".to_string(), true, vec![("b".to_string(), vec![])]),
-            ("user_c".to_string(), false, vec![])
-        ]
+        [("user_b".to_string(), true), ("user_c".to_string(), false)]
     );
     assert_eq!(
         contacts(&client_b, cx_b),
-        [
-            ("user_a".to_string(), true, vec![]),
-            ("user_c".to_string(), false, vec![])
-        ]
+        [("user_a".to_string(), true), ("user_c".to_string(), false)]
     );
     assert_eq!(contacts(&client_c, cx_c), []);
 
@@ -4084,48 +3729,24 @@ async fn test_contacts(
     deterministic.run_until_parked();
     assert_eq!(
         contacts(&client_a, cx_a),
-        [
-            ("user_b".to_string(), true, vec![("b".to_string(), vec![])]),
-            ("user_c".to_string(), true, vec![])
-        ]
+        [("user_b".to_string(), true), ("user_c".to_string(), true)]
     );
     assert_eq!(
         contacts(&client_b, cx_b),
-        [
-            ("user_a".to_string(), true, vec![]),
-            ("user_c".to_string(), true, vec![])
-        ]
+        [("user_a".to_string(), true), ("user_c".to_string(), true)]
     );
     assert_eq!(
         contacts(&client_c, cx_c),
-        [
-            ("user_a".to_string(), true, vec![]),
-            ("user_b".to_string(), true, vec![("b".to_string(), vec![])])
-        ]
+        [("user_a".to_string(), true), ("user_b".to_string(), true)]
     );
 
     #[allow(clippy::type_complexity)]
-    fn contacts(
-        client: &TestClient,
-        cx: &TestAppContext,
-    ) -> Vec<(String, bool, Vec<(String, Vec<String>)>)> {
+    fn contacts(client: &TestClient, cx: &TestAppContext) -> Vec<(String, bool)> {
         client.user_store.read_with(cx, |store, _| {
             store
                 .contacts()
                 .iter()
-                .map(|contact| {
-                    let projects = contact
-                        .projects
-                        .iter()
-                        .map(|p| {
-                            (
-                                p.visible_worktree_root_names[0].clone(),
-                                p.guests.iter().map(|p| p.github_login.clone()).collect(),
-                            )
-                        })
-                        .collect();
-                    (contact.user.github_login.clone(), contact.online, projects)
-                })
+                .map(|contact| (contact.user.github_login.clone(), contact.online))
                 .collect()
         })
     }
@@ -5155,22 +4776,6 @@ async fn test_random_collaboration(
                     log::error!("{} error - {:?}", guest.username, guest_err);
                 }
 
-                let contacts = server
-                    .app_state
-                    .db
-                    .get_contacts(guest.current_user_id(&guest_cx))
-                    .await
-                    .unwrap();
-                let contacts = server
-                    .store
-                    .lock()
-                    .await
-                    .build_initial_contacts_update(contacts)
-                    .contacts;
-                assert!(!contacts
-                    .iter()
-                    .flat_map(|contact| &contact.projects)
-                    .any(|project| project.id == host_project_id));
                 guest_project.read_with(&guest_cx, |project, _| assert!(project.is_read_only()));
                 guest_cx.update(|_| drop((guest, guest_project)));
             }
@@ -5258,14 +4863,6 @@ async fn test_random_collaboration(
                                 contact.user_id, removed_guest_id.0 as u64,
                                 "removed guest is still a contact of another peer"
                             );
-                        }
-                        for project in contact.projects {
-                            for project_guest_id in project.guests {
-                                assert_ne!(
-                                    project_guest_id, removed_guest_id.0 as u64,
-                                    "removed guest appears as still participating on a project"
-                                );
-                            }
                         }
                     }
                 }
