@@ -29,7 +29,7 @@ export default function projectPanel(colorScheme: ColorScheme) {
     ignoredEntryFade: 0.6,
     filenameEditor: {
       background: background(layer, "on"),
-      text: text(layer, "mono", "on", "active", { size: "sm" }),
+      text: text(layer, "mono", "on", { size: "sm" }),
       selection: colorScheme.players[0],
     },
   };
