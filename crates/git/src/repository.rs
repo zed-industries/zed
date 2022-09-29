@@ -18,6 +18,8 @@ pub trait GitRepository: Send + Sync + std::fmt::Debug {
 
     fn set_scan_id(&mut self, scan_id: usize);
 
+    fn reopen_git_repo(&mut self) -> bool;
+
     fn git_repo(&self) -> Arc<Mutex<LibGitRepository>>;
 
     fn boxed_clone(&self) -> Box<dyn GitRepository>;
@@ -79,18 +81,15 @@ impl GitRepository for RealGitRepository {
 
     async fn load_head_text(&self, relative_file_path: &Path) -> Option<String> {
         fn logic(repo: &LibGitRepository, relative_file_path: &Path) -> Result<Option<String>> {
-            let object = repo
-                .head()?
-                .peel_to_tree()?
-                .get_path(relative_file_path)?
-                .to_object(&repo)?;
-
-            let content = match object.as_blob() {
-                Some(blob) => blob.content().to_owned(),
+            const STAGE_NORMAL: i32 = 0;
+            let index = repo.index()?;
+            let oid = match index.get_path(relative_file_path, STAGE_NORMAL) {
+                Some(entry) => entry.id,
                 None => return Ok(None),
             };
 
-            let head_text = String::from_utf8(content.to_owned())?;
+            let content = repo.find_blob(oid)?.content().to_owned();
+            let head_text = String::from_utf8(content)?;
             Ok(Some(head_text))
         }
 
@@ -99,6 +98,17 @@ impl GitRepository for RealGitRepository {
             Err(err) => log::error!("Error loading head text: {:?}", err),
         }
         None
+    }
+
+    fn reopen_git_repo(&mut self) -> bool {
+        match LibGitRepository::open(&self.git_dir_path) {
+            Ok(repo) => {
+                self.libgit_repository = Arc::new(Mutex::new(repo));
+                true
+            }
+
+            Err(_) => false,
+        }
     }
 
     fn git_repo(&self) -> Arc<Mutex<LibGitRepository>> {
@@ -165,6 +175,10 @@ impl GitRepository for FakeGitRepository {
     }
 
     async fn load_head_text(&self, _: &Path) -> Option<String> {
+        unimplemented!()
+    }
+
+    fn reopen_git_repo(&mut self) -> bool {
         unimplemented!()
     }
 

@@ -2603,7 +2603,13 @@ impl BackgroundScanner {
             .git_repositories
             .iter()
             .map(|repo| repo.boxed_clone())
-            .filter(|repo| git::libgit::Repository::open(repo.git_dir_path()).is_ok())
+            .filter_map(|mut repo| {
+                if repo.reopen_git_repo() {
+                    Some(repo)
+                } else {
+                    None
+                }
+            })
             .collect();
 
         snapshot.git_repositories = new_repos;
