@@ -12,89 +12,56 @@ async fn test_get_users_by_ids() {
     ] {
         let db = test_db.db();
 
-        let user1 = db
-            .create_user(
-                "u1@example.com",
-                false,
-                NewUserParams {
-                    github_login: "u1".into(),
-                    github_user_id: 1,
-                    invite_count: 0,
-                },
-            )
-            .await
-            .unwrap();
-        let user2 = db
-            .create_user(
-                "u2@example.com",
-                false,
-                NewUserParams {
-                    github_login: "u2".into(),
-                    github_user_id: 2,
-                    invite_count: 0,
-                },
-            )
-            .await
-            .unwrap();
-        let user3 = db
-            .create_user(
-                "u3@example.com",
-                false,
-                NewUserParams {
-                    github_login: "u3".into(),
-                    github_user_id: 3,
-                    invite_count: 0,
-                },
-            )
-            .await
-            .unwrap();
-        let user4 = db
-            .create_user(
-                "u4@example.com",
-                false,
-                NewUserParams {
-                    github_login: "u4".into(),
-                    github_user_id: 4,
-                    invite_count: 0,
-                },
-            )
-            .await
-            .unwrap();
+        let mut user_ids = Vec::new();
+        for i in 1..=4 {
+            user_ids.push(
+                db.create_user(
+                    &format!("user{i}@example.com"),
+                    false,
+                    NewUserParams {
+                        github_login: format!("user{i}"),
+                        github_user_id: i,
+                        invite_count: 0,
+                    },
+                )
+                .await
+                .unwrap()
+                .user_id,
+            );
+        }
 
         assert_eq!(
-            db.get_users_by_ids(vec![user1, user2, user3, user4])
-                .await
-                .unwrap(),
+            db.get_users_by_ids(user_ids.clone()).await.unwrap(),
             vec![
                 User {
-                    id: user1,
-                    github_login: "u1".to_string(),
+                    id: user_ids[0],
+                    github_login: "user1".to_string(),
                     github_user_id: Some(1),
-                    email_address: Some("u1@example.com".to_string()),
+                    email_address: Some("user1@example.com".to_string()),
                     admin: false,
                     ..Default::default()
                 },
                 User {
-                    id: user2,
-                    github_login: "u2".to_string(),
+                    id: user_ids[1],
+                    github_login: "user2".to_string(),
                     github_user_id: Some(2),
-                    email_address: Some("u2@example.com".to_string()),
+                    email_address: Some("user2@example.com".to_string()),
                     admin: false,
                     ..Default::default()
                 },
                 User {
-                    id: user3,
-                    github_login: "u3".to_string(),
+                    id: user_ids[2],
+                    github_login: "user3".to_string(),
                     github_user_id: Some(3),
-                    email_address: Some("u3@example.com".to_string()),
+                    email_address: Some("user3@example.com".to_string()),
                     admin: false,
                     ..Default::default()
                 },
                 User {
-                    id: user4,
-                    github_login: "u4".to_string(),
+                    id: user_ids[3],
+                    github_login: "user4".to_string(),
                     github_user_id: Some(4),
-                    email_address: Some("u4@example.com".to_string()),
+                    email_address: Some("user4@example.com".to_string()),
                     admin: false,
                     ..Default::default()
                 }
@@ -121,7 +88,8 @@ async fn test_get_user_by_github_account() {
                 },
             )
             .await
-            .unwrap();
+            .unwrap()
+            .user_id;
         let user_id2 = db
             .create_user(
                 "user2@example.com",
@@ -133,7 +101,8 @@ async fn test_get_user_by_github_account() {
                 },
             )
             .await
-            .unwrap();
+            .unwrap()
+            .user_id;
 
         let user = db
             .get_user_by_github_account("login1", None)
@@ -177,7 +146,8 @@ async fn test_worktree_extensions() {
             },
         )
         .await
-        .unwrap();
+        .unwrap()
+        .user_id;
     let project = db.register_project(user).await.unwrap();
 
     db.update_worktree_extensions(project, 100, Default::default())
@@ -237,43 +207,25 @@ async fn test_user_activity() {
     let test_db = TestDb::postgres().await;
     let db = test_db.db();
 
-    let user_1 = db
-        .create_user(
-            "u1@example.com",
-            false,
-            NewUserParams {
-                github_login: "u1".into(),
-                github_user_id: 0,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap();
-    let user_2 = db
-        .create_user(
-            "u2@example.com",
-            false,
-            NewUserParams {
-                github_login: "u2".into(),
-                github_user_id: 0,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap();
-    let user_3 = db
-        .create_user(
-            "u3@example.com",
-            false,
-            NewUserParams {
-                github_login: "u3".into(),
-                github_user_id: 0,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap();
-    let project_1 = db.register_project(user_1).await.unwrap();
+    let mut user_ids = Vec::new();
+    for i in 0..=2 {
+        user_ids.push(
+            db.create_user(
+                &format!("user{i}@example.com"),
+                false,
+                NewUserParams {
+                    github_login: format!("user{i}"),
+                    github_user_id: i,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap()
+            .user_id,
+        );
+    }
+
+    let project_1 = db.register_project(user_ids[0]).await.unwrap();
     db.update_worktree_extensions(
         project_1,
         1,
@@ -281,34 +233,37 @@ async fn test_user_activity() {
     )
     .await
     .unwrap();
-    let project_2 = db.register_project(user_2).await.unwrap();
+    let project_2 = db.register_project(user_ids[1]).await.unwrap();
     let t0 = OffsetDateTime::now_utc() - Duration::from_secs(60 * 60);
 
     // User 2 opens a project
     let t1 = t0 + Duration::from_secs(10);
-    db.record_user_activity(t0..t1, &[(user_2, project_2)])
+    db.record_user_activity(t0..t1, &[(user_ids[1], project_2)])
         .await
         .unwrap();
 
     let t2 = t1 + Duration::from_secs(10);
-    db.record_user_activity(t1..t2, &[(user_2, project_2)])
+    db.record_user_activity(t1..t2, &[(user_ids[1], project_2)])
         .await
         .unwrap();
 
     // User 1 joins the project
     let t3 = t2 + Duration::from_secs(10);
-    db.record_user_activity(t2..t3, &[(user_2, project_2), (user_1, project_2)])
-        .await
-        .unwrap();
+    db.record_user_activity(
+        t2..t3,
+        &[(user_ids[1], project_2), (user_ids[0], project_2)],
+    )
+    .await
+    .unwrap();
 
     // User 1 opens another project
     let t4 = t3 + Duration::from_secs(10);
     db.record_user_activity(
         t3..t4,
         &[
-            (user_2, project_2),
-            (user_1, project_2),
-            (user_1, project_1),
+            (user_ids[1], project_2),
+            (user_ids[0], project_2),
+            (user_ids[0], project_1),
         ],
     )
     .await
@@ -319,10 +274,10 @@ async fn test_user_activity() {
     db.record_user_activity(
         t4..t5,
         &[
-            (user_2, project_2),
-            (user_1, project_2),
-            (user_1, project_1),
-            (user_3, project_1),
+            (user_ids[1], project_2),
+            (user_ids[0], project_2),
+            (user_ids[0], project_1),
+            (user_ids[2], project_1),
         ],
     )
     .await
@@ -330,13 +285,16 @@ async fn test_user_activity() {
 
     // User 2 leaves
     let t6 = t5 + Duration::from_secs(5);
-    db.record_user_activity(t5..t6, &[(user_1, project_1), (user_3, project_1)])
-        .await
-        .unwrap();
+    db.record_user_activity(
+        t5..t6,
+        &[(user_ids[0], project_1), (user_ids[2], project_1)],
+    )
+    .await
+    .unwrap();
 
     let t7 = t6 + Duration::from_secs(60);
     let t8 = t7 + Duration::from_secs(10);
-    db.record_user_activity(t7..t8, &[(user_1, project_1)])
+    db.record_user_activity(t7..t8, &[(user_ids[0], project_1)])
         .await
         .unwrap();
 
@@ -344,8 +302,8 @@ async fn test_user_activity() {
         db.get_top_users_activity_summary(t0..t6, 10).await.unwrap(),
         &[
             UserActivitySummary {
-                id: user_1,
-                github_login: "u1".to_string(),
+                id: user_ids[0],
+                github_login: "user0".to_string(),
                 project_activity: vec![
                     ProjectActivitySummary {
                         id: project_1,
@@ -360,8 +318,8 @@ async fn test_user_activity() {
                 ]
             },
             UserActivitySummary {
-                id: user_2,
-                github_login: "u2".to_string(),
+                id: user_ids[1],
+                github_login: "user1".to_string(),
                 project_activity: vec![ProjectActivitySummary {
                     id: project_2,
                     duration: Duration::from_secs(50),
@@ -369,8 +327,8 @@ async fn test_user_activity() {
                 }]
             },
             UserActivitySummary {
-                id: user_3,
-                github_login: "u3".to_string(),
+                id: user_ids[2],
+                github_login: "user2".to_string(),
                 project_activity: vec![ProjectActivitySummary {
                     id: project_1,
                     duration: Duration::from_secs(15),
@@ -442,7 +400,9 @@ async fn test_user_activity() {
     );
 
     assert_eq!(
-        db.get_user_activity_timeline(t3..t6, user_1).await.unwrap(),
+        db.get_user_activity_timeline(t3..t6, user_ids[0])
+            .await
+            .unwrap(),
         &[
             UserActivityPeriod {
                 project_id: project_1,
@@ -459,7 +419,9 @@ async fn test_user_activity() {
         ]
     );
     assert_eq!(
-        db.get_user_activity_timeline(t0..t8, user_1).await.unwrap(),
+        db.get_user_activity_timeline(t0..t8, user_ids[0])
+            .await
+            .unwrap(),
         &[
             UserActivityPeriod {
                 project_id: project_2,
@@ -501,7 +463,8 @@ async fn test_recent_channel_messages() {
                 },
             )
             .await
-            .unwrap();
+            .unwrap()
+            .user_id;
         let org = db.create_org("org", "org").await.unwrap();
         let channel = db.create_org_channel(org, "channel").await.unwrap();
         for i in 0..10 {
@@ -545,7 +508,8 @@ async fn test_channel_message_nonces() {
                 },
             )
             .await
-            .unwrap();
+            .unwrap()
+            .user_id;
         let org = db.create_org("org", "org").await.unwrap();
         let channel = db.create_org_channel(org, "channel").await.unwrap();
 
@@ -587,7 +551,8 @@ async fn test_create_access_tokens() {
             },
         )
         .await
-        .unwrap();
+        .unwrap()
+        .user_id;
 
     db.create_access_token_hash(user, "h1", 3).await.unwrap();
     db.create_access_token_hash(user, "h2", 3).await.unwrap();
@@ -678,42 +643,27 @@ async fn test_add_contacts() {
     ] {
         let db = test_db.db();
 
-        let user_1 = db
-            .create_user(
-                "u1@example.com",
-                false,
-                NewUserParams {
-                    github_login: "u1".into(),
-                    github_user_id: 0,
-                    invite_count: 0,
-                },
-            )
-            .await
-            .unwrap();
-        let user_2 = db
-            .create_user(
-                "u2@example.com",
-                false,
-                NewUserParams {
-                    github_login: "u2".into(),
-                    github_user_id: 1,
-                    invite_count: 0,
-                },
-            )
-            .await
-            .unwrap();
-        let user_3 = db
-            .create_user(
-                "u3@example.com",
-                false,
-                NewUserParams {
-                    github_login: "u3".into(),
-                    github_user_id: 2,
-                    invite_count: 0,
-                },
-            )
-            .await
-            .unwrap();
+        let mut user_ids = Vec::new();
+        for i in 0..3 {
+            user_ids.push(
+                db.create_user(
+                    &format!("user{i}@example.com"),
+                    false,
+                    NewUserParams {
+                        github_login: format!("user{i}"),
+                        github_user_id: i,
+                        invite_count: 0,
+                    },
+                )
+                .await
+                .unwrap()
+                .user_id,
+            );
+        }
+
+        let user_1 = user_ids[0];
+        let user_2 = user_ids[1];
+        let user_3 = user_ids[2];
 
         // User starts with no contacts
         assert_eq!(
@@ -927,12 +877,12 @@ async fn test_add_contacts() {
 async fn test_invite_codes() {
     let postgres = TestDb::postgres().await;
     let db = postgres.db();
-    let user1 = db
+    let NewUserResult { user_id: user1, .. } = db
         .create_user(
-            "u1@example.com",
+            "user1@example.com",
             false,
             NewUserParams {
-                github_login: "u1".into(),
+                github_login: "user1".into(),
                 github_user_id: 0,
                 invite_count: 0,
             },
@@ -954,13 +904,14 @@ async fn test_invite_codes() {
 
     // User 2 redeems the invite code and becomes a contact of user 1.
     let user2_invite = db
-        .create_invite_from_code(&invite_code, "u2@example.com", Some("user-2-device-id"))
+        .create_invite_from_code(&invite_code, "user2@example.com", Some("user-2-device-id"))
         .await
         .unwrap();
     let NewUserResult {
         user_id: user2,
         inviting_user_id,
         signup_device_id,
+        metrics_id,
     } = db
         .create_user_from_invite(
             &user2_invite,
@@ -976,6 +927,7 @@ async fn test_invite_codes() {
     assert_eq!(invite_count, 1);
     assert_eq!(inviting_user_id, Some(user1));
     assert_eq!(signup_device_id.unwrap(), "user-2-device-id");
+    assert_eq!(db.get_user_metrics_id(user2).await.unwrap(), metrics_id);
     assert_eq!(
         db.get_contacts(user1).await.unwrap(),
         [
@@ -1009,13 +961,14 @@ async fn test_invite_codes() {
 
     // User 3 redeems the invite code and becomes a contact of user 1.
     let user3_invite = db
-        .create_invite_from_code(&invite_code, "u3@example.com", None)
+        .create_invite_from_code(&invite_code, "user3@example.com", None)
         .await
         .unwrap();
     let NewUserResult {
         user_id: user3,
         inviting_user_id,
         signup_device_id,
+        ..
     } = db
         .create_user_from_invite(
             &user3_invite,
@@ -1067,7 +1020,7 @@ async fn test_invite_codes() {
     );
 
     // Trying to reedem the code for the third time results in an error.
-    db.create_invite_from_code(&invite_code, "u4@example.com", Some("user-4-device-id"))
+    db.create_invite_from_code(&invite_code, "user4@example.com", Some("user-4-device-id"))
         .await
         .unwrap_err();
 
@@ -1079,7 +1032,7 @@ async fn test_invite_codes() {
 
     // User 4 can now redeem the invite code and becomes a contact of user 1.
     let user4_invite = db
-        .create_invite_from_code(&invite_code, "u4@example.com", Some("user-4-device-id"))
+        .create_invite_from_code(&invite_code, "user4@example.com", Some("user-4-device-id"))
         .await
         .unwrap();
     let user4 = db
@@ -1137,7 +1090,7 @@ async fn test_invite_codes() {
     );
 
     // An existing user cannot redeem invite codes.
-    db.create_invite_from_code(&invite_code, "u2@example.com", Some("user-2-device-id"))
+    db.create_invite_from_code(&invite_code, "user2@example.com", Some("user-2-device-id"))
         .await
         .unwrap_err();
     let (_, invite_count) = db.get_invite_code_for_user(user1).await.unwrap().unwrap();
@@ -1232,6 +1185,7 @@ async fn test_signups() {
         user_id,
         inviting_user_id,
         signup_device_id,
+        ..
     } = db
         .create_user_from_invite(
             &Invite {
@@ -1282,6 +1236,51 @@ async fn test_signups() {
     )
     .await
     .unwrap_err();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_metrics_id() {
+    let postgres = TestDb::postgres().await;
+    let db = postgres.db();
+
+    let NewUserResult {
+        user_id: user1,
+        metrics_id: metrics_id1,
+        ..
+    } = db
+        .create_user(
+            "person1@example.com",
+            false,
+            NewUserParams {
+                github_login: "person1".into(),
+                github_user_id: 101,
+                invite_count: 5,
+            },
+        )
+        .await
+        .unwrap();
+    let NewUserResult {
+        user_id: user2,
+        metrics_id: metrics_id2,
+        ..
+    } = db
+        .create_user(
+            "person2@example.com",
+            false,
+            NewUserParams {
+                github_login: "person2".into(),
+                github_user_id: 102,
+                invite_count: 5,
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(db.get_user_metrics_id(user1).await.unwrap(), metrics_id1);
+    assert_eq!(db.get_user_metrics_id(user2).await.unwrap(), metrics_id2);
+    assert_eq!(metrics_id1.len(), 36);
+    assert_eq!(metrics_id2.len(), 36);
+    assert_ne!(metrics_id1, metrics_id2);
 }
 
 fn build_background_executor() -> Arc<Background> {

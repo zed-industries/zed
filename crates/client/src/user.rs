@@ -142,10 +142,14 @@ impl UserStore {
                     match status {
                         Status::Connected { .. } => {
                             if let Some((this, user_id)) = this.upgrade(&cx).zip(client.user_id()) {
-                                let user = this
+                                let fetch_user = this
                                     .update(&mut cx, |this, cx| this.fetch_user(user_id, cx))
-                                    .log_err()
-                                    .await;
+                                    .log_err();
+                                let fetch_metrics_id =
+                                    client.request(proto::GetPrivateUserInfo {}).log_err();
+                                let (user, info) = futures::join!(fetch_user, fetch_metrics_id);
+                                client.telemetry.set_metrics_id(info.map(|i| i.metrics_id));
+                                client.telemetry.report_event("sign in", Default::default());
                                 current_user_tx.send(user).await.ok();
                             }
                         }

@@ -205,7 +205,8 @@ impl Server {
             .add_request_handler(Server::follow)
             .add_message_handler(Server::unfollow)
             .add_message_handler(Server::update_followers)
-            .add_request_handler(Server::get_channel_messages);
+            .add_request_handler(Server::get_channel_messages)
+            .add_request_handler(Server::get_private_user_info);
 
         Arc::new(server)
     }
@@ -1724,6 +1725,20 @@ impl Server {
             done: messages.len() < MESSAGE_COUNT_PER_PAGE,
             messages,
         })?;
+        Ok(())
+    }
+
+    async fn get_private_user_info(
+        self: Arc<Self>,
+        request: TypedEnvelope<proto::GetPrivateUserInfo>,
+        response: Response<proto::GetPrivateUserInfo>,
+    ) -> Result<()> {
+        let user_id = self
+            .store()
+            .await
+            .user_id_for_connection(request.sender_id)?;
+        let metrics_id = self.app_state.db.get_user_metrics_id(user_id).await?;
+        response.send(proto::GetPrivateUserInfoResponse { metrics_id })?;
         Ok(())
     }
 

@@ -4663,7 +4663,8 @@ async fn test_random_collaboration(
             },
         )
         .await
-        .unwrap();
+        .unwrap()
+        .user_id;
     let mut available_guests = vec![
         "guest-1".to_string(),
         "guest-2".to_string(),
@@ -4683,7 +4684,8 @@ async fn test_random_collaboration(
                 },
             )
             .await
-            .unwrap();
+            .unwrap()
+            .user_id;
         assert_eq!(*username, format!("guest-{}", guest_user_id));
         server
             .app_state
@@ -5206,6 +5208,7 @@ impl TestServer {
                 )
                 .await
                 .unwrap()
+                .user_id
         };
         let client_name = name.to_string();
         let mut client = cx.read(|cx| Client::new(http.clone(), cx));

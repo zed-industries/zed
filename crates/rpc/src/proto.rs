@@ -167,6 +167,8 @@ messages!(
     (UpdateProject, Foreground),
     (UpdateWorktree, Foreground),
     (UpdateWorktreeExtensions, Background),
+    (GetPrivateUserInfo, Foreground),
+    (GetPrivateUserInfoResponse, Foreground),
 );
 
 request_messages!(
@@ -189,6 +191,7 @@ request_messages!(
     (GetTypeDefinition, GetTypeDefinitionResponse),
     (GetDocumentHighlights, GetDocumentHighlightsResponse),
     (GetReferences, GetReferencesResponse),
+    (GetPrivateUserInfo, GetPrivateUserInfoResponse),
     (GetProjectSymbols, GetProjectSymbolsResponse),
     (FuzzySearchUsers, UsersResponse),
     (GetUsers, UsersResponse),
