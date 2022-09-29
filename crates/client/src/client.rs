@@ -15,11 +15,9 @@ use async_tungstenite::tungstenite::{
 use db::Db;
 use futures::{future::LocalBoxFuture, FutureExt, SinkExt, StreamExt, TryStreamExt};
 use gpui::{
-    actions,
-    serde_json::{json, Value},
-    AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, AppContext,
-    AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task, View, ViewContext,
-    ViewHandle,
+    actions, serde_json::Value, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle,
+    AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
+    MutableAppContext, Task, View, ViewContext, ViewHandle,
 };
 use http::HttpClient;
 use lazy_static::lazy_static;
@@ -56,7 +54,7 @@ lazy_static! {
 
 pub const ZED_SECRET_CLIENT_TOKEN: &str = "618033988749894";
 
-actions!(client, [Authenticate, TestTelemetry]);
+actions!(client, [Authenticate]);
 
 pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
     cx.add_global_action({
@@ -67,17 +65,6 @@ pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
                 |cx| async move { client.authenticate_and_connect(true, &cx).log_err().await },
             )
             .detach();
-        }
-    });
-    cx.add_global_action({
-        let client = client.clone();
-        move |_: &TestTelemetry, _| {
-            client.report_event(
-                "test_telemetry",
-                json!({
-                    "test_property": "test_value"
-                }),
-            )
         }
     });
 }
