@@ -44,6 +44,8 @@ pub struct Call {
 
 #[derive(Serialize)]
 pub struct Project {
+    pub id: ProjectId,
+    pub room_id: RoomId,
     pub host_connection_id: ConnectionId,
     pub host: Collaborator,
     pub guests: HashMap<ConnectionId, Collaborator>,
@@ -90,10 +92,17 @@ pub struct RemovedConnectionState {
 }
 
 pub struct LeftProject {
+    pub id: ProjectId,
     pub host_user_id: UserId,
     pub host_connection_id: ConnectionId,
     pub connection_ids: Vec<ConnectionId>,
     pub remove_collaborator: bool,
+}
+
+pub struct LeftRoom<'a> {
+    pub room: &'a proto::Room,
+    pub unshared_projects: Vec<Project>,
+    pub left_projects: Vec<LeftProject>,
 }
 
 #[derive(Copy, Clone)]
@@ -199,9 +208,9 @@ impl Store {
 
         // Unshare and leave all projects.
         for project_id in connection_projects {
-            if let Ok(project) = self.unshare_project(project_id, connection_id) {
+            if let Ok((_, project)) = self.unshare_project(project_id, connection_id) {
                 result.hosted_projects.insert(project_id, project);
-            } else if self.leave_project(connection_id, project_id).is_ok() {
+            } else if self.leave_project(project_id, connection_id).is_ok() {
                 result.guest_project_ids.insert(project_id);
             }
         }
@@ -424,11 +433,7 @@ impl Store {
         Ok((room, recipient_connection_ids))
     }
 
-    pub fn leave_room(
-        &mut self,
-        room_id: RoomId,
-        connection_id: ConnectionId,
-    ) -> Result<&proto::Room> {
+    pub fn leave_room(&mut self, room_id: RoomId, connection_id: ConnectionId) -> Result<LeftRoom> {
         let connection = self
             .connections
             .get_mut(&connection_id)
@@ -454,7 +459,22 @@ impl Store {
             .retain(|participant| participant.peer_id != connection_id.0);
         connected_user.active_call = None;
 
-        Ok(room)
+        let mut unshared_projects = Vec::new();
+        let mut left_projects = Vec::new();
+        for project_id in connection.projects.clone() {
+            if let Ok((_, project)) = self.unshare_project(project_id, connection_id) {
+                unshared_projects.push(project);
+            } else if let Ok(project) = self.leave_project(project_id, connection_id) {
+                left_projects.push(project);
+            }
+        }
+
+        let room = self.rooms.get(&room_id).unwrap();
+        Ok(LeftRoom {
+            room,
+            unshared_projects,
+            left_projects,
+        })
     }
 
     pub fn room(&self, room_id: RoomId) -> Option<&proto::Room> {
@@ -564,17 +584,32 @@ impl Store {
 
     pub fn share_project(
         &mut self,
-        host_connection_id: ConnectionId,
+        room_id: RoomId,
         project_id: ProjectId,
-    ) -> Result<()> {
+        host_connection_id: ConnectionId,
+    ) -> Result<&proto::Room> {
         let connection = self
             .connections
             .get_mut(&host_connection_id)
             .ok_or_else(|| anyhow!("no such connection"))?;
+
+        let room = self
+            .rooms
+            .get_mut(&room_id)
+            .ok_or_else(|| anyhow!("no such room"))?;
+        let participant = room
+            .participants
+            .iter_mut()
+            .find(|participant| participant.peer_id == host_connection_id.0)
+            .ok_or_else(|| anyhow!("no such room"))?;
+        participant.project_ids.push(project_id.to_proto());
+
         connection.projects.insert(project_id);
         self.projects.insert(
             project_id,
             Project {
+                id: project_id,
+                room_id,
                 host_connection_id,
                 host: Collaborator {
                     user_id: connection.user_id,
@@ -588,14 +623,15 @@ impl Store {
                 language_servers: Default::default(),
             },
         );
-        Ok(())
+
+        Ok(room)
     }
 
     pub fn unshare_project(
         &mut self,
         project_id: ProjectId,
         connection_id: ConnectionId,
-    ) -> Result<Project> {
+    ) -> Result<(&proto::Room, Project)> {
         match self.projects.entry(project_id) {
             btree_map::Entry::Occupied(e) => {
                 if e.get().host_connection_id == connection_id {
@@ -611,7 +647,20 @@ impl Store {
                         }
                     }
 
-                    Ok(project)
+                    let room = self
+                        .rooms
+                        .get_mut(&project.room_id)
+                        .ok_or_else(|| anyhow!("no such room"))?;
+                    let participant = room
+                        .participants
+                        .iter_mut()
+                        .find(|participant| participant.peer_id == connection_id.0)
+                        .ok_or_else(|| anyhow!("no such room"))?;
+                    participant
+                        .project_ids
+                        .retain(|id| *id != project_id.to_proto());
+
+                    Ok((room, project))
                 } else {
                     Err(anyhow!("no such project"))?
                 }
@@ -731,8 +780,8 @@ impl Store {
 
     pub fn leave_project(
         &mut self,
-        connection_id: ConnectionId,
         project_id: ProjectId,
+        connection_id: ConnectionId,
     ) -> Result<LeftProject> {
         let project = self
             .projects
@@ -752,6 +801,7 @@ impl Store {
         }
 
         Ok(LeftProject {
+            id: project.id,
             host_connection_id: project.host_connection_id,
             host_user_id: project.host.user_id,
             connection_ids: project.connection_ids(),

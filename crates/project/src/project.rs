@@ -1049,13 +1049,13 @@ impl Project {
         }
     }
 
-    pub fn share(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<u64>> {
+    pub fn share(&mut self, room_id: u64, cx: &mut ModelContext<Self>) -> Task<Result<u64>> {
         if let ProjectClientState::Local { remote_id, .. } = &mut self.client_state {
             if let Some(remote_id) = remote_id {
                 return Task::ready(Ok(*remote_id));
             }
 
-            let response = self.client.request(proto::ShareProject {});
+            let response = self.client.request(proto::ShareProject { room_id });
             cx.spawn(|this, mut cx| async move {
                 let project_id = response.await?.project_id;
                 let mut worktree_share_tasks = Vec::new();

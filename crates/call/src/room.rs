@@ -1,10 +1,9 @@
-use crate::participant::{LocalParticipant, ParticipantLocation, RemoteParticipant};
+use crate::participant::{ParticipantLocation, RemoteParticipant};
 use anyhow::{anyhow, Result};
 use client::{incoming_call::IncomingCall, proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use collections::HashMap;
 use futures::StreamExt;
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
-use project::Project;
 use std::sync::Arc;
 use util::ResultExt;
 
@@ -15,7 +14,6 @@ pub enum Event {
 pub struct Room {
     id: u64,
     status: RoomStatus,
-    local_participant: LocalParticipant,
     remote_participants: HashMap<PeerId, RemoteParticipant>,
     pending_users: Vec<Arc<User>>,
     client: Arc<Client>,
@@ -53,9 +51,6 @@ impl Room {
         Self {
             id,
             status: RoomStatus::Online,
-            local_participant: LocalParticipant {
-                projects: Default::default(),
-            },
             remote_participants: Default::default(),
             pending_users: Default::default(),
             _subscriptions: vec![client.add_message_handler(cx.handle(), Self::handle_room_updated)],
@@ -178,33 +173,6 @@ impl Room {
                 .await?;
             Ok(())
         })
-    }
-
-    pub fn publish_project(&mut self, project: ModelHandle<Project>) -> Task<Result<()>> {
-        if self.status.is_offline() {
-            return Task::ready(Err(anyhow!("room is offline")));
-        }
-
-        todo!()
-    }
-
-    pub fn unpublish_project(&mut self, project: ModelHandle<Project>) -> Task<Result<()>> {
-        if self.status.is_offline() {
-            return Task::ready(Err(anyhow!("room is offline")));
-        }
-
-        todo!()
-    }
-
-    pub fn set_active_project(
-        &mut self,
-        project: Option<&ModelHandle<Project>>,
-    ) -> Task<Result<()>> {
-        if self.status.is_offline() {
-            return Task::ready(Err(anyhow!("room is offline")));
-        }
-
-        todo!()
     }
 }
 

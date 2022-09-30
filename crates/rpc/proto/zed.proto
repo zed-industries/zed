@@ -194,7 +194,9 @@ message RoomUpdated {
     Room room = 1;
 }
 
-message ShareProject {}
+message ShareProject {
+    uint64 room_id = 1;
+}
 
 message ShareProjectResponse {
     uint64 project_id = 1;

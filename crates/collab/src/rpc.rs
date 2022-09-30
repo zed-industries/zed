@@ -611,8 +611,34 @@ impl Server {
     async fn leave_room(self: Arc<Server>, message: TypedEnvelope<proto::LeaveRoom>) -> Result<()> {
         let room_id = message.payload.id;
         let mut store = self.store().await;
-        let room = store.leave_room(room_id, message.sender_id)?;
-        self.room_updated(room);
+        let left_room = store.leave_room(room_id, message.sender_id)?;
+
+        for project in left_room.unshared_projects {
+            for connection_id in project.connection_ids() {
+                self.peer.send(
+                    connection_id,
+                    proto::UnshareProject {
+                        project_id: project.id.to_proto(),
+                    },
+                )?;
+            }
+        }
+
+        for project in left_room.left_projects {
+            if project.remove_collaborator {
+                for connection_id in project.connection_ids {
+                    self.peer.send(
+                        connection_id,
+                        proto::RemoveProjectCollaborator {
+                            project_id: project.id.to_proto(),
+                            peer_id: message.sender_id.0,
+                        },
+                    )?;
+                }
+            }
+        }
+
+        self.room_updated(left_room.room);
         Ok(())
     }
 
@@ -696,13 +722,12 @@ impl Server {
             .await
             .user_id_for_connection(request.sender_id)?;
         let project_id = self.app_state.db.register_project(user_id).await?;
-        self.store()
-            .await
-            .share_project(request.sender_id, project_id)?;
-
+        let mut store = self.store().await;
+        let room = store.share_project(request.payload.room_id, project_id, request.sender_id)?;
         response.send(proto::ShareProjectResponse {
             project_id: project_id.to_proto(),
         })?;
+        self.room_updated(room);
 
         Ok(())
     }
@@ -712,15 +737,14 @@ impl Server {
         message: TypedEnvelope<proto::UnshareProject>,
     ) -> Result<()> {
         let project_id = ProjectId::from_proto(message.payload.project_id);
-        let project = self
-            .store()
-            .await
-            .unshare_project(project_id, message.sender_id)?;
+        let mut store = self.store().await;
+        let (room, project) = store.unshare_project(project_id, message.sender_id)?;
         broadcast(
             message.sender_id,
             project.guest_connection_ids(),
             |conn_id| self.peer.send(conn_id, message.payload.clone()),
         );
+        self.room_updated(room);
 
         Ok(())
     }
@@ -882,7 +906,7 @@ impl Server {
         let project;
         {
             let mut store = self.store().await;
-            project = store.leave_project(sender_id, project_id)?;
+            project = store.leave_project(project_id, sender_id)?;
             tracing::info!(
                 %project_id,
                 host_user_id = %project.host_user_id,

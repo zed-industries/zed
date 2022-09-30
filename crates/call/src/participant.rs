@@ -20,10 +20,6 @@ impl ParticipantLocation {
     }
 }
 
-pub struct LocalParticipant {
-    pub projects: Vec<ModelHandle<Project>>,
-}
-
 pub struct RemoteParticipant {
     pub user_id: u64,
     pub projects: Vec<ModelHandle<Project>>,
