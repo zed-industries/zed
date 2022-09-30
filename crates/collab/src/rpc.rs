@@ -151,11 +151,10 @@ impl Server {
             .add_message_handler(Server::leave_room)
             .add_request_handler(Server::call)
             .add_message_handler(Server::decline_call)
-            .add_request_handler(Server::register_project)
-            .add_request_handler(Server::unregister_project)
+            .add_request_handler(Server::share_project)
+            .add_message_handler(Server::unshare_project)
             .add_request_handler(Server::join_project)
             .add_message_handler(Server::leave_project)
-            .add_message_handler(Server::unshare_project)
             .add_message_handler(Server::update_project)
             .add_message_handler(Server::register_project_activity)
             .add_request_handler(Server::update_worktree)
@@ -470,18 +469,18 @@ impl Server {
     async fn sign_out(self: &mut Arc<Self>, connection_id: ConnectionId) -> Result<()> {
         self.peer.disconnect(connection_id);
 
-        let mut projects_to_unregister = Vec::new();
+        let mut projects_to_unshare = Vec::new();
         let removed_user_id;
         {
             let mut store = self.store().await;
             let removed_connection = store.remove_connection(connection_id)?;
 
             for (project_id, project) in removed_connection.hosted_projects {
-                projects_to_unregister.push(project_id);
+                projects_to_unshare.push(project_id);
                 broadcast(connection_id, project.guests.keys().copied(), |conn_id| {
                     self.peer.send(
                         conn_id,
-                        proto::UnregisterProject {
+                        proto::UnshareProject {
                             project_id: project_id.to_proto(),
                         },
                     )
@@ -514,7 +513,7 @@ impl Server {
 
         self.update_user_contacts(removed_user_id).await.trace_err();
 
-        for project_id in projects_to_unregister {
+        for project_id in projects_to_unshare {
             self.app_state
                 .db
                 .unregister_project(project_id)
@@ -687,10 +686,10 @@ impl Server {
         }
     }
 
-    async fn register_project(
+    async fn share_project(
         self: Arc<Server>,
-        request: TypedEnvelope<proto::RegisterProject>,
-        response: Response<proto::RegisterProject>,
+        request: TypedEnvelope<proto::ShareProject>,
+        response: Response<proto::ShareProject>,
     ) -> Result<()> {
         let user_id = self
             .store()
@@ -699,40 +698,11 @@ impl Server {
         let project_id = self.app_state.db.register_project(user_id).await?;
         self.store()
             .await
-            .register_project(request.sender_id, project_id)?;
+            .share_project(request.sender_id, project_id)?;
 
-        response.send(proto::RegisterProjectResponse {
+        response.send(proto::ShareProjectResponse {
             project_id: project_id.to_proto(),
         })?;
-
-        Ok(())
-    }
-
-    async fn unregister_project(
-        self: Arc<Server>,
-        request: TypedEnvelope<proto::UnregisterProject>,
-        response: Response<proto::UnregisterProject>,
-    ) -> Result<()> {
-        let project_id = ProjectId::from_proto(request.payload.project_id);
-        let project = self
-            .store()
-            .await
-            .unregister_project(project_id, request.sender_id)?;
-        self.app_state.db.unregister_project(project_id).await?;
-
-        broadcast(
-            request.sender_id,
-            project.guests.keys().copied(),
-            |conn_id| {
-                self.peer.send(
-                    conn_id,
-                    proto::UnregisterProject {
-                        project_id: project_id.to_proto(),
-                    },
-                )
-            },
-        );
-        response.send(proto::Ack {})?;
 
         Ok(())
     }
@@ -746,9 +716,11 @@ impl Server {
             .store()
             .await
             .unshare_project(project_id, message.sender_id)?;
-        broadcast(message.sender_id, project.guest_connection_ids, |conn_id| {
-            self.peer.send(conn_id, message.payload.clone())
-        });
+        broadcast(
+            message.sender_id,
+            project.guest_connection_ids(),
+            |conn_id| self.peer.send(conn_id, message.payload.clone()),
+        );
 
         Ok(())
     }

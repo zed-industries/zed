@@ -314,11 +314,14 @@ async fn test_share_project(
         .await;
 
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = project_a.read_with(cx_a, |project, _| project.remote_id().unwrap());
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
 
     // Join that project as client B
     let client_b_peer_id = client_b.peer_id;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
     let replica_id_b = project_b.read_with(cx_b, |project, _| {
         assert_eq!(
             project
@@ -390,17 +393,7 @@ async fn test_share_project(
 
     // Client B can join again on a different window because they are already a participant.
     let client_b2 = server.create_client(cx_b2, "user_b").await;
-    let project_b2 = Project::remote(
-        project_id,
-        client_b2.client.clone(),
-        client_b2.user_store.clone(),
-        client_b2.project_store.clone(),
-        client_b2.language_registry.clone(),
-        FakeFs::new(cx_b2.background()),
-        cx_b2.to_async(),
-    )
-    .await
-    .unwrap();
+    let project_b2 = client_b2.build_remote_project(project_id, cx_b2).await;
     deterministic.run_until_parked();
     project_a.read_with(cx_a, |project, _| {
         assert_eq!(project.collaborators().len(), 2);
@@ -449,8 +442,12 @@ async fn test_unshare_project(
         .await;
 
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
     let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
     project_b
@@ -467,7 +464,11 @@ async fn test_unshare_project(
     assert!(project_b.read_with(cx_b, |project, _| project.is_read_only()));
 
     // Client B can join again after client A re-shares.
-    let project_b2 = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
+    let project_b2 = client_b.build_remote_project(project_id, cx_b).await;
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
     project_b2
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
@@ -517,9 +518,12 @@ async fn test_host_disconnect(
 
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
     let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
-    project_a.read_with(cx_a, |project, _| project.remote_id().unwrap());
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
 
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
     let (_, workspace_b) =
@@ -574,7 +578,11 @@ async fn test_host_disconnect(
     });
 
     // Ensure guests can still join.
-    let project_b2 = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
+    let project_b2 = client_b.build_remote_project(project_id, cx_b).await;
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
     project_b2
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
@@ -613,10 +621,14 @@ async fn test_propagate_saves_and_fs_changes(
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
     let worktree_a = project_a.read_with(cx_a, |p, cx| p.worktrees(cx).next().unwrap());
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
 
     // Join that worktree as clients B and C.
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
-    let project_c = client_c.build_remote_project(&project_a, cx_a, cx_c).await;
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_c = client_c.build_remote_project(project_id, cx_c).await;
     let worktree_b = project_b.read_with(cx_b, |p, cx| p.worktrees(cx).next().unwrap());
     let worktree_c = project_c.read_with(cx_c, |p, cx| p.worktrees(cx).next().unwrap());
 
@@ -756,7 +768,11 @@ async fn test_fs_operations(
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
     let worktree_b = project_b.read_with(cx_b, |project, cx| project.worktrees(cx).next().unwrap());
@@ -1016,7 +1032,11 @@ async fn test_buffer_conflict_after_save(cx_a: &mut TestAppContext, cx_b: &mut T
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Open a buffer as client B
     let buffer_b = project_b
@@ -1065,7 +1085,11 @@ async fn test_buffer_reloading(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Open a buffer as client B
     let buffer_b = project_b
@@ -1114,7 +1138,11 @@ async fn test_editing_while_guest_opens_buffer(
         .insert_tree("/dir", json!({ "a.txt": "a-contents" }))
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Open a buffer as client A
     let buffer_a = project_a
@@ -1156,7 +1184,11 @@ async fn test_leaving_worktree_while_opening_buffer(
         .insert_tree("/dir", json!({ "a.txt": "a-contents" }))
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // See that a guest has joined as client A.
     project_a
@@ -1201,7 +1233,11 @@ async fn test_canceling_buffer_opening(
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     let buffer_a = project_a
         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
@@ -1243,7 +1279,11 @@ async fn test_leaving_project(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
         )
         .await;
     let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
-    let _project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
+    let _project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Client A sees that a guest has joined.
     project_a
@@ -1257,7 +1297,7 @@ async fn test_leaving_project(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
         .await;
 
     // Rejoin the project as client B
-    let _project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let _project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Client A sees that a guest has re-joined.
     project_a
@@ -1317,7 +1357,10 @@ async fn test_collaborating_with_diagnostics(
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
 
     // Cause the language server to start.
     let _buffer = cx_a
@@ -1335,7 +1378,7 @@ async fn test_collaborating_with_diagnostics(
         .unwrap();
 
     // Join the worktree as client B.
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Simulate a language server reporting errors for a file.
     let mut fake_language_server = fake_language_servers.next().await.unwrap();
@@ -1383,7 +1426,7 @@ async fn test_collaborating_with_diagnostics(
     });
 
     // Join project as client C and observe the diagnostics.
-    let project_c = client_c.build_remote_project(&project_a, cx_a, cx_c).await;
+    let project_c = client_c.build_remote_project(project_id, cx_c).await;
     deterministic.run_until_parked();
     project_c.read_with(cx_c, |project, cx| {
         assert_eq!(
@@ -1561,7 +1604,11 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Open a file in an editor as the guest.
     let buffer_b = project_b
@@ -1705,8 +1752,12 @@ async fn test_reloading_buffer_manually(cx_a: &mut TestAppContext, cx_b: &mut Te
         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
         .await
         .unwrap();
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
 
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     let buffer_b = cx_b
         .background()
@@ -1805,7 +1856,11 @@ async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
         .insert_tree(&directory, json!({ "a.rs": "let one = \"two\"" }))
         .await;
     let (project_a, worktree_id) = client_a.build_local_project(&directory, cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     let buffer_b = cx_b
         .background()
@@ -1908,7 +1963,11 @@ async fn test_definition(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/root/dir-1", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Open the file on client B.
     let buffer_b = cx_b
@@ -2047,7 +2106,11 @@ async fn test_references(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/root/dir-1", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Open the file on client B.
     let buffer_b = cx_b
@@ -2142,8 +2205,12 @@ async fn test_project_search(cx_a: &mut TestAppContext, cx_b: &mut TestAppContex
     worktree_2
         .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
         .await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
 
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Perform a search as the guest.
     let results = project_b
@@ -2212,7 +2279,11 @@ async fn test_document_highlights(cx_a: &mut TestAppContext, cx_b: &mut TestAppC
     client_a.language_registry.add(Arc::new(language));
 
     let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Open the file on client B.
     let buffer_b = cx_b
@@ -2309,7 +2380,11 @@ async fn test_lsp_hover(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     client_a.language_registry.add(Arc::new(language));
 
     let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Open the file as the guest
     let buffer_b = cx_b
@@ -2414,7 +2489,11 @@ async fn test_project_symbols(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/code/crate-1", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Cause the language server to start.
     let _buffer = cx_b
@@ -2510,7 +2589,11 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/root", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     let buffer_b1 = cx_b
         .background()
@@ -2581,9 +2664,13 @@ async fn test_collaborating_with_code_actions(
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
 
     // Join the project as client B.
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
     let (_window_b, workspace_b) =
         cx_b.add_window(|cx| Workspace::new(project_b.clone(), |_, _| unimplemented!(), cx));
     let editor_b = workspace_b
@@ -2798,7 +2885,11 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     let (_window_b, workspace_b) =
         cx_b.add_window(|cx| Workspace::new(project_b.clone(), |_, _| unimplemented!(), cx));
@@ -3006,7 +3097,11 @@ async fn test_language_server_statuses(
         );
     });
 
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
     project_b.read_with(cx_b, |project, _| {
         let status = project.language_server_statuses().next().unwrap();
         assert_eq!(status.name, "the-language-server");
@@ -3485,79 +3580,6 @@ async fn test_contacts(
         [("user_a".to_string(), true), ("user_b".to_string(), true)]
     );
 
-    // Share a project as client A.
-    client_a.fs.create_dir(Path::new("/a")).await.unwrap();
-    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
-
-    deterministic.run_until_parked();
-    assert_eq!(
-        contacts(&client_a, cx_a),
-        [("user_b".to_string(), true), ("user_c".to_string(), true)]
-    );
-    assert_eq!(
-        contacts(&client_b, cx_b),
-        [("user_a".to_string(), true), ("user_c".to_string(), true)]
-    );
-    assert_eq!(
-        contacts(&client_c, cx_c),
-        [("user_a".to_string(), true), ("user_b".to_string(), true)]
-    );
-
-    let _project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
-
-    deterministic.run_until_parked();
-    assert_eq!(
-        contacts(&client_a, cx_a),
-        [("user_b".to_string(), true), ("user_c".to_string(), true)]
-    );
-    assert_eq!(
-        contacts(&client_b, cx_b),
-        [("user_a".to_string(), true,), ("user_c".to_string(), true)]
-    );
-    assert_eq!(
-        contacts(&client_c, cx_c),
-        [("user_a".to_string(), true,), ("user_b".to_string(), true)]
-    );
-
-    // Add a local project as client B
-    client_a.fs.create_dir("/b".as_ref()).await.unwrap();
-    let (_project_b, _) = client_b.build_local_project("/b", cx_b).await;
-
-    deterministic.run_until_parked();
-    assert_eq!(
-        contacts(&client_a, cx_a),
-        [("user_b".to_string(), true), ("user_c".to_string(), true)]
-    );
-    assert_eq!(
-        contacts(&client_b, cx_b),
-        [("user_a".to_string(), true), ("user_c".to_string(), true)]
-    );
-    assert_eq!(
-        contacts(&client_c, cx_c),
-        [("user_a".to_string(), true,), ("user_b".to_string(), true)]
-    );
-
-    project_a
-        .condition(cx_a, |project, _| {
-            project.collaborators().contains_key(&client_b.peer_id)
-        })
-        .await;
-
-    cx_a.update(move |_| drop(project_a));
-    deterministic.run_until_parked();
-    assert_eq!(
-        contacts(&client_a, cx_a),
-        [("user_b".to_string(), true), ("user_c".to_string(), true)]
-    );
-    assert_eq!(
-        contacts(&client_b, cx_b),
-        [("user_a".to_string(), true), ("user_c".to_string(), true)]
-    );
-    assert_eq!(
-        contacts(&client_c, cx_c),
-        [("user_a".to_string(), true), ("user_b".to_string(), true)]
-    );
-
     server.disconnect_client(client_c.current_user_id(cx_c));
     server.forbid_connections();
     deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
@@ -3811,8 +3833,11 @@ async fn test_following(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Client A opens some editors.
     let workspace_a = client_a.build_workspace(&project_a, cx_a);
@@ -4019,9 +4044,13 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
 
     // Client B joins the project.
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Client A opens some editors.
     let workspace_a = client_a.build_workspace(&project_a, cx_a);
@@ -4182,7 +4211,11 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Client A opens some editors.
     let workspace_a = client_a.build_workspace(&project_a, cx_a);
@@ -4331,8 +4364,12 @@ async fn test_peers_simultaneously_following_each_other(
     client_a.fs.insert_tree("/a", json!({})).await;
     let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
     let workspace_a = client_a.build_workspace(&project_a, cx_a);
+    let project_id = project_a
+        .update(cx_a, |project, cx| project.share(cx))
+        .await
+        .unwrap();
 
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
     let workspace_b = client_b.build_workspace(&project_b, cx_b);
 
     deterministic.run_until_parked();
@@ -4445,9 +4482,6 @@ async fn test_random_collaboration(
             cx,
         )
     });
-    let host_project_id = host_project
-        .update(&mut host_cx, |p, _| p.next_remote_id())
-        .await;
 
     let (collab_worktree, _) = host_project
         .update(&mut host_cx, |project, cx| {
@@ -4588,7 +4622,7 @@ async fn test_random_collaboration(
         .await;
     host_language_registry.add(Arc::new(language));
 
-    host_project
+    let host_project_id = host_project
         .update(&mut host_cx, |project, cx| project.share(cx))
         .await
         .unwrap();
@@ -5155,40 +5189,26 @@ impl TestClient {
         worktree
             .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        project
-            .update(cx, |project, _| project.next_remote_id())
-            .await;
         (project, worktree.read_with(cx, |tree, _| tree.id()))
     }
 
     async fn build_remote_project(
         &self,
-        host_project: &ModelHandle<Project>,
-        host_cx: &mut TestAppContext,
+        host_project_id: u64,
         guest_cx: &mut TestAppContext,
     ) -> ModelHandle<Project> {
-        let host_project_id = host_project
-            .read_with(host_cx, |project, _| project.next_remote_id())
-            .await;
-        host_project
-            .update(host_cx, |project, cx| project.share(cx))
-            .await
-            .unwrap();
-        let languages = host_project.read_with(host_cx, |project, _| project.languages().clone());
         let project_b = guest_cx.spawn(|cx| {
             Project::remote(
                 host_project_id,
                 self.client.clone(),
                 self.user_store.clone(),
                 self.project_store.clone(),
-                languages,
+                self.language_registry.clone(),
                 FakeFs::new(cx.background()),
                 cx,
             )
         });
-
-        let project = project_b.await.unwrap();
-        project
+        project_b.await.unwrap()
     }
 
     fn build_workspace(

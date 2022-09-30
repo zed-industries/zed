@@ -96,10 +96,6 @@ pub struct LeftProject {
     pub remove_collaborator: bool,
 }
 
-pub struct UnsharedProject {
-    pub guest_connection_ids: Vec<ConnectionId>,
-}
-
 #[derive(Copy, Clone)]
 pub struct Metrics {
     pub connections: usize,
@@ -201,9 +197,9 @@ impl Store {
             self.leave_channel(connection_id, channel_id);
         }
 
-        // Unregister and leave all projects.
+        // Unshare and leave all projects.
         for project_id in connection_projects {
-            if let Ok(project) = self.unregister_project(project_id, connection_id) {
+            if let Ok(project) = self.unshare_project(project_id, connection_id) {
                 result.hosted_projects.insert(project_id, project);
             } else if self.leave_project(connection_id, project_id).is_ok() {
                 result.guest_project_ids.insert(project_id);
@@ -566,7 +562,7 @@ impl Store {
         }
     }
 
-    pub fn register_project(
+    pub fn share_project(
         &mut self,
         host_connection_id: ConnectionId,
         project_id: ProjectId,
@@ -593,6 +589,35 @@ impl Store {
             },
         );
         Ok(())
+    }
+
+    pub fn unshare_project(
+        &mut self,
+        project_id: ProjectId,
+        connection_id: ConnectionId,
+    ) -> Result<Project> {
+        match self.projects.entry(project_id) {
+            btree_map::Entry::Occupied(e) => {
+                if e.get().host_connection_id == connection_id {
+                    let project = e.remove();
+
+                    if let Some(host_connection) = self.connections.get_mut(&connection_id) {
+                        host_connection.projects.remove(&project_id);
+                    }
+
+                    for guest_connection in project.guests.keys() {
+                        if let Some(connection) = self.connections.get_mut(guest_connection) {
+                            connection.projects.remove(&project_id);
+                        }
+                    }
+
+                    Ok(project)
+                } else {
+                    Err(anyhow!("no such project"))?
+                }
+            }
+            btree_map::Entry::Vacant(_) => Err(anyhow!("no such project"))?,
+        }
     }
 
     pub fn update_project(
@@ -626,66 +651,6 @@ impl Store {
         } else {
             Err(anyhow!("no such project"))?
         }
-    }
-
-    pub fn unregister_project(
-        &mut self,
-        project_id: ProjectId,
-        connection_id: ConnectionId,
-    ) -> Result<Project> {
-        match self.projects.entry(project_id) {
-            btree_map::Entry::Occupied(e) => {
-                if e.get().host_connection_id == connection_id {
-                    let project = e.remove();
-
-                    if let Some(host_connection) = self.connections.get_mut(&connection_id) {
-                        host_connection.projects.remove(&project_id);
-                    }
-
-                    for guest_connection in project.guests.keys() {
-                        if let Some(connection) = self.connections.get_mut(guest_connection) {
-                            connection.projects.remove(&project_id);
-                        }
-                    }
-
-                    Ok(project)
-                } else {
-                    Err(anyhow!("no such project"))?
-                }
-            }
-            btree_map::Entry::Vacant(_) => Err(anyhow!("no such project"))?,
-        }
-    }
-
-    pub fn unshare_project(
-        &mut self,
-        project_id: ProjectId,
-        connection_id: ConnectionId,
-    ) -> Result<UnsharedProject> {
-        let project = self
-            .projects
-            .get_mut(&project_id)
-            .ok_or_else(|| anyhow!("no such project"))?;
-        anyhow::ensure!(
-            project.host_connection_id == connection_id,
-            "no such project"
-        );
-
-        let guest_connection_ids = project.guest_connection_ids();
-        project.active_replica_ids.clear();
-        project.guests.clear();
-        project.language_servers.clear();
-        project.worktrees.clear();
-
-        for connection_id in &guest_connection_ids {
-            if let Some(connection) = self.connections.get_mut(connection_id) {
-                connection.projects.remove(&project_id);
-            }
-        }
-
-        Ok(UnsharedProject {
-            guest_connection_ids,
-        })
     }
 
     pub fn update_diagnostic_summary(

@@ -22,15 +22,14 @@ message Envelope {
         DeclineCall decline_call = 13;
         RoomUpdated room_updated = 14;
 
-        RegisterProject register_project = 15;
-        RegisterProjectResponse register_project_response = 16;
-        UnregisterProject unregister_project = 17;
+        ShareProject share_project = 15;
+        ShareProjectResponse share_project_response = 16;
+        UnshareProject unshare_project = 17;
         JoinProject join_project = 21;
         JoinProjectResponse join_project_response = 22;
         LeaveProject leave_project = 23;
         AddProjectCollaborator add_project_collaborator = 24;
         RemoveProjectCollaborator remove_project_collaborator = 25;
-        UnshareProject unshare_project = 26;
 
         GetDefinition get_definition = 27;
         GetDefinitionResponse get_definition_response = 28;
@@ -195,13 +194,13 @@ message RoomUpdated {
     Room room = 1;
 }
 
-message RegisterProject {}
+message ShareProject {}
 
-message RegisterProjectResponse {
+message ShareProjectResponse {
     uint64 project_id = 1;
 }
 
-message UnregisterProject {
+message UnshareProject {
     uint64 project_id = 1;
 }
 
@@ -283,10 +282,6 @@ message AddProjectCollaborator {
 message RemoveProjectCollaborator {
     uint64 project_id = 1;
     uint32 peer_id = 2;
-}
-
-message UnshareProject {
-    uint64 project_id = 1;
 }
 
 message GetDefinition {
