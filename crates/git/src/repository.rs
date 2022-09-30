@@ -1,7 +1,11 @@
 use anyhow::Result;
+use collections::HashMap;
 use git2::Repository as LibGitRepository;
 use parking_lot::Mutex;
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::ResultExt;
 
 #[async_trait::async_trait]
@@ -140,14 +144,25 @@ pub struct FakeGitRepository {
     content_path: Arc<Path>,
     git_dir_path: Arc<Path>,
     scan_id: usize,
+    state: Arc<Mutex<FakeGitRepositoryState>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FakeGitRepositoryState {
+    pub index_contents: HashMap<PathBuf, String>,
 }
 
 impl FakeGitRepository {
-    pub fn open(dotgit_path: &Path, scan_id: usize) -> Box<dyn GitRepository> {
+    pub fn open(
+        dotgit_path: &Path,
+        scan_id: usize,
+        state: Arc<Mutex<FakeGitRepositoryState>>,
+    ) -> Box<dyn GitRepository> {
         Box::new(FakeGitRepository {
             content_path: dotgit_path.parent().unwrap().into(),
             git_dir_path: dotgit_path.into(),
             scan_id,
+            state,
         })
     }
 }
@@ -174,12 +189,13 @@ impl GitRepository for FakeGitRepository {
         self.scan_id
     }
 
-    async fn load_head_text(&self, _: &Path) -> Option<String> {
-        None
+    async fn load_head_text(&self, path: &Path) -> Option<String> {
+        let state = self.state.lock();
+        state.index_contents.get(path).cloned()
     }
 
     fn reopen_git_repo(&mut self) -> bool {
-        false
+        true
     }
 
     fn git_repo(&self) -> Arc<Mutex<LibGitRepository>> {

@@ -3288,15 +3288,15 @@ mod tests {
     #[test]
     fn test_changed_repos() {
         let prev_repos: Vec<Box<dyn GitRepository>> = vec![
-            FakeGitRepository::open(Path::new("/.git"), 0),
-            FakeGitRepository::open(Path::new("/a/.git"), 0),
-            FakeGitRepository::open(Path::new("/a/b/.git"), 0),
+            FakeGitRepository::open(Path::new("/.git"), 0, Default::default()),
+            FakeGitRepository::open(Path::new("/a/.git"), 0, Default::default()),
+            FakeGitRepository::open(Path::new("/a/b/.git"), 0, Default::default()),
         ];
 
         let new_repos: Vec<Box<dyn GitRepository>> = vec![
-            FakeGitRepository::open(Path::new("/a/.git"), 1),
-            FakeGitRepository::open(Path::new("/a/b/.git"), 0),
-            FakeGitRepository::open(Path::new("/a/c/.git"), 0),
+            FakeGitRepository::open(Path::new("/a/.git"), 1, Default::default()),
+            FakeGitRepository::open(Path::new("/a/b/.git"), 0, Default::default()),
+            FakeGitRepository::open(Path::new("/a/c/.git"), 0, Default::default()),
         ];
 
         let res = LocalWorktree::changed_repos(&prev_repos, &new_repos);

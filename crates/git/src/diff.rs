@@ -222,6 +222,40 @@ impl BufferDiff {
     }
 }
 
+/// Range (crossing new lines), old, new
+#[cfg(any(test, feature = "test-support"))]
+#[track_caller]
+pub fn assert_hunks<Iter>(
+    diff_hunks: Iter,
+    buffer: &BufferSnapshot,
+    head_text: &str,
+    expected_hunks: &[(Range<u32>, &str, &str)],
+) where
+    Iter: Iterator<Item = DiffHunk<u32>>,
+{
+    let actual_hunks = diff_hunks
+        .map(|hunk| {
+            (
+                hunk.buffer_range.clone(),
+                &head_text[hunk.head_byte_range],
+                buffer
+                    .text_for_range(
+                        Point::new(hunk.buffer_range.start, 0)
+                            ..Point::new(hunk.buffer_range.end, 0),
+                    )
+                    .collect::<String>(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let expected_hunks: Vec<_> = expected_hunks
+        .iter()
+        .map(|(r, s, h)| (r.clone(), *s, h.to_string()))
+        .collect();
+
+    assert_eq!(actual_hunks, expected_hunks);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,21 +282,19 @@ mod tests {
         let mut diff = BufferDiff::new();
         smol::block_on(diff.update(&head_text, &buffer));
         assert_hunks(
-            &diff,
+            diff.hunks(&buffer),
             &buffer,
             &head_text,
             &[(1..2, "two\n", "HELLO\n")],
-            None,
         );
 
         buffer.edit([(0..0, "point five\n")]);
         smol::block_on(diff.update(&head_text, &buffer));
         assert_hunks(
-            &diff,
+            diff.hunks(&buffer),
             &buffer,
             &head_text,
             &[(0..1, "", "point five\n"), (2..3, "two\n", "HELLO\n")],
-            None,
         );
     }
 
@@ -309,7 +341,7 @@ mod tests {
         assert_eq!(diff.hunks(&buffer).count(), 8);
 
         assert_hunks(
-            &diff,
+            diff.hunks_in_range(7..12, &buffer),
             &buffer,
             &head_text,
             &[
@@ -317,39 +349,6 @@ mod tests {
                 (9..10, "six\n", "SIXTEEN\n"),
                 (12..13, "", "WORLD\n"),
             ],
-            Some(7..12),
         );
-    }
-
-    #[track_caller]
-    fn assert_hunks(
-        diff: &BufferDiff,
-        buffer: &BufferSnapshot,
-        head_text: &str,
-        expected_hunks: &[(Range<u32>, &str, &str)],
-        range: Option<Range<u32>>,
-    ) {
-        let actual_hunks = diff
-            .hunks_in_range(range.unwrap_or(0..u32::MAX), buffer)
-            .map(|hunk| {
-                (
-                    hunk.buffer_range.clone(),
-                    &head_text[hunk.head_byte_range],
-                    buffer
-                        .text_for_range(
-                            Point::new(hunk.buffer_range.start, 0)
-                                ..Point::new(hunk.buffer_range.end, 0),
-                        )
-                        .collect::<String>(),
-                )
-            })
-            .collect::<Vec<_>>();
-
-        let expected_hunks: Vec<_> = expected_hunks
-            .iter()
-            .map(|(r, s, h)| (r.clone(), *s, h.to_string()))
-            .collect();
-
-        assert_eq!(actual_hunks, expected_hunks);
     }
 }

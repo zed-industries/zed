@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use fsevent::EventStream;
 use futures::{future::BoxFuture, Stream, StreamExt};
-use git::repository::{GitRepository, RealGitRepository};
+use git::repository::{FakeGitRepositoryState, GitRepository, RealGitRepository};
 use language::LineEnding;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::{
@@ -277,6 +277,7 @@ enum FakeFsEntry {
         inode: u64,
         mtime: SystemTime,
         entries: BTreeMap<String, Arc<Mutex<FakeFsEntry>>>,
+        git_repo_state: Option<Arc<parking_lot::Mutex<git::repository::FakeGitRepositoryState>>>,
     },
     Symlink {
         target: PathBuf,
@@ -391,6 +392,7 @@ impl FakeFs {
                     inode: 0,
                     mtime: SystemTime::now(),
                     entries: Default::default(),
+                    git_repo_state: None,
                 })),
                 next_inode: 1,
                 event_txs: Default::default(),
@@ -478,6 +480,31 @@ impl FakeFs {
             }
         }
         .boxed()
+    }
+
+    pub async fn set_head_state_for_git_repository(
+        &self,
+        dot_git: &Path,
+        head_state: &[(&Path, String)],
+    ) {
+        let content_path = dot_git.parent().unwrap();
+        let state = self.state.lock().await;
+        let entry = state.read_path(dot_git).await.unwrap();
+        let mut entry = entry.lock().await;
+
+        if let FakeFsEntry::Dir { git_repo_state, .. } = &mut *entry {
+            let repo_state = git_repo_state.get_or_insert_with(Default::default);
+            let mut repo_state = repo_state.lock();
+
+            repo_state.index_contents.clear();
+            repo_state.index_contents.extend(
+                head_state
+                    .iter()
+                    .map(|(path, content)| (content_path.join(path), content.clone())),
+            );
+        } else {
+            panic!("not a directory");
+        }
     }
 
     pub async fn files(&self) -> Vec<PathBuf> {
@@ -569,6 +596,7 @@ impl Fs for FakeFs {
                             inode,
                             mtime: SystemTime::now(),
                             entries: Default::default(),
+                            git_repo_state: None,
                         }))
                     });
                     Ok(())
@@ -854,10 +882,26 @@ impl Fs for FakeFs {
     }
 
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Box<dyn GitRepository>> {
-        Some(git::repository::FakeGitRepository::open(
-            abs_dot_git.into(),
-            0,
-        ))
+        let executor = self.executor.upgrade().unwrap();
+        executor.block(async move {
+            let state = self.state.lock().await;
+            let entry = state.read_path(abs_dot_git).await.unwrap();
+            let mut entry = entry.lock().await;
+            if let FakeFsEntry::Dir { git_repo_state, .. } = &mut *entry {
+                let state = git_repo_state
+                    .get_or_insert_with(|| {
+                        Arc::new(parking_lot::Mutex::new(FakeGitRepositoryState::default()))
+                    })
+                    .clone();
+                Some(git::repository::FakeGitRepository::open(
+                    abs_dot_git.into(),
+                    0,
+                    state,
+                ))
+            } else {
+                None
+            }
+        })
     }
 
     fn is_fake(&self) -> bool {

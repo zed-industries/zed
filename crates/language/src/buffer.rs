@@ -662,6 +662,11 @@ impl Buffer {
         task
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn head_text(&self) -> Option<&str> {
+        self.head_text.as_deref()
+    }
+
     pub fn update_head_text(&mut self, head_text: Option<String>, cx: &mut ModelContext<Self>) {
         self.head_text = head_text;
         self.git_diff_recalc(cx);
@@ -669,6 +674,10 @@ impl Buffer {
 
     pub fn needs_git_diff_recalc(&self) -> bool {
         self.git_diff_status.diff.needs_update(self)
+    }
+
+    pub fn is_recalculating_git_diff(&self) -> bool {
+        self.git_diff_status.update_in_progress
     }
 
     pub fn git_diff_recalc(&mut self, cx: &mut ModelContext<Self>) {

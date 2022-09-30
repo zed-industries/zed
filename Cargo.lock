@@ -1031,6 +1031,7 @@ dependencies = [
  "env_logger",
  "envy",
  "futures",
+ "git",
  "gpui",
  "hyper",
  "language",
@@ -1061,6 +1062,7 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
+ "unindent",
  "util",
  "workspace",
 ]
@@ -2232,6 +2234,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "clock",
+ "collections",
  "git2",
  "lazy_static",
  "log",

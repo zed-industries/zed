@@ -51,6 +51,7 @@ use std::{
     time::Duration,
 };
 use theme::ThemeRegistry;
+use unindent::Unindent as _;
 use workspace::{Item, SplitDirection, ToggleFollow, Workspace};
 
 #[ctor::ctor]
@@ -944,6 +945,143 @@ async fn test_propagate_saves_and_fs_changes(
             buf.file().unwrap().path().to_str() == Some("file1-renamed")
         })
         .await;
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_git_head_text(
+    executor: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    executor.forbid_parking();
+    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    client_a
+        .fs
+        .insert_tree(
+            "/dir",
+            json!({
+            ".git": {},
+            "a.txt": "
+                    one
+                    two
+                    three
+                ".unindent(),
+            }),
+        )
+        .await;
+
+    let head_text = "
+        one
+        three
+    "
+    .unindent();
+
+    let new_head_text = "
+        1
+        two
+        three
+    "
+    .unindent();
+
+    client_a
+        .fs
+        .as_fake()
+        .set_head_state_for_git_repository(
+            Path::new("/dir/.git"),
+            &[(Path::new("a.txt"), head_text.clone())],
+        )
+        .await;
+
+    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+
+    // Create the buffer
+    let buffer_a = project_a
+        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "/dir/a.txt"), cx))
+        .await
+        .unwrap();
+
+    // Wait for it to catch up to the new diff
+    buffer_a
+        .condition(cx_a, |buffer, _| !buffer.is_recalculating_git_diff())
+        .await;
+
+    // Smoke test diffing
+    buffer_a.read_with(cx_a, |buffer, _| {
+        assert_eq!(buffer.head_text(), Some(head_text.as_ref()));
+        git::diff::assert_hunks(
+            buffer.snapshot().git_diff_hunks_in_range(0..4),
+            &buffer,
+            &head_text,
+            &[(1..2, "", "two\n")],
+        );
+    });
+
+    // Create remote buffer
+    let buffer_b = project_b
+        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "/dir/a.txt"), cx))
+        .await
+        .unwrap();
+
+    //TODO: WAIT FOR REMOTE UPDATES TO FINISH
+
+    // Smoke test diffing
+    buffer_b.read_with(cx_b, |buffer, _| {
+        assert_eq!(buffer.head_text(), Some(head_text.as_ref()));
+        git::diff::assert_hunks(
+            buffer.snapshot().git_diff_hunks_in_range(0..4),
+            &buffer,
+            &head_text,
+            &[(1..2, "", "two\n")],
+        );
+    });
+
+    // TODO: Create a dummy file event
+    client_a
+        .fs
+        .as_fake()
+        .set_head_state_for_git_repository(
+            Path::new("/dir/.git"),
+            &[(Path::new("a.txt"), new_head_text.clone())],
+        )
+        .await;
+
+    // TODO: Flush this file event
+
+    // Wait for buffer_a to receive it
+    buffer_a
+        .condition(cx_a, |buffer, _| !buffer.is_recalculating_git_diff())
+        .await;
+
+    // Smoke test new diffing
+    buffer_a.read_with(cx_a, |buffer, _| {
+        assert_eq!(buffer.head_text(), Some(new_head_text.as_ref()));
+        git::diff::assert_hunks(
+            buffer.snapshot().git_diff_hunks_in_range(0..4),
+            &buffer,
+            &head_text,
+            &[(0..1, "1", "one\n")],
+        );
+    });
+
+    //TODO: WAIT FOR REMOTE UPDATES TO FINISH on B
+
+    // Smoke test B
+    buffer_b.read_with(cx_b, |buffer, _| {
+        assert_eq!(buffer.head_text(), Some(new_head_text.as_ref()));
+        git::diff::assert_hunks(
+            buffer.snapshot().git_diff_hunks_in_range(0..4),
+            &buffer,
+            &head_text,
+            &[(0..1, "1", "one\n")],
+        );
+    });
 }
 
 #[gpui::test(iterations = 10)]
