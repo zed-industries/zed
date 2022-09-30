@@ -26,7 +26,7 @@ impl Anchor {
         bias: Bias::Right,
         buffer_id: None,
     };
-
+    
     pub fn cmp(&self, other: &Anchor, buffer: &BufferSnapshot) -> Ordering {
         let fragment_id_comparison = if self.timestamp == other.timestamp {
             Ordering::Equal
