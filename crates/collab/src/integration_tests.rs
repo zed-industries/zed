@@ -1008,9 +1008,7 @@ async fn test_git_head_text(
         .unwrap();
 
     // Wait for it to catch up to the new diff
-    buffer_a
-        .condition(cx_a, |buffer, _| !buffer.is_recalculating_git_diff())
-        .await;
+    executor.run_until_parked();
 
     // Smoke test diffing
     buffer_a.read_with(cx_a, |buffer, _| {
@@ -1029,7 +1027,8 @@ async fn test_git_head_text(
         .await
         .unwrap();
 
-    //TODO: WAIT FOR REMOTE UPDATES TO FINISH
+    // Wait remote buffer to catch up to the new diff
+    executor.run_until_parked();
 
     // Smoke test diffing
     buffer_b.read_with(cx_b, |buffer, _| {
@@ -1055,9 +1054,7 @@ async fn test_git_head_text(
     // TODO: Flush this file event
 
     // Wait for buffer_a to receive it
-    buffer_a
-        .condition(cx_a, |buffer, _| !buffer.is_recalculating_git_diff())
-        .await;
+    executor.run_until_parked();
 
     // Smoke test new diffing
     buffer_a.read_with(cx_a, |buffer, _| {
@@ -1071,6 +1068,7 @@ async fn test_git_head_text(
     });
 
     //TODO: WAIT FOR REMOTE UPDATES TO FINISH on B
+    executor.run_until_parked();
 
     // Smoke test B
     buffer_b.read_with(cx_b, |buffer, _| {

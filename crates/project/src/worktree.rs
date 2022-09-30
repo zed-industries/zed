@@ -97,10 +97,39 @@ pub struct Snapshot {
     is_complete: bool,
 }
 
+#[derive(Clone)]
+struct GitRepositoryEntry {
+    repo: Arc<Mutex<dyn GitRepository>>,
+    
+    // repo: Box<dyn GitRepository>,
+    scan_id: usize,
+    // Path to folder containing the .git file or directory
+    content_path: Arc<Path>,
+    // Path to the actual .git folder.
+    // Note: if .git is a file, this points to the folder indicated by the .git file
+    git_dir_path: Arc<Path>,
+}
+
+impl std::fmt::Debug for GitRepositoryEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitRepositoryEntry")
+            .field("content_path", &self.content_path)
+            .field("git_dir_path", &self.git_dir_path)
+            .field("libgit_repository", &"LibGitRepository")
+            .finish()
+    }
+}
+
+// impl Clone for GitRepositoryEntry {
+//     fn clone(&self) -> Self {
+//         GitRepositoryEntry { repo: self.repo.boxed_clone(), scan_id: self.scan_id }
+//     }
+// }
+
 pub struct LocalSnapshot {
     abs_path: Arc<Path>,
     ignores_by_parent_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
-    git_repositories: Vec<Box<dyn GitRepository>>,
+    git_repositories: Vec<GitRepositoryEntry>,
     removed_entry_ids: HashMap<u64, ProjectEntryId>,
     next_entry_id: Arc<AtomicUsize>,
     snapshot: Snapshot,
@@ -115,7 +144,7 @@ impl Clone for LocalSnapshot {
             git_repositories: self
                 .git_repositories
                 .iter()
-                .map(|repo| repo.boxed_clone())
+                .cloned()
                 .collect(),
             removed_entry_ids: self.removed_entry_ids.clone(),
             next_entry_id: self.next_entry_id.clone(),
@@ -3287,17 +3316,17 @@ mod tests {
 
     #[test]
     fn test_changed_repos() {
-        let prev_repos: Vec<Box<dyn GitRepository>> = vec![
-            FakeGitRepository::open(Path::new("/.git"), 0, Default::default()),
-            FakeGitRepository::open(Path::new("/a/.git"), 0, Default::default()),
-            FakeGitRepository::open(Path::new("/a/b/.git"), 0, Default::default()),
-        ];
+        // let prev_repos: Vec<Box<dyn GitRepository>> = vec![
+        //     FakeGitRepository::open(Path::new("/.git"), 0, Default::default()),
+        //     FakeGitRepository::open(Path::new("/a/.git"), 0, Default::default()),
+        //     FakeGitRepository::open(Path::new("/a/b/.git"), 0, Default::default()),
+        // ];
 
-        let new_repos: Vec<Box<dyn GitRepository>> = vec![
-            FakeGitRepository::open(Path::new("/a/.git"), 1, Default::default()),
-            FakeGitRepository::open(Path::new("/a/b/.git"), 0, Default::default()),
-            FakeGitRepository::open(Path::new("/a/c/.git"), 0, Default::default()),
-        ];
+        // let new_repos: Vec<Box<dyn GitRepository>> = vec![
+        //     FakeGitRepository::open(Path::new("/a/.git"), 1, Default::default()),
+        //     FakeGitRepository::open(Path::new("/a/b/.git"), 0, Default::default()),
+        //     FakeGitRepository::open(Path::new("/a/c/.git"), 0, Default::default()),
+        // ];
 
         let res = LocalWorktree::changed_repos(&prev_repos, &new_repos);
 

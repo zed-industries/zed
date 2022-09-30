@@ -676,10 +676,6 @@ impl Buffer {
         self.git_diff_status.diff.needs_update(self)
     }
 
-    pub fn is_recalculating_git_diff(&self) -> bool {
-        self.git_diff_status.update_in_progress
-    }
-
     pub fn git_diff_recalc(&mut self, cx: &mut ModelContext<Self>) {
         if self.git_diff_status.update_in_progress {
             self.git_diff_status.update_requested = true;

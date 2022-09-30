@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use fsevent::EventStream;
 use futures::{future::BoxFuture, Stream, StreamExt};
-use git::repository::{FakeGitRepositoryState, GitRepository, RealGitRepository};
+use git::repository::{FakeGitRepositoryState, GitRepository, Git2Repo};
 use language::LineEnding;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::{
@@ -239,7 +239,7 @@ impl Fs for RealFs {
     }
 
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Box<dyn GitRepository>> {
-        RealGitRepository::open(&abs_dot_git)
+        Git2Repo::open(&abs_dot_git)
     }
 
     fn is_fake(&self) -> bool {
@@ -895,7 +895,6 @@ impl Fs for FakeFs {
                     .clone();
                 Some(git::repository::FakeGitRepository::open(
                     abs_dot_git.into(),
-                    0,
                     state,
                 ))
             } else {
