@@ -175,11 +175,11 @@ impl GitRepository for FakeGitRepository {
     }
 
     async fn load_head_text(&self, _: &Path) -> Option<String> {
-        unimplemented!()
+        None
     }
 
     fn reopen_git_repo(&mut self) -> bool {
-        unimplemented!()
+        false
     }
 
     fn git_repo(&self) -> Arc<Mutex<LibGitRepository>> {
