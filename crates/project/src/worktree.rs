@@ -3211,7 +3211,7 @@ mod tests {
         }));
 
         let http_client = FakeHttpClient::with_404_response();
-        let client = Client::new(http_client);
+        let client = cx.read(|cx| Client::new(http_client, cx));
         let tree = Worktree::local(
             client,
             root.path(),
