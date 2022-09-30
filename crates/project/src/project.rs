@@ -5816,7 +5816,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
         let mut opened_buffer_rx = self.opened_buffer.1.clone();
-        cx.spawn(|this, cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let buffer = loop {
                 let buffer = this.read_with(&cx, |this, cx| {
                     this.opened_buffers
@@ -5834,6 +5834,7 @@ impl Project {
                     .await
                     .ok_or_else(|| anyhow!("project dropped while waiting for buffer"))?;
             };
+            buffer.update(&mut cx, |buffer, cx| buffer.git_diff_recalc(cx));
             Ok(buffer)
         })
     }
