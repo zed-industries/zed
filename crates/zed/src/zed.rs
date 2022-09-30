@@ -286,12 +286,7 @@ pub fn initialize_workspace(
 
     let project_panel = ProjectPanel::new(workspace.project().clone(), cx);
     let contact_panel = cx.add_view(|cx| {
-        ContactsPanel::new(
-            app_state.user_store.clone(),
-            app_state.project_store.clone(),
-            workspace.weak_handle(),
-            cx,
-        )
+        ContactsPanel::new(app_state.user_store.clone(), workspace.weak_handle(), cx)
     });
 
     workspace.left_sidebar().update(cx, |sidebar, cx| {

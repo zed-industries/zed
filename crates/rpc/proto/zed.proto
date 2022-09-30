@@ -25,15 +25,12 @@ message Envelope {
         RegisterProject register_project = 15;
         RegisterProjectResponse register_project_response = 16;
         UnregisterProject unregister_project = 17;
-        RequestJoinProject request_join_project = 18;
-        RespondToJoinProjectRequest respond_to_join_project_request = 19;
-        JoinProjectRequestCancelled join_project_request_cancelled = 20;
         JoinProject join_project = 21;
         JoinProjectResponse join_project_response = 22;
         LeaveProject leave_project = 23;
         AddProjectCollaborator add_project_collaborator = 24;
         RemoveProjectCollaborator remove_project_collaborator = 25;
-        ProjectUnshared project_unshared = 26;
+        UnshareProject unshare_project = 26;
 
         GetDefinition get_definition = 27;
         GetDefinitionResponse get_definition_response = 28;
@@ -198,9 +195,7 @@ message RoomUpdated {
     Room room = 1;
 }
 
-message RegisterProject {
-    bool online = 1;
-}
+message RegisterProject {}
 
 message RegisterProjectResponse {
     uint64 project_id = 1;
@@ -213,27 +208,10 @@ message UnregisterProject {
 message UpdateProject {
     uint64 project_id = 1;
     repeated WorktreeMetadata worktrees = 2;
-    bool online = 3;
 }
 
 message RegisterProjectActivity {
     uint64 project_id = 1;
-}
-
-message RequestJoinProject {
-    uint64 requester_id = 1;
-    uint64 project_id = 2;
-}
-
-message RespondToJoinProjectRequest {
-    uint64 requester_id = 1;
-    uint64 project_id = 2;
-    bool allow = 3;
-}
-
-message JoinProjectRequestCancelled {
-    uint64 requester_id = 1;
-    uint64 project_id = 2;
 }
 
 message JoinProject {
@@ -241,27 +219,10 @@ message JoinProject {
 }
 
 message JoinProjectResponse {
-    oneof variant {
-        Accept accept = 1;
-        Decline decline = 2;
-    }
-
-    message Accept {
-        uint32 replica_id = 1;
-        repeated WorktreeMetadata worktrees = 2;
-        repeated Collaborator collaborators = 3;
-        repeated LanguageServer language_servers = 4;        
-    }
-    
-    message Decline {
-        Reason reason = 1;
-
-        enum Reason {
-            Declined = 0;
-            Closed = 1;
-            WentOffline = 2;
-        }
-    }
+    uint32 replica_id = 1;
+    repeated WorktreeMetadata worktrees = 2;
+    repeated Collaborator collaborators = 3;
+    repeated LanguageServer language_servers = 4;
 }
 
 message LeaveProject {
@@ -324,7 +285,7 @@ message RemoveProjectCollaborator {
     uint32 peer_id = 2;
 }
 
-message ProjectUnshared {
+message UnshareProject {
     uint64 project_id = 1;
 }
 

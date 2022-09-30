@@ -7,7 +7,7 @@ use ::rpc::Peer;
 use anyhow::anyhow;
 use call::Room;
 use client::{
-    self, proto, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Connection,
+    self, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Connection,
     Credentials, EstablishConnectionError, UserStore, RECEIVE_TIMEOUT,
 };
 use collections::{BTreeMap, HashMap, HashSet};
@@ -40,7 +40,6 @@ use serde_json::json;
 use settings::{Formatter, Settings};
 use sqlx::types::time::OffsetDateTime;
 use std::{
-    cell::RefCell,
     env,
     ops::Deref,
     path::{Path, PathBuf},
@@ -459,12 +458,15 @@ async fn test_unshare_project(
         .await
         .unwrap();
 
-    // When client B leaves the project, it gets automatically unshared.
-    cx_b.update(|_| drop(project_b));
+    // When client A unshares the project, client B's project becomes read-only.
+    project_a
+        .update(cx_a, |project, cx| project.unshare(cx))
+        .unwrap();
     deterministic.run_until_parked();
     assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
+    assert!(project_b.read_with(cx_b, |project, _| project.is_read_only()));
 
-    // When client B joins again, the project gets re-shared.
+    // Client B can join again after client A re-shares.
     let project_b2 = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
     project_b2
@@ -515,7 +517,7 @@ async fn test_host_disconnect(
 
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
     let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
-    let project_id = project_a.read_with(cx_a, |project, _| project.remote_id().unwrap());
+    project_a.read_with(cx_a, |project, _| project.remote_id().unwrap());
 
     let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
@@ -539,20 +541,6 @@ async fn test_host_disconnect(
     editor_b.update(cx_b, |editor, cx| editor.insert("X", cx));
     assert!(cx_b.is_window_edited(workspace_b.window_id()));
 
-    // Request to join that project as client C
-    let project_c = cx_c.spawn(|cx| {
-        Project::remote(
-            project_id,
-            client_c.client.clone(),
-            client_c.user_store.clone(),
-            client_c.project_store.clone(),
-            client_c.language_registry.clone(),
-            FakeFs::new(cx.background()),
-            cx,
-        )
-    });
-    deterministic.run_until_parked();
-
     // Drop client A's connection. Collaborators should disappear and the project should not be shown as shared.
     server.disconnect_client(client_a.current_user_id(cx_a));
     cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
@@ -564,10 +552,6 @@ async fn test_host_disconnect(
         .condition(cx_b, |project, _| project.is_read_only())
         .await;
     assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
-    assert!(matches!(
-        project_c.await.unwrap_err(),
-        project::JoinProjectError::HostWentOffline
-    ));
 
     // Ensure client B's edited state is reset and that the whole window is blurred.
     cx_b.read(|cx| {
@@ -596,139 +580,6 @@ async fn test_host_disconnect(
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
         .unwrap();
-}
-
-#[gpui::test(iterations = 10)]
-async fn test_decline_join_request(
-    deterministic: Arc<Deterministic>,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
-) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
-    server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
-        .await;
-
-    client_a.fs.insert_tree("/a", json!({})).await;
-
-    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = project_a.read_with(cx_a, |project, _| project.remote_id().unwrap());
-
-    // Request to join that project as client B
-    let project_b = cx_b.spawn(|cx| {
-        Project::remote(
-            project_id,
-            client_b.client.clone(),
-            client_b.user_store.clone(),
-            client_b.project_store.clone(),
-            client_b.language_registry.clone(),
-            FakeFs::new(cx.background()),
-            cx,
-        )
-    });
-    deterministic.run_until_parked();
-    project_a.update(cx_a, |project, cx| {
-        project.respond_to_join_request(client_b.user_id().unwrap(), false, cx)
-    });
-    assert!(matches!(
-        project_b.await.unwrap_err(),
-        project::JoinProjectError::HostDeclined
-    ));
-
-    // Request to join the project again as client B
-    let project_b = cx_b.spawn(|cx| {
-        Project::remote(
-            project_id,
-            client_b.client.clone(),
-            client_b.user_store.clone(),
-            client_b.project_store.clone(),
-            client_b.language_registry.clone(),
-            FakeFs::new(cx.background()),
-            cx,
-        )
-    });
-
-    // Close the project on the host
-    deterministic.run_until_parked();
-    cx_a.update(|_| drop(project_a));
-    deterministic.run_until_parked();
-    assert!(matches!(
-        project_b.await.unwrap_err(),
-        project::JoinProjectError::HostClosedProject
-    ));
-}
-
-#[gpui::test(iterations = 10)]
-async fn test_cancel_join_request(
-    deterministic: Arc<Deterministic>,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
-) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
-    server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
-        .await;
-
-    client_a.fs.insert_tree("/a", json!({})).await;
-    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = project_a.read_with(cx_a, |project, _| project.remote_id().unwrap());
-
-    let user_b = client_a
-        .user_store
-        .update(cx_a, |store, cx| {
-            store.get_user(client_b.user_id().unwrap(), cx)
-        })
-        .await
-        .unwrap();
-
-    let project_a_events = Rc::new(RefCell::new(Vec::new()));
-    project_a.update(cx_a, {
-        let project_a_events = project_a_events.clone();
-        move |_, cx| {
-            cx.subscribe(&cx.handle(), move |_, _, event, _| {
-                project_a_events.borrow_mut().push(event.clone());
-            })
-            .detach();
-        }
-    });
-
-    // Request to join that project as client B
-    let project_b = cx_b.spawn(|cx| {
-        Project::remote(
-            project_id,
-            client_b.client.clone(),
-            client_b.user_store.clone(),
-            client_b.project_store.clone(),
-            client_b.language_registry.clone(),
-            FakeFs::new(cx.background()),
-            cx,
-        )
-    });
-    deterministic.run_until_parked();
-    assert_eq!(
-        &*project_a_events.borrow(),
-        &[project::Event::ContactRequestedJoin(user_b.clone())]
-    );
-    project_a_events.borrow_mut().clear();
-
-    // Cancel the join request by leaving the project
-    client_b
-        .client
-        .send(proto::LeaveProject { project_id })
-        .unwrap();
-    drop(project_b);
-
-    deterministic.run_until_parked();
-    assert_eq!(
-        &*project_a_events.borrow(),
-        &[project::Event::ContactCancelledJoinRequest(user_b)]
-    );
 }
 
 #[gpui::test(iterations = 10)]
@@ -4586,7 +4437,6 @@ async fn test_random_collaboration(
     let host = server.create_client(&mut host_cx, "host").await;
     let host_project = host_cx.update(|cx| {
         Project::local(
-            true,
             host.client.clone(),
             host.user_store.clone(),
             host.project_store.clone(),
@@ -4737,6 +4587,11 @@ async fn test_random_collaboration(
         }))
         .await;
     host_language_registry.add(Arc::new(language));
+
+    host_project
+        .update(&mut host_cx, |project, cx| project.share(cx))
+        .await
+        .unwrap();
 
     let op_start_signal = futures::channel::mpsc::unbounded();
     user_ids.push(host.current_user_id(&host_cx));
@@ -5097,7 +4952,7 @@ impl TestServer {
 
         let fs = FakeFs::new(cx.background());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
-        let project_store = cx.add_model(|_| ProjectStore::new(project::Db::open_fake()));
+        let project_store = cx.add_model(|_| ProjectStore::new());
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
@@ -5283,7 +5138,6 @@ impl TestClient {
     ) -> (ModelHandle<Project>, WorktreeId) {
         let project = cx.update(|cx| {
             Project::local(
-                true,
                 self.client.clone(),
                 self.user_store.clone(),
                 self.project_store.clone(),
@@ -5316,7 +5170,10 @@ impl TestClient {
         let host_project_id = host_project
             .read_with(host_cx, |project, _| project.next_remote_id())
             .await;
-        let guest_user_id = self.user_id().unwrap();
+        host_project
+            .update(host_cx, |project, cx| project.share(cx))
+            .await
+            .unwrap();
         let languages = host_project.read_with(host_cx, |project, _| project.languages().clone());
         let project_b = guest_cx.spawn(|cx| {
             Project::remote(
@@ -5329,10 +5186,7 @@ impl TestClient {
                 cx,
             )
         });
-        host_cx.foreground().run_until_parked();
-        host_project.update(host_cx, |project, cx| {
-            project.respond_to_join_request(guest_user_id, true, cx)
-        });
+
         let project = project_b.await.unwrap();
         project
     }
@@ -5368,18 +5222,6 @@ impl TestClient {
             cx: &mut TestAppContext,
         ) -> anyhow::Result<()> {
             let fs = project.read_with(cx, |project, _| project.fs().clone());
-
-            cx.update(|cx| {
-                cx.subscribe(&project, move |project, event, cx| {
-                    if let project::Event::ContactRequestedJoin(user) = event {
-                        log::info!("Host: accepting join request from {}", user.github_login);
-                        project.update(cx, |project, cx| {
-                            project.respond_to_join_request(user.id, true, cx)
-                        });
-                    }
-                })
-                .detach();
-            });
 
             while op_start_signal.next().await.is_some() {
                 let distribution = rng.lock().gen_range::<usize, _>(0..100);

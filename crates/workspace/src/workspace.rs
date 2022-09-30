@@ -108,12 +108,6 @@ pub struct OpenPaths {
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
-pub struct ToggleProjectOnline {
-    #[serde(skip_deserializing)]
-    pub project: Option<ModelHandle<Project>>,
-}
-
-#[derive(Clone, Deserialize, PartialEq)]
 pub struct ActivatePane(pub usize);
 
 #[derive(Clone, PartialEq)]
@@ -134,7 +128,7 @@ impl_internal_actions!(
         RemoveWorktreeFromProject
     ]
 );
-impl_actions!(workspace, [ToggleProjectOnline, ActivatePane]);
+impl_actions!(workspace, [ActivatePane]);
 
 pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     pane::init(cx);
@@ -172,7 +166,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_async_action(Workspace::save_all);
     cx.add_action(Workspace::add_folder_to_project);
     cx.add_action(Workspace::remove_folder_from_project);
-    cx.add_action(Workspace::toggle_project_online);
     cx.add_action(
         |workspace: &mut Workspace, _: &Unfollow, cx: &mut ViewContext<Workspace>| {
             let pane = workspace.active_pane().clone();
@@ -840,7 +833,7 @@ impl AppState {
         let languages = Arc::new(LanguageRegistry::test());
         let http_client = client::test::FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone());
-        let project_store = cx.add_model(|_| ProjectStore::new(project::Db::open_fake()));
+        let project_store = cx.add_model(|_| ProjectStore::new());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
         let themes = ThemeRegistry::new((), cx.font_cache().clone());
         Arc::new(Self {
@@ -1086,7 +1079,6 @@ impl Workspace {
             let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
                 let mut workspace = Workspace::new(
                     Project::local(
-                        false,
                         app_state.client.clone(),
                         app_state.user_store.clone(),
                         app_state.project_store.clone(),
@@ -1289,17 +1281,6 @@ impl Workspace {
     ) {
         self.project
             .update(cx, |project, cx| project.remove_worktree(*worktree_id, cx));
-    }
-
-    fn toggle_project_online(&mut self, action: &ToggleProjectOnline, cx: &mut ViewContext<Self>) {
-        let project = action
-            .project
-            .clone()
-            .unwrap_or_else(|| self.project.clone());
-        project.update(cx, |project, cx| {
-            let public = !project.is_online();
-            project.set_online(public, cx);
-        });
     }
 
     fn project_path_for_path(
@@ -2617,7 +2598,6 @@ pub fn open_paths(
 
             cx.add_window((app_state.build_window_options)(), |cx| {
                 let project = Project::local(
-                    false,
                     app_state.client.clone(),
                     app_state.user_store.clone(),
                     app_state.project_store.clone(),
@@ -2642,13 +2622,6 @@ pub fn open_paths(
             })
             .await;
 
-        if let Some(project) = new_project {
-            project
-                .update(&mut cx, |project, cx| project.restore_state(cx))
-                .await
-                .log_err();
-        }
-
         (workspace, items)
     })
 }
@@ -2657,7 +2630,6 @@ fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
     let (window_id, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
         let mut workspace = Workspace::new(
             Project::local(
-                false,
                 app_state.client.clone(),
                 app_state.user_store.clone(),
                 app_state.project_store.clone(),

@@ -140,7 +140,7 @@ fn main() {
         })
         .detach();
 
-        let project_store = cx.add_model(|_| ProjectStore::new(db.clone()));
+        let project_store = cx.add_model(|_| ProjectStore::new());
         let app_state = Arc::new(AppState {
             languages,
             themes,

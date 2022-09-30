@@ -1,6 +1,5 @@
 mod contact_finder;
 mod contact_notification;
-mod join_project_notification;
 mod notifications;
 
 use client::{Contact, ContactEventKind, User, UserStore};
@@ -13,9 +12,7 @@ use gpui::{
     MouseButton, MutableAppContext, RenderContext, Subscription, View, ViewContext, ViewHandle,
     WeakViewHandle,
 };
-use join_project_notification::JoinProjectNotification;
 use menu::{Confirm, SelectNext, SelectPrev};
-use project::ProjectStore;
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
@@ -54,7 +51,6 @@ pub struct ContactsPanel {
     match_candidates: Vec<StringMatchCandidate>,
     list_state: ListState,
     user_store: ModelHandle<UserStore>,
-    project_store: ModelHandle<ProjectStore>,
     filter_editor: ViewHandle<Editor>,
     collapsed_sections: Vec<Section>,
     selection: Option<usize>,
@@ -76,7 +72,6 @@ pub struct RespondToContactRequest {
 pub fn init(cx: &mut MutableAppContext) {
     contact_finder::init(cx);
     contact_notification::init(cx);
-    join_project_notification::init(cx);
     cx.add_action(ContactsPanel::request_contact);
     cx.add_action(ContactsPanel::remove_contact);
     cx.add_action(ContactsPanel::respond_to_contact_request);
@@ -90,7 +85,6 @@ pub fn init(cx: &mut MutableAppContext) {
 impl ContactsPanel {
     pub fn new(
         user_store: ModelHandle<UserStore>,
-        project_store: ModelHandle<ProjectStore>,
         workspace: WeakViewHandle<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -119,38 +113,6 @@ impl ContactsPanel {
             }
         })
         .detach();
-
-        cx.defer({
-            let workspace = workspace.clone();
-            move |_, cx| {
-                if let Some(workspace_handle) = workspace.upgrade(cx) {
-                    cx.subscribe(&workspace_handle.read(cx).project().clone(), {
-                        let workspace = workspace;
-                        move |_, project, event, cx| {
-                            if let project::Event::ContactRequestedJoin(user) = event {
-                                if let Some(workspace) = workspace.upgrade(cx) {
-                                    workspace.update(cx, |workspace, cx| {
-                                        workspace.show_notification(user.id as usize, cx, |cx| {
-                                            cx.add_view(|cx| {
-                                                JoinProjectNotification::new(
-                                                    project,
-                                                    user.clone(),
-                                                    cx,
-                                                )
-                                            })
-                                        })
-                                    });
-                                }
-                            }
-                        }
-                    })
-                    .detach();
-                }
-            }
-        });
-
-        cx.observe(&project_store, |this, _, cx| this.update_entries(cx))
-            .detach();
 
         cx.subscribe(&user_store, move |_, user_store, event, cx| {
             if let Some(workspace) = workspace.upgrade(cx) {
@@ -219,7 +181,6 @@ impl ContactsPanel {
             filter_editor,
             _maintain_contacts: cx.observe(&user_store, |this, _, cx| this.update_entries(cx)),
             user_store,
-            project_store,
         };
         this.update_entries(cx);
         this
@@ -841,7 +802,7 @@ mod tests {
     use collections::HashSet;
     use gpui::TestAppContext;
     use language::LanguageRegistry;
-    use project::{FakeFs, Project};
+    use project::{FakeFs, Project, ProjectStore};
 
     #[gpui::test]
     async fn test_contact_panel(cx: &mut TestAppContext) {
@@ -852,12 +813,11 @@ mod tests {
         let http_client = FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let project_store = cx.add_model(|_| ProjectStore::new(project::Db::open_fake()));
+        let project_store = cx.add_model(|_| ProjectStore::new());
         let server = FakeServer::for_client(current_user_id, &client, cx).await;
         let fs = FakeFs::new(cx.background());
         let project = cx.update(|cx| {
             Project::local(
-                false,
                 client.clone(),
                 user_store.clone(),
                 project_store.clone(),
@@ -870,12 +830,7 @@ mod tests {
         let (_, workspace) =
             cx.add_window(|cx| Workspace::new(project.clone(), |_, _| unimplemented!(), cx));
         let panel = cx.add_view(&workspace, |cx| {
-            ContactsPanel::new(
-                user_store.clone(),
-                project_store.clone(),
-                workspace.downgrade(),
-                cx,
-            )
+            ContactsPanel::new(user_store.clone(), workspace.downgrade(), cx)
         });
 
         workspace.update(cx, |_, cx| {
@@ -889,6 +844,14 @@ mod tests {
             })
             .detach();
         });
+
+        let request = server.receive::<proto::RegisterProject>().await.unwrap();
+        server
+            .respond(
+                request.receipt(),
+                proto::RegisterProjectResponse { project_id: 200 },
+            )
+            .await;
 
         let get_users_request = server.receive::<proto::GetUsers>().await.unwrap();
         server
@@ -917,14 +880,6 @@ mod tests {
                     }])
                     .collect(),
                 },
-            )
-            .await;
-
-        let request = server.receive::<proto::RegisterProject>().await.unwrap();
-        server
-            .respond(
-                request.receipt(),
-                proto::RegisterProjectResponse { project_id: 200 },
             )
             .await;
 

@@ -74,7 +74,6 @@ pub trait Item: Entity {
 }
 
 pub struct ProjectStore {
-    db: Arc<Db>,
     projects: Vec<WeakModelHandle<Project>>,
 }
 
@@ -126,7 +125,6 @@ pub struct Project {
     incomplete_buffers: HashMap<u64, ModelHandle<Buffer>>,
     buffer_snapshots: HashMap<u64, Vec<(i32, TextBufferSnapshot)>>,
     nonce: u128,
-    initialized_persistent_state: bool,
     _maintain_buffer_languages: Task<()>,
 }
 
@@ -158,10 +156,7 @@ enum ProjectClientState {
         is_shared: bool,
         remote_id_tx: watch::Sender<Option<u64>>,
         remote_id_rx: watch::Receiver<Option<u64>>,
-        online_tx: watch::Sender<bool>,
-        online_rx: watch::Receiver<bool>,
         _maintain_remote_id: Task<Option<()>>,
-        _maintain_online_status: Task<Option<()>>,
     },
     Remote {
         sharing_has_stopped: bool,
@@ -196,8 +191,6 @@ pub enum Event {
     RemoteIdChanged(Option<u64>),
     DisconnectedFromHost,
     CollaboratorLeft(PeerId),
-    ContactRequestedJoin(Arc<User>),
-    ContactCancelledJoinRequest(Arc<User>),
 }
 
 pub enum LanguageServerState {
@@ -382,17 +375,15 @@ impl FormatTrigger {
 
 impl Project {
     pub fn init(client: &Arc<Client>) {
-        client.add_model_message_handler(Self::handle_request_join_project);
         client.add_model_message_handler(Self::handle_add_collaborator);
         client.add_model_message_handler(Self::handle_buffer_reloaded);
         client.add_model_message_handler(Self::handle_buffer_saved);
         client.add_model_message_handler(Self::handle_start_language_server);
         client.add_model_message_handler(Self::handle_update_language_server);
         client.add_model_message_handler(Self::handle_remove_collaborator);
-        client.add_model_message_handler(Self::handle_join_project_request_cancelled);
         client.add_model_message_handler(Self::handle_update_project);
         client.add_model_message_handler(Self::handle_unregister_project);
-        client.add_model_message_handler(Self::handle_project_unshared);
+        client.add_model_message_handler(Self::handle_unshare_project);
         client.add_model_message_handler(Self::handle_create_buffer_for_peer);
         client.add_model_message_handler(Self::handle_update_buffer_file);
         client.add_model_message_handler(Self::handle_update_buffer);
@@ -424,7 +415,6 @@ impl Project {
     }
 
     pub fn local(
-        online: bool,
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
         project_store: ModelHandle<ProjectStore>,
@@ -453,23 +443,6 @@ impl Project {
                 }
             });
 
-            let (online_tx, online_rx) = watch::channel_with(online);
-            let _maintain_online_status = cx.spawn_weak({
-                let mut online_rx = online_rx.clone();
-                move |this, mut cx| async move {
-                    while let Some(online) = online_rx.recv().await {
-                        let this = this.upgrade(&cx)?;
-                        this.update(&mut cx, |this, cx| {
-                            if !online {
-                                this.unshared(cx);
-                            }
-                            this.metadata_changed(false, cx)
-                        });
-                    }
-                    None
-                }
-            });
-
             let handle = cx.weak_handle();
             project_store.update(cx, |store, cx| store.add_project(handle, cx));
 
@@ -486,10 +459,7 @@ impl Project {
                     is_shared: false,
                     remote_id_tx,
                     remote_id_rx,
-                    online_tx,
-                    online_rx,
                     _maintain_remote_id,
-                    _maintain_online_status,
                 },
                 opened_buffer: watch::channel(),
                 client_subscriptions: Vec::new(),
@@ -510,7 +480,6 @@ impl Project {
                 language_server_settings: Default::default(),
                 next_language_server_id: 0,
                 nonce: StdRng::from_entropy().gen(),
-                initialized_persistent_state: false,
             }
         })
     }
@@ -531,24 +500,6 @@ impl Project {
                 project_id: remote_id,
             })
             .await?;
-
-        let response = match response.variant.ok_or_else(|| anyhow!("missing variant"))? {
-            proto::join_project_response::Variant::Accept(response) => response,
-            proto::join_project_response::Variant::Decline(decline) => {
-                match proto::join_project_response::decline::Reason::from_i32(decline.reason) {
-                    Some(proto::join_project_response::decline::Reason::Declined) => {
-                        Err(JoinProjectError::HostDeclined)?
-                    }
-                    Some(proto::join_project_response::decline::Reason::Closed) => {
-                        Err(JoinProjectError::HostClosedProject)?
-                    }
-                    Some(proto::join_project_response::decline::Reason::WentOffline) => {
-                        Err(JoinProjectError::HostWentOffline)?
-                    }
-                    None => Err(anyhow!("missing decline reason"))?,
-                }
-            }
-        };
 
         let replica_id = response.replica_id as ReplicaId;
 
@@ -625,7 +576,6 @@ impl Project {
                 opened_buffers: Default::default(),
                 buffer_snapshots: Default::default(),
                 nonce: StdRng::from_entropy().gen(),
-                initialized_persistent_state: false,
             };
             for worktree in worktrees {
                 this.add_worktree(&worktree, cx);
@@ -668,10 +618,9 @@ impl Project {
         let http_client = client::test::FakeHttpClient::with_404_response();
         let client = client::Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let project_store = cx.add_model(|_| ProjectStore::new(Db::open_fake()));
-        let project = cx.update(|cx| {
-            Project::local(true, client, user_store, project_store, languages, fs, cx)
-        });
+        let project_store = cx.add_model(|_| ProjectStore::new());
+        let project =
+            cx.update(|cx| Project::local(client, user_store, project_store, languages, fs, cx));
         for path in root_paths {
             let (tree, _) = project
                 .update(cx, |project, cx| {
@@ -683,53 +632,6 @@ impl Project {
                 .await;
         }
         project
-    }
-
-    pub fn restore_state(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        if self.is_remote() {
-            return Task::ready(Ok(()));
-        }
-
-        let db = self.project_store.read(cx).db.clone();
-        let keys = self.db_keys_for_online_state(cx);
-        let online_by_default = cx.global::<Settings>().projects_online_by_default;
-        let read_online = cx.background().spawn(async move {
-            let values = db.read(keys)?;
-            anyhow::Ok(
-                values
-                    .into_iter()
-                    .all(|e| e.map_or(online_by_default, |e| e == [true as u8])),
-            )
-        });
-        cx.spawn(|this, mut cx| async move {
-            let online = read_online.await.log_err().unwrap_or(false);
-            this.update(&mut cx, |this, cx| {
-                this.initialized_persistent_state = true;
-                if let ProjectClientState::Local { online_tx, .. } = &mut this.client_state {
-                    let mut online_tx = online_tx.borrow_mut();
-                    if *online_tx != online {
-                        *online_tx = online;
-                        drop(online_tx);
-                        this.metadata_changed(false, cx);
-                    }
-                }
-            });
-            Ok(())
-        })
-    }
-
-    fn persist_state(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        if self.is_remote() || !self.initialized_persistent_state {
-            return Task::ready(Ok(()));
-        }
-
-        let db = self.project_store.read(cx).db.clone();
-        let keys = self.db_keys_for_online_state(cx);
-        let is_online = self.is_online();
-        cx.background().spawn(async move {
-            let value = &[is_online as u8];
-            db.write(keys.into_iter().map(|key| (key, value)))
-        })
     }
 
     fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
@@ -860,24 +762,8 @@ impl Project {
         &self.fs
     }
 
-    pub fn set_online(&mut self, online: bool, _: &mut ModelContext<Self>) {
-        if let ProjectClientState::Local { online_tx, .. } = &mut self.client_state {
-            let mut online_tx = online_tx.borrow_mut();
-            if *online_tx != online {
-                *online_tx = online;
-            }
-        }
-    }
-
-    pub fn is_online(&self) -> bool {
-        match &self.client_state {
-            ProjectClientState::Local { online_rx, .. } => *online_rx.borrow(),
-            ProjectClientState::Remote { .. } => true,
-        }
-    }
-
     fn unregister(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        self.unshared(cx);
+        self.unshare(cx).log_err();
         if let ProjectClientState::Local { remote_id_rx, .. } = &mut self.client_state {
             if let Some(remote_id) = *remote_id_rx.borrow() {
                 let request = self.client.request(proto::UnregisterProject {
@@ -905,7 +791,7 @@ impl Project {
                             *remote_id_tx.borrow_mut() = None;
                         }
                         this.client_subscriptions.clear();
-                        this.metadata_changed(false, cx);
+                        this.metadata_changed(cx);
                     });
                     response.map(drop)
                 });
@@ -915,19 +801,12 @@ impl Project {
     }
 
     fn register(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        if let ProjectClientState::Local {
-            remote_id_rx,
-            online_rx,
-            ..
-        } = &self.client_state
-        {
+        if let ProjectClientState::Local { remote_id_rx, .. } = &self.client_state {
             if remote_id_rx.borrow().is_some() {
                 return Task::ready(Ok(()));
             }
 
-            let response = self.client.request(proto::RegisterProject {
-                online: *online_rx.borrow(),
-            });
+            let response = self.client.request(proto::RegisterProject {});
             cx.spawn(|this, mut cx| async move {
                 let remote_id = response.await?.project_id;
                 this.update(&mut cx, |this, cx| {
@@ -935,7 +814,7 @@ impl Project {
                         *remote_id_tx.borrow_mut() = Some(remote_id);
                     }
 
-                    this.metadata_changed(false, cx);
+                    this.metadata_changed(cx);
                     cx.emit(Event::RemoteIdChanged(Some(remote_id)));
                     this.client_subscriptions
                         .push(this.client.add_model_for_remote_entity(remote_id, cx));
@@ -1001,65 +880,50 @@ impl Project {
         }
     }
 
-    fn metadata_changed(&mut self, persist: bool, cx: &mut ModelContext<Self>) {
-        if let ProjectClientState::Local {
-            remote_id_rx,
-            online_rx,
-            ..
-        } = &self.client_state
-        {
+    fn metadata_changed(&mut self, cx: &mut ModelContext<Self>) {
+        if let ProjectClientState::Local { remote_id_rx, .. } = &self.client_state {
             // Broadcast worktrees only if the project is online.
-            let worktrees = if *online_rx.borrow() {
-                self.worktrees
-                    .iter()
-                    .filter_map(|worktree| {
-                        worktree
-                            .upgrade(cx)
-                            .map(|worktree| worktree.read(cx).as_local().unwrap().metadata_proto())
-                    })
-                    .collect()
-            } else {
-                Default::default()
-            };
+            let worktrees = self
+                .worktrees
+                .iter()
+                .filter_map(|worktree| {
+                    worktree
+                        .upgrade(cx)
+                        .map(|worktree| worktree.read(cx).as_local().unwrap().metadata_proto())
+                })
+                .collect();
             if let Some(project_id) = *remote_id_rx.borrow() {
-                let online = *online_rx.borrow();
                 self.client
                     .send(proto::UpdateProject {
                         project_id,
                         worktrees,
-                        online,
                     })
                     .log_err();
 
-                if online {
-                    let worktrees = self.visible_worktrees(cx).collect::<Vec<_>>();
-                    let scans_complete =
-                        futures::future::join_all(worktrees.iter().filter_map(|worktree| {
-                            Some(worktree.read(cx).as_local()?.scan_complete())
-                        }));
+                let worktrees = self.visible_worktrees(cx).collect::<Vec<_>>();
+                let scans_complete =
+                    futures::future::join_all(worktrees.iter().filter_map(|worktree| {
+                        Some(worktree.read(cx).as_local()?.scan_complete())
+                    }));
 
-                    let worktrees = worktrees.into_iter().map(|handle| handle.downgrade());
-                    cx.spawn_weak(move |_, cx| async move {
-                        scans_complete.await;
-                        cx.read(|cx| {
-                            for worktree in worktrees {
-                                if let Some(worktree) = worktree
-                                    .upgrade(cx)
-                                    .and_then(|worktree| worktree.read(cx).as_local())
-                                {
-                                    worktree.send_extension_counts(project_id);
-                                }
+                let worktrees = worktrees.into_iter().map(|handle| handle.downgrade());
+                cx.spawn_weak(move |_, cx| async move {
+                    scans_complete.await;
+                    cx.read(|cx| {
+                        for worktree in worktrees {
+                            if let Some(worktree) = worktree
+                                .upgrade(cx)
+                                .and_then(|worktree| worktree.read(cx).as_local())
+                            {
+                                worktree.send_extension_counts(project_id);
                             }
-                        })
+                        }
                     })
-                    .detach();
-                }
+                })
+                .detach();
             }
 
             self.project_store.update(cx, |_, cx| cx.notify());
-            if persist {
-                self.persist_state(cx).detach_and_log_err(cx);
-            }
             cx.notify();
         }
     }
@@ -1095,23 +959,6 @@ impl Project {
     pub fn worktree_root_names<'a>(&'a self, cx: &'a AppContext) -> impl Iterator<Item = &'a str> {
         self.visible_worktrees(cx)
             .map(|tree| tree.read(cx).root_name())
-    }
-
-    fn db_keys_for_online_state(&self, cx: &AppContext) -> Vec<String> {
-        self.worktrees
-            .iter()
-            .filter_map(|worktree| {
-                let worktree = worktree.upgrade(cx)?.read(cx);
-                if worktree.is_visible() {
-                    Some(format!(
-                        "project-path-online:{}",
-                        worktree.as_local().unwrap().abs_path().to_string_lossy()
-                    ))
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
     }
 
     pub fn worktree_for_id(
@@ -1317,11 +1164,7 @@ impl Project {
         }
     }
 
-    fn share(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        if !self.is_online() {
-            return Task::ready(Err(anyhow!("can't share an offline project")));
-        }
-
+    pub fn share(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let project_id;
         if let ProjectClientState::Local {
             remote_id_rx,
@@ -1394,10 +1237,15 @@ impl Project {
         })
     }
 
-    fn unshared(&mut self, cx: &mut ModelContext<Self>) {
-        if let ProjectClientState::Local { is_shared, .. } = &mut self.client_state {
+    pub fn unshare(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
+        if let ProjectClientState::Local {
+            is_shared,
+            remote_id_rx,
+            ..
+        } = &mut self.client_state
+        {
             if !*is_shared {
-                return;
+                return Ok(());
             }
 
             *is_shared = false;
@@ -1422,37 +1270,13 @@ impl Project {
             }
 
             cx.notify();
-        } else {
-            log::error!("attempted to unshare a remote project");
-        }
-    }
+            if let Some(project_id) = *remote_id_rx.borrow() {
+                self.client.send(proto::UnshareProject { project_id })?;
+            }
 
-    pub fn respond_to_join_request(
-        &mut self,
-        requester_id: u64,
-        allow: bool,
-        cx: &mut ModelContext<Self>,
-    ) {
-        if let Some(project_id) = self.remote_id() {
-            let share = if self.is_online() && allow {
-                Some(self.share(cx))
-            } else {
-                None
-            };
-            let client = self.client.clone();
-            cx.foreground()
-                .spawn(async move {
-                    client.send(proto::RespondToJoinProjectRequest {
-                        requester_id,
-                        project_id,
-                        allow,
-                    })?;
-                    if let Some(share) = share {
-                        share.await?;
-                    }
-                    anyhow::Ok(())
-                })
-                .detach_and_log_err(cx);
+            Ok(())
+        } else {
+            Err(anyhow!("attempted to unshare a remote project"))
         }
     }
 
@@ -4527,7 +4351,7 @@ impl Project {
                 false
             }
         });
-        self.metadata_changed(true, cx);
+        self.metadata_changed(cx);
         cx.notify();
     }
 
@@ -4552,7 +4376,7 @@ impl Project {
                 .push(WorktreeHandle::Weak(worktree.downgrade()));
         }
 
-        self.metadata_changed(true, cx);
+        self.metadata_changed(cx);
         cx.observe_release(worktree, |this, worktree, cx| {
             this.remove_worktree(worktree.id(), cx);
             cx.notify();
@@ -4728,29 +4552,6 @@ impl Project {
 
     // RPC message handlers
 
-    async fn handle_request_join_project(
-        this: ModelHandle<Self>,
-        message: TypedEnvelope<proto::RequestJoinProject>,
-        _: Arc<Client>,
-        mut cx: AsyncAppContext,
-    ) -> Result<()> {
-        let user_id = message.payload.requester_id;
-        if this.read_with(&cx, |project, _| {
-            project.collaborators.values().any(|c| c.user.id == user_id)
-        }) {
-            this.update(&mut cx, |this, cx| {
-                this.respond_to_join_request(user_id, true, cx)
-            });
-        } else {
-            let user_store = this.read_with(&cx, |this, _| this.user_store.clone());
-            let user = user_store
-                .update(&mut cx, |store, cx| store.get_user(user_id, cx))
-                .await?;
-            this.update(&mut cx, |_, cx| cx.emit(Event::ContactRequestedJoin(user)));
-        }
-        Ok(())
-    }
-
     async fn handle_unregister_project(
         this: ModelHandle<Self>,
         _: TypedEnvelope<proto::UnregisterProject>,
@@ -4761,13 +4562,13 @@ impl Project {
         Ok(())
     }
 
-    async fn handle_project_unshared(
+    async fn handle_unshare_project(
         this: ModelHandle<Self>,
-        _: TypedEnvelope<proto::ProjectUnshared>,
+        _: TypedEnvelope<proto::UnshareProject>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        this.update(&mut cx, |this, cx| this.unshared(cx));
+        this.update(&mut cx, |this, cx| this.disconnected_from_host(cx));
         Ok(())
     }
 
@@ -4819,27 +4620,6 @@ impl Project {
         })
     }
 
-    async fn handle_join_project_request_cancelled(
-        this: ModelHandle<Self>,
-        envelope: TypedEnvelope<proto::JoinProjectRequestCancelled>,
-        _: Arc<Client>,
-        mut cx: AsyncAppContext,
-    ) -> Result<()> {
-        let user = this
-            .update(&mut cx, |this, cx| {
-                this.user_store.update(cx, |user_store, cx| {
-                    user_store.get_user(envelope.payload.requester_id, cx)
-                })
-            })
-            .await?;
-
-        this.update(&mut cx, |_, cx| {
-            cx.emit(Event::ContactCancelledJoinRequest(user));
-        });
-
-        Ok(())
-    }
-
     async fn handle_update_project(
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<proto::UpdateProject>,
@@ -4871,7 +4651,7 @@ impl Project {
                 }
             }
 
-            this.metadata_changed(true, cx);
+            this.metadata_changed(cx);
             for (id, _) in old_worktrees_by_id {
                 cx.emit(Event::WorktreeRemoved(id));
             }
@@ -6077,9 +5857,8 @@ impl Project {
 }
 
 impl ProjectStore {
-    pub fn new(db: Arc<Db>) -> Self {
+    pub fn new() -> Self {
         Self {
-            db,
             projects: Default::default(),
         }
     }
