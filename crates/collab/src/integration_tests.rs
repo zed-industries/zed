@@ -966,7 +966,8 @@ async fn test_git_head_text(
         .insert_tree(
             "/dir",
             json!({
-            ".git": {},
+            ".git": {
+            },
             "a.txt": "
                     one
                     two
@@ -983,9 +984,8 @@ async fn test_git_head_text(
     .unindent();
 
     let new_head_text = "
-        1
+        one
         two
-        three
     "
     .unindent();
 
@@ -1041,7 +1041,6 @@ async fn test_git_head_text(
         );
     });
 
-    // TODO: Create a dummy file event
     client_a
         .fs
         .as_fake()
@@ -1051,19 +1050,18 @@ async fn test_git_head_text(
         )
         .await;
 
-    // TODO: Flush this file event
-
     // Wait for buffer_a to receive it
     executor.run_until_parked();
 
     // Smoke test new diffing
     buffer_a.read_with(cx_a, |buffer, _| {
         assert_eq!(buffer.head_text(), Some(new_head_text.as_ref()));
+
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_range(0..4),
             &buffer,
             &head_text,
-            &[(0..1, "1", "one\n")],
+            &[(2..3, "", "three\n")],
         );
     });
 

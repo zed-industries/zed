@@ -2235,6 +2235,7 @@ dependencies = [
  "async-trait",
  "clock",
  "collections",
+ "futures",
  "git2",
  "lazy_static",
  "log",

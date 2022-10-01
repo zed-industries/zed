@@ -12,7 +12,7 @@ use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use futures::{future::Shared, AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt};
-use git::repository::GitRepository;
+
 use gpui::{
     AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
     MutableAppContext, Task, UpgradeModelHandle, WeakModelHandle,
@@ -4648,7 +4648,7 @@ impl Project {
 
     fn update_local_worktree_buffers_git_repos(
         &mut self,
-        repos: &[Box<dyn GitRepository>],
+        repos: &[GitRepositoryEntry],
         cx: &mut ModelContext<Self>,
     ) {
         //TODO: Produce protos
@@ -4663,12 +4663,15 @@ impl Project {
                 let abs_path = file.abs_path(cx);
 
                 let repo = match repos.iter().find(|repo| repo.manages(&abs_path)) {
-                    Some(repo) => repo.boxed_clone(),
+                    Some(repo) => repo.clone(),
                     None => return,
                 };
 
                 cx.spawn(|_, mut cx| async move {
-                    let head_text = repo.load_head_text(&path).await;
+                    let head_text = cx
+                        .background()
+                        .spawn(async move { repo.repo.lock().load_head_text(&path) })
+                        .await;
                     buffer.update(&mut cx, |buffer, cx| {
                         buffer.update_head_text(head_text, cx);
                     });

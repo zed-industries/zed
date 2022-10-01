@@ -1,8 +1,9 @@
 use anyhow::{anyhow, Result};
 use fsevent::EventStream;
 use futures::{future::BoxFuture, Stream, StreamExt};
-use git::repository::{FakeGitRepositoryState, GitRepository, Git2Repo};
+use git::repository::{FakeGitRepositoryState, GitRepository, LibGitRepository};
 use language::LineEnding;
+use parking_lot::Mutex as SyncMutex;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::{
     io,
@@ -11,6 +12,7 @@ use std::{
     pin::Pin,
     time::{Duration, SystemTime},
 };
+use util::ResultExt;
 
 use text::Rope;
 
@@ -44,7 +46,7 @@ pub trait Fs: Send + Sync {
         path: &Path,
         latency: Duration,
     ) -> Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>>;
-    fn open_repo(&self, abs_dot_git: &Path) -> Option<Box<dyn GitRepository>>;
+    fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<SyncMutex<dyn GitRepository>>>;
     fn is_fake(&self) -> bool;
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeFs;
@@ -238,8 +240,12 @@ impl Fs for RealFs {
         })))
     }
 
-    fn open_repo(&self, abs_dot_git: &Path) -> Option<Box<dyn GitRepository>> {
-        Git2Repo::open(&abs_dot_git)
+    fn open_repo(&self, dotgit_path: &Path) -> Option<Arc<SyncMutex<dyn GitRepository>>> {
+        LibGitRepository::open(&dotgit_path)
+            .log_err()
+            .and_then::<Arc<SyncMutex<dyn GitRepository>>, _>(|libgit_repository| {
+                Some(Arc::new(SyncMutex::new(libgit_repository)))
+            })
     }
 
     fn is_fake(&self) -> bool {
@@ -277,7 +283,7 @@ enum FakeFsEntry {
         inode: u64,
         mtime: SystemTime,
         entries: BTreeMap<String, Arc<Mutex<FakeFsEntry>>>,
-        git_repo_state: Option<Arc<parking_lot::Mutex<git::repository::FakeGitRepositoryState>>>,
+        git_repo_state: Option<Arc<SyncMutex<git::repository::FakeGitRepositoryState>>>,
     },
     Symlink {
         target: PathBuf,
@@ -488,7 +494,7 @@ impl FakeFs {
         head_state: &[(&Path, String)],
     ) {
         let content_path = dot_git.parent().unwrap();
-        let state = self.state.lock().await;
+        let mut state = self.state.lock().await;
         let entry = state.read_path(dot_git).await.unwrap();
         let mut entry = entry.lock().await;
 
@@ -502,6 +508,8 @@ impl FakeFs {
                     .iter()
                     .map(|(path, content)| (content_path.join(path), content.clone())),
             );
+
+            state.emit_event([dot_git]);
         } else {
             panic!("not a directory");
         }
@@ -881,7 +889,7 @@ impl Fs for FakeFs {
         }))
     }
 
-    fn open_repo(&self, abs_dot_git: &Path) -> Option<Box<dyn GitRepository>> {
+    fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<SyncMutex<dyn GitRepository>>> {
         let executor = self.executor.upgrade().unwrap();
         executor.block(async move {
             let state = self.state.lock().await;
@@ -890,13 +898,10 @@ impl Fs for FakeFs {
             if let FakeFsEntry::Dir { git_repo_state, .. } = &mut *entry {
                 let state = git_repo_state
                     .get_or_insert_with(|| {
-                        Arc::new(parking_lot::Mutex::new(FakeGitRepositoryState::default()))
+                        Arc::new(SyncMutex::new(FakeGitRepositoryState::default()))
                     })
                     .clone();
-                Some(git::repository::FakeGitRepository::open(
-                    abs_dot_git.into(),
-                    state,
-                ))
+                Some(git::repository::FakeGitRepository::open(state))
             } else {
                 None
             }
