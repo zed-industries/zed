@@ -1075,7 +1075,7 @@ async fn test_git_head_text(
             buffer.snapshot().git_diff_hunks_in_range(0..4),
             &buffer,
             &head_text,
-            &[(0..1, "1", "one\n")],
+            &[(2..3, "", "three\n")],
         );
     });
 }
