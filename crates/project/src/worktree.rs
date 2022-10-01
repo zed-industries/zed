@@ -119,12 +119,6 @@ impl std::fmt::Debug for GitRepositoryEntry {
     }
 }
 
-// impl Clone for GitRepositoryEntry {
-//     fn clone(&self) -> Self {
-//         GitRepositoryEntry { repo: self.repo.boxed_clone(), scan_id: self.scan_id }
-//     }
-// }
-
 pub struct LocalSnapshot {
     abs_path: Arc<Path>,
     ignores_by_parent_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
@@ -1723,17 +1717,14 @@ impl LocalSnapshot {
         &self.git_repositories
     }
 }
-//                  Worktree root
-//                          |
-//    git_dir_path:         c/d/.git
-//in_dot_git Query:         c/d/.git/HEAD
-//   Manages Query:         c/d/e/f/a.txt
 
 impl GitRepositoryEntry {
+    // Note that these paths should be relative to the worktree root.
     pub(crate) fn manages(&self, path: &Path) -> bool {
         path.starts_with(self.content_path.as_ref())
     }
 
+    // Note that theis path should be relative to the worktree root.
     pub(crate) fn in_dot_git(&self, path: &Path) -> bool {
         path.starts_with(self.git_dir_path.as_ref())
     }
