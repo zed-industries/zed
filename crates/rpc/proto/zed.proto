@@ -108,6 +108,7 @@ message Envelope {
         FollowResponse follow_response = 93;
         UpdateFollowers update_followers = 94;
         Unfollow unfollow = 95;
+        UpdateHeadText update_head_text = 96;
     }
 }
 
@@ -991,4 +992,10 @@ message WorktreeMetadata {
     uint64 id = 1;
     string root_name = 2;
     bool visible = 3;
+}
+
+message UpdateHeadText {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    optional string head_text = 3;
 }

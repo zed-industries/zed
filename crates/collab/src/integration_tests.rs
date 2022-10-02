@@ -1065,9 +1065,6 @@ async fn test_git_head_text(
         );
     });
 
-    //TODO: WAIT FOR REMOTE UPDATES TO FINISH on B
-    executor.run_until_parked();
-
     // Smoke test B
     buffer_b.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.head_text(), Some(new_head_text.as_ref()));

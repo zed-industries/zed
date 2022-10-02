@@ -8,7 +8,10 @@ pub mod worktree;
 mod project_tests;
 
 use anyhow::{anyhow, Context, Result};
-use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
+use client::{
+    proto::{self},
+    Client, PeerId, TypedEnvelope, User, UserStore,
+};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use futures::{future::Shared, AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt};
@@ -421,6 +424,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_open_buffer_by_id);
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
         client.add_model_request_handler(Self::handle_save_buffer);
+        client.add_model_message_handler(Self::handle_update_head_text);
     }
 
     pub fn local(
@@ -4667,14 +4671,29 @@ impl Project {
                     None => return,
                 };
 
+                let shared_remote_id = self.shared_remote_id();
+                let client = self.client.clone();
+
                 cx.spawn(|_, mut cx| async move {
                     let head_text = cx
                         .background()
                         .spawn(async move { repo.repo.lock().load_head_text(&path) })
                         .await;
-                    buffer.update(&mut cx, |buffer, cx| {
-                        buffer.update_head_text(head_text, cx);
+
+                    let buffer_id = buffer.update(&mut cx, |buffer, cx| {
+                        buffer.update_head_text(head_text.clone(), cx);
+                        buffer.remote_id()
                     });
+
+                    if let Some(project_id) = shared_remote_id {
+                        client
+                            .send(proto::UpdateHeadText {
+                                project_id,
+                                buffer_id: buffer_id as u64,
+                                head_text,
+                            })
+                            .log_err();
+                    }
                 })
                 .detach();
             }
@@ -5248,6 +5267,27 @@ impl Project {
                     }
                 }
             }
+
+            Ok(())
+        })
+    }
+
+    async fn handle_update_head_text(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::UpdateHeadText>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            let buffer_id = envelope.payload.buffer_id;
+            let head_text = envelope.payload.head_text;
+            let buffer = this
+                .opened_buffers
+                .get_mut(&buffer_id)
+                .and_then(|b| b.upgrade(cx))
+                .ok_or_else(|| anyhow!("No such buffer {}", buffer_id))?;
+
+            buffer.update(cx, |buffer, cx| buffer.update_head_text(head_text, cx));
 
             Ok(())
         })
