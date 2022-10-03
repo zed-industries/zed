@@ -1,10 +1,11 @@
 use anyhow::{anyhow, Result};
 use fsevent::EventStream;
 use futures::{future::BoxFuture, Stream, StreamExt};
-use git::repository::{FakeGitRepositoryState, GitRepository, LibGitRepository};
+use git::repository::{GitRepository, LibGitRepository};
 use language::LineEnding;
 use parking_lot::Mutex as SyncMutex;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
+use std::sync::Arc;
 use std::{
     io,
     os::unix::fs::MetadataExt,
@@ -12,16 +13,17 @@ use std::{
     pin::Pin,
     time::{Duration, SystemTime},
 };
-use util::ResultExt;
-
 use text::Rope;
+use util::ResultExt;
 
 #[cfg(any(test, feature = "test-support"))]
 use collections::{btree_map, BTreeMap};
 #[cfg(any(test, feature = "test-support"))]
 use futures::lock::Mutex;
 #[cfg(any(test, feature = "test-support"))]
-use std::sync::{Arc, Weak};
+use git::repository::FakeGitRepositoryState;
+#[cfg(any(test, feature = "test-support"))]
+use std::sync::Weak;
 
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {
