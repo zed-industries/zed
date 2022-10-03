@@ -635,6 +635,13 @@ impl Server {
                         },
                     )?;
                 }
+
+                self.peer.send(
+                    message.sender_id,
+                    proto::UnshareProject {
+                        project_id: project.id.to_proto(),
+                    },
+                )?;
             }
         }
 
@@ -798,14 +805,6 @@ impl Server {
         };
 
         tracing::info!(%project_id, %host_user_id, %host_connection_id, "join project");
-        let has_contact = self
-            .app_state
-            .db
-            .has_contact(guest_user_id, host_user_id)
-            .await?;
-        if !has_contact {
-            return Err(anyhow!("no such project"))?;
-        }
 
         let mut store = self.store().await;
         let (project, replica_id) = store.join_project(request.sender_id, project_id)?;

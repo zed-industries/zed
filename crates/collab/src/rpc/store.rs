@@ -39,7 +39,7 @@ struct ConnectionState {
 pub struct Call {
     pub caller_user_id: UserId,
     pub room_id: RoomId,
-    pub joined: bool,
+    pub connection_id: Option<ConnectionId>,
 }
 
 #[derive(Serialize)]
@@ -163,7 +163,7 @@ impl Store {
         let connected_user = self.connected_users.entry(user_id).or_default();
         connected_user.connection_ids.insert(connection_id);
         if let Some(active_call) = connected_user.active_call {
-            if active_call.joined {
+            if active_call.connection_id.is_some() {
                 None
             } else {
                 let room = self.room(active_call.room_id)?;
@@ -378,7 +378,7 @@ impl Store {
         connected_user.active_call = Some(Call {
             caller_user_id: connection.user_id,
             room_id,
-            joined: true,
+            connection_id: Some(creator_connection_id),
         });
         Ok(room_id)
     }
@@ -404,7 +404,7 @@ impl Store {
             .as_mut()
             .ok_or_else(|| anyhow!("not being called"))?;
         anyhow::ensure!(
-            active_call.room_id == room_id && !active_call.joined,
+            active_call.room_id == room_id && active_call.connection_id.is_none(),
             "not being called on this room"
         );
 
@@ -428,7 +428,7 @@ impl Store {
                 )),
             }),
         });
-        active_call.joined = true;
+        active_call.connection_id = Some(connection_id);
 
         Ok((room, recipient_connection_ids))
     }
@@ -440,25 +440,20 @@ impl Store {
             .ok_or_else(|| anyhow!("no such connection"))?;
         let user_id = connection.user_id;
 
-        let mut connected_user = self
+        let connected_user = self
             .connected_users
-            .get_mut(&user_id)
+            .get(&user_id)
             .ok_or_else(|| anyhow!("no such connection"))?;
         anyhow::ensure!(
             connected_user
                 .active_call
-                .map_or(false, |call| call.room_id == room_id && call.joined),
+                .map_or(false, |call| call.room_id == room_id
+                    && call.connection_id == Some(connection_id)),
             "cannot leave a room before joining it"
         );
 
-        let room = self
-            .rooms
-            .get_mut(&room_id)
-            .ok_or_else(|| anyhow!("no such room"))?;
-        room.participants
-            .retain(|participant| participant.peer_id != connection_id.0);
-        connected_user.active_call = None;
-
+        // Given that users can only join one room at a time, we can safely unshare
+        // and leave all projects associated with the connection.
         let mut unshared_projects = Vec::new();
         let mut left_projects = Vec::new();
         for project_id in connection.projects.clone() {
@@ -468,8 +463,15 @@ impl Store {
                 left_projects.push(project);
             }
         }
+        self.connected_users.get_mut(&user_id).unwrap().active_call = None;
 
-        let room = self.rooms.get(&room_id).unwrap();
+        let room = self
+            .rooms
+            .get_mut(&room_id)
+            .ok_or_else(|| anyhow!("no such room"))?;
+        room.participants
+            .retain(|participant| participant.peer_id != connection_id.0);
+
         Ok(LeftRoom {
             room,
             unshared_projects,
@@ -521,7 +523,7 @@ impl Store {
         recipient.active_call = Some(Call {
             caller_user_id,
             room_id,
-            joined: false,
+            connection_id: None,
         });
 
         Ok((
@@ -546,7 +548,8 @@ impl Store {
             .ok_or_else(|| anyhow!("no such connection"))?;
         anyhow::ensure!(recipient
             .active_call
-            .map_or(false, |call| call.room_id == room_id && !call.joined));
+            .map_or(false, |call| call.room_id == room_id
+                && call.connection_id.is_none()));
         recipient.active_call = None;
         let room = self
             .rooms
@@ -754,10 +757,22 @@ impl Store {
             .connections
             .get_mut(&requester_connection_id)
             .ok_or_else(|| anyhow!("no such connection"))?;
+        let user = self
+            .connected_users
+            .get(&connection.user_id)
+            .ok_or_else(|| anyhow!("no such connection"))?;
+        let active_call = user.active_call.ok_or_else(|| anyhow!("no such project"))?;
+        anyhow::ensure!(
+            active_call.connection_id == Some(requester_connection_id),
+            "no such project"
+        );
+
         let project = self
             .projects
             .get_mut(&project_id)
             .ok_or_else(|| anyhow!("no such project"))?;
+        anyhow::ensure!(project.room_id == active_call.room_id, "no such project");
+
         connection.projects.insert(project_id);
         let mut replica_id = 1;
         while project.active_replica_ids.contains(&replica_id) {

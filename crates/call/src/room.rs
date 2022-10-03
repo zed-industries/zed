@@ -24,6 +24,10 @@ pub struct Room {
 
 impl Entity for Room {
     type Event = Event;
+
+    fn release(&mut self, _: &mut MutableAppContext) {
+        self.client.send(proto::LeaveRoom { id: self.id }).log_err();
+    }
 }
 
 impl Room {
@@ -97,6 +101,14 @@ impl Room {
         self.remote_participants.clear();
         self.client.send(proto::LeaveRoom { id: self.id })?;
         Ok(())
+    }
+
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    pub fn status(&self) -> RoomStatus {
+        self.status
     }
 
     pub fn remote_participants(&self) -> &HashMap<PeerId, RemoteParticipant> {
@@ -183,7 +195,7 @@ pub enum RoomStatus {
 }
 
 impl RoomStatus {
-    fn is_offline(&self) -> bool {
+    pub fn is_offline(&self) -> bool {
         matches!(self, RoomStatus::Offline)
     }
 }

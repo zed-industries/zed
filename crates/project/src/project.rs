@@ -4435,8 +4435,14 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        this.update(&mut cx, |this, cx| this.disconnected_from_host(cx));
-        Ok(())
+        this.update(&mut cx, |this, cx| {
+            if this.is_local() {
+                this.unshare(cx)?;
+            } else {
+                this.disconnected_from_host(cx);
+            }
+            Ok(())
+        })
     }
 
     async fn handle_add_collaborator(
