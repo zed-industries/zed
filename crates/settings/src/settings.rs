@@ -32,6 +32,7 @@ pub struct Settings {
     pub default_dock_anchor: DockAnchor,
     pub editor_defaults: EditorSettings,
     pub editor_overrides: EditorSettings,
+    pub git: GitSettings,
     pub terminal_defaults: TerminalSettings,
     pub terminal_overrides: TerminalSettings,
     pub language_defaults: HashMap<Arc<str>, EditorSettings>,
@@ -52,20 +53,13 @@ impl FeatureFlags {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
-pub struct EditorSettings {
-    pub tab_size: Option<NonZeroU32>,
-    pub hard_tabs: Option<bool>,
-    pub soft_wrap: Option<SoftWrap>,
-    pub preferred_line_length: Option<u32>,
-    pub format_on_save: Option<FormatOnSave>,
-    pub formatter: Option<Formatter>,
-    pub enable_language_server: Option<bool>,
-    pub git_gutter: Option<GitGutterConfig>,
+#[derive(Copy, Clone, Debug, Default, Deserialize, JsonSchema)]
+pub struct GitSettings {
+    pub git_gutter: Option<GitGutterSettings>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
-pub struct GitGutterConfig {
+pub struct GitGutterSettings {
     pub files_included: GitFilesIncluded,
     pub debounce_delay_millis: Option<u64>,
 }
@@ -77,6 +71,17 @@ pub enum GitFilesIncluded {
     All,
     OnlyTracked,
     None,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
+pub struct EditorSettings {
+    pub tab_size: Option<NonZeroU32>,
+    pub hard_tabs: Option<bool>,
+    pub soft_wrap: Option<SoftWrap>,
+    pub preferred_line_length: Option<u32>,
+    pub format_on_save: Option<FormatOnSave>,
+    pub formatter: Option<Formatter>,
+    pub enable_language_server: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -212,6 +217,8 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub terminal: TerminalSettings,
     #[serde(default)]
+    pub git: Option<GitSettings>,
+    #[serde(default)]
     #[serde(alias = "language_overrides")]
     pub languages: HashMap<Arc<str>, EditorSettings>,
     #[serde(default)]
@@ -266,9 +273,9 @@ impl Settings {
                 format_on_save: required(defaults.editor.format_on_save),
                 formatter: required(defaults.editor.formatter),
                 enable_language_server: required(defaults.editor.enable_language_server),
-                git_gutter: defaults.editor.git_gutter,
             },
             editor_overrides: Default::default(),
+            git: defaults.git.unwrap(),
             terminal_defaults: Default::default(),
             terminal_overrides: Default::default(),
             language_defaults: defaults.languages,
@@ -395,11 +402,11 @@ impl Settings {
                 format_on_save: Some(FormatOnSave::On),
                 formatter: Some(Formatter::LanguageServer),
                 enable_language_server: Some(true),
-                git_gutter: Default::default(),
             },
             editor_overrides: Default::default(),
             terminal_defaults: Default::default(),
             terminal_overrides: Default::default(),
+            git: Default::default(),
             language_defaults: Default::default(),
             language_overrides: Default::default(),
             lsp: Default::default(),

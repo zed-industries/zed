@@ -665,9 +665,9 @@ impl LocalWorktree {
 
         let files_included = cx
             .global::<Settings>()
-            .editor_overrides
+            .git
             .git_gutter
-            .unwrap_or_default()
+            .expect("This should be Some by setting setup")
             .files_included;
 
         cx.spawn(|this, mut cx| async move {

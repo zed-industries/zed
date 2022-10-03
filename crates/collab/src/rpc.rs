@@ -1744,7 +1744,7 @@ impl Server {
         Ok(())
     }
 
-  async fn get_private_user_info(
+    async fn get_private_user_info(
         self: Arc<Self>,
         request: TypedEnvelope<proto::GetPrivateUserInfo>,
         response: Response<proto::GetPrivateUserInfo>,

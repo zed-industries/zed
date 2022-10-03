@@ -736,9 +736,9 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
 
                                 let debounce_delay = cx
                                     .global::<Settings>()
-                                    .editor_overrides
+                                    .git
                                     .git_gutter
-                                    .unwrap_or_default()
+                                    .expect("This should be Some by setting setup")
                                     .debounce_delay_millis;
                                 let item = item.clone();
 
