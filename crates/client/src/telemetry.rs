@@ -53,12 +53,6 @@ lazy_static! {
 struct AmplitudeEventBatch {
     api_key: &'static str,
     events: Vec<AmplitudeEvent>,
-    options: AmplitudeEventBatchOptions,
-}
-
-#[derive(Serialize)]
-struct AmplitudeEventBatchOptions {
-    min_id_length: usize,
 }
 
 #[derive(Serialize)]
@@ -273,11 +267,7 @@ impl Telemetry {
                             }
                         }
 
-                        let batch = AmplitudeEventBatch {
-                            api_key,
-                            events,
-                            options: AmplitudeEventBatchOptions { min_id_length: 1 },
-                        };
+                        let batch = AmplitudeEventBatch { api_key, events };
                         json_bytes.clear();
                         serde_json::to_writer(&mut json_bytes, &batch)?;
                         let request =
