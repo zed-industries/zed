@@ -19,8 +19,8 @@ export default function commandPalette(colorScheme: ColorScheme) {
         left: 2,
       },
       active: {
-        text: text(layer, "mono", "active", { size: "xs" }),
-        background: background(layer, "on", "active"),
+        text: text(layer, "mono", { size: "xs" }),
+        background: background(layer),
       },
     },
   };

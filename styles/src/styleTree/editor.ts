@@ -30,7 +30,7 @@ export default function editor(colorScheme: ColorScheme) {
       header: {
         border: border(layer, {
           top: true,
-        }),
+        })
       },
       message: {
         text: text(layer, "sans", styleSet, { size: "sm" }),

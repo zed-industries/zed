@@ -637,7 +637,7 @@ function topLayer(ramps: RampSet, isLight: boolean): Layer {
       default: 0.9,
       hovered: 0.9,
       pressed: 0.9,
-      active: 0.9,
+      active: 0.5,
       disabled: 0.2,
     },
   });

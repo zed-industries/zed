@@ -21,10 +21,11 @@ export default function picker(colorScheme: ColorScheme) {
       },
       cornerRadius: 8,
       text: text(layer, "sans"),
-      highlightText: text(layer, "sans", "info", "active", { weight: "bold" }),
+      highlightText: text(layer, "sans", "info", { weight: "bold" }),
       active: {
         background: background(layer, "active"),
         text: text(layer, "sans", "active"),
+        highlightText: text(layer, "sans", "info", "active", { weight: "bold" }),
       },
       hover: {
         background: background(layer, "hovered"),
