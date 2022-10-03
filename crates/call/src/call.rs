@@ -1,5 +1,5 @@
 mod participant;
-mod room;
+pub mod room;
 
 use anyhow::{anyhow, Result};
 use client::{incoming_call::IncomingCall, Client, UserStore};

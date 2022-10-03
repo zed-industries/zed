@@ -1,14 +1,15 @@
 use crate::participant::{ParticipantLocation, RemoteParticipant};
 use anyhow::{anyhow, Result};
 use client::{incoming_call::IncomingCall, proto, Client, PeerId, TypedEnvelope, User, UserStore};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::StreamExt;
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use std::sync::Arc;
 use util::ResultExt;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
-    PeerChangedActiveProject,
+    RemoteProjectShared { owner: Arc<User>, project_id: u64 },
 }
 
 pub struct Room {
@@ -158,19 +159,46 @@ impl Room {
 
             this.update(&mut cx, |this, cx| {
                 if let Some(participants) = participants.log_err() {
-                    // TODO: compute diff instead of clearing participants
-                    this.remote_participants.clear();
+                    let mut seen_participants = HashSet::default();
+
                     for (participant, user) in room.participants.into_iter().zip(participants) {
+                        let peer_id = PeerId(participant.peer_id);
+                        seen_participants.insert(peer_id);
+
+                        let existing_project_ids = this
+                            .remote_participants
+                            .get(&peer_id)
+                            .map(|existing| existing.project_ids.clone())
+                            .unwrap_or_default();
+                        for project_id in &participant.project_ids {
+                            if !existing_project_ids.contains(project_id) {
+                                cx.emit(Event::RemoteProjectShared {
+                                    owner: user.clone(),
+                                    project_id: *project_id,
+                                });
+                            }
+                        }
+
                         this.remote_participants.insert(
-                            PeerId(participant.peer_id),
+                            peer_id,
                             RemoteParticipant {
-                                user,
+                                user: user.clone(),
                                 project_ids: participant.project_ids,
                                 location: ParticipantLocation::from_proto(participant.location)
                                     .unwrap_or(ParticipantLocation::External),
                             },
                         );
                     }
+
+                    for participant_peer_id in
+                        this.remote_participants.keys().copied().collect::<Vec<_>>()
+                    {
+                        if !seen_participants.contains(&participant_peer_id) {
+                            this.remote_participants.remove(&participant_peer_id);
+                        }
+                    }
+
+                    cx.notify();
                 }
 
                 if let Some(pending_users) = pending_users.log_err() {

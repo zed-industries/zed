@@ -9,7 +9,7 @@ use rpc::proto::{RequestMessage, UsersResponse};
 use std::sync::{Arc, Weak};
 use util::TryFutureExt as _;
 
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct User {
     pub id: u64,
     pub github_login: String,
