@@ -206,11 +206,8 @@ impl Server {
             .add_message_handler(Server::unfollow)
             .add_message_handler(Server::update_followers)
             .add_request_handler(Server::get_channel_messages)
-<<<<<<< HEAD
-            .add_message_handler(Server::update_head_text);
-=======
+            .add_message_handler(Server::update_head_text)
             .add_request_handler(Server::get_private_user_info);
->>>>>>> 5d09083a (Identify users in amplitude via a separate 'metrics_id' UUID)
 
         Arc::new(server)
     }
