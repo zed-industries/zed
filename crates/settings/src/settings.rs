@@ -55,11 +55,11 @@ impl FeatureFlags {
 
 #[derive(Copy, Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct GitSettings {
-    pub git_gutter: Option<GitGutterSettings>,
+    pub git_gutter: Option<GitGutter>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
-pub struct GitGutterSettings {
+pub struct GitGutter {
     pub files_included: GitFilesIncluded,
     pub debounce_delay_millis: Option<u64>,
 }
@@ -406,7 +406,12 @@ impl Settings {
             editor_overrides: Default::default(),
             terminal_defaults: Default::default(),
             terminal_overrides: Default::default(),
-            git: Default::default(),
+            git: GitSettings {
+                git_gutter: Some(GitGutter {
+                    files_included: GitFilesIncluded::All,
+                    debounce_delay_millis: None,
+                }),
+            },
             language_defaults: Default::default(),
             language_overrides: Default::default(),
             lsp: Default::default(),

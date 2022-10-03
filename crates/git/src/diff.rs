@@ -111,11 +111,11 @@ impl BufferDiff {
         }
     }
 
-    pub async fn update(&mut self, head_text: &str, buffer: &text::BufferSnapshot) {
+    pub async fn update(&mut self, diff_base: &str, buffer: &text::BufferSnapshot) {
         let mut tree = SumTree::new();
 
         let buffer_text = buffer.as_rope().to_string();
-        let patch = Self::diff(&head_text, &buffer_text);
+        let patch = Self::diff(&diff_base, &buffer_text);
 
         if let Some(patch) = patch {
             let mut divergence = 0;
@@ -228,7 +228,7 @@ impl BufferDiff {
 pub fn assert_hunks<Iter>(
     diff_hunks: Iter,
     buffer: &BufferSnapshot,
-    head_text: &str,
+    diff_base: &str,
     expected_hunks: &[(Range<u32>, &str, &str)],
 ) where
     Iter: Iterator<Item = DiffHunk<u32>>,
@@ -237,7 +237,7 @@ pub fn assert_hunks<Iter>(
         .map(|hunk| {
             (
                 hunk.buffer_range.clone(),
-                &head_text[hunk.head_byte_range],
+                &diff_base[hunk.head_byte_range],
                 buffer
                     .text_for_range(
                         Point::new(hunk.buffer_range.start, 0)
@@ -264,7 +264,7 @@ mod tests {
 
     #[test]
     fn test_buffer_diff_simple() {
-        let head_text = "
+        let diff_base = "
             one
             two
             three
@@ -280,27 +280,27 @@ mod tests {
 
         let mut buffer = Buffer::new(0, 0, buffer_text);
         let mut diff = BufferDiff::new();
-        smol::block_on(diff.update(&head_text, &buffer));
+        smol::block_on(diff.update(&diff_base, &buffer));
         assert_hunks(
             diff.hunks(&buffer),
             &buffer,
-            &head_text,
+            &diff_base,
             &[(1..2, "two\n", "HELLO\n")],
         );
 
         buffer.edit([(0..0, "point five\n")]);
-        smol::block_on(diff.update(&head_text, &buffer));
+        smol::block_on(diff.update(&diff_base, &buffer));
         assert_hunks(
             diff.hunks(&buffer),
             &buffer,
-            &head_text,
+            &diff_base,
             &[(0..1, "", "point five\n"), (2..3, "two\n", "HELLO\n")],
         );
     }
 
     #[test]
     fn test_buffer_diff_range() {
-        let head_text = "
+        let diff_base = "
             one
             two
             three
@@ -337,13 +337,13 @@ mod tests {
 
         let buffer = Buffer::new(0, 0, buffer_text);
         let mut diff = BufferDiff::new();
-        smol::block_on(diff.update(&head_text, &buffer));
+        smol::block_on(diff.update(&diff_base, &buffer));
         assert_eq!(diff.hunks(&buffer).count(), 8);
 
         assert_hunks(
             diff.hunks_in_range(7..12, &buffer),
             &buffer,
-            &head_text,
+            &diff_base,
             &[
                 (6..7, "", "HELLO\n"),
                 (9..10, "six\n", "SIXTEEN\n"),

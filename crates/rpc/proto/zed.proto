@@ -110,7 +110,7 @@ message Envelope {
         Unfollow unfollow = 95;
         GetPrivateUserInfo get_private_user_info = 96;
         GetPrivateUserInfoResponse get_private_user_info_response = 97;
-        UpdateHeadText update_head_text = 98;
+        UpdateDiffBase update_diff_base = 98;
     }
 }
 
@@ -830,7 +830,7 @@ message BufferState {
     uint64 id = 1;
     optional File file = 2;
     string base_text = 3;
-    optional string head_text = 4;
+    optional string diff_base = 4;
     LineEnding line_ending = 5;
 }
 
@@ -1002,8 +1002,8 @@ message WorktreeMetadata {
     bool visible = 3;
 }
 
-message UpdateHeadText {
+message UpdateDiffBase {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
-    optional string head_text = 3;
+    optional string diff_base = 3;
 }

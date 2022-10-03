@@ -206,7 +206,7 @@ impl Server {
             .add_message_handler(Server::unfollow)
             .add_message_handler(Server::update_followers)
             .add_request_handler(Server::get_channel_messages)
-            .add_message_handler(Server::update_head_text)
+            .add_message_handler(Server::update_diff_base)
             .add_request_handler(Server::get_private_user_info);
 
         Arc::new(server)
@@ -1729,9 +1729,9 @@ impl Server {
         Ok(())
     }
 
-    async fn update_head_text(
+    async fn update_diff_base(
         self: Arc<Server>,
-        request: TypedEnvelope<proto::UpdateHeadText>,
+        request: TypedEnvelope<proto::UpdateDiffBase>,
     ) -> Result<()> {
         let receiver_ids = self.store().await.project_connection_ids(
             ProjectId::from_proto(request.payload.project_id),

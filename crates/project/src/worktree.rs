@@ -481,11 +481,11 @@ impl LocalWorktree {
     ) -> Task<Result<ModelHandle<Buffer>>> {
         let path = Arc::from(path);
         cx.spawn(move |this, mut cx| async move {
-            let (file, contents, head_text) = this
+            let (file, contents, diff_base) = this
                 .update(&mut cx, |t, cx| t.as_local().unwrap().load(&path, cx))
                 .await?;
             Ok(cx.add_model(|cx| {
-                let mut buffer = Buffer::from_file(0, contents, head_text, Arc::new(file), cx);
+                let mut buffer = Buffer::from_file(0, contents, diff_base, Arc::new(file), cx);
                 buffer.git_diff_recalc(cx);
                 buffer
             }))
@@ -673,13 +673,13 @@ impl LocalWorktree {
         cx.spawn(|this, mut cx| async move {
             let text = fs.load(&abs_path).await?;
 
-            let head_text = match files_included {
+            let diff_base = match files_included {
                 settings::GitFilesIncluded::All | settings::GitFilesIncluded::OnlyTracked => {
                     let results = if let Some(repo) = snapshot.repo_for(&abs_path) {
                         cx.background()
                             .spawn({
                                 let path = path.clone();
-                                async move { repo.repo.lock().load_head_text(&path) }
+                                async move { repo.repo.lock().load_index(&path) }
                             })
                             .await
                     } else {
@@ -714,7 +714,7 @@ impl LocalWorktree {
                     is_local: true,
                 },
                 text,
-                head_text,
+                diff_base,
             ))
         })
     }

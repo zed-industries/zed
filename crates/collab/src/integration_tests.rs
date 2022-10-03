@@ -948,7 +948,7 @@ async fn test_propagate_saves_and_fs_changes(
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_git_head_text(
+async fn test_git_diff_base_change(
     executor: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
@@ -977,13 +977,13 @@ async fn test_git_head_text(
         )
         .await;
 
-    let head_text = "
+    let diff_base = "
         one
         three
     "
     .unindent();
 
-    let new_head_text = "
+    let new_diff_base = "
         one
         two
     "
@@ -992,9 +992,9 @@ async fn test_git_head_text(
     client_a
         .fs
         .as_fake()
-        .set_head_state_for_git_repository(
+        .set_index_for_repo(
             Path::new("/dir/.git"),
-            &[(Path::new("a.txt"), head_text.clone())],
+            &[(Path::new("a.txt"), diff_base.clone())],
         )
         .await;
 
@@ -1012,11 +1012,11 @@ async fn test_git_head_text(
 
     // Smoke test diffing
     buffer_a.read_with(cx_a, |buffer, _| {
-        assert_eq!(buffer.head_text(), Some(head_text.as_ref()));
+        assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_range(0..4),
             &buffer,
-            &head_text,
+            &diff_base,
             &[(1..2, "", "two\n")],
         );
     });
@@ -1032,11 +1032,11 @@ async fn test_git_head_text(
 
     // Smoke test diffing
     buffer_b.read_with(cx_b, |buffer, _| {
-        assert_eq!(buffer.head_text(), Some(head_text.as_ref()));
+        assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_range(0..4),
             &buffer,
-            &head_text,
+            &diff_base,
             &[(1..2, "", "two\n")],
         );
     });
@@ -1044,9 +1044,9 @@ async fn test_git_head_text(
     client_a
         .fs
         .as_fake()
-        .set_head_state_for_git_repository(
+        .set_index_for_repo(
             Path::new("/dir/.git"),
-            &[(Path::new("a.txt"), new_head_text.clone())],
+            &[(Path::new("a.txt"), new_diff_base.clone())],
         )
         .await;
 
@@ -1055,23 +1055,23 @@ async fn test_git_head_text(
 
     // Smoke test new diffing
     buffer_a.read_with(cx_a, |buffer, _| {
-        assert_eq!(buffer.head_text(), Some(new_head_text.as_ref()));
+        assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
 
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_range(0..4),
             &buffer,
-            &head_text,
+            &diff_base,
             &[(2..3, "", "three\n")],
         );
     });
 
     // Smoke test B
     buffer_b.read_with(cx_b, |buffer, _| {
-        assert_eq!(buffer.head_text(), Some(new_head_text.as_ref()));
+        assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_range(0..4),
             &buffer,
-            &head_text,
+            &diff_base,
             &[(2..3, "", "three\n")],
         );
     });

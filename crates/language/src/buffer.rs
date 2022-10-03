@@ -53,7 +53,7 @@ struct GitDiffStatus {
 
 pub struct Buffer {
     text: TextBuffer,
-    head_text: Option<String>,
+    diff_base: Option<String>,
     git_diff_status: GitDiffStatus,
     file: Option<Arc<dyn File>>,
     saved_version: clock::Global,
@@ -346,13 +346,13 @@ impl Buffer {
     pub fn from_file<T: Into<String>>(
         replica_id: ReplicaId,
         base_text: T,
-        head_text: Option<T>,
+        diff_base: Option<T>,
         file: Arc<dyn File>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         Self::build(
             TextBuffer::new(replica_id, cx.model_id() as u64, base_text.into()),
-            head_text.map(|h| h.into().into_boxed_str().into()),
+            diff_base.map(|h| h.into().into_boxed_str().into()),
             Some(file),
         )
     }
@@ -365,7 +365,7 @@ impl Buffer {
         let buffer = TextBuffer::new(replica_id, message.id, message.base_text);
         let mut this = Self::build(
             buffer,
-            message.head_text.map(|text| text.into_boxed_str().into()),
+            message.diff_base.map(|text| text.into_boxed_str().into()),
             file,
         );
         this.text.set_line_ending(proto::deserialize_line_ending(
@@ -380,7 +380,7 @@ impl Buffer {
             id: self.remote_id(),
             file: self.file.as_ref().map(|f| f.to_proto()),
             base_text: self.base_text().to_string(),
-            head_text: self.head_text.as_ref().map(|h| h.to_string()),
+            diff_base: self.diff_base.as_ref().map(|h| h.to_string()),
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
         }
     }
@@ -423,7 +423,7 @@ impl Buffer {
         self
     }
 
-    fn build(buffer: TextBuffer, head_text: Option<String>, file: Option<Arc<dyn File>>) -> Self {
+    fn build(buffer: TextBuffer, diff_base: Option<String>, file: Option<Arc<dyn File>>) -> Self {
         let saved_mtime = if let Some(file) = file.as_ref() {
             file.mtime()
         } else {
@@ -437,7 +437,7 @@ impl Buffer {
             transaction_depth: 0,
             was_dirty_before_starting_transaction: None,
             text: buffer,
-            head_text,
+            diff_base,
             git_diff_status: GitDiffStatus {
                 diff: git::diff::BufferDiff::new(),
                 update_in_progress: false,
@@ -663,12 +663,12 @@ impl Buffer {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn head_text(&self) -> Option<&str> {
-        self.head_text.as_deref()
+    pub fn diff_base(&self) -> Option<&str> {
+        self.diff_base.as_deref()
     }
 
-    pub fn update_head_text(&mut self, head_text: Option<String>, cx: &mut ModelContext<Self>) {
-        self.head_text = head_text;
+    pub fn update_diff_base(&mut self, diff_base: Option<String>, cx: &mut ModelContext<Self>) {
+        self.diff_base = diff_base;
         self.git_diff_recalc(cx);
     }
 
@@ -682,13 +682,13 @@ impl Buffer {
             return;
         }
 
-        if let Some(head_text) = &self.head_text {
+        if let Some(diff_base) = &self.diff_base {
             let snapshot = self.snapshot();
-            let head_text = head_text.clone();
+            let diff_base = diff_base.clone();
 
             let mut diff = self.git_diff_status.diff.clone();
             let diff = cx.background().spawn(async move {
-                diff.update(&head_text, &snapshot).await;
+                diff.update(&diff_base, &snapshot).await;
                 diff
             });
 

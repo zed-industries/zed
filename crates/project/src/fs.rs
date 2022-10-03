@@ -490,11 +490,7 @@ impl FakeFs {
         .boxed()
     }
 
-    pub async fn set_head_state_for_git_repository(
-        &self,
-        dot_git: &Path,
-        head_state: &[(&Path, String)],
-    ) {
+    pub async fn set_index_for_repo(&self, dot_git: &Path, head_state: &[(&Path, String)]) {
         let content_path = dot_git.parent().unwrap();
         let mut state = self.state.lock().await;
         let entry = state.read_path(dot_git).await.unwrap();

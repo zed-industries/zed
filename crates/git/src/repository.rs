@@ -10,12 +10,12 @@ pub use git2::Repository as LibGitRepository;
 
 #[async_trait::async_trait]
 pub trait GitRepository: Send {
-    fn load_head_text(&self, relative_file_path: &Path) -> Option<String>;
+    fn load_index(&self, relative_file_path: &Path) -> Option<String>;
 }
 
 #[async_trait::async_trait]
 impl GitRepository for LibGitRepository {
-    fn load_head_text(&self, relative_file_path: &Path) -> Option<String> {
+    fn load_index(&self, relative_file_path: &Path) -> Option<String> {
         fn logic(repo: &LibGitRepository, relative_file_path: &Path) -> Result<Option<String>> {
             const STAGE_NORMAL: i32 = 0;
             let index = repo.index()?;
@@ -25,8 +25,7 @@ impl GitRepository for LibGitRepository {
             };
 
             let content = repo.find_blob(oid)?.content().to_owned();
-            let head_text = String::from_utf8(content)?;
-            Ok(Some(head_text))
+            Ok(Some(String::from_utf8(content)?))
         }
 
         match logic(&self, relative_file_path) {
@@ -55,7 +54,7 @@ impl FakeGitRepository {
 
 #[async_trait::async_trait]
 impl GitRepository for FakeGitRepository {
-    fn load_head_text(&self, path: &Path) -> Option<String> {
+    fn load_index(&self, path: &Path) -> Option<String> {
         let state = self.state.lock();
         state.index_contents.get(path).cloned()
     }

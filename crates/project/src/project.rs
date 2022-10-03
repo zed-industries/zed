@@ -424,7 +424,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_open_buffer_by_id);
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
         client.add_model_request_handler(Self::handle_save_buffer);
-        client.add_model_message_handler(Self::handle_update_head_text);
+        client.add_model_message_handler(Self::handle_update_diff_base);
     }
 
     pub fn local(
@@ -4675,22 +4675,22 @@ impl Project {
                 let client = self.client.clone();
 
                 cx.spawn(|_, mut cx| async move {
-                    let head_text = cx
+                    let diff_base = cx
                         .background()
-                        .spawn(async move { repo.repo.lock().load_head_text(&path) })
+                        .spawn(async move { repo.repo.lock().load_index(&path) })
                         .await;
 
                     let buffer_id = buffer.update(&mut cx, |buffer, cx| {
-                        buffer.update_head_text(head_text.clone(), cx);
+                        buffer.update_diff_base(diff_base.clone(), cx);
                         buffer.remote_id()
                     });
 
                     if let Some(project_id) = shared_remote_id {
                         client
-                            .send(proto::UpdateHeadText {
+                            .send(proto::UpdateDiffBase {
                                 project_id,
                                 buffer_id: buffer_id as u64,
-                                head_text,
+                                diff_base,
                             })
                             .log_err();
                     }
@@ -5272,22 +5272,22 @@ impl Project {
         })
     }
 
-    async fn handle_update_head_text(
+    async fn handle_update_diff_base(
         this: ModelHandle<Self>,
-        envelope: TypedEnvelope<proto::UpdateHeadText>,
+        envelope: TypedEnvelope<proto::UpdateDiffBase>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             let buffer_id = envelope.payload.buffer_id;
-            let head_text = envelope.payload.head_text;
+            let diff_base = envelope.payload.diff_base;
             let buffer = this
                 .opened_buffers
                 .get_mut(&buffer_id)
                 .and_then(|b| b.upgrade(cx))
                 .ok_or_else(|| anyhow!("No such buffer {}", buffer_id))?;
 
-            buffer.update(cx, |buffer, cx| buffer.update_head_text(head_text, cx));
+            buffer.update(cx, |buffer, cx| buffer.update_diff_base(diff_base, cx));
 
             Ok(())
         })
