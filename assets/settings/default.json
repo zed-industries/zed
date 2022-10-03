@@ -78,11 +78,12 @@
     "git_gutter": {
         // Which files to show the git gutter on. This setting can take 
         // three values:
-        // 1. All files:
+        // 1. All files, files not tracked in git will be diffed against 
+        //    their contents when the file was last opened in Zed:
         //      "files_included": "all",
-        // 2. Only files tracked in git:
+        // 2. Only show for files tracked in git:
         //      "files_included": "only_tracked",
-        // 3. Disable git gutters:
+        // 3. Disable git gutters entirely:
         //      "files_included": "none",
         "files_included": "all"
     },
