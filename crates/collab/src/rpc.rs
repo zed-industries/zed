@@ -654,7 +654,20 @@ impl Server {
         request: TypedEnvelope<proto::Call>,
         response: Response<proto::Call>,
     ) -> Result<()> {
+        let caller_user_id = self
+            .store()
+            .await
+            .user_id_for_connection(request.sender_id)?;
         let recipient_user_id = UserId::from_proto(request.payload.recipient_user_id);
+        if !self
+            .app_state
+            .db
+            .has_contact(caller_user_id, recipient_user_id)
+            .await?
+        {
+            return Err(anyhow!("cannot call a user who isn't a contact"))?;
+        }
+
         let room_id = request.payload.room_id;
         let mut calls = {
             let mut store = self.store().await;
