@@ -271,7 +271,7 @@ pub struct FakeLspAdapter {
     pub disk_based_diagnostics_sources: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct BracketPair {
     pub start: String,
     pub end: String,

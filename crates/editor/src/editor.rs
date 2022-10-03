@@ -6001,6 +6001,10 @@ impl Editor {
 }
 
 impl EditorSnapshot {
+    pub fn language_at<T: ToOffset>(&self, position: T) -> Option<&Arc<Language>> {
+        self.display_snapshot.buffer_snapshot.language_at(position)
+    }
+
     pub fn is_focused(&self) -> bool {
         self.is_focused
     }
@@ -9788,13 +9792,24 @@ mod tests {
             Language::new(
                 LanguageConfig {
                     name: "HTML".into(),
-                    brackets: vec![BracketPair {
-                        start: "<".to_string(),
-                        end: ">".to_string(),
-                        close: true,
-                        newline: true,
-                    }],
-                    autoclose_before: "})]".to_string(),
+                    brackets: vec![
+                        BracketPair {
+                            start: "<".into(),
+                            end: ">".into(),
+                            ..Default::default()
+                        },
+                        BracketPair {
+                            start: "{".into(),
+                            end: "}".into(),
+                            ..Default::default()
+                        },
+                        BracketPair {
+                            start: "(".into(),
+                            end: ")".into(),
+                            ..Default::default()
+                        },
+                    ],
+                    autoclose_before: "})]>".into(),
                     ..Default::default()
                 },
                 Some(tree_sitter_html::language()),
@@ -9812,13 +9827,24 @@ mod tests {
         let javascript_language = Arc::new(Language::new(
             LanguageConfig {
                 name: "JavaScript".into(),
-                brackets: vec![BracketPair {
-                    start: "/*".to_string(),
-                    end: "*/".to_string(),
-                    close: true,
-                    newline: true,
-                }],
-                autoclose_before: "})]".to_string(),
+                brackets: vec![
+                    BracketPair {
+                        start: "/*".into(),
+                        end: " */".into(),
+                        ..Default::default()
+                    },
+                    BracketPair {
+                        start: "{".into(),
+                        end: "}".into(),
+                        ..Default::default()
+                    },
+                    BracketPair {
+                        start: "(".into(),
+                        end: ")".into(),
+                        ..Default::default()
+                    },
+                ],
+                autoclose_before: "})]>".into(),
                 ..Default::default()
             },
             Some(tree_sitter_javascript::language()),
@@ -9839,31 +9865,145 @@ mod tests {
                     <script>
                         var x = 1;ˇ
                     </script>
-                </body>
+                </body>ˇ
             "#
             .unindent(),
         );
 
-        let cursors = cx.update_editor(|editor, cx| editor.selections.ranges::<usize>(cx));
-        cx.update_buffer(|buffer, _| {
-            let snapshot = buffer.snapshot();
+        // Precondition: different languages are active at different locations.
+        cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            let cursors = editor.selections.ranges::<usize>(cx);
+            let languages = cursors
+                .iter()
+                .map(|c| snapshot.language_at(c.start).unwrap().name())
+                .collect::<Vec<_>>();
             assert_eq!(
-                snapshot
-                    .language_at(cursors[0].start)
-                    .unwrap()
-                    .name()
-                    .as_ref(),
-                "HTML"
-            );
-            assert_eq!(
-                snapshot
-                    .language_at(cursors[1].start)
-                    .unwrap()
-                    .name()
-                    .as_ref(),
-                "JavaScript"
+                languages,
+                &["HTML".into(), "JavaScript".into(), "HTML".into()]
             );
         });
+
+        // Angle brackets autoclose in HTML, but not JavaScript.
+        cx.update_editor(|editor, cx| {
+            editor.handle_input("<", cx);
+            editor.handle_input("a", cx);
+        });
+        cx.assert_editor_state(
+            &r#"
+                <body><aˇ>
+                    <script>
+                        var x = 1;<aˇ
+                    </script>
+                </body><aˇ>
+            "#
+            .unindent(),
+        );
+
+        // Curly braces and parens autoclose in both HTML and JavaScript.
+        cx.update_editor(|editor, cx| {
+            editor.handle_input(" b=", cx);
+            editor.handle_input("{", cx);
+            editor.handle_input("c", cx);
+            editor.handle_input("(", cx);
+        });
+        cx.assert_editor_state(
+            &r#"
+                <body><a b={c(ˇ)}>
+                    <script>
+                        var x = 1;<a b={c(ˇ)}
+                    </script>
+                </body><a b={c(ˇ)}>
+            "#
+            .unindent(),
+        );
+
+        // Brackets that were already autoclosed are skipped.
+        cx.update_editor(|editor, cx| {
+            editor.handle_input(")", cx);
+            editor.handle_input("d", cx);
+            editor.handle_input("}", cx);
+        });
+        cx.assert_editor_state(
+            &r#"
+                <body><a b={c()d}ˇ>
+                    <script>
+                        var x = 1;<a b={c()d}ˇ
+                    </script>
+                </body><a b={c()d}ˇ>
+            "#
+            .unindent(),
+        );
+        cx.update_editor(|editor, cx| {
+            editor.handle_input(">", cx);
+        });
+        cx.assert_editor_state(
+            &r#"
+                <body><a b={c()d}>ˇ
+                    <script>
+                        var x = 1;<a b={c()d}>ˇ
+                    </script>
+                </body><a b={c()d}>ˇ
+            "#
+            .unindent(),
+        );
+
+        // Reset
+        cx.set_state(
+            &r#"
+                <body>ˇ
+                    <script>
+                        var x = 1;ˇ
+                    </script>
+                </body>ˇ
+            "#
+            .unindent(),
+        );
+
+        cx.update_editor(|editor, cx| {
+            editor.handle_input("<", cx);
+        });
+        cx.assert_editor_state(
+            &r#"
+                <body><ˇ>
+                    <script>
+                        var x = 1;<ˇ
+                    </script>
+                </body><ˇ>
+            "#
+            .unindent(),
+        );
+
+        // When backspacing, the closing angle brackets are removed.
+        cx.update_editor(|editor, cx| {
+            editor.backspace(&Backspace, cx);
+        });
+        cx.assert_editor_state(
+            &r#"
+                <body>ˇ
+                    <script>
+                        var x = 1;ˇ
+                    </script>
+                </body>ˇ
+            "#
+            .unindent(),
+        );
+
+        // Block comments autoclose in JavaScript, but not HTML.
+        cx.update_editor(|editor, cx| {
+            editor.handle_input("/", cx);
+            editor.handle_input("*", cx);
+        });
+        cx.assert_editor_state(
+            &r#"
+                <body>/*ˇ
+                    <script>
+                        var x = 1;/*ˇ */
+                    </script>
+                </body>/*ˇ
+            "#
+            .unindent(),
+        );
     }
 
     #[gpui::test]
