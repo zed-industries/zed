@@ -673,28 +673,27 @@ impl LocalWorktree {
         cx.spawn(|this, mut cx| async move {
             let text = fs.load(&abs_path).await?;
 
-            let head_text = if matches!(
-                files_included,
-                settings::GitFilesIncluded::All | settings::GitFilesIncluded::OnlyTracked
-            ) {
-                let results = if let Some(repo) = snapshot.repo_for(&abs_path) {
-                    cx.background()
-                        .spawn({
-                            let path = path.clone();
-                            async move { repo.repo.lock().load_head_text(&path) }
-                        })
-                        .await
-                } else {
-                    None
-                };
+            let head_text = match files_included {
+                settings::GitFilesIncluded::All | settings::GitFilesIncluded::OnlyTracked => {
+                    let results = if let Some(repo) = snapshot.repo_for(&abs_path) {
+                        cx.background()
+                            .spawn({
+                                let path = path.clone();
+                                async move { repo.repo.lock().load_head_text(&path) }
+                            })
+                            .await
+                    } else {
+                        None
+                    };
 
-                if files_included == settings::GitFilesIncluded::All {
-                    results.or_else(|| Some(text.clone()))
-                } else {
-                    results
+                    if files_included == settings::GitFilesIncluded::All {
+                        results.or_else(|| Some(text.clone()))
+                    } else {
+                        results
+                    }
                 }
-            } else {
-                None
+
+                settings::GitFilesIncluded::None => None,
             };
 
             // Eagerly populate the snapshot with an updated entry for the loaded file
