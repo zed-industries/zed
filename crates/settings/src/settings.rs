@@ -33,6 +33,7 @@ pub struct Settings {
     pub editor_defaults: EditorSettings,
     pub editor_overrides: EditorSettings,
     pub git: GitSettings,
+    pub git_overrides: GitSettings,
     pub terminal_defaults: TerminalSettings,
     pub terminal_overrides: TerminalSettings,
     pub language_defaults: HashMap<Arc<str>, EditorSettings>,
@@ -60,8 +61,19 @@ pub struct GitSettings {
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
 pub struct GitGutter {
-    pub files_included: GitFilesIncluded,
+    pub files_included: Option<GitFilesIncluded>,
     pub debounce_delay_millis: Option<u64>,
+}
+
+impl GitGutter {
+    pub fn files_included(&self, settings: &Settings) -> GitFilesIncluded {
+        self.files_included.unwrap_or_else(|| {
+            settings
+                .git.git_gutter.expect("git_gutter must be some in defaults.json")
+                .files_included
+                .expect("Should be some in defaults.json")
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -276,6 +288,7 @@ impl Settings {
             },
             editor_overrides: Default::default(),
             git: defaults.git.unwrap(),
+            git_overrides: Default::default(),
             terminal_defaults: Default::default(),
             terminal_overrides: Default::default(),
             language_defaults: defaults.languages,
@@ -327,6 +340,7 @@ impl Settings {
         }
 
         self.editor_overrides = data.editor;
+        self.git_overrides = data.git.unwrap_or_default();
         self.terminal_defaults.font_size = data.terminal.font_size;
         self.terminal_overrides = data.terminal;
         self.language_overrides = data.languages;
@@ -382,6 +396,14 @@ impl Settings {
             .expect("missing default")
     }
 
+    pub fn git_gutter(&self) -> GitGutter {
+        self.git_overrides.git_gutter.unwrap_or_else(|| {
+            self.git
+                .git_gutter
+                .expect("git_gutter should be some by setting setup")
+        })
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &gpui::AppContext) -> Settings {
         Settings {
@@ -408,10 +430,11 @@ impl Settings {
             terminal_overrides: Default::default(),
             git: GitSettings {
                 git_gutter: Some(GitGutter {
-                    files_included: GitFilesIncluded::All,
+                    files_included: Some(GitFilesIncluded::All),
                     debounce_delay_millis: None,
                 }),
             },
+            git_overrides: Default::default(),
             language_defaults: Default::default(),
             language_overrides: Default::default(),
             lsp: Default::default(),

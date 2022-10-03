@@ -663,12 +663,8 @@ impl LocalWorktree {
         let fs = self.fs.clone();
         let snapshot = self.snapshot();
 
-        let files_included = cx
-            .global::<Settings>()
-            .git
-            .git_gutter
-            .expect("This should be Some by setting setup")
-            .files_included;
+        let settings = cx.global::<Settings>();
+        let files_included = settings.git_gutter().files_included(settings);
 
         cx.spawn(|this, mut cx| async move {
             let text = fs.load(&abs_path).await?;
