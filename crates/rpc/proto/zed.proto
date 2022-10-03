@@ -108,7 +108,9 @@ message Envelope {
         FollowResponse follow_response = 93;
         UpdateFollowers update_followers = 94;
         Unfollow unfollow = 95;
-        UpdateHeadText update_head_text = 96;
+        GetPrivateUserInfo get_private_user_info = 96;
+        GetPrivateUserInfoResponse get_private_user_info_response = 97;
+        UpdateHeadText update_head_text = 98;
     }
 }
 
@@ -747,6 +749,12 @@ message UpdateFollowers {
 message Unfollow {
     uint64 project_id = 1;
     uint32 leader_id = 2;
+}
+
+message GetPrivateUserInfo {}
+
+message GetPrivateUserInfoResponse {
+    string metrics_id = 1;
 }
 
 // Entities

@@ -29,7 +29,7 @@ pub struct Telemetry {
 
 #[derive(Default)]
 struct TelemetryState {
-    user_id: Option<Arc<str>>,
+    metrics_id: Option<Arc<str>>,
     device_id: Option<Arc<str>>,
     app_version: Option<Arc<str>>,
     os_version: Option<Arc<str>>,
@@ -115,7 +115,7 @@ impl Telemetry {
                 flush_task: Default::default(),
                 next_event_id: 0,
                 log_file: None,
-                user_id: None,
+                metrics_id: None,
             }),
         });
 
@@ -176,8 +176,8 @@ impl Telemetry {
             .detach();
     }
 
-    pub fn set_user_id(&self, user_id: Option<u64>) {
-        self.state.lock().user_id = user_id.map(|id| id.to_string().into());
+    pub fn set_metrics_id(&self, metrics_id: Option<String>) {
+        self.state.lock().metrics_id = metrics_id.map(|s| s.into());
     }
 
     pub fn report_event(self: &Arc<Self>, kind: &str, properties: Value) {
@@ -199,7 +199,7 @@ impl Telemetry {
                 None
             },
             user_properties: None,
-            user_id: state.user_id.clone(),
+            user_id: state.metrics_id.clone(),
             device_id: state.device_id.clone(),
             os_name: state.os_name,
             os_version: state.os_version.clone(),

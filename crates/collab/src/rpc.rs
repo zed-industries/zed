@@ -206,7 +206,11 @@ impl Server {
             .add_message_handler(Server::unfollow)
             .add_message_handler(Server::update_followers)
             .add_request_handler(Server::get_channel_messages)
+<<<<<<< HEAD
             .add_message_handler(Server::update_head_text);
+=======
+            .add_request_handler(Server::get_private_user_info);
+>>>>>>> 5d09083a (Identify users in amplitude via a separate 'metrics_id' UUID)
 
         Arc::new(server)
     }
@@ -1740,6 +1744,19 @@ impl Server {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
         });
+        Ok(())
+    }
+    async fn get_private_user_info(
+        self: Arc<Self>,
+        request: TypedEnvelope<proto::GetPrivateUserInfo>,
+        response: Response<proto::GetPrivateUserInfo>,
+    ) -> Result<()> {
+        let user_id = self
+            .store()
+            .await
+            .user_id_for_connection(request.sender_id)?;
+        let metrics_id = self.app_state.db.get_user_metrics_id(user_id).await?;
+        response.send(proto::GetPrivateUserInfoResponse { metrics_id })?;
         Ok(())
     }
 
