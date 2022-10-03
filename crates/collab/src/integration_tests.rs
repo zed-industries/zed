@@ -82,7 +82,7 @@ async fn test_basic_calls(
         .await
         .unwrap();
     assert_eq!(
-        room_participants(&room_a, &client_a, cx_a).await,
+        room_participants(&room_a, cx_a),
         RoomParticipants {
             remote: Default::default(),
             pending: Default::default()
@@ -100,7 +100,7 @@ async fn test_basic_calls(
 
     deterministic.run_until_parked();
     assert_eq!(
-        room_participants(&room_a, &client_a, cx_a).await,
+        room_participants(&room_a, cx_a),
         RoomParticipants {
             remote: Default::default(),
             pending: vec!["user_b".to_string()]
@@ -127,14 +127,14 @@ async fn test_basic_calls(
 
     deterministic.run_until_parked();
     assert_eq!(
-        room_participants(&room_a, &client_a, cx_a).await,
+        room_participants(&room_a, cx_a),
         RoomParticipants {
             remote: vec!["user_b".to_string()],
             pending: Default::default()
         }
     );
     assert_eq!(
-        room_participants(&room_b, &client_b, cx_b).await,
+        room_participants(&room_b, cx_b),
         RoomParticipants {
             remote: vec!["user_a".to_string()],
             pending: Default::default()
@@ -152,14 +152,14 @@ async fn test_basic_calls(
 
     deterministic.run_until_parked();
     assert_eq!(
-        room_participants(&room_a, &client_a, cx_a).await,
+        room_participants(&room_a, cx_a),
         RoomParticipants {
             remote: vec!["user_b".to_string()],
             pending: vec!["user_c".to_string()]
         }
     );
     assert_eq!(
-        room_participants(&room_b, &client_b, cx_b).await,
+        room_participants(&room_b, cx_b),
         RoomParticipants {
             remote: vec!["user_a".to_string()],
             pending: vec!["user_c".to_string()]
@@ -176,14 +176,14 @@ async fn test_basic_calls(
 
     deterministic.run_until_parked();
     assert_eq!(
-        room_participants(&room_a, &client_a, cx_a).await,
+        room_participants(&room_a, cx_a),
         RoomParticipants {
             remote: vec!["user_b".to_string()],
             pending: Default::default()
         }
     );
     assert_eq!(
-        room_participants(&room_b, &client_b, cx_b).await,
+        room_participants(&room_b, cx_b),
         RoomParticipants {
             remote: vec!["user_a".to_string()],
             pending: Default::default()
@@ -194,14 +194,14 @@ async fn test_basic_calls(
     room_a.update(cx_a, |room, cx| room.leave(cx)).unwrap();
     deterministic.run_until_parked();
     assert_eq!(
-        room_participants(&room_a, &client_a, cx_a).await,
+        room_participants(&room_a, cx_a),
         RoomParticipants {
             remote: Default::default(),
             pending: Default::default()
         }
     );
     assert_eq!(
-        room_participants(&room_b, &client_b, cx_b).await,
+        room_participants(&room_b, cx_b),
         RoomParticipants {
             remote: Default::default(),
             pending: Default::default()
@@ -245,14 +245,14 @@ async fn test_leaving_room_on_disconnection(
         .unwrap();
     deterministic.run_until_parked();
     assert_eq!(
-        room_participants(&room_a, &client_a, cx_a).await,
+        room_participants(&room_a, cx_a),
         RoomParticipants {
             remote: vec!["user_b".to_string()],
             pending: Default::default()
         }
     );
     assert_eq!(
-        room_participants(&room_b, &client_b, cx_b).await,
+        room_participants(&room_b, cx_b),
         RoomParticipants {
             remote: vec!["user_a".to_string()],
             pending: Default::default()
@@ -262,14 +262,14 @@ async fn test_leaving_room_on_disconnection(
     server.disconnect_client(client_a.current_user_id(cx_a));
     cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
     assert_eq!(
-        room_participants(&room_a, &client_a, cx_a).await,
+        room_participants(&room_a, cx_a),
         RoomParticipants {
             remote: Default::default(),
             pending: Default::default()
         }
     );
     assert_eq!(
-        room_participants(&room_b, &client_b, cx_b).await,
+        room_participants(&room_b, cx_b),
         RoomParticipants {
             remote: Default::default(),
             pending: Default::default()
@@ -5822,34 +5822,17 @@ struct RoomParticipants {
     pending: Vec<String>,
 }
 
-async fn room_participants(
-    room: &ModelHandle<Room>,
-    client: &TestClient,
-    cx: &mut TestAppContext,
-) -> RoomParticipants {
-    let remote_users = room.update(cx, |room, cx| {
-        room.remote_participants()
-            .values()
-            .map(|participant| {
-                client
-                    .user_store
-                    .update(cx, |users, cx| users.get_user(participant.user_id, cx))
-            })
-            .collect::<Vec<_>>()
-    });
-    let remote_users = futures::future::try_join_all(remote_users).await.unwrap();
-    let pending_users = room.read_with(cx, |room, _| {
-        room.pending_users().iter().cloned().collect::<Vec<_>>()
-    });
-
-    RoomParticipants {
-        remote: remote_users
-            .into_iter()
+fn room_participants(room: &ModelHandle<Room>, cx: &mut TestAppContext) -> RoomParticipants {
+    room.read_with(cx, |room, _| RoomParticipants {
+        remote: room
+            .remote_participants()
+            .iter()
+            .map(|(_, participant)| participant.user.github_login.clone())
+            .collect(),
+        pending: room
+            .pending_users()
+            .iter()
             .map(|user| user.github_login.clone())
             .collect(),
-        pending: pending_users
-            .into_iter()
-            .map(|user| user.github_login.clone())
-            .collect(),
-    }
+    })
 }

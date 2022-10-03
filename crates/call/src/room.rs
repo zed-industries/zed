@@ -19,7 +19,7 @@ pub struct Room {
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     _subscriptions: Vec<client::Subscription>,
-    _load_pending_users: Option<Task<()>>,
+    _pending_room_update: Option<Task<()>>,
 }
 
 impl Entity for Room {
@@ -58,7 +58,7 @@ impl Room {
             remote_participants: Default::default(),
             pending_users: Default::default(),
             _subscriptions: vec![client.add_message_handler(cx.handle(), Self::handle_room_updated)],
-            _load_pending_users: None,
+            _pending_room_update: None,
             client,
             user_store,
         }
@@ -133,32 +133,51 @@ impl Room {
         Ok(())
     }
 
-    fn apply_room_update(&mut self, room: proto::Room, cx: &mut ModelContext<Self>) -> Result<()> {
-        // TODO: compute diff instead of clearing participants
-        self.remote_participants.clear();
-        for participant in room.participants {
-            if Some(participant.user_id) != self.client.user_id() {
-                self.remote_participants.insert(
-                    PeerId(participant.peer_id),
-                    RemoteParticipant {
-                        user_id: participant.user_id,
-                        projects: Default::default(), // TODO: populate projects
-                        location: ParticipantLocation::from_proto(participant.location)?,
-                    },
-                );
-            }
-        }
+    fn apply_room_update(
+        &mut self,
+        mut room: proto::Room,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        // Filter ourselves out from the room's participants.
+        room.participants
+            .retain(|participant| Some(participant.user_id) != self.client.user_id());
 
-        let pending_users = self.user_store.update(cx, move |user_store, cx| {
-            user_store.get_users(room.pending_user_ids, cx)
+        let participant_user_ids = room
+            .participants
+            .iter()
+            .map(|p| p.user_id)
+            .collect::<Vec<_>>();
+        let (participants, pending_users) = self.user_store.update(cx, move |user_store, cx| {
+            (
+                user_store.get_users(participant_user_ids, cx),
+                user_store.get_users(room.pending_user_ids, cx),
+            )
         });
-        self._load_pending_users = Some(cx.spawn(|this, mut cx| async move {
-            if let Some(pending_users) = pending_users.await.log_err() {
-                this.update(&mut cx, |this, cx| {
+        self._pending_room_update = Some(cx.spawn(|this, mut cx| async move {
+            let (participants, pending_users) = futures::join!(participants, pending_users);
+
+            this.update(&mut cx, |this, cx| {
+                if let Some(participants) = participants.log_err() {
+                    // TODO: compute diff instead of clearing participants
+                    this.remote_participants.clear();
+                    for (participant, user) in room.participants.into_iter().zip(participants) {
+                        this.remote_participants.insert(
+                            PeerId(participant.peer_id),
+                            RemoteParticipant {
+                                user,
+                                project_ids: participant.project_ids,
+                                location: ParticipantLocation::from_proto(participant.location)
+                                    .unwrap_or(ParticipantLocation::External),
+                            },
+                        );
+                    }
+                }
+
+                if let Some(pending_users) = pending_users.log_err() {
                     this.pending_users = pending_users;
                     cx.notify();
-                });
-            }
+                }
+            });
         }));
 
         cx.notify();

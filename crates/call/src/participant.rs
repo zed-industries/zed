@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Result};
-use client::proto;
-use gpui::ModelHandle;
-use project::Project;
+use client::{proto, User};
+use std::sync::Arc;
 
 pub enum ParticipantLocation {
     Project { project_id: u64 },
@@ -21,7 +20,7 @@ impl ParticipantLocation {
 }
 
 pub struct RemoteParticipant {
-    pub user_id: u64,
-    pub projects: Vec<ModelHandle<Project>>,
+    pub user: Arc<User>,
+    pub project_ids: Vec<u64>,
     pub location: ParticipantLocation,
 }
