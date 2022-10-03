@@ -1738,7 +1738,16 @@ impl Server {
             .await
             .user_id_for_connection(request.sender_id)?;
         let metrics_id = self.app_state.db.get_user_metrics_id(user_id).await?;
-        response.send(proto::GetPrivateUserInfoResponse { metrics_id })?;
+        let user = self
+            .app_state
+            .db
+            .get_user_by_id(user_id)
+            .await?
+            .ok_or_else(|| anyhow!("user not found"))?;
+        response.send(proto::GetPrivateUserInfoResponse {
+            metrics_id,
+            staff: user.admin,
+        })?;
         Ok(())
     }
 

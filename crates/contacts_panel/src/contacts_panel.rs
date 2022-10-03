@@ -1221,16 +1221,6 @@ mod tests {
         let project_store = cx.add_model(|_| ProjectStore::new(project::Db::open_fake()));
         let server = FakeServer::for_client(current_user_id, &client, cx).await;
 
-        let request = server.receive::<proto::GetPrivateUserInfo>().await.unwrap();
-        server
-            .respond(
-                request.receipt(),
-                proto::GetPrivateUserInfoResponse {
-                    metrics_id: "the-metrics-id".into(),
-                },
-            )
-            .await;
-
         let fs = FakeFs::new(cx.background());
         fs.insert_tree("/private_dir", json!({ "one.rs": "" }))
             .await;

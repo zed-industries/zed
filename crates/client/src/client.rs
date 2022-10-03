@@ -351,7 +351,7 @@ impl Client {
                 }));
             }
             Status::SignedOut | Status::UpgradeRequired => {
-                self.telemetry.set_metrics_id(None);
+                self.telemetry.set_authenticated_user_info(None, false);
                 state._reconnect_task.take();
             }
             _ => {}
