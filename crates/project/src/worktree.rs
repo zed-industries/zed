@@ -1561,7 +1561,7 @@ impl LocalSnapshot {
 
         if parent_path.file_name() == Some(&DOT_GIT) {
             let abs_path = self.abs_path.join(&parent_path);
-            let content_path: Arc<Path> = parent_path.parent().unwrap().into();
+            let content_path: Arc<Path> = abs_path.parent().unwrap().into();
             if let Err(ix) = self
                 .git_repositories
                 .binary_search_by_key(&&content_path, |repo| &repo.content_path)
