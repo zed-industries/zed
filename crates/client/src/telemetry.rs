@@ -9,6 +9,7 @@ use isahc::Request;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Serialize;
+use serde_json::json;
 use std::{
     io::Write,
     mem,
@@ -52,12 +53,6 @@ lazy_static! {
 struct AmplitudeEventBatch {
     api_key: &'static str,
     events: Vec<AmplitudeEvent>,
-    options: AmplitudeEventBatchOptions,
-}
-
-#[derive(Serialize)]
-struct AmplitudeEventBatchOptions {
-    min_id_length: usize,
 }
 
 #[derive(Serialize)]
@@ -73,6 +68,7 @@ struct AmplitudeEvent {
     os_name: &'static str,
     os_version: Option<Arc<str>>,
     app_version: Option<Arc<str>>,
+    platform: &'static str,
     event_id: usize,
     session_id: u128,
     time: u128,
@@ -176,11 +172,32 @@ impl Telemetry {
             .detach();
     }
 
-    pub fn set_metrics_id(&self, metrics_id: Option<String>) {
+    pub fn set_authenticated_user_info(
+        self: &Arc<Self>,
+        metrics_id: Option<String>,
+        is_staff: bool,
+    ) {
+        let is_signed_in = metrics_id.is_some();
         self.state.lock().metrics_id = metrics_id.map(|s| s.into());
+        if is_signed_in {
+            self.report_event_with_user_properties(
+                "$identify",
+                Default::default(),
+                json!({ "$set": { "staff": is_staff } }),
+            )
+        }
     }
 
     pub fn report_event(self: &Arc<Self>, kind: &str, properties: Value) {
+        self.report_event_with_user_properties(kind, properties, Default::default());
+    }
+
+    fn report_event_with_user_properties(
+        self: &Arc<Self>,
+        kind: &str,
+        properties: Value,
+        user_properties: Value,
+    ) {
         if AMPLITUDE_API_KEY.is_none() {
             return;
         }
@@ -198,10 +215,15 @@ impl Telemetry {
             } else {
                 None
             },
-            user_properties: None,
+            user_properties: if let Value::Object(user_properties) = user_properties {
+                Some(user_properties)
+            } else {
+                None
+            },
             user_id: state.metrics_id.clone(),
             device_id: state.device_id.clone(),
             os_name: state.os_name,
+            platform: "Zed",
             os_version: state.os_version.clone(),
             app_version: state.app_version.clone(),
             event_id: post_inc(&mut state.next_event_id),
@@ -245,11 +267,7 @@ impl Telemetry {
                             }
                         }
 
-                        let batch = AmplitudeEventBatch {
-                            api_key,
-                            events,
-                            options: AmplitudeEventBatchOptions { min_id_length: 1 },
-                        };
+                        let batch = AmplitudeEventBatch { api_key, events };
                         json_bytes.clear();
                         serde_json::to_writer(&mut json_bytes, &batch)?;
                         let request =

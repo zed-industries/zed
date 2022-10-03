@@ -148,7 +148,14 @@ impl UserStore {
                                 let fetch_metrics_id =
                                     client.request(proto::GetPrivateUserInfo {}).log_err();
                                 let (user, info) = futures::join!(fetch_user, fetch_metrics_id);
-                                client.telemetry.set_metrics_id(info.map(|i| i.metrics_id));
+                                if let Some(info) = info {
+                                    client.telemetry.set_authenticated_user_info(
+                                        Some(info.metrics_id),
+                                        info.staff,
+                                    );
+                                } else {
+                                    client.telemetry.set_authenticated_user_info(None, false);
+                                }
                                 client.telemetry.report_event("sign in", Default::default());
                                 current_user_tx.send(user).await.ok();
                             }

@@ -157,6 +157,7 @@ impl FakeServer {
                         .receipt(),
                     GetPrivateUserInfoResponse {
                         metrics_id: "the-metrics-id".into(),
+                        staff: false,
                     },
                 )
                 .await;
