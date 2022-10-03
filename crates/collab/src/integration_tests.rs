@@ -4675,20 +4675,20 @@ async fn test_random_collaboration(
             deterministic.finish_waiting();
             deterministic.run_until_parked();
 
-            let (host, host_project, mut host_cx, host_err) = clients.remove(0);
+            let (host, host_room, host_project, mut host_cx, host_err) = clients.remove(0);
             if let Some(host_err) = host_err {
                 log::error!("host error - {:?}", host_err);
             }
             host_project.read_with(&host_cx, |project, _| assert!(!project.is_shared()));
-            for (guest, guest_project, mut guest_cx, guest_err) in clients {
+            for (guest, guest_room, guest_project, mut guest_cx, guest_err) in clients {
                 if let Some(guest_err) = guest_err {
                     log::error!("{} error - {:?}", guest.username, guest_err);
                 }
 
                 guest_project.read_with(&guest_cx, |project, _| assert!(project.is_read_only()));
-                guest_cx.update(|_| drop((guest, guest_project)));
+                guest_cx.update(|_| drop((guest, guest_room, guest_project)));
             }
-            host_cx.update(|_| drop((host, host_project)));
+            host_cx.update(|_| drop((host, host_room, host_project)));
 
             return;
         }
@@ -4773,7 +4773,7 @@ async fn test_random_collaboration(
                 deterministic.advance_clock(RECEIVE_TIMEOUT);
                 deterministic.start_waiting();
                 log::info!("Waiting for guest {} to exit...", removed_guest_id);
-                let (guest, guest_project, mut guest_cx, guest_err) = guest.await;
+                let (guest, guest_room, guest_project, mut guest_cx, guest_err) = guest.await;
                 deterministic.finish_waiting();
                 server.allow_connections();
 
@@ -4801,7 +4801,7 @@ async fn test_random_collaboration(
 
                 log::info!("{} removed", guest.username);
                 available_guests.push(guest.username.clone());
-                guest_cx.update(|_| drop((guest, guest_project)));
+                guest_cx.update(|_| drop((guest, guest_room, guest_project)));
 
                 operations += 1;
             }
@@ -4828,7 +4828,7 @@ async fn test_random_collaboration(
     deterministic.finish_waiting();
     deterministic.run_until_parked();
 
-    let (host_client, host_project, mut host_cx, host_err) = clients.remove(0);
+    let (host_client, host_room, host_project, mut host_cx, host_err) = clients.remove(0);
     if let Some(host_err) = host_err {
         panic!("host error - {:?}", host_err);
     }
@@ -4844,7 +4844,7 @@ async fn test_random_collaboration(
 
     host_project.read_with(&host_cx, |project, cx| project.check_invariants(cx));
 
-    for (guest_client, guest_project, mut guest_cx, guest_err) in clients.into_iter() {
+    for (guest_client, guest_room, guest_project, mut guest_cx, guest_err) in clients.into_iter() {
         if let Some(guest_err) = guest_err {
             panic!("{} error - {:?}", guest_client.username, guest_err);
         }
@@ -4916,10 +4916,10 @@ async fn test_random_collaboration(
             );
         }
 
-        guest_cx.update(|_| drop((guest_project, guest_client)));
+        guest_cx.update(|_| drop((guest_room, guest_project, guest_client)));
     }
 
-    host_cx.update(|_| drop((host_client, host_project)));
+    host_cx.update(|_| drop((host_client, host_room, host_project)));
 }
 
 struct TestServer {
@@ -5315,13 +5315,14 @@ impl TestClient {
 
     async fn simulate_host(
         mut self,
-        _room: ModelHandle<Room>,
+        room: ModelHandle<Room>,
         project: ModelHandle<Project>,
         op_start_signal: futures::channel::mpsc::UnboundedReceiver<()>,
         rng: Arc<Mutex<StdRng>>,
         mut cx: TestAppContext,
     ) -> (
         Self,
+        ModelHandle<Room>,
         ModelHandle<Project>,
         TestAppContext,
         Option<anyhow::Error>,
@@ -5447,19 +5448,20 @@ impl TestClient {
         let result =
             simulate_host_internal(&mut self, project.clone(), op_start_signal, rng, &mut cx).await;
         log::info!("Host done");
-        (self, project, cx, result.err())
+        (self, room, project, cx, result.err())
     }
 
     pub async fn simulate_guest(
         mut self,
         guest_username: String,
-        _room: ModelHandle<Room>,
+        room: ModelHandle<Room>,
         project: ModelHandle<Project>,
         op_start_signal: futures::channel::mpsc::UnboundedReceiver<()>,
         rng: Arc<Mutex<StdRng>>,
         mut cx: TestAppContext,
     ) -> (
         Self,
+        ModelHandle<Room>,
         ModelHandle<Project>,
         TestAppContext,
         Option<anyhow::Error>,
@@ -5778,7 +5780,7 @@ impl TestClient {
         .await;
         log::info!("{}: done", guest_username);
 
-        (self, project, cx, result.err())
+        (self, room, project, cx, result.err())
     }
 }
 
