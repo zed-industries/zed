@@ -71,6 +71,7 @@ pub struct Titlebar {
     pub avatar_ribbon: AvatarRibbon,
     pub offline_icon: OfflineIcon,
     pub avatar: ImageStyle,
+    pub inactive_avatar: ImageStyle,
     pub sign_in_prompt: Interactive<ContainedText>,
     pub outdated_warning: ContainedText,
     pub toggle_contacts_button: Interactive<IconButton>,

@@ -69,6 +69,10 @@ export default function workspace(theme: Theme) {
           width: 1,
         },
       },
+      inactiveAvatar: {
+        cornerRadius: 10,
+        opacity: 0.65,
+      },
       avatarRibbon: {
         height: 3,
         width: 12,

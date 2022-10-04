@@ -1,4 +1,5 @@
 use crate::contacts_popover;
+use call::{ActiveCall, ParticipantLocation};
 use client::{Authenticate, PeerId};
 use clock::ReplicaId;
 use contacts_popover::ContactsPopover;
@@ -25,6 +26,7 @@ pub fn init(cx: &mut MutableAppContext) {
 pub struct CollabTitlebarItem {
     workspace: WeakViewHandle<Workspace>,
     contacts_popover: Option<ViewHandle<ContactsPopover>>,
+    room_subscription: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -56,12 +58,27 @@ impl View for CollabTitlebarItem {
 
 impl CollabTitlebarItem {
     pub fn new(workspace: &ViewHandle<Workspace>, cx: &mut ViewContext<Self>) -> Self {
-        let observe_workspace = cx.observe(workspace, |_, _, cx| cx.notify());
-        Self {
+        let active_call = ActiveCall::global(cx);
+        let mut subscriptions = Vec::new();
+        subscriptions.push(cx.observe(workspace, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
+        let mut this = Self {
             workspace: workspace.downgrade(),
             contacts_popover: None,
-            _subscriptions: vec![observe_workspace],
+            room_subscription: None,
+            _subscriptions: subscriptions,
+        };
+        this.active_call_changed(cx);
+        this
+    }
+
+    fn active_call_changed(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
+            self.room_subscription = Some(cx.observe(&room, |_, _, cx| cx.notify()));
+        } else {
+            self.room_subscription = None;
         }
+        cx.notify();
     }
 
     fn toggle_contacts_popover(&mut self, _: &ToggleContactsPopover, cx: &mut ViewContext<Self>) {
@@ -151,28 +168,40 @@ impl CollabTitlebarItem {
         theme: &Theme,
         cx: &mut RenderContext<Self>,
     ) -> Vec<ElementBox> {
-        let mut collaborators = workspace
-            .read(cx)
-            .project()
-            .read(cx)
-            .collaborators()
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        collaborators.sort_unstable_by_key(|collaborator| collaborator.replica_id);
-        collaborators
-            .into_iter()
-            .filter_map(|collaborator| {
-                Some(self.render_avatar(
-                    collaborator.user.avatar.clone()?,
-                    collaborator.replica_id,
-                    Some((collaborator.peer_id, &collaborator.user.github_login)),
-                    workspace,
-                    theme,
-                    cx,
-                ))
-            })
-            .collect()
+        let active_call = ActiveCall::global(cx);
+        if let Some(room) = active_call.read(cx).room().cloned() {
+            let project = workspace.read(cx).project().read(cx);
+            let project_id = project.remote_id();
+            let mut collaborators = project
+                .collaborators()
+                .values()
+                .cloned()
+                .collect::<Vec<_>>();
+            collaborators.sort_by_key(|collaborator| collaborator.replica_id);
+            collaborators
+                .into_iter()
+                .filter_map(|collaborator| {
+                    let participant = room
+                        .read(cx)
+                        .remote_participants()
+                        .get(&collaborator.peer_id)?;
+                    let is_active = project_id.map_or(false, |project_id| {
+                        participant.location == ParticipantLocation::Project { project_id }
+                    });
+                    Some(self.render_avatar(
+                        collaborator.user.avatar.clone()?,
+                        collaborator.replica_id,
+                        Some((collaborator.peer_id, &collaborator.user.github_login)),
+                        is_active,
+                        workspace,
+                        theme,
+                        cx,
+                    ))
+                })
+                .collect()
+        } else {
+            Default::default()
+        }
     }
 
     fn render_current_user(
@@ -185,7 +214,7 @@ impl CollabTitlebarItem {
         let replica_id = workspace.read(cx).project().read(cx).replica_id();
         let status = *workspace.read(cx).client().status().borrow();
         if let Some(avatar) = user.and_then(|user| user.avatar.clone()) {
-            Some(self.render_avatar(avatar, replica_id, None, workspace, theme, cx))
+            Some(self.render_avatar(avatar, replica_id, None, true, workspace, theme, cx))
         } else if matches!(status, client::Status::UpgradeRequired) {
             None
         } else {
@@ -214,6 +243,7 @@ impl CollabTitlebarItem {
         avatar: Arc<ImageData>,
         replica_id: ReplicaId,
         peer: Option<(PeerId, &str)>,
+        is_active: bool,
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
         cx: &mut RenderContext<Self>,
@@ -222,10 +252,18 @@ impl CollabTitlebarItem {
         let is_followed = peer.map_or(false, |(peer_id, _)| {
             workspace.read(cx).is_following(peer_id)
         });
-        let mut avatar_style = theme.workspace.titlebar.avatar;
+        let mut avatar_style;
+
+        if is_active {
+            avatar_style = theme.workspace.titlebar.avatar;
+        } else {
+            avatar_style = theme.workspace.titlebar.inactive_avatar;
+        }
+
         if is_followed {
             avatar_style.border = Border::all(1.0, replica_color);
         }
+
         let content = Stack::new()
             .with_child(
                 Image::new(avatar)
