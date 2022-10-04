@@ -57,33 +57,18 @@ impl FeatureFlags {
 #[derive(Copy, Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct GitSettings {
     pub git_gutter: Option<GitGutter>,
+    pub gutter_debounce: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
-pub struct GitGutter {
-    pub files_included: Option<GitFilesIncluded>,
-    pub debounce_delay_millis: Option<u64>,
-}
-
-impl GitGutter {
-    pub fn files_included(&self, settings: &Settings) -> GitFilesIncluded {
-        self.files_included.unwrap_or_else(|| {
-            settings
-                .git.git_gutter.expect("git_gutter must be some in defaults.json")
-                .files_included
-                .expect("Should be some in defaults.json")
-        })
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum GitFilesIncluded {
+pub enum GitGutter {
     #[default]
-    All,
-    OnlyTracked,
-    None,
+    TrackedFiles,
+    Hide,
 }
+
+pub struct GitGutterConfig {}
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct EditorSettings {
@@ -428,12 +413,7 @@ impl Settings {
             editor_overrides: Default::default(),
             terminal_defaults: Default::default(),
             terminal_overrides: Default::default(),
-            git: GitSettings {
-                git_gutter: Some(GitGutter {
-                    files_included: Some(GitFilesIncluded::All),
-                    debounce_delay_millis: None,
-                }),
-            },
+            git: Default::default(),
             git_overrides: Default::default(),
             language_defaults: Default::default(),
             language_overrides: Default::default(),

@@ -37,7 +37,7 @@ use gpui::{
 use json::json;
 use language::{Bias, DiagnosticSeverity, OffsetUtf16, Selection};
 use project::ProjectPath;
-use settings::Settings;
+use settings::{GitGutter, Settings};
 use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
@@ -607,13 +607,16 @@ impl EditorElement {
         };
 
         let diff_style = &cx.global::<Settings>().theme.editor.diff.clone();
-        // dbg!("***************");
-        // dbg!(&layout.diff_hunks);
-        // dbg!("***************");
+        let show_gutter = matches!(
+            &cx.global::<Settings>()
+                .git_overrides
+                .git_gutter
+                .unwrap_or_default(),
+            GitGutter::TrackedFiles
+        );
 
         // line is `None` when there's a line wrap
         for (ix, line) in layout.line_number_layouts.iter().enumerate() {
-            // dbg!(ix);
             if let Some(line) = line {
                 let line_origin = bounds.origin()
                     + vec2f(
@@ -624,39 +627,39 @@ impl EditorElement {
 
                 line.paint(line_origin, visible_bounds, gutter_layout.line_height, cx);
 
-                //This line starts a buffer line, so let's do the diff calculation
-                let new_hunk = get_hunk(diff_layout.buffer_line, &layout.diff_hunks);
+                if show_gutter {
+                    //This line starts a buffer line, so let's do the diff calculation
+                    let new_hunk = get_hunk(diff_layout.buffer_line, &layout.diff_hunks);
 
-                // This + the unwraps are annoying, but at least it's legible
-                let (is_ending, is_starting) = match (diff_layout.last_diff, new_hunk) {
-                    (None, None) => (false, false),
-                    (None, Some(_)) => (false, true),
-                    (Some(_), None) => (true, false),
-                    (Some((old_hunk, _)), Some(new_hunk)) if new_hunk == old_hunk => (false, false),
-                    (Some(_), Some(_)) => (true, true),
-                };
+                    // This + the unwraps are annoying, but at least it's legible
+                    let (is_ending, is_starting) = match (diff_layout.last_diff, new_hunk) {
+                        (None, None) => (false, false),
+                        (None, Some(_)) => (false, true),
+                        (Some(_), None) => (true, false),
+                        (Some((old_hunk, _)), Some(new_hunk)) if new_hunk == old_hunk => {
+                            (false, false)
+                        }
+                        (Some(_), Some(_)) => (true, true),
+                    };
 
-                // dbg!(diff_layout.buffer_line, is_starting);
+                    if is_ending {
+                        let (last_hunk, start_line) = diff_layout.last_diff.take().unwrap();
+                        cx.scene.push_quad(diff_quad(
+                            last_hunk.status(),
+                            start_line..ix,
+                            &gutter_layout,
+                            diff_style,
+                        ));
+                    }
 
-                if is_ending {
-                    let (last_hunk, start_line) = diff_layout.last_diff.take().unwrap();
-                    // dbg!("ending");
-                    // dbg!(start_line..ix);
-                    cx.scene.push_quad(diff_quad(
-                        last_hunk.status(),
-                        start_line..ix,
-                        &gutter_layout,
-                        diff_style,
-                    ));
+                    if is_starting {
+                        let new_hunk = new_hunk.unwrap();
+
+                        diff_layout.last_diff = Some((new_hunk, ix));
+                    };
+
+                    diff_layout.buffer_line += 1;
                 }
-
-                if is_starting {
-                    let new_hunk = new_hunk.unwrap();
-
-                    diff_layout.last_diff = Some((new_hunk, ix));
-                };
-
-                diff_layout.buffer_line += 1;
             }
         }
 

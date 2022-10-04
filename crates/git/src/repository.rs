@@ -19,7 +19,6 @@ impl GitRepository for LibGitRepository {
         fn logic(repo: &LibGitRepository, relative_file_path: &Path) -> Result<Option<String>> {
             const STAGE_NORMAL: i32 = 0;
             let index = repo.index()?;
-            dbg!(relative_file_path);
             let oid = match index.get_path(relative_file_path, STAGE_NORMAL) {
                 Some(entry) => entry.id,
                 None => return Ok(None),

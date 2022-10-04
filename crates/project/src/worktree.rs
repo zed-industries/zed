@@ -32,7 +32,7 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
-use settings::Settings;
+
 use smol::channel::{self, Sender};
 use std::{
     any::Any,
@@ -664,40 +664,18 @@ impl LocalWorktree {
         let fs = self.fs.clone();
         let snapshot = self.snapshot();
 
-        let settings = cx.global::<Settings>();
-
-        // Cut files included because we want to ship!
-        // TODO:
-        // - Rename / etc. setting to be show/hide git gutters
-        // - Unconditionally load index text for all files,
-        // - then choose at rendering time based on settings
-
-        let files_included = settings.git_gutter().files_included(settings);
-
         cx.spawn(|this, mut cx| async move {
             let text = fs.load(&abs_path).await?;
 
-            let diff_base = match files_included {
-                settings::GitFilesIncluded::All | settings::GitFilesIncluded::OnlyTracked => {
-                    let results = if let Some(repo) = snapshot.repo_for(&abs_path) {
-                        cx.background()
-                            .spawn({
-                                let path = path.clone();
-                                async move { repo.repo.lock().load_index(&path) }
-                            })
-                            .await
-                    } else {
-                        None
-                    };
-
-                    if files_included == settings::GitFilesIncluded::All {
-                        results.or_else(|| Some(text.clone()))
-                    } else {
-                        results
-                    }
-                }
-
-                settings::GitFilesIncluded::None => None,
+            let diff_base = if let Some(repo) = snapshot.repo_for(&abs_path) {
+                cx.background()
+                    .spawn({
+                        let path = path.clone();
+                        async move { repo.repo.lock().load_index(&path) }
+                    })
+                    .await
+            } else {
+                None
             };
 
             // Eagerly populate the snapshot with an updated entry for the loaded file
@@ -1387,7 +1365,6 @@ impl LocalSnapshot {
 
     // Gives the most specific git repository for a given path
     pub(crate) fn repo_for(&self, path: &Path) -> Option<GitRepositoryEntry> {
-        dbg!(&self.git_repositories);
         self.git_repositories
             .iter()
             .rev() //git_repository is ordered lexicographically
@@ -1725,7 +1702,6 @@ impl LocalSnapshot {
 impl GitRepositoryEntry {
     // Note that these paths should be relative to the worktree root.
     pub(crate) fn manages(&self, path: &Path) -> bool {
-        dbg!(path, &self.content_path);
         path.starts_with(self.content_path.as_ref())
     }
 

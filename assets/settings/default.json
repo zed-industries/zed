@@ -76,18 +76,12 @@
     "tab_size": 4,
     // Git gutter behavior configuration.
     "git": {
-        "git_gutter": {
-            // Which files to show the git gutter on. This setting can take 
-            // three values:
-            // 1. All files, files not tracked in git will be diffed against 
-            //    their contents when the file was last opened in Zed:
-            //      "files_included": "all",
-            // 2. Only show for files tracked in git:
-            //      "files_included": "only_tracked",
-            // 3. Disable git gutters entirely:
-            //      "files_included": "none",
-            "files_included": "all"
-        }
+        // Control whether the git gutter is shown. May take 2 values:
+        // 1. Show the gutter
+        //      "git_gutter": "tracked_files"
+        // 2. Hide the gutter
+        //      "git_gutter": "hide"
+        "git_gutter": "tracked_files"
     },
     // Settings specific to the terminal
     "terminal": {
