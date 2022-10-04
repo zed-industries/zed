@@ -95,7 +95,9 @@ async fn test_basic_calls(
         .user_store
         .update(cx_b, |user, _| user.incoming_call());
     room_a
-        .update(cx_a, |room, cx| room.call(client_b.user_id().unwrap(), cx))
+        .update(cx_a, |room, cx| {
+            room.call(client_b.user_id().unwrap(), None, cx)
+        })
         .await
         .unwrap();
 
@@ -147,7 +149,9 @@ async fn test_basic_calls(
         .user_store
         .update(cx_c, |user, _| user.incoming_call());
     room_b
-        .update(cx_b, |room, cx| room.call(client_c.user_id().unwrap(), cx))
+        .update(cx_b, |room, cx| {
+            room.call(client_c.user_id().unwrap(), None, cx)
+        })
         .await
         .unwrap();
 
@@ -234,7 +238,9 @@ async fn test_leaving_room_on_disconnection(
         .user_store
         .update(cx_b, |user, _| user.incoming_call());
     room_a
-        .update(cx_a, |room, cx| room.call(client_b.user_id().unwrap(), cx))
+        .update(cx_a, |room, cx| {
+            room.call(client_b.user_id().unwrap(), None, cx)
+        })
         .await
         .unwrap();
 
@@ -4849,7 +4855,7 @@ async fn test_random_collaboration(
     host_language_registry.add(Arc::new(language));
 
     let host_user_id = host.current_user_id(&host_cx);
-    room.update(cx, |room, cx| room.call(host_user_id.to_proto(), cx))
+    room.update(cx, |room, cx| room.call(host_user_id.to_proto(), None, cx))
         .await
         .unwrap();
     deterministic.run_until_parked();
@@ -4941,7 +4947,7 @@ async fn test_random_collaboration(
                 let guest = server.create_client(&mut guest_cx, &guest_username).await;
                 let guest_user_id = guest.current_user_id(&guest_cx);
 
-                room.update(cx, |room, cx| room.call(guest_user_id.to_proto(), cx))
+                room.update(cx, |room, cx| room.call(guest_user_id.to_proto(), None, cx))
                     .await
                     .unwrap();
                 deterministic.run_until_parked();
@@ -5353,7 +5359,7 @@ impl TestServer {
         for (client_b, cx_b) in right {
             let user_id_b = client_b.current_user_id(*cx_b).to_proto();
             room_a
-                .update(*cx_a, |room, cx| room.call(user_id_b, cx))
+                .update(*cx_a, |room, cx| room.call(user_id_b, None, cx))
                 .await
                 .unwrap();
 

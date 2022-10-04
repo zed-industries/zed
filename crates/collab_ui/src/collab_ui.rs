@@ -11,6 +11,6 @@ use workspace::AppState;
 pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     contacts_popover::init(cx);
     collab_titlebar_item::init(cx);
-    incoming_call_notification::init(app_state.user_store.clone(), cx);
+    incoming_call_notification::init(app_state.clone(), cx);
     project_shared_notification::init(app_state, cx);
 }

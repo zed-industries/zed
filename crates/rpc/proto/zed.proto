@@ -179,12 +179,14 @@ message ParticipantLocation {
 message Call {
     uint64 room_id = 1;
     uint64 recipient_user_id = 2;
+    optional uint64 initial_project_id = 3;
 }
 
 message IncomingCall {
     uint64 room_id = 1;
     uint64 caller_user_id = 2;
     repeated uint64 participant_user_ids = 3;
+    optional uint64 initial_project_id = 4;
 }
 
 message CancelCall {}

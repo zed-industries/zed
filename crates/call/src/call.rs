@@ -5,6 +5,7 @@ use anyhow::{anyhow, Result};
 use client::{incoming_call::IncomingCall, Client, UserStore};
 use gpui::{Entity, ModelContext, ModelHandle, MutableAppContext, Subscription, Task};
 pub use participant::ParticipantLocation;
+use project::Project;
 pub use room::Room;
 use std::sync::Arc;
 
@@ -39,6 +40,7 @@ impl ActiveCall {
     pub fn invite(
         &mut self,
         recipient_user_id: u64,
+        initial_project: Option<ModelHandle<Project>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let room = self.room.as_ref().map(|(room, _)| room.clone());
@@ -52,8 +54,21 @@ impl ActiveCall {
                 this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx));
                 room
             };
-            room.update(&mut cx, |room, cx| room.call(recipient_user_id, cx))
-                .await?;
+
+            let initial_project_id = if let Some(initial_project) = initial_project {
+                let room_id = room.read_with(&cx, |room, _| room.id());
+                Some(
+                    initial_project
+                        .update(&mut cx, |project, cx| project.share(room_id, cx))
+                        .await?,
+                )
+            } else {
+                None
+            };
+            room.update(&mut cx, |room, cx| {
+                room.call(recipient_user_id, initial_project_id, cx)
+            })
+            .await?;
 
             Ok(())
         })

@@ -216,6 +216,7 @@ impl Room {
     pub fn call(
         &mut self,
         recipient_user_id: u64,
+        initial_project_id: Option<u64>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         if self.status.is_offline() {
@@ -229,6 +230,7 @@ impl Room {
                 .request(proto::Call {
                     room_id,
                     recipient_user_id,
+                    initial_project_id,
                 })
                 .await?;
             Ok(())

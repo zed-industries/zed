@@ -40,6 +40,7 @@ pub struct Call {
     pub caller_user_id: UserId,
     pub room_id: RoomId,
     pub connection_id: Option<ConnectionId>,
+    pub initial_project_id: Option<ProjectId>,
 }
 
 #[derive(Serialize)]
@@ -175,6 +176,9 @@ impl Store {
                         .iter()
                         .map(|participant| participant.user_id)
                         .collect(),
+                    initial_project_id: active_call
+                        .initial_project_id
+                        .map(|project_id| project_id.to_proto()),
                 })
             }
         } else {
@@ -379,6 +383,7 @@ impl Store {
             caller_user_id: connection.user_id,
             room_id,
             connection_id: Some(creator_connection_id),
+            initial_project_id: None,
         });
         Ok(room_id)
     }
@@ -486,17 +491,18 @@ impl Store {
     pub fn call(
         &mut self,
         room_id: RoomId,
+        recipient_user_id: UserId,
+        initial_project_id: Option<ProjectId>,
         from_connection_id: ConnectionId,
-        recipient_id: UserId,
     ) -> Result<(&proto::Room, Vec<ConnectionId>, proto::IncomingCall)> {
         let caller_user_id = self.user_id_for_connection(from_connection_id)?;
 
         let recipient_connection_ids = self
-            .connection_ids_for_user(recipient_id)
+            .connection_ids_for_user(recipient_user_id)
             .collect::<Vec<_>>();
         let mut recipient = self
             .connected_users
-            .get_mut(&recipient_id)
+            .get_mut(&recipient_user_id)
             .ok_or_else(|| anyhow!("no such connection"))?;
         anyhow::ensure!(
             recipient.active_call.is_none(),
@@ -516,14 +522,24 @@ impl Store {
         anyhow::ensure!(
             room.pending_user_ids
                 .iter()
-                .all(|user_id| UserId::from_proto(*user_id) != recipient_id),
+                .all(|user_id| UserId::from_proto(*user_id) != recipient_user_id),
             "cannot call the same user more than once"
         );
-        room.pending_user_ids.push(recipient_id.to_proto());
+        room.pending_user_ids.push(recipient_user_id.to_proto());
+
+        if let Some(initial_project_id) = initial_project_id {
+            let project = self
+                .projects
+                .get(&initial_project_id)
+                .ok_or_else(|| anyhow!("no such project"))?;
+            anyhow::ensure!(project.room_id == room_id, "no such project");
+        }
+
         recipient.active_call = Some(Call {
             caller_user_id,
             room_id,
             connection_id: None,
+            initial_project_id,
         });
 
         Ok((
@@ -537,6 +553,7 @@ impl Store {
                     .iter()
                     .map(|participant| participant.user_id)
                     .collect(),
+                initial_project_id: initial_project_id.map(|project_id| project_id.to_proto()),
             },
         ))
     }

@@ -212,6 +212,7 @@ impl UserStore {
                     this.get_user(envelope.payload.caller_user_id, cx)
                 })
                 .await?,
+            initial_project_id: envelope.payload.initial_project_id,
         };
         this.update(&mut cx, |this, _| {
             *this.incoming_call.0.borrow_mut() = Some(call);

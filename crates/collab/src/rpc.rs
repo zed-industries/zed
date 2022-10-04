@@ -660,6 +660,10 @@ impl Server {
             .await
             .user_id_for_connection(request.sender_id)?;
         let recipient_user_id = UserId::from_proto(request.payload.recipient_user_id);
+        let initial_project_id = request
+            .payload
+            .initial_project_id
+            .map(ProjectId::from_proto);
         if !self
             .app_state
             .db
@@ -672,8 +676,12 @@ impl Server {
         let room_id = request.payload.room_id;
         let mut calls = {
             let mut store = self.store().await;
-            let (room, recipient_connection_ids, incoming_call) =
-                store.call(room_id, request.sender_id, recipient_user_id)?;
+            let (room, recipient_connection_ids, incoming_call) = store.call(
+                room_id,
+                recipient_user_id,
+                initial_project_id,
+                request.sender_id,
+            )?;
             self.room_updated(room);
             recipient_connection_ids
                 .into_iter()

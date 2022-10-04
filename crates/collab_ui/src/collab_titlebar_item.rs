@@ -100,8 +100,9 @@ impl CollabTitlebarItem {
             Some(_) => {}
             None => {
                 if let Some(workspace) = self.workspace.upgrade(cx) {
+                    let project = workspace.read(cx).project().clone();
                     let user_store = workspace.read(cx).user_store().clone();
-                    let view = cx.add_view(|cx| ContactsPopover::new(user_store, cx));
+                    let view = cx.add_view(|cx| ContactsPopover::new(project, user_store, cx));
                     cx.focus(&view);
                     cx.subscribe(&view, |this, _, event, cx| {
                         match event {

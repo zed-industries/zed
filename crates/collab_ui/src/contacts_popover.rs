@@ -10,6 +10,7 @@ use gpui::{
     ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
+use project::Project;
 use settings::Settings;
 use theme::IconButton;
 
@@ -30,6 +31,7 @@ struct ToggleExpanded(Section);
 #[derive(Clone, PartialEq)]
 struct Call {
     recipient_user_id: u64,
+    initial_project: Option<ModelHandle<Project>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
@@ -83,6 +85,7 @@ pub struct ContactsPopover {
     entries: Vec<ContactEntry>,
     match_candidates: Vec<StringMatchCandidate>,
     list_state: ListState,
+    project: ModelHandle<Project>,
     user_store: ModelHandle<UserStore>,
     filter_editor: ViewHandle<Editor>,
     collapsed_sections: Vec<Section>,
@@ -91,7 +94,11 @@ pub struct ContactsPopover {
 }
 
 impl ContactsPopover {
-    pub fn new(user_store: ModelHandle<UserStore>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        project: ModelHandle<Project>,
+        user_store: ModelHandle<UserStore>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let filter_editor = cx.add_view(|cx| {
             let mut editor = Editor::single_line(
                 Some(|theme| theme.contacts_panel.user_query_editor.clone()),
@@ -149,9 +156,13 @@ impl ContactsPopover {
                     is_selected,
                     cx,
                 ),
-                ContactEntry::Contact(contact) => {
-                    Self::render_contact(contact, &theme.contacts_panel, is_selected, cx)
-                }
+                ContactEntry::Contact(contact) => Self::render_contact(
+                    contact,
+                    &this.project,
+                    &theme.contacts_panel,
+                    is_selected,
+                    cx,
+                ),
             }
         });
 
@@ -168,6 +179,7 @@ impl ContactsPopover {
             match_candidates: Default::default(),
             filter_editor,
             _subscriptions: subscriptions,
+            project,
             user_store,
         };
         this.update_entries(cx);
@@ -463,12 +475,18 @@ impl ContactsPopover {
 
     fn render_contact(
         contact: &Contact,
+        project: &ModelHandle<Project>,
         theme: &theme::ContactsPanel,
         is_selected: bool,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         let online = contact.online;
         let user_id = contact.user.id;
+        let initial_project = if ActiveCall::global(cx).read(cx).room().is_none() {
+            Some(project.clone())
+        } else {
+            None
+        };
         let mut element =
             MouseEventHandler::<Contact>::new(contact.user.id as usize, cx, |_, _| {
                 Flex::row()
@@ -501,6 +519,7 @@ impl ContactsPopover {
                 if online {
                     cx.dispatch_action(Call {
                         recipient_user_id: user_id,
+                        initial_project: initial_project.clone(),
                     });
                 }
             });
@@ -629,7 +648,7 @@ impl ContactsPopover {
     fn call(&mut self, action: &Call, cx: &mut ViewContext<Self>) {
         ActiveCall::global(cx)
             .update(cx, |active_call, cx| {
-                active_call.invite(action.recipient_user_id, cx)
+                active_call.invite(action.recipient_user_id, action.initial_project.clone(), cx)
             })
             .detach_and_log_err(cx);
     }

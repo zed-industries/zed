@@ -1,21 +1,25 @@
+use std::sync::Arc;
+
 use call::ActiveCall;
-use client::{incoming_call::IncomingCall, UserStore};
+use client::incoming_call::IncomingCall;
 use futures::StreamExt;
 use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
-    impl_internal_actions, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext,
-    View, ViewContext, WindowBounds, WindowKind, WindowOptions,
+    impl_internal_actions, Entity, MouseButton, MutableAppContext, RenderContext, View,
+    ViewContext, WindowBounds, WindowKind, WindowOptions,
 };
+use project::Project;
 use settings::Settings;
 use util::ResultExt;
+use workspace::{AppState, Workspace};
 
 impl_internal_actions!(incoming_call_notification, [RespondToCall]);
 
-pub fn init(user_store: ModelHandle<UserStore>, cx: &mut MutableAppContext) {
+pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_action(IncomingCallNotification::respond_to_call);
 
-    let mut incoming_call = user_store.read(cx).incoming_call();
+    let mut incoming_call = app_state.user_store.read(cx).incoming_call();
     cx.spawn(|mut cx| async move {
         let mut notification_window = None;
         while let Some(incoming_call) = incoming_call.next().await {
@@ -32,7 +36,7 @@ pub fn init(user_store: ModelHandle<UserStore>, cx: &mut MutableAppContext) {
                         kind: WindowKind::PopUp,
                         is_movable: false,
                     },
-                    |_| IncomingCallNotification::new(incoming_call, user_store.clone()),
+                    |_| IncomingCallNotification::new(incoming_call, app_state.clone()),
                 );
                 notification_window = Some(window_id);
             }
@@ -48,21 +52,47 @@ struct RespondToCall {
 
 pub struct IncomingCallNotification {
     call: IncomingCall,
-    user_store: ModelHandle<UserStore>,
+    app_state: Arc<AppState>,
 }
 
 impl IncomingCallNotification {
-    pub fn new(call: IncomingCall, user_store: ModelHandle<UserStore>) -> Self {
-        Self { call, user_store }
+    pub fn new(call: IncomingCall, app_state: Arc<AppState>) -> Self {
+        Self { call, app_state }
     }
 
     fn respond_to_call(&mut self, action: &RespondToCall, cx: &mut ViewContext<Self>) {
         if action.accept {
-            ActiveCall::global(cx)
-                .update(cx, |active_call, cx| active_call.join(&self.call, cx))
-                .detach_and_log_err(cx);
+            let app_state = self.app_state.clone();
+            let join = ActiveCall::global(cx)
+                .update(cx, |active_call, cx| active_call.join(&self.call, cx));
+            let initial_project_id = self.call.initial_project_id;
+            cx.spawn_weak(|_, mut cx| async move {
+                join.await?;
+                if let Some(initial_project_id) = initial_project_id {
+                    let project = Project::remote(
+                        initial_project_id,
+                        app_state.client.clone(),
+                        app_state.user_store.clone(),
+                        app_state.project_store.clone(),
+                        app_state.languages.clone(),
+                        app_state.fs.clone(),
+                        cx.clone(),
+                    )
+                    .await?;
+
+                    cx.add_window((app_state.build_window_options)(), |cx| {
+                        let mut workspace =
+                            Workspace::new(project, app_state.default_item_factory, cx);
+                        (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
+                        workspace
+                    });
+                }
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
         } else {
-            self.user_store
+            self.app_state
+                .user_store
                 .update(cx, |user_store, _| user_store.decline_call().log_err());
         }
 
