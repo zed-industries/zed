@@ -54,7 +54,10 @@ impl View for CollabTitlebarItem {
 
         let mut container = Flex::row();
         if workspace.read(cx).client().status().borrow().is_connected() {
-            if project.is_shared() || ActiveCall::global(cx).read(cx).room().is_none() {
+            if project.is_shared()
+                || project.is_remote()
+                || ActiveCall::global(cx).read(cx).room().is_none()
+            {
                 container.add_child(self.render_toggle_contacts_button(&theme, cx));
             } else {
                 container.add_child(self.render_share_button(&theme, cx));
