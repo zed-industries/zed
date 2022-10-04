@@ -19,35 +19,18 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_action(ProjectSharedNotification::dismiss);
 
     let active_call = ActiveCall::global(cx);
-    let mut _room_subscription = None;
-    cx.observe(&active_call, move |active_call, cx| {
-        if let Some(room) = active_call.read(cx).room().cloned() {
-            let app_state = app_state.clone();
-            _room_subscription = Some(cx.subscribe(&room, move |_, event, cx| match event {
-                room::Event::RemoteProjectShared { owner, project_id } => {
-                    cx.add_window(
-                        WindowOptions {
-                            bounds: WindowBounds::Fixed(RectF::new(
-                                vec2f(0., 0.),
-                                vec2f(300., 400.),
-                            )),
-                            titlebar: None,
-                            center: true,
-                            kind: WindowKind::PopUp,
-                            is_movable: false,
-                        },
-                        |_| {
-                            ProjectSharedNotification::new(
-                                *project_id,
-                                owner.clone(),
-                                app_state.clone(),
-                            )
-                        },
-                    );
-                }
-            }));
-        } else {
-            _room_subscription = None;
+    cx.subscribe(&active_call, move |_, event, cx| match event {
+        room::Event::RemoteProjectShared { owner, project_id } => {
+            cx.add_window(
+                WindowOptions {
+                    bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), vec2f(300., 400.))),
+                    titlebar: None,
+                    center: true,
+                    kind: WindowKind::PopUp,
+                    is_movable: false,
+                },
+                |_| ProjectSharedNotification::new(*project_id, owner.clone(), app_state.clone()),
+            );
         }
     })
     .detach();

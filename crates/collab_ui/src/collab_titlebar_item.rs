@@ -30,7 +30,6 @@ pub fn init(cx: &mut MutableAppContext) {
 pub struct CollabTitlebarItem {
     workspace: WeakViewHandle<Workspace>,
     contacts_popover: Option<ViewHandle<ContactsPopover>>,
-    room_subscription: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -73,24 +72,12 @@ impl CollabTitlebarItem {
         let active_call = ActiveCall::global(cx);
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe(workspace, |_, _, cx| cx.notify()));
-        subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
-        let mut this = Self {
+        subscriptions.push(cx.observe(&active_call, |_, _, cx| cx.notify()));
+        Self {
             workspace: workspace.downgrade(),
             contacts_popover: None,
-            room_subscription: None,
             _subscriptions: subscriptions,
-        };
-        this.active_call_changed(cx);
-        this
-    }
-
-    fn active_call_changed(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
-            self.room_subscription = Some(cx.observe(&room, |_, _, cx| cx.notify()));
-        } else {
-            self.room_subscription = None;
         }
-        cx.notify();
     }
 
     fn share_project(&mut self, _: &ShareProject, cx: &mut ViewContext<Self>) {

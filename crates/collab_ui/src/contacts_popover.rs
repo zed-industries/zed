@@ -80,7 +80,6 @@ pub enum Event {
 }
 
 pub struct ContactsPopover {
-    room_subscription: Option<Subscription>,
     entries: Vec<ContactEntry>,
     match_candidates: Vec<StringMatchCandidate>,
     list_state: ListState,
@@ -159,10 +158,9 @@ impl ContactsPopover {
         let active_call = ActiveCall::global(cx);
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe(&user_store, |this, _, cx| this.update_entries(cx)));
-        subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
+        subscriptions.push(cx.observe(&active_call, |_, _, cx| cx.notify()));
 
         let mut this = Self {
-            room_subscription: None,
             list_state,
             selection: None,
             collapsed_sections: Default::default(),
@@ -173,17 +171,7 @@ impl ContactsPopover {
             user_store,
         };
         this.update_entries(cx);
-        this.active_call_changed(cx);
         this
-    }
-
-    fn active_call_changed(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
-            self.room_subscription = Some(cx.observe(&room, |_, _, cx| cx.notify()));
-        } else {
-            self.room_subscription = None;
-        }
-        cx.notify();
     }
 
     fn clear_filter(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {

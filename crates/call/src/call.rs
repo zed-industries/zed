@@ -3,7 +3,7 @@ pub mod room;
 
 use anyhow::{anyhow, Result};
 use client::{incoming_call::IncomingCall, Client, UserStore};
-use gpui::{Entity, ModelContext, ModelHandle, MutableAppContext, Task};
+use gpui::{Entity, ModelContext, ModelHandle, MutableAppContext, Subscription, Task};
 pub use participant::ParticipantLocation;
 pub use room::Room;
 use std::sync::Arc;
@@ -14,13 +14,13 @@ pub fn init(client: Arc<Client>, user_store: ModelHandle<UserStore>, cx: &mut Mu
 }
 
 pub struct ActiveCall {
-    room: Option<ModelHandle<Room>>,
+    room: Option<(ModelHandle<Room>, Vec<Subscription>)>,
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
 }
 
 impl Entity for ActiveCall {
-    type Event = ();
+    type Event = room::Event;
 }
 
 impl ActiveCall {
@@ -41,8 +41,7 @@ impl ActiveCall {
         recipient_user_id: u64,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let room = self.room.clone();
-
+        let room = self.room.as_ref().map(|(room, _)| room.clone());
         let client = self.client.clone();
         let user_store = self.user_store.clone();
         cx.spawn(|this, mut cx| async move {
@@ -50,10 +49,7 @@ impl ActiveCall {
                 room
             } else {
                 let room = cx.update(|cx| Room::create(client, user_store, cx)).await?;
-                this.update(&mut cx, |this, cx| {
-                    this.room = Some(room.clone());
-                    cx.notify();
-                });
+                this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx));
                 room
             };
             room.update(&mut cx, |room, cx| room.call(recipient_user_id, cx))
@@ -71,15 +67,25 @@ impl ActiveCall {
         let join = Room::join(call, self.client.clone(), self.user_store.clone(), cx);
         cx.spawn(|this, mut cx| async move {
             let room = join.await?;
-            this.update(&mut cx, |this, cx| {
-                this.room = Some(room);
-                cx.notify();
-            });
+            this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx));
             Ok(())
         })
     }
 
+    fn set_room(&mut self, room: Option<ModelHandle<Room>>, cx: &mut ModelContext<Self>) {
+        if let Some(room) = room {
+            let subscriptions = vec![
+                cx.observe(&room, |_, _, cx| cx.notify()),
+                cx.subscribe(&room, |_, _, event, cx| cx.emit(event.clone())),
+            ];
+            self.room = Some((room, subscriptions));
+        } else {
+            self.room = None;
+        }
+        cx.notify();
+    }
+
     pub fn room(&self) -> Option<&ModelHandle<Room>> {
-        self.room.as_ref()
+        self.room.as_ref().map(|(room, _)| room)
     }
 }
