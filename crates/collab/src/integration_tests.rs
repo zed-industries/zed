@@ -318,24 +318,12 @@ async fn test_share_project(
     // Join that project as client B
     let client_b_peer_id = client_b.peer_id;
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
-    let replica_id_b = project_b.read_with(cx_b, |project, _| {
-        assert_eq!(
-            project
-                .collaborators()
-                .get(&client_a.peer_id)
-                .unwrap()
-                .user
-                .github_login,
-            "user_a"
-        );
-        project.replica_id()
-    });
+    let replica_id_b = project_b.read_with(cx_b, |project, _| project.replica_id());
 
     deterministic.run_until_parked();
     project_a.read_with(cx_a, |project, _| {
         let client_b_collaborator = project.collaborators().get(&client_b_peer_id).unwrap();
         assert_eq!(client_b_collaborator.replica_id, replica_id_b);
-        assert_eq!(client_b_collaborator.user.github_login, "user_b");
     });
     project_b.read_with(cx_b, |project, cx| {
         let worktree = project.worktrees(cx).next().unwrap().read(cx);

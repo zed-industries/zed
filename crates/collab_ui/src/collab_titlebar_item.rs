@@ -223,13 +223,14 @@ impl CollabTitlebarItem {
                         .read(cx)
                         .remote_participants()
                         .get(&collaborator.peer_id)?;
+                    let user = participant.user.clone();
                     let is_active = project_id.map_or(false, |project_id| {
                         participant.location == ParticipantLocation::Project { project_id }
                     });
                     Some(self.render_avatar(
-                        collaborator.user.avatar.clone()?,
+                        user.avatar.clone()?,
                         collaborator.replica_id,
-                        Some((collaborator.peer_id, &collaborator.user.github_login)),
+                        Some((collaborator.peer_id, &user.github_login)),
                         is_active,
                         workspace,
                         theme,

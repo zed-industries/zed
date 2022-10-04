@@ -9,7 +9,7 @@ pub mod worktree;
 mod project_tests;
 
 use anyhow::{anyhow, Context, Result};
-use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
+use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use futures::{future::Shared, AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt};
@@ -165,7 +165,6 @@ enum ProjectClientState {
 
 #[derive(Clone, Debug)]
 pub struct Collaborator {
-    pub user: Arc<User>,
     pub peer_id: PeerId,
     pub replica_id: ReplicaId,
 }
@@ -582,7 +581,7 @@ impl Project {
             .await?;
         let mut collaborators = HashMap::default();
         for message in response.collaborators {
-            let collaborator = Collaborator::from_proto(message, &user_store, &mut cx).await?;
+            let collaborator = Collaborator::from_proto(message);
             collaborators.insert(collaborator.peer_id, collaborator);
         }
 
@@ -4451,14 +4450,13 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        let user_store = this.read_with(&cx, |this, _| this.user_store.clone());
         let collaborator = envelope
             .payload
             .collaborator
             .take()
             .ok_or_else(|| anyhow!("empty collaborator"))?;
 
-        let collaborator = Collaborator::from_proto(collaborator, &user_store, &mut cx).await?;
+        let collaborator = Collaborator::from_proto(collaborator);
         this.update(&mut cx, |this, cx| {
             this.collaborators
                 .insert(collaborator.peer_id, collaborator);
@@ -5904,21 +5902,10 @@ impl Entity for Project {
 }
 
 impl Collaborator {
-    fn from_proto(
-        message: proto::Collaborator,
-        user_store: &ModelHandle<UserStore>,
-        cx: &mut AsyncAppContext,
-    ) -> impl Future<Output = Result<Self>> {
-        let user = user_store.update(cx, |user_store, cx| {
-            user_store.get_user(message.user_id, cx)
-        });
-
-        async move {
-            Ok(Self {
-                peer_id: PeerId(message.peer_id),
-                user: user.await?,
-                replica_id: message.replica_id as ReplicaId,
-            })
+    fn from_proto(message: proto::Collaborator) -> Self {
+        Self {
+            peer_id: PeerId(message.peer_id),
+            replica_id: message.replica_id as ReplicaId,
         }
     }
 }
