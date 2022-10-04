@@ -170,6 +170,7 @@ messages!(
     (UpdateFollowers, Foreground),
     (UpdateInviteInfo, Foreground),
     (UpdateLanguageServer, Foreground),
+    (UpdateParticipantLocation, Foreground),
     (UpdateProject, Foreground),
     (UpdateWorktree, Foreground),
     (UpdateWorktreeExtensions, Background),
@@ -222,6 +223,7 @@ request_messages!(
     (ShareProject, ShareProjectResponse),
     (Test, Test),
     (UpdateBuffer, Ack),
+    (UpdateParticipantLocation, Ack),
     (UpdateWorktree, Ack),
 );
 

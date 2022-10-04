@@ -5,7 +5,7 @@ use crate::{
 };
 use ::rpc::Peer;
 use anyhow::anyhow;
-use call::{room, Room};
+use call::{room, ParticipantLocation, Room};
 use client::{
     self, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Connection,
     Credentials, EstablishConnectionError, User, UserStore, RECEIVE_TIMEOUT,
@@ -40,7 +40,7 @@ use serde_json::json;
 use settings::{Formatter, Settings};
 use sqlx::types::time::OffsetDateTime;
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     env, mem,
     ops::Deref,
     path::{Path, PathBuf},
@@ -634,6 +634,164 @@ async fn test_room_events(
             }
         });
         events
+    }
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_room_location(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    client_a.fs.insert_tree("/a", json!({})).await;
+    client_b.fs.insert_tree("/b", json!({})).await;
+
+    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
+    let (project_b, _) = client_b.build_local_project("/b", cx_b).await;
+
+    let (room_id, mut rooms) = server
+        .create_rooms(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    let room_a = rooms.remove(0);
+    let room_a_notified = Rc::new(Cell::new(false));
+    cx_a.update({
+        let room_a_notified = room_a_notified.clone();
+        |cx| {
+            cx.observe(&room_a, move |_, _| room_a_notified.set(true))
+                .detach()
+        }
+    });
+
+    let room_b = rooms.remove(0);
+    let room_b_notified = Rc::new(Cell::new(false));
+    cx_b.update({
+        let room_b_notified = room_b_notified.clone();
+        |cx| {
+            cx.observe(&room_b, move |_, _| room_b_notified.set(true))
+                .detach()
+        }
+    });
+
+    let project_a_id = project_a
+        .update(cx_a, |project, cx| project.share(room_id, cx))
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert!(room_a_notified.take());
+    assert_eq!(
+        participant_locations(&room_a, cx_a),
+        vec![("user_b".to_string(), ParticipantLocation::External)]
+    );
+    assert!(room_b_notified.take());
+    assert_eq!(
+        participant_locations(&room_b, cx_b),
+        vec![("user_a".to_string(), ParticipantLocation::External)]
+    );
+
+    let project_b_id = project_b
+        .update(cx_b, |project, cx| project.share(room_id, cx))
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert!(room_a_notified.take());
+    assert_eq!(
+        participant_locations(&room_a, cx_a),
+        vec![("user_b".to_string(), ParticipantLocation::External)]
+    );
+    assert!(room_b_notified.take());
+    assert_eq!(
+        participant_locations(&room_b, cx_b),
+        vec![("user_a".to_string(), ParticipantLocation::External)]
+    );
+
+    room_a
+        .update(cx_a, |room, cx| room.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert!(room_a_notified.take());
+    assert_eq!(
+        participant_locations(&room_a, cx_a),
+        vec![("user_b".to_string(), ParticipantLocation::External)]
+    );
+    assert!(room_b_notified.take());
+    assert_eq!(
+        participant_locations(&room_b, cx_b),
+        vec![(
+            "user_a".to_string(),
+            ParticipantLocation::Project {
+                project_id: project_a_id
+            }
+        )]
+    );
+
+    room_b
+        .update(cx_b, |room, cx| room.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert!(room_a_notified.take());
+    assert_eq!(
+        participant_locations(&room_a, cx_a),
+        vec![(
+            "user_b".to_string(),
+            ParticipantLocation::Project {
+                project_id: project_b_id
+            }
+        )]
+    );
+    assert!(room_b_notified.take());
+    assert_eq!(
+        participant_locations(&room_b, cx_b),
+        vec![(
+            "user_a".to_string(),
+            ParticipantLocation::Project {
+                project_id: project_a_id
+            }
+        )]
+    );
+
+    room_b
+        .update(cx_b, |room, cx| room.set_location(None, cx))
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert!(room_a_notified.take());
+    assert_eq!(
+        participant_locations(&room_a, cx_a),
+        vec![("user_b".to_string(), ParticipantLocation::External)]
+    );
+    assert!(room_b_notified.take());
+    assert_eq!(
+        participant_locations(&room_b, cx_b),
+        vec![(
+            "user_a".to_string(),
+            ParticipantLocation::Project {
+                project_id: project_a_id
+            }
+        )]
+    );
+
+    fn participant_locations(
+        room: &ModelHandle<Room>,
+        cx: &TestAppContext,
+    ) -> Vec<(String, ParticipantLocation)> {
+        room.read_with(cx, |room, _| {
+            room.remote_participants()
+                .values()
+                .map(|participant| {
+                    (
+                        participant.user.github_login.to_string(),
+                        participant.location,
+                    )
+                })
+                .collect()
+        })
     }
 }
 

@@ -151,6 +151,7 @@ impl Server {
             .add_message_handler(Server::leave_room)
             .add_request_handler(Server::call)
             .add_message_handler(Server::decline_call)
+            .add_request_handler(Server::update_participant_location)
             .add_request_handler(Server::share_project)
             .add_message_handler(Server::unshare_project)
             .add_request_handler(Server::join_project)
@@ -716,6 +717,23 @@ impl Server {
                 .trace_err();
         }
         self.room_updated(room);
+        Ok(())
+    }
+
+    async fn update_participant_location(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::UpdateParticipantLocation>,
+        response: Response<proto::UpdateParticipantLocation>,
+    ) -> Result<()> {
+        let room_id = request.payload.room_id;
+        let location = request
+            .payload
+            .location
+            .ok_or_else(|| anyhow!("invalid location"))?;
+        let mut store = self.store().await;
+        let room = store.update_participant_location(room_id, location, request.sender_id)?;
+        self.room_updated(room);
+        response.send(proto::Ack {})?;
         Ok(())
     }
 

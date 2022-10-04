@@ -4,6 +4,7 @@ pub mod room;
 use anyhow::{anyhow, Result};
 use client::{incoming_call::IncomingCall, Client, UserStore};
 use gpui::{Entity, ModelContext, ModelHandle, MutableAppContext, Task};
+pub use participant::ParticipantLocation;
 pub use room::Room;
 use std::sync::Arc;
 

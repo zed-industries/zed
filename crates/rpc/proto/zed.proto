@@ -20,6 +20,7 @@ message Envelope {
         IncomingCall incoming_call = 1000;
         CancelCall cancel_call = 1001;
         DeclineCall decline_call = 13;
+        UpdateParticipantLocation update_participant_location = 1003;
         RoomUpdated room_updated = 14;
 
         ShareProject share_project = 15;
@@ -189,6 +190,11 @@ message IncomingCall {
 message CancelCall {}
 
 message DeclineCall {}
+
+message UpdateParticipantLocation {
+    uint64 room_id = 1;
+    ParticipantLocation location = 2;
+}
 
 message RoomUpdated {
     Room room = 1;

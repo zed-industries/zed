@@ -4,6 +4,7 @@ use client::{incoming_call::IncomingCall, proto, Client, PeerId, TypedEnvelope, 
 use collections::{HashMap, HashSet};
 use futures::StreamExt;
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
+use project::Project;
 use std::sync::Arc;
 use util::ResultExt;
 
@@ -228,6 +229,42 @@ impl Room {
                 .request(proto::Call {
                     room_id,
                     recipient_user_id,
+                })
+                .await?;
+            Ok(())
+        })
+    }
+
+    pub fn set_location(
+        &mut self,
+        project: Option<&ModelHandle<Project>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        if self.status.is_offline() {
+            return Task::ready(Err(anyhow!("room is offline")));
+        }
+
+        let client = self.client.clone();
+        let room_id = self.id;
+        let location = if let Some(project) = project {
+            if let Some(project_id) = project.read(cx).remote_id() {
+                proto::participant_location::Variant::Project(
+                    proto::participant_location::Project { id: project_id },
+                )
+            } else {
+                return Task::ready(Err(anyhow!("project is not shared")));
+            }
+        } else {
+            proto::participant_location::Variant::External(proto::participant_location::External {})
+        };
+
+        cx.foreground().spawn(async move {
+            client
+                .request(proto::UpdateParticipantLocation {
+                    room_id,
+                    location: Some(proto::ParticipantLocation {
+                        variant: Some(location),
+                    }),
                 })
                 .await?;
             Ok(())

@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use client::{proto, User};
 use std::sync::Arc;
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum ParticipantLocation {
     Project { project_id: u64 },
     External,
