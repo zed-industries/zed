@@ -41,6 +41,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt,
     future::Future,
+    mem,
     ops::{Deref, DerefMut},
     os::unix::prelude::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
@@ -664,6 +665,13 @@ impl LocalWorktree {
         let snapshot = self.snapshot();
 
         let settings = cx.global::<Settings>();
+
+        // Cut files included because we want to ship!
+        // TODO:
+        // - Rename / etc. setting to be show/hide git gutters
+        // - Unconditionally load index text for all files,
+        // - then choose at rendering time based on settings
+
         let files_included = settings.git_gutter().files_included(settings);
 
         cx.spawn(|this, mut cx| async move {
@@ -1379,6 +1387,7 @@ impl LocalSnapshot {
 
     // Gives the most specific git repository for a given path
     pub(crate) fn repo_for(&self, path: &Path) -> Option<GitRepositoryEntry> {
+        dbg!(&self.git_repositories);
         self.git_repositories
             .iter()
             .rev() //git_repository is ordered lexicographically
@@ -1557,7 +1566,7 @@ impl LocalSnapshot {
 
         if parent_path.file_name() == Some(&DOT_GIT) {
             let abs_path = self.abs_path.join(&parent_path);
-            let content_path: Arc<Path> = abs_path.parent().unwrap().into();
+            let content_path: Arc<Path> = parent_path.parent().unwrap().into();
             if let Err(ix) = self
                 .git_repositories
                 .binary_search_by_key(&&content_path, |repo| &repo.content_path)
@@ -1716,6 +1725,7 @@ impl LocalSnapshot {
 impl GitRepositoryEntry {
     // Note that these paths should be relative to the worktree root.
     pub(crate) fn manages(&self, path: &Path) -> bool {
+        dbg!(path, &self.content_path);
         path.starts_with(self.content_path.as_ref())
     }
 
@@ -2566,7 +2576,7 @@ impl BackgroundScanner {
         self.snapshot.lock().removed_entry_ids.clear();
 
         self.update_ignore_statuses().await;
-        self.update_git_repositories().await;
+        self.update_git_repositories();
         true
     }
 
@@ -2632,25 +2642,11 @@ impl BackgroundScanner {
             .await;
     }
 
-    // TODO: Clarify what is going on here because re-loading every git repository
-    // on every file system event seems wrong
-    async fn update_git_repositories(&self) {
+    fn update_git_repositories(&self) {
         let mut snapshot = self.snapshot.lock();
-
-        let new_repos = snapshot
-            .git_repositories
-            .iter()
-            .cloned()
-            .filter_map(|mut repo_entry| {
-                let repo = self
-                    .fs
-                    .open_repo(&snapshot.abs_path.join(&repo_entry.git_dir_path))?;
-                repo_entry.repo = repo;
-                Some(repo_entry)
-            })
-            .collect();
-
-        snapshot.git_repositories = new_repos;
+        let mut git_repositories = mem::take(&mut snapshot.git_repositories);
+        git_repositories.retain(|repo| snapshot.entry_for_path(&repo.git_dir_path).is_some());
+        snapshot.git_repositories = git_repositories;
     }
 
     async fn update_ignore_status(&self, job: UpdateIgnoreStatusJob, snapshot: &LocalSnapshot) {
@@ -3245,7 +3241,8 @@ mod tests {
                     "b.txt": ""
                 }
             },
-            "c.txt": ""
+            "c.txt": "",
+
         }));
 
         let http_client = FakeHttpClient::with_404_response();

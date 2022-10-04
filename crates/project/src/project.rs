@@ -4541,7 +4541,7 @@ impl Project {
             cx.subscribe(worktree, |this, worktree, event, cx| match event {
                 worktree::Event::UpdatedEntries => this.update_local_worktree_buffers(worktree, cx),
                 worktree::Event::UpdatedGitRepositories(updated_repos) => {
-                    this.update_local_worktree_buffers_git_repos(updated_repos, cx)
+                    this.update_local_worktree_buffers_git_repos(worktree, updated_repos, cx)
                 }
             })
             .detach();
@@ -4652,21 +4652,23 @@ impl Project {
 
     fn update_local_worktree_buffers_git_repos(
         &mut self,
+        worktree: ModelHandle<Worktree>,
         repos: &[GitRepositoryEntry],
         cx: &mut ModelContext<Self>,
     ) {
-        //TODO: Produce protos
-
         for (_, buffer) in &self.opened_buffers {
             if let Some(buffer) = buffer.upgrade(cx) {
-                let file = match buffer.read(cx).file().and_then(|file| file.as_local()) {
+                let file = match File::from_dyn(buffer.read(cx).file()) {
                     Some(file) => file,
-                    None => return,
+                    None => continue,
                 };
-                let path = file.path().clone();
-                let abs_path = file.abs_path(cx);
+                if file.worktree != worktree {
+                    continue;
+                }
 
-                let repo = match repos.iter().find(|repo| repo.manages(&abs_path)) {
+                let path = file.path().clone();
+
+                let repo = match repos.iter().find(|repo| repo.manages(&path)) {
                     Some(repo) => repo.clone(),
                     None => return,
                 };

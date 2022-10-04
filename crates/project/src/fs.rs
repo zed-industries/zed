@@ -888,8 +888,7 @@ impl Fs for FakeFs {
     }
 
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<SyncMutex<dyn GitRepository>>> {
-        let executor = self.executor.upgrade().unwrap();
-        executor.block(async move {
+        smol::block_on(async move {
             let state = self.state.lock().await;
             let entry = state.read_path(abs_dot_git).await.unwrap();
             let mut entry = entry.lock().await;
