@@ -10,7 +10,12 @@ export default function picker(colorScheme: ColorScheme) {
   let layer = elevation.top;
   return {
     background: background(layer),
+    border: border(layer),
+    shadow: elevation.shadow,
     cornerRadius: 12,
+    padding: {
+      bottom: 4
+    },
     item: {
       padding: {
         bottom: 4,
@@ -19,10 +24,11 @@ export default function picker(colorScheme: ColorScheme) {
         top: 4,
       },
       margin: {
+        top: 1,
         left: 4,
         right: 4
       },
-      cornerRadius: 6,
+      cornerRadius: 8,
       text: text(layer, "sans", "variant"),
       highlightText: text(layer, "sans", "info", { weight: "bold" }),
       active: {
@@ -34,7 +40,6 @@ export default function picker(colorScheme: ColorScheme) {
         background: background(layer, "hovered"),
       },
     },
-    border: border(layer),
     empty: {
       text: text(layer, "sans", "variant"),
       padding: {
@@ -59,6 +64,5 @@ export default function picker(colorScheme: ColorScheme) {
         bottom: 4
       }
     },
-    shadow: elevation.shadow,
   };
 }
