@@ -96,7 +96,7 @@ export default function workspace(colorScheme: ColorScheme) {
 
       // Offline Indicator
       offlineIcon: {
-        color: foreground(layer, "on"),
+        color: foreground(layer, "variant"),
         width: 16,
         margin: {
           left: titlebarPadding,
