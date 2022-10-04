@@ -17,9 +17,9 @@ const ramps = {
   red: colorRamp(chroma("#B4637A")),
   orange: colorRamp(chroma("#a07e3b")),
   yellow: colorRamp(chroma("#a07e3b")),
-  green: colorRamp(chroma("#528b8b")),
+  green: colorRamp(chroma("#83a598")),
   cyan: colorRamp(chroma("#83a598")),
-  blue: colorRamp(chroma("#83a598")),
+  blue: colorRamp(chroma("#528b8b")),
   violet: colorRamp(chroma("#d75f5f")),
   magenta: colorRamp(chroma("#a87322")),
 };

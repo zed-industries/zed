@@ -13,6 +13,15 @@ const ramps = {
     "#979db4",
     "#dfe2f1",
     "#f5f7ff",
+  ]).domain([
+    0,
+    0.2,
+    0.38,
+    0.45,
+    0.65,
+    0.7,
+    0.85,
+    1
   ]),
   red: colorRamp(chroma("#c94922")),
   orange: colorRamp(chroma("#c76b29")),

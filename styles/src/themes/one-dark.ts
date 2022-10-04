@@ -33,6 +33,15 @@ const ramps = {
     base05,
     base06,
     base07,
+  ]).domain([
+    0,
+    0.2,
+    0.3,
+    0.45,
+    0.62,
+    0.8,
+    0.9,
+    1
   ]),
   red: colorRamp(chroma(base08)),
   orange: colorRamp(chroma(base09)),
