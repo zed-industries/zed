@@ -30,6 +30,7 @@ pub struct Theme {
     pub breadcrumbs: ContainedText,
     pub contact_notification: ContactNotification,
     pub update_notification: UpdateNotification,
+    pub project_shared_notification: ProjectSharedNotification,
     pub tooltip: TooltipStyle,
     pub terminal: TerminalStyle,
 }
@@ -479,6 +480,14 @@ pub struct UpdateNotification {
     pub message: ContainedText,
     pub action_message: Interactive<ContainedText>,
     pub dismiss_button: Interactive<IconButton>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ProjectSharedNotification {
+    pub owner_avatar: ImageStyle,
+    pub message: ContainedText,
+    pub join_button: ContainedText,
+    pub dismiss_button: ContainedText,
 }
 
 #[derive(Clone, Deserialize, Default)]

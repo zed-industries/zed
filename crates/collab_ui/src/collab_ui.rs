@@ -1,13 +1,16 @@
 mod collab_titlebar_item;
 mod contacts_popover;
 mod incoming_call_notification;
+mod project_shared_notification;
 
-use client::UserStore;
 pub use collab_titlebar_item::CollabTitlebarItem;
-use gpui::{ModelHandle, MutableAppContext};
+use gpui::MutableAppContext;
+use std::sync::Arc;
+use workspace::AppState;
 
-pub fn init(user_store: ModelHandle<UserStore>, cx: &mut MutableAppContext) {
+pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     contacts_popover::init(cx);
     collab_titlebar_item::init(cx);
-    incoming_call_notification::init(user_store, cx);
+    incoming_call_notification::init(app_state.user_store.clone(), cx);
+    project_shared_notification::init(app_state, cx);
 }

@@ -14,6 +14,7 @@ import contextMenu from "./contextMenu";
 import projectDiagnostics from "./projectDiagnostics";
 import contactNotification from "./contactNotification";
 import updateNotification from "./updateNotification";
+import projectSharedNotification from "./projectSharedNotification";
 import tooltip from "./tooltip";
 import terminal from "./terminal";
 
@@ -47,6 +48,7 @@ export default function app(theme: Theme): Object {
     },
     contactNotification: contactNotification(theme),
     updateNotification: updateNotification(theme),
+    projectSharedNotification: projectSharedNotification(theme),
     tooltip: tooltip(theme),
     terminal: terminal(theme),
   };

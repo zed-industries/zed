@@ -107,7 +107,6 @@ fn main() {
         project::Project::init(&client);
         client::Channel::init(&client);
         client::init(client.clone(), cx);
-        collab_ui::init(user_store.clone(), cx);
         command_palette::init(cx);
         editor::init(cx);
         go_to_line::init(cx);
@@ -157,6 +156,7 @@ fn main() {
         journal::init(app_state.clone(), cx);
         theme_selector::init(app_state.clone(), cx);
         zed::init(&app_state, cx);
+        collab_ui::init(app_state.clone(), cx);
 
         cx.set_menus(menus::menus());
 
