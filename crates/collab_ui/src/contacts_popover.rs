@@ -479,40 +479,49 @@ impl ContactsPopover {
         is_selected: bool,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
+        let online = contact.online;
         let user_id = contact.user.id;
-        MouseEventHandler::<Contact>::new(contact.user.id as usize, cx, |_, _| {
-            Flex::row()
-                .with_children(contact.user.avatar.clone().map(|avatar| {
-                    Image::new(avatar)
-                        .with_style(theme.contact_avatar)
+        let mut element =
+            MouseEventHandler::<Contact>::new(contact.user.id as usize, cx, |_, _| {
+                Flex::row()
+                    .with_children(contact.user.avatar.clone().map(|avatar| {
+                        Image::new(avatar)
+                            .with_style(theme.contact_avatar)
+                            .aligned()
+                            .left()
+                            .boxed()
+                    }))
+                    .with_child(
+                        Label::new(
+                            contact.user.github_login.clone(),
+                            theme.contact_username.text.clone(),
+                        )
+                        .contained()
+                        .with_style(theme.contact_username.container)
                         .aligned()
                         .left()
-                        .boxed()
-                }))
-                .with_child(
-                    Label::new(
-                        contact.user.github_login.clone(),
-                        theme.contact_username.text.clone(),
+                        .flex(1., true)
+                        .boxed(),
                     )
+                    .constrained()
+                    .with_height(theme.row_height)
                     .contained()
-                    .with_style(theme.contact_username.container)
-                    .aligned()
-                    .left()
-                    .flex(1., true)
-                    .boxed(),
-                )
-                .constrained()
-                .with_height(theme.row_height)
-                .contained()
-                .with_style(*theme.contact_row.style_for(Default::default(), is_selected))
-                .boxed()
-        })
-        .on_click(MouseButton::Left, move |_, cx| {
-            cx.dispatch_action(Call {
-                recipient_user_id: user_id,
+                    .with_style(*theme.contact_row.style_for(Default::default(), is_selected))
+                    .boxed()
             })
-        })
-        .boxed()
+            .on_click(MouseButton::Left, move |_, cx| {
+                if online {
+                    cx.dispatch_action(Call {
+                        recipient_user_id: user_id,
+                    });
+                }
+            });
+
+        if online {
+            element = element.with_cursor_style(CursorStyle::PointingHand);
+        }
+
+        element.boxed()
     }
 
     fn render_contact_request(

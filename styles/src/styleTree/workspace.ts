@@ -17,6 +17,26 @@ export function workspaceBackground(theme: Theme) {
 
 export default function workspace(theme: Theme) {
   const titlebarPadding = 6;
+  const titlebarButton = {
+    background: backgroundColor(theme, 100),
+    border: border(theme, "secondary"),
+    cornerRadius: 6,
+    margin: {
+      top: 1,
+    },
+    padding: {
+      top: 1,
+      bottom: 1,
+      left: 7,
+      right: 7,
+    },
+    ...text(theme, "sans", "secondary", { size: "xs" }),
+    hover: {
+      ...text(theme, "sans", "active", { size: "xs" }),
+      background: backgroundColor(theme, "on300", "hovered"),
+      border: border(theme, "primary"),
+    },
+  };
 
   return {
     background: backgroundColor(theme, 300),
@@ -81,24 +101,7 @@ export default function workspace(theme: Theme) {
       },
       border: border(theme, "primary", { bottom: true, overlay: true }),
       signInPrompt: {
-        background: backgroundColor(theme, 100),
-        border: border(theme, "secondary"),
-        cornerRadius: 6,
-        margin: {
-          top: 1,
-        },
-        padding: {
-          top: 1,
-          bottom: 1,
-          left: 7,
-          right: 7,
-        },
-        ...text(theme, "sans", "secondary", { size: "xs" }),
-        hover: {
-          ...text(theme, "sans", "active", { size: "xs" }),
-          background: backgroundColor(theme, "on300", "hovered"),
-          border: border(theme, "primary"),
-        },
+        ...titlebarButton
       },
       offlineIcon: {
         color: iconColor(theme, "secondary"),
@@ -136,6 +139,9 @@ export default function workspace(theme: Theme) {
           background: backgroundColor(theme, "on300", "hovered"),
           color: iconColor(theme, "active"),
         },
+      },
+      shareButton: {
+        ...titlebarButton
       },
       contactsPopover: {
         background: backgroundColor(theme, 300, "base"),

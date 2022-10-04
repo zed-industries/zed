@@ -17,10 +17,14 @@ use std::{ops::Range, sync::Arc};
 use theme::Theme;
 use workspace::{FollowNextCollaborator, ToggleFollow, Workspace};
 
-actions!(contacts_titlebar_item, [ToggleContactsPopover]);
+actions!(
+    contacts_titlebar_item,
+    [ToggleContactsPopover, ShareProject]
+);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(CollabTitlebarItem::toggle_contacts_popover);
+    cx.add_action(CollabTitlebarItem::share_project);
 }
 
 pub struct CollabTitlebarItem {
@@ -47,12 +51,20 @@ impl View for CollabTitlebarItem {
         };
 
         let theme = cx.global::<Settings>().theme.clone();
-        Flex::row()
-            .with_children(self.render_toggle_contacts_button(&workspace, &theme, cx))
-            .with_children(self.render_collaborators(&workspace, &theme, cx))
-            .with_children(self.render_current_user(&workspace, &theme, cx))
-            .with_children(self.render_connection_status(&workspace, cx))
-            .boxed()
+        let project = workspace.read(cx).project().read(cx);
+
+        let mut container = Flex::row();
+        if workspace.read(cx).client().status().borrow().is_connected() {
+            if project.is_shared() || ActiveCall::global(cx).read(cx).room().is_none() {
+                container.add_child(self.render_toggle_contacts_button(&theme, cx));
+            } else {
+                container.add_child(self.render_share_button(&theme, cx));
+            }
+        }
+        container.add_children(self.render_collaborators(&workspace, &theme, cx));
+        container.add_children(self.render_current_user(&workspace, &theme, cx));
+        container.add_children(self.render_connection_status(&workspace, cx));
+        container.boxed()
     }
 }
 
@@ -79,6 +91,18 @@ impl CollabTitlebarItem {
             self.room_subscription = None;
         }
         cx.notify();
+    }
+
+    fn share_project(&mut self, _: &ShareProject, cx: &mut ViewContext<Self>) {
+        if let Some(workspace) = self.workspace.upgrade(cx) {
+            if let Some(room) = ActiveCall::global(cx).read(cx).room() {
+                let room_id = room.read(cx).id();
+                let project = workspace.read(cx).project().clone();
+                project
+                    .update(cx, |project, cx| project.share(room_id, cx))
+                    .detach_and_log_err(cx);
+            }
+        }
     }
 
     fn toggle_contacts_popover(&mut self, _: &ToggleContactsPopover, cx: &mut ViewContext<Self>) {
@@ -108,58 +132,72 @@ impl CollabTitlebarItem {
 
     fn render_toggle_contacts_button(
         &self,
-        workspace: &ViewHandle<Workspace>,
         theme: &Theme,
         cx: &mut RenderContext<Self>,
-    ) -> Option<ElementBox> {
-        if !workspace.read(cx).client().status().borrow().is_connected() {
-            return None;
-        }
+    ) -> ElementBox {
+        let titlebar = &theme.workspace.titlebar;
+        Stack::new()
+            .with_child(
+                MouseEventHandler::<ToggleContactsPopover>::new(0, cx, |state, _| {
+                    let style = titlebar
+                        .toggle_contacts_button
+                        .style_for(state, self.contacts_popover.is_some());
+                    Svg::new("icons/plus_8.svg")
+                        .with_color(style.color)
+                        .constrained()
+                        .with_width(style.icon_width)
+                        .aligned()
+                        .constrained()
+                        .with_width(style.button_width)
+                        .with_height(style.button_width)
+                        .contained()
+                        .with_style(style.container)
+                        .boxed()
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(MouseButton::Left, |_, cx| {
+                    cx.dispatch_action(ToggleContactsPopover);
+                })
+                .aligned()
+                .boxed(),
+            )
+            .with_children(self.contacts_popover.as_ref().map(|popover| {
+                Overlay::new(
+                    ChildView::new(popover)
+                        .contained()
+                        .with_margin_top(titlebar.height)
+                        .with_margin_right(-titlebar.toggle_contacts_button.default.button_width)
+                        .boxed(),
+                )
+                .with_fit_mode(OverlayFitMode::SwitchAnchor)
+                .with_anchor_corner(AnchorCorner::BottomLeft)
+                .boxed()
+            }))
+            .boxed()
+    }
+
+    fn render_share_button(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
+        enum Share {}
 
         let titlebar = &theme.workspace.titlebar;
-
-        Some(
-            Stack::new()
-                .with_child(
-                    MouseEventHandler::<ToggleContactsPopover>::new(0, cx, |state, _| {
-                        let style = titlebar
-                            .toggle_contacts_button
-                            .style_for(state, self.contacts_popover.is_some());
-                        Svg::new("icons/plus_8.svg")
-                            .with_color(style.color)
-                            .constrained()
-                            .with_width(style.icon_width)
-                            .aligned()
-                            .constrained()
-                            .with_width(style.button_width)
-                            .with_height(style.button_width)
-                            .contained()
-                            .with_style(style.container)
-                            .boxed()
-                    })
-                    .with_cursor_style(CursorStyle::PointingHand)
-                    .on_click(MouseButton::Left, |_, cx| {
-                        cx.dispatch_action(ToggleContactsPopover);
-                    })
-                    .aligned()
-                    .boxed(),
-                )
-                .with_children(self.contacts_popover.as_ref().map(|popover| {
-                    Overlay::new(
-                        ChildView::new(popover)
-                            .contained()
-                            .with_margin_top(titlebar.height)
-                            .with_margin_right(
-                                -titlebar.toggle_contacts_button.default.button_width,
-                            )
-                            .boxed(),
-                    )
-                    .with_fit_mode(OverlayFitMode::SwitchAnchor)
-                    .with_anchor_corner(AnchorCorner::BottomLeft)
-                    .boxed()
-                }))
-                .boxed(),
+        MouseEventHandler::<Share>::new(0, cx, |state, _| {
+            let style = titlebar.share_button.style_for(state, false);
+            Label::new("Share".into(), style.text.clone())
+                .contained()
+                .with_style(style.container)
+                .boxed()
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(ShareProject))
+        .with_tooltip::<Share, _>(
+            0,
+            "Share project with call participants".into(),
+            None,
+            theme.tooltip.clone(),
+            cx,
         )
+        .aligned()
+        .boxed()
     }
 
     fn render_collaborators(

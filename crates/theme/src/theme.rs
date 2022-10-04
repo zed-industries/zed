@@ -74,6 +74,7 @@ pub struct Titlebar {
     pub inactive_avatar: ImageStyle,
     pub sign_in_prompt: Interactive<ContainedText>,
     pub outdated_warning: ContainedText,
+    pub share_button: Interactive<ContainedText>,
     pub toggle_contacts_button: Interactive<IconButton>,
     pub contacts_popover: AddParticipantPopover,
 }
