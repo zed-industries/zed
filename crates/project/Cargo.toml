@@ -24,6 +24,7 @@ collections = { path = "../collections" }
 db = { path = "../db" }
 fsevent = { path = "../fsevent" }
 fuzzy = { path = "../fuzzy" }
+git = { path = "../git" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }

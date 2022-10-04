@@ -51,6 +51,7 @@ use std::{
     time::Duration,
 };
 use theme::ThemeRegistry;
+use unindent::Unindent as _;
 use workspace::{Item, SplitDirection, ToggleFollow, Workspace};
 
 #[ctor::ctor]
@@ -944,6 +945,136 @@ async fn test_propagate_saves_and_fs_changes(
             buf.file().unwrap().path().to_str() == Some("file1-renamed")
         })
         .await;
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_git_diff_base_change(
+    executor: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    executor.forbid_parking();
+    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    client_a
+        .fs
+        .insert_tree(
+            "/dir",
+            json!({
+            ".git": {
+            },
+            "a.txt": "
+                    one
+                    two
+                    three
+                ".unindent(),
+            }),
+        )
+        .await;
+
+    let diff_base = "
+        one
+        three
+    "
+    .unindent();
+
+    let new_diff_base = "
+        one
+        two
+    "
+    .unindent();
+
+    client_a
+        .fs
+        .as_fake()
+        .set_index_for_repo(
+            Path::new("/dir/.git"),
+            &[(Path::new("a.txt"), diff_base.clone())],
+        )
+        .await;
+
+    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+
+    // Create the buffer
+    let buffer_a = project_a
+        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "/dir/a.txt"), cx))
+        .await
+        .unwrap();
+
+    // Wait for it to catch up to the new diff
+    executor.run_until_parked();
+
+    // Smoke test diffing
+    buffer_a.read_with(cx_a, |buffer, _| {
+        assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
+        git::diff::assert_hunks(
+            buffer.snapshot().git_diff_hunks_in_range(0..4),
+            &buffer,
+            &diff_base,
+            &[(1..2, "", "two\n")],
+        );
+    });
+
+    // Create remote buffer
+    let buffer_b = project_b
+        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "/dir/a.txt"), cx))
+        .await
+        .unwrap();
+
+    // Wait remote buffer to catch up to the new diff
+    executor.run_until_parked();
+
+    // Smoke test diffing
+    buffer_b.read_with(cx_b, |buffer, _| {
+        assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
+        git::diff::assert_hunks(
+            buffer.snapshot().git_diff_hunks_in_range(0..4),
+            &buffer,
+            &diff_base,
+            &[(1..2, "", "two\n")],
+        );
+    });
+
+    client_a
+        .fs
+        .as_fake()
+        .set_index_for_repo(
+            Path::new("/dir/.git"),
+            &[(Path::new("a.txt"), new_diff_base.clone())],
+        )
+        .await;
+
+    // Wait for buffer_a to receive it
+    executor.run_until_parked();
+
+    // Smoke test new diffing
+    buffer_a.read_with(cx_a, |buffer, _| {
+        assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
+
+        git::diff::assert_hunks(
+            buffer.snapshot().git_diff_hunks_in_range(0..4),
+            &buffer,
+            &diff_base,
+            &[(2..3, "", "three\n")],
+        );
+    });
+
+    // Smoke test B
+    buffer_b.read_with(cx_b, |buffer, _| {
+        assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
+        git::diff::assert_hunks(
+            buffer.snapshot().git_diff_hunks_in_range(0..4),
+            &buffer,
+            &diff_base,
+            &[(2..3, "", "three\n")],
+        );
+    });
 }
 
 #[gpui::test(iterations = 10)]

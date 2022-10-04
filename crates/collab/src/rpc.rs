@@ -206,6 +206,7 @@ impl Server {
             .add_message_handler(Server::unfollow)
             .add_message_handler(Server::update_followers)
             .add_request_handler(Server::get_channel_messages)
+            .add_message_handler(Server::update_diff_base)
             .add_request_handler(Server::get_private_user_info);
 
         Arc::new(server)
@@ -1725,6 +1726,21 @@ impl Server {
             done: messages.len() < MESSAGE_COUNT_PER_PAGE,
             messages,
         })?;
+        Ok(())
+    }
+
+    async fn update_diff_base(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::UpdateDiffBase>,
+    ) -> Result<()> {
+        let receiver_ids = self.store().await.project_connection_ids(
+            ProjectId::from_proto(request.payload.project_id),
+            request.sender_id,
+        )?;
+        broadcast(request.sender_id, receiver_ids, |connection_id| {
+            self.peer
+                .forward_send(request.sender_id, connection_id, request.payload.clone())
+        });
         Ok(())
     }
 

@@ -32,6 +32,8 @@ pub struct Settings {
     pub default_dock_anchor: DockAnchor,
     pub editor_defaults: EditorSettings,
     pub editor_overrides: EditorSettings,
+    pub git: GitSettings,
+    pub git_overrides: GitSettings,
     pub terminal_defaults: TerminalSettings,
     pub terminal_overrides: TerminalSettings,
     pub language_defaults: HashMap<Arc<str>, EditorSettings>,
@@ -51,6 +53,22 @@ impl FeatureFlags {
         vec![]
     }
 }
+
+#[derive(Copy, Clone, Debug, Default, Deserialize, JsonSchema)]
+pub struct GitSettings {
+    pub git_gutter: Option<GitGutter>,
+    pub gutter_debounce: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GitGutter {
+    #[default]
+    TrackedFiles,
+    Hide,
+}
+
+pub struct GitGutterConfig {}
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct EditorSettings {
@@ -196,6 +214,8 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub terminal: TerminalSettings,
     #[serde(default)]
+    pub git: Option<GitSettings>,
+    #[serde(default)]
     #[serde(alias = "language_overrides")]
     pub languages: HashMap<Arc<str>, EditorSettings>,
     #[serde(default)]
@@ -252,6 +272,8 @@ impl Settings {
                 enable_language_server: required(defaults.editor.enable_language_server),
             },
             editor_overrides: Default::default(),
+            git: defaults.git.unwrap(),
+            git_overrides: Default::default(),
             terminal_defaults: Default::default(),
             terminal_overrides: Default::default(),
             language_defaults: defaults.languages,
@@ -303,6 +325,7 @@ impl Settings {
         }
 
         self.editor_overrides = data.editor;
+        self.git_overrides = data.git.unwrap_or_default();
         self.terminal_defaults.font_size = data.terminal.font_size;
         self.terminal_overrides = data.terminal;
         self.language_overrides = data.languages;
@@ -358,6 +381,14 @@ impl Settings {
             .expect("missing default")
     }
 
+    pub fn git_gutter(&self) -> GitGutter {
+        self.git_overrides.git_gutter.unwrap_or_else(|| {
+            self.git
+                .git_gutter
+                .expect("git_gutter should be some by setting setup")
+        })
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &gpui::AppContext) -> Settings {
         Settings {
@@ -382,6 +413,8 @@ impl Settings {
             editor_overrides: Default::default(),
             terminal_defaults: Default::default(),
             terminal_overrides: Default::default(),
+            git: Default::default(),
+            git_overrides: Default::default(),
             language_defaults: Default::default(),
             language_overrides: Default::default(),
             lsp: Default::default(),

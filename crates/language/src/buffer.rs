@@ -45,8 +45,16 @@ pub use {tree_sitter_rust, tree_sitter_typescript};
 
 pub use lsp::DiagnosticSeverity;
 
+struct GitDiffStatus {
+    diff: git::diff::BufferDiff,
+    update_in_progress: bool,
+    update_requested: bool,
+}
+
 pub struct Buffer {
     text: TextBuffer,
+    diff_base: Option<String>,
+    git_diff_status: GitDiffStatus,
     file: Option<Arc<dyn File>>,
     saved_version: clock::Global,
     saved_version_fingerprint: String,
@@ -66,6 +74,7 @@ pub struct Buffer {
     diagnostics_update_count: usize,
     diagnostics_timestamp: clock::Lamport,
     file_update_count: usize,
+    git_diff_update_count: usize,
     completion_triggers: Vec<String>,
     completion_triggers_timestamp: clock::Lamport,
     deferred_ops: OperationQueue<Operation>,
@@ -73,11 +82,13 @@ pub struct Buffer {
 
 pub struct BufferSnapshot {
     text: text::BufferSnapshot,
+    pub git_diff: git::diff::BufferDiff,
     pub(crate) syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: DiagnosticSet,
     diagnostics_update_count: usize,
     file_update_count: usize,
+    git_diff_update_count: usize,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     selections_update_count: usize,
     language: Option<Arc<Language>>,
@@ -328,17 +339,20 @@ impl Buffer {
         Self::build(
             TextBuffer::new(replica_id, cx.model_id() as u64, base_text.into()),
             None,
+            None,
         )
     }
 
     pub fn from_file<T: Into<String>>(
         replica_id: ReplicaId,
         base_text: T,
+        diff_base: Option<T>,
         file: Arc<dyn File>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         Self::build(
             TextBuffer::new(replica_id, cx.model_id() as u64, base_text.into()),
+            diff_base.map(|h| h.into().into_boxed_str().into()),
             Some(file),
         )
     }
@@ -349,7 +363,11 @@ impl Buffer {
         file: Option<Arc<dyn File>>,
     ) -> Result<Self> {
         let buffer = TextBuffer::new(replica_id, message.id, message.base_text);
-        let mut this = Self::build(buffer, file);
+        let mut this = Self::build(
+            buffer,
+            message.diff_base.map(|text| text.into_boxed_str().into()),
+            file,
+        );
         this.text.set_line_ending(proto::deserialize_line_ending(
             proto::LineEnding::from_i32(message.line_ending)
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
@@ -362,6 +380,7 @@ impl Buffer {
             id: self.remote_id(),
             file: self.file.as_ref().map(|f| f.to_proto()),
             base_text: self.base_text().to_string(),
+            diff_base: self.diff_base.as_ref().map(|h| h.to_string()),
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
         }
     }
@@ -404,7 +423,7 @@ impl Buffer {
         self
     }
 
-    fn build(buffer: TextBuffer, file: Option<Arc<dyn File>>) -> Self {
+    fn build(buffer: TextBuffer, diff_base: Option<String>, file: Option<Arc<dyn File>>) -> Self {
         let saved_mtime = if let Some(file) = file.as_ref() {
             file.mtime()
         } else {
@@ -418,6 +437,12 @@ impl Buffer {
             transaction_depth: 0,
             was_dirty_before_starting_transaction: None,
             text: buffer,
+            diff_base,
+            git_diff_status: GitDiffStatus {
+                diff: git::diff::BufferDiff::new(),
+                update_in_progress: false,
+                update_requested: false,
+            },
             file,
             syntax_map: Mutex::new(SyntaxMap::new()),
             parsing_in_background: false,
@@ -432,6 +457,7 @@ impl Buffer {
             diagnostics_update_count: 0,
             diagnostics_timestamp: Default::default(),
             file_update_count: 0,
+            git_diff_update_count: 0,
             completion_triggers: Default::default(),
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
@@ -447,11 +473,13 @@ impl Buffer {
         BufferSnapshot {
             text,
             syntax,
+            git_diff: self.git_diff_status.diff.clone(),
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
             diagnostics_update_count: self.diagnostics_update_count,
             file_update_count: self.file_update_count,
+            git_diff_update_count: self.git_diff_update_count,
             language: self.language.clone(),
             parse_count: self.parse_count,
             selections_update_count: self.selections_update_count,
@@ -584,6 +612,7 @@ impl Buffer {
                 cx,
             );
         }
+        self.git_diff_recalc(cx);
         cx.emit(Event::Reloaded);
         cx.notify();
     }
@@ -633,6 +662,55 @@ impl Buffer {
         task
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn diff_base(&self) -> Option<&str> {
+        self.diff_base.as_deref()
+    }
+
+    pub fn update_diff_base(&mut self, diff_base: Option<String>, cx: &mut ModelContext<Self>) {
+        self.diff_base = diff_base;
+        self.git_diff_recalc(cx);
+    }
+
+    pub fn needs_git_diff_recalc(&self) -> bool {
+        self.git_diff_status.diff.needs_update(self)
+    }
+
+    pub fn git_diff_recalc(&mut self, cx: &mut ModelContext<Self>) {
+        if self.git_diff_status.update_in_progress {
+            self.git_diff_status.update_requested = true;
+            return;
+        }
+
+        if let Some(diff_base) = &self.diff_base {
+            let snapshot = self.snapshot();
+            let diff_base = diff_base.clone();
+
+            let mut diff = self.git_diff_status.diff.clone();
+            let diff = cx.background().spawn(async move {
+                diff.update(&diff_base, &snapshot).await;
+                diff
+            });
+
+            cx.spawn_weak(|this, mut cx| async move {
+                let buffer_diff = diff.await;
+                if let Some(this) = this.upgrade(&cx) {
+                    this.update(&mut cx, |this, cx| {
+                        this.git_diff_status.diff = buffer_diff;
+                        this.git_diff_update_count += 1;
+                        cx.notify();
+
+                        this.git_diff_status.update_in_progress = false;
+                        if this.git_diff_status.update_requested {
+                            this.git_diff_recalc(cx);
+                        }
+                    })
+                }
+            })
+            .detach()
+        }
+    }
+
     pub fn close(&mut self, cx: &mut ModelContext<Self>) {
         cx.emit(Event::Closed);
     }
@@ -655,6 +733,10 @@ impl Buffer {
 
     pub fn file_update_count(&self) -> usize {
         self.file_update_count
+    }
+
+    pub fn git_diff_update_count(&self) -> usize {
+        self.git_diff_update_count
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -2139,6 +2221,13 @@ impl BufferSnapshot {
             })
     }
 
+    pub fn git_diff_hunks_in_range<'a>(
+        &'a self,
+        query_row_range: Range<u32>,
+    ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
+        self.git_diff.hunks_in_range(query_row_range, self)
+    }
+
     pub fn diagnostics_in_range<'a, T, O>(
         &'a self,
         search_range: Range<T>,
@@ -2186,6 +2275,10 @@ impl BufferSnapshot {
     pub fn file_update_count(&self) -> usize {
         self.file_update_count
     }
+
+    pub fn git_diff_update_count(&self) -> usize {
+        self.git_diff_update_count
+    }
 }
 
 pub fn indent_size_for_line(text: &text::BufferSnapshot, row: u32) -> IndentSize {
@@ -2212,6 +2305,7 @@ impl Clone for BufferSnapshot {
     fn clone(&self) -> Self {
         Self {
             text: self.text.clone(),
+            git_diff: self.git_diff.clone(),
             syntax: self.syntax.clone(),
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
@@ -2219,6 +2313,7 @@ impl Clone for BufferSnapshot {
             selections_update_count: self.selections_update_count,
             diagnostics_update_count: self.diagnostics_update_count,
             file_update_count: self.file_update_count,
+            git_diff_update_count: self.git_diff_update_count,
             language: self.language.clone(),
             parse_count: self.parse_count,
         }

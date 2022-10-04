@@ -25,6 +25,7 @@ client = { path = "../client" }
 clock = { path = "../clock" }
 collections = { path = "../collections" }
 fuzzy = { path = "../fuzzy" }
+git = { path = "../git" }
 gpui = { path = "../gpui" }
 lsp = { path = "../lsp" }
 rpc = { path = "../rpc" }

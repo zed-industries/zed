@@ -1031,6 +1031,7 @@ dependencies = [
  "env_logger",
  "envy",
  "futures",
+ "git",
  "gpui",
  "hyper",
  "language",
@@ -1061,6 +1062,7 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
+ "unindent",
  "util",
  "workspace",
 ]
@@ -1697,6 +1699,7 @@ dependencies = [
  "env_logger",
  "futures",
  "fuzzy",
+ "git",
  "gpui",
  "indoc",
  "itertools",
@@ -2222,6 +2225,39 @@ dependencies = [
  "fallible-iterator",
  "indexmap",
  "stable_deref_trait",
+]
+
+[[package]]
+name = "git"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clock",
+ "collections",
+ "futures",
+ "git2",
+ "lazy_static",
+ "log",
+ "parking_lot 0.11.2",
+ "smol",
+ "sum_tree",
+ "text",
+ "unindent",
+ "util",
+]
+
+[[package]]
+name = "git2"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2994bee4a3a6a51eb90c218523be382fd7ea09b16380b9312e9dbe955ff7c7d1"
+dependencies = [
+ "bitflags",
+ "libc",
+ "libgit2-sys",
+ "log",
+ "url",
 ]
 
 [[package]]
@@ -2840,6 +2876,7 @@ dependencies = [
  "env_logger",
  "futures",
  "fuzzy",
+ "git",
  "gpui",
  "lazy_static",
  "log",
@@ -2893,6 +2930,18 @@ name = "libc"
 version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "349d5a591cd28b49e1d1037471617a32ddcda5731b99419008085f72d5a53836"
+
+[[package]]
+name = "libgit2-sys"
+version = "0.14.0+1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47a00859c70c8a4f7218e6d1cc32875c4b55f6799445b842b0d8ed5e4c3d959b"
+dependencies = [
+ "cc",
+ "libc",
+ "libz-sys",
+ "pkg-config",
+]
 
 [[package]]
 name = "libloading"
@@ -3970,6 +4019,7 @@ dependencies = [
  "fsevent",
  "futures",
  "fuzzy",
+ "git",
  "gpui",
  "ignore",
  "language",
@@ -6332,6 +6382,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures",
+ "git2",
+ "lazy_static",
  "log",
  "rand 0.8.5",
  "serde_json",

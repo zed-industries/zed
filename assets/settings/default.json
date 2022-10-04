@@ -74,6 +74,15 @@
     "hard_tabs": false,
     // How many columns a tab should occupy.
     "tab_size": 4,
+    // Git gutter behavior configuration.
+    "git": {
+        // Control whether the git gutter is shown. May take 2 values:
+        // 1. Show the gutter
+        //      "git_gutter": "tracked_files"
+        // 2. Hide the gutter
+        //      "git_gutter": "hide"
+        "git_gutter": "tracked_files"
+    },
     // Settings specific to the terminal
     "terminal": {
         // What shell to use when opening a terminal. May take 3 values: 

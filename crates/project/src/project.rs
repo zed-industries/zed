@@ -8,10 +8,14 @@ pub mod worktree;
 mod project_tests;
 
 use anyhow::{anyhow, Context, Result};
-use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
+use client::{
+    proto::{self},
+    Client, PeerId, TypedEnvelope, User, UserStore,
+};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use futures::{future::Shared, AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt};
+
 use gpui::{
     AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
     MutableAppContext, Task, UpgradeModelHandle, WeakModelHandle,
@@ -420,6 +424,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_open_buffer_by_id);
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
         client.add_model_request_handler(Self::handle_save_buffer);
+        client.add_model_message_handler(Self::handle_update_diff_base);
     }
 
     pub fn local(
@@ -4533,8 +4538,11 @@ impl Project {
     fn add_worktree(&mut self, worktree: &ModelHandle<Worktree>, cx: &mut ModelContext<Self>) {
         cx.observe(worktree, |_, _, cx| cx.notify()).detach();
         if worktree.read(cx).is_local() {
-            cx.subscribe(worktree, |this, worktree, _, cx| {
-                this.update_local_worktree_buffers(worktree, cx);
+            cx.subscribe(worktree, |this, worktree, event, cx| match event {
+                worktree::Event::UpdatedEntries => this.update_local_worktree_buffers(worktree, cx),
+                worktree::Event::UpdatedGitRepositories(updated_repos) => {
+                    this.update_local_worktree_buffers_git_repos(worktree, updated_repos, cx)
+                }
             })
             .detach();
         }
@@ -4639,6 +4647,58 @@ impl Project {
             self.unregister_buffer_from_language_server(&buffer, old_path, cx);
             self.assign_language_to_buffer(&buffer, cx);
             self.register_buffer_with_language_server(&buffer, cx);
+        }
+    }
+
+    fn update_local_worktree_buffers_git_repos(
+        &mut self,
+        worktree: ModelHandle<Worktree>,
+        repos: &[GitRepositoryEntry],
+        cx: &mut ModelContext<Self>,
+    ) {
+        for (_, buffer) in &self.opened_buffers {
+            if let Some(buffer) = buffer.upgrade(cx) {
+                let file = match File::from_dyn(buffer.read(cx).file()) {
+                    Some(file) => file,
+                    None => continue,
+                };
+                if file.worktree != worktree {
+                    continue;
+                }
+
+                let path = file.path().clone();
+
+                let repo = match repos.iter().find(|repo| repo.manages(&path)) {
+                    Some(repo) => repo.clone(),
+                    None => return,
+                };
+
+                let shared_remote_id = self.shared_remote_id();
+                let client = self.client.clone();
+
+                cx.spawn(|_, mut cx| async move {
+                    let diff_base = cx
+                        .background()
+                        .spawn(async move { repo.repo.lock().load_index(&path) })
+                        .await;
+
+                    let buffer_id = buffer.update(&mut cx, |buffer, cx| {
+                        buffer.update_diff_base(diff_base.clone(), cx);
+                        buffer.remote_id()
+                    });
+
+                    if let Some(project_id) = shared_remote_id {
+                        client
+                            .send(proto::UpdateDiffBase {
+                                project_id,
+                                buffer_id: buffer_id as u64,
+                                diff_base,
+                            })
+                            .log_err();
+                    }
+                })
+                .detach();
+            }
         }
     }
 
@@ -5214,6 +5274,27 @@ impl Project {
         })
     }
 
+    async fn handle_update_diff_base(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::UpdateDiffBase>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            let buffer_id = envelope.payload.buffer_id;
+            let diff_base = envelope.payload.diff_base;
+            let buffer = this
+                .opened_buffers
+                .get_mut(&buffer_id)
+                .and_then(|b| b.upgrade(cx))
+                .ok_or_else(|| anyhow!("No such buffer {}", buffer_id))?;
+
+            buffer.update(cx, |buffer, cx| buffer.update_diff_base(diff_base, cx));
+
+            Ok(())
+        })
+    }
+
     async fn handle_update_buffer_file(
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<proto::UpdateBufferFile>,
@@ -5780,7 +5861,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
         let mut opened_buffer_rx = self.opened_buffer.1.clone();
-        cx.spawn(|this, cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let buffer = loop {
                 let buffer = this.read_with(&cx, |this, cx| {
                     this.opened_buffers
@@ -5798,6 +5879,7 @@ impl Project {
                     .await
                     .ok_or_else(|| anyhow!("project dropped while waiting for buffer"))?;
             };
+            buffer.update(&mut cx, |buffer, cx| buffer.git_diff_recalc(cx));
             Ok(buffer)
         })
     }

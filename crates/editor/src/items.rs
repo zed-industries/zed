@@ -478,6 +478,17 @@ impl Item for Editor {
         })
     }
 
+    fn git_diff_recalc(
+        &mut self,
+        _project: ModelHandle<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        self.buffer().update(cx, |multibuffer, cx| {
+            multibuffer.git_diff_recalc(cx);
+        });
+        Task::ready(Ok(()))
+    }
+
     fn to_item_events(event: &Self::Event) -> Vec<workspace::ItemEvent> {
         let mut result = Vec::new();
         match event {

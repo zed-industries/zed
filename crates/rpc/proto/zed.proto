@@ -108,9 +108,9 @@ message Envelope {
         FollowResponse follow_response = 93;
         UpdateFollowers update_followers = 94;
         Unfollow unfollow = 95;
-
         GetPrivateUserInfo get_private_user_info = 96;
         GetPrivateUserInfoResponse get_private_user_info_response = 97;
+        UpdateDiffBase update_diff_base = 98;
     }
 }
 
@@ -831,7 +831,8 @@ message BufferState {
     uint64 id = 1;
     optional File file = 2;
     string base_text = 3;
-    LineEnding line_ending = 4;
+    optional string diff_base = 4;
+    LineEnding line_ending = 5;
 }
 
 message BufferChunk {
@@ -1000,4 +1001,10 @@ message WorktreeMetadata {
     uint64 id = 1;
     string root_name = 2;
     bool visible = 3;
+}
+
+message UpdateDiffBase {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    optional string diff_base = 3;
 }

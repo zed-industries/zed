@@ -25,6 +25,7 @@ clock = { path = "../clock" }
 collections = { path = "../collections" }
 context_menu = { path = "../context_menu" }
 fuzzy = { path = "../fuzzy" }
+git = { path = "../git" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }

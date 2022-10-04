@@ -167,6 +167,7 @@ messages!(
     (UpdateProject, Foreground),
     (UpdateWorktree, Foreground),
     (UpdateWorktreeExtensions, Background),
+    (UpdateDiffBase, Background),
     (GetPrivateUserInfo, Foreground),
     (GetPrivateUserInfoResponse, Foreground),
 );
@@ -266,6 +267,7 @@ entity_messages!(
     UpdateProject,
     UpdateWorktree,
     UpdateWorktreeExtensions,
+    UpdateDiffBase
 );
 
 entity_messages!(channel_id, ChannelMessageSent);
