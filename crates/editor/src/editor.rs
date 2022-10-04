@@ -569,6 +569,7 @@ struct SelectNextState {
     done: bool,
 }
 
+#[derive(Debug)]
 struct AutocloseRegion {
     selection_id: usize,
     range: Range<Anchor>,
@@ -1883,19 +1884,20 @@ impl Editor {
                             // If the inserted text is a suffix of an opening bracket and the
                             // selection is preceded by the rest of the opening bracket, then
                             // insert the closing bracket.
-                            let should_autoclose = selection.start.column > (prefix_len as u32)
-                                && snapshot.contains_str_at(
-                                    Point::new(
-                                        selection.start.row,
-                                        selection.start.column - (prefix_len as u32),
-                                    ),
-                                    &bracket_pair.start[..prefix_len],
-                                )
-                                && snapshot
-                                    .chars_at(selection.start)
-                                    .next()
-                                    .map_or(true, |c| language.should_autoclose_before(c));
-                            if should_autoclose {
+                            let following_text_allows_autoclose = snapshot
+                                .chars_at(selection.start)
+                                .next()
+                                .map_or(true, |c| language.should_autoclose_before(c));
+                            let preceding_text_matches_prefix = prefix_len == 0
+                                || (selection.start.column >= (prefix_len as u32)
+                                    && snapshot.contains_str_at(
+                                        Point::new(
+                                            selection.start.row,
+                                            selection.start.column - (prefix_len as u32),
+                                        ),
+                                        &bracket_pair.start[..prefix_len],
+                                    ));
+                            if following_text_allows_autoclose && preceding_text_matches_prefix {
                                 let anchor = snapshot.anchor_before(selection.end);
                                 new_selections
                                     .push((selection.map(|_| anchor.clone()), text.len()));
@@ -2210,14 +2212,14 @@ impl Editor {
         buffer: &'a MultiBufferSnapshot,
     ) -> impl Iterator<Item = (Selection<D>, Option<&'a AutocloseRegion>)> {
         let mut i = 0;
-        let mut pair_states = self.autoclose_regions.as_slice();
+        let mut regions = self.autoclose_regions.as_slice();
         selections.into_iter().map(move |selection| {
             let range = selection.start.to_offset(buffer)..selection.end.to_offset(buffer);
 
             let mut enclosing = None;
-            while let Some(pair_state) = pair_states.get(i) {
+            while let Some(pair_state) = regions.get(i) {
                 if pair_state.range.end.to_offset(buffer) < range.start {
-                    pair_states = &pair_states[i + 1..];
+                    regions = &regions[i + 1..];
                     i = 0;
                 } else if pair_state.range.start.to_offset(buffer) > range.end {
                     break;
@@ -9594,7 +9596,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| cx.set_global(Settings::test(cx)));
+        let mut cx = EditorTestContext::new(cx);
+
         let language = Arc::new(Language::new(
             LanguageConfig {
                 brackets: vec![
@@ -9623,165 +9626,101 @@ mod tests {
             Some(tree_sitter_rust::language()),
         ));
 
-        let text = r#"
-            a
+        let registry = Arc::new(LanguageRegistry::test());
+        registry.add(language.clone());
+        cx.update_buffer(|buffer, cx| {
+            buffer.set_language_registry(registry);
+            buffer.set_language(Some(language), cx);
+        });
 
-            /
+        cx.set_state(
+            &r#"
+                🏀ˇ
+                εˇ
+                ❤️ˇ
+            "#
+            .unindent(),
+        );
 
-        "#
-        .unindent();
-
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
-        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-        let (_, view) = cx.add_window(|cx| build_editor(buffer, cx));
-        view.condition(cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
-            .await;
-
-        view.update(cx, |view, cx| {
-            view.change_selections(None, cx, |s| {
-                s.select_display_ranges([
-                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
-                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-                ])
-            });
-
+        // autoclose multiple nested brackets at multiple cursors
+        cx.update_editor(|view, cx| {
             view.handle_input("{", cx);
             view.handle_input("{", cx);
             view.handle_input("{", cx);
-            assert_eq!(
-                view.text(cx),
-                "
-                {{{}}}
-                {{{}}}
-                /
+        });
+        cx.assert_editor_state(
+            &"
+                🏀{{{ˇ}}}
+                ε{{{ˇ}}}
+                ❤️{{{ˇ}}}
+            "
+            .unindent(),
+        );
 
-                "
-                .unindent()
-            );
-
+        // skip over the auto-closed brackets when typing a closing bracket
+        cx.update_editor(|view, cx| {
             view.move_right(&MoveRight, cx);
             view.handle_input("}", cx);
             view.handle_input("}", cx);
             view.handle_input("}", cx);
-            assert_eq!(
-                view.text(cx),
-                "
-                {{{}}}}
-                {{{}}}}
-                /
+        });
+        cx.assert_editor_state(
+            &"
+                🏀{{{}}}}ˇ
+                ε{{{}}}}ˇ
+                ❤️{{{}}}}ˇ
+            "
+            .unindent(),
+        );
 
-                "
-                .unindent()
-            );
-
-            view.undo(&Undo, cx);
+        // autoclose multi-character pairs
+        cx.set_state(
+            &"
+                ˇ
+                ˇ
+            "
+            .unindent(),
+        );
+        cx.update_editor(|view, cx| {
             view.handle_input("/", cx);
             view.handle_input("*", cx);
-            assert_eq!(
-                view.text(cx),
-                "
-                /* */
-                /* */
-                /
-
-                "
-                .unindent()
-            );
-
-            view.undo(&Undo, cx);
-            view.change_selections(None, cx, |s| {
-                s.select_display_ranges([
-                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
-                    DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
-                ])
-            });
-            view.handle_input("*", cx);
-            assert_eq!(
-                view.text(cx),
-                "
-                a
-
-                /*
-                *
-                "
-                .unindent()
-            );
-
-            // Don't autoclose if the next character isn't whitespace and isn't
-            // listed in the language's "autoclose_before" section.
-            view.finalize_last_transaction(cx);
-            view.change_selections(None, cx, |s| {
-                s.select_display_ranges([DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)])
-            });
-            view.handle_input("{", cx);
-            assert_eq!(
-                view.text(cx),
-                "
-                {a
-
-                /*
-                *
-                "
-                .unindent()
-            );
-
-            view.undo(&Undo, cx);
-            view.change_selections(None, cx, |s| {
-                s.select_display_ranges([DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1)])
-            });
-            view.handle_input("{", cx);
-            assert_eq!(
-                view.text(cx),
-                "
-                {a}
-
-                /*
-                *
-                "
-                .unindent()
-            );
-            assert_eq!(
-                view.selections.display_ranges(cx),
-                [DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2)]
-            );
-
-            view.undo(&Undo, cx);
-            view.handle_input("[", cx);
-            assert_eq!(
-                view.text(cx),
-                "
-                [a]
-                
-                /*
-                *
-                "
-                .unindent()
-            );
-            assert_eq!(
-                view.selections.display_ranges(cx),
-                [DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2)]
-            );
-
-            view.undo(&Undo, cx);
-            view.change_selections(None, cx, |s| {
-                s.select_display_ranges([DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)])
-            });
-            view.handle_input("[", cx);
-            assert_eq!(
-                view.text(cx),
-                "
-                a[
-                
-                /*
-                *
-                "
-                .unindent()
-            );
-            assert_eq!(
-                view.selections.display_ranges(cx),
-                [DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2)]
-            );
         });
+        cx.assert_editor_state(
+            &"
+                /*ˇ */
+                /*ˇ */
+            "
+            .unindent(),
+        );
+
+        // one cursor autocloses a multi-character pair, one cursor
+        // does not autoclose.
+        cx.set_state(
+            &"
+                /ˇ
+                ˇ
+            "
+            .unindent(),
+        );
+        cx.update_editor(|view, cx| view.handle_input("*", cx));
+        cx.assert_editor_state(
+            &"
+                /*ˇ */
+                *ˇ
+            "
+            .unindent(),
+        );
+
+        // Don't autoclose if the next character isn't whitespace and isn't
+        // listed in the language's "autoclose_before" section.
+        cx.set_state("ˇa b");
+        cx.update_editor(|view, cx| view.handle_input("{", cx));
+        cx.assert_editor_state("{ˇa b");
+
+        // Surround with brackets if text is selected
+        cx.set_state("«aˇ» b");
+        cx.update_editor(|view, cx| view.handle_input("{", cx));
+        cx.assert_editor_state("{«aˇ»} b");
     }
 
     #[gpui::test]
