@@ -10,8 +10,7 @@ export default function picker(colorScheme: ColorScheme) {
   let layer = elevation.top;
   return {
     background: background(layer),
-    cornerRadius: 8,
-    padding: 8,
+    cornerRadius: 12,
     item: {
       padding: {
         bottom: 4,
@@ -19,8 +18,12 @@ export default function picker(colorScheme: ColorScheme) {
         right: 12,
         top: 4,
       },
-      cornerRadius: 8,
-      text: text(layer, "sans"),
+      margin: {
+        left: 4,
+        right: 4
+      },
+      cornerRadius: 6,
+      text: text(layer, "sans", "variant"),
       highlightText: text(layer, "sans", "info", { weight: "bold" }),
       active: {
         background: background(layer, "active"),
@@ -35,25 +38,26 @@ export default function picker(colorScheme: ColorScheme) {
     empty: {
       text: text(layer, "sans", "variant"),
       padding: {
-        bottom: 4,
-        left: 12,
-        right: 12,
+        bottom: 8,
+        left: 16,
+        right: 16,
         top: 8,
       },
     },
     inputEditor: {
-      background: background(layer, "on"),
-      cornerRadius: 8,
       placeholderText: text(layer, "sans", "on", "disabled"),
       selection: colorScheme.players[0],
       text: text(layer, "mono", "on"),
-      border: border(layer, "on"),
+      border: border(layer, { bottom: true }),
       padding: {
-        bottom: 7,
+        bottom: 8,
         left: 16,
         right: 16,
-        top: 7,
+        top: 8,
       },
+      margin: {
+        bottom: 4
+      }
     },
     shadow: elevation.shadow,
   };

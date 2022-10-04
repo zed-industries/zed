@@ -57,7 +57,7 @@ export function createColorScheme(name: string, isLight: boolean, colorRamps: { 
   let middle = elevation(
     resampleSet(
       baseSet,
-      evenSamples(0.125, 1)
+      evenSamples(0.08, 1)
     ),
     isLight,
     {
@@ -71,7 +71,7 @@ export function createColorScheme(name: string, isLight: boolean, colorRamps: { 
   let highest = elevation(
     resampleSet(
       baseSet,
-      evenSamples(0.25, 1)
+      evenSamples(0.16, 1)
     ),
     isLight,
     {
@@ -634,10 +634,10 @@ function topLayer(ramps: RampSet, isLight: boolean): Layer {
       disabled: 0.1,
     },
     foreground: {
-      default: 0.9,
+      default: 0.6,
       hovered: 0.9,
       pressed: 0.9,
-      active: 0.5,
+      active: 0.3,
       disabled: 0.2,
     },
   });
