@@ -534,23 +534,22 @@ impl EditorElement {
         }
 
         struct DiffLayout<'a> {
-            buffer_line: usize,
-            last_diff: Option<(&'a DiffHunk<u32>, usize)>,
+            buffer_row: u32,
+            last_diff: Option<&'a DiffHunk<u32>>,
         }
 
         fn diff_quad(
-            status: DiffHunkStatus,
-            layout_range: Range<usize>,
+            hunk: &DiffHunk<u32>,
             gutter_layout: &GutterLayout,
             diff_style: &DiffStyle,
         ) -> Quad {
-            let color = match status {
+            let color = match hunk.status() {
                 DiffHunkStatus::Added => diff_style.inserted,
                 DiffHunkStatus::Modified => diff_style.modified,
 
                 //TODO: This rendering is entirely a horrible hack
                 DiffHunkStatus::Removed => {
-                    let row = layout_range.start;
+                    let row = hunk.buffer_range.start;
 
                     let offset = gutter_layout.line_height / 2.;
                     let start_y =
@@ -571,8 +570,8 @@ impl EditorElement {
                 }
             };
 
-            let start_row = layout_range.start;
-            let end_row = layout_range.end;
+            let start_row = hunk.buffer_range.start;
+            let end_row = hunk.buffer_range.end;
 
             let start_y = start_row as f32 * gutter_layout.line_height - gutter_layout.scroll_top;
             let end_y = end_row as f32 * gutter_layout.line_height - gutter_layout.scroll_top;
@@ -590,19 +589,18 @@ impl EditorElement {
             }
         }
 
+        let scroll_position = layout.position_map.snapshot.scroll_position();
         let gutter_layout = {
-            let scroll_position = layout.position_map.snapshot.scroll_position();
             let line_height = layout.position_map.line_height;
             GutterLayout {
                 scroll_top: scroll_position.y() * line_height,
-                // scroll_position,
                 line_height,
                 bounds,
             }
         };
 
         let mut diff_layout = DiffLayout {
-            buffer_line: 0,
+            buffer_row: scroll_position.y() as u32,
             last_diff: None,
         };
 
@@ -629,49 +627,35 @@ impl EditorElement {
 
                 if show_gutter {
                     //This line starts a buffer line, so let's do the diff calculation
-                    let new_hunk = get_hunk(diff_layout.buffer_line, &layout.diff_hunks);
+                    let new_hunk = get_hunk(diff_layout.buffer_row, &layout.diff_hunks);
 
-                    // This + the unwraps are annoying, but at least it's legible
                     let (is_ending, is_starting) = match (diff_layout.last_diff, new_hunk) {
-                        (None, None) => (false, false),
-                        (None, Some(_)) => (false, true),
-                        (Some(_), None) => (true, false),
-                        (Some((old_hunk, _)), Some(new_hunk)) if new_hunk == old_hunk => {
+                        (Some(old_hunk), Some(new_hunk)) if new_hunk == old_hunk => {
                             (false, false)
                         }
-                        (Some(_), Some(_)) => (true, true),
+                        (a, b) => (a.is_some(), b.is_some()),
                     };
 
                     if is_ending {
-                        let (last_hunk, start_line) = diff_layout.last_diff.take().unwrap();
-                        cx.scene.push_quad(diff_quad(
-                            last_hunk.status(),
-                            start_line..ix,
-                            &gutter_layout,
-                            diff_style,
-                        ));
+                        let last_hunk = diff_layout.last_diff.take().unwrap();
+                        cx.scene
+                            .push_quad(diff_quad(last_hunk, &gutter_layout, diff_style));
                     }
 
                     if is_starting {
                         let new_hunk = new_hunk.unwrap();
-
-                        diff_layout.last_diff = Some((new_hunk, ix));
+                        diff_layout.last_diff = Some(new_hunk);
                     };
 
-                    diff_layout.buffer_line += 1;
+                    diff_layout.buffer_row += 1;
                 }
             }
         }
 
-        // If we ran out  with a diff hunk still being prepped, paint it now
-        if let Some((last_hunk, start_line)) = diff_layout.last_diff {
-            let end_line = layout.line_number_layouts.len();
-            cx.scene.push_quad(diff_quad(
-                last_hunk.status(),
-                start_line..end_line,
-                &gutter_layout,
-                diff_style,
-            ))
+        // If we ran out with a diff hunk still being prepped, paint it now
+        if let Some(last_hunk) = diff_layout.last_diff {
+            cx.scene
+                .push_quad(diff_quad(last_hunk, &gutter_layout, diff_style))
         }
 
         if let Some((row, indicator)) = layout.code_actions_indicator.as_mut() {
@@ -1385,14 +1369,13 @@ impl EditorElement {
 
 /// Get the hunk that contains buffer_line, starting from start_idx
 /// Returns none if there is none found, and
-fn get_hunk(buffer_line: usize, hunks: &[DiffHunk<u32>]) -> Option<&DiffHunk<u32>> {
+fn get_hunk(buffer_line: u32, hunks: &[DiffHunk<u32>]) -> Option<&DiffHunk<u32>> {
     for i in 0..hunks.len() {
         // Safety: Index out of bounds is handled by the check above
         let hunk = hunks.get(i).unwrap();
         if hunk.buffer_range.contains(&(buffer_line as u32)) {
             return Some(hunk);
-        } else if hunk.status() == DiffHunkStatus::Removed
-            && buffer_line == hunk.buffer_range.start as usize
+        } else if hunk.status() == DiffHunkStatus::Removed && buffer_line == hunk.buffer_range.start
         {
             return Some(hunk);
         } else if hunk.buffer_range.start > buffer_line as u32 {
