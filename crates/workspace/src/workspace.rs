@@ -13,7 +13,7 @@ mod toolbar;
 
 use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
-use client::{proto, Client, Contact, PeerId, TypedEnvelope, UserStore};
+use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use collections::{hash_map, HashMap, HashSet};
 use dock::{DefaultItemFactory, Dock, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
@@ -116,8 +116,8 @@ pub struct ToggleFollow(pub PeerId);
 
 #[derive(Clone, PartialEq)]
 pub struct JoinProject {
-    pub contact: Arc<Contact>,
-    pub project_index: usize,
+    pub project_id: u64,
+    pub follow_user_id: u64,
 }
 
 impl_internal_actions!(

@@ -790,6 +790,10 @@ impl AsyncAppContext {
         self.update(|cx| cx.remove_window(window_id))
     }
 
+    pub fn activate_window(&mut self, window_id: usize) {
+        self.update(|cx| cx.activate_window(window_id))
+    }
+
     pub fn platform(&self) -> Arc<dyn Platform> {
         self.0.borrow().platform()
     }
