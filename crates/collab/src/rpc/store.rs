@@ -1030,6 +1030,45 @@ impl Store {
                     *user_id
                 );
             }
+
+            if let Some(active_call) = state.active_call.as_ref() {
+                if let Some(active_call_connection_id) = active_call.connection_id {
+                    assert!(
+                        state.connection_ids.contains(&active_call_connection_id),
+                        "call is active on a dead connection"
+                    );
+                    assert!(
+                        state.connection_ids.contains(&active_call_connection_id),
+                        "call is active on a dead connection"
+                    );
+                }
+            }
+        }
+
+        for (room_id, room) in &self.rooms {
+            for pending_user_id in &room.pending_user_ids {
+                assert!(
+                    self.connected_users
+                        .contains_key(&UserId::from_proto(*pending_user_id)),
+                    "call is active on a user that has disconnected"
+                );
+            }
+
+            for participant in &room.participants {
+                assert!(
+                    self.connections
+                        .contains_key(&ConnectionId(participant.peer_id)),
+                    "room contains participant that has disconnected"
+                );
+
+                for project_id in &participant.project_ids {
+                    let project = &self.projects[&ProjectId::from_proto(*project_id)];
+                    assert_eq!(
+                        project.room_id, *room_id,
+                        "project was shared on a different room"
+                    );
+                }
+            }
         }
 
         for (project_id, project) in &self.projects {
@@ -1048,6 +1087,19 @@ impl Store {
                     .values()
                     .map(|guest| guest.replica_id)
                     .collect::<HashSet<_>>(),
+            );
+
+            let room = &self.rooms[&project.room_id];
+            let room_participant = room
+                .participants
+                .iter()
+                .find(|participant| participant.peer_id == project.host_connection_id.0)
+                .unwrap();
+            assert!(
+                room_participant
+                    .project_ids
+                    .contains(&project_id.to_proto()),
+                "project was not shared in room"
             );
         }
 
