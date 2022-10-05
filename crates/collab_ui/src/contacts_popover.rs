@@ -482,11 +482,7 @@ impl ContactsPopover {
     ) -> ElementBox {
         let online = contact.online;
         let user_id = contact.user.id;
-        let initial_project = if ActiveCall::global(cx).read(cx).room().is_none() {
-            Some(project.clone())
-        } else {
-            None
-        };
+        let initial_project = project.clone();
         let mut element =
             MouseEventHandler::<Contact>::new(contact.user.id as usize, cx, |_, _| {
                 Flex::row()
@@ -519,7 +515,7 @@ impl ContactsPopover {
                 if online {
                     cx.dispatch_action(Call {
                         recipient_user_id: user_id,
-                        initial_project: initial_project.clone(),
+                        initial_project: Some(initial_project.clone()),
                     });
                 }
             });
