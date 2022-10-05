@@ -671,7 +671,7 @@ impl LocalWorktree {
                 if let Ok(repo_relative) = path.strip_prefix(repo.content_path) {
                     let repo_relative = repo_relative.to_owned();
                     cx.background()
-                        .spawn(async move { repo.repo.lock().load_index(&repo_relative) })
+                        .spawn(async move { repo.repo.lock().load_index_text(&repo_relative) })
                         .await
                 } else {
                     None
@@ -2505,6 +2505,7 @@ impl BackgroundScanner {
 
                         let scan_id = snapshot.scan_id;
                         if let Some(repo) = snapshot.in_dot_git(&path) {
+                            repo.repo.lock().reload_index();
                             repo.scan_id = scan_id;
                         }
 

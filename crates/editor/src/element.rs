@@ -630,9 +630,7 @@ impl EditorElement {
                     let new_hunk = get_hunk(diff_layout.buffer_row, &layout.diff_hunks);
 
                     let (is_ending, is_starting) = match (diff_layout.last_diff, new_hunk) {
-                        (Some(old_hunk), Some(new_hunk)) if new_hunk == old_hunk => {
-                            (false, false)
-                        }
+                        (Some(old_hunk), Some(new_hunk)) if new_hunk == old_hunk => (false, false),
                         (a, b) => (a.is_some(), b.is_some()),
                     };
 

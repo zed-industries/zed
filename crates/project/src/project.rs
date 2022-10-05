@@ -4684,7 +4684,7 @@ impl Project {
                 cx.spawn(|_, mut cx| async move {
                     let diff_base = cx
                         .background()
-                        .spawn(async move { repo.repo.lock().load_index(&relative_repo) })
+                        .spawn(async move { repo.repo.lock().load_index_text(&relative_repo) })
                         .await;
 
                     let buffer_id = buffer.update(&mut cx, |buffer, cx| {
