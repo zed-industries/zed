@@ -215,6 +215,90 @@ async fn test_basic_calls(
 }
 
 #[gpui::test(iterations = 10)]
+async fn test_calling_busy_user(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+    server
+        .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
+        .await;
+
+    // Call user B from client A.
+    let room_a = cx_a
+        .update(|cx| Room::create(client_a.clone(), client_a.user_store.clone(), cx))
+        .await
+        .unwrap();
+
+    let mut incoming_call_b = client_b
+        .user_store
+        .update(cx_b, |user, _| user.incoming_call());
+    room_a
+        .update(cx_a, |room, cx| {
+            room.call(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    let call_b1 = incoming_call_b.next().await.unwrap().unwrap();
+    assert_eq!(call_b1.caller.github_login, "user_a");
+
+    // Ensure calling users A and B from client C fails.
+    let room_c = cx_c
+        .update(|cx| Room::create(client_c.clone(), client_c.user_store.clone(), cx))
+        .await
+        .unwrap();
+    room_c
+        .update(cx_c, |room, cx| {
+            room.call(client_a.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap_err();
+    room_c
+        .update(cx_c, |room, cx| {
+            room.call(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap_err();
+
+    // User B joins the room and calling them after they've joined still fails.
+    let room_b = cx_b
+        .update(|cx| {
+            Room::join(
+                &call_b1,
+                client_b.client.clone(),
+                client_b.user_store.clone(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    room_c
+        .update(cx_c, |room, cx| {
+            room.call(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap_err();
+
+    // Client C can successfully call client B after client B leaves the room.
+    cx_b.update(|_| drop(room_b));
+    deterministic.run_until_parked();
+    room_c
+        .update(cx_c, |room, cx| {
+            room.call(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    let call_b2 = incoming_call_b.next().await.unwrap().unwrap();
+    assert_eq!(call_b2.caller.github_login, "user_c");
+}
+
+#[gpui::test(iterations = 10)]
 async fn test_leaving_room_on_disconnection(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
