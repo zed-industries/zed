@@ -3,7 +3,7 @@ pub mod room;
 
 use anyhow::{anyhow, Result};
 use client::{incoming_call::IncomingCall, Client, UserStore};
-use gpui::{Entity, ModelContext, ModelHandle, MutableAppContext, Subscription, Task};
+use gpui::{AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Subscription, Task};
 pub use participant::ParticipantLocation;
 use project::Project;
 pub use room::Room;
@@ -33,7 +33,7 @@ impl ActiveCall {
         }
     }
 
-    pub fn global(cx: &mut MutableAppContext) -> ModelHandle<Self> {
+    pub fn global(cx: &AppContext) -> ModelHandle<Self> {
         cx.global::<ModelHandle<Self>>().clone()
     }
 
