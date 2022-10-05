@@ -50,9 +50,7 @@ impl ActiveCall {
             let room = if let Some(room) = room {
                 room
             } else {
-                let room = cx.update(|cx| Room::create(client, user_store, cx)).await?;
-                this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx));
-                room
+                cx.update(|cx| Room::create(client, user_store, cx)).await?
             };
 
             let initial_project_id = if let Some(initial_project) = initial_project {
@@ -65,6 +63,8 @@ impl ActiveCall {
             } else {
                 None
             };
+
+            this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx));
             room.update(&mut cx, |room, cx| {
                 room.call(recipient_user_id, initial_project_id, cx)
             })
@@ -88,16 +88,18 @@ impl ActiveCall {
     }
 
     fn set_room(&mut self, room: Option<ModelHandle<Room>>, cx: &mut ModelContext<Self>) {
-        if let Some(room) = room {
-            let subscriptions = vec![
-                cx.observe(&room, |_, _, cx| cx.notify()),
-                cx.subscribe(&room, |_, _, event, cx| cx.emit(event.clone())),
-            ];
-            self.room = Some((room, subscriptions));
-        } else {
-            self.room = None;
+        if room.as_ref() != self.room.as_ref().map(|room| &room.0) {
+            if let Some(room) = room {
+                let subscriptions = vec![
+                    cx.observe(&room, |_, _, cx| cx.notify()),
+                    cx.subscribe(&room, |_, _, event, cx| cx.emit(event.clone())),
+                ];
+                self.room = Some((room, subscriptions));
+            } else {
+                self.room = None;
+            }
+            cx.notify();
         }
-        cx.notify();
     }
 
     pub fn room(&self) -> Option<&ModelHandle<Room>> {
