@@ -215,7 +215,7 @@ async fn test_basic_calls(
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_calling_busy_user(
+async fn test_room_uniqueness(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
@@ -230,12 +230,16 @@ async fn test_calling_busy_user(
         .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
 
-    // Call user B from client A.
     let room_a = cx_a
         .update(|cx| Room::create(client_a.clone(), client_a.user_store.clone(), cx))
         .await
         .unwrap();
+    // Ensure room can't be created given we've just created one.
+    cx_a.update(|cx| Room::create(client_a.clone(), client_a.user_store.clone(), cx))
+        .await
+        .unwrap_err();
 
+    // Call user B from client A.
     let mut incoming_call_b = client_b
         .user_store
         .update(cx_b, |user, _| user.incoming_call());
@@ -266,6 +270,11 @@ async fn test_calling_busy_user(
         .await
         .unwrap_err();
 
+    // Ensure User B can't create a room while they still have an incoming call.
+    cx_b.update(|cx| Room::create(client_b.clone(), client_b.user_store.clone(), cx))
+        .await
+        .unwrap_err();
+
     // User B joins the room and calling them after they've joined still fails.
     let room_b = cx_b
         .update(|cx| {
@@ -285,6 +294,11 @@ async fn test_calling_busy_user(
         .await
         .unwrap_err();
 
+    // Ensure User B can't create a room while they belong to another room.
+    cx_b.update(|cx| Room::create(client_b.clone(), client_b.user_store.clone(), cx))
+        .await
+        .unwrap_err();
+
     // Client C can successfully call client B after client B leaves the room.
     cx_b.update(|_| drop(room_b));
     deterministic.run_until_parked();
@@ -296,6 +310,16 @@ async fn test_calling_busy_user(
         .unwrap();
     let call_b2 = incoming_call_b.next().await.unwrap().unwrap();
     assert_eq!(call_b2.caller.github_login, "user_c");
+
+    // Client B can successfully create a room after declining the call from client C.
+    client_b
+        .user_store
+        .update(cx_b, |user_store, _| user_store.decline_call())
+        .unwrap();
+    deterministic.run_until_parked();
+    cx_b.update(|cx| Room::create(client_b.clone(), client_b.user_store.clone(), cx))
+        .await
+        .unwrap();
 }
 
 #[gpui::test(iterations = 10)]
