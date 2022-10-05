@@ -11,15 +11,15 @@ export default function contextMenu(colorScheme: ColorScheme) {
   let layer = elevation.bottom;
   return {
     background: background(layer),
-    cornerRadius: 6,
-    padding: 6,
+    cornerRadius: 10,
+    padding: 4,
     shadow: elevation.shadow,
     border: border(layer),
     keystrokeMargin: 30,
     item: {
       iconSpacing: 8,
       iconWidth: 14,
-      padding: { left: 4, right: 4, top: 2, bottom: 2 },
+      padding: { left: 6, right: 6, top: 2, bottom: 2 },
       cornerRadius: 6,
       label: text(layer, "sans", { size: "sm" }),
       keystroke: {

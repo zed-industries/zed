@@ -54,7 +54,7 @@ export default function statusBar(colorScheme: ColorScheme) {
       iconSpacing: 2,
       summarySpacing: 6,
       text: text(layer, "sans", { size: "sm" }),
-      iconColorOk: foreground(layer, "positive"),
+      iconColorOk: foreground(layer, "variant"),
       iconColorWarning: foreground(layer, "warning"),
       iconColorError: foreground(layer, "negative"),
       containerOk: {
