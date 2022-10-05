@@ -4673,13 +4673,18 @@ impl Project {
                     None => return,
                 };
 
+                let relative_repo = match path.strip_prefix(repo.content_path) {
+                    Ok(relative_repo) => relative_repo.to_owned(),
+                    Err(_) => return,
+                };
+
                 let shared_remote_id = self.shared_remote_id();
                 let client = self.client.clone();
 
                 cx.spawn(|_, mut cx| async move {
                     let diff_base = cx
                         .background()
-                        .spawn(async move { repo.repo.lock().load_index(&path) })
+                        .spawn(async move { repo.repo.lock().load_index(&relative_repo) })
                         .await;
 
                     let buffer_id = buffer.update(&mut cx, |buffer, cx| {
