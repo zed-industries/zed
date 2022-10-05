@@ -4492,6 +4492,7 @@ impl Editor {
             let mut last_toggled_row = None;
             let snapshot = this.buffer.read(cx).read(cx);
             let empty_str: Arc<str> = "".into();
+            let mut suffixes_inserted = Vec::new();
 
             fn comment_prefix_range(
                 snapshot: &MultiBufferSnapshot,
@@ -4569,7 +4570,6 @@ impl Editor {
                     continue;
                 };
 
-                let mut all_selection_lines_are_comments = true;
                 selection_edit_ranges.clear();
 
                 // If multiple selections contain a given row, avoid processing that
@@ -4586,12 +4586,17 @@ impl Editor {
                     };
                 last_toggled_row = Some(end_row);
 
+                if start_row > end_row {
+                    continue;
+                }
+
                 // If the language has line comments, toggle those.
                 if let Some(full_comment_prefix) = language.line_comment_prefix() {
                     // Split the comment prefix's trailing whitespace into a separate string,
                     // as that portion won't be used for detecting if a line is a comment.
                     let comment_prefix = full_comment_prefix.trim_end_matches(' ');
                     let comment_prefix_whitespace = &full_comment_prefix[comment_prefix.len()..];
+                    let mut all_selection_lines_are_comments = true;
 
                     for row in start_row..=end_row {
                         if snapshot.is_line_blank(row) {
@@ -4633,7 +4638,6 @@ impl Editor {
                 {
                     let comment_prefix = full_comment_prefix.trim_end_matches(' ');
                     let comment_prefix_whitespace = &full_comment_prefix[comment_prefix.len()..];
-
                     let prefix_range = comment_prefix_range(
                         snapshot.deref(),
                         start_row,
@@ -4653,6 +4657,7 @@ impl Editor {
                             full_comment_prefix.clone(),
                         ));
                         edits.push((suffix_range.end..suffix_range.end, comment_suffix.clone()));
+                        suffixes_inserted.push((end_row, comment_suffix.len()));
                     } else {
                         edits.push((prefix_range, empty_str.clone()));
                         edits.push((suffix_range, empty_str.clone()));
@@ -4667,7 +4672,33 @@ impl Editor {
                 buffer.edit(edits, None, cx);
             });
 
-            let selections = this.selections.all::<usize>(cx);
+            // Adjust selections so that they end before any comment suffixes that
+            // were inserted.
+            let mut suffixes_inserted = suffixes_inserted.into_iter().peekable();
+            let mut selections = this.selections.all::<Point>(cx);
+            let snapshot = this.buffer.read(cx).read(cx);
+            for selection in &mut selections {
+                while let Some((row, suffix_len)) = suffixes_inserted.peek().copied() {
+                    match row.cmp(&selection.end.row) {
+                        Ordering::Less => {
+                            suffixes_inserted.next();
+                            continue;
+                        }
+                        Ordering::Greater => break,
+                        Ordering::Equal => {
+                            if selection.end.column == snapshot.line_len(row) {
+                                if selection.is_empty() {
+                                    selection.start.column -= suffix_len as u32;
+                                }
+                                selection.end.column -= suffix_len as u32;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            drop(snapshot);
             this.change_selections(Some(Autoscroll::Fit), cx, |s| s.select(selections));
         });
     }
@@ -10975,6 +11006,7 @@ mod tests {
             buffer.set_language(Some(html_language), cx);
         });
 
+        // Toggle comments for empty selections
         cx.set_state(
             &r#"
                 <p>A</p>ˇ
@@ -10983,13 +11015,75 @@ mod tests {
             "#
             .unindent(),
         );
-
         cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments, cx));
         cx.assert_editor_state(
             &r#"
                 <!-- <p>A</p>ˇ -->
                 <!-- <p>B</p>ˇ -->
                 <!-- <p>C</p>ˇ -->
+            "#
+            .unindent(),
+        );
+        cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments, cx));
+        cx.assert_editor_state(
+            &r#"
+                <p>A</p>ˇ
+                <p>B</p>ˇ
+                <p>C</p>ˇ
+            "#
+            .unindent(),
+        );
+
+        // Toggle comments for mixture of empty and non-empty selections, where
+        // multiple selections occupy a given line.
+        cx.set_state(
+            &r#"
+                <p>A«</p>
+                <p>ˇ»B</p>ˇ
+                <p>C«</p>
+                <p>ˇ»D</p>ˇ
+            "#
+            .unindent(),
+        );
+
+        cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments, cx));
+        cx.assert_editor_state(
+            &r#"
+                <!-- <p>A«</p>
+                <p>ˇ»B</p>ˇ -->
+                <!-- <p>C«</p>
+                <p>ˇ»D</p>ˇ -->
+            "#
+            .unindent(),
+        );
+        cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments, cx));
+        cx.assert_editor_state(
+            &r#"
+                <p>A«</p>
+                <p>ˇ»B</p>ˇ
+                <p>C«</p>
+                <p>ˇ»D</p>ˇ
+            "#
+            .unindent(),
+        );
+
+        // Toggle comments when different languages are active for different
+        // selections.
+        cx.set_state(
+            &r#"
+                ˇ<script>
+                    ˇvar x = new Y();
+                ˇ</script>
+            "#
+            .unindent(),
+        );
+        cx.foreground().run_until_parked();
+        cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments, cx));
+        cx.assert_editor_state(
+            &r#"
+                <!-- ˇ<script> -->
+                    // ˇvar x = new Y();
+                <!-- ˇ</script> -->
             "#
             .unindent(),
         );

@@ -525,19 +525,19 @@ impl SyntaxSnapshot {
     }
 
     #[cfg(test)]
-    pub fn layers(&self, buffer: &BufferSnapshot) -> Vec<SyntaxLayerInfo> {
-        self.layers_for_range(0..buffer.len(), buffer)
+    pub fn layers<'a>(&'a self, buffer: &'a BufferSnapshot) -> Vec<SyntaxLayerInfo> {
+        self.layers_for_range(0..buffer.len(), buffer).collect()
     }
 
     pub fn layers_for_range<'a, T: ToOffset>(
-        &self,
+        &'a self,
         range: Range<T>,
-        buffer: &BufferSnapshot,
-    ) -> Vec<SyntaxLayerInfo> {
+        buffer: &'a BufferSnapshot,
+    ) -> impl 'a + Iterator<Item = SyntaxLayerInfo> {
         let start = buffer.anchor_before(range.start.to_offset(buffer));
         let end = buffer.anchor_after(range.end.to_offset(buffer));
 
-        let mut cursor = self.layers.filter::<_, ()>(|summary| {
+        let mut cursor = self.layers.filter::<_, ()>(move |summary| {
             if summary.max_depth > summary.min_depth {
                 true
             } else {
@@ -547,21 +547,26 @@ impl SyntaxSnapshot {
             }
         });
 
-        let mut result = Vec::new();
+        // let mut result = Vec::new();
         cursor.next(buffer);
-        while let Some(layer) = cursor.item() {
-            result.push(SyntaxLayerInfo {
-                language: &layer.language,
-                depth: layer.depth,
-                node: layer.tree.root_node_with_offset(
-                    layer.range.start.to_offset(buffer),
-                    layer.range.start.to_point(buffer).to_ts_point(),
-                ),
-            });
-            cursor.next(buffer)
-        }
+        std::iter::from_fn(move || {
+            if let Some(layer) = cursor.item() {
+                let info = SyntaxLayerInfo {
+                    language: &layer.language,
+                    depth: layer.depth,
+                    node: layer.tree.root_node_with_offset(
+                        layer.range.start.to_offset(buffer),
+                        layer.range.start.to_point(buffer).to_ts_point(),
+                    ),
+                };
+                cursor.next(buffer);
+                Some(info)
+            } else {
+                None
+            }
+        })
 
-        result
+        // result
     }
 }
 
@@ -1848,7 +1853,9 @@ mod tests {
         range: Range<Point>,
         expected_layers: &[&str],
     ) {
-        let layers = syntax_map.layers_for_range(range, &buffer);
+        let layers = syntax_map
+            .layers_for_range(range, &buffer)
+            .collect::<Vec<_>>();
         assert_eq!(
             layers.len(),
             expected_layers.len(),

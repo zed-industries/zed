@@ -1840,6 +1840,7 @@ impl BufferSnapshot {
         let offset = position.to_offset(self);
         self.syntax
             .layers_for_range(offset..offset, &self.text)
+            .filter(|l| l.node.end_byte() > offset)
             .last()
             .map(|info| info.language)
             .or(self.language.as_ref())
