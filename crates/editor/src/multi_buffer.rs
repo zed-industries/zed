@@ -2501,13 +2501,6 @@ impl MultiBufferSnapshot {
         self.trailing_excerpt_update_count
     }
 
-    pub fn language(&self) -> Option<&Arc<Language>> {
-        self.excerpts
-            .iter()
-            .next()
-            .and_then(|excerpt| excerpt.buffer.language())
-    }
-
     pub fn language_at<'a, T: ToOffset>(&'a self, point: T) -> Option<&'a Arc<Language>> {
         self.point_to_buffer_offset(point)
             .and_then(|(buffer, offset)| buffer.language_at(offset))

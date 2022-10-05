@@ -2021,7 +2021,7 @@ impl Editor {
                         let end = selection.end;
 
                         let mut insert_extra_newline = false;
-                        if let Some(language) = buffer.language() {
+                        if let Some(language) = buffer.language_at(start) {
                             let leading_whitespace_len = buffer
                                 .reversed_chars_at(start)
                                 .take_while(|c| c.is_whitespace() && *c != '\n')
@@ -2927,7 +2927,9 @@ impl Editor {
                         {
                             let indent_size =
                                 buffer.indent_size_for_line(line_buffer_range.start.row);
-                            let language_name = buffer.language().map(|language| language.name());
+                            let language_name = buffer
+                                .language_at(line_buffer_range.start)
+                                .map(|language| language.name());
                             let indent_len = match indent_size.kind {
                                 IndentKind::Space => {
                                     cx.global::<Settings>().tab_size(language_name.as_deref())
