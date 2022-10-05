@@ -1,10 +1,10 @@
-use crate::{FollowerStatesByLeader, Pane};
+use crate::{FollowerStatesByLeader, JoinProject, Pane, Workspace};
 use anyhow::{anyhow, Result};
 use call::ActiveCall;
-use client::PeerId;
-use collections::HashMap;
-use gpui::{elements::*, AppContext, Axis, Border, ViewHandle};
-use project::Collaborator;
+use gpui::{
+    elements::*, Axis, Border, CursorStyle, ModelHandle, MouseButton, RenderContext, ViewHandle,
+};
+use project::Project;
 use serde::Deserialize;
 use theme::Theme;
 
@@ -57,14 +57,12 @@ impl PaneGroup {
 
     pub(crate) fn render(
         &self,
-        project_id: Option<u64>,
+        project: &ModelHandle<Project>,
         theme: &Theme,
         follower_states: &FollowerStatesByLeader,
-        collaborators: &HashMap<PeerId, Collaborator>,
-        cx: &AppContext,
+        cx: &mut RenderContext<Workspace>,
     ) -> ElementBox {
-        self.root
-            .render(project_id, theme, follower_states, collaborators, cx)
+        self.root.render(project, theme, follower_states, cx)
     }
 
     pub(crate) fn panes(&self) -> Vec<&ViewHandle<Pane>> {
@@ -104,12 +102,13 @@ impl Member {
 
     pub fn render(
         &self,
-        project_id: Option<u64>,
+        project: &ModelHandle<Project>,
         theme: &Theme,
         follower_states: &FollowerStatesByLeader,
-        collaborators: &HashMap<PeerId, Collaborator>,
-        cx: &AppContext,
+        cx: &mut RenderContext<Workspace>,
     ) -> ElementBox {
+        enum FollowIntoExternalProject {}
+
         match self {
             Member::Pane(pane) => {
                 let leader = follower_states
@@ -123,7 +122,7 @@ impl Member {
                     })
                     .and_then(|leader_id| {
                         let room = ActiveCall::global(cx).read(cx).room()?.read(cx);
-                        let collaborator = collaborators.get(leader_id)?;
+                        let collaborator = project.read(cx).collaborators().get(leader_id)?;
                         let participant = room.remote_participants().get(&leader_id)?;
                         Some((collaborator.replica_id, participant))
                     });
@@ -133,18 +132,36 @@ impl Member {
                         call::ParticipantLocation::Project {
                             project_id: leader_project_id,
                         } => {
-                            if Some(leader_project_id) == project_id {
+                            if Some(leader_project_id) == project.read(cx).remote_id() {
                                 ChildView::new(pane).boxed()
                             } else {
-                                Label::new(
-                                    format!(
-                                        "Follow {} on their currently active project",
-                                        leader.user.github_login,
-                                    ),
-                                    theme.workspace.external_location_message.text.clone(),
+                                let leader_user = leader.user.clone();
+                                let leader_user_id = leader.user.id;
+                                MouseEventHandler::<FollowIntoExternalProject>::new(
+                                    pane.id(),
+                                    cx,
+                                    |_, _| {
+                                        Label::new(
+                                            format!(
+                                                "Follow {} on their currently active project",
+                                                leader_user.github_login,
+                                            ),
+                                            theme.workspace.external_location_message.text.clone(),
+                                        )
+                                        .contained()
+                                        .with_style(
+                                            theme.workspace.external_location_message.container,
+                                        )
+                                        .boxed()
+                                    },
                                 )
-                                .contained()
-                                .with_style(theme.workspace.external_location_message.container)
+                                .with_cursor_style(CursorStyle::PointingHand)
+                                .on_click(MouseButton::Left, move |_, cx| {
+                                    cx.dispatch_action(JoinProject {
+                                        project_id: leader_project_id,
+                                        follow_user_id: leader_user_id,
+                                    })
+                                })
                                 .aligned()
                                 .boxed()
                             }
@@ -173,9 +190,7 @@ impl Member {
                     ChildView::new(pane).boxed()
                 }
             }
-            Member::Axis(axis) => {
-                axis.render(project_id, theme, follower_states, collaborators, cx)
-            }
+            Member::Axis(axis) => axis.render(project, theme, follower_states, cx),
         }
     }
 
@@ -277,17 +292,15 @@ impl PaneAxis {
 
     fn render(
         &self,
-        project_id: Option<u64>,
+        project: &ModelHandle<Project>,
         theme: &Theme,
         follower_state: &FollowerStatesByLeader,
-        collaborators: &HashMap<PeerId, Collaborator>,
-        cx: &AppContext,
+        cx: &mut RenderContext<Workspace>,
     ) -> ElementBox {
         let last_member_ix = self.members.len() - 1;
         Flex::new(self.axis)
             .with_children(self.members.iter().enumerate().map(|(ix, member)| {
-                let mut member =
-                    member.render(project_id, theme, follower_state, collaborators, cx);
+                let mut member = member.render(project, theme, follower_state, cx);
                 if ix < last_member_ix {
                     let mut border = theme.workspace.pane_divider;
                     border.left = false;

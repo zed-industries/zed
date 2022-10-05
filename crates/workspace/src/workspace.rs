@@ -2416,6 +2416,7 @@ impl View for Workspace {
                     .with_child(
                         Stack::new()
                             .with_child({
+                                let project = self.project.clone();
                                 Flex::row()
                                     .with_children(
                                         if self.left_sidebar.read(cx).active_item().is_some() {
@@ -2433,10 +2434,9 @@ impl View for Workspace {
                                             Flex::column()
                                                 .with_child(
                                                     FlexItem::new(self.center.render(
-                                                        self.project.read(cx).remote_id(),
+                                                        &project,
                                                         &theme,
                                                         &self.follower_states_by_leader,
-                                                        self.project.read(cx).collaborators(),
                                                         cx,
                                                     ))
                                                     .flex(1., true)
