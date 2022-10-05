@@ -231,7 +231,10 @@ pub struct LanguageConfig {
     pub decrease_indent_pattern: Option<Regex>,
     #[serde(default)]
     pub autoclose_before: String,
-    pub line_comment: Option<String>,
+    #[serde(default)]
+    pub line_comment: Option<Arc<str>>,
+    #[serde(default)]
+    pub block_comment: Option<(Arc<str>, Arc<str>)>,
 }
 
 impl Default for LanguageConfig {
@@ -245,6 +248,7 @@ impl Default for LanguageConfig {
             decrease_indent_pattern: Default::default(),
             autoclose_before: Default::default(),
             line_comment: Default::default(),
+            block_comment: Default::default(),
         }
     }
 }
@@ -768,8 +772,15 @@ impl Language {
         self.config.name.clone()
     }
 
-    pub fn line_comment_prefix(&self) -> Option<&str> {
-        self.config.line_comment.as_deref()
+    pub fn line_comment_prefix(&self) -> Option<&Arc<str>> {
+        self.config.line_comment.as_ref()
+    }
+
+    pub fn block_comment_delimiters(&self) -> Option<(&Arc<str>, &Arc<str>)> {
+        self.config
+            .block_comment
+            .as_ref()
+            .map(|(start, end)| (start, end))
     }
 
     pub async fn disk_based_diagnostic_sources(&self) -> &[String] {

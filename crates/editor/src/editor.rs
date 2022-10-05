@@ -4487,105 +4487,184 @@ impl Editor {
     pub fn toggle_comments(&mut self, _: &ToggleComments, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
             let mut selections = this.selections.all::<Point>(cx);
-            let mut all_selection_lines_are_comments = true;
-            let mut edit_ranges = Vec::new();
+            let mut edits = Vec::new();
+            let mut selection_edit_ranges = Vec::new();
             let mut last_toggled_row = None;
-            this.buffer.update(cx, |buffer, cx| {
-                // TODO: Handle selections that cross excerpts
-                for selection in &mut selections {
-                    // Get the line comment prefix. Split its trailing whitespace into a separate string,
-                    // as that portion won't be used for detecting if a line is a comment.
-                    let full_comment_prefix: Arc<str> = if let Some(prefix) = buffer
-                        .language_at(selection.start, cx)
-                        .and_then(|l| l.line_comment_prefix().map(|p| p.into()))
-                    {
-                        prefix
+            let snapshot = this.buffer.read(cx).read(cx);
+            let empty_str: Arc<str> = "".into();
+
+            fn comment_prefix_range(
+                snapshot: &MultiBufferSnapshot,
+                row: u32,
+                comment_prefix: &str,
+                comment_prefix_whitespace: &str,
+            ) -> Range<Point> {
+                let start = Point::new(row, snapshot.indent_size_for_line(row).len);
+
+                let mut line_bytes = snapshot
+                    .bytes_in_range(start..snapshot.max_point())
+                    .flatten()
+                    .copied();
+
+                // If this line currently begins with the line comment prefix, then record
+                // the range containing the prefix.
+                if line_bytes
+                    .by_ref()
+                    .take(comment_prefix.len())
+                    .eq(comment_prefix.bytes())
+                {
+                    // Include any whitespace that matches the comment prefix.
+                    let matching_whitespace_len = line_bytes
+                        .zip(comment_prefix_whitespace.bytes())
+                        .take_while(|(a, b)| a == b)
+                        .count() as u32;
+                    let end = Point::new(
+                        start.row,
+                        start.column + comment_prefix.len() as u32 + matching_whitespace_len,
+                    );
+                    start..end
+                } else {
+                    start..start
+                }
+            }
+
+            fn comment_suffix_range(
+                snapshot: &MultiBufferSnapshot,
+                row: u32,
+                comment_suffix: &str,
+                comment_suffix_has_leading_space: bool,
+            ) -> Range<Point> {
+                let end = Point::new(row, snapshot.line_len(row));
+                let suffix_start_column = end.column.saturating_sub(comment_suffix.len() as u32);
+
+                let mut line_end_bytes = snapshot
+                    .bytes_in_range(Point::new(end.row, suffix_start_column.saturating_sub(1))..end)
+                    .flatten()
+                    .copied();
+
+                let leading_space_len = if suffix_start_column > 0
+                    && line_end_bytes.next() == Some(b' ')
+                    && comment_suffix_has_leading_space
+                {
+                    1
+                } else {
+                    0
+                };
+
+                // If this line currently begins with the line comment prefix, then record
+                // the range containing the prefix.
+                if line_end_bytes.by_ref().eq(comment_suffix.bytes()) {
+                    let start = Point::new(end.row, suffix_start_column - leading_space_len);
+                    start..end
+                } else {
+                    end..end
+                }
+            }
+
+            // TODO: Handle selections that cross excerpts
+            for selection in &mut selections {
+                let language = if let Some(language) = snapshot.language_at(selection.start) {
+                    language
+                } else {
+                    continue;
+                };
+
+                let mut all_selection_lines_are_comments = true;
+                selection_edit_ranges.clear();
+
+                // If multiple selections contain a given row, avoid processing that
+                // row more than once.
+                let mut start_row = selection.start.row;
+                if last_toggled_row == Some(start_row) {
+                    start_row += 1;
+                }
+                let end_row =
+                    if selection.end.row > selection.start.row && selection.end.column == 0 {
+                        selection.end.row - 1
                     } else {
-                        return;
+                        selection.end.row
                     };
+                last_toggled_row = Some(end_row);
+
+                // If the language has line comments, toggle those.
+                if let Some(full_comment_prefix) = language.line_comment_prefix() {
+                    // Split the comment prefix's trailing whitespace into a separate string,
+                    // as that portion won't be used for detecting if a line is a comment.
                     let comment_prefix = full_comment_prefix.trim_end_matches(' ');
                     let comment_prefix_whitespace = &full_comment_prefix[comment_prefix.len()..];
-                    edit_ranges.clear();
-                    let snapshot = buffer.snapshot(cx);
 
-                    let end_row =
-                        if selection.end.row > selection.start.row && selection.end.column == 0 {
-                            selection.end.row
-                        } else {
-                            selection.end.row + 1
-                        };
-
-                    for row in selection.start.row..end_row {
-                        // If multiple selections contain a given row, avoid processing that
-                        // row more than once.
-                        if last_toggled_row == Some(row) {
-                            continue;
-                        } else {
-                            last_toggled_row = Some(row);
-                        }
-
+                    for row in start_row..=end_row {
                         if snapshot.is_line_blank(row) {
                             continue;
                         }
 
-                        let start = Point::new(row, snapshot.indent_size_for_line(row).len);
-                        let mut line_bytes = snapshot
-                            .bytes_in_range(start..snapshot.max_point())
-                            .flatten()
-                            .copied();
-
-                        // If this line currently begins with the line comment prefix, then record
-                        // the range containing the prefix.
-                        if all_selection_lines_are_comments
-                            && line_bytes
-                                .by_ref()
-                                .take(comment_prefix.len())
-                                .eq(comment_prefix.bytes())
-                        {
-                            // Include any whitespace that matches the comment prefix.
-                            let matching_whitespace_len = line_bytes
-                                .zip(comment_prefix_whitespace.bytes())
-                                .take_while(|(a, b)| a == b)
-                                .count()
-                                as u32;
-                            let end = Point::new(
-                                row,
-                                start.column
-                                    + comment_prefix.len() as u32
-                                    + matching_whitespace_len,
-                            );
-                            edit_ranges.push(start..end);
-                        }
-                        // If this line does not begin with the line comment prefix, then record
-                        // the position where the prefix should be inserted.
-                        else {
+                        let prefix_range = comment_prefix_range(
+                            snapshot.deref(),
+                            row,
+                            comment_prefix,
+                            comment_prefix_whitespace,
+                        );
+                        if prefix_range.is_empty() {
                             all_selection_lines_are_comments = false;
-                            edit_ranges.push(start..start);
                         }
+                        selection_edit_ranges.push(prefix_range);
                     }
 
-                    if !edit_ranges.is_empty() {
-                        if all_selection_lines_are_comments {
-                            let empty_str: Arc<str> = "".into();
-                            buffer.edit(
-                                edit_ranges
-                                    .iter()
-                                    .cloned()
-                                    .map(|range| (range, empty_str.clone())),
-                                None,
-                                cx,
-                            );
-                        } else {
-                            let min_column =
-                                edit_ranges.iter().map(|r| r.start.column).min().unwrap();
-                            let edits = edit_ranges.iter().map(|range| {
-                                let position = Point::new(range.start.row, min_column);
-                                (position..position, full_comment_prefix.clone())
-                            });
-                            buffer.edit(edits, None, cx);
-                        }
+                    if all_selection_lines_are_comments {
+                        edits.extend(
+                            selection_edit_ranges
+                                .iter()
+                                .cloned()
+                                .map(|range| (range, empty_str.clone())),
+                        );
+                    } else {
+                        let min_column = selection_edit_ranges
+                            .iter()
+                            .map(|r| r.start.column)
+                            .min()
+                            .unwrap_or(0);
+                        edits.extend(selection_edit_ranges.iter().map(|range| {
+                            let position = Point::new(range.start.row, min_column);
+                            (position..position, full_comment_prefix.clone())
+                        }));
                     }
+                } else if let Some((full_comment_prefix, comment_suffix)) =
+                    language.block_comment_delimiters()
+                {
+                    let comment_prefix = full_comment_prefix.trim_end_matches(' ');
+                    let comment_prefix_whitespace = &full_comment_prefix[comment_prefix.len()..];
+
+                    let prefix_range = comment_prefix_range(
+                        snapshot.deref(),
+                        start_row,
+                        comment_prefix,
+                        comment_prefix_whitespace,
+                    );
+                    let suffix_range = comment_suffix_range(
+                        snapshot.deref(),
+                        end_row,
+                        comment_suffix.trim_start_matches(' '),
+                        comment_suffix.starts_with(' '),
+                    );
+
+                    if prefix_range.is_empty() || suffix_range.is_empty() {
+                        edits.push((
+                            prefix_range.start..prefix_range.start,
+                            full_comment_prefix.clone(),
+                        ));
+                        edits.push((suffix_range.end..suffix_range.end, comment_suffix.clone()));
+                    } else {
+                        edits.push((prefix_range, empty_str.clone()));
+                        edits.push((suffix_range, empty_str.clone()));
+                    }
+                } else {
+                    continue;
                 }
+            }
+
+            drop(snapshot);
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
             });
 
             let selections = this.selections.all::<usize>(cx);
@@ -10777,7 +10856,7 @@ mod tests {
         cx.update(|cx| cx.set_global(Settings::test(cx)));
         let language = Arc::new(Language::new(
             LanguageConfig {
-                line_comment: Some("// ".to_string()),
+                line_comment: Some("// ".into()),
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
@@ -10853,6 +10932,67 @@ mod tests {
                 .unindent()
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
+        let mut cx = EditorTestContext::new(cx);
+
+        let html_language = Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "HTML".into(),
+                    block_comment: Some(("<!-- ".into(), " -->".into())),
+                    ..Default::default()
+                },
+                Some(tree_sitter_html::language()),
+            )
+            .with_injection_query(
+                r#"
+                (script_element
+                    (raw_text) @content
+                    (#set! "language" "javascript"))
+                "#,
+            )
+            .unwrap(),
+        );
+
+        let javascript_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "JavaScript".into(),
+                line_comment: Some("// ".into()),
+                ..Default::default()
+            },
+            Some(tree_sitter_javascript::language()),
+        ));
+
+        let registry = Arc::new(LanguageRegistry::test());
+        registry.add(html_language.clone());
+        registry.add(javascript_language.clone());
+
+        cx.update_buffer(|buffer, cx| {
+            buffer.set_language_registry(registry);
+            buffer.set_language(Some(html_language), cx);
+        });
+
+        cx.set_state(
+            &r#"
+                <p>A</p>ˇ
+                <p>B</p>ˇ
+                <p>C</p>ˇ
+            "#
+            .unindent(),
+        );
+
+        cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments, cx));
+        cx.assert_editor_state(
+            &r#"
+                <!-- <p>A</p>ˇ -->
+                <!-- <p>B</p>ˇ -->
+                <!-- <p>C</p>ˇ -->
+            "#
+            .unindent(),
+        );
     }
 
     #[gpui::test]
