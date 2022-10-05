@@ -7084,6 +7084,7 @@ name = "workspace"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "call",
  "client",
  "collections",
  "context_menu",

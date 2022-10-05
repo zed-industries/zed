@@ -1,8 +1,9 @@
 use crate::{FollowerStatesByLeader, Pane};
 use anyhow::{anyhow, Result};
+use call::ActiveCall;
 use client::PeerId;
 use collections::HashMap;
-use gpui::{elements::*, Axis, Border, ViewHandle};
+use gpui::{elements::*, AppContext, Axis, Border, ViewHandle};
 use project::Collaborator;
 use serde::Deserialize;
 use theme::Theme;
@@ -56,11 +57,14 @@ impl PaneGroup {
 
     pub(crate) fn render(
         &self,
+        project_id: Option<u64>,
         theme: &Theme,
         follower_states: &FollowerStatesByLeader,
         collaborators: &HashMap<PeerId, Collaborator>,
+        cx: &AppContext,
     ) -> ElementBox {
-        self.root.render(theme, follower_states, collaborators)
+        self.root
+            .render(project_id, theme, follower_states, collaborators, cx)
     }
 
     pub(crate) fn panes(&self) -> Vec<&ViewHandle<Pane>> {
@@ -100,13 +104,14 @@ impl Member {
 
     pub fn render(
         &self,
+        project_id: Option<u64>,
         theme: &Theme,
         follower_states: &FollowerStatesByLeader,
         collaborators: &HashMap<PeerId, Collaborator>,
+        cx: &AppContext,
     ) -> ElementBox {
         match self {
             Member::Pane(pane) => {
-                let mut border = Border::default();
                 let leader = follower_states
                     .iter()
                     .find_map(|(leader_id, follower_states)| {
@@ -116,21 +121,61 @@ impl Member {
                             None
                         }
                     })
-                    .and_then(|leader_id| collaborators.get(leader_id));
-                if let Some(leader) = leader {
-                    let leader_color = theme
-                        .editor
-                        .replica_selection_style(leader.replica_id)
-                        .cursor;
-                    border = Border::all(theme.workspace.leader_border_width, leader_color);
+                    .and_then(|leader_id| {
+                        let room = ActiveCall::global(cx).read(cx).room()?.read(cx);
+                        let collaborator = collaborators.get(leader_id)?;
+                        let participant = room.remote_participants().get(&leader_id)?;
+                        Some((collaborator.replica_id, participant))
+                    });
+
+                if let Some((replica_id, leader)) = leader {
+                    let view = match leader.location {
+                        call::ParticipantLocation::Project {
+                            project_id: leader_project_id,
+                        } => {
+                            if Some(leader_project_id) == project_id {
+                                ChildView::new(pane).boxed()
+                            } else {
+                                Label::new(
+                                    format!(
+                                        "Follow {} on their currently active project",
+                                        leader.user.github_login,
+                                    ),
+                                    theme.workspace.external_location_message.text.clone(),
+                                )
+                                .contained()
+                                .with_style(theme.workspace.external_location_message.container)
+                                .aligned()
+                                .boxed()
+                            }
+                        }
+                        call::ParticipantLocation::External => Label::new(
+                            format!(
+                                "{} is viewing a window outside of Zed",
+                                leader.user.github_login
+                            ),
+                            theme.workspace.external_location_message.text.clone(),
+                        )
+                        .contained()
+                        .with_style(theme.workspace.external_location_message.container)
+                        .aligned()
+                        .boxed(),
+                    };
+
+                    let leader_color = theme.editor.replica_selection_style(replica_id).cursor;
+                    let mut border = Border::all(theme.workspace.leader_border_width, leader_color);
                     border
                         .color
                         .fade_out(1. - theme.workspace.leader_border_opacity);
                     border.overlay = true;
+                    Container::new(view).with_border(border).boxed()
+                } else {
+                    ChildView::new(pane).boxed()
                 }
-                ChildView::new(pane).contained().with_border(border).boxed()
             }
-            Member::Axis(axis) => axis.render(theme, follower_states, collaborators),
+            Member::Axis(axis) => {
+                axis.render(project_id, theme, follower_states, collaborators, cx)
+            }
         }
     }
 
@@ -232,14 +277,17 @@ impl PaneAxis {
 
     fn render(
         &self,
+        project_id: Option<u64>,
         theme: &Theme,
         follower_state: &FollowerStatesByLeader,
         collaborators: &HashMap<PeerId, Collaborator>,
+        cx: &AppContext,
     ) -> ElementBox {
         let last_member_ix = self.members.len() - 1;
         Flex::new(self.axis)
             .with_children(self.members.iter().enumerate().map(|(ix, member)| {
-                let mut member = member.render(theme, follower_state, collaborators);
+                let mut member =
+                    member.render(project_id, theme, follower_state, collaborators, cx);
                 if ix < last_member_ix {
                     let mut border = theme.workspace.pane_divider;
                     border.left = false;

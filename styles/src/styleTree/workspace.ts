@@ -48,6 +48,10 @@ export default function workspace(theme: Theme) {
       padding: 12,
       ...text(theme, "sans", "primary", { size: "lg" }),
     },
+    externalLocationMessage: {
+      padding: 12,
+      ...text(theme, "sans", "primary", { size: "lg" }),
+    },
     leaderBorderOpacity: 0.7,
     leaderBorderWidth: 2.0,
     tabBar: tabBar(theme),

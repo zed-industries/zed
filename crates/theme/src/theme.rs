@@ -58,6 +58,7 @@ pub struct Workspace {
     pub notifications: Notifications,
     pub joining_project_avatar: ImageStyle,
     pub joining_project_message: ContainedText,
+    pub external_location_message: ContainedText,
     pub dock: Dock,
 }
 

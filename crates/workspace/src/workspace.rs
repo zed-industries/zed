@@ -12,7 +12,8 @@ mod status_bar;
 mod toolbar;
 
 use anyhow::{anyhow, Context, Result};
-use client::{proto, Client, Contact, PeerId, Subscription, TypedEnvelope, UserStore};
+use call::ActiveCall;
+use client::{proto, Client, Contact, PeerId, TypedEnvelope, UserStore};
 use collections::{hash_map, HashMap, HashSet};
 use dock::{DefaultItemFactory, Dock, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
@@ -860,7 +861,7 @@ pub struct Workspace {
     weak_self: WeakViewHandle<Self>,
     client: Arc<Client>,
     user_store: ModelHandle<client::UserStore>,
-    remote_entity_subscription: Option<Subscription>,
+    remote_entity_subscription: Option<client::Subscription>,
     fs: Arc<dyn Fs>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
@@ -880,6 +881,7 @@ pub struct Workspace {
     last_leaders_by_pane: HashMap<WeakViewHandle<Pane>, PeerId>,
     window_edited: bool,
     _observe_current_user: Task<()>,
+    _active_call_observation: gpui::Subscription,
 }
 
 #[derive(Default)]
@@ -1015,6 +1017,7 @@ impl Workspace {
             last_leaders_by_pane: Default::default(),
             window_edited: false,
             _observe_current_user,
+            _active_call_observation: cx.observe(&ActiveCall::global(cx), |_, _, cx| cx.notify()),
         };
         this.project_remote_id_changed(this.project.read(cx).remote_id(), cx);
         cx.defer(|this, cx| this.update_window_title(cx));
@@ -2430,9 +2433,11 @@ impl View for Workspace {
                                             Flex::column()
                                                 .with_child(
                                                     FlexItem::new(self.center.render(
+                                                        self.project.read(cx).remote_id(),
                                                         &theme,
                                                         &self.follower_states_by_leader,
                                                         self.project.read(cx).collaborators(),
+                                                        cx,
                                                     ))
                                                     .flex(1., true)
                                                     .boxed(),

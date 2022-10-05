@@ -76,6 +76,10 @@ impl CollabTitlebarItem {
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe(workspace, |_, _, cx| cx.notify()));
         subscriptions.push(cx.observe(&active_call, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe_window_activation(|this, active, cx| {
+            this.window_activation_changed(active, cx)
+        }));
+
         Self {
             workspace: workspace.downgrade(),
             contacts_popover: None,
@@ -83,14 +87,43 @@ impl CollabTitlebarItem {
         }
     }
 
+    fn window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {
+        let workspace = self.workspace.upgrade(cx);
+        let room = ActiveCall::global(cx).read(cx).room().cloned();
+        if let Some((workspace, room)) = workspace.zip(room) {
+            let workspace = workspace.read(cx);
+            let project = if !active {
+                None
+            } else if workspace.project().read(cx).remote_id().is_some() {
+                Some(workspace.project().clone())
+            } else {
+                None
+            };
+
+            room.update(cx, |room, cx| {
+                room.set_location(project.as_ref(), cx)
+                    .detach_and_log_err(cx);
+            });
+        }
+    }
+
     fn share_project(&mut self, _: &ShareProject, cx: &mut ViewContext<Self>) {
         if let Some(workspace) = self.workspace.upgrade(cx) {
-            if let Some(room) = ActiveCall::global(cx).read(cx).room() {
+            if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
+                let window_id = cx.window_id();
                 let room_id = room.read(cx).id();
                 let project = workspace.read(cx).project().clone();
-                project
-                    .update(cx, |project, cx| project.share(room_id, cx))
-                    .detach_and_log_err(cx);
+                let share = project.update(cx, |project, cx| project.share(room_id, cx));
+                cx.spawn_weak(|_, mut cx| async move {
+                    share.await?;
+                    if cx.update(|cx| cx.window_is_active(window_id)) {
+                        room.update(&mut cx, |room, cx| {
+                            room.set_location(Some(&project), cx).detach_and_log_err(cx);
+                        });
+                    }
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
             }
         }
     }
