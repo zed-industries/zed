@@ -4,8 +4,9 @@ mod highlight_map;
 mod outline;
 pub mod proto;
 mod syntax_map;
+
 #[cfg(test)]
-mod tests;
+mod buffer_tests;
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
