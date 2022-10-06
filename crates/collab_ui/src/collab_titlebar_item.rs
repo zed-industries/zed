@@ -1,6 +1,6 @@
-use crate::contacts_popover;
+use crate::{contact_notification::ContactNotification, contacts_popover};
 use call::{ActiveCall, ParticipantLocation};
-use client::{Authenticate, PeerId};
+use client::{Authenticate, ContactEventKind, PeerId, UserStore};
 use clock::ReplicaId;
 use contacts_popover::ContactsPopover;
 use gpui::{
@@ -9,8 +9,8 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
     json::{self, ToJson},
-    Border, CursorStyle, Entity, ImageData, MouseButton, MutableAppContext, RenderContext,
-    Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
+    Border, CursorStyle, Entity, ImageData, ModelHandle, MouseButton, MutableAppContext,
+    RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
 use std::{ops::Range, sync::Arc};
@@ -29,6 +29,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
 pub struct CollabTitlebarItem {
     workspace: WeakViewHandle<Workspace>,
+    user_store: ModelHandle<UserStore>,
     contacts_popover: Option<ViewHandle<ContactsPopover>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -71,7 +72,11 @@ impl View for CollabTitlebarItem {
 }
 
 impl CollabTitlebarItem {
-    pub fn new(workspace: &ViewHandle<Workspace>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        workspace: &ViewHandle<Workspace>,
+        user_store: &ModelHandle<UserStore>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let active_call = ActiveCall::global(cx);
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe(workspace, |_, _, cx| cx.notify()));
@@ -79,9 +84,33 @@ impl CollabTitlebarItem {
         subscriptions.push(cx.observe_window_activation(|this, active, cx| {
             this.window_activation_changed(active, cx)
         }));
+        subscriptions.push(cx.observe(user_store, |_, _, cx| cx.notify()));
+        subscriptions.push(
+            cx.subscribe(user_store, move |this, user_store, event, cx| {
+                if let Some(workspace) = this.workspace.upgrade(cx) {
+                    workspace.update(cx, |workspace, cx| {
+                        if let client::Event::Contact { user, kind } = event {
+                            if let ContactEventKind::Requested | ContactEventKind::Accepted = kind {
+                                workspace.show_notification(user.id as usize, cx, |cx| {
+                                    cx.add_view(|cx| {
+                                        ContactNotification::new(
+                                            user.clone(),
+                                            *kind,
+                                            user_store,
+                                            cx,
+                                        )
+                                    })
+                                })
+                            }
+                        }
+                    });
+                }
+            }),
+        );
 
         Self {
             workspace: workspace.downgrade(),
+            user_store: user_store.clone(),
             contacts_popover: None,
             _subscriptions: subscriptions,
         }
@@ -160,6 +189,26 @@ impl CollabTitlebarItem {
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         let titlebar = &theme.workspace.titlebar;
+        let badge = if self
+            .user_store
+            .read(cx)
+            .incoming_contact_requests()
+            .is_empty()
+        {
+            None
+        } else {
+            Some(
+                Empty::new()
+                    .collapsed()
+                    .contained()
+                    .with_style(titlebar.toggle_contacts_badge)
+                    .contained()
+                    .with_margin_left(titlebar.toggle_contacts_button.default.icon_width)
+                    .with_margin_top(titlebar.toggle_contacts_button.default.icon_width)
+                    .aligned()
+                    .boxed(),
+            )
+        };
         Stack::new()
             .with_child(
                 MouseEventHandler::<ToggleContactsPopover>::new(0, cx, |state, _| {
@@ -185,6 +234,7 @@ impl CollabTitlebarItem {
                 .aligned()
                 .boxed(),
             )
+            .with_children(badge)
             .with_children(self.contacts_popover.as_ref().map(|popover| {
                 Overlay::new(
                     ChildView::new(popover)

@@ -144,6 +144,13 @@ export default function workspace(theme: Theme) {
           color: iconColor(theme, "active"),
         },
       },
+      toggleContactsBadge: {
+        cornerRadius: 3,
+        padding: 2,
+        margin: { top: 3, left: 3 },
+        border: { width: 1, color: workspaceBackground(theme) },
+        background: iconColor(theme, "feature"),
+      },
       shareButton: {
         ...titlebarButton
       },

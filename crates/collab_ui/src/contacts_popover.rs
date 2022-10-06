@@ -1,22 +1,27 @@
 use std::sync::Arc;
 
+use crate::contact_finder;
 use call::ActiveCall;
 use client::{Contact, User, UserStore};
 use editor::{Cancel, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    elements::*, impl_internal_actions, keymap, AppContext, ClipboardItem, CursorStyle, Entity,
-    ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, View, ViewContext,
-    ViewHandle,
+    elements::*, impl_actions, impl_internal_actions, keymap, AppContext, ClipboardItem,
+    CursorStyle, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription,
+    View, ViewContext, ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::Project;
+use serde::Deserialize;
 use settings::Settings;
 use theme::IconButton;
 
-impl_internal_actions!(contacts_panel, [ToggleExpanded, Call]);
+impl_actions!(contacts_popover, [RemoveContact, RespondToContactRequest]);
+impl_internal_actions!(contacts_popover, [ToggleExpanded, Call]);
 
 pub fn init(cx: &mut MutableAppContext) {
+    cx.add_action(ContactsPopover::remove_contact);
+    cx.add_action(ContactsPopover::respond_to_contact_request);
     cx.add_action(ContactsPopover::clear_filter);
     cx.add_action(ContactsPopover::select_next);
     cx.add_action(ContactsPopover::select_prev);
@@ -75,6 +80,18 @@ impl PartialEq for ContactEntry {
         }
         false
     }
+}
+
+#[derive(Clone, Deserialize, PartialEq)]
+pub struct RequestContact(pub u64);
+
+#[derive(Clone, Deserialize, PartialEq)]
+pub struct RemoveContact(pub u64);
+
+#[derive(Clone, Deserialize, PartialEq)]
+pub struct RespondToContactRequest {
+    pub user_id: u64,
+    pub accept: bool,
 }
 
 pub enum Event {
@@ -184,6 +201,24 @@ impl ContactsPopover {
         };
         this.update_entries(cx);
         this
+    }
+
+    fn remove_contact(&mut self, request: &RemoveContact, cx: &mut ViewContext<Self>) {
+        self.user_store
+            .update(cx, |store, cx| store.remove_contact(request.0, cx))
+            .detach();
+    }
+
+    fn respond_to_contact_request(
+        &mut self,
+        action: &RespondToContactRequest,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.user_store
+            .update(cx, |store, cx| {
+                store.respond_to_contact_request(action.user_id, action.accept, cx)
+            })
+            .detach();
     }
 
     fn clear_filter(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
@@ -574,18 +609,15 @@ impl ContactsPopover {
                     };
                     render_icon_button(button_style, "icons/x_mark_8.svg")
                         .aligned()
-                        // .flex_float()
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, cx| {
-                    todo!();
-                    // cx.dispatch_action(RespondToContactRequest {
-                    //     user_id,
-                    //     accept: false,
-                    // })
+                    cx.dispatch_action(RespondToContactRequest {
+                        user_id,
+                        accept: false,
+                    })
                 })
-                // .flex_float()
                 .contained()
                 .with_margin_right(button_spacing)
                 .boxed(),
@@ -602,11 +634,10 @@ impl ContactsPopover {
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, cx| {
-                    todo!()
-                    // cx.dispatch_action(RespondToContactRequest {
-                    //     user_id,
-                    //     accept: true,
-                    // })
+                    cx.dispatch_action(RespondToContactRequest {
+                        user_id,
+                        accept: true,
+                    })
                 })
                 .boxed(),
             ]);
@@ -626,8 +657,7 @@ impl ContactsPopover {
                 .with_padding(Padding::uniform(2.))
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, cx| {
-                    todo!()
-                    // cx.dispatch_action(RemoveContact(user_id))
+                    cx.dispatch_action(RemoveContact(user_id))
                 })
                 .flex_float()
                 .boxed(),
@@ -692,8 +722,7 @@ impl View for ContactsPopover {
                         })
                         .with_cursor_style(CursorStyle::PointingHand)
                         .on_click(MouseButton::Left, |_, cx| {
-                            todo!()
-                            // cx.dispatch_action(contact_finder::Toggle)
+                            cx.dispatch_action(contact_finder::Toggle)
                         })
                         .boxed(),
                     )

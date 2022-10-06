@@ -1,9 +1,7 @@
-use crate::render_icon_button;
 use client::User;
 use gpui::{
-    elements::{Flex, Image, Label, MouseEventHandler, Padding, ParentElement, Text},
-    platform::CursorStyle,
-    Action, Element, ElementBox, MouseButton, RenderContext, View,
+    elements::*, platform::CursorStyle, Action, Element, ElementBox, MouseButton, RenderContext,
+    View,
 };
 use settings::Settings;
 use std::sync::Arc;
@@ -53,11 +51,18 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                 )
                 .with_child(
                     MouseEventHandler::<Dismiss>::new(user.id as usize, cx, |state, _| {
-                        render_icon_button(
-                            theme.dismiss_button.style_for(state, false),
-                            "icons/x_mark_thin_8.svg",
-                        )
-                        .boxed()
+                        let style = theme.dismiss_button.style_for(state, false);
+                        Svg::new("icons/x_mark_thin_8.svg")
+                            .with_color(style.color)
+                            .constrained()
+                            .with_width(style.icon_width)
+                            .aligned()
+                            .contained()
+                            .with_style(style.container)
+                            .constrained()
+                            .with_width(style.button_width)
+                            .with_height(style.button_width)
+                            .boxed()
                     })
                     .with_cursor_style(CursorStyle::PointingHand)
                     .with_padding(Padding::uniform(5.))

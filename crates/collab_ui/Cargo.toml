@@ -29,6 +29,7 @@ editor = { path = "../editor" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 menu = { path = "../menu" }
+picker = { path = "../picker" }
 project = { path = "../project" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }

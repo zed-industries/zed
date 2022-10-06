@@ -1,6 +1,9 @@
 mod collab_titlebar_item;
+mod contact_finder;
+mod contact_notification;
 mod contacts_popover;
 mod incoming_call_notification;
+mod notifications;
 mod project_shared_notification;
 
 use call::ActiveCall;
@@ -11,6 +14,8 @@ use std::sync::Arc;
 use workspace::{AppState, JoinProject, ToggleFollow, Workspace};
 
 pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
+    contact_notification::init(cx);
+    contact_finder::init(cx);
     contacts_popover::init(cx);
     collab_titlebar_item::init(cx);
     incoming_call_notification::init(cx);

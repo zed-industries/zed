@@ -9,8 +9,6 @@ use std::sync::Arc;
 use util::TryFutureExt;
 use workspace::Workspace;
 
-use crate::render_icon_button;
-
 actions!(contact_finder, [Toggle]);
 
 pub fn init(cx: &mut MutableAppContext) {
@@ -117,11 +115,10 @@ impl PickerDelegate for ContactFinder {
 
         let icon_path = match request_status {
             ContactRequestStatus::None | ContactRequestStatus::RequestReceived => {
-                "icons/check_8.svg"
+                Some("icons/check_8.svg")
             }
-            ContactRequestStatus::RequestSent | ContactRequestStatus::RequestAccepted => {
-                "icons/x_mark_8.svg"
-            }
+            ContactRequestStatus::RequestSent => Some("icons/x_mark_8.svg"),
+            ContactRequestStatus::RequestAccepted => None,
         };
         let button_style = if self.user_store.read(cx).is_contact_request_pending(user) {
             &theme.contact_finder.disabled_contact_button
@@ -145,12 +142,21 @@ impl PickerDelegate for ContactFinder {
                     .left()
                     .boxed(),
             )
-            .with_child(
-                render_icon_button(button_style, icon_path)
+            .with_children(icon_path.map(|icon_path| {
+                Svg::new(icon_path)
+                    .with_color(button_style.color)
+                    .constrained()
+                    .with_width(button_style.icon_width)
+                    .aligned()
+                    .contained()
+                    .with_style(button_style.container)
+                    .constrained()
+                    .with_width(button_style.button_width)
+                    .with_height(button_style.button_width)
                     .aligned()
                     .flex_float()
-                    .boxed(),
-            )
+                    .boxed()
+            }))
             .contained()
             .with_style(style.container)
             .constrained()

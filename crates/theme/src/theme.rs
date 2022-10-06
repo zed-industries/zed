@@ -78,6 +78,7 @@ pub struct Titlebar {
     pub outdated_warning: ContainedText,
     pub share_button: Interactive<ContainedText>,
     pub toggle_contacts_button: Interactive<IconButton>,
+    pub toggle_contacts_badge: ContainerStyle,
     pub contacts_popover: AddParticipantPopover,
 }
 

@@ -1091,6 +1091,7 @@ dependencies = [
  "gpui",
  "log",
  "menu",
+ "picker",
  "postage",
  "project",
  "serde",
@@ -1139,30 +1140,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30ed07550be01594c6026cff2a1d7fe9c8f683caa798e12b68694ac9e88286a3"
 dependencies = [
  "cache-padded",
-]
-
-[[package]]
-name = "contacts_panel"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "collections",
- "editor",
- "futures",
- "fuzzy",
- "gpui",
- "language",
- "log",
- "menu",
- "picker",
- "postage",
- "project",
- "serde",
- "settings",
- "theme",
- "util",
- "workspace",
 ]
 
 [[package]]
@@ -7165,7 +7142,6 @@ dependencies = [
  "collab_ui",
  "collections",
  "command_palette",
- "contacts_panel",
  "context_menu",
  "ctor",
  "diagnostics",
