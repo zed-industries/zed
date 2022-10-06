@@ -1990,6 +1990,10 @@ impl MutableAppContext {
         })
     }
 
+    pub fn remove_status_bar_item(&mut self, id: usize) {
+        self.remove_window(id);
+    }
+
     fn register_platform_window(
         &mut self,
         window_id: usize,
