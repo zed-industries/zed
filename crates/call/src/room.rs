@@ -1,6 +1,9 @@
-use crate::participant::{ParticipantLocation, RemoteParticipant};
+use crate::{
+    participant::{ParticipantLocation, RemoteParticipant},
+    IncomingCall,
+};
 use anyhow::{anyhow, Result};
-use client::{incoming_call::IncomingCall, proto, Client, PeerId, TypedEnvelope, User, UserStore};
+use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use collections::{HashMap, HashSet};
 use futures::StreamExt;
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};

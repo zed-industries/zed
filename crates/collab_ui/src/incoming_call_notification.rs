@@ -1,5 +1,4 @@
-use call::ActiveCall;
-use client::incoming_call::IncomingCall;
+use call::{ActiveCall, IncomingCall};
 use futures::StreamExt;
 use gpui::{
     elements::*,

@@ -2,7 +2,7 @@ mod participant;
 pub mod room;
 
 use anyhow::{anyhow, Result};
-use client::{incoming_call::IncomingCall, proto, Client, TypedEnvelope, UserStore};
+use client::{proto, Client, TypedEnvelope, User, UserStore};
 use gpui::{
     AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Subscription, Task,
@@ -16,6 +16,14 @@ use std::sync::Arc;
 pub fn init(client: Arc<Client>, user_store: ModelHandle<UserStore>, cx: &mut MutableAppContext) {
     let active_call = cx.add_model(|cx| ActiveCall::new(client, user_store, cx));
     cx.set_global(active_call);
+}
+
+#[derive(Clone)]
+pub struct IncomingCall {
+    pub room_id: u64,
+    pub caller: Arc<User>,
+    pub participants: Vec<Arc<User>>,
+    pub initial_project_id: Option<u64>,
 }
 
 pub struct ActiveCall {

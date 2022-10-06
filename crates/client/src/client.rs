@@ -3,7 +3,6 @@ pub mod test;
 
 pub mod channel;
 pub mod http;
-pub mod incoming_call;
 pub mod user;
 
 use anyhow::{anyhow, Context, Result};
