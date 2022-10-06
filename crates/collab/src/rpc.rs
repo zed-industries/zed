@@ -723,6 +723,7 @@ impl Server {
     ) -> Result<()> {
         let mut store = self.store().await;
         let (room, recipient_connection_ids) = store.cancel_call(
+            request.payload.room_id,
             UserId::from_proto(request.payload.recipient_user_id),
             request.sender_id,
         )?;
@@ -741,7 +742,8 @@ impl Server {
         message: TypedEnvelope<proto::DeclineCall>,
     ) -> Result<()> {
         let mut store = self.store().await;
-        let (room, recipient_connection_ids) = store.call_declined(message.sender_id)?;
+        let (room, recipient_connection_ids) =
+            store.decline_call(message.payload.room_id, message.sender_id)?;
         for recipient_id in recipient_connection_ids {
             self.peer
                 .send(recipient_id, proto::CallCanceled {})

@@ -193,10 +193,13 @@ message IncomingCall {
 message CallCanceled {}
 
 message CancelCall {
-    uint64 recipient_user_id = 1;
+    uint64 room_id = 1;
+    uint64 recipient_user_id = 2;
 }
 
-message DeclineCall {}
+message DeclineCall {
+    uint64 room_id = 1;
+}
 
 message UpdateParticipantLocation {
     uint64 room_id = 1;

@@ -587,6 +587,7 @@ impl Store {
 
     pub fn cancel_call(
         &mut self,
+        room_id: RoomId,
         recipient_user_id: UserId,
         canceller_connection_id: ConnectionId,
     ) -> Result<(&proto::Room, HashSet<ConnectionId>)> {
@@ -609,7 +610,11 @@ impl Store {
             .ok_or_else(|| anyhow!("no active call for recipient"))?;
 
         anyhow::ensure!(
-            canceller_active_call.room_id == recipient_active_call.room_id,
+            canceller_active_call.room_id == room_id,
+            "users are on different calls"
+        );
+        anyhow::ensure!(
+            recipient_active_call.room_id == room_id,
             "users are on different calls"
         );
         anyhow::ensure!(
@@ -630,8 +635,9 @@ impl Store {
         Ok((room, recipient.connection_ids.clone()))
     }
 
-    pub fn call_declined(
+    pub fn decline_call(
         &mut self,
+        room_id: RoomId,
         recipient_connection_id: ConnectionId,
     ) -> Result<(&proto::Room, Vec<ConnectionId>)> {
         let recipient_user_id = self.user_id_for_connection(recipient_connection_id)?;
@@ -640,6 +646,7 @@ impl Store {
             .get_mut(&recipient_user_id)
             .ok_or_else(|| anyhow!("no such connection"))?;
         if let Some(active_call) = recipient.active_call.take() {
+            anyhow::ensure!(active_call.room_id == room_id, "no such room");
             let recipient_connection_ids = self
                 .connection_ids_for_user(recipient_user_id)
                 .collect::<Vec<_>>();

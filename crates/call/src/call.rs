@@ -145,10 +145,19 @@ impl ActiveCall {
         recipient_user_id: u64,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
+        let room_id = if let Some(room) = self.room() {
+            room.read(cx).id()
+        } else {
+            return Task::ready(Err(anyhow!("no active call")));
+        };
+
         let client = self.client.clone();
         cx.foreground().spawn(async move {
             client
-                .request(proto::CancelCall { recipient_user_id })
+                .request(proto::CancelCall {
+                    room_id,
+                    recipient_user_id,
+                })
                 .await?;
             anyhow::Ok(())
         })
@@ -178,8 +187,15 @@ impl ActiveCall {
     }
 
     pub fn decline_incoming(&mut self) -> Result<()> {
-        *self.incoming_call.0.borrow_mut() = None;
-        self.client.send(proto::DeclineCall {})?;
+        let call = self
+            .incoming_call
+            .0
+            .borrow_mut()
+            .take()
+            .ok_or_else(|| anyhow!("no incoming call"))?;
+        self.client.send(proto::DeclineCall {
+            room_id: call.room_id,
+        })?;
         Ok(())
     }
 
