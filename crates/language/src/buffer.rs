@@ -300,10 +300,8 @@ pub struct Chunk<'a> {
 
 pub struct Diff {
     base_version: clock::Global,
-    new_text: Arc<str>,
-    changes: Vec<(ChangeTag, usize)>,
     line_ending: LineEnding,
-    start_offset: usize,
+    edits: Vec<(Range<usize>, Arc<str>)>,
 }
 
 #[derive(Clone, Copy)]
@@ -1084,16 +1082,30 @@ impl Buffer {
             let old_text = old_text.to_string();
             let line_ending = LineEnding::detect(&new_text);
             LineEnding::normalize(&mut new_text);
-            let changes = TextDiff::from_chars(old_text.as_str(), new_text.as_str())
-                .iter_all_changes()
-                .map(|c| (c.tag(), c.value().len()))
-                .collect::<Vec<_>>();
+            let diff = TextDiff::from_chars(old_text.as_str(), new_text.as_str());
+            let mut edits = Vec::new();
+            let mut offset = 0;
+            let empty: Arc<str> = "".into();
+            for change in diff.iter_all_changes() {
+                let value = change.value();
+                let end_offset = offset + value.len();
+                match change.tag() {
+                    ChangeTag::Equal => {
+                        offset = end_offset;
+                    }
+                    ChangeTag::Delete => {
+                        edits.push((offset..end_offset, empty.clone()));
+                        offset = end_offset;
+                    }
+                    ChangeTag::Insert => {
+                        edits.push((offset..offset, value.into()));
+                    }
+                }
+            }
             Diff {
                 base_version,
-                new_text: new_text.into(),
-                changes,
                 line_ending,
-                start_offset: 0,
+                edits,
             }
         })
     }
@@ -1103,28 +1115,7 @@ impl Buffer {
             self.finalize_last_transaction();
             self.start_transaction();
             self.text.set_line_ending(diff.line_ending);
-            let mut offset = diff.start_offset;
-            for (tag, len) in diff.changes {
-                let range = offset..(offset + len);
-                match tag {
-                    ChangeTag::Equal => offset += len,
-                    ChangeTag::Delete => {
-                        self.edit([(range, "")], None, cx);
-                    }
-                    ChangeTag::Insert => {
-                        self.edit(
-                            [(
-                                offset..offset,
-                                &diff.new_text[range.start - diff.start_offset
-                                    ..range.end - diff.start_offset],
-                            )],
-                            None,
-                            cx,
-                        );
-                        offset += len;
-                    }
-                }
-            }
+            self.edit(diff.edits, None, cx);
             if self.end_transaction(cx).is_some() {
                 self.finalize_last_transaction()
             } else {
