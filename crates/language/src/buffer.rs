@@ -84,14 +84,15 @@ pub struct BufferSnapshot {
     parse_count: usize,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct IndentSize {
     pub len: u32,
     pub kind: IndentKind,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum IndentKind {
+    #[default]
     Space,
     Tab,
 }
@@ -236,7 +237,6 @@ pub enum AutoindentMode {
 struct AutoindentRequest {
     before_edit: BufferSnapshot,
     entries: Vec<AutoindentRequestEntry>,
-    indent_size: IndentSize,
     is_block_mode: bool,
 }
 
@@ -249,6 +249,7 @@ struct AutoindentRequestEntry {
     /// only be adjusted if the suggested indentation level has *changed*
     /// since the edit was made.
     first_line_is_new: bool,
+    indent_size: IndentSize,
     original_indent_column: Option<u32>,
 }
 
@@ -794,10 +795,13 @@ impl Buffer {
                 // buffer before this batch of edits.
                 let mut row_ranges = Vec::new();
                 let mut old_to_new_rows = BTreeMap::new();
+                let mut language_indent_sizes_by_new_row = Vec::new();
                 for entry in &request.entries {
                     let position = entry.range.start;
                     let new_row = position.to_point(&snapshot).row;
                     let new_end_row = entry.range.end.to_point(&snapshot).row + 1;
+                    language_indent_sizes_by_new_row.push((new_row, entry.indent_size));
+
                     if !entry.first_line_is_new {
                         let old_row = position.to_point(&request.before_edit).row;
                         old_to_new_rows.insert(old_row, new_row);
@@ -811,6 +815,8 @@ impl Buffer {
                 let mut old_suggestions = BTreeMap::<u32, IndentSize>::default();
                 let old_edited_ranges =
                     contiguous_ranges(old_to_new_rows.keys().copied(), max_rows_between_yields);
+                let mut language_indent_sizes = language_indent_sizes_by_new_row.iter().peekable();
+                let mut language_indent_size = IndentSize::default();
                 for old_edited_range in old_edited_ranges {
                     let suggestions = request
                         .before_edit
@@ -819,6 +825,17 @@ impl Buffer {
                         .flatten();
                     for (old_row, suggestion) in old_edited_range.zip(suggestions) {
                         if let Some(suggestion) = suggestion {
+                            let new_row = *old_to_new_rows.get(&old_row).unwrap();
+
+                            // Find the indent size based on the language for this row.
+                            while let Some((row, size)) = language_indent_sizes.peek() {
+                                if *row > new_row {
+                                    break;
+                                }
+                                language_indent_size = *size;
+                                language_indent_sizes.next();
+                            }
+
                             let suggested_indent = old_to_new_rows
                                 .get(&suggestion.basis_row)
                                 .and_then(|from_row| old_suggestions.get(from_row).copied())
@@ -827,9 +844,8 @@ impl Buffer {
                                         .before_edit
                                         .indent_size_for_line(suggestion.basis_row)
                                 })
-                                .with_delta(suggestion.delta, request.indent_size);
-                            old_suggestions
-                                .insert(*old_to_new_rows.get(&old_row).unwrap(), suggested_indent);
+                                .with_delta(suggestion.delta, language_indent_size);
+                            old_suggestions.insert(new_row, suggested_indent);
                         }
                     }
                     yield_now().await;
@@ -850,6 +866,8 @@ impl Buffer {
 
                 // Compute new suggestions for each line, but only include them in the result
                 // if they differ from the old suggestion for that line.
+                let mut language_indent_sizes = language_indent_sizes_by_new_row.iter().peekable();
+                let mut language_indent_size = IndentSize::default();
                 for new_edited_row_range in new_edited_row_ranges {
                     let suggestions = snapshot
                         .suggest_autoindents(new_edited_row_range.clone())
@@ -857,13 +875,22 @@ impl Buffer {
                         .flatten();
                     for (new_row, suggestion) in new_edited_row_range.zip(suggestions) {
                         if let Some(suggestion) = suggestion {
+                            // Find the indent size based on the language for this row.
+                            while let Some((row, size)) = language_indent_sizes.peek() {
+                                if *row > new_row {
+                                    break;
+                                }
+                                language_indent_size = *size;
+                                language_indent_sizes.next();
+                            }
+
                             let suggested_indent = indent_sizes
                                 .get(&suggestion.basis_row)
                                 .copied()
                                 .unwrap_or_else(|| {
                                     snapshot.indent_size_for_line(suggestion.basis_row)
                                 })
-                                .with_delta(suggestion.delta, request.indent_size);
+                                .with_delta(suggestion.delta, language_indent_size);
                             if old_suggestions
                                 .get(&new_row)
                                 .map_or(true, |old_indentation| {
@@ -1194,7 +1221,6 @@ impl Buffer {
         let edit_id = edit_operation.local_timestamp();
 
         if let Some((before_edit, mode)) = autoindent_request {
-            let indent_size = before_edit.single_indent_size(cx);
             let (start_columns, is_block_mode) = match mode {
                 AutoindentMode::Block {
                     original_indent_columns: start_columns,
@@ -1243,6 +1269,7 @@ impl Buffer {
                     AutoindentRequestEntry {
                         first_line_is_new,
                         original_indent_column: start_column,
+                        indent_size: before_edit.language_indent_size_at(range.start, cx),
                         range: self.anchor_before(new_start + range_of_insertion_to_indent.start)
                             ..self.anchor_after(new_start + range_of_insertion_to_indent.end),
                     }
@@ -1252,7 +1279,6 @@ impl Buffer {
             self.autoindent_requests.push(Arc::new(AutoindentRequest {
                 before_edit,
                 entries,
-                indent_size,
                 is_block_mode,
             }));
         }
@@ -1570,8 +1596,8 @@ impl BufferSnapshot {
         indent_size_for_line(self, row)
     }
 
-    pub fn single_indent_size(&self, cx: &AppContext) -> IndentSize {
-        let language_name = self.language().map(|language| language.name());
+    pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &AppContext) -> IndentSize {
+        let language_name = self.language_at(position).map(|language| language.name());
         let settings = cx.global::<Settings>();
         if settings.hard_tabs(language_name.as_deref()) {
             IndentSize::tab()
@@ -1830,10 +1856,6 @@ impl BufferSnapshot {
                 line.push_str(text);
             }
         }
-    }
-
-    pub fn language(&self) -> Option<&Arc<Language>> {
-        self.language.as_ref()
     }
 
     pub fn language_at<D: ToOffset>(&self, position: D) -> Option<&Arc<Language>> {

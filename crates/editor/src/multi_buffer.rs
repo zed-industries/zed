@@ -1967,8 +1967,10 @@ impl MultiBufferSnapshot {
 
         let mut rows_for_excerpt = Vec::new();
         let mut cursor = self.excerpts.cursor::<Point>();
-
         let mut rows = rows.into_iter().peekable();
+        let mut prev_row = u32::MAX;
+        let mut prev_language_indent_size = IndentSize::default();
+
         while let Some(row) = rows.next() {
             cursor.seek(&Point::new(row, 0), Bias::Right, &());
             let excerpt = match cursor.item() {
@@ -1976,7 +1978,17 @@ impl MultiBufferSnapshot {
                 _ => continue,
             };
 
-            let single_indent_size = excerpt.buffer.single_indent_size(cx);
+            // Retrieve the language and indent size once for each disjoint region being indented.
+            let single_indent_size = if row.saturating_sub(1) == prev_row {
+                prev_language_indent_size
+            } else {
+                excerpt
+                    .buffer
+                    .language_indent_size_at(Point::new(row, 0), cx)
+            };
+            prev_language_indent_size = single_indent_size;
+            prev_row = row;
+
             let start_buffer_row = excerpt.range.context.start.to_point(&excerpt.buffer).row;
             let start_multibuffer_row = cursor.start().row;
 
