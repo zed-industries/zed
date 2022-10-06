@@ -84,6 +84,7 @@ messages!(
     (BufferReloaded, Foreground),
     (BufferSaved, Foreground),
     (Call, Foreground),
+    (CallCanceled, Foreground),
     (CancelCall, Foreground),
     (ChannelMessageSent, Foreground),
     (CopyProjectEntry, Foreground),
@@ -183,6 +184,7 @@ request_messages!(
         ApplyCompletionAdditionalEditsResponse
     ),
     (Call, Ack),
+    (CancelCall, Ack),
     (CopyProjectEntry, ProjectEntryResponse),
     (CreateProjectEntry, ProjectEntryResponse),
     (CreateRoom, CreateRoomResponse),

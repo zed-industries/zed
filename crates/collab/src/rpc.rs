@@ -150,6 +150,7 @@ impl Server {
             .add_request_handler(Server::join_room)
             .add_message_handler(Server::leave_room)
             .add_request_handler(Server::call)
+            .add_request_handler(Server::cancel_call)
             .add_message_handler(Server::decline_call)
             .add_request_handler(Server::update_participant_location)
             .add_request_handler(Server::share_project)
@@ -599,7 +600,7 @@ impl Server {
         let (room, recipient_connection_ids) = store.join_room(room_id, request.sender_id)?;
         for recipient_id in recipient_connection_ids {
             self.peer
-                .send(recipient_id, proto::CancelCall {})
+                .send(recipient_id, proto::CallCanceled {})
                 .trace_err();
         }
         response.send(proto::JoinRoomResponse {
@@ -715,6 +716,26 @@ impl Server {
         Err(anyhow!("failed to ring call recipient"))?
     }
 
+    async fn cancel_call(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::CancelCall>,
+        response: Response<proto::CancelCall>,
+    ) -> Result<()> {
+        let mut store = self.store().await;
+        let (room, recipient_connection_ids) = store.cancel_call(
+            UserId::from_proto(request.payload.recipient_user_id),
+            request.sender_id,
+        )?;
+        for recipient_id in recipient_connection_ids {
+            self.peer
+                .send(recipient_id, proto::CallCanceled {})
+                .trace_err();
+        }
+        self.room_updated(room);
+        response.send(proto::Ack {})?;
+        Ok(())
+    }
+
     async fn decline_call(
         self: Arc<Server>,
         message: TypedEnvelope<proto::DeclineCall>,
@@ -723,7 +744,7 @@ impl Server {
         let (room, recipient_connection_ids) = store.call_declined(message.sender_id)?;
         for recipient_id in recipient_connection_ids {
             self.peer
-                .send(recipient_id, proto::CancelCall {})
+                .send(recipient_id, proto::CallCanceled {})
                 .trace_err();
         }
         self.room_updated(room);

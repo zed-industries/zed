@@ -18,7 +18,8 @@ message Envelope {
         LeaveRoom leave_room = 1002;
         Call call = 12;
         IncomingCall incoming_call = 1000;
-        CancelCall cancel_call = 1001;
+        CallCanceled call_canceled = 1001;
+        CancelCall cancel_call = 1004;
         DeclineCall decline_call = 13;
         UpdateParticipantLocation update_participant_location = 1003;
         RoomUpdated room_updated = 14;
@@ -189,7 +190,11 @@ message IncomingCall {
     optional uint64 initial_project_id = 4;
 }
 
-message CancelCall {}
+message CallCanceled {}
+
+message CancelCall {
+    uint64 recipient_user_id = 1;
+}
 
 message DeclineCall {}
 

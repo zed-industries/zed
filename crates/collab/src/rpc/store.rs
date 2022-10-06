@@ -585,6 +585,51 @@ impl Store {
         Ok(room)
     }
 
+    pub fn cancel_call(
+        &mut self,
+        recipient_user_id: UserId,
+        canceller_connection_id: ConnectionId,
+    ) -> Result<(&proto::Room, HashSet<ConnectionId>)> {
+        let canceller_user_id = self.user_id_for_connection(canceller_connection_id)?;
+        let canceller = self
+            .connected_users
+            .get(&canceller_user_id)
+            .ok_or_else(|| anyhow!("no such connection"))?;
+        let recipient = self
+            .connected_users
+            .get(&recipient_user_id)
+            .ok_or_else(|| anyhow!("no such connection"))?;
+        let canceller_active_call = canceller
+            .active_call
+            .as_ref()
+            .ok_or_else(|| anyhow!("no active call"))?;
+        let recipient_active_call = recipient
+            .active_call
+            .as_ref()
+            .ok_or_else(|| anyhow!("no active call for recipient"))?;
+
+        anyhow::ensure!(
+            canceller_active_call.room_id == recipient_active_call.room_id,
+            "users are on different calls"
+        );
+        anyhow::ensure!(
+            recipient_active_call.connection_id.is_none(),
+            "recipient has already answered"
+        );
+        let room_id = recipient_active_call.room_id;
+        let room = self
+            .rooms
+            .get_mut(&room_id)
+            .ok_or_else(|| anyhow!("no such room"))?;
+        room.pending_user_ids
+            .retain(|user_id| UserId::from_proto(*user_id) != recipient_user_id);
+
+        let recipient = self.connected_users.get_mut(&recipient_user_id).unwrap();
+        recipient.active_call.take();
+
+        Ok((room, recipient.connection_ids.clone()))
+    }
+
     pub fn call_declined(
         &mut self,
         recipient_connection_id: ConnectionId,

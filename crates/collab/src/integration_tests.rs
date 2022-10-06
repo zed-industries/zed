@@ -402,6 +402,88 @@ async fn test_leaving_room_on_disconnection(
 }
 
 #[gpui::test(iterations = 10)]
+async fn test_calls_on_multiple_connections(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b1: &mut TestAppContext,
+    cx_b2: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b1 = server.create_client(cx_b1, "user_b").await;
+    let _client_b2 = server.create_client(cx_b2, "user_b").await;
+    server
+        .make_contacts(&mut [(&client_a, cx_a), (&client_b1, cx_b1)])
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b1 = cx_b1.read(ActiveCall::global);
+    let active_call_b2 = cx_b2.read(ActiveCall::global);
+    let mut incoming_call_b1 = active_call_b1.read_with(cx_b1, |call, _| call.incoming());
+    let mut incoming_call_b2 = active_call_b2.read_with(cx_b2, |call, _| call.incoming());
+    assert!(incoming_call_b1.next().await.unwrap().is_none());
+    assert!(incoming_call_b2.next().await.unwrap().is_none());
+
+    // Call user B from client A, ensuring both clients for user B ring.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b1.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    assert!(incoming_call_b1.next().await.unwrap().is_some());
+    assert!(incoming_call_b2.next().await.unwrap().is_some());
+
+    // User B declines the call on one of the two connections, causing both connections
+    // to stop ringing.
+    active_call_b2.update(cx_b2, |call, _| call.decline_incoming().unwrap());
+    assert!(incoming_call_b1.next().await.unwrap().is_none());
+    assert!(incoming_call_b2.next().await.unwrap().is_none());
+
+    // Call user B again from client A.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b1.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    assert!(incoming_call_b1.next().await.unwrap().is_some());
+    assert!(incoming_call_b2.next().await.unwrap().is_some());
+
+    // User B accepts the call on one of the two connections, causing both connections
+    // to stop ringing.
+    active_call_b2
+        .update(cx_b2, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+    assert!(incoming_call_b1.next().await.unwrap().is_none());
+    assert!(incoming_call_b2.next().await.unwrap().is_none());
+
+    // User B hangs up, and user A calls them again.
+    active_call_b2.update(cx_b2, |call, cx| call.hang_up(cx).unwrap());
+    deterministic.run_until_parked();
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b1.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    assert!(incoming_call_b1.next().await.unwrap().is_some());
+    assert!(incoming_call_b2.next().await.unwrap().is_some());
+
+    // User A cancels the call, causing both connections to stop ringing.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.cancel_invite(client_b1.user_id().unwrap(), cx)
+        })
+        .await
+        .unwrap();
+    assert!(incoming_call_b1.next().await.unwrap().is_none());
+    assert!(incoming_call_b2.next().await.unwrap().is_none());
+}
+
+#[gpui::test(iterations = 10)]
 async fn test_share_project(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,

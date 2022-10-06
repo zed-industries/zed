@@ -52,7 +52,7 @@ impl ActiveCall {
             incoming_call: watch::channel(),
             _subscriptions: vec![
                 client.add_request_handler(cx.handle(), Self::handle_incoming_call),
-                client.add_message_handler(cx.handle(), Self::handle_cancel_call),
+                client.add_message_handler(cx.handle(), Self::handle_call_canceled),
             ],
             client,
             user_store,
@@ -87,9 +87,9 @@ impl ActiveCall {
         Ok(proto::Ack {})
     }
 
-    async fn handle_cancel_call(
+    async fn handle_call_canceled(
         this: ModelHandle<Self>,
-        _: TypedEnvelope<proto::CancelCall>,
+        _: TypedEnvelope<proto::CallCanceled>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
@@ -137,6 +137,20 @@ impl ActiveCall {
             .await?;
 
             Ok(())
+        })
+    }
+
+    pub fn cancel_invite(
+        &mut self,
+        recipient_user_id: u64,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let client = self.client.clone();
+        cx.foreground().spawn(async move {
+            client
+                .request(proto::CancelCall { recipient_user_id })
+                .await?;
+            anyhow::Ok(())
         })
     }
 
