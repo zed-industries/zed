@@ -693,6 +693,7 @@ dependencies = [
  "collections",
  "futures",
  "gpui",
+ "postage",
  "project",
  "util",
 ]

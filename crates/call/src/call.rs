@@ -2,22 +2,31 @@ mod participant;
 pub mod room;
 
 use anyhow::{anyhow, Result};
-use client::{incoming_call::IncomingCall, Client, UserStore};
-use gpui::{AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Subscription, Task};
+use client::{incoming_call::IncomingCall, proto, Client, TypedEnvelope, UserStore};
+use gpui::{
+    AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
+    Subscription, Task,
+};
 pub use participant::ParticipantLocation;
+use postage::watch;
 use project::Project;
 pub use room::Room;
 use std::sync::Arc;
 
 pub fn init(client: Arc<Client>, user_store: ModelHandle<UserStore>, cx: &mut MutableAppContext) {
-    let active_call = cx.add_model(|_| ActiveCall::new(client, user_store));
+    let active_call = cx.add_model(|cx| ActiveCall::new(client, user_store, cx));
     cx.set_global(active_call);
 }
 
 pub struct ActiveCall {
     room: Option<(ModelHandle<Room>, Vec<Subscription>)>,
+    incoming_call: (
+        watch::Sender<Option<IncomingCall>>,
+        watch::Receiver<Option<IncomingCall>>,
+    ),
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
+    _subscriptions: Vec<client::Subscription>,
 }
 
 impl Entity for ActiveCall {
@@ -25,12 +34,61 @@ impl Entity for ActiveCall {
 }
 
 impl ActiveCall {
-    fn new(client: Arc<Client>, user_store: ModelHandle<UserStore>) -> Self {
+    fn new(
+        client: Arc<Client>,
+        user_store: ModelHandle<UserStore>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         Self {
             room: None,
+            incoming_call: watch::channel(),
+            _subscriptions: vec![
+                client.add_request_handler(cx.handle(), Self::handle_incoming_call),
+                client.add_message_handler(cx.handle(), Self::handle_cancel_call),
+            ],
             client,
             user_store,
         }
+    }
+
+    async fn handle_incoming_call(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::IncomingCall>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::Ack> {
+        let user_store = this.read_with(&cx, |this, _| this.user_store.clone());
+        let call = IncomingCall {
+            room_id: envelope.payload.room_id,
+            participants: user_store
+                .update(&mut cx, |user_store, cx| {
+                    user_store.get_users(envelope.payload.participant_user_ids, cx)
+                })
+                .await?,
+            caller: user_store
+                .update(&mut cx, |user_store, cx| {
+                    user_store.get_user(envelope.payload.caller_user_id, cx)
+                })
+                .await?,
+            initial_project_id: envelope.payload.initial_project_id,
+        };
+        this.update(&mut cx, |this, _| {
+            *this.incoming_call.0.borrow_mut() = Some(call);
+        });
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_cancel_call(
+        this: ModelHandle<Self>,
+        _: TypedEnvelope<proto::CancelCall>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, _| {
+            *this.incoming_call.0.borrow_mut() = None;
+        });
+        Ok(())
     }
 
     pub fn global(cx: &AppContext) -> ModelHandle<Self> {
@@ -74,17 +132,40 @@ impl ActiveCall {
         })
     }
 
-    pub fn join(&mut self, call: &IncomingCall, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn incoming(&self) -> watch::Receiver<Option<IncomingCall>> {
+        self.incoming_call.1.clone()
+    }
+
+    pub fn accept_incoming(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         if self.room.is_some() {
             return Task::ready(Err(anyhow!("cannot join while on another call")));
         }
 
-        let join = Room::join(call, self.client.clone(), self.user_store.clone(), cx);
+        let call = if let Some(call) = self.incoming_call.1.borrow().clone() {
+            call
+        } else {
+            return Task::ready(Err(anyhow!("no incoming call")));
+        };
+
+        let join = Room::join(&call, self.client.clone(), self.user_store.clone(), cx);
         cx.spawn(|this, mut cx| async move {
             let room = join.await?;
             this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx));
             Ok(())
         })
+    }
+
+    pub fn decline_incoming(&mut self) -> Result<()> {
+        *self.incoming_call.0.borrow_mut() = None;
+        self.client.send(proto::DeclineCall {})?;
+        Ok(())
+    }
+
+    pub fn hang_up(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
+        if let Some((room, _)) = self.room.take() {
+            room.update(cx, |room, cx| room.leave(cx))?;
+        }
+        Ok(())
     }
 
     fn set_room(&mut self, room: Option<ModelHandle<Room>>, cx: &mut ModelContext<Self>) {

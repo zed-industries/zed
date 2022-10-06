@@ -66,7 +66,7 @@ impl Room {
         }
     }
 
-    pub fn create(
+    pub(crate) fn create(
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
         cx: &mut MutableAppContext,
@@ -77,7 +77,7 @@ impl Room {
         })
     }
 
-    pub fn join(
+    pub(crate) fn join(
         call: &IncomingCall,
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
@@ -93,7 +93,7 @@ impl Room {
         })
     }
 
-    pub fn leave(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
+    pub(crate) fn leave(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
         if self.status.is_offline() {
             return Err(anyhow!("room is offline"));
         }
@@ -213,7 +213,7 @@ impl Room {
         Ok(())
     }
 
-    pub fn call(
+    pub(crate) fn call(
         &mut self,
         recipient_user_id: u64,
         initial_project_id: Option<u64>,

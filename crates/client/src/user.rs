@@ -1,5 +1,4 @@
 use super::{http::HttpClient, proto, Client, Status, TypedEnvelope};
-use crate::incoming_call::IncomingCall;
 use anyhow::{anyhow, Context, Result};
 use collections::{hash_map::Entry, HashMap, HashSet};
 use futures::{channel::mpsc, future, AsyncReadExt, Future, StreamExt};
@@ -59,10 +58,6 @@ pub struct UserStore {
     outgoing_contact_requests: Vec<Arc<User>>,
     pending_contact_requests: HashMap<u64, usize>,
     invite_info: Option<InviteInfo>,
-    incoming_call: (
-        watch::Sender<Option<IncomingCall>>,
-        watch::Receiver<Option<IncomingCall>>,
-    ),
     client: Weak<Client>,
     http: Arc<dyn HttpClient>,
     _maintain_contacts: Task<()>,
@@ -112,8 +107,6 @@ impl UserStore {
             client.add_message_handler(cx.handle(), Self::handle_update_contacts),
             client.add_message_handler(cx.handle(), Self::handle_update_invite_info),
             client.add_message_handler(cx.handle(), Self::handle_show_contacts),
-            client.add_request_handler(cx.handle(), Self::handle_incoming_call),
-            client.add_message_handler(cx.handle(), Self::handle_cancel_call),
         ];
         Self {
             users: Default::default(),
@@ -122,7 +115,6 @@ impl UserStore {
             incoming_contact_requests: Default::default(),
             outgoing_contact_requests: Default::default(),
             invite_info: None,
-            incoming_call: watch::channel(),
             client: Arc::downgrade(&client),
             update_contacts_tx,
             http,
@@ -194,58 +186,8 @@ impl UserStore {
         Ok(())
     }
 
-    async fn handle_incoming_call(
-        this: ModelHandle<Self>,
-        envelope: TypedEnvelope<proto::IncomingCall>,
-        _: Arc<Client>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::Ack> {
-        let call = IncomingCall {
-            room_id: envelope.payload.room_id,
-            participants: this
-                .update(&mut cx, |this, cx| {
-                    this.get_users(envelope.payload.participant_user_ids, cx)
-                })
-                .await?,
-            caller: this
-                .update(&mut cx, |this, cx| {
-                    this.get_user(envelope.payload.caller_user_id, cx)
-                })
-                .await?,
-            initial_project_id: envelope.payload.initial_project_id,
-        };
-        this.update(&mut cx, |this, _| {
-            *this.incoming_call.0.borrow_mut() = Some(call);
-        });
-
-        Ok(proto::Ack {})
-    }
-
-    async fn handle_cancel_call(
-        this: ModelHandle<Self>,
-        _: TypedEnvelope<proto::CancelCall>,
-        _: Arc<Client>,
-        mut cx: AsyncAppContext,
-    ) -> Result<()> {
-        this.update(&mut cx, |this, _| {
-            *this.incoming_call.0.borrow_mut() = None;
-        });
-        Ok(())
-    }
-
     pub fn invite_info(&self) -> Option<&InviteInfo> {
         self.invite_info.as_ref()
-    }
-
-    pub fn incoming_call(&self) -> watch::Receiver<Option<IncomingCall>> {
-        self.incoming_call.1.clone()
-    }
-
-    pub fn decline_call(&mut self) -> Result<()> {
-        if let Some(client) = self.client.upgrade() {
-            client.send(proto::DeclineCall {})?;
-        }
-        Ok(())
     }
 
     async fn handle_update_contacts(

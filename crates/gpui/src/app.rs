@@ -1906,6 +1906,10 @@ impl MutableAppContext {
         })
     }
 
+    pub fn clear_globals(&mut self) {
+        self.cx.globals.clear();
+    }
+
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>
     where
         T: Entity,

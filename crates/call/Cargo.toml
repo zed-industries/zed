@@ -25,6 +25,7 @@ util = { path = "../util" }
 
 anyhow = "1.0.38"
 futures = "0.3"
+postage = { version = "0.4.1", features = ["futures-traits"] }
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }
