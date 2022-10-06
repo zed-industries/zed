@@ -118,7 +118,7 @@ impl ContactsPopover {
     ) -> Self {
         let filter_editor = cx.add_view(|cx| {
             let mut editor = Editor::single_line(
-                Some(|theme| theme.contacts_panel.user_query_editor.clone()),
+                Some(|theme| theme.contacts_popover.user_query_editor.clone()),
                 cx,
             );
             editor.set_placeholder_text("Filter contacts", cx);
@@ -151,7 +151,7 @@ impl ContactsPopover {
                     let is_collapsed = this.collapsed_sections.contains(section);
                     Self::render_header(
                         *section,
-                        &theme.contacts_panel,
+                        &theme.contacts_popover,
                         is_selected,
                         is_collapsed,
                         cx,
@@ -160,7 +160,7 @@ impl ContactsPopover {
                 ContactEntry::IncomingRequest(user) => Self::render_contact_request(
                     user.clone(),
                     this.user_store.clone(),
-                    &theme.contacts_panel,
+                    &theme.contacts_popover,
                     true,
                     is_selected,
                     cx,
@@ -168,7 +168,7 @@ impl ContactsPopover {
                 ContactEntry::OutgoingRequest(user) => Self::render_contact_request(
                     user.clone(),
                     this.user_store.clone(),
-                    &theme.contacts_panel,
+                    &theme.contacts_popover,
                     false,
                     is_selected,
                     cx,
@@ -176,7 +176,7 @@ impl ContactsPopover {
                 ContactEntry::Contact(contact) => Self::render_contact(
                     contact,
                     &this.project,
-                    &theme.contacts_panel,
+                    &theme.contacts_popover,
                     is_selected,
                     cx,
                 ),
@@ -418,7 +418,7 @@ impl ContactsPopover {
 
     fn render_active_call(&self, cx: &mut RenderContext<Self>) -> Option<ElementBox> {
         let room = ActiveCall::global(cx).read(cx).room()?;
-        let theme = &cx.global::<Settings>().theme.contacts_panel;
+        let theme = &cx.global::<Settings>().theme.contacts_popover;
 
         Some(
             Flex::column()
@@ -455,7 +455,7 @@ impl ContactsPopover {
 
     fn render_header(
         section: Section,
-        theme: &theme::ContactsPanel,
+        theme: &theme::ContactsPopover,
         is_selected: bool,
         is_collapsed: bool,
         cx: &mut RenderContext<Self>,
@@ -511,7 +511,7 @@ impl ContactsPopover {
     fn render_contact(
         contact: &Contact,
         project: &ModelHandle<Project>,
-        theme: &theme::ContactsPanel,
+        theme: &theme::ContactsPopover,
         is_selected: bool,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
@@ -565,7 +565,7 @@ impl ContactsPopover {
     fn render_contact_request(
         user: Arc<User>,
         user_store: ModelHandle<UserStore>,
-        theme: &theme::ContactsPanel,
+        theme: &theme::ContactsPopover,
         is_incoming: bool,
         is_selected: bool,
         cx: &mut RenderContext<Self>,
@@ -705,18 +705,18 @@ impl View for ContactsPopover {
                     .with_child(
                         ChildView::new(self.filter_editor.clone())
                             .contained()
-                            .with_style(theme.contacts_panel.user_query_editor.container)
+                            .with_style(theme.contacts_popover.user_query_editor.container)
                             .flex(1., true)
                             .boxed(),
                     )
                     .with_child(
                         MouseEventHandler::<AddContact>::new(0, cx, |_, _| {
                             Svg::new("icons/user_plus_16.svg")
-                                .with_color(theme.contacts_panel.add_contact_button.color)
+                                .with_color(theme.contacts_popover.add_contact_button.color)
                                 .constrained()
                                 .with_height(16.)
                                 .contained()
-                                .with_style(theme.contacts_panel.add_contact_button.container)
+                                .with_style(theme.contacts_popover.add_contact_button.container)
                                 .aligned()
                                 .boxed()
                         })
@@ -727,7 +727,7 @@ impl View for ContactsPopover {
                         .boxed(),
                     )
                     .constrained()
-                    .with_height(theme.contacts_panel.user_query_editor_height)
+                    .with_height(theme.contacts_popover.user_query_editor_height)
                     .boxed(),
             )
             .with_children(self.render_active_call(cx))
@@ -744,7 +744,7 @@ impl View for ContactsPopover {
                             Some(
                                 MouseEventHandler::<InviteLink>::new(0, cx, |state, cx| {
                                     let style = theme
-                                        .contacts_panel
+                                        .contacts_popover
                                         .invite_row
                                         .style_for(state, false)
                                         .clone();
@@ -764,7 +764,7 @@ impl View for ContactsPopover {
                                     .aligned()
                                     .left()
                                     .constrained()
-                                    .with_height(theme.contacts_panel.row_height)
+                                    .with_height(theme.contacts_popover.row_height)
                                     .contained()
                                     .with_style(style.container)
                                     .boxed()
@@ -782,10 +782,10 @@ impl View for ContactsPopover {
                     }),
             )
             .contained()
-            .with_style(theme.workspace.titlebar.contacts_popover.container)
+            .with_style(theme.contacts_popover.container)
             .constrained()
-            .with_width(theme.workspace.titlebar.contacts_popover.width)
-            .with_height(theme.workspace.titlebar.contacts_popover.height)
+            .with_width(theme.contacts_popover.width)
+            .with_height(theme.contacts_popover.height)
             .boxed()
     }
 

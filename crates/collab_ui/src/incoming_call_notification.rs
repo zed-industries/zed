@@ -82,7 +82,7 @@ impl IncomingCallNotification {
     }
 
     fn render_caller(&self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &cx.global::<Settings>().theme.contacts_panel;
+        let theme = &cx.global::<Settings>().theme.contacts_popover;
         Flex::row()
             .with_children(
                 self.call
@@ -108,7 +108,7 @@ impl IncomingCallNotification {
         Flex::row()
             .with_child(
                 MouseEventHandler::<Accept>::new(0, cx, |_, cx| {
-                    let theme = &cx.global::<Settings>().theme.contacts_panel;
+                    let theme = &cx.global::<Settings>().theme.contacts_popover;
                     Label::new("Accept".to_string(), theme.contact_username.text.clone()).boxed()
                 })
                 .on_click(MouseButton::Left, |_, cx| {
@@ -118,7 +118,7 @@ impl IncomingCallNotification {
             )
             .with_child(
                 MouseEventHandler::<Decline>::new(0, cx, |_, cx| {
-                    let theme = &cx.global::<Settings>().theme.contacts_panel;
+                    let theme = &cx.global::<Settings>().theme.contacts_popover;
                     Label::new("Decline".to_string(), theme.contact_username.text.clone()).boxed()
                 })
                 .on_click(MouseButton::Left, |_, cx| {

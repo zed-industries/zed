@@ -19,7 +19,7 @@ pub struct Theme {
     pub workspace: Workspace,
     pub context_menu: ContextMenu,
     pub chat_panel: ChatPanel,
-    pub contacts_panel: ContactsPanel,
+    pub contacts_popover: ContactsPopover,
     pub contact_finder: ContactFinder,
     pub project_panel: ProjectPanel,
     pub command_palette: CommandPalette,
@@ -79,15 +79,30 @@ pub struct Titlebar {
     pub share_button: Interactive<ContainedText>,
     pub toggle_contacts_button: Interactive<IconButton>,
     pub toggle_contacts_badge: ContainerStyle,
-    pub contacts_popover: AddParticipantPopover,
 }
 
-#[derive(Clone, Deserialize, Default)]
-pub struct AddParticipantPopover {
+#[derive(Deserialize, Default)]
+pub struct ContactsPopover {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub height: f32,
     pub width: f32,
+    pub user_query_editor: FieldEditor,
+    pub user_query_editor_height: f32,
+    pub add_contact_button: IconButton,
+    pub header_row: Interactive<ContainedText>,
+    pub contact_row: Interactive<ContainerStyle>,
+    pub project_row: Interactive<ProjectRow>,
+    pub row_height: f32,
+    pub contact_avatar: ImageStyle,
+    pub contact_username: ContainedText,
+    pub contact_button: Interactive<IconButton>,
+    pub contact_button_spacing: f32,
+    pub disabled_button: IconButton,
+    pub tree_branch: Interactive<TreeBranch>,
+    pub private_button: Interactive<IconButton>,
+    pub section_icon_size: f32,
+    pub invite_row: Interactive<ContainedLabel>,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -327,28 +342,6 @@ pub struct ContextMenuItem {
 pub struct CommandPalette {
     pub key: Interactive<ContainedLabel>,
     pub keystroke_spacing: f32,
-}
-
-#[derive(Deserialize, Default)]
-pub struct ContactsPanel {
-    #[serde(flatten)]
-    pub container: ContainerStyle,
-    pub user_query_editor: FieldEditor,
-    pub user_query_editor_height: f32,
-    pub add_contact_button: IconButton,
-    pub header_row: Interactive<ContainedText>,
-    pub contact_row: Interactive<ContainerStyle>,
-    pub project_row: Interactive<ProjectRow>,
-    pub row_height: f32,
-    pub contact_avatar: ImageStyle,
-    pub contact_username: ContainedText,
-    pub contact_button: Interactive<IconButton>,
-    pub contact_button_spacing: f32,
-    pub disabled_button: IconButton,
-    pub tree_branch: Interactive<TreeBranch>,
-    pub private_button: Interactive<IconButton>,
-    pub section_icon_size: f32,
-    pub invite_row: Interactive<ContainedLabel>,
 }
 
 #[derive(Deserialize, Default)]
