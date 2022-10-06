@@ -14,7 +14,7 @@ use std::{
 };
 use text::network::Network;
 use unindent::Unindent as _;
-use util::post_inc;
+use util::{post_inc, test::marked_text_ranges};
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -1028,6 +1028,120 @@ fn test_autoindent_language_without_indents_query(cx: &mut MutableAppContext) {
                 - b
 
             * two
+            "
+            .unindent()
+        );
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_autoindent_with_injected_languages(cx: &mut MutableAppContext) {
+    cx.set_global({
+        let mut settings = Settings::test(cx);
+        settings.language_overrides.extend([
+            (
+                "HTML".into(),
+                settings::EditorSettings {
+                    tab_size: Some(2.try_into().unwrap()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "JavaScript".into(),
+                settings::EditorSettings {
+                    tab_size: Some(8.try_into().unwrap()),
+                    ..Default::default()
+                },
+            ),
+        ]);
+        settings
+    });
+
+    let html_language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "HTML".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_html::language()),
+        )
+        .with_indents_query(
+            "
+            (element
+              (start_tag) @start
+              (end_tag)? @end) @indent
+            ",
+        )
+        .unwrap()
+        .with_injection_query(
+            r#"
+            (script_element
+                (raw_text) @content
+                (#set! "language" "javascript"))
+            "#,
+        )
+        .unwrap(),
+    );
+
+    let javascript_language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "JavaScript".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_javascript::language()),
+        )
+        .with_indents_query(
+            r#"
+            (object "}" @end) @indent
+            "#,
+        )
+        .unwrap(),
+    );
+
+    let language_registry = Arc::new(LanguageRegistry::test());
+    language_registry.add(html_language.clone());
+    language_registry.add(javascript_language.clone());
+
+    cx.add_model(|cx| {
+        let (text, ranges) = marked_text_ranges(
+            &"
+                <div>ˇ
+                </div>
+                <script>
+                    init({ˇ
+                    })
+                </script>
+                <span>ˇ
+                </span>
+            "
+            .unindent(),
+            false,
+        );
+
+        let mut buffer = Buffer::new(0, text, cx);
+        buffer.set_language_registry(language_registry);
+        buffer.set_language(Some(html_language), cx);
+        buffer.edit(
+            ranges.into_iter().map(|range| (range, "\na")),
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
+        assert_eq!(
+            buffer.text(),
+            "
+                <div>
+                  a
+                </div>
+                <script>
+                    init({
+                            a
+                    })
+                </script>
+                <span>
+                  a
+                </span>
             "
             .unindent()
         );
