@@ -2,7 +2,6 @@ import Theme from "../themes/common/theme";
 import chatPanel from "./chatPanel";
 import { text } from "./components";
 import contactFinder from "./contactFinder";
-import contactsPanel from "./contactsPanel";
 import contactsPopover from "./contactsPopover";
 import commandPalette from "./commandPalette";
 import editor from "./editor";
@@ -37,7 +36,6 @@ export default function app(theme: Theme): Object {
     projectPanel: projectPanel(theme),
     chatPanel: chatPanel(theme),
     contactsPopover: contactsPopover(theme),
-    contactsPanel: contactsPanel(theme),
     contactFinder: contactFinder(theme),
     search: search(theme),
     breadcrumbs: {
