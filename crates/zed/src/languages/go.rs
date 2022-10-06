@@ -134,7 +134,7 @@ impl super::LspAdapter for GoLspAdapter {
     async fn label_for_completion(
         &self,
         completion: &lsp::CompletionItem,
-        language: &Language,
+        language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         let label = &completion.label;
 
@@ -235,7 +235,7 @@ impl super::LspAdapter for GoLspAdapter {
         &self,
         name: &str,
         kind: lsp::SymbolKind,
-        language: &Language,
+        language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         let (text, filter_range, display_range) = match kind {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {

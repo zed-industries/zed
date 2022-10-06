@@ -7,6 +7,7 @@ use std::{borrow::Cow, str, sync::Arc};
 mod c;
 mod elixir;
 mod go;
+mod html;
 mod installation;
 mod json;
 mod language_plugin;
@@ -45,6 +46,11 @@ pub async fn init(languages: Arc<LanguageRegistry>, _executor: Arc<Background>) 
             "cpp",
             tree_sitter_cpp::language(),
             Some(CachedLspAdapter::new(c::CLspAdapter).await),
+        ),
+        (
+            "css",
+            tree_sitter_css::language(),
+            None, //
         ),
         (
             "elixir",
@@ -96,8 +102,13 @@ pub async fn init(languages: Arc<LanguageRegistry>, _executor: Arc<Background>) 
             tree_sitter_typescript::language_tsx(),
             Some(CachedLspAdapter::new(typescript::TypeScriptLspAdapter).await),
         ),
+        (
+            "html",
+            tree_sitter_html::language(),
+            Some(CachedLspAdapter::new(html::HtmlLspAdapter).await),
+        ),
     ] {
-        languages.add(Arc::new(language(name, grammar, lsp_adapter)));
+        languages.add(language(name, grammar, lsp_adapter));
     }
 }
 
@@ -105,7 +116,7 @@ pub(crate) fn language(
     name: &str,
     grammar: tree_sitter::Language,
     lsp_adapter: Option<Arc<CachedLspAdapter>>,
-) -> Language {
+) -> Arc<Language> {
     let config = toml::from_slice(
         &LanguageDir::get(&format!("{}/config.toml", name))
             .unwrap()
@@ -142,7 +153,7 @@ pub(crate) fn language(
     if let Some(lsp_adapter) = lsp_adapter {
         language = language.with_lsp_adapter(lsp_adapter)
     }
-    language
+    Arc::new(language)
 }
 
 fn load_query(name: &str, filename_prefix: &str) -> Option<Cow<'static, str>> {

@@ -112,7 +112,7 @@ impl super::LspAdapter for CLspAdapter {
     async fn label_for_completion(
         &self,
         completion: &lsp::CompletionItem,
-        language: &Language,
+        language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         let label = completion
             .label
@@ -190,7 +190,7 @@ impl super::LspAdapter for CLspAdapter {
         &self,
         name: &str,
         kind: lsp::SymbolKind,
-        language: &Language,
+        language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         let (text, filter_range, display_range) = match kind {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
@@ -251,7 +251,6 @@ mod tests {
     use gpui::MutableAppContext;
     use language::{AutoindentMode, Buffer};
     use settings::Settings;
-    use std::sync::Arc;
 
     #[gpui::test]
     fn test_c_autoindent(cx: &mut MutableAppContext) {
@@ -262,7 +261,7 @@ mod tests {
         let language = crate::languages::language("c", tree_sitter_c::language(), None);
 
         cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, "", cx).with_language(Arc::new(language), cx);
+            let mut buffer = Buffer::new(0, "", cx).with_language(language, cx);
 
             // empty function
             buffer.edit([(0..0, "int main() {}")], None, cx);

@@ -113,7 +113,7 @@ impl LspAdapter for ElixirLspAdapter {
     async fn label_for_completion(
         &self,
         completion: &lsp::CompletionItem,
-        language: &Language,
+        language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         match completion.kind.zip(completion.detail.as_ref()) {
             Some((_, detail)) if detail.starts_with("(function)") => {
@@ -168,7 +168,7 @@ impl LspAdapter for ElixirLspAdapter {
         &self,
         name: &str,
         kind: SymbolKind,
-        language: &Language,
+        language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         let (text, filter_range, display_range) = match kind {
             SymbolKind::METHOD | SymbolKind::FUNCTION => {

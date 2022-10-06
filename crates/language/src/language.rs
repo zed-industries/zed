@@ -26,6 +26,7 @@ use serde_json::Value;
 use std::{
     any::Any,
     cell::RefCell,
+    fmt::Debug,
     mem,
     ops::Range,
     path::{Path, PathBuf},
@@ -135,7 +136,7 @@ impl CachedLspAdapter {
     pub async fn label_for_completion(
         &self,
         completion_item: &lsp::CompletionItem,
-        language: &Language,
+        language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         self.adapter
             .label_for_completion(completion_item, language)
@@ -146,7 +147,7 @@ impl CachedLspAdapter {
         &self,
         name: &str,
         kind: lsp::SymbolKind,
-        language: &Language,
+        language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         self.adapter.label_for_symbol(name, kind, language).await
     }
@@ -175,7 +176,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn label_for_completion(
         &self,
         _: &lsp::CompletionItem,
-        _: &Language,
+        _: &Arc<Language>,
     ) -> Option<CodeLabel> {
         None
     }
@@ -184,7 +185,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         &self,
         _: &str,
         _: lsp::SymbolKind,
-        _: &Language,
+        _: &Arc<Language>,
     ) -> Option<CodeLabel> {
         None
     }
@@ -230,7 +231,10 @@ pub struct LanguageConfig {
     pub decrease_indent_pattern: Option<Regex>,
     #[serde(default)]
     pub autoclose_before: String,
-    pub line_comment: Option<String>,
+    #[serde(default)]
+    pub line_comment: Option<Arc<str>>,
+    #[serde(default)]
+    pub block_comment: Option<(Arc<str>, Arc<str>)>,
 }
 
 impl Default for LanguageConfig {
@@ -244,6 +248,7 @@ impl Default for LanguageConfig {
             decrease_indent_pattern: Default::default(),
             autoclose_before: Default::default(),
             line_comment: Default::default(),
+            block_comment: Default::default(),
         }
     }
 }
@@ -270,7 +275,7 @@ pub struct FakeLspAdapter {
     pub disk_based_diagnostics_sources: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct BracketPair {
     pub start: String,
     pub end: String,
@@ -304,6 +309,7 @@ pub struct Grammar {
 struct IndentConfig {
     query: Query,
     indent_capture_ix: u32,
+    start_capture_ix: Option<u32>,
     end_capture_ix: Option<u32>,
 }
 
@@ -661,11 +667,13 @@ impl Language {
         let grammar = self.grammar_mut();
         let query = Query::new(grammar.ts_language, source)?;
         let mut indent_capture_ix = None;
+        let mut start_capture_ix = None;
         let mut end_capture_ix = None;
         get_capture_indices(
             &query,
             &mut [
                 ("indent", &mut indent_capture_ix),
+                ("start", &mut start_capture_ix),
                 ("end", &mut end_capture_ix),
             ],
         );
@@ -673,6 +681,7 @@ impl Language {
             grammar.indents_config = Some(IndentConfig {
                 query,
                 indent_capture_ix,
+                start_capture_ix,
                 end_capture_ix,
             });
         }
@@ -763,8 +772,15 @@ impl Language {
         self.config.name.clone()
     }
 
-    pub fn line_comment_prefix(&self) -> Option<&str> {
-        self.config.line_comment.as_deref()
+    pub fn line_comment_prefix(&self) -> Option<&Arc<str>> {
+        self.config.line_comment.as_ref()
+    }
+
+    pub fn block_comment_delimiters(&self) -> Option<(&Arc<str>, &Arc<str>)> {
+        self.config
+            .block_comment
+            .as_ref()
+            .map(|(start, end)| (start, end))
     }
 
     pub async fn disk_based_diagnostic_sources(&self) -> &[String] {
@@ -789,7 +805,7 @@ impl Language {
     }
 
     pub async fn label_for_completion(
-        &self,
+        self: &Arc<Self>,
         completion: &lsp::CompletionItem,
     ) -> Option<CodeLabel> {
         self.adapter
@@ -798,7 +814,11 @@ impl Language {
             .await
     }
 
-    pub async fn label_for_symbol(&self, name: &str, kind: lsp::SymbolKind) -> Option<CodeLabel> {
+    pub async fn label_for_symbol(
+        self: &Arc<Self>,
+        name: &str,
+        kind: lsp::SymbolKind,
+    ) -> Option<CodeLabel> {
         self.adapter
             .as_ref()?
             .label_for_symbol(name, kind, self)
@@ -806,20 +826,17 @@ impl Language {
     }
 
     pub fn highlight_text<'a>(
-        &'a self,
+        self: &'a Arc<Self>,
         text: &'a Rope,
         range: Range<usize>,
     ) -> Vec<(Range<usize>, HighlightId)> {
         let mut result = Vec::new();
         if let Some(grammar) = &self.grammar {
             let tree = grammar.parse_text(text, None);
-            let captures = SyntaxSnapshot::single_tree_captures(
-                range.clone(),
-                text,
-                &tree,
-                grammar,
-                |grammar| grammar.highlights_query.as_ref(),
-            );
+            let captures =
+                SyntaxSnapshot::single_tree_captures(range.clone(), text, &tree, self, |grammar| {
+                    grammar.highlights_query.as_ref()
+                });
             let highlight_maps = vec![grammar.highlight_map()];
             let mut offset = 0;
             for chunk in BufferChunks::new(text, range, Some((captures, highlight_maps)), vec![]) {
@@ -858,6 +875,14 @@ impl Language {
 
     pub fn grammar(&self) -> Option<&Arc<Grammar>> {
         self.grammar.as_ref()
+    }
+}
+
+impl Debug for Language {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Language")
+            .field("name", &self.config.name)
+            .finish()
     }
 }
 
