@@ -203,6 +203,27 @@ async fn test_basic_calls(
             pending: Default::default()
         }
     );
+
+    // User B leaves the room.
+    active_call_b.update(cx_b, |call, cx| {
+        call.hang_up(cx).unwrap();
+        assert!(call.room().is_none());
+    });
+    deterministic.run_until_parked();
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: Default::default(),
+            pending: Default::default()
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: Default::default(),
+            pending: Default::default()
+        }
+    );
 }
 
 #[gpui::test(iterations = 10)]

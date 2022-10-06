@@ -101,7 +101,7 @@ pub struct LeftProject {
 }
 
 pub struct LeftRoom<'a> {
-    pub room: &'a proto::Room,
+    pub room: Option<&'a proto::Room>,
     pub unshared_projects: Vec<Project>,
     pub left_projects: Vec<LeftProject>,
 }
@@ -222,7 +222,8 @@ impl Store {
         let connected_user = self.connected_users.get_mut(&user_id).unwrap();
         connected_user.connection_ids.remove(&connection_id);
         if let Some(active_call) = connected_user.active_call.as_ref() {
-            if let Some(room) = self.rooms.get_mut(&active_call.room_id) {
+            let room_id = active_call.room_id;
+            if let Some(room) = self.rooms.get_mut(&room_id) {
                 let prev_participant_count = room.participants.len();
                 room.participants
                     .retain(|participant| participant.peer_id != connection_id.0);
@@ -230,12 +231,16 @@ impl Store {
                     if connected_user.connection_ids.is_empty() {
                         room.pending_user_ids
                             .retain(|pending_user_id| *pending_user_id != user_id.to_proto());
-                        result.room_id = Some(active_call.room_id);
+                        result.room_id = Some(room_id);
                         connected_user.active_call = None;
                     }
                 } else {
-                    result.room_id = Some(active_call.room_id);
+                    result.room_id = Some(room_id);
                     connected_user.active_call = None;
+                }
+
+                if room.participants.is_empty() && room.pending_user_ids.is_empty() {
+                    self.rooms.remove(&room_id);
                 }
             } else {
                 tracing::error!("disconnected user claims to be in a room that does not exist");
@@ -476,9 +481,12 @@ impl Store {
             .ok_or_else(|| anyhow!("no such room"))?;
         room.participants
             .retain(|participant| participant.peer_id != connection_id.0);
+        if room.participants.is_empty() && room.pending_user_ids.is_empty() {
+            self.rooms.remove(&room_id);
+        }
 
         Ok(LeftRoom {
-            room,
+            room: self.rooms.get(&room_id),
             unshared_projects,
             left_projects,
         })
@@ -1069,6 +1077,11 @@ impl Store {
                     );
                 }
             }
+
+            assert!(
+                !room.pending_user_ids.is_empty() || !room.participants.is_empty(),
+                "room can't be empty"
+            );
         }
 
         for (project_id, project) in &self.projects {

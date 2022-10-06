@@ -646,7 +646,9 @@ impl Server {
             }
         }
 
-        self.room_updated(left_room.room);
+        if let Some(room) = left_room.room {
+            self.room_updated(room);
+        }
         Ok(())
     }
 
