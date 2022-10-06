@@ -141,3 +141,5 @@ impl gpui::View for ScreenCaptureView {
 fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
     cx.platform().quit();
 }
+
+// Test
