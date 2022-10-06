@@ -1,8 +1,8 @@
 use editor::CursorShape;
 use gpui::keymap::Context;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Mode {
     Normal,
     Insert,
@@ -26,6 +26,7 @@ pub enum Operator {
     Change,
     Delete,
     Yank,
+    Object { around: bool },
 }
 
 #[derive(Default)]
@@ -77,7 +78,12 @@ impl VimState {
             context.set.insert("VimControl".to_string());
         }
 
-        Operator::set_context(self.operator_stack.last(), &mut context);
+        let active_operator = self.operator_stack.last();
+        if matches!(active_operator, Some(Operator::Object { .. })) {
+            context.set.insert("VimObject".to_string());
+        }
+
+        Operator::set_context(active_operator, &mut context);
 
         context
     }
@@ -87,6 +93,8 @@ impl Operator {
     pub fn set_context(operator: Option<&Operator>, context: &mut Context) {
         let operator_context = match operator {
             Some(Operator::Namespace(Namespace::G)) => "g",
+            Some(Operator::Object { around: false }) => "i",
+            Some(Operator::Object { around: true }) => "a",
             Some(Operator::Change) => "c",
             Some(Operator::Delete) => "d",
             Some(Operator::Yank) => "y",

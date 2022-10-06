@@ -752,7 +752,7 @@ impl EditorElement {
                                 .snapshot
                                 .chars_at(cursor_position)
                                 .next()
-                                .and_then(|character| {
+                                .and_then(|(character, _)| {
                                     let font_id =
                                         cursor_row_layout.font_for_index(cursor_column)?;
                                     let text = character.to_string();

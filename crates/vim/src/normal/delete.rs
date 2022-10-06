@@ -1,9 +1,9 @@
-use crate::{motion::Motion, utils::copy_selections_content, Vim};
-use collections::HashMap;
-use editor::{Autoscroll, Bias};
+use crate::{motion::Motion, object::Object, utils::copy_selections_content, Vim};
+use collections::{HashMap, HashSet};
+use editor::{display_map::ToDisplayPoint, Autoscroll, Bias};
 use gpui::MutableAppContext;
 
-pub fn delete_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
+pub fn delete_motion(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.transact(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
@@ -36,11 +36,67 @@ pub fn delete_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
     });
 }
 
+pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut MutableAppContext) {
+    vim.update_active_editor(cx, |editor, cx| {
+        editor.transact(cx, |editor, cx| {
+            editor.set_clip_at_line_ends(false, cx);
+            // Emulates behavior in vim where if we expanded backwards to include a newline
+            // the cursor gets set back to the start of the line
+            let mut should_move_to_start: HashSet<_> = Default::default();
+            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.move_with(|map, selection| {
+                    object.expand_selection(map, selection, around);
+                    let offset_range = selection.map(|p| p.to_offset(map, Bias::Left)).range();
+                    let contains_only_newlines = map
+                        .chars_at(selection.start)
+                        .take_while(|(_, p)| p < &selection.end)
+                        .all(|(char, _)| char == '\n')
+                        || offset_range.is_empty();
+                    let end_at_newline = map
+                        .chars_at(selection.end)
+                        .next()
+                        .map(|(c, _)| c == '\n')
+                        .unwrap_or(false);
+
+                    // If expanded range contains only newlines and
+                    // the object is around or sentence, expand to include a newline
+                    // at the end or start
+                    if (around || object == Object::Sentence) && contains_only_newlines {
+                        if end_at_newline {
+                            selection.end =
+                                (offset_range.end + '\n'.len_utf8()).to_display_point(map);
+                        } else if selection.start.row() > 0 {
+                            should_move_to_start.insert(selection.id);
+                            selection.start =
+                                (offset_range.start - '\n'.len_utf8()).to_display_point(map);
+                        }
+                    }
+                });
+            });
+            copy_selections_content(editor, false, cx);
+            editor.insert("", cx);
+
+            // Fixup cursor position after the deletion
+            editor.set_clip_at_line_ends(true, cx);
+            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.move_with(|map, selection| {
+                    let mut cursor = selection.head();
+                    if should_move_to_start.contains(&selection.id) {
+                        *cursor.column_mut() = 0;
+                    }
+                    cursor = map.clip_point(cursor, Bias::Left);
+                    selection.collapse_to(cursor, selection.goal)
+                });
+            });
+        });
+    });
+}
+
 #[cfg(test)]
 mod test {
     use indoc::indoc;
 
-    use crate::{state::Mode, vim_test_context::VimTestContext};
+    use crate::{state::Mode, test_contexts::VimTestContext};
 
     #[gpui::test]
     async fn test_delete_h(cx: &mut gpui::TestAppContext) {
@@ -140,8 +196,7 @@ mod test {
                 test"},
             indoc! {"
                 Test test
-                ˇ
-                test"},
+                ˇ"},
         );
 
         let mut cx = cx.binding(["d", "shift-e"]);

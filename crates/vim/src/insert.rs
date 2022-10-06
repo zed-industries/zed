@@ -26,7 +26,7 @@ fn normal_before(_: &mut Workspace, _: &NormalBefore, cx: &mut ViewContext<Works
 
 #[cfg(test)]
 mod test {
-    use crate::{state::Mode, vim_test_context::VimTestContext};
+    use crate::{state::Mode, test_contexts::VimTestContext};
 
     #[gpui::test]
     async fn test_enter_and_exit_insert_mode(cx: &mut gpui::TestAppContext) {

@@ -206,7 +206,7 @@ impl Motion {
                 }
             }
 
-            selection.end = map.next_line_boundary(selection.end.to_point(map)).1;
+            (_, selection.end) = map.next_line_boundary(selection.end.to_point(map));
         } else {
             // If the motion is exclusive and the end of the motion is in column 1, the
             // end of the motion is moved to the end of the previous line and the motion
@@ -239,12 +239,12 @@ fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     map.clip_point(point, Bias::Left)
 }
 
-fn right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
+pub(crate) fn right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     *point.column_mut() += 1;
     map.clip_point(point, Bias::Right)
 }
 
-fn next_word_start(
+pub(crate) fn next_word_start(
     map: &DisplaySnapshot,
     point: DisplayPoint,
     ignore_punctuation: bool,
@@ -255,7 +255,7 @@ fn next_word_start(
         let right_kind = char_kind(right).coerce_punctuation(ignore_punctuation);
         let at_newline = right == '\n';
 
-        let found = (left_kind != right_kind && !right.is_whitespace())
+        let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
             || at_newline && crossed_newline
             || at_newline && left == '\n'; // Prevents skipping repeated empty lines
 
@@ -272,23 +272,28 @@ fn next_word_end(
     ignore_punctuation: bool,
 ) -> DisplayPoint {
     *point.column_mut() += 1;
+    dbg!(point);
     point = movement::find_boundary(map, point, |left, right| {
+        dbg!(left);
         let left_kind = char_kind(left).coerce_punctuation(ignore_punctuation);
         let right_kind = char_kind(right).coerce_punctuation(ignore_punctuation);
 
-        left_kind != right_kind && !left.is_whitespace()
+        left_kind != right_kind && left_kind != CharKind::Whitespace
     });
+
+    dbg!(point);
+
     // find_boundary clips, so if the character after the next character is a newline or at the end of the document, we know
     // we have backtraced already
     if !map
         .chars_at(point)
         .nth(1)
-        .map(|c| c == '\n')
+        .map(|(c, _)| c == '\n')
         .unwrap_or(true)
     {
         *point.column_mut() = point.column().saturating_sub(1);
     }
-    map.clip_point(point, Bias::Left)
+    dbg!(map.clip_point(point, Bias::Left))
 }
 
 fn previous_word_start(
@@ -307,22 +312,21 @@ fn previous_word_start(
     point
 }
 
-fn first_non_whitespace(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
-    let mut column = 0;
-    for ch in map.chars_at(DisplayPoint::new(point.row(), 0)) {
+fn first_non_whitespace(map: &DisplaySnapshot, from: DisplayPoint) -> DisplayPoint {
+    let mut last_point = DisplayPoint::new(from.row(), 0);
+    for (ch, point) in map.chars_at(last_point) {
         if ch == '\n' {
-            return point;
+            return from;
         }
+
+        last_point = point;
 
         if char_kind(ch) != CharKind::Whitespace {
             break;
         }
-
-        column += ch.len_utf8() as u32;
     }
 
-    *point.column_mut() = column;
-    map.clip_point(point, Bias::Left)
+    map.clip_point(last_point, Bias::Left)
 }
 
 fn start_of_line(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {

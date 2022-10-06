@@ -1,4 +1,4 @@
-use crate::{motion::Motion, state::Mode, utils::copy_selections_content, Vim};
+use crate::{motion::Motion, object::Object, state::Mode, utils::copy_selections_content, Vim};
 use editor::{char_kind, movement, Autoscroll};
 use gpui::{impl_actions, MutableAppContext, ViewContext};
 use serde::Deserialize;
@@ -17,7 +17,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(change_word);
 }
 
-pub fn change_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
+pub fn change_motion(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.transact(cx, |editor, cx| {
             // We are swapping to insert mode anyway. Just set the line end clipping behavior now
@@ -32,6 +32,23 @@ pub fn change_over(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
         });
     });
     vim.switch_mode(Mode::Insert, false, cx)
+}
+
+pub fn change_object(vim: &mut Vim, object: Object, around: bool, cx: &mut MutableAppContext) {
+    vim.update_active_editor(cx, |editor, cx| {
+        editor.transact(cx, |editor, cx| {
+            // We are swapping to insert mode anyway. Just set the line end clipping behavior now
+            editor.set_clip_at_line_ends(false, cx);
+            editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                s.move_with(|map, selection| {
+                    object.expand_selection(map, selection, around);
+                });
+            });
+            copy_selections_content(editor, false, cx);
+            editor.insert("", cx);
+        });
+    });
+    vim.switch_mode(Mode::Insert, false, cx);
 }
 
 // From the docs https://vimhelp.org/change.txt.html#cw
@@ -78,7 +95,7 @@ fn change_word(
 mod test {
     use indoc::indoc;
 
-    use crate::{state::Mode, vim_test_context::VimTestContext};
+    use crate::{state::Mode, test_contexts::VimTestContext};
 
     #[gpui::test]
     async fn test_change_h(cx: &mut gpui::TestAppContext) {
@@ -170,8 +187,7 @@ mod test {
                 test"},
             indoc! {"
                 Test test
-                ˇ
-                test"},
+                ˇ"},
         );
 
         let mut cx = cx.binding(["c", "shift-e"]);
@@ -193,6 +209,7 @@ mod test {
                 Test ˇ
                 test"},
         );
+        println!("Marker");
         cx.assert(
             indoc! {"
                 Test test

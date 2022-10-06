@@ -4074,7 +4074,7 @@ impl Editor {
         self.change_selections(Some(Autoscroll::Fit), cx, |s| {
             s.move_cursors_with(|map, head, _| {
                 (
-                    movement::line_beginning(map, head, true),
+                    movement::indented_line_beginning(map, head, true),
                     SelectionGoal::None,
                 )
             });
@@ -4089,7 +4089,7 @@ impl Editor {
         self.change_selections(Some(Autoscroll::Fit), cx, |s| {
             s.move_heads_with(|map, head, _| {
                 (
-                    movement::line_beginning(map, head, action.stop_at_soft_wraps),
+                    movement::indented_line_beginning(map, head, action.stop_at_soft_wraps),
                     SelectionGoal::None,
                 )
             });

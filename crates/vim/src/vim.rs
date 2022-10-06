@@ -1,10 +1,11 @@
 #[cfg(test)]
-mod vim_test_context;
+mod test_contexts;
 
 mod editor_events;
 mod insert;
 mod motion;
 mod normal;
+mod object;
 mod state;
 mod utils;
 mod visual;
@@ -32,6 +33,7 @@ pub fn init(cx: &mut MutableAppContext) {
     normal::init(cx);
     visual::init(cx);
     insert::init(cx);
+    object::init(cx);
     motion::init(cx);
 
     // Vim Actions
@@ -144,7 +146,8 @@ impl Vim {
     }
 
     fn pop_operator(&mut self, cx: &mut MutableAppContext) -> Operator {
-        let popped_operator = self.state.operator_stack.pop().expect("Operator popped when no operator was on the stack. This likely means there is an invalid keymap config");
+        let popped_operator = self.state.operator_stack.pop()
+            .expect("Operator popped when no operator was on the stack. This likely means there is an invalid keymap config");
         self.sync_vim_settings(cx);
         popped_operator
     }
@@ -210,13 +213,29 @@ mod test {
     use indoc::indoc;
     use search::BufferSearchBar;
 
-    use crate::{state::Mode, vim_test_context::VimTestContext};
+    use crate::{
+        state::Mode,
+        test_contexts::{NeovimBackedTestContext, VimTestContext},
+    };
 
     #[gpui::test]
     async fn test_initially_disabled(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, false).await;
         cx.simulate_keystrokes(["h", "j", "k", "l"]);
         cx.assert_editor_state("hjklˇ");
+    }
+
+    #[gpui::test]
+    async fn test_neovim(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new("test_neovim", cx).await;
+
+        cx.simulate_shared_keystroke("i").await;
+        cx.simulate_shared_keystrokes([
+            "shift-T", "e", "s", "t", " ", "t", "e", "s", "t", "escape", "0", "d", "w",
+        ])
+        .await;
+        cx.assert_state_matches().await;
+        cx.assert_editor_state("ˇtest");
     }
 
     #[gpui::test]

@@ -6,6 +6,7 @@ use std::borrow::Cow;
 
 use crate::{
     motion::Motion,
+    object::Object,
     state::{Mode, Operator},
     Vim,
 };
@@ -16,7 +17,11 @@ use gpui::{actions, MutableAppContext, ViewContext};
 use language::{AutoindentMode, Point, SelectionGoal};
 use workspace::Workspace;
 
-use self::{change::change_over, delete::delete_over, yank::yank_over};
+use self::{
+    change::{change_motion, change_object},
+    delete::{delete_motion, delete_object},
+    yank::{yank_motion, yank_object},
+};
 
 actions!(
     vim,
@@ -43,22 +48,22 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(insert_line_below);
     cx.add_action(|_: &mut Workspace, _: &DeleteLeft, cx| {
         Vim::update(cx, |vim, cx| {
-            delete_over(vim, Motion::Left, cx);
+            delete_motion(vim, Motion::Left, cx);
         })
     });
     cx.add_action(|_: &mut Workspace, _: &DeleteRight, cx| {
         Vim::update(cx, |vim, cx| {
-            delete_over(vim, Motion::Right, cx);
+            delete_motion(vim, Motion::Right, cx);
         })
     });
     cx.add_action(|_: &mut Workspace, _: &ChangeToEndOfLine, cx| {
         Vim::update(cx, |vim, cx| {
-            change_over(vim, Motion::EndOfLine, cx);
+            change_motion(vim, Motion::EndOfLine, cx);
         })
     });
     cx.add_action(|_: &mut Workspace, _: &DeleteToEndOfLine, cx| {
         Vim::update(cx, |vim, cx| {
-            delete_over(vim, Motion::EndOfLine, cx);
+            delete_motion(vim, Motion::EndOfLine, cx);
         })
     });
     cx.add_action(paste);
@@ -70,15 +75,34 @@ pub fn normal_motion(motion: Motion, cx: &mut MutableAppContext) {
     Vim::update(cx, |vim, cx| {
         match vim.state.operator_stack.pop() {
             None => move_cursor(vim, motion, cx),
-            Some(Operator::Namespace(_)) => {
-                // Can't do anything for a namespace operator. Ignoring
+            Some(Operator::Change) => change_motion(vim, motion, cx),
+            Some(Operator::Delete) => delete_motion(vim, motion, cx),
+            Some(Operator::Yank) => yank_motion(vim, motion, cx),
+            _ => {
+                // Can't do anything for text objects or namespace operators. Ignoring
             }
-            Some(Operator::Change) => change_over(vim, motion, cx),
-            Some(Operator::Delete) => delete_over(vim, motion, cx),
-            Some(Operator::Yank) => yank_over(vim, motion, cx),
         }
         vim.clear_operator(cx);
     });
+}
+
+pub fn normal_object(object: Object, cx: &mut MutableAppContext) {
+    Vim::update(cx, |vim, cx| {
+        match vim.state.operator_stack.pop() {
+            Some(Operator::Object { around }) => match vim.state.operator_stack.pop() {
+                Some(Operator::Change) => change_object(vim, object, around, cx),
+                Some(Operator::Delete) => delete_object(vim, object, around, cx),
+                Some(Operator::Yank) => yank_object(vim, object, around, cx),
+                _ => {
+                    // Can't do anything for namespace operators. Ignoring
+                }
+            },
+            _ => {
+                // Can't do anything with change/delete/yank and text objects. Ignoring
+            }
+        }
+        vim.clear_operator(cx);
+    })
 }
 
 fn move_cursor(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
@@ -304,7 +328,7 @@ mod test {
             Mode::{self, *},
             Namespace, Operator,
         },
-        vim_test_context::VimTestContext,
+        test_contexts::VimTestContext,
     };
 
     #[gpui::test]

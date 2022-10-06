@@ -6,7 +6,7 @@ use gpui::{actions, MutableAppContext, ViewContext};
 use language::{AutoindentMode, SelectionGoal};
 use workspace::Workspace;
 
-use crate::{motion::Motion, state::Mode, utils::copy_selections_content, Vim};
+use crate::{motion::Motion, object::Object, state::Mode, utils::copy_selections_content, Vim};
 
 actions!(vim, [VisualDelete, VisualChange, VisualYank, VisualPaste]);
 
@@ -42,6 +42,8 @@ pub fn visual_motion(motion: Motion, cx: &mut MutableAppContext) {
         });
     });
 }
+
+pub fn visual_object(_object: Object, _cx: &mut MutableAppContext) {}
 
 pub fn change(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
@@ -274,7 +276,7 @@ pub fn paste(_: &mut Workspace, _: &VisualPaste, cx: &mut ViewContext<Workspace>
 mod test {
     use indoc::indoc;
 
-    use crate::{state::Mode, vim_test_context::VimTestContext};
+    use crate::{state::Mode, test_contexts::VimTestContext};
 
     #[gpui::test]
     async fn test_enter_visual_mode(cx: &mut gpui::TestAppContext) {

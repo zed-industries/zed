@@ -38,7 +38,23 @@
                 }
             ],
             "%": "vim::Matching",
-            "escape": "editor::Cancel"
+            "escape": "editor::Cancel",
+            "i": [
+                "vim::PushOperator",
+                {
+                    "Object": {
+                        "around": false
+                    }
+                }
+            ],
+            "a": [
+                "vim::PushOperator",
+                {
+                    "Object": {
+                        "around": true
+                    }
+                }
+            ]
         }
     },
     {
@@ -132,6 +148,20 @@
         "context": "Editor && vim_operator == y",
         "bindings": {
             "y": "vim::CurrentLine"
+        }
+    },
+    {
+        "context": "Editor && VimObject",
+        "bindings": {
+            "w": "vim::Word",
+            "shift-w": [
+                "vim::Word",
+                {
+                    "ignorePunctuation": true
+                }
+            ],
+            "s": "vim::Sentence",
+            "p": "vim::Paragraph"
         }
     },
     {
