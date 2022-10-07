@@ -491,7 +491,6 @@ impl FakeFs {
     }
 
     pub async fn set_index_for_repo(&self, dot_git: &Path, head_state: &[(&Path, String)]) {
-        let content_path = dot_git.parent().unwrap();
         let mut state = self.state.lock().await;
         let entry = state.read_path(dot_git).await.unwrap();
         let mut entry = entry.lock().await;
@@ -504,7 +503,7 @@ impl FakeFs {
             repo_state.index_contents.extend(
                 head_state
                     .iter()
-                    .map(|(path, content)| (content_path.join(path), content.clone())),
+                    .map(|(path, content)| (path.to_path_buf(), content.clone())),
             );
 
             state.emit_event([dot_git]);

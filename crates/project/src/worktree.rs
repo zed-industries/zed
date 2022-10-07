@@ -667,13 +667,15 @@ impl LocalWorktree {
         cx.spawn(|this, mut cx| async move {
             let text = fs.load(&abs_path).await?;
 
-            let diff_base = if let Some(repo) = snapshot.repo_for(&abs_path) {
-                cx.background()
-                    .spawn({
-                        let path = path.clone();
-                        async move { repo.repo.lock().load_index(&path) }
-                    })
-                    .await
+            let diff_base = if let Some(repo) = snapshot.repo_for(&path) {
+                if let Ok(repo_relative) = path.strip_prefix(repo.content_path) {
+                    let repo_relative = repo_relative.to_owned();
+                    cx.background()
+                        .spawn(async move { repo.repo.lock().load_index_text(&repo_relative) })
+                        .await
+                } else {
+                    None
+                }
             } else {
                 None
             };
@@ -2503,6 +2505,7 @@ impl BackgroundScanner {
 
                         let scan_id = snapshot.scan_id;
                         if let Some(repo) = snapshot.in_dot_git(&path) {
+                            repo.repo.lock().reload_index();
                             repo.scan_id = scan_id;
                         }
 
