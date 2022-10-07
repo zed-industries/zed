@@ -6475,7 +6475,7 @@ fn room_participants(room: &ModelHandle<Room>, cx: &mut TestAppContext) -> RoomP
             .map(|(_, participant)| participant.user.github_login.clone())
             .collect(),
         pending: room
-            .pending_users()
+            .pending_participants()
             .iter()
             .map(|user| user.github_login.clone())
             .collect(),

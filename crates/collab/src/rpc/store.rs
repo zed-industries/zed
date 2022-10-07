@@ -229,7 +229,7 @@ impl Store {
                     .retain(|participant| participant.peer_id != connection_id.0);
                 if prev_participant_count == room.participants.len() {
                     if connected_user.connection_ids.is_empty() {
-                        room.pending_user_ids
+                        room.pending_participant_user_ids
                             .retain(|pending_user_id| *pending_user_id != user_id.to_proto());
                         result.room_id = Some(room_id);
                         connected_user.active_call = None;
@@ -239,7 +239,7 @@ impl Store {
                     connected_user.active_call = None;
                 }
 
-                if room.participants.is_empty() && room.pending_user_ids.is_empty() {
+                if room.participants.is_empty() && room.pending_participant_user_ids.is_empty() {
                     self.rooms.remove(&room_id);
                 }
             } else {
@@ -432,10 +432,11 @@ impl Store {
             .get_mut(&room_id)
             .ok_or_else(|| anyhow!("no such room"))?;
         anyhow::ensure!(
-            room.pending_user_ids.contains(&user_id.to_proto()),
+            room.pending_participant_user_ids
+                .contains(&user_id.to_proto()),
             anyhow!("no such room")
         );
-        room.pending_user_ids
+        room.pending_participant_user_ids
             .retain(|pending| *pending != user_id.to_proto());
         room.participants.push(proto::Participant {
             user_id: user_id.to_proto(),
@@ -490,7 +491,7 @@ impl Store {
             .ok_or_else(|| anyhow!("no such room"))?;
         room.participants
             .retain(|participant| participant.peer_id != connection_id.0);
-        if room.participants.is_empty() && room.pending_user_ids.is_empty() {
+        if room.participants.is_empty() && room.pending_participant_user_ids.is_empty() {
             self.rooms.remove(&room_id);
         }
 
@@ -537,12 +538,13 @@ impl Store {
             "no such room"
         );
         anyhow::ensure!(
-            room.pending_user_ids
+            room.pending_participant_user_ids
                 .iter()
                 .all(|user_id| UserId::from_proto(*user_id) != recipient_user_id),
             "cannot call the same user more than once"
         );
-        room.pending_user_ids.push(recipient_user_id.to_proto());
+        room.pending_participant_user_ids
+            .push(recipient_user_id.to_proto());
 
         if let Some(initial_project_id) = initial_project_id {
             let project = self
@@ -589,7 +591,7 @@ impl Store {
             .rooms
             .get_mut(&room_id)
             .ok_or_else(|| anyhow!("no such room"))?;
-        room.pending_user_ids
+        room.pending_participant_user_ids
             .retain(|user_id| UserId::from_proto(*user_id) != to_user_id);
         Ok(room)
     }
@@ -635,7 +637,7 @@ impl Store {
             .rooms
             .get_mut(&room_id)
             .ok_or_else(|| anyhow!("no such room"))?;
-        room.pending_user_ids
+        room.pending_participant_user_ids
             .retain(|user_id| UserId::from_proto(*user_id) != recipient_user_id);
 
         let recipient = self.connected_users.get_mut(&recipient_user_id).unwrap();
@@ -663,7 +665,7 @@ impl Store {
                 .rooms
                 .get_mut(&active_call.room_id)
                 .ok_or_else(|| anyhow!("no such room"))?;
-            room.pending_user_ids
+            room.pending_participant_user_ids
                 .retain(|user_id| UserId::from_proto(*user_id) != recipient_user_id);
             Ok((room, recipient_connection_ids))
         } else {
@@ -1115,7 +1117,7 @@ impl Store {
         }
 
         for (room_id, room) in &self.rooms {
-            for pending_user_id in &room.pending_user_ids {
+            for pending_user_id in &room.pending_participant_user_ids {
                 assert!(
                     self.connected_users
                         .contains_key(&UserId::from_proto(*pending_user_id)),
@@ -1140,7 +1142,7 @@ impl Store {
             }
 
             assert!(
-                !room.pending_user_ids.is_empty() || !room.participants.is_empty(),
+                !room.pending_participant_user_ids.is_empty() || !room.participants.is_empty(),
                 "room can't be empty"
             );
         }

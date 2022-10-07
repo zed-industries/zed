@@ -4,7 +4,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
-use collections::{HashMap, HashSet};
+use collections::{BTreeMap, HashSet};
 use futures::StreamExt;
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use project::Project;
@@ -19,8 +19,9 @@ pub enum Event {
 pub struct Room {
     id: u64,
     status: RoomStatus,
-    remote_participants: HashMap<PeerId, RemoteParticipant>,
-    pending_users: Vec<Arc<User>>,
+    remote_participants: BTreeMap<PeerId, RemoteParticipant>,
+    pending_participants: Vec<Arc<User>>,
+    participant_user_ids: HashSet<u64>,
     pending_call_count: usize,
     leave_when_empty: bool,
     client: Arc<Client>,
@@ -62,8 +63,9 @@ impl Room {
         Self {
             id,
             status: RoomStatus::Online,
+            participant_user_ids: Default::default(),
             remote_participants: Default::default(),
-            pending_users: Default::default(),
+            pending_participants: Default::default(),
             pending_call_count: 0,
             subscriptions: vec![client.add_message_handler(cx.handle(), Self::handle_room_updated)],
             leave_when_empty: false,
@@ -131,7 +133,7 @@ impl Room {
     fn should_leave(&self) -> bool {
         self.leave_when_empty
             && self.pending_room_update.is_none()
-            && self.pending_users.is_empty()
+            && self.pending_participants.is_empty()
             && self.remote_participants.is_empty()
             && self.pending_call_count == 0
     }
@@ -144,6 +146,8 @@ impl Room {
         cx.notify();
         self.status = RoomStatus::Offline;
         self.remote_participants.clear();
+        self.pending_participants.clear();
+        self.participant_user_ids.clear();
         self.subscriptions.clear();
         self.client.send(proto::LeaveRoom { id: self.id })?;
         Ok(())
@@ -157,12 +161,16 @@ impl Room {
         self.status
     }
 
-    pub fn remote_participants(&self) -> &HashMap<PeerId, RemoteParticipant> {
+    pub fn remote_participants(&self) -> &BTreeMap<PeerId, RemoteParticipant> {
         &self.remote_participants
     }
 
-    pub fn pending_users(&self) -> &[Arc<User>] {
-        &self.pending_users
+    pub fn pending_participants(&self) -> &[Arc<User>] {
+        &self.pending_participants
+    }
+
+    pub fn contains_participant(&self, user_id: u64) -> bool {
+        self.participant_user_ids.contains(&user_id)
     }
 
     async fn handle_room_updated(
@@ -187,27 +195,29 @@ impl Room {
         room.participants
             .retain(|participant| Some(participant.user_id) != self.client.user_id());
 
-        let participant_user_ids = room
+        let remote_participant_user_ids = room
             .participants
             .iter()
             .map(|p| p.user_id)
             .collect::<Vec<_>>();
-        let (participants, pending_users) = self.user_store.update(cx, move |user_store, cx| {
-            (
-                user_store.get_users(participant_user_ids, cx),
-                user_store.get_users(room.pending_user_ids, cx),
-            )
-        });
+        let (remote_participants, pending_participants) =
+            self.user_store.update(cx, move |user_store, cx| {
+                (
+                    user_store.get_users(remote_participant_user_ids, cx),
+                    user_store.get_users(room.pending_participant_user_ids, cx),
+                )
+            });
         self.pending_room_update = Some(cx.spawn(|this, mut cx| async move {
-            let (participants, pending_users) = futures::join!(participants, pending_users);
+            let (remote_participants, pending_participants) =
+                futures::join!(remote_participants, pending_participants);
 
             this.update(&mut cx, |this, cx| {
-                if let Some(participants) = participants.log_err() {
-                    let mut seen_participants = HashSet::default();
+                this.participant_user_ids.clear();
 
+                if let Some(participants) = remote_participants.log_err() {
                     for (participant, user) in room.participants.into_iter().zip(participants) {
                         let peer_id = PeerId(participant.peer_id);
-                        seen_participants.insert(peer_id);
+                        this.participant_user_ids.insert(participant.user_id);
 
                         let existing_project_ids = this
                             .remote_participants
@@ -234,19 +244,18 @@ impl Room {
                         );
                     }
 
-                    for participant_peer_id in
-                        this.remote_participants.keys().copied().collect::<Vec<_>>()
-                    {
-                        if !seen_participants.contains(&participant_peer_id) {
-                            this.remote_participants.remove(&participant_peer_id);
-                        }
-                    }
+                    this.remote_participants.retain(|_, participant| {
+                        this.participant_user_ids.contains(&participant.user.id)
+                    });
 
                     cx.notify();
                 }
 
-                if let Some(pending_users) = pending_users.log_err() {
-                    this.pending_users = pending_users;
+                if let Some(pending_participants) = pending_participants.log_err() {
+                    this.pending_participants = pending_participants;
+                    for participant in &this.pending_participants {
+                        this.participant_user_ids.insert(participant.id);
+                    }
                     cx.notify();
                 }
 
@@ -254,11 +263,31 @@ impl Room {
                 if this.should_leave() {
                     let _ = this.leave(cx);
                 }
+
+                this.check_invariants();
             });
         }));
 
         cx.notify();
         Ok(())
+    }
+
+    fn check_invariants(&self) {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            for participant in self.remote_participants.values() {
+                assert!(self.participant_user_ids.contains(&participant.user.id));
+            }
+
+            for participant in &self.pending_participants {
+                assert!(self.participant_user_ids.contains(&participant.id));
+            }
+
+            assert_eq!(
+                self.participant_user_ids.len(),
+                self.remote_participants.len() + self.pending_participants.len()
+            );
+        }
     }
 
     pub(crate) fn call(

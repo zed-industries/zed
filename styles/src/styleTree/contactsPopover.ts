@@ -171,5 +171,8 @@ export default function contactsPopover(theme: Theme) {
         text: text(theme, "sans", "active", { size: "sm" }),
       },
     },
+    callingIndicator: {
+      ...text(theme, "mono", "primary", { size: "xs" }),
+    }
   }
 }

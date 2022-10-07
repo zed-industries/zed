@@ -105,6 +105,7 @@ pub struct ContactsPopover {
     pub private_button: Interactive<IconButton>,
     pub section_icon_size: f32,
     pub invite_row: Interactive<ContainedLabel>,
+    pub calling_indicator: ContainedText,
 }
 
 #[derive(Clone, Deserialize, Default)]

@@ -33,7 +33,7 @@ impl fmt::Display for ConnectionId {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct PeerId(pub u32);
 
 impl fmt::Display for PeerId {

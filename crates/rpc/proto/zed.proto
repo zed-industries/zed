@@ -154,7 +154,7 @@ message LeaveRoom {
 
 message Room {
     repeated Participant participants = 1;
-    repeated uint64 pending_user_ids = 2;
+    repeated uint64 pending_participant_user_ids = 2;
 }
 
 message Participant {
