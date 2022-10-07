@@ -33,7 +33,7 @@
 
 ; Assume all-caps names are constants
 ((identifier) @constant
- (#match? @constant "^[A-Z][A-Z\\d_]+$"))
+ (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
 
 [
   "("
