@@ -21,17 +21,23 @@ cargo build --release --package cli --target x86_64-apple-darwin
 echo "Creating application bundle"
 (cd crates/zed && cargo bundle --release --target x86_64-apple-darwin)
 
+echo "Updating application plist"
+BUNDLE_DIR=target/x86_64-apple-darwin/release/bundle/osx
+PLIST_PATH=${BUNDLE_DIR}/Zed.app/Contents/Info.plist
+sed -i.bak 's_<dict>_<dict>\n  <key>com.apple.security.get-task-allow</key><true/>_' $PLIST_PATH
+rm ${PLIST_PATH}.bak
+
 echo "Creating fat binaries"
 lipo \
     -create \
     target/{x86_64-apple-darwin,aarch64-apple-darwin}/release/Zed \
     -output \
-    target/x86_64-apple-darwin/release/bundle/osx/Zed.app/Contents/MacOS/zed
+    ${BUNDLE_DIR}/Zed.app/Contents/MacOS/zed
 lipo \
     -create \
     target/{x86_64-apple-darwin,aarch64-apple-darwin}/release/cli \
     -output \
-    target/x86_64-apple-darwin/release/bundle/osx/Zed.app/Contents/MacOS/cli
+    ${BUNDLE_DIR}/Zed.app/Contents/MacOS/cli
 
 if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
     echo "Signing bundle with Apple-issued certificate"
@@ -42,17 +48,17 @@ if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTAR
     security import /tmp/zed-certificate.p12 -k zed.keychain -P $MACOS_CERTIFICATE_PASSWORD -T /usr/bin/codesign
     rm /tmp/zed-certificate.p12
     security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $MACOS_CERTIFICATE_PASSWORD zed.keychain
-    /usr/bin/codesign --force --deep --timestamp --options runtime --sign "Zed Industries, Inc." target/x86_64-apple-darwin/release/bundle/osx/Zed.app -v
+    /usr/bin/codesign --force --deep --timestamp --options runtime --sign "Zed Industries, Inc." ${BUNDLE_DIR}/Zed.app -v
     security default-keychain -s login.keychain
 else
     echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_USERNAME, APPLE_NOTARIZATION_PASSWORD"
     echo "Performing an ad-hoc signature, but this bundle should not be distributed"
-    codesign --force --deep --sign - target/x86_64-apple-darwin/release/bundle/osx/Zed.app -v
+    codesign --force --deep --sign - ${BUNDLE_DIR}/Zed.app -v
 fi
 
 echo "Creating DMG"
 mkdir -p target/release
-hdiutil create -volname Zed -srcfolder target/x86_64-apple-darwin/release/bundle/osx -ov -format UDZO target/release/Zed.dmg
+hdiutil create -volname Zed -srcfolder ${BUNDLE_DIR} -ov -format UDZO target/release/Zed.dmg
 
 if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
     echo "Notarizing DMG with Apple"
