@@ -97,14 +97,12 @@ impl Room {
 
             match room
                 .update(&mut cx, |room, cx| {
+                    room.leave_when_empty = true;
                     room.call(recipient_user_id, initial_project_id, cx)
                 })
                 .await
             {
-                Ok(()) => {
-                    room.update(&mut cx, |room, _| room.leave_when_empty = true);
-                    Ok(room)
-                }
+                Ok(()) => Ok(room),
                 Err(error) => Err(anyhow!("room creation failed: {:?}", error)),
             }
         })
