@@ -17,15 +17,10 @@ cargo build --release --package zed --target aarch64-apple-darwin
 cargo build --release --package zed --target x86_64-apple-darwin
 cargo build --release --package cli --target aarch64-apple-darwin
 cargo build --release --package cli --target x86_64-apple-darwin
+BUNDLE_DIR=target/x86_64-apple-darwin/release/bundle/osx
 
 echo "Creating application bundle"
 (cd crates/zed && cargo bundle --release --target x86_64-apple-darwin)
-
-echo "Updating application plist"
-BUNDLE_DIR=target/x86_64-apple-darwin/release/bundle/osx
-PLIST_PATH=${BUNDLE_DIR}/Zed.app/Contents/Info.plist
-sed -i.bak 's_<dict>_<dict>\n  <key>com.apple.security.get-task-allow</key><true/>_' $PLIST_PATH
-rm ${PLIST_PATH}.bak
 
 echo "Creating fat binaries"
 lipo \
@@ -48,7 +43,14 @@ if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTAR
     security import /tmp/zed-certificate.p12 -k zed.keychain -P $MACOS_CERTIFICATE_PASSWORD -T /usr/bin/codesign
     rm /tmp/zed-certificate.p12
     security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $MACOS_CERTIFICATE_PASSWORD zed.keychain
-    /usr/bin/codesign --force --deep --timestamp --options runtime --sign "Zed Industries, Inc." ${BUNDLE_DIR}/Zed.app -v
+    /usr/bin/codesign \
+        --force \
+        --deep \
+        --timestamp \
+        --options runtime \
+        --entitlements crates/zed/resources/entitlements.plist \
+        --sign "Zed Industries, Inc." \
+        ${BUNDLE_DIR}/Zed.app -v
     security default-keychain -s login.keychain
 else
     echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_USERNAME, APPLE_NOTARIZATION_PASSWORD"
