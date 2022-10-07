@@ -123,10 +123,10 @@ export default function contactsPopover(theme: Theme) {
       background: iconColor(theme, "success"),
     },
     contactStatusBusy: {
-      cornerRadius: 3,
-      padding: 2,
-      margin: { top: 3, left: 3 },
-      background: iconColor(theme, "feature"),
+      cornerRadius: 4,
+      padding: 4,
+      margin: { top: 12, left: 12 },
+      background: iconColor(theme, "warning"),
     },
     contactUsername: {
       ...text(theme, "mono", "primary", { size: "sm" }),
