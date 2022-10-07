@@ -120,10 +120,8 @@ impl ActiveCall {
             };
 
             let initial_project_id = if let Some(initial_project) = initial_project {
-                let room_id = room.read_with(&cx, |room, _| room.id());
                 Some(
-                    initial_project
-                        .update(&mut cx, |project, cx| project.share(room_id, cx))
+                    room.update(&mut cx, |room, cx| room.share_project(initial_project, cx))
                         .await?,
                 )
             } else {
@@ -204,6 +202,30 @@ impl ActiveCall {
             room.update(cx, |room, cx| room.leave(cx))?;
         }
         Ok(())
+    }
+
+    pub fn share_project(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<u64>> {
+        if let Some((room, _)) = self.room.as_ref() {
+            room.update(cx, |room, cx| room.share_project(project, cx))
+        } else {
+            Task::ready(Err(anyhow!("no active call")))
+        }
+    }
+
+    pub fn set_location(
+        &mut self,
+        project: Option<&ModelHandle<Project>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        if let Some((room, _)) = self.room.as_ref() {
+            room.update(cx, |room, cx| room.set_location(project, cx))
+        } else {
+            Task::ready(Err(anyhow!("no active call")))
+        }
     }
 
     fn set_room(&mut self, room: Option<ModelHandle<Room>>, cx: &mut ModelContext<Self>) {

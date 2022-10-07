@@ -1048,15 +1048,13 @@ impl Project {
         }
     }
 
-    pub fn share(&mut self, room_id: u64, cx: &mut ModelContext<Self>) -> Task<Result<u64>> {
+    pub fn shared(&mut self, project_id: u64, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         if let ProjectClientState::Local { remote_id, .. } = &mut self.client_state {
-            if let Some(remote_id) = remote_id {
-                return Task::ready(Ok(*remote_id));
+            if remote_id.is_some() {
+                return Task::ready(Err(anyhow!("project was already shared")));
             }
 
-            let response = self.client.request(proto::ShareProject { room_id });
             cx.spawn(|this, mut cx| async move {
-                let project_id = response.await?.project_id;
                 let mut worktree_share_tasks = Vec::new();
                 this.update(&mut cx, |this, cx| {
                     if let ProjectClientState::Local { remote_id, .. } = &mut this.client_state {
@@ -1113,7 +1111,7 @@ impl Project {
                 });
 
                 futures::future::try_join_all(worktree_share_tasks).await?;
-                Ok(project_id)
+                Ok(())
             })
         } else {
             Task::ready(Err(anyhow!("can't share a remote project")))

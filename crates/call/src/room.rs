@@ -240,6 +240,25 @@ impl Room {
         })
     }
 
+    pub(crate) fn share_project(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<u64>> {
+        let request = self
+            .client
+            .request(proto::ShareProject { room_id: self.id() });
+        cx.spawn_weak(|_, mut cx| async move {
+            let response = request.await?;
+            project
+                .update(&mut cx, |project, cx| {
+                    project.shared(response.project_id, cx)
+                })
+                .await?;
+            Ok(response.project_id)
+        })
+    }
+
     pub fn set_location(
         &mut self,
         project: Option<&ModelHandle<Project>>,

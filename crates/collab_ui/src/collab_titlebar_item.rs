@@ -138,22 +138,21 @@ impl CollabTitlebarItem {
 
     fn share_project(&mut self, _: &ShareProject, cx: &mut ViewContext<Self>) {
         if let Some(workspace) = self.workspace.upgrade(cx) {
-            if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
-                let window_id = cx.window_id();
-                let room_id = room.read(cx).id();
-                let project = workspace.read(cx).project().clone();
-                let share = project.update(cx, |project, cx| project.share(room_id, cx));
-                cx.spawn_weak(|_, mut cx| async move {
-                    share.await?;
-                    if cx.update(|cx| cx.window_is_active(window_id)) {
-                        room.update(&mut cx, |room, cx| {
-                            room.set_location(Some(&project), cx).detach_and_log_err(cx);
-                        });
-                    }
-                    anyhow::Ok(())
-                })
-                .detach_and_log_err(cx);
-            }
+            let active_call = ActiveCall::global(cx);
+
+            let window_id = cx.window_id();
+            let project = workspace.read(cx).project().clone();
+            let share = active_call.update(cx, |call, cx| call.share_project(project.clone(), cx));
+            cx.spawn_weak(|_, mut cx| async move {
+                share.await?;
+                if cx.update(|cx| cx.window_is_active(window_id)) {
+                    active_call.update(&mut cx, |call, cx| {
+                        call.set_location(Some(&project), cx).detach_and_log_err(cx);
+                    });
+                }
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
         }
     }
 

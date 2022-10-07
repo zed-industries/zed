@@ -495,9 +495,10 @@ async fn test_share_project(
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -516,8 +517,8 @@ async fn test_share_project(
         .await;
 
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
 
@@ -594,7 +595,7 @@ async fn test_unshare_project(
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
 
@@ -613,8 +614,8 @@ async fn test_unshare_project(
         .await;
 
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
@@ -643,8 +644,8 @@ async fn test_unshare_project(
     assert!(project_c.read_with(cx_c, |project, _| project.is_read_only()));
 
     // Client C can open the project again after client A re-shares.
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_c2 = client_c.build_remote_project(project_id, cx_c).await;
@@ -677,7 +678,7 @@ async fn test_host_disconnect(
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
 
@@ -692,10 +693,11 @@ async fn test_host_disconnect(
         )
         .await;
 
+    let active_call_a = cx_a.read(ActiveCall::global);
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
     let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
 
@@ -770,15 +772,17 @@ async fn test_active_call_events(
     let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
     let (project_b, _) = client_b.build_local_project("/b", cx_b).await;
 
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
 
     let events_a = active_call_events(cx_a);
     let events_b = active_call_events(cx_b);
 
-    let project_a_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_a_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     deterministic.run_until_parked();
@@ -795,8 +799,8 @@ async fn test_active_call_events(
         }]
     );
 
-    let project_b_id = project_b
-        .update(cx_b, |project, cx| project.share(room_id, cx))
+    let project_b_id = active_call_b
+        .update(cx_b, |call, cx| call.share_project(project_b.clone(), cx))
         .await
         .unwrap();
     deterministic.run_until_parked();
@@ -845,7 +849,7 @@ async fn test_room_location(
     let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
     let (project_b, _) = client_b.build_local_project("/b", cx_b).await;
 
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
 
@@ -871,8 +875,8 @@ async fn test_room_location(
         }
     });
 
-    let project_a_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_a_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     deterministic.run_until_parked();
@@ -887,8 +891,8 @@ async fn test_room_location(
         vec![("user_a".to_string(), ParticipantLocation::External)]
     );
 
-    let project_b_id = project_b
-        .update(cx_b, |project, cx| project.share(room_id, cx))
+    let project_b_id = active_call_b
+        .update(cx_b, |call, cx| call.share_project(project_b.clone(), cx))
         .await
         .unwrap();
     deterministic.run_until_parked();
@@ -1000,9 +1004,10 @@ async fn test_propagate_saves_and_fs_changes(
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -1016,8 +1021,8 @@ async fn test_propagate_saves_and_fs_changes(
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
     let worktree_a = project_a.read_with(cx_a, |p, cx| p.worktrees(cx).next().unwrap());
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
 
@@ -1148,9 +1153,10 @@ async fn test_fs_operations(
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -1163,8 +1169,8 @@ async fn test_fs_operations(
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
@@ -1413,9 +1419,10 @@ async fn test_buffer_conflict_after_save(cx_a: &mut TestAppContext, cx_b: &mut T
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -1427,8 +1434,8 @@ async fn test_buffer_conflict_after_save(cx_a: &mut TestAppContext, cx_b: &mut T
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
@@ -1466,9 +1473,10 @@ async fn test_buffer_reloading(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -1480,8 +1488,8 @@ async fn test_buffer_reloading(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
@@ -1524,17 +1532,18 @@ async fn test_editing_while_guest_opens_buffer(
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
         .insert_tree("/dir", json!({ "a.txt": "a-contents" }))
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
@@ -1570,17 +1579,18 @@ async fn test_leaving_worktree_while_opening_buffer(
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
         .insert_tree("/dir", json!({ "a.txt": "a-contents" }))
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
@@ -1614,9 +1624,10 @@ async fn test_canceling_buffer_opening(
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -1628,8 +1639,8 @@ async fn test_canceling_buffer_opening(
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
@@ -1665,9 +1676,10 @@ async fn test_leaving_project(
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -1680,8 +1692,8 @@ async fn test_leaving_project(
         )
         .await;
     let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
@@ -1755,9 +1767,10 @@ async fn test_collaborating_with_diagnostics(
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -1783,8 +1796,8 @@ async fn test_collaborating_with_diagnostics(
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
 
@@ -1992,9 +2005,10 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -2030,8 +2044,8 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
@@ -2165,9 +2179,10 @@ async fn test_reloading_buffer_manually(cx_a: &mut TestAppContext, cx_b: &mut Te
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -2178,8 +2193,8 @@ async fn test_reloading_buffer_manually(cx_a: &mut TestAppContext, cx_b: &mut Te
         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
         .await
         .unwrap();
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
 
@@ -2257,9 +2272,10 @@ async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -2282,8 +2298,8 @@ async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
         .insert_tree(&directory, json!({ "a.rs": "let one = \"two\"" }))
         .await;
     let (project_a, worktree_id) = client_a.build_local_project(&directory, cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
@@ -2357,9 +2373,10 @@ async fn test_definition(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -2389,8 +2406,8 @@ async fn test_definition(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/root/dir-1", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
@@ -2500,9 +2517,10 @@ async fn test_references(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -2532,8 +2550,8 @@ async fn test_references(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/root/dir-1", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
@@ -2600,9 +2618,10 @@ async fn test_project_search(cx_a: &mut TestAppContext, cx_b: &mut TestAppContex
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -2631,8 +2650,8 @@ async fn test_project_search(cx_a: &mut TestAppContext, cx_b: &mut TestAppContex
     worktree_2
         .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
         .await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
 
@@ -2678,9 +2697,10 @@ async fn test_document_highlights(cx_a: &mut TestAppContext, cx_b: &mut TestAppC
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -2705,8 +2725,8 @@ async fn test_document_highlights(cx_a: &mut TestAppContext, cx_b: &mut TestAppC
     client_a.language_registry.add(Arc::new(language));
 
     let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
@@ -2779,9 +2799,10 @@ async fn test_lsp_hover(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -2806,8 +2827,8 @@ async fn test_lsp_hover(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     client_a.language_registry.add(Arc::new(language));
 
     let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
@@ -2881,9 +2902,10 @@ async fn test_project_symbols(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -2915,8 +2937,8 @@ async fn test_project_symbols(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/code/crate-1", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
@@ -2988,9 +3010,10 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -3015,8 +3038,8 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/root", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
@@ -3063,9 +3086,10 @@ async fn test_collaborating_with_code_actions(
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -3090,8 +3114,8 @@ async fn test_collaborating_with_code_actions(
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
 
@@ -3273,9 +3297,10 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -3311,8 +3336,8 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
@@ -3464,9 +3489,10 @@ async fn test_language_server_statuses(
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -3523,8 +3549,8 @@ async fn test_language_server_statuses(
         );
     });
 
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
@@ -4234,14 +4260,16 @@ async fn test_contact_requests(
 #[gpui::test(iterations = 10)]
 async fn test_following(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -4255,8 +4283,8 @@ async fn test_following(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
@@ -4443,14 +4471,16 @@ async fn test_following(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
 #[gpui::test(iterations = 10)]
 async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Client A shares a project.
     client_a
@@ -4466,8 +4496,8 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
 
@@ -4609,16 +4639,17 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
 #[gpui::test(iterations = 10)]
 async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
 
     // 2 clients connect to a server.
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Client A shares a project.
     client_a
@@ -4633,8 +4664,8 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
@@ -4773,21 +4804,22 @@ async fn test_peers_simultaneously_following_each_other(
     cx_b: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
 
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    let room_id = server
+    server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a.fs.insert_tree("/a", json!({})).await;
     let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
     let workspace_a = client_a.build_workspace(&project_a, cx_a);
-    let project_id = project_a
-        .update(cx_a, |project, cx| project.share(room_id, cx))
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
 
@@ -5057,16 +5089,18 @@ async fn test_random_collaboration(
         })
         .await
         .unwrap();
-    let room_id = active_call.read_with(cx, |call, cx| call.room().unwrap().read(cx).id());
+    active_call.read_with(cx, |call, cx| call.room().unwrap().read(cx).id());
     deterministic.run_until_parked();
-    host_cx
-        .read(ActiveCall::global)
+    let host_active_call = host_cx.read(ActiveCall::global);
+    host_active_call
         .update(&mut host_cx, |call, cx| call.accept_incoming(cx))
         .await
         .unwrap();
 
-    let host_project_id = host_project
-        .update(&mut host_cx, |project, cx| project.share(room_id, cx))
+    let host_project_id = host_active_call
+        .update(&mut host_cx, |call, cx| {
+            call.share_project(host_project.clone(), cx)
+        })
         .await
         .unwrap();
 
@@ -5539,7 +5573,7 @@ impl TestServer {
         }
     }
 
-    async fn create_room(&self, clients: &mut [(&TestClient, &mut TestAppContext)]) -> u64 {
+    async fn create_room(&self, clients: &mut [(&TestClient, &mut TestAppContext)]) {
         self.make_contacts(clients).await;
 
         let (left, right) = clients.split_at_mut(1);
@@ -5560,8 +5594,6 @@ impl TestServer {
                 .await
                 .unwrap();
         }
-
-        active_call_a.read_with(*cx_a, |call, cx| call.room().unwrap().read(cx).id())
     }
 
     async fn build_app_state(test_db: &TestDb) -> Arc<AppState> {
