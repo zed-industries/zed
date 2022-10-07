@@ -966,7 +966,14 @@ async fn test_git_diff_base_change(
         .insert_tree(
             "/dir",
             json!({
-            ".git": {
+            ".git": {},
+            "sub": {
+                ".git": {},
+                "b.txt": "
+                    one
+                    two
+                    three
+                ".unindent(),
             },
             "a.txt": "
                     one
@@ -975,6 +982,11 @@ async fn test_git_diff_base_change(
                 ".unindent(),
             }),
         )
+        .await;
+
+    let (project_local, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let project_remote = client_b
+        .build_remote_project(&project_local, cx_a, cx_b)
         .await;
 
     let diff_base = "
@@ -998,12 +1010,9 @@ async fn test_git_diff_base_change(
         )
         .await;
 
-    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
-
     // Create the buffer
-    let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "/dir/a.txt"), cx))
+    let buffer_local_a = project_local
+        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
         .unwrap();
 
@@ -1011,7 +1020,7 @@ async fn test_git_diff_base_change(
     executor.run_until_parked();
 
     // Smoke test diffing
-    buffer_a.read_with(cx_a, |buffer, _| {
+    buffer_local_a.read_with(cx_a, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_range(0..4),
@@ -1022,8 +1031,8 @@ async fn test_git_diff_base_change(
     });
 
     // Create remote buffer
-    let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "/dir/a.txt"), cx))
+    let buffer_remote_a = project_remote
+        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
         .unwrap();
 
@@ -1031,7 +1040,7 @@ async fn test_git_diff_base_change(
     executor.run_until_parked();
 
     // Smoke test diffing
-    buffer_b.read_with(cx_b, |buffer, _| {
+    buffer_remote_a.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_range(0..4),
@@ -1050,11 +1059,11 @@ async fn test_git_diff_base_change(
         )
         .await;
 
-    // Wait for buffer_a to receive it
+    // Wait for buffer_local_a to receive it
     executor.run_until_parked();
 
     // Smoke test new diffing
-    buffer_a.read_with(cx_a, |buffer, _| {
+    buffer_local_a.read_with(cx_a, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
 
         git::diff::assert_hunks(
@@ -1066,7 +1075,114 @@ async fn test_git_diff_base_change(
     });
 
     // Smoke test B
-    buffer_b.read_with(cx_b, |buffer, _| {
+    buffer_remote_a.read_with(cx_b, |buffer, _| {
+        assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
+        git::diff::assert_hunks(
+            buffer.snapshot().git_diff_hunks_in_range(0..4),
+            &buffer,
+            &diff_base,
+            &[(2..3, "", "three\n")],
+        );
+    });
+
+    //Nested git dir
+
+    let diff_base = "
+        one
+        three
+    "
+    .unindent();
+
+    let new_diff_base = "
+        one
+        two
+    "
+    .unindent();
+
+    client_a
+        .fs
+        .as_fake()
+        .set_index_for_repo(
+            Path::new("/dir/sub/.git"),
+            &[(Path::new("b.txt"), diff_base.clone())],
+        )
+        .await;
+
+    // Create the buffer
+    let buffer_local_b = project_local
+        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "sub/b.txt"), cx))
+        .await
+        .unwrap();
+
+    // Wait for it to catch up to the new diff
+    executor.run_until_parked();
+
+    // Smoke test diffing
+    buffer_local_b.read_with(cx_a, |buffer, _| {
+        assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
+        git::diff::assert_hunks(
+            buffer.snapshot().git_diff_hunks_in_range(0..4),
+            &buffer,
+            &diff_base,
+            &[(1..2, "", "two\n")],
+        );
+    });
+
+    // Create remote buffer
+    let buffer_remote_b = project_remote
+        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "sub/b.txt"), cx))
+        .await
+        .unwrap();
+
+    // Wait remote buffer to catch up to the new diff
+    executor.run_until_parked();
+
+    // Smoke test diffing
+    buffer_remote_b.read_with(cx_b, |buffer, _| {
+        assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
+        git::diff::assert_hunks(
+            buffer.snapshot().git_diff_hunks_in_range(0..4),
+            &buffer,
+            &diff_base,
+            &[(1..2, "", "two\n")],
+        );
+    });
+
+    client_a
+        .fs
+        .as_fake()
+        .set_index_for_repo(
+            Path::new("/dir/sub/.git"),
+            &[(Path::new("b.txt"), new_diff_base.clone())],
+        )
+        .await;
+
+    // Wait for buffer_local_b to receive it
+    executor.run_until_parked();
+
+    // Smoke test new diffing
+    buffer_local_b.read_with(cx_a, |buffer, _| {
+        assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
+        println!("{:?}", buffer.as_rope().to_string());
+        println!("{:?}", buffer.diff_base());
+        println!(
+            "{:?}",
+            buffer
+                .snapshot()
+                .git_diff_hunks_in_range(0..4)
+                .collect::<Vec<_>>()
+        );
+
+        git::diff::assert_hunks(
+            buffer.snapshot().git_diff_hunks_in_range(0..4),
+            &buffer,
+            &diff_base,
+            &[(2..3, "", "three\n")],
+        );
+    });
+
+    // Smoke test B
+    buffer_remote_b.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_range(0..4),
