@@ -26,7 +26,7 @@ pub struct Room {
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     subscriptions: Vec<client::Subscription>,
-    _pending_room_update: Option<Task<()>>,
+    pending_room_update: Option<Task<()>>,
 }
 
 impl Entity for Room {
@@ -67,7 +67,7 @@ impl Room {
             pending_call_count: 0,
             subscriptions: vec![client.add_message_handler(cx.handle(), Self::handle_room_updated)],
             leave_when_empty: false,
-            _pending_room_update: None,
+            pending_room_update: None,
             client,
             user_store,
         }
@@ -130,6 +130,7 @@ impl Room {
 
     fn should_leave(&self) -> bool {
         self.leave_when_empty
+            && self.pending_room_update.is_none()
             && self.pending_users.is_empty()
             && self.remote_participants.is_empty()
             && self.pending_call_count == 0
@@ -197,7 +198,7 @@ impl Room {
                 user_store.get_users(room.pending_user_ids, cx),
             )
         });
-        self._pending_room_update = Some(cx.spawn(|this, mut cx| async move {
+        self.pending_room_update = Some(cx.spawn(|this, mut cx| async move {
             let (participants, pending_users) = futures::join!(participants, pending_users);
 
             this.update(&mut cx, |this, cx| {
@@ -249,6 +250,7 @@ impl Room {
                     cx.notify();
                 }
 
+                this.pending_room_update.take();
                 if this.should_leave() {
                     let _ = this.leave(cx);
                 }
