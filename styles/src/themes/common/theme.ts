@@ -43,7 +43,7 @@ export interface Syntax {
   keyword: SyntaxHighlightStyle;
   function: SyntaxHighlightStyle;
   type: SyntaxHighlightStyle;
-  variant: SyntaxHighlightStyle;
+  constructor: SyntaxHighlightStyle;
   property: SyntaxHighlightStyle;
   enum: SyntaxHighlightStyle;
   operator: SyntaxHighlightStyle;
