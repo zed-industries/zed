@@ -123,6 +123,7 @@ export default interface Theme {
     error: string;
     warning: string;
     info: string;
+    success: string;
   };
   editor: {
     background: string;

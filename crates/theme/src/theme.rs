@@ -95,6 +95,8 @@ pub struct ContactsPopover {
     pub project_row: Interactive<ProjectRow>,
     pub row_height: f32,
     pub contact_avatar: ImageStyle,
+    pub contact_status_free: ContainerStyle,
+    pub contact_status_busy: ContainerStyle,
     pub contact_username: ContainedText,
     pub contact_button: Interactive<IconButton>,
     pub contact_button_spacing: f32,

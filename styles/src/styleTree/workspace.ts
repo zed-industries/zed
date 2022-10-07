@@ -5,7 +5,6 @@ import {
   border,
   iconColor,
   modalShadow,
-  popoverShadow,
   text,
 } from "./components";
 import statusBar from "./statusBar";

@@ -522,10 +522,31 @@ impl ContactsPopover {
             MouseEventHandler::<Contact>::new(contact.user.id as usize, cx, |_, _| {
                 Flex::row()
                     .with_children(contact.user.avatar.clone().map(|avatar| {
-                        Image::new(avatar)
-                            .with_style(theme.contact_avatar)
-                            .aligned()
-                            .left()
+                        let status_badge = if contact.online {
+                            Some(
+                                Empty::new()
+                                    .collapsed()
+                                    .contained()
+                                    .with_style(if contact.busy {
+                                        theme.contact_status_busy
+                                    } else {
+                                        theme.contact_status_free
+                                    })
+                                    .aligned()
+                                    .boxed(),
+                            )
+                        } else {
+                            None
+                        };
+                        Stack::new()
+                            .with_child(
+                                Image::new(avatar)
+                                    .with_style(theme.contact_avatar)
+                                    .aligned()
+                                    .left()
+                                    .boxed(),
+                            )
+                            .with_children(status_badge)
                             .boxed()
                     }))
                     .with_child(

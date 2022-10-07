@@ -116,6 +116,18 @@ export default function contactsPopover(theme: Theme) {
       cornerRadius: 10,
       width: 18,
     },
+    contactStatusFree: {
+      cornerRadius: 4,
+      padding: 4,
+      margin: { top: 12, left: 12 },
+      background: iconColor(theme, "success"),
+    },
+    contactStatusBusy: {
+      cornerRadius: 3,
+      padding: 2,
+      margin: { top: 3, left: 3 },
+      background: iconColor(theme, "feature"),
+    },
     contactUsername: {
       ...text(theme, "mono", "primary", { size: "sm" }),
       margin: {
