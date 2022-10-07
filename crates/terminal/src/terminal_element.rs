@@ -680,12 +680,12 @@ impl Element for TerminalElement {
             let focused = self.focused;
             TerminalElement::shape_cursor(cursor_point, dimensions, &cursor_text).map(
                 move |(cursor_position, block_width)| {
-                    let shape = match cursor.shape {
-                        AlacCursorShape::Block if !focused => CursorShape::Hollow,
-                        AlacCursorShape::Block => CursorShape::Block,
-                        AlacCursorShape::Underline => CursorShape::Underscore,
-                        AlacCursorShape::Beam => CursorShape::Bar,
-                        AlacCursorShape::HollowBlock => CursorShape::Hollow,
+                    let (shape, text) = match cursor.shape {
+                        AlacCursorShape::Block if !focused => (CursorShape::Hollow, None),
+                        AlacCursorShape::Block => (CursorShape::Block, Some(cursor_text)),
+                        AlacCursorShape::Underline => (CursorShape::Underscore, None),
+                        AlacCursorShape::Beam => (CursorShape::Bar, None),
+                        AlacCursorShape::HollowBlock => (CursorShape::Hollow, None),
                         //This case is handled in the if wrapping the whole cursor layout
                         AlacCursorShape::Hidden => unreachable!(),
                     };
@@ -696,7 +696,7 @@ impl Element for TerminalElement {
                         dimensions.line_height,
                         terminal_theme.colors.cursor,
                         shape,
-                        Some(cursor_text),
+                        text,
                     )
                 },
             )
