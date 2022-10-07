@@ -385,6 +385,7 @@ async fn test_leaving_room_on_disconnection(
 
     server.disconnect_client(client_a.current_user_id(cx_a));
     cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
+    active_call_a.read_with(cx_a, |call, _| assert!(call.room().is_none()));
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {

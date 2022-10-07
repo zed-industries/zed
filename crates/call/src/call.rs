@@ -210,7 +210,13 @@ impl ActiveCall {
         if room.as_ref() != self.room.as_ref().map(|room| &room.0) {
             if let Some(room) = room {
                 let subscriptions = vec![
-                    cx.observe(&room, |_, _, cx| cx.notify()),
+                    cx.observe(&room, |this, room, cx| {
+                        if room.read(cx).status().is_offline() {
+                            this.set_room(None, cx);
+                        }
+
+                        cx.notify();
+                    }),
                     cx.subscribe(&room, |_, _, event, cx| cx.emit(event.clone())),
                 ];
                 self.room = Some((room, subscriptions));
