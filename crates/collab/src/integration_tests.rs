@@ -435,12 +435,14 @@ async fn test_calls_on_multiple_connections(
         })
         .await
         .unwrap();
+    deterministic.run_until_parked();
     assert!(incoming_call_b1.next().await.unwrap().is_some());
     assert!(incoming_call_b2.next().await.unwrap().is_some());
 
     // User B declines the call on one of the two connections, causing both connections
     // to stop ringing.
     active_call_b2.update(cx_b2, |call, _| call.decline_incoming().unwrap());
+    deterministic.run_until_parked();
     assert!(incoming_call_b1.next().await.unwrap().is_none());
     assert!(incoming_call_b2.next().await.unwrap().is_none());
 
@@ -451,6 +453,7 @@ async fn test_calls_on_multiple_connections(
         })
         .await
         .unwrap();
+    deterministic.run_until_parked();
     assert!(incoming_call_b1.next().await.unwrap().is_some());
     assert!(incoming_call_b2.next().await.unwrap().is_some());
 
@@ -460,6 +463,7 @@ async fn test_calls_on_multiple_connections(
         .update(cx_b2, |call, cx| call.accept_incoming(cx))
         .await
         .unwrap();
+    deterministic.run_until_parked();
     assert!(incoming_call_b1.next().await.unwrap().is_none());
     assert!(incoming_call_b2.next().await.unwrap().is_none());
 
@@ -472,6 +476,7 @@ async fn test_calls_on_multiple_connections(
         })
         .await
         .unwrap();
+    deterministic.run_until_parked();
     assert!(incoming_call_b1.next().await.unwrap().is_some());
     assert!(incoming_call_b2.next().await.unwrap().is_some());
 
@@ -482,6 +487,7 @@ async fn test_calls_on_multiple_connections(
         })
         .await
         .unwrap();
+    deterministic.run_until_parked();
     assert!(incoming_call_b1.next().await.unwrap().is_none());
     assert!(incoming_call_b2.next().await.unwrap().is_none());
 }
@@ -4015,19 +4021,31 @@ async fn test_contacts(
     server
         .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_c = cx_c.read(ActiveCall::global);
 
     deterministic.run_until_parked();
     assert_eq!(
         contacts(&client_a, cx_a),
-        [("user_b".to_string(), true), ("user_c".to_string(), true)]
+        [
+            ("user_b".to_string(), "online", "free"),
+            ("user_c".to_string(), "online", "free")
+        ]
     );
     assert_eq!(
         contacts(&client_b, cx_b),
-        [("user_a".to_string(), true), ("user_c".to_string(), true)]
+        [
+            ("user_a".to_string(), "online", "free"),
+            ("user_c".to_string(), "online", "free")
+        ]
     );
     assert_eq!(
         contacts(&client_c, cx_c),
-        [("user_a".to_string(), true), ("user_b".to_string(), true)]
+        [
+            ("user_a".to_string(), "online", "free"),
+            ("user_b".to_string(), "online", "free")
+        ]
     );
 
     server.disconnect_client(client_c.current_user_id(cx_c));
@@ -4035,11 +4053,17 @@ async fn test_contacts(
     deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
     assert_eq!(
         contacts(&client_a, cx_a),
-        [("user_b".to_string(), true), ("user_c".to_string(), false)]
+        [
+            ("user_b".to_string(), "online", "free"),
+            ("user_c".to_string(), "offline", "free")
+        ]
     );
     assert_eq!(
         contacts(&client_b, cx_b),
-        [("user_a".to_string(), true), ("user_c".to_string(), false)]
+        [
+            ("user_a".to_string(), "online", "free"),
+            ("user_c".to_string(), "offline", "free")
+        ]
     );
     assert_eq!(contacts(&client_c, cx_c), []);
 
@@ -4052,24 +4076,180 @@ async fn test_contacts(
     deterministic.run_until_parked();
     assert_eq!(
         contacts(&client_a, cx_a),
-        [("user_b".to_string(), true), ("user_c".to_string(), true)]
+        [
+            ("user_b".to_string(), "online", "free"),
+            ("user_c".to_string(), "online", "free")
+        ]
     );
     assert_eq!(
         contacts(&client_b, cx_b),
-        [("user_a".to_string(), true), ("user_c".to_string(), true)]
+        [
+            ("user_a".to_string(), "online", "free"),
+            ("user_c".to_string(), "online", "free")
+        ]
     );
     assert_eq!(
         contacts(&client_c, cx_c),
-        [("user_a".to_string(), true), ("user_b".to_string(), true)]
+        [
+            ("user_a".to_string(), "online", "free"),
+            ("user_b".to_string(), "online", "free")
+        ]
+    );
+
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), "online", "busy"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_b".to_string(), "online", "busy")
+        ]
+    );
+
+    active_call_b.update(cx_b, |call, _| call.decline_incoming().unwrap());
+    deterministic.run_until_parked();
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), "online", "free"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), "online", "free"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), "online", "free"),
+            ("user_b".to_string(), "online", "free")
+        ]
+    );
+
+    active_call_c
+        .update(cx_c, |call, cx| {
+            call.invite(client_a.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), "online", "free"),
+            ("user_c".to_string(), "online", "busy")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_c".to_string(), "online", "busy")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_b".to_string(), "online", "free")
+        ]
+    );
+
+    active_call_a
+        .update(cx_a, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), "online", "free"),
+            ("user_c".to_string(), "online", "busy")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_c".to_string(), "online", "busy")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_b".to_string(), "online", "free")
+        ]
+    );
+
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), "online", "busy"),
+            ("user_c".to_string(), "online", "busy")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_c".to_string(), "online", "busy")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_b".to_string(), "online", "busy")
+        ]
     );
 
     #[allow(clippy::type_complexity)]
-    fn contacts(client: &TestClient, cx: &TestAppContext) -> Vec<(String, bool)> {
+    fn contacts(
+        client: &TestClient,
+        cx: &TestAppContext,
+    ) -> Vec<(String, &'static str, &'static str)> {
         client.user_store.read_with(cx, |store, _| {
             store
                 .contacts()
                 .iter()
-                .map(|contact| (contact.user.github_login.clone(), contact.online))
+                .map(|contact| {
+                    (
+                        contact.user.github_login.clone(),
+                        if contact.online { "online" } else { "offline" },
+                        if contact.busy { "busy" } else { "free" },
+                    )
+                })
                 .collect()
         })
     }

@@ -1023,7 +1023,8 @@ message ChannelMessage {
 message Contact {
     uint64 user_id = 1;
     bool online = 2;
-    bool should_notify = 3;
+    bool busy = 3;
+    bool should_notify = 4;
 }
 
 message WorktreeMetadata {

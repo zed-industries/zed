@@ -314,6 +314,14 @@ impl Store {
             .is_empty()
     }
 
+    fn is_user_busy(&self, user_id: UserId) -> bool {
+        self.connected_users
+            .get(&user_id)
+            .unwrap_or(&Default::default())
+            .active_call
+            .is_some()
+    }
+
     pub fn build_initial_contacts_update(
         &self,
         contacts: Vec<db::Contact>,
@@ -352,6 +360,7 @@ impl Store {
         proto::Contact {
             user_id: user_id.to_proto(),
             online: self.is_user_online(user_id),
+            busy: self.is_user_busy(user_id),
             should_notify,
         }
     }

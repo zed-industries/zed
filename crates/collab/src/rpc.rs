@@ -585,8 +585,15 @@ impl Server {
         request: TypedEnvelope<proto::CreateRoom>,
         response: Response<proto::CreateRoom>,
     ) -> Result<()> {
-        let room_id = self.store().await.create_room(request.sender_id)?;
+        let user_id;
+        let room_id;
+        {
+            let mut store = self.store().await;
+            user_id = store.user_id_for_connection(request.sender_id)?;
+            room_id = store.create_room(request.sender_id)?;
+        }
         response.send(proto::CreateRoomResponse { id: room_id })?;
+        self.update_user_contacts(user_id).await?;
         Ok(())
     }
 
@@ -595,61 +602,71 @@ impl Server {
         request: TypedEnvelope<proto::JoinRoom>,
         response: Response<proto::JoinRoom>,
     ) -> Result<()> {
-        let room_id = request.payload.id;
-        let mut store = self.store().await;
-        let (room, recipient_connection_ids) = store.join_room(room_id, request.sender_id)?;
-        for recipient_id in recipient_connection_ids {
-            self.peer
-                .send(recipient_id, proto::CallCanceled {})
-                .trace_err();
+        let user_id;
+        {
+            let mut store = self.store().await;
+            user_id = store.user_id_for_connection(request.sender_id)?;
+            let (room, recipient_connection_ids) =
+                store.join_room(request.payload.id, request.sender_id)?;
+            for recipient_id in recipient_connection_ids {
+                self.peer
+                    .send(recipient_id, proto::CallCanceled {})
+                    .trace_err();
+            }
+            response.send(proto::JoinRoomResponse {
+                room: Some(room.clone()),
+            })?;
+            self.room_updated(room);
         }
-        response.send(proto::JoinRoomResponse {
-            room: Some(room.clone()),
-        })?;
-        self.room_updated(room);
+        self.update_user_contacts(user_id).await?;
         Ok(())
     }
 
     async fn leave_room(self: Arc<Server>, message: TypedEnvelope<proto::LeaveRoom>) -> Result<()> {
-        let room_id = message.payload.id;
-        let mut store = self.store().await;
-        let left_room = store.leave_room(room_id, message.sender_id)?;
+        let user_id;
+        {
+            let mut store = self.store().await;
+            user_id = store.user_id_for_connection(message.sender_id)?;
+            let left_room = store.leave_room(message.payload.id, message.sender_id)?;
 
-        for project in left_room.unshared_projects {
-            for connection_id in project.connection_ids() {
-                self.peer.send(
-                    connection_id,
-                    proto::UnshareProject {
-                        project_id: project.id.to_proto(),
-                    },
-                )?;
-            }
-        }
-
-        for project in left_room.left_projects {
-            if project.remove_collaborator {
-                for connection_id in project.connection_ids {
+            for project in left_room.unshared_projects {
+                for connection_id in project.connection_ids() {
                     self.peer.send(
                         connection_id,
-                        proto::RemoveProjectCollaborator {
+                        proto::UnshareProject {
                             project_id: project.id.to_proto(),
-                            peer_id: message.sender_id.0,
                         },
                     )?;
                 }
+            }
 
-                self.peer.send(
-                    message.sender_id,
-                    proto::UnshareProject {
-                        project_id: project.id.to_proto(),
-                    },
-                )?;
+            for project in left_room.left_projects {
+                if project.remove_collaborator {
+                    for connection_id in project.connection_ids {
+                        self.peer.send(
+                            connection_id,
+                            proto::RemoveProjectCollaborator {
+                                project_id: project.id.to_proto(),
+                                peer_id: message.sender_id.0,
+                            },
+                        )?;
+                    }
+
+                    self.peer.send(
+                        message.sender_id,
+                        proto::UnshareProject {
+                            project_id: project.id.to_proto(),
+                        },
+                    )?;
+                }
+            }
+
+            if let Some(room) = left_room.room {
+                self.room_updated(room);
             }
         }
+        self.update_user_contacts(user_id).await?;
 
-        if let Some(room) = left_room.room {
-            self.room_updated(room);
-        }
         Ok(())
     }
 
@@ -694,6 +711,7 @@ impl Server {
                 })
                 .collect::<FuturesUnordered<_>>()
         };
+        self.update_user_contacts(recipient_user_id).await?;
 
         while let Some(call_response) = calls.next().await {
             match call_response.as_ref() {
@@ -712,6 +730,7 @@ impl Server {
             let room = store.call_failed(room_id, recipient_user_id)?;
             self.room_updated(&room);
         }
+        self.update_user_contacts(recipient_user_id).await?;
 
         Err(anyhow!("failed to ring call recipient"))?
     }
@@ -721,19 +740,23 @@ impl Server {
         request: TypedEnvelope<proto::CancelCall>,
         response: Response<proto::CancelCall>,
     ) -> Result<()> {
-        let mut store = self.store().await;
-        let (room, recipient_connection_ids) = store.cancel_call(
-            request.payload.room_id,
-            UserId::from_proto(request.payload.recipient_user_id),
-            request.sender_id,
-        )?;
-        for recipient_id in recipient_connection_ids {
-            self.peer
-                .send(recipient_id, proto::CallCanceled {})
-                .trace_err();
+        let recipient_user_id = UserId::from_proto(request.payload.recipient_user_id);
+        {
+            let mut store = self.store().await;
+            let (room, recipient_connection_ids) = store.cancel_call(
+                request.payload.room_id,
+                recipient_user_id,
+                request.sender_id,
+            )?;
+            for recipient_id in recipient_connection_ids {
+                self.peer
+                    .send(recipient_id, proto::CallCanceled {})
+                    .trace_err();
+            }
+            self.room_updated(room);
+            response.send(proto::Ack {})?;
         }
-        self.room_updated(room);
-        response.send(proto::Ack {})?;
+        self.update_user_contacts(recipient_user_id).await?;
         Ok(())
     }
 
@@ -741,15 +764,20 @@ impl Server {
         self: Arc<Server>,
         message: TypedEnvelope<proto::DeclineCall>,
     ) -> Result<()> {
-        let mut store = self.store().await;
-        let (room, recipient_connection_ids) =
-            store.decline_call(message.payload.room_id, message.sender_id)?;
-        for recipient_id in recipient_connection_ids {
-            self.peer
-                .send(recipient_id, proto::CallCanceled {})
-                .trace_err();
+        let recipient_user_id;
+        {
+            let mut store = self.store().await;
+            recipient_user_id = store.user_id_for_connection(message.sender_id)?;
+            let (room, recipient_connection_ids) =
+                store.decline_call(message.payload.room_id, message.sender_id)?;
+            for recipient_id in recipient_connection_ids {
+                self.peer
+                    .send(recipient_id, proto::CallCanceled {})
+                    .trace_err();
+            }
+            self.room_updated(room);
         }
-        self.room_updated(room);
+        self.update_user_contacts(recipient_user_id).await?;
         Ok(())
     }
 

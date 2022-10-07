@@ -39,6 +39,7 @@ impl Eq for User {}
 pub struct Contact {
     pub user: Arc<User>,
     pub online: bool,
+    pub busy: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -625,6 +626,7 @@ impl Contact {
         Ok(Self {
             user,
             online: contact.online,
+            busy: contact.busy,
         })
     }
 }
