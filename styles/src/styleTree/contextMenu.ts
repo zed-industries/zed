@@ -28,15 +28,15 @@ export default function contextMenu(colorScheme: ColorScheme) {
       },
       hover: {
         background: background(layer, "hovered"),
-        text: text(layer, "sans", "hovered", { size: "sm" }),
+        label: text(layer, "sans", "hovered", { size: "sm" }),
       },
       active: {
         background: background(layer, "active"),
-        text: text(layer, "sans", "active", { size: "sm" }),
+        label: text(layer, "sans", "active", { size: "sm" }),
       },
       activeHover: {
         background: background(layer, "active"),
-        text: text(layer, "sans", "active", { size: "sm" }),
+        label: text(layer, "sans", "active", { size: "sm" }),
       },
     },
     separator: {
