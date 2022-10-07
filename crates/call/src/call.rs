@@ -109,30 +109,31 @@ impl ActiveCall {
         initial_project: Option<ModelHandle<Project>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let room = self.room.as_ref().map(|(room, _)| room.clone());
         let client = self.client.clone();
         let user_store = self.user_store.clone();
         cx.spawn(|this, mut cx| async move {
-            let room = if let Some(room) = room {
-                room
-            } else {
-                cx.update(|cx| Room::create(client, user_store, cx)).await?
-            };
+            if let Some(room) = this.read_with(&cx, |this, _| this.room().cloned()) {
+                let initial_project_id = if let Some(initial_project) = initial_project {
+                    Some(
+                        room.update(&mut cx, |room, cx| room.share_project(initial_project, cx))
+                            .await?,
+                    )
+                } else {
+                    None
+                };
 
-            let initial_project_id = if let Some(initial_project) = initial_project {
-                Some(
-                    room.update(&mut cx, |room, cx| room.share_project(initial_project, cx))
-                        .await?,
-                )
+                room.update(&mut cx, |room, cx| {
+                    room.call(recipient_user_id, initial_project_id, cx)
+                })
+                .await?;
             } else {
-                None
+                let room = cx
+                    .update(|cx| {
+                        Room::create(recipient_user_id, initial_project, client, user_store, cx)
+                    })
+                    .await?;
+                this.update(&mut cx, |this, cx| this.set_room(Some(room), cx));
             };
-
-            this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx));
-            room.update(&mut cx, |room, cx| {
-                room.call(recipient_user_id, initial_project_id, cx)
-            })
-            .await?;
 
             Ok(())
         })

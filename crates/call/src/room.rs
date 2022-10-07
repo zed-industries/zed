@@ -21,9 +21,10 @@ pub struct Room {
     status: RoomStatus,
     remote_participants: HashMap<PeerId, RemoteParticipant>,
     pending_users: Vec<Arc<User>>,
+    pending_call_count: usize,
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
-    _subscriptions: Vec<client::Subscription>,
+    subscriptions: Vec<client::Subscription>,
     _pending_room_update: Option<Task<()>>,
 }
 
@@ -62,7 +63,8 @@ impl Room {
             status: RoomStatus::Online,
             remote_participants: Default::default(),
             pending_users: Default::default(),
-            _subscriptions: vec![client.add_message_handler(cx.handle(), Self::handle_room_updated)],
+            pending_call_count: 0,
+            subscriptions: vec![client.add_message_handler(cx.handle(), Self::handle_room_updated)],
             _pending_room_update: None,
             client,
             user_store,
@@ -70,13 +72,40 @@ impl Room {
     }
 
     pub(crate) fn create(
+        recipient_user_id: u64,
+        initial_project: Option<ModelHandle<Project>>,
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
         cx: &mut MutableAppContext,
     ) -> Task<Result<ModelHandle<Self>>> {
         cx.spawn(|mut cx| async move {
-            let room = client.request(proto::CreateRoom {}).await?;
-            Ok(cx.add_model(|cx| Self::new(room.id, client, user_store, cx)))
+            let response = client.request(proto::CreateRoom {}).await?;
+            let room = cx.add_model(|cx| Self::new(response.id, client, user_store, cx));
+            let initial_project_id = if let Some(initial_project) = initial_project {
+                let initial_project_id = room
+                    .update(&mut cx, |room, cx| {
+                        room.share_project(initial_project.clone(), cx)
+                    })
+                    .await?;
+                initial_project
+                    .update(&mut cx, |project, cx| {
+                        project.shared(initial_project_id, cx)
+                    })
+                    .await?;
+                Some(initial_project_id)
+            } else {
+                None
+            };
+
+            match room
+                .update(&mut cx, |room, cx| {
+                    room.call(recipient_user_id, initial_project_id, cx)
+                })
+                .await
+            {
+                Ok(()) => Ok(room),
+                Err(_) => Err(anyhow!("call failed")),
+            }
         })
     }
 
@@ -96,6 +125,12 @@ impl Room {
         })
     }
 
+    fn should_leave(&self) -> bool {
+        self.pending_users.is_empty()
+            && self.remote_participants.is_empty()
+            && self.pending_call_count == 0
+    }
+
     pub(crate) fn leave(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
         if self.status.is_offline() {
             return Err(anyhow!("room is offline"));
@@ -104,6 +139,7 @@ impl Room {
         cx.notify();
         self.status = RoomStatus::Offline;
         self.remote_participants.clear();
+        self.subscriptions.clear();
         self.client.send(proto::LeaveRoom { id: self.id })?;
         Ok(())
     }
@@ -134,8 +170,7 @@ impl Room {
             .payload
             .room
             .ok_or_else(|| anyhow!("invalid room"))?;
-        this.update(&mut cx, |this, cx| this.apply_room_update(room, cx))?;
-        Ok(())
+        this.update(&mut cx, |this, cx| this.apply_room_update(room, cx))
     }
 
     fn apply_room_update(
@@ -209,6 +244,10 @@ impl Room {
                     this.pending_users = pending_users;
                     cx.notify();
                 }
+
+                if this.should_leave() {
+                    let _ = this.leave(cx);
+                }
             });
         }));
 
@@ -226,16 +265,25 @@ impl Room {
             return Task::ready(Err(anyhow!("room is offline")));
         }
 
+        cx.notify();
         let client = self.client.clone();
         let room_id = self.id;
-        cx.foreground().spawn(async move {
-            client
+        self.pending_call_count += 1;
+        cx.spawn(|this, mut cx| async move {
+            let result = client
                 .request(proto::Call {
                     room_id,
                     recipient_user_id,
                     initial_project_id,
                 })
-                .await?;
+                .await;
+            this.update(&mut cx, |this, cx| {
+                this.pending_call_count -= 1;
+                if this.should_leave() {
+                    this.leave(cx)?;
+                }
+                result
+            })?;
             Ok(())
         })
     }
