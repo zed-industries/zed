@@ -41,10 +41,13 @@
 
 (function_name) @function
 
-((property_name) @variable
- (#match? @variable "^--"))
-((plain_value) @variable
- (#match? @variable "^--"))
+(
+  [
+    (property_name)
+    (plain_value)
+  ] @variable.special
+  (#match? @variable.special "^--")
+)
 
 [
   "@media"

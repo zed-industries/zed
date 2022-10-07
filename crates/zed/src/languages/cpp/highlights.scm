@@ -41,7 +41,7 @@
 
 (field_identifier) @property
 (statement_identifier) @label
-(this) @variable.builtin
+(this) @variable.special
 
 [
   "break"

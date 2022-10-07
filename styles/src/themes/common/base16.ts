@@ -185,6 +185,10 @@ export function createTheme(
       color: sample(ramps.neutral, 7),
       weight: fontWeights.normal,
     },
+    "variable.special": {
+      color: sample(ramps.blue, 0.80),
+      weight: fontWeights.normal,
+    },
     comment: {
       color: sample(ramps.neutral, 5),
       weight: fontWeights.normal,

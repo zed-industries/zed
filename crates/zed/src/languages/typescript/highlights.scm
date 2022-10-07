@@ -55,8 +55,8 @@
 
 ; Literals
 
-(this) @variable.builtin
-(super) @variable.builtin
+(this) @variable.special
+(super) @variable.special
 
 [
   (true)

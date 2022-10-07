@@ -1,6 +1,6 @@
 (type_identifier) @type
 (primitive_type) @type.builtin
-(self) @variable.builtin
+(self) @variable.special
 (field_identifier) @property
 
 (call_expression
