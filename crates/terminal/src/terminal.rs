@@ -618,8 +618,11 @@ impl Terminal {
                 term.resize(new_size);
             }
             InternalEvent::Clear => {
-                self.write_to_pty("\x0c".to_string());
                 term.clear_screen(ClearMode::Saved);
+
+                term.clear_screen(ClearMode::All);
+
+                term.grid_mut().cursor.point = Point::new(Line(0), Column(0));
             }
             InternalEvent::Scroll(scroll) => {
                 term.scroll_display(*scroll);
