@@ -20,7 +20,7 @@ impl ParticipantLocation {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RemoteParticipant {
     pub user: Arc<User>,
     pub project_ids: Vec<u64>,

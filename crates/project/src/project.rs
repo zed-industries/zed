@@ -1054,62 +1054,59 @@ impl Project {
                 return Task::ready(Err(anyhow!("project was already shared")));
             }
 
-            cx.spawn(|this, mut cx| async move {
-                let mut worktree_share_tasks = Vec::new();
-                this.update(&mut cx, |this, cx| {
-                    if let ProjectClientState::Local { remote_id, .. } = &mut this.client_state {
-                        *remote_id = Some(project_id);
-                    }
+            *remote_id = Some(project_id);
 
-                    for open_buffer in this.opened_buffers.values_mut() {
-                        match open_buffer {
-                            OpenBuffer::Strong(_) => {}
-                            OpenBuffer::Weak(buffer) => {
-                                if let Some(buffer) = buffer.upgrade(cx) {
-                                    *open_buffer = OpenBuffer::Strong(buffer);
-                                }
-                            }
-                            OpenBuffer::Operations(_) => unreachable!(),
+            let mut worktree_share_tasks = Vec::new();
+
+            for open_buffer in self.opened_buffers.values_mut() {
+                match open_buffer {
+                    OpenBuffer::Strong(_) => {}
+                    OpenBuffer::Weak(buffer) => {
+                        if let Some(buffer) = buffer.upgrade(cx) {
+                            *open_buffer = OpenBuffer::Strong(buffer);
                         }
                     }
+                    OpenBuffer::Operations(_) => unreachable!(),
+                }
+            }
 
-                    for worktree_handle in this.worktrees.iter_mut() {
-                        match worktree_handle {
-                            WorktreeHandle::Strong(_) => {}
-                            WorktreeHandle::Weak(worktree) => {
-                                if let Some(worktree) = worktree.upgrade(cx) {
-                                    *worktree_handle = WorktreeHandle::Strong(worktree);
-                                }
-                            }
+            for worktree_handle in self.worktrees.iter_mut() {
+                match worktree_handle {
+                    WorktreeHandle::Strong(_) => {}
+                    WorktreeHandle::Weak(worktree) => {
+                        if let Some(worktree) = worktree.upgrade(cx) {
+                            *worktree_handle = WorktreeHandle::Strong(worktree);
                         }
                     }
+                }
+            }
 
-                    for worktree in this.worktrees(cx).collect::<Vec<_>>() {
-                        worktree.update(cx, |worktree, cx| {
-                            let worktree = worktree.as_local_mut().unwrap();
-                            worktree_share_tasks.push(worktree.share(project_id, cx));
-                        });
-                    }
-
-                    for (server_id, status) in &this.language_server_statuses {
-                        this.client
-                            .send(proto::StartLanguageServer {
-                                project_id,
-                                server: Some(proto::LanguageServer {
-                                    id: *server_id as u64,
-                                    name: status.name.clone(),
-                                }),
-                            })
-                            .log_err();
-                    }
-
-                    this.client_subscriptions
-                        .push(this.client.add_model_for_remote_entity(project_id, cx));
-                    this.metadata_changed(cx);
-                    cx.emit(Event::RemoteIdChanged(Some(project_id)));
-                    cx.notify();
+            for worktree in self.worktrees(cx).collect::<Vec<_>>() {
+                worktree.update(cx, |worktree, cx| {
+                    let worktree = worktree.as_local_mut().unwrap();
+                    worktree_share_tasks.push(worktree.share(project_id, cx));
                 });
+            }
 
+            for (server_id, status) in &self.language_server_statuses {
+                self.client
+                    .send(proto::StartLanguageServer {
+                        project_id,
+                        server: Some(proto::LanguageServer {
+                            id: *server_id as u64,
+                            name: status.name.clone(),
+                        }),
+                    })
+                    .log_err();
+            }
+
+            self.client_subscriptions
+                .push(self.client.add_model_for_remote_entity(project_id, cx));
+            self.metadata_changed(cx);
+            cx.emit(Event::RemoteIdChanged(Some(project_id)));
+            cx.notify();
+
+            cx.foreground().spawn(async move {
                 futures::future::try_join_all(worktree_share_tasks).await?;
                 Ok(())
             })

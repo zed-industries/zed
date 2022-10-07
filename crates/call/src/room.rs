@@ -22,6 +22,7 @@ pub struct Room {
     remote_participants: HashMap<PeerId, RemoteParticipant>,
     pending_users: Vec<Arc<User>>,
     pending_call_count: usize,
+    leave_when_empty: bool,
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     subscriptions: Vec<client::Subscription>,
@@ -65,6 +66,7 @@ impl Room {
             pending_users: Default::default(),
             pending_call_count: 0,
             subscriptions: vec![client.add_message_handler(cx.handle(), Self::handle_room_updated)],
+            leave_when_empty: false,
             _pending_room_update: None,
             client,
             user_store,
@@ -81,15 +83,11 @@ impl Room {
         cx.spawn(|mut cx| async move {
             let response = client.request(proto::CreateRoom {}).await?;
             let room = cx.add_model(|cx| Self::new(response.id, client, user_store, cx));
+
             let initial_project_id = if let Some(initial_project) = initial_project {
                 let initial_project_id = room
                     .update(&mut cx, |room, cx| {
                         room.share_project(initial_project.clone(), cx)
-                    })
-                    .await?;
-                initial_project
-                    .update(&mut cx, |project, cx| {
-                        project.shared(initial_project_id, cx)
                     })
                     .await?;
                 Some(initial_project_id)
@@ -103,8 +101,11 @@ impl Room {
                 })
                 .await
             {
-                Ok(()) => Ok(room),
-                Err(_) => Err(anyhow!("call failed")),
+                Ok(()) => {
+                    room.update(&mut cx, |room, _| room.leave_when_empty = true);
+                    Ok(room)
+                }
+                Err(error) => Err(anyhow!("room creation failed: {:?}", error)),
             }
         })
     }
@@ -120,13 +121,18 @@ impl Room {
             let response = client.request(proto::JoinRoom { id: room_id }).await?;
             let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
             let room = cx.add_model(|cx| Self::new(room_id, client, user_store, cx));
-            room.update(&mut cx, |room, cx| room.apply_room_update(room_proto, cx))?;
+            room.update(&mut cx, |room, cx| {
+                room.leave_when_empty = true;
+                room.apply_room_update(room_proto, cx)?;
+                anyhow::Ok(())
+            })?;
             Ok(room)
         })
     }
 
     fn should_leave(&self) -> bool {
-        self.pending_users.is_empty()
+        self.leave_when_empty
+            && self.pending_users.is_empty()
             && self.remote_participants.is_empty()
             && self.pending_call_count == 0
     }

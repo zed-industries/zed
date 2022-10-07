@@ -504,9 +504,10 @@ async fn test_share_project(
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
 
     client_a
         .fs
@@ -524,13 +525,25 @@ async fn test_share_project(
         )
         .await;
 
+    // Invite client B to collaborate on a project
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = active_call_a
-        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), Some(project_a.clone()), cx)
+        })
         .await
         .unwrap();
 
     // Join that project as client B
+    let incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
+    deterministic.run_until_parked();
+    let call = incoming_call_b.borrow().clone().unwrap();
+    assert_eq!(call.caller.github_login, "user_a");
+    let project_id = call.initial_project_id.unwrap();
+    active_call_b
+        .update(cx_b, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
     let client_b_peer_id = client_b.peer_id;
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
     let replica_id_b = project_b.read_with(cx_b, |project, _| project.replica_id());
