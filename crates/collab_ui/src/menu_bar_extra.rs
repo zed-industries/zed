@@ -16,13 +16,17 @@ pub fn init(cx: &mut MutableAppContext) {
 
     let mut status_bar_item_id = None;
     cx.observe(&ActiveCall::global(cx), move |call, cx| {
-        if let Some(status_bar_item_id) = status_bar_item_id.take() {
-            cx.remove_status_bar_item(status_bar_item_id);
-        }
+        let had_room = status_bar_item_id.is_some();
+        let has_room = call.read(cx).room().is_some();
+        if had_room != has_room {
+            if let Some(status_bar_item_id) = status_bar_item_id.take() {
+                cx.remove_status_bar_item(status_bar_item_id);
+            }
 
-        if call.read(cx).room().is_some() {
-            let (id, _) = cx.add_status_bar_item(|_| MenuBarExtra::new());
-            status_bar_item_id = Some(id);
+            if has_room {
+                let (id, _) = cx.add_status_bar_item(|_| MenuBarExtra::new());
+                status_bar_item_id = Some(id);
+            }
         }
     })
     .detach();
@@ -34,6 +38,12 @@ struct MenuBarExtra {
 
 impl Entity for MenuBarExtra {
     type Event = ();
+
+    fn release(&mut self, cx: &mut MutableAppContext) {
+        if let Some(popover) = self.popover.take() {
+            cx.remove_window(popover.window_id());
+        }
+    }
 }
 
 impl View for MenuBarExtra {
