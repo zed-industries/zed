@@ -1,9 +1,8 @@
+use super::*;
 use crate::test::{
     assert_text_with_selections, build_editor, select_ranges, EditorLspTestContext,
     EditorTestContext,
 };
-
-use super::*;
 use futures::StreamExt;
 use gpui::{
     geometry::rect::RectF,
@@ -418,12 +417,12 @@ fn test_canceling_pending_selection(cx: &mut gpui::MutableAppContext) {
 fn test_clone(cx: &mut gpui::MutableAppContext) {
     let (text, selection_ranges) = marked_text_ranges(
         indoc! {"
-                one
-                two
-                threeˇ
-                four
-                fiveˇ
-            "},
+            one
+            two
+            threeˇ
+            four
+            fiveˇ
+        "},
         true,
     );
     cx.set_global(Settings::test(cx));
@@ -624,22 +623,22 @@ fn test_fold(cx: &mut gpui::MutableAppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple(
         &"
-                impl Foo {
-                    // Hello!
+            impl Foo {
+                // Hello!
 
-                    fn a() {
-                        1
-                    }
-
-                    fn b() {
-                        2
-                    }
-
-                    fn c() {
-                        3
-                    }
+                fn a() {
+                    1
                 }
-            "
+
+                fn b() {
+                    2
+                }
+
+                fn c() {
+                    3
+                }
+            }
+        "
         .unindent(),
         cx,
     );
@@ -653,20 +652,20 @@ fn test_fold(cx: &mut gpui::MutableAppContext) {
         assert_eq!(
             view.display_text(cx),
             "
-                    impl Foo {
-                        // Hello!
+                impl Foo {
+                    // Hello!
 
-                        fn a() {
-                            1
-                        }
-
-                        fn b() {…
-                        }
-
-                        fn c() {…
-                        }
+                    fn a() {
+                        1
                     }
-                "
+
+                    fn b() {…
+                    }
+
+                    fn c() {…
+                    }
+                }
+            "
             .unindent(),
         );
 
@@ -674,9 +673,9 @@ fn test_fold(cx: &mut gpui::MutableAppContext) {
         assert_eq!(
             view.display_text(cx),
             "
-                    impl Foo {…
-                    }
-                "
+                impl Foo {…
+                }
+            "
             .unindent(),
         );
 
@@ -684,20 +683,20 @@ fn test_fold(cx: &mut gpui::MutableAppContext) {
         assert_eq!(
             view.display_text(cx),
             "
-                    impl Foo {
-                        // Hello!
+                impl Foo {
+                    // Hello!
 
-                        fn a() {
-                            1
-                        }
-
-                        fn b() {…
-                        }
-
-                        fn c() {…
-                        }
+                    fn a() {
+                        1
                     }
-                "
+
+                    fn b() {…
+                    }
+
+                    fn c() {…
+                    }
+                }
+            "
             .unindent(),
         );
 
@@ -1264,14 +1263,14 @@ fn test_newline_with_old_selections(cx: &mut gpui::MutableAppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple(
         "
-                a
-                b(
-                    X
-                )
-                c(
-                    X
-                )
-            "
+            a
+            b(
+                X
+            )
+            c(
+                X
+            )
+        "
         .unindent()
         .as_str(),
         cx,
@@ -1301,10 +1300,10 @@ fn test_newline_with_old_selections(cx: &mut gpui::MutableAppContext) {
         assert_eq!(
             buffer.read(cx).text(),
             "
-                    a
-                    b()
-                    c()
-                "
+                a
+                b()
+                c()
+            "
             .unindent()
         );
     });
@@ -1322,12 +1321,12 @@ fn test_newline_with_old_selections(cx: &mut gpui::MutableAppContext) {
         assert_eq!(
             editor.text(cx),
             "
-                    a
-                    b(
-                    )
-                    c(
-                    )
-                "
+                a
+                b(
+                )
+                c(
+                )
+            "
             .unindent()
         );
 
@@ -1362,33 +1361,33 @@ async fn test_newline_below(cx: &mut gpui::TestAppContext) {
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
     cx.set_state(indoc! {"
-            const a: ˇA = (
-                (ˇ
-                    «const_functionˇ»(ˇ),
-                    so«mˇ»et«hˇ»ing_ˇelse,ˇ
-                )ˇ
-            ˇ);ˇ
-        "});
+        const a: ˇA = (
+            (ˇ
+                «const_functionˇ»(ˇ),
+                so«mˇ»et«hˇ»ing_ˇelse,ˇ
+            )ˇ
+        ˇ);ˇ
+    "});
     cx.update_editor(|e, cx| e.newline_below(&NewlineBelow, cx));
     cx.assert_editor_state(indoc! {"
-            const a: A = (
-                ˇ
-                (
-                    ˇ
-                    const_function(),
-                    ˇ
-                    ˇ
-                    something_else,
-                    ˇ
-                    ˇ
-                    ˇ
-                    ˇ
-                )
-                ˇ
-            );
+        const a: A = (
             ˇ
+            (
+                ˇ
+                const_function(),
+                ˇ
+                ˇ
+                something_else,
+                ˇ
+                ˇ
+                ˇ
+                ˇ
+            )
             ˇ
-        "});
+        );
+        ˇ
+        ˇ
+    "});
 }
 
 #[gpui::test]
@@ -1427,26 +1426,26 @@ async fn test_tab(cx: &mut gpui::TestAppContext) {
         });
     });
     cx.set_state(indoc! {"
-            ˇabˇc
-            ˇ🏀ˇ🏀ˇefg
-            dˇ
-        "});
+        ˇabˇc
+        ˇ🏀ˇ🏀ˇefg
+        dˇ
+    "});
     cx.update_editor(|e, cx| e.tab(&Tab, cx));
     cx.assert_editor_state(indoc! {"
-              ˇab ˇc
-              ˇ🏀  ˇ🏀  ˇefg
-           d  ˇ
-        "});
+           ˇab ˇc
+           ˇ🏀  ˇ🏀  ˇefg
+        d  ˇ
+    "});
 
     cx.set_state(indoc! {"
-            a
-            «🏀ˇ»🏀«🏀ˇ»🏀«🏀ˇ»
-        "});
+        a
+        «🏀ˇ»🏀«🏀ˇ»🏀«🏀ˇ»
+    "});
     cx.update_editor(|e, cx| e.tab(&Tab, cx));
     cx.assert_editor_state(indoc! {"
-            a
-               «🏀ˇ»🏀«🏀ˇ»🏀«🏀ˇ»
-        "});
+        a
+           «🏀ˇ»🏀«🏀ˇ»🏀«🏀ˇ»
+    "});
 }
 
 #[gpui::test]
@@ -1466,45 +1465,45 @@ async fn test_tab_on_blank_line_auto_indents(cx: &mut gpui::TestAppContext) {
     // a soft tab. cursors that are to the left of the suggested indent
     // auto-indent their line.
     cx.set_state(indoc! {"
-            ˇ
-            const a: B = (
-                c(
-                    d(
-            ˇ
-                    )
-            ˇ
-            ˇ    )
-            );
-        "});
+        ˇ
+        const a: B = (
+            c(
+                d(
+        ˇ
+                )
+        ˇ
+        ˇ    )
+        );
+    "});
     cx.update_editor(|e, cx| e.tab(&Tab, cx));
     cx.assert_editor_state(indoc! {"
-                ˇ
-            const a: B = (
-                c(
-                    d(
-                        ˇ
-                    )
+            ˇ
+        const a: B = (
+            c(
+                d(
                     ˇ
-                ˇ)
-            );
-        "});
+                )
+                ˇ
+            ˇ)
+        );
+    "});
 
     // handle auto-indent when there are multiple cursors on the same line
     cx.set_state(indoc! {"
-            const a: B = (
-                c(
-            ˇ    ˇ    
-            ˇ    )
-            );
-        "});
+        const a: B = (
+            c(
+        ˇ    ˇ
+        ˇ    )
+        );
+    "});
     cx.update_editor(|e, cx| e.tab(&Tab, cx));
     cx.assert_editor_state(indoc! {"
-            const a: B = (
-                c(
-                    ˇ
-                ˇ)
-            );
-        "});
+        const a: B = (
+            c(
+                ˇ
+            ˇ)
+        );
+    "});
 }
 
 #[gpui::test]
@@ -1512,68 +1511,68 @@ async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorTestContext::new(cx);
 
     cx.set_state(indoc! {"
-              «oneˇ» «twoˇ»
-            three
-             four
-        "});
+          «oneˇ» «twoˇ»
+        three
+         four
+    "});
     cx.update_editor(|e, cx| e.tab(&Tab, cx));
     cx.assert_editor_state(indoc! {"
-                «oneˇ» «twoˇ»
-            three
-             four
-        "});
+            «oneˇ» «twoˇ»
+        three
+         four
+    "});
 
     cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
     cx.assert_editor_state(indoc! {"
-            «oneˇ» «twoˇ»
-            three
-             four
-        "});
+        «oneˇ» «twoˇ»
+        three
+         four
+    "});
 
     // select across line ending
     cx.set_state(indoc! {"
-            one two
-            t«hree
-            ˇ» four
-        "});
+        one two
+        t«hree
+        ˇ» four
+    "});
     cx.update_editor(|e, cx| e.tab(&Tab, cx));
     cx.assert_editor_state(indoc! {"
-            one two
-                t«hree
-            ˇ» four
-        "});
+        one two
+            t«hree
+        ˇ» four
+    "});
 
     cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
     cx.assert_editor_state(indoc! {"
-            one two
-            t«hree
-            ˇ» four
-        "});
+        one two
+        t«hree
+        ˇ» four
+    "});
 
     // Ensure that indenting/outdenting works when the cursor is at column 0.
     cx.set_state(indoc! {"
-            one two
-            ˇthree
-                four
-        "});
+        one two
+        ˇthree
+            four
+    "});
     cx.update_editor(|e, cx| e.tab(&Tab, cx));
     cx.assert_editor_state(indoc! {"
-            one two
-                ˇthree
-                four
-        "});
+        one two
+            ˇthree
+            four
+    "});
 
     cx.set_state(indoc! {"
-            one two
-            ˇ    three
-             four
-        "});
+        one two
+        ˇ    three
+            four
+    "});
     cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
     cx.assert_editor_state(indoc! {"
-            one two
-            ˇthree
-             four
-        "});
+        one two
+        ˇthree
+            four
+    "});
 }
 
 #[gpui::test]
@@ -1587,90 +1586,90 @@ async fn test_indent_outdent_with_hard_tabs(cx: &mut gpui::TestAppContext) {
 
     // select two ranges on one line
     cx.set_state(indoc! {"
-            «oneˇ» «twoˇ»
-            three
-            four
-        "});
+        «oneˇ» «twoˇ»
+        three
+        four
+    "});
     cx.update_editor(|e, cx| e.tab(&Tab, cx));
     cx.assert_editor_state(indoc! {"
-            \t«oneˇ» «twoˇ»
-            three
-            four
-        "});
+        \t«oneˇ» «twoˇ»
+        three
+        four
+    "});
     cx.update_editor(|e, cx| e.tab(&Tab, cx));
     cx.assert_editor_state(indoc! {"
-            \t\t«oneˇ» «twoˇ»
-            three
-            four
-        "});
+        \t\t«oneˇ» «twoˇ»
+        three
+        four
+    "});
     cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
     cx.assert_editor_state(indoc! {"
-            \t«oneˇ» «twoˇ»
-            three
-            four
-        "});
+        \t«oneˇ» «twoˇ»
+        three
+        four
+    "});
     cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
     cx.assert_editor_state(indoc! {"
-            «oneˇ» «twoˇ»
-            three
-            four
-        "});
+        «oneˇ» «twoˇ»
+        three
+        four
+    "});
 
     // select across a line ending
     cx.set_state(indoc! {"
-            one two
-            t«hree
-            ˇ»four
-        "});
+        one two
+        t«hree
+        ˇ»four
+    "});
     cx.update_editor(|e, cx| e.tab(&Tab, cx));
     cx.assert_editor_state(indoc! {"
-            one two
-            \tt«hree
-            ˇ»four
-        "});
+        one two
+        \tt«hree
+        ˇ»four
+    "});
     cx.update_editor(|e, cx| e.tab(&Tab, cx));
     cx.assert_editor_state(indoc! {"
-            one two
-            \t\tt«hree
-            ˇ»four
-        "});
+        one two
+        \t\tt«hree
+        ˇ»four
+    "});
     cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
     cx.assert_editor_state(indoc! {"
-            one two
-            \tt«hree
-            ˇ»four
-        "});
+        one two
+        \tt«hree
+        ˇ»four
+    "});
     cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
     cx.assert_editor_state(indoc! {"
-            one two
-            t«hree
-            ˇ»four
-        "});
+        one two
+        t«hree
+        ˇ»four
+    "});
 
     // Ensure that indenting/outdenting works when the cursor is at column 0.
     cx.set_state(indoc! {"
-            one two
-            ˇthree
-            four
-        "});
+        one two
+        ˇthree
+        four
+    "});
     cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
     cx.assert_editor_state(indoc! {"
-            one two
-            ˇthree
-            four
-        "});
+        one two
+        ˇthree
+        four
+    "});
     cx.update_editor(|e, cx| e.tab(&Tab, cx));
     cx.assert_editor_state(indoc! {"
-            one two
-            \tˇthree
-            four
-        "});
+        one two
+        \tˇthree
+        four
+    "});
     cx.update_editor(|e, cx| e.tab_prev(&TabPrev, cx));
     cx.assert_editor_state(indoc! {"
-            one two
-            ˇthree
-            four
-        "});
+        one two
+        ˇthree
+        four
+    "});
 }
 
 #[gpui::test]
@@ -1739,21 +1738,21 @@ fn test_indent_outdent_with_excerpts(cx: &mut gpui::MutableAppContext) {
         assert_eq!(
             editor.text(cx),
             indoc! {"
-                    a = 1
-                    b = 2
+                a = 1
+                b = 2
 
-                    const c: usize = 3;
-                "}
+                const c: usize = 3;
+            "}
         );
 
         select_ranges(
             &mut editor,
             indoc! {"
-                    «aˇ» = 1
-                    b = 2
+                «aˇ» = 1
+                b = 2
 
-                    «const c:ˇ» usize = 3;
-                "},
+                «const c:ˇ» usize = 3;
+            "},
             cx,
         );
 
@@ -1761,22 +1760,22 @@ fn test_indent_outdent_with_excerpts(cx: &mut gpui::MutableAppContext) {
         assert_text_with_selections(
             &mut editor,
             indoc! {"
-                      «aˇ» = 1
-                    b = 2
+                  «aˇ» = 1
+                b = 2
 
-                        «const c:ˇ» usize = 3;
-                "},
+                    «const c:ˇ» usize = 3;
+            "},
             cx,
         );
         editor.tab_prev(&TabPrev, cx);
         assert_text_with_selections(
             &mut editor,
             indoc! {"
-                    «aˇ» = 1
-                    b = 2
+                «aˇ» = 1
+                b = 2
 
-                    «const c:ˇ» usize = 3;
-                "},
+                «const c:ˇ» usize = 3;
+            "},
             cx,
         );
 
@@ -1790,45 +1789,45 @@ async fn test_backspace(cx: &mut gpui::TestAppContext) {
 
     // Basic backspace
     cx.set_state(indoc! {"
-            onˇe two three
-            fou«rˇ» five six
-            seven «ˇeight nine
-            »ten
-        "});
+        onˇe two three
+        fou«rˇ» five six
+        seven «ˇeight nine
+        »ten
+    "});
     cx.update_editor(|e, cx| e.backspace(&Backspace, cx));
     cx.assert_editor_state(indoc! {"
-            oˇe two three
-            fouˇ five six
-            seven ˇten
-        "});
+        oˇe two three
+        fouˇ five six
+        seven ˇten
+    "});
 
     // Test backspace inside and around indents
     cx.set_state(indoc! {"
-            zero
-                ˇone
-                    ˇtwo
-                ˇ ˇ ˇ  three
-            ˇ  ˇ  four
-        "});
-    cx.update_editor(|e, cx| e.backspace(&Backspace, cx));
-    cx.assert_editor_state(indoc! {"
-            zero
+        zero
             ˇone
                 ˇtwo
-            ˇ  threeˇ  four
-        "});
+            ˇ ˇ ˇ  three
+        ˇ  ˇ  four
+    "});
+    cx.update_editor(|e, cx| e.backspace(&Backspace, cx));
+    cx.assert_editor_state(indoc! {"
+        zero
+        ˇone
+            ˇtwo
+        ˇ  threeˇ  four
+    "});
 
     // Test backspace with line_mode set to true
     cx.update_editor(|e, _| e.selections.line_mode = true);
     cx.set_state(indoc! {"
-            The ˇquick ˇbrown
-            fox jumps over
-            the lazy dog
-            ˇThe qu«ick bˇ»rown"});
+        The ˇquick ˇbrown
+        fox jumps over
+        the lazy dog
+        ˇThe qu«ick bˇ»rown"});
     cx.update_editor(|e, cx| e.backspace(&Backspace, cx));
     cx.assert_editor_state(indoc! {"
-            ˇfox jumps over
-            the lazy dogˇ"});
+        ˇfox jumps over
+        the lazy dogˇ"});
 }
 
 #[gpui::test]
@@ -1836,25 +1835,25 @@ async fn test_delete(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorTestContext::new(cx);
 
     cx.set_state(indoc! {"
-            onˇe two three
-            fou«rˇ» five six
-            seven «ˇeight nine
-            »ten
-        "});
+        onˇe two three
+        fou«rˇ» five six
+        seven «ˇeight nine
+        »ten
+    "});
     cx.update_editor(|e, cx| e.delete(&Delete, cx));
     cx.assert_editor_state(indoc! {"
-            onˇ two three
-            fouˇ five six
-            seven ˇten
-        "});
+        onˇ two three
+        fouˇ five six
+        seven ˇten
+    "});
 
     // Test backspace with line_mode set to true
     cx.update_editor(|e, _| e.selections.line_mode = true);
     cx.set_state(indoc! {"
-            The ˇquick ˇbrown
-            fox «ˇjum»ps over
-            the lazy dog
-            ˇThe qu«ick bˇ»rown"});
+        The ˇquick ˇbrown
+        fox «ˇjum»ps over
+        the lazy dog
+        ˇThe qu«ick bˇ»rown"});
     cx.update_editor(|e, cx| e.backspace(&Backspace, cx));
     cx.assert_editor_state("ˇthe lazy dogˇ");
 }
@@ -2191,57 +2190,57 @@ async fn test_clipboard(cx: &mut gpui::TestAppContext) {
         e.handle_input(") ", cx);
     });
     cx.assert_editor_state(indoc! {"
-            ( one✅ 
-            three 
-            five ) ˇtwo one✅ four three six five ( one✅ 
-            three 
-            five ) ˇ"});
+        ( one✅ 
+        three 
+        five ) ˇtwo one✅ four three six five ( one✅ 
+        three 
+        five ) ˇ"});
 
     // Cut with three selections, one of which is full-line.
     cx.set_state(indoc! {"
-            1«2ˇ»3
-            4ˇ567
-            «8ˇ»9"});
+        1«2ˇ»3
+        4ˇ567
+        «8ˇ»9"});
     cx.update_editor(|e, cx| e.cut(&Cut, cx));
     cx.assert_editor_state(indoc! {"
-            1ˇ3
-            ˇ9"});
+        1ˇ3
+        ˇ9"});
 
     // Paste with three selections, noticing how the copied selection that was full-line
     // gets inserted before the second cursor.
     cx.set_state(indoc! {"
-            1ˇ3
-            9ˇ
-            «oˇ»ne"});
+        1ˇ3
+        9ˇ
+        «oˇ»ne"});
     cx.update_editor(|e, cx| e.paste(&Paste, cx));
     cx.assert_editor_state(indoc! {"
-            12ˇ3
-            4567
-            9ˇ
-            8ˇne"});
+        12ˇ3
+        4567
+        9ˇ
+        8ˇne"});
 
     // Copy with a single cursor only, which writes the whole line into the clipboard.
     cx.set_state(indoc! {"
-            The quick brown
-            fox juˇmps over
-            the lazy dog"});
+        The quick brown
+        fox juˇmps over
+        the lazy dog"});
     cx.update_editor(|e, cx| e.copy(&Copy, cx));
     cx.cx.assert_clipboard_content(Some("fox jumps over\n"));
 
     // Paste with three selections, noticing how the copied full-line selection is inserted
     // before the empty selections but replaces the selection that is non-empty.
     cx.set_state(indoc! {"
-            Tˇhe quick brown
-            «foˇ»x jumps over
-            tˇhe lazy dog"});
+        Tˇhe quick brown
+        «foˇ»x jumps over
+        tˇhe lazy dog"});
     cx.update_editor(|e, cx| e.paste(&Paste, cx));
     cx.assert_editor_state(indoc! {"
-            fox jumps over
-            Tˇhe quick brown
-            fox jumps over
-            ˇx jumps over
-            fox jumps over
-            tˇhe lazy dog"});
+        fox jumps over
+        Tˇhe quick brown
+        fox jumps over
+        ˇx jumps over
+        fox jumps over
+        tˇhe lazy dog"});
 }
 
 #[gpui::test]
@@ -2255,105 +2254,105 @@ async fn test_paste_multiline(cx: &mut gpui::TestAppContext) {
 
     // Cut an indented block, without the leading whitespace.
     cx.set_state(indoc! {"
-            const a: B = (
-                c(),
-                «d(
-                    e,
-                    f
-                )ˇ»
-            );
-        "});
+        const a: B = (
+            c(),
+            «d(
+                e,
+                f
+            )ˇ»
+        );
+    "});
     cx.update_editor(|e, cx| e.cut(&Cut, cx));
     cx.assert_editor_state(indoc! {"
-            const a: B = (
-                c(),
-                ˇ
-            );
-        "});
+        const a: B = (
+            c(),
+            ˇ
+        );
+    "});
 
     // Paste it at the same position.
     cx.update_editor(|e, cx| e.paste(&Paste, cx));
     cx.assert_editor_state(indoc! {"
-            const a: B = (
-                c(),
-                d(
-                    e,
-                    f
-                )ˇ
-            );
-        "});
-
-    // Paste it at a line with a lower indent level.
-    cx.set_state(indoc! {"
-            ˇ
-            const a: B = (
-                c(),
-            );
-        "});
-    cx.update_editor(|e, cx| e.paste(&Paste, cx));
-    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(),
             d(
                 e,
                 f
             )ˇ
-            const a: B = (
-                c(),
-            );
-        "});
+        );
+    "});
+
+    // Paste it at a line with a lower indent level.
+    cx.set_state(indoc! {"
+        ˇ
+        const a: B = (
+            c(),
+        );
+    "});
+    cx.update_editor(|e, cx| e.paste(&Paste, cx));
+    cx.assert_editor_state(indoc! {"
+        d(
+            e,
+            f
+        )ˇ
+        const a: B = (
+            c(),
+        );
+    "});
 
     // Cut an indented block, with the leading whitespace.
     cx.set_state(indoc! {"
-            const a: B = (
-                c(),
-            «    d(
-                    e,
-                    f
-                )
-            ˇ»);
-        "});
+        const a: B = (
+            c(),
+        «    d(
+                e,
+                f
+            )
+        ˇ»);
+    "});
     cx.update_editor(|e, cx| e.cut(&Cut, cx));
     cx.assert_editor_state(indoc! {"
-            const a: B = (
-                c(),
-            ˇ);
-        "});
+        const a: B = (
+            c(),
+        ˇ);
+    "});
 
     // Paste it at the same position.
     cx.update_editor(|e, cx| e.paste(&Paste, cx));
     cx.assert_editor_state(indoc! {"
-            const a: B = (
-                c(),
-                d(
-                    e,
-                    f
-                )
-            ˇ);
-        "});
+        const a: B = (
+            c(),
+            d(
+                e,
+                f
+            )
+        ˇ);
+    "});
 
     // Paste it at a line with a higher indent level.
     cx.set_state(indoc! {"
-            const a: B = (
-                c(),
-                d(
-                    e,
-                    fˇ
-                )
-            );
-        "});
+        const a: B = (
+            c(),
+            d(
+                e,
+                fˇ
+            )
+        );
+    "});
     cx.update_editor(|e, cx| e.paste(&Paste, cx));
     cx.assert_editor_state(indoc! {"
-            const a: B = (
-                c(),
-                d(
+        const a: B = (
+            c(),
+            d(
+                e,
+                f    d(
                     e,
-                    f    d(
-                        e,
-                        f
-                    )
-            ˇ
+                    f
                 )
-            );
-        "});
+        ˇ
+            )
+        );
+    "});
 }
 
 #[gpui::test]
@@ -2706,12 +2705,12 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     ));
 
     let text = r#"
-            use mod1::mod2::{mod3, mod4};
+        use mod1::mod2::{mod3, mod4};
 
-            fn fn_1(param1: bool, param2: &str) {
-                let var1 = "text";
-            }
-        "#
+        fn fn_1(param1: bool, param2: &str) {
+            let var1 = "text";
+        }
+    "#
     .unindent();
 
     let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
@@ -2865,7 +2864,7 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
             r#"
                 (_ "(" ")" @end) @indent
                 (_ "{" "}" @end) @indent
-                "#,
+            "#,
         )
         .unwrap(),
     );
@@ -2935,10 +2934,10 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
 
     cx.set_state(
         &r#"
-                🏀ˇ
-                εˇ
-                ❤️ˇ
-            "#
+            🏀ˇ
+            εˇ
+            ❤️ˇ
+        "#
         .unindent(),
     );
 
@@ -2950,10 +2949,10 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
     });
     cx.assert_editor_state(
         &"
-                🏀{{{ˇ}}}
-                ε{{{ˇ}}}
-                ❤️{{{ˇ}}}
-            "
+            🏀{{{ˇ}}}
+            ε{{{ˇ}}}
+            ❤️{{{ˇ}}}
+        "
         .unindent(),
     );
 
@@ -2966,19 +2965,19 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
     });
     cx.assert_editor_state(
         &"
-                🏀{{{}}}}ˇ
-                ε{{{}}}}ˇ
-                ❤️{{{}}}}ˇ
-            "
+            🏀{{{}}}}ˇ
+            ε{{{}}}}ˇ
+            ❤️{{{}}}}ˇ
+        "
         .unindent(),
     );
 
     // autoclose multi-character pairs
     cx.set_state(
         &"
-                ˇ
-                ˇ
-            "
+            ˇ
+            ˇ
+        "
         .unindent(),
     );
     cx.update_editor(|view, cx| {
@@ -2987,9 +2986,9 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
     });
     cx.assert_editor_state(
         &"
-                /*ˇ */
-                /*ˇ */
-            "
+            /*ˇ */
+            /*ˇ */
+        "
         .unindent(),
     );
 
@@ -2997,17 +2996,17 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
     // does not autoclose.
     cx.set_state(
         &"
-                /ˇ
-                ˇ
-            "
+            /ˇ
+            ˇ
+        "
         .unindent(),
     );
     cx.update_editor(|view, cx| view.handle_input("*", cx));
     cx.assert_editor_state(
         &"
-                /*ˇ */
-                *ˇ
-            "
+            /*ˇ */
+            *ˇ
+        "
         .unindent(),
     );
 
@@ -3055,10 +3054,10 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
         )
         .with_injection_query(
             r#"
-                (script_element
-                    (raw_text) @content
-                    (#set! "language" "javascript"))
-                "#,
+            (script_element
+                (raw_text) @content
+                (#set! "language" "javascript"))
+            "#,
         )
         .unwrap(),
     );
@@ -3100,12 +3099,12 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
 
     cx.set_state(
         &r#"
-                <body>ˇ
-                    <script>
-                        var x = 1;ˇ
-                    </script>
-                </body>ˇ
-            "#
+            <body>ˇ
+                <script>
+                    var x = 1;ˇ
+                </script>
+            </body>ˇ
+        "#
         .unindent(),
     );
 
@@ -3130,12 +3129,12 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
     });
     cx.assert_editor_state(
         &r#"
-                <body><aˇ>
-                    <script>
-                        var x = 1;<aˇ
-                    </script>
-                </body><aˇ>
-            "#
+            <body><aˇ>
+                <script>
+                    var x = 1;<aˇ
+                </script>
+            </body><aˇ>
+        "#
         .unindent(),
     );
 
@@ -3148,12 +3147,12 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
     });
     cx.assert_editor_state(
         &r#"
-                <body><a b={c(ˇ)}>
-                    <script>
-                        var x = 1;<a b={c(ˇ)}
-                    </script>
-                </body><a b={c(ˇ)}>
-            "#
+            <body><a b={c(ˇ)}>
+                <script>
+                    var x = 1;<a b={c(ˇ)}
+                </script>
+            </body><a b={c(ˇ)}>
+        "#
         .unindent(),
     );
 
@@ -3165,12 +3164,12 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
     });
     cx.assert_editor_state(
         &r#"
-                <body><a b={c()d}ˇ>
-                    <script>
-                        var x = 1;<a b={c()d}ˇ
-                    </script>
-                </body><a b={c()d}ˇ>
-            "#
+            <body><a b={c()d}ˇ>
+                <script>
+                    var x = 1;<a b={c()d}ˇ
+                </script>
+            </body><a b={c()d}ˇ>
+        "#
         .unindent(),
     );
     cx.update_editor(|editor, cx| {
@@ -3178,24 +3177,24 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
     });
     cx.assert_editor_state(
         &r#"
-                <body><a b={c()d}>ˇ
-                    <script>
-                        var x = 1;<a b={c()d}>ˇ
-                    </script>
-                </body><a b={c()d}>ˇ
-            "#
+            <body><a b={c()d}>ˇ
+                <script>
+                    var x = 1;<a b={c()d}>ˇ
+                </script>
+            </body><a b={c()d}>ˇ
+        "#
         .unindent(),
     );
 
     // Reset
     cx.set_state(
         &r#"
-                <body>ˇ
-                    <script>
-                        var x = 1;ˇ
-                    </script>
-                </body>ˇ
-            "#
+            <body>ˇ
+                <script>
+                    var x = 1;ˇ
+                </script>
+            </body>ˇ
+        "#
         .unindent(),
     );
 
@@ -3204,12 +3203,12 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
     });
     cx.assert_editor_state(
         &r#"
-                <body><ˇ>
-                    <script>
-                        var x = 1;<ˇ
-                    </script>
-                </body><ˇ>
-            "#
+            <body><ˇ>
+                <script>
+                    var x = 1;<ˇ
+                </script>
+            </body><ˇ>
+        "#
         .unindent(),
     );
 
@@ -3219,12 +3218,12 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
     });
     cx.assert_editor_state(
         &r#"
-                <body>ˇ
-                    <script>
-                        var x = 1;ˇ
-                    </script>
-                </body>ˇ
-            "#
+            <body>ˇ
+                <script>
+                    var x = 1;ˇ
+                </script>
+            </body>ˇ
+        "#
         .unindent(),
     );
 
@@ -3235,12 +3234,12 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
     });
     cx.assert_editor_state(
         &r#"
-                <body>/*ˇ
-                    <script>
-                        var x = 1;/*ˇ */
-                    </script>
-                </body>/*ˇ
-            "#
+            <body>/*ˇ
+                <script>
+                    var x = 1;/*ˇ */
+                </script>
+            </body>/*ˇ
+        "#
         .unindent(),
     );
 }
@@ -3262,10 +3261,10 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
     ));
 
     let text = r#"
-            a
-            b
-            c
-        "#
+        a
+        b
+        c
+    "#
     .unindent();
 
     let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
@@ -3292,7 +3291,7 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
                 {{{a}}}
                 {{{b}}}
                 {{{c}}}
-                "
+            "
             .unindent()
         );
         assert_eq!(
@@ -3311,7 +3310,7 @@ async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
                 a
                 b
                 c
-                "
+            "
             .unindent()
         );
         assert_eq!(
@@ -3343,10 +3342,10 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
     ));
 
     let text = r#"
-            a
-            b
-            c
-        "#
+        a
+        b
+        c
+    "#
     .unindent();
 
     let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
@@ -3374,7 +3373,7 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
                 a{{_}}
                 b{{_}}
                 c{{_}}
-                "
+            "
             .unindent()
         );
         assert_eq!(
@@ -3394,7 +3393,7 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
                 a{}
                 b{}
                 c{}
-                "
+            "
             .unindent()
         );
         assert_eq!(
@@ -3413,7 +3412,7 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
                 a
                 b
                 c
-                "
+            "
             .unindent()
         );
         assert_eq!(
@@ -3433,10 +3432,10 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
 
     let (text, insertion_ranges) = marked_text_ranges(
         indoc! {"
-                a.ˇ b
-                a.ˇ b
-                a.ˇ b
-            "},
+            a.ˇ b
+            a.ˇ b
+            a.ˇ b
+        "},
         false,
     );
 
@@ -3460,10 +3459,10 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
             editor,
             cx,
             indoc! {"
-                    a.f(«one», two, «three») b
-                    a.f(«one», two, «three») b
-                    a.f(«one», two, «three») b
-                "},
+                a.f(«one», two, «three») b
+                a.f(«one», two, «three») b
+                a.f(«one», two, «three») b
+            "},
         );
 
         // Can't move earlier than the first tab stop
@@ -3472,10 +3471,10 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
             editor,
             cx,
             indoc! {"
-                    a.f(«one», two, «three») b
-                    a.f(«one», two, «three») b
-                    a.f(«one», two, «three») b
-                "},
+                a.f(«one», two, «three») b
+                a.f(«one», two, «three») b
+                a.f(«one», two, «three») b
+            "},
         );
 
         assert!(editor.move_to_next_snippet_tabstop(cx));
@@ -3483,10 +3482,10 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
             editor,
             cx,
             indoc! {"
-                    a.f(one, «two», three) b
-                    a.f(one, «two», three) b
-                    a.f(one, «two», three) b
-                "},
+                a.f(one, «two», three) b
+                a.f(one, «two», three) b
+                a.f(one, «two», three) b
+            "},
         );
 
         editor.move_to_prev_snippet_tabstop(cx);
@@ -3494,10 +3493,10 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
             editor,
             cx,
             indoc! {"
-                    a.f(«one», two, «three») b
-                    a.f(«one», two, «three») b
-                    a.f(«one», two, «three») b
-                "},
+                a.f(«one», two, «three») b
+                a.f(«one», two, «three») b
+                a.f(«one», two, «three») b
+            "},
         );
 
         assert!(editor.move_to_next_snippet_tabstop(cx));
@@ -3505,20 +3504,20 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
             editor,
             cx,
             indoc! {"
-                    a.f(one, «two», three) b
-                    a.f(one, «two», three) b
-                    a.f(one, «two», three) b
-                "},
+                a.f(one, «two», three) b
+                a.f(one, «two», three) b
+                a.f(one, «two», three) b
+            "},
         );
         assert!(editor.move_to_next_snippet_tabstop(cx));
         assert(
             editor,
             cx,
             indoc! {"
-                    a.f(one, two, three)ˇ b
-                    a.f(one, two, three)ˇ b
-                    a.f(one, two, three)ˇ b
-                "},
+                a.f(one, two, three)ˇ b
+                a.f(one, two, three)ˇ b
+                a.f(one, two, three)ˇ b
+            "},
         );
 
         // As soon as the last tab stop is reached, snippet state is gone
@@ -3527,10 +3526,10 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
             editor,
             cx,
             indoc! {"
-                    a.f(one, two, three)ˇ b
-                    a.f(one, two, three)ˇ b
-                    a.f(one, two, three)ˇ b
-                "},
+                a.f(one, two, three)ˇ b
+                a.f(one, two, three)ˇ b
+                a.f(one, two, three)ˇ b
+            "},
         );
     });
 }
@@ -3847,6 +3846,63 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_concurrent_format_requests(cx: &mut gpui::TestAppContext) {
+    cx.foreground().forbid_parking();
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            document_formatting_provider: Some(lsp::OneOf::Left(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(indoc! {"
+        one.twoˇ
+    "});
+
+    // The format request takes a long time. When it completes, it inserts
+    // a newline and an indent before the `.`
+    cx.lsp
+        .handle_request::<lsp::request::Formatting, _, _>(move |_, cx| {
+            let executor = cx.background();
+            async move {
+                executor.timer(Duration::from_millis(100)).await;
+                Ok(Some(vec![lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 3)),
+                    new_text: "\n    ".into(),
+                }]))
+            }
+        });
+
+    // Submit a format request.
+    let format_1 = cx
+        .update_editor(|editor, cx| editor.format(&Format, cx))
+        .unwrap();
+    cx.foreground().run_until_parked();
+
+    // Submit a second format request.
+    let format_2 = cx
+        .update_editor(|editor, cx| editor.format(&Format, cx))
+        .unwrap();
+    cx.foreground().run_until_parked();
+
+    // Wait for both format requests to complete
+    cx.foreground().advance_clock(Duration::from_millis(200));
+    cx.foreground().start_waiting();
+    format_1.await.unwrap();
+    cx.foreground().start_waiting();
+    format_2.await.unwrap();
+
+    // The formatting edits only happens once.
+    cx.assert_editor_state(indoc! {"
+        one
+            .twoˇ
+    "});
+}
+
+#[gpui::test]
 async fn test_completion(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
@@ -3861,18 +3917,18 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     .await;
 
     cx.set_state(indoc! {"
-            oneˇ
-            two
-            three
-        "});
+        oneˇ
+        two
+        three
+    "});
     cx.simulate_keystroke(".");
     handle_completion_request(
         &mut cx,
         indoc! {"
-                one.|<>
-                two
-                three
-            "},
+            one.|<>
+            two
+            three
+        "},
         vec!["first_completion", "second_completion"],
     )
     .await;
@@ -3885,57 +3941,56 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
             .unwrap()
     });
     cx.assert_editor_state(indoc! {"
-            one.second_completionˇ
-            two
-            three
-        "});
+        one.second_completionˇ
+        two
+        three
+    "});
 
     handle_resolve_completion_request(
         &mut cx,
         Some((
             indoc! {"
-                    one.second_completion
-                    two
-                    threeˇ
-                "},
+                one.second_completion
+                two
+                threeˇ
+            "},
             "\nadditional edit",
         )),
     )
     .await;
     apply_additional_edits.await.unwrap();
     cx.assert_editor_state(indoc! {"
-            one.second_completionˇ
-            two
-            three
-            additional edit
-        "});
+        one.second_completionˇ
+        two
+        three
+        additional edit
+    "});
 
     cx.set_state(indoc! {"
-            one.second_completion
-            twoˇ
-            threeˇ
-            additional edit
-        "});
+        one.second_completion
+        twoˇ
+        threeˇ
+        additional edit
+    "});
     cx.simulate_keystroke(" ");
     assert!(cx.editor(|e, _| e.context_menu.is_none()));
     cx.simulate_keystroke("s");
     assert!(cx.editor(|e, _| e.context_menu.is_none()));
 
     cx.assert_editor_state(indoc! {"
-            one.second_completion
-            two sˇ
-            three sˇ
-            additional edit
-        "});
-    //
+        one.second_completion
+        two sˇ
+        three sˇ
+        additional edit
+    "});
     handle_completion_request(
         &mut cx,
         indoc! {"
-                one.second_completion
-                two s
-                three <s|>
-                additional edit
-            "},
+            one.second_completion
+            two s
+            three <s|>
+            additional edit
+        "},
         vec!["fourth_completion", "fifth_completion", "sixth_completion"],
     )
     .await;
@@ -3947,11 +4002,11 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     handle_completion_request(
         &mut cx,
         indoc! {"
-                one.second_completion
-                two si
-                three <si|>
-                additional edit
-            "},
+            one.second_completion
+            two si
+            three <si|>
+            additional edit
+        "},
         vec!["fourth_completion", "fifth_completion", "sixth_completion"],
     )
     .await;
@@ -3964,11 +4019,11 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
             .unwrap()
     });
     cx.assert_editor_state(indoc! {"
-            one.second_completion
-            two sixth_completionˇ
-            three sixth_completionˇ
-            additional edit
-        "});
+        one.second_completion
+        two sixth_completionˇ
+        three sixth_completionˇ
+        additional edit
+    "});
 
     handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
@@ -4084,12 +4139,12 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
     ));
 
     let text = "
-            fn a() {
-                //b();
-                // c();
-                //  d();
-            }
-        "
+        fn a() {
+            //b();
+            // c();
+            //  d();
+        }
+    "
     .unindent();
 
     let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
@@ -4109,12 +4164,12 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             editor.text(cx),
             "
-                    fn a() {
-                        b();
-                        c();
-                         d();
-                    }
-                "
+                fn a() {
+                    b();
+                    c();
+                     d();
+                }
+            "
             .unindent()
         );
 
@@ -4127,12 +4182,12 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             editor.text(cx),
             "
-                    fn a() {
-                        // b();
-                        // c();
-                        //  d();
-                    }
-                "
+                fn a() {
+                    // b();
+                    // c();
+                    //  d();
+                }
+            "
             .unindent()
         );
 
@@ -4144,12 +4199,12 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             editor.text(cx),
             "
-                        fn a() {
-                            // b();
-                            c();
-                            //  d();
-                        }
-                    "
+                fn a() {
+                    // b();
+                    c();
+                    //  d();
+                }
+            "
             .unindent()
         );
     });
@@ -4170,10 +4225,10 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
         )
         .with_injection_query(
             r#"
-                (script_element
-                    (raw_text) @content
-                    (#set! "language" "javascript"))
-                "#,
+            (script_element
+                (raw_text) @content
+                (#set! "language" "javascript"))
+            "#,
         )
         .unwrap(),
     );
@@ -4199,28 +4254,28 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
     // Toggle comments for empty selections
     cx.set_state(
         &r#"
-                <p>A</p>ˇ
-                <p>B</p>ˇ
-                <p>C</p>ˇ
-            "#
+            <p>A</p>ˇ
+            <p>B</p>ˇ
+            <p>C</p>ˇ
+        "#
         .unindent(),
     );
     cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments, cx));
     cx.assert_editor_state(
         &r#"
-                <!-- <p>A</p>ˇ -->
-                <!-- <p>B</p>ˇ -->
-                <!-- <p>C</p>ˇ -->
-            "#
+            <!-- <p>A</p>ˇ -->
+            <!-- <p>B</p>ˇ -->
+            <!-- <p>C</p>ˇ -->
+        "#
         .unindent(),
     );
     cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments, cx));
     cx.assert_editor_state(
         &r#"
-                <p>A</p>ˇ
-                <p>B</p>ˇ
-                <p>C</p>ˇ
-            "#
+            <p>A</p>ˇ
+            <p>B</p>ˇ
+            <p>C</p>ˇ
+        "#
         .unindent(),
     );
 
@@ -4228,32 +4283,32 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
     // multiple selections occupy a given line.
     cx.set_state(
         &r#"
-                <p>A«</p>
-                <p>ˇ»B</p>ˇ
-                <p>C«</p>
-                <p>ˇ»D</p>ˇ
-            "#
+            <p>A«</p>
+            <p>ˇ»B</p>ˇ
+            <p>C«</p>
+            <p>ˇ»D</p>ˇ
+        "#
         .unindent(),
     );
 
     cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments, cx));
     cx.assert_editor_state(
         &r#"
-                <!-- <p>A«</p>
-                <p>ˇ»B</p>ˇ -->
-                <!-- <p>C«</p>
-                <p>ˇ»D</p>ˇ -->
-            "#
+            <!-- <p>A«</p>
+            <p>ˇ»B</p>ˇ -->
+            <!-- <p>C«</p>
+            <p>ˇ»D</p>ˇ -->
+        "#
         .unindent(),
     );
     cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments, cx));
     cx.assert_editor_state(
         &r#"
-                <p>A«</p>
-                <p>ˇ»B</p>ˇ
-                <p>C«</p>
-                <p>ˇ»D</p>ˇ
-            "#
+            <p>A«</p>
+            <p>ˇ»B</p>ˇ
+            <p>C«</p>
+            <p>ˇ»D</p>ˇ
+        "#
         .unindent(),
     );
 
@@ -4261,20 +4316,20 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
     // selections.
     cx.set_state(
         &r#"
-                ˇ<script>
-                    ˇvar x = new Y();
-                ˇ</script>
-            "#
+            ˇ<script>
+                ˇvar x = new Y();
+            ˇ</script>
+        "#
         .unindent(),
     );
     cx.foreground().run_until_parked();
     cx.update_editor(|editor, cx| editor.toggle_comments(&ToggleComments, cx));
     cx.assert_editor_state(
         &r#"
-                <!-- ˇ<script> -->
-                    // ˇvar x = new Y();
-                <!-- ˇ</script> -->
-            "#
+            <!-- ˇ<script> -->
+                // ˇvar x = new Y();
+            <!-- ˇ</script> -->
+        "#
         .unindent(),
     );
 }
@@ -4332,9 +4387,9 @@ fn test_editing_overlapping_excerpts(cx: &mut gpui::MutableAppContext) {
     let markers = vec![('[', ']').into(), ('(', ')').into()];
     let (initial_text, mut excerpt_ranges) = marked_text_ranges_by(
         indoc! {"
-                [aaaa
-                (bbbb]
-                cccc)",
+            [aaaa
+            (bbbb]
+            cccc)",
         },
         markers.clone(),
     );
@@ -4356,10 +4411,10 @@ fn test_editing_overlapping_excerpts(cx: &mut gpui::MutableAppContext) {
     view.update(cx, |view, cx| {
         let (expected_text, selection_ranges) = marked_text_ranges(
             indoc! {"
-                    aaaa
-                    bˇbbb
-                    bˇbbˇb
-                    cccc"
+                aaaa
+                bˇbbb
+                bˇbbˇb
+                cccc"
             },
             true,
         );
@@ -4370,10 +4425,10 @@ fn test_editing_overlapping_excerpts(cx: &mut gpui::MutableAppContext) {
 
         let (expected_text, expected_selections) = marked_text_ranges(
             indoc! {"
-                    aaaa
-                    bXˇbbXb
-                    bXˇbbXˇb
-                    cccc"
+                aaaa
+                bXˇbbXb
+                bXˇbbXˇb
+                cccc"
             },
             false,
         );
@@ -4383,14 +4438,14 @@ fn test_editing_overlapping_excerpts(cx: &mut gpui::MutableAppContext) {
         view.newline(&Newline, cx);
         let (expected_text, expected_selections) = marked_text_ranges(
             indoc! {"
-                    aaaa
-                    bX
-                    ˇbbX
-                    b
-                    bX
-                    ˇbbX
-                    ˇb
-                    cccc"
+                aaaa
+                bX
+                ˇbbX
+                b
+                bX
+                ˇbbX
+                ˇb
+                cccc"
             },
             false,
         );
@@ -4580,7 +4635,7 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
     );
 
     let text = concat!(
-        "{   }\n",     // Suppress rustfmt
+        "{   }\n",     //
         "  x\n",       //
         "  /*   */\n", //
         "x\n",         //
