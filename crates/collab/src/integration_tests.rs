@@ -838,6 +838,16 @@ async fn test_active_call_events(
     );
     assert_eq!(mem::take(&mut *events_b.borrow_mut()), vec![]);
 
+    // Sharing a project twice is idempotent.
+    let project_b_id_2 = active_call_b
+        .update(cx_b, |call, cx| call.share_project(project_b.clone(), cx))
+        .await
+        .unwrap();
+    assert_eq!(project_b_id_2, project_b_id);
+    deterministic.run_until_parked();
+    assert_eq!(mem::take(&mut *events_a.borrow_mut()), vec![]);
+    assert_eq!(mem::take(&mut *events_b.borrow_mut()), vec![]);
+
     fn active_call_events(cx: &mut TestAppContext) -> Rc<RefCell<Vec<room::Event>>> {
         let events = Rc::new(RefCell::new(Vec::new()));
         let active_call = cx.read(ActiveCall::global);

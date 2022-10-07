@@ -299,6 +299,12 @@ impl Room {
         project: ModelHandle<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<u64>> {
+        if project.read(cx).is_remote() {
+            return Task::ready(Err(anyhow!("can't share remote project")));
+        } else if let Some(project_id) = project.read(cx).remote_id() {
+            return Task::ready(Ok(project_id));
+        }
+
         let request = self
             .client
             .request(proto::ShareProject { room_id: self.id() });
