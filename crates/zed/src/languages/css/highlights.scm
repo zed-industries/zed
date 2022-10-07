@@ -73,7 +73,6 @@
 (unit) @type
 
 [
-  "#"
   ","
   ":"
 ] @punctuation.delimiter
