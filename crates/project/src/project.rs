@@ -8,10 +8,7 @@ pub mod worktree;
 mod project_tests;
 
 use anyhow::{anyhow, Context, Result};
-use client::{
-    proto::{self},
-    Client, PeerId, TypedEnvelope, User, UserStore,
-};
+use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use futures::{future::Shared, AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt};
@@ -66,7 +63,7 @@ use std::{
     time::Instant,
 };
 use thiserror::Error;
-use util::{post_inc, ResultExt, TryFutureExt as _};
+use util::{defer, post_inc, ResultExt, TryFutureExt as _};
 
 pub use db::Db;
 pub use fs::*;
@@ -128,6 +125,7 @@ pub struct Project {
     opened_buffers: HashMap<u64, OpenBuffer>,
     incomplete_buffers: HashMap<u64, ModelHandle<Buffer>>,
     buffer_snapshots: HashMap<u64, Vec<(i32, TextBufferSnapshot)>>,
+    buffers_being_formatted: HashSet<usize>,
     nonce: u128,
     initialized_persistent_state: bool,
     _maintain_buffer_languages: Task<()>,
@@ -512,6 +510,7 @@ impl Project {
                 language_server_statuses: Default::default(),
                 last_workspace_edits_by_language_server: Default::default(),
                 language_server_settings: Default::default(),
+                buffers_being_formatted: Default::default(),
                 next_language_server_id: 0,
                 nonce: StdRng::from_entropy().gen(),
                 initialized_persistent_state: false,
@@ -627,6 +626,7 @@ impl Project {
                 last_workspace_edits_by_language_server: Default::default(),
                 next_language_server_id: 0,
                 opened_buffers: Default::default(),
+                buffers_being_formatted: Default::default(),
                 buffer_snapshots: Default::default(),
                 nonce: StdRng::from_entropy().gen(),
                 initialized_persistent_state: false,
@@ -3113,7 +3113,26 @@ impl Project {
                     .await?;
             }
 
-            for (buffer, buffer_abs_path, language_server) in local_buffers {
+            // Do not allow multiple concurrent formatting requests for the
+            // same buffer.
+            this.update(&mut cx, |this, _| {
+                local_buffers
+                    .retain(|(buffer, _, _)| this.buffers_being_formatted.insert(buffer.id()));
+            });
+            let _cleanup = defer({
+                let this = this.clone();
+                let mut cx = cx.clone();
+                let local_buffers = &local_buffers;
+                move || {
+                    this.update(&mut cx, |this, _| {
+                        for (buffer, _, _) in local_buffers {
+                            this.buffers_being_formatted.remove(&buffer.id());
+                        }
+                    });
+                }
+            });
+
+            for (buffer, buffer_abs_path, language_server) in &local_buffers {
                 let (format_on_save, formatter, tab_size) = buffer.read_with(&cx, |buffer, cx| {
                     let settings = cx.global::<Settings>();
                     let language_name = buffer.language().map(|language| language.name());
@@ -3165,7 +3184,7 @@ impl Project {
                             buffer.forget_transaction(transaction.id)
                         });
                     }
-                    project_transaction.0.insert(buffer, transaction);
+                    project_transaction.0.insert(buffer.clone(), transaction);
                 }
             }
 

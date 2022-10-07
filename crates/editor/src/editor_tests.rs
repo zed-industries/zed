@@ -3846,6 +3846,63 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_concurrent_format_requests(cx: &mut gpui::TestAppContext) {
+    cx.foreground().forbid_parking();
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            document_formatting_provider: Some(lsp::OneOf::Left(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(indoc! {"
+        one.twoˇ
+    "});
+
+    // The format request takes a long time. When it completes, it inserts
+    // a newline and an indent before the `.`
+    cx.lsp
+        .handle_request::<lsp::request::Formatting, _, _>(move |_, cx| {
+            let executor = cx.background();
+            async move {
+                executor.timer(Duration::from_millis(100)).await;
+                Ok(Some(vec![lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 3)),
+                    new_text: "\n    ".into(),
+                }]))
+            }
+        });
+
+    // Submit a format request.
+    let format_1 = cx
+        .update_editor(|editor, cx| editor.format(&Format, cx))
+        .unwrap();
+    cx.foreground().run_until_parked();
+
+    // Submit a second format request.
+    let format_2 = cx
+        .update_editor(|editor, cx| editor.format(&Format, cx))
+        .unwrap();
+    cx.foreground().run_until_parked();
+
+    // Wait for both format requests to complete
+    cx.foreground().advance_clock(Duration::from_millis(200));
+    cx.foreground().start_waiting();
+    format_1.await.unwrap();
+    cx.foreground().start_waiting();
+    format_2.await.unwrap();
+
+    // The formatting edits only happens once.
+    cx.assert_editor_state(indoc! {"
+        one
+            .twoˇ
+    "});
+}
+
+#[gpui::test]
 async fn test_completion(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
