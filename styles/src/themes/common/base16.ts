@@ -185,6 +185,10 @@ export function createTheme(
       color: sample(ramps.neutral, 7),
       weight: fontWeights.normal,
     },
+    "variable.special": {
+      color: sample(ramps.blue, 0.80),
+      weight: fontWeights.normal,
+    },
     comment: {
       color: sample(ramps.neutral, 5),
       weight: fontWeights.normal,
@@ -210,15 +214,11 @@ export function createTheme(
       weight: fontWeights.normal,
     },
     constructor: {
-      color: sample(ramps.blue, 0.5),
-      weight: fontWeights.normal,
-    },
-    variant: {
-      color: sample(ramps.blue, 0.5),
+      color: sample(ramps.cyan, 0.5),
       weight: fontWeights.normal,
     },
     property: {
-      color: sample(ramps.blue, 0.5),
+      color: sample(ramps.blue, 0.6),
       weight: fontWeights.normal,
     },
     enum: {

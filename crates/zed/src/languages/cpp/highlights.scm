@@ -37,11 +37,11 @@
 (type_identifier) @type
 
 ((identifier) @constant
- (#match? @constant "^[A-Z][A-Z\\d_]*$"))
+ (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
 
 (field_identifier) @property
 (statement_identifier) @label
-(this) @variable.builtin
+(this) @variable.special
 
 [
   "break"

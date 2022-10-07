@@ -51,12 +51,12 @@
   (shorthand_property_identifier)
   (shorthand_property_identifier_pattern)
  ] @constant
- (#match? @constant "^[A-Z_][A-Z\\d_]+$"))
+ (#match? @constant "^_*[A-Z_][A-Z\\d_]*$"))
 
 ; Literals
 
-(this) @variable.builtin
-(super) @variable.builtin
+(this) @variable.special
+(super) @variable.special
 
 [
   (true)
