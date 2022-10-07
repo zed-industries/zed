@@ -232,17 +232,21 @@ impl ActiveCall {
     fn set_room(&mut self, room: Option<ModelHandle<Room>>, cx: &mut ModelContext<Self>) {
         if room.as_ref() != self.room.as_ref().map(|room| &room.0) {
             if let Some(room) = room {
-                let subscriptions = vec![
-                    cx.observe(&room, |this, room, cx| {
-                        if room.read(cx).status().is_offline() {
-                            this.set_room(None, cx);
-                        }
+                if room.read(cx).status().is_offline() {
+                    self.room = None;
+                } else {
+                    let subscriptions = vec![
+                        cx.observe(&room, |this, room, cx| {
+                            if room.read(cx).status().is_offline() {
+                                this.set_room(None, cx);
+                            }
 
-                        cx.notify();
-                    }),
-                    cx.subscribe(&room, |_, _, event, cx| cx.emit(event.clone())),
-                ];
-                self.room = Some((room, subscriptions));
+                            cx.notify();
+                        }),
+                        cx.subscribe(&room, |_, _, event, cx| cx.emit(event.clone())),
+                    ];
+                    self.room = Some((room, subscriptions));
+                }
             } else {
                 self.room = None;
             }
