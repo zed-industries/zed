@@ -104,6 +104,11 @@ impl BufferDiff {
         })
     }
 
+    pub fn clear(&mut self, buffer: &text::BufferSnapshot) {
+        self.last_buffer_version = Some(buffer.version().clone());
+        self.tree = SumTree::new();
+    }
+
     pub fn needs_update(&self, buffer: &text::BufferSnapshot) -> bool {
         match &self.last_buffer_version {
             Some(last) => buffer.version().changed_since(last),
@@ -296,6 +301,9 @@ mod tests {
             &diff_base,
             &[(0..1, "", "point five\n"), (2..3, "two\n", "HELLO\n")],
         );
+
+        diff.clear(&buffer);
+        assert_hunks(diff.hunks(&buffer), &buffer, &diff_base, &[]);
     }
 
     #[test]

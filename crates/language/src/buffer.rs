@@ -707,6 +707,11 @@ impl Buffer {
                 }
             })
             .detach()
+        } else {
+            let snapshot = self.snapshot();
+            self.git_diff_status.diff.clear(&snapshot);
+            self.git_diff_update_count += 1;
+            cx.notify();
         }
     }
 
