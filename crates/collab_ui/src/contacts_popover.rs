@@ -282,6 +282,17 @@ impl ContactsPopover {
                         let section = *section;
                         self.toggle_expanded(&ToggleExpanded(section), cx);
                     }
+                    ContactEntry::Contact(contact) => {
+                        if contact.online && !contact.busy {
+                            self.call(
+                                &Call {
+                                    recipient_user_id: contact.user.id,
+                                    initial_project: Some(self.project.clone()),
+                                },
+                                cx,
+                            );
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -636,6 +647,7 @@ impl ContactsPopover {
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         let online = contact.online;
+        let busy = contact.busy;
         let user_id = contact.user.id;
         let initial_project = project.clone();
         let mut element =
@@ -688,7 +700,7 @@ impl ContactsPopover {
                     .boxed()
             })
             .on_click(MouseButton::Left, move |_, cx| {
-                if online {
+                if online && !busy {
                     cx.dispatch_action(Call {
                         recipient_user_id: user_id,
                         initial_project: Some(initial_project.clone()),
