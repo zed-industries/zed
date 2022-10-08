@@ -825,11 +825,27 @@ impl ContactsPopover {
     }
 
     fn call(&mut self, action: &Call, cx: &mut ViewContext<Self>) {
-        ActiveCall::global(cx)
-            .update(cx, |active_call, cx| {
-                active_call.invite(action.recipient_user_id, action.initial_project.clone(), cx)
-            })
-            .detach_and_log_err(cx);
+        let recipient_user_id = action.recipient_user_id;
+        let initial_project = action.initial_project.clone();
+        let window_id = cx.window_id();
+
+        let active_call = ActiveCall::global(cx);
+        cx.spawn_weak(|_, mut cx| async move {
+            active_call
+                .update(&mut cx, |active_call, cx| {
+                    active_call.invite(recipient_user_id, initial_project.clone(), cx)
+                })
+                .await?;
+            if cx.update(|cx| cx.window_is_active(window_id)) {
+                active_call
+                    .update(&mut cx, |call, cx| {
+                        call.set_location(initial_project.as_ref(), cx)
+                    })
+                    .await?;
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 }
 
