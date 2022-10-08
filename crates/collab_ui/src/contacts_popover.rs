@@ -165,7 +165,12 @@ impl ContactsPopover {
                     )
                 }
                 ContactEntry::CallParticipant { user, is_pending } => {
-                    Self::render_call_participant(user, *is_pending, &theme.contacts_popover)
+                    Self::render_call_participant(
+                        user,
+                        *is_pending,
+                        is_selected,
+                        &theme.contacts_popover,
+                    )
                 }
                 ContactEntry::IncomingRequest(user) => Self::render_contact_request(
                     user.clone(),
@@ -303,21 +308,16 @@ impl ContactsPopover {
 
         if let Some(room) = ActiveCall::global(cx).read(cx).room() {
             let room = room.read(cx);
+            let mut call_participants = Vec::new();
 
-            self.entries.push(ContactEntry::Header(Section::ActiveCall));
-            if !self.collapsed_sections.contains(&Section::ActiveCall) {
-                // Populate remote participants.
+            // Populate the active user.
+            if let Some(user) = user_store.current_user() {
                 self.match_candidates.clear();
-                self.match_candidates
-                    .extend(
-                        room.remote_participants()
-                            .iter()
-                            .map(|(peer_id, participant)| StringMatchCandidate {
-                                id: peer_id.0 as usize,
-                                string: participant.user.github_login.clone(),
-                                char_bag: participant.user.github_login.chars().collect(),
-                            }),
-                    );
+                self.match_candidates.push(StringMatchCandidate {
+                    id: 0,
+                    string: user.github_login.clone(),
+                    char_bag: user.github_login.chars().collect(),
+                });
                 let matches = executor.block(match_strings(
                     &self.match_candidates,
                     &query,
@@ -326,38 +326,74 @@ impl ContactsPopover {
                     &Default::default(),
                     executor.clone(),
                 ));
-                self.entries.extend(matches.iter().map(|mat| {
-                    ContactEntry::CallParticipant {
-                        user: room.remote_participants()[&PeerId(mat.candidate_id as u32)]
-                            .user
-                            .clone(),
+                if !matches.is_empty() {
+                    call_participants.push(ContactEntry::CallParticipant {
+                        user,
                         is_pending: false,
-                    }
-                }));
+                    });
+                }
+            }
 
-                // Populate pending participants.
-                self.match_candidates.clear();
-                self.match_candidates
-                    .extend(room.pending_participants().iter().enumerate().map(
-                        |(id, participant)| StringMatchCandidate {
+            // Populate remote participants.
+            self.match_candidates.clear();
+            self.match_candidates
+                .extend(
+                    room.remote_participants()
+                        .iter()
+                        .map(|(peer_id, participant)| StringMatchCandidate {
+                            id: peer_id.0 as usize,
+                            string: participant.user.github_login.clone(),
+                            char_bag: participant.user.github_login.chars().collect(),
+                        }),
+                );
+            let matches = executor.block(match_strings(
+                &self.match_candidates,
+                &query,
+                true,
+                usize::MAX,
+                &Default::default(),
+                executor.clone(),
+            ));
+            call_participants.extend(matches.iter().map(|mat| {
+                ContactEntry::CallParticipant {
+                    user: room.remote_participants()[&PeerId(mat.candidate_id as u32)]
+                        .user
+                        .clone(),
+                    is_pending: false,
+                }
+            }));
+
+            // Populate pending participants.
+            self.match_candidates.clear();
+            self.match_candidates
+                .extend(
+                    room.pending_participants()
+                        .iter()
+                        .enumerate()
+                        .map(|(id, participant)| StringMatchCandidate {
                             id,
                             string: participant.github_login.clone(),
                             char_bag: participant.github_login.chars().collect(),
-                        },
-                    ));
-                let matches = executor.block(match_strings(
-                    &self.match_candidates,
-                    &query,
-                    true,
-                    usize::MAX,
-                    &Default::default(),
-                    executor.clone(),
-                ));
-                self.entries
-                    .extend(matches.iter().map(|mat| ContactEntry::CallParticipant {
-                        user: room.pending_participants()[mat.candidate_id].clone(),
-                        is_pending: true,
-                    }));
+                        }),
+                );
+            let matches = executor.block(match_strings(
+                &self.match_candidates,
+                &query,
+                true,
+                usize::MAX,
+                &Default::default(),
+                executor.clone(),
+            ));
+            call_participants.extend(matches.iter().map(|mat| ContactEntry::CallParticipant {
+                user: room.pending_participants()[mat.candidate_id].clone(),
+                is_pending: true,
+            }));
+
+            if !call_participants.is_empty() {
+                self.entries.push(ContactEntry::Header(Section::ActiveCall));
+                if !self.collapsed_sections.contains(&Section::ActiveCall) {
+                    self.entries.extend(call_participants);
+                }
             }
         }
 
@@ -495,6 +531,7 @@ impl ContactsPopover {
     fn render_call_participant(
         user: &User,
         is_pending: bool,
+        is_selected: bool,
         theme: &theme::ContactsPopover,
     ) -> ElementBox {
         Flex::row()
@@ -512,25 +549,26 @@ impl ContactsPopover {
                 )
                 .contained()
                 .with_style(theme.contact_username.container)
+                .aligned()
+                .left()
+                .flex(1., true)
                 .boxed(),
             )
             .with_children(if is_pending {
                 Some(
-                    Label::new(
-                        "Calling...".to_string(),
-                        theme.calling_indicator.text.clone(),
-                    )
-                    .contained()
-                    .with_style(theme.calling_indicator.container)
-                    .aligned()
-                    .flex_float()
-                    .boxed(),
+                    Label::new("Calling".to_string(), theme.calling_indicator.text.clone())
+                        .contained()
+                        .with_style(theme.calling_indicator.container)
+                        .aligned()
+                        .boxed(),
                 )
             } else {
                 None
             })
             .constrained()
             .with_height(theme.row_height)
+            .contained()
+            .with_style(*theme.contact_row.style_for(Default::default(), is_selected))
             .boxed()
     }
 

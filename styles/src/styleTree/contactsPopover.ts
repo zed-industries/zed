@@ -5,32 +5,6 @@ export default function contactsPopover(theme: Theme) {
   const nameMargin = 8;
   const sidePadding = 12;
 
-  const projectRow = {
-    guestAvatarSpacing: 4,
-    height: 24,
-    guestAvatar: {
-      cornerRadius: 8,
-      width: 14,
-    },
-    name: {
-      ...text(theme, "mono", "placeholder", { size: "sm" }),
-      margin: {
-        left: nameMargin,
-        right: 6,
-      },
-    },
-    guests: {
-      margin: {
-        left: nameMargin,
-        right: nameMargin,
-      },
-    },
-    padding: {
-      left: sidePadding,
-      right: sidePadding,
-    },
-  };
-
   const contactButton = {
     background: backgroundColor(theme, 100),
     color: iconColor(theme, "primary"),
@@ -102,16 +76,6 @@ export default function contactsPopover(theme: Theme) {
         background: backgroundColor(theme, 100, "active"),
       },
     },
-    treeBranch: {
-      color: borderColor(theme, "active"),
-      width: 1,
-      hover: {
-        color: borderColor(theme, "active"),
-      },
-      active: {
-        color: borderColor(theme, "active"),
-      },
-    },
     contactAvatar: {
       cornerRadius: 10,
       width: 18,
@@ -146,20 +110,6 @@ export default function contactsPopover(theme: Theme) {
       background: backgroundColor(theme, 100),
       color: iconColor(theme, "muted"),
     },
-    projectRow: {
-      ...projectRow,
-      background: backgroundColor(theme, 300),
-      name: {
-        ...projectRow.name,
-        ...text(theme, "mono", "secondary", { size: "sm" }),
-      },
-      hover: {
-        background: backgroundColor(theme, 300, "hovered"),
-      },
-      active: {
-        background: backgroundColor(theme, 300, "active"),
-      },
-    },
     inviteRow: {
       padding: {
         left: sidePadding,
@@ -172,7 +122,7 @@ export default function contactsPopover(theme: Theme) {
       },
     },
     callingIndicator: {
-      ...text(theme, "mono", "primary", { size: "xs" }),
+      ...text(theme, "mono", "muted", { size: "xs" })
     }
   }
 }

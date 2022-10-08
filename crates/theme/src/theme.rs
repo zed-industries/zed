@@ -92,7 +92,6 @@ pub struct ContactsPopover {
     pub add_contact_button: IconButton,
     pub header_row: Interactive<ContainedText>,
     pub contact_row: Interactive<ContainerStyle>,
-    pub project_row: Interactive<ProjectRow>,
     pub row_height: f32,
     pub contact_avatar: ImageStyle,
     pub contact_status_free: ContainerStyle,
@@ -101,8 +100,6 @@ pub struct ContactsPopover {
     pub contact_button: Interactive<IconButton>,
     pub contact_button_spacing: f32,
     pub disabled_button: IconButton,
-    pub tree_branch: Interactive<TreeBranch>,
-    pub private_button: Interactive<IconButton>,
     pub section_icon_size: f32,
     pub invite_row: Interactive<ContainedLabel>,
     pub calling_indicator: ContainedText,
@@ -356,12 +353,6 @@ pub struct InviteLink {
     pub icon: Icon,
 }
 
-#[derive(Deserialize, Default, Clone, Copy)]
-pub struct TreeBranch {
-    pub width: f32,
-    pub color: Color,
-}
-
 #[derive(Deserialize, Default)]
 pub struct ContactFinder {
     pub row_height: f32,
@@ -387,16 +378,6 @@ pub struct IconButton {
     pub color: Color,
     pub icon_width: f32,
     pub button_width: f32,
-}
-
-#[derive(Deserialize, Default)]
-pub struct ProjectRow {
-    #[serde(flatten)]
-    pub container: ContainerStyle,
-    pub name: ContainedText,
-    pub guests: ContainerStyle,
-    pub guest_avatar: ImageStyle,
-    pub guest_avatar_spacing: f32,
 }
 
 #[derive(Deserialize, Default)]
