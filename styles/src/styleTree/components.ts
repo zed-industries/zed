@@ -2,12 +2,24 @@ import { fontFamilies, fontSizes, FontWeight } from "../common";
 import { Layer, Styles, StyleSets, Style } from "../themes/common/colorScheme";
 
 function isStyleSet(key: any): key is StyleSets {
-  return ["base", "variant", "on", "info", "positive", "warning", "negative"].includes(key);
+  return [
+    "base",
+    "variant",
+    "on",
+    "info",
+    "positive",
+    "warning",
+    "negative",
+  ].includes(key);
 }
 function isStyle(key: any): key is Styles {
   return ["default", "active", "disabled", "hovered", "pressed"].includes(key);
 }
-function getStyle(layer: Layer, possibleStyleSetOrStyle?: any, possibleStyle?: any): Style {
+function getStyle(
+  layer: Layer,
+  possibleStyleSetOrStyle?: any,
+  possibleStyle?: any
+): Style {
   let styleSet: StyleSets = "base";
   let style: Styles = "default";
   if (isStyleSet(possibleStyleSetOrStyle)) {
@@ -24,29 +36,53 @@ function getStyle(layer: Layer, possibleStyleSetOrStyle?: any, possibleStyle?: a
 }
 
 export function background(layer: Layer, style?: Styles): string;
-export function background(layer: Layer, styleSet?: StyleSets, style?: Styles): string;
-export function background(layer: Layer, styleSetOrStyles?: StyleSets | Styles, style?: Styles): string {
+export function background(
+  layer: Layer,
+  styleSet?: StyleSets,
+  style?: Styles
+): string;
+export function background(
+  layer: Layer,
+  styleSetOrStyles?: StyleSets | Styles,
+  style?: Styles
+): string {
   return getStyle(layer, styleSetOrStyles, style).background;
 }
 
 export function borderColor(layer: Layer, style?: Styles): string;
-export function borderColor(layer: Layer, styleSet?: StyleSets, style?: Styles): string;
-export function borderColor(layer: Layer, styleSetOrStyles?: StyleSets | Styles, style?: Styles): string {
+export function borderColor(
+  layer: Layer,
+  styleSet?: StyleSets,
+  style?: Styles
+): string;
+export function borderColor(
+  layer: Layer,
+  styleSetOrStyles?: StyleSets | Styles,
+  style?: Styles
+): string {
   return getStyle(layer, styleSetOrStyles, style).border;
 }
 
 export function foreground(layer: Layer, style?: Styles): string;
-export function foreground(layer: Layer, styleSet?: StyleSets, style?: Styles): string;
-export function foreground(layer: Layer, styleSetOrStyles?: StyleSets | Styles, style?: Styles): string {
+export function foreground(
+  layer: Layer,
+  styleSet?: StyleSets,
+  style?: Styles
+): string;
+export function foreground(
+  layer: Layer,
+  styleSetOrStyles?: StyleSets | Styles,
+  style?: Styles
+): string {
   return getStyle(layer, styleSetOrStyles, style).foreground;
 }
 
 interface Text {
-  family: keyof typeof fontFamilies,
-  color: string,
-  size: number,
-  weight?: FontWeight,
-  underline?: boolean,
+  family: keyof typeof fontFamilies;
+  color: string;
+  size: number;
+  weight?: FontWeight;
+  underline?: boolean;
 }
 
 interface TextProperties {
@@ -66,16 +102,19 @@ export function text(
   layer: Layer,
   fontFamily: keyof typeof fontFamilies,
   styleSet: StyleSets,
-  properties?: TextProperties): Text;
+  properties?: TextProperties
+): Text;
 export function text(
   layer: Layer,
   fontFamily: keyof typeof fontFamilies,
   style: Styles,
-  properties?: TextProperties): Text;
+  properties?: TextProperties
+): Text;
 export function text(
   layer: Layer,
   fontFamily: keyof typeof fontFamilies,
-  properties?: TextProperties): Text;
+  properties?: TextProperties
+): Text;
 export function text(
   layer: Layer,
   fontFamily: keyof typeof fontFamilies,
@@ -101,10 +140,9 @@ export function text(
   };
 }
 
-
 export interface Border {
-  color: string,
-  width: number,
+  color: string;
+  width: number;
   top?: boolean;
   bottom?: boolean;
   left?: boolean;
@@ -137,10 +175,7 @@ export function border(
   style: Styles,
   properties?: BorderProperties
 ): Border;
-export function border(
-  layer: Layer,
-  properties?: BorderProperties
-): Border;
+export function border(layer: Layer, properties?: BorderProperties): Border;
 export function border(
   layer: Layer,
   styleSetStyleOrProperties?: StyleSets | Styles | BorderProperties,

@@ -4,21 +4,18 @@ import { colorRamp, createColorScheme } from "./common/ramps";
 const name = "rosé-pine-moon";
 
 const ramps = {
-  neutral: chroma.scale([
-    "#232136",
-    "#2A273F",
-    "#393552",
-    "#3E3A53",
-    "#56526C",
-    "#6E6A86",
-    "#908CAA",
-    "#E0DEF4",
-  ]).domain([
-    0,
-    0.3,
-    0.55,
-    1
-  ]),
+  neutral: chroma
+    .scale([
+      "#232136",
+      "#2A273F",
+      "#393552",
+      "#3E3A53",
+      "#56526C",
+      "#6E6A86",
+      "#908CAA",
+      "#E0DEF4",
+    ])
+    .domain([0, 0.3, 0.55, 1]),
   red: colorRamp(chroma("#EB6F92")),
   orange: colorRamp(chroma("#EBBCBA")),
   yellow: colorRamp(chroma("#F6C177")),

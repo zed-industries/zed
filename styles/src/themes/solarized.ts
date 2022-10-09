@@ -4,25 +4,18 @@ import { colorRamp, createColorScheme } from "./common/ramps";
 const name = "solarized";
 
 const ramps = {
-  neutral: chroma.scale([
-    "#002b36",
-    "#073642",
-    "#586e75",
-    "#657b83",
-    "#839496",
-    "#93a1a1",
-    "#eee8d5",
-    "#fdf6e3",
-  ]).domain([
-    0,
-    0.2,
-    0.38,
-    0.45,
-    0.65,
-    0.7,
-    0.85,
-    1
-  ]),
+  neutral: chroma
+    .scale([
+      "#002b36",
+      "#073642",
+      "#586e75",
+      "#657b83",
+      "#839496",
+      "#93a1a1",
+      "#eee8d5",
+      "#fdf6e3",
+    ])
+    .domain([0, 0.2, 0.38, 0.45, 0.65, 0.7, 0.85, 1]),
   red: colorRamp(chroma("#dc322f")),
   orange: colorRamp(chroma("#cb4b16")),
   yellow: colorRamp(chroma("#b58900")),

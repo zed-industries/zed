@@ -1,5 +1,10 @@
 import { fontWeights } from "../common";
-import { ColorScheme, Elevation, Layer, StyleSets } from "../themes/common/colorScheme";
+import {
+  ColorScheme,
+  Elevation,
+  Layer,
+  StyleSets,
+} from "../themes/common/colorScheme";
 import { withOpacity } from "../utils/color";
 import {
   background,
@@ -30,7 +35,7 @@ export default function editor(colorScheme: ColorScheme) {
       header: {
         border: border(layer, {
           top: true,
-        })
+        }),
       },
       message: {
         text: text(layer, "sans", styleSet, { size: "sm" }),
@@ -129,7 +134,7 @@ export default function editor(colorScheme: ColorScheme) {
       weight: fontWeights.normal,
       italic: true,
     },
-  }
+  };
 
   return {
     textColor: syntax.primary.color,
@@ -138,12 +143,18 @@ export default function editor(colorScheme: ColorScheme) {
     highlightedLineBackground: background(layer, "on"),
     codeActions: {
       indicator: foreground(layer, "variant"),
-      verticalScale: 0.55
+      verticalScale: 0.55,
     },
     diffBackgroundDeleted: background(layer, "negative"),
     diffBackgroundInserted: background(layer, "positive"),
-    documentHighlightReadBackground: elevation.ramps.neutral(0.5).alpha(0.2).hex(), // TODO: This was blend
-    documentHighlightWriteBackground: elevation.ramps.neutral(0.5).alpha(0.4).hex(), // TODO: This was blend * 2
+    documentHighlightReadBackground: elevation.ramps
+      .neutral(0.5)
+      .alpha(0.2)
+      .hex(), // TODO: This was blend
+    documentHighlightWriteBackground: elevation.ramps
+      .neutral(0.5)
+      .alpha(0.4)
+      .hex(), // TODO: This was blend * 2
     errorColor: foreground(layer, "negative"),
     gutterBackground: background(layer),
     gutterPaddingFactor: 3.5,

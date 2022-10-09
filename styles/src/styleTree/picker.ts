@@ -1,9 +1,5 @@
 import { ColorScheme } from "../themes/common/colorScheme";
-import {
-  background,
-  border,
-  text,
-} from "./components";
+import { background, border, text } from "./components";
 
 export default function picker(colorScheme: ColorScheme) {
   let elevation = colorScheme.highest;
@@ -14,7 +10,7 @@ export default function picker(colorScheme: ColorScheme) {
     shadow: elevation.shadow,
     cornerRadius: 12,
     padding: {
-      bottom: 4
+      bottom: 4,
     },
     item: {
       padding: {
@@ -26,7 +22,7 @@ export default function picker(colorScheme: ColorScheme) {
       margin: {
         top: 1,
         left: 4,
-        right: 4
+        right: 4,
       },
       cornerRadius: 8,
       text: text(layer, "sans", "variant"),
@@ -34,7 +30,9 @@ export default function picker(colorScheme: ColorScheme) {
       active: {
         background: background(layer, "active"),
         text: text(layer, "sans", "active"),
-        highlightText: text(layer, "sans", "info", "active", { weight: "bold" }),
+        highlightText: text(layer, "sans", "info", "active", {
+          weight: "bold",
+        }),
       },
       hover: {
         background: background(layer, "hovered"),
@@ -61,8 +59,8 @@ export default function picker(colorScheme: ColorScheme) {
         top: 8,
       },
       margin: {
-        bottom: 4
-      }
+        bottom: 4,
+      },
     },
   };
 }

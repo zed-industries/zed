@@ -38,8 +38,8 @@ export default function tabBar(colorScheme: ColorScheme) {
     // When two tabs of the same name are open, a label appears next to them
     description: {
       margin: { left: 8 },
-      ...text(activeLayerInactiveTab, "sans", "disabled", { size: "2xs" })
-    }
+      ...text(activeLayerInactiveTab, "sans", "disabled", { size: "2xs" }),
+    },
   };
 
   const activePaneActiveTab = {
@@ -48,7 +48,7 @@ export default function tabBar(colorScheme: ColorScheme) {
     text: text(activeLayerActiveTab, "sans", { size: "sm" }),
     border: {
       ...tab.border,
-      bottom: false
+      bottom: false,
     },
   };
 
@@ -64,21 +64,24 @@ export default function tabBar(colorScheme: ColorScheme) {
     text: text(inactiveLayerActiveTab, "sans", "variant", { size: "sm" }),
     border: {
       ...tab.border,
-      bottom: false
+      bottom: false,
     },
-  }
+  };
 
   const draggedTab = {
     ...activePaneActiveTab,
     background: withOpacity(tab.background, 0.8),
     border: undefined as any,
     shadow: elevation.above.shadow,
-  }
+  };
 
   return {
     height,
     background: background(activeLayerInactiveTab),
-    dropTargetOverlayColor: withOpacity(foreground(activeLayerInactiveTab), 0.6),
+    dropTargetOverlayColor: withOpacity(
+      foreground(activeLayerInactiveTab),
+      0.6
+    ),
     activePane: {
       activeTab: activePaneActiveTab,
       inactiveTab: tab,
@@ -101,7 +104,7 @@ export default function tabBar(colorScheme: ColorScheme) {
       border: {
         ...tab.border,
         right: false,
-      }
-    }
-  }
+      },
+    },
+  };
 }

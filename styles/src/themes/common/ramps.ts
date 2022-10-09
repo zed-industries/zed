@@ -1,5 +1,15 @@
 import chroma, { Color, Scale } from "chroma-js";
-import { ColorScheme, Elevation, Layer, Player, RampSet, Shadow, Style, Styles, StyleSet } from "./colorScheme";
+import {
+  ColorScheme,
+  Elevation,
+  Layer,
+  Player,
+  RampSet,
+  Shadow,
+  Style,
+  Styles,
+  StyleSet,
+} from "./colorScheme";
 
 export function colorRamp(color: Color): Scale {
   let hue = color.hsl()[0];
@@ -8,7 +18,11 @@ export function colorRamp(color: Color): Scale {
   return chroma.scale([startColor, color, endColor]).mode("hsl");
 }
 
-export function createColorScheme(name: string, isLight: boolean, colorRamps: { [rampName: string]: Scale }): ColorScheme {
+export function createColorScheme(
+  name: string,
+  isLight: boolean,
+  colorRamps: { [rampName: string]: Scale }
+): ColorScheme {
   // Chromajs scales from 0 to 1 flipped if isLight is true
   let baseRamps: typeof colorRamps = {};
 
@@ -20,18 +34,16 @@ export function createColorScheme(name: string, isLight: boolean, colorRamps: { 
   // function to any in order to get the colors back out from the original ramps.
   if (isLight) {
     for (var rampName in colorRamps) {
-      baseRamps[rampName] = chroma
-        .scale(colorRamps[rampName].colors(100).reverse());
+      baseRamps[rampName] = chroma.scale(
+        colorRamps[rampName].colors(100).reverse()
+      );
     }
-    baseRamps.neutral = chroma
-      .scale(colorRamps.neutral.colors(100).reverse());
+    baseRamps.neutral = chroma.scale(colorRamps.neutral.colors(100).reverse());
   } else {
     for (var rampName in colorRamps) {
-      baseRamps[rampName] = chroma
-        .scale(colorRamps[rampName].colors(100));
+      baseRamps[rampName] = chroma.scale(colorRamps[rampName].colors(100));
     }
-    baseRamps.neutral = chroma
-      .scale(colorRamps.neutral.colors(100));
+    baseRamps.neutral = chroma.scale(colorRamps.neutral.colors(100));
   }
 
   let baseSet = {
@@ -46,40 +58,28 @@ export function createColorScheme(name: string, isLight: boolean, colorRamps: { 
     magenta: baseRamps.magenta,
   };
 
-  let lowest = elevation(
-    resampleSet(
-      baseSet,
-      evenSamples(0, 1)
-    ),
-    isLight,
-  );
+  let lowest = elevation(resampleSet(baseSet, evenSamples(0, 1)), isLight);
 
-  let middle = elevation(
-    resampleSet(
-      baseSet,
-      evenSamples(0.08, 1)
-    ),
-    isLight,
-    {
-      blur: 4,
-      color: baseSet.neutral(isLight ? 7 : 0).darken().alpha(0.2).hex(), // TODO used blend previously. Replace with something else
-      offset: [1, 2],
-    }
-  );
+  let middle = elevation(resampleSet(baseSet, evenSamples(0.08, 1)), isLight, {
+    blur: 4,
+    color: baseSet
+      .neutral(isLight ? 7 : 0)
+      .darken()
+      .alpha(0.2)
+      .hex(), // TODO used blend previously. Replace with something else
+    offset: [1, 2],
+  });
   lowest.above = middle;
 
-  let highest = elevation(
-    resampleSet(
-      baseSet,
-      evenSamples(0.16, 1)
-    ),
-    isLight,
-    {
-      blur: 16,
-      color: baseSet.neutral(isLight ? 7 : 0).darken().alpha(0.2).hex(), // TODO used blend previously. Replace with something else
-      offset: [0, 2],
-    }
-  );
+  let highest = elevation(resampleSet(baseSet, evenSamples(0.16, 1)), isLight, {
+    blur: 16,
+    color: baseSet
+      .neutral(isLight ? 7 : 0)
+      .darken()
+      .alpha(0.2)
+      .hex(), // TODO used blend previously. Replace with something else
+    offset: [0, 2],
+  });
   middle.above = highest;
 
   let players = {
@@ -91,7 +91,7 @@ export function createColorScheme(name: string, isLight: boolean, colorRamps: { 
     "5": player(baseSet.cyan),
     "6": player(baseSet.red),
     "7": player(baseSet.yellow),
-  }
+  };
 
   return {
     name,
@@ -109,11 +109,13 @@ function player(ramp: Scale): Player {
   return {
     selection: ramp(0.5).alpha(0.24).hex(),
     cursor: ramp(0.5).hex(),
-  }
+  };
 }
 
 function evenSamples(min: number, max: number): number[] {
-  return Array.from(Array(101).keys()).map((i) => (i / 100) * (max - min) + min);
+  return Array.from(Array(101).keys()).map(
+    (i) => (i / 100) * (max - min) + min
+  );
 }
 
 function resampleSet(ramps: RampSet, samples: number[]): RampSet {
@@ -127,7 +129,7 @@ function resampleSet(ramps: RampSet, samples: number[]): RampSet {
     blue: resample(ramps.blue, samples),
     violet: resample(ramps.violet, samples),
     magenta: resample(ramps.magenta, samples),
-  }
+  };
 }
 
 function resample(scale: Scale, samples: number[]): Scale {
@@ -135,7 +137,11 @@ function resample(scale: Scale, samples: number[]): Scale {
   return chroma.scale(newColors);
 }
 
-function elevation(ramps: RampSet, isLight: boolean, shadow?: Shadow): Elevation {
+function elevation(
+  ramps: RampSet,
+  isLight: boolean,
+  shadow?: Shadow
+): Elevation {
   return {
     ramps,
 
@@ -148,17 +154,20 @@ function elevation(ramps: RampSet, isLight: boolean, shadow?: Shadow): Elevation
 }
 
 interface StyleColors {
-  default: number | Color,
-  hovered: number | Color,
-  pressed: number | Color,
-  active: number | Color,
-  disabled: number | Color,
+  default: number | Color;
+  hovered: number | Color;
+  pressed: number | Color;
+  active: number | Color;
+  disabled: number | Color;
 }
-function buildStyleSet(ramp: Scale, styleDefinitions: {
-  background: StyleColors,
-  border: StyleColors,
-  foreground: StyleColors,
-}): StyleSet {
+function buildStyleSet(
+  ramp: Scale,
+  styleDefinitions: {
+    background: StyleColors;
+    border: StyleColors;
+    foreground: StyleColors;
+  }
+): StyleSet {
   function colorString(indexOrColor: number | Color): string {
     if (typeof indexOrColor === "number") {
       return ramp(indexOrColor).hex();
@@ -172,7 +181,7 @@ function buildStyleSet(ramp: Scale, styleDefinitions: {
       background: colorString(styleDefinitions.background[style]),
       border: colorString(styleDefinitions.border[style]),
       foreground: colorString(styleDefinitions.foreground[style]),
-    }
+    };
   }
 
   return {
@@ -181,73 +190,67 @@ function buildStyleSet(ramp: Scale, styleDefinitions: {
     pressed: buildStyle("pressed"),
     active: buildStyle("active"),
     disabled: buildStyle("disabled"),
-  }
+  };
 }
 
-function buildLayer(fgLayer: number, bgBase: number, fgBase: number, step: number) {
+function buildLayer(bgBase: number, fgBase: number, step: number) {
   return {
     background: {
       default: bgBase,
       hovered: bgBase + step,
-      pressed: bgBase + (step * 1.5),
-      active: bgBase + (step * 2.5),
+      pressed: bgBase + step * 1.5,
+      active: bgBase + step * 3,
       disabled: bgBase,
     },
     border: {
-      default: bgBase + step,
+      default: bgBase + step * 1,
       hovered: bgBase + step,
       pressed: bgBase + step,
-      active: bgBase + step,
-      disabled: bgBase + step,
+      active: bgBase + step * 3,
+      disabled: bgBase + step * 0.5,
     },
     foreground: {
       default: fgBase,
       hovered: fgBase - step,
       pressed: fgBase - step,
       active: fgBase,
-      disabled: fgLayer - (step * 4),
+      disabled: bgBase + step * 4,
     },
-  }
+  };
 }
 
 function bottomLayer(ramps: RampSet, isLight: boolean): Layer {
-  let fgLayer = 1
-
   return {
-    base: buildStyleSet(ramps.neutral, buildLayer(fgLayer, 0.2, 1, 0.08)),
-    variant: buildStyleSet(ramps.neutral, buildLayer(fgLayer, 0.2, 0.7, 0.08)),
-    on: buildStyleSet(ramps.neutral, buildLayer(fgLayer, 0.1, 1, 0.08)),
-    info: buildStyleSet(ramps.blue, buildLayer(fgLayer, 0.2, 1, 0.08)),
-    positive: buildStyleSet(ramps.green, buildLayer(fgLayer, 0.2, 1, 0.08)),
-    warning: buildStyleSet(ramps.yellow, buildLayer(fgLayer, 0.2, 1, 0.08)),
-    negative: buildStyleSet(ramps.red, buildLayer(fgLayer, 0.2, 1, 0.08))
+    base: buildStyleSet(ramps.neutral, buildLayer(0.2, 1, 0.08)),
+    variant: buildStyleSet(ramps.neutral, buildLayer(0.2, 0.7, 0.08)),
+    on: buildStyleSet(ramps.neutral, buildLayer(0.1, 1, 0.08)),
+    info: buildStyleSet(ramps.blue, buildLayer(0.1, 1, 0.08)),
+    positive: buildStyleSet(ramps.green, buildLayer(0.1, 1, 0.08)),
+    warning: buildStyleSet(ramps.yellow, buildLayer(0.1, 1, 0.08)),
+    negative: buildStyleSet(ramps.red, buildLayer(0.1, 1, 0.08)),
   };
 }
 
 function middleLayer(ramps: RampSet, isLight: boolean): Layer {
-  let fgLayer = 1
-
   return {
-    base: buildStyleSet(ramps.neutral, buildLayer(fgLayer, 0.1, 1, 0.08)),
-    variant: buildStyleSet(ramps.neutral, buildLayer(fgLayer, 0.1, 0.7, 0.08)),
-    on: buildStyleSet(ramps.neutral, buildLayer(fgLayer, 0, 1, 0.08)),
-    info: buildStyleSet(ramps.blue, buildLayer(fgLayer, 0.1, 1, 0.08)),
-    positive: buildStyleSet(ramps.green, buildLayer(fgLayer, 0.1, 1, 0.08)),
-    warning: buildStyleSet(ramps.yellow, buildLayer(fgLayer, 0.1, 1, 0.08)),
-    negative: buildStyleSet(ramps.red, buildLayer(fgLayer, 0.1, 1, 0.08))
+    base: buildStyleSet(ramps.neutral, buildLayer(0.1, 1, 0.08)),
+    variant: buildStyleSet(ramps.neutral, buildLayer(0.1, 0.7, 0.08)),
+    on: buildStyleSet(ramps.neutral, buildLayer(0, 1, 0.08)),
+    info: buildStyleSet(ramps.blue, buildLayer(0.1, 1, 0.08)),
+    positive: buildStyleSet(ramps.green, buildLayer(0.1, 1, 0.08)),
+    warning: buildStyleSet(ramps.yellow, buildLayer(0.1, 1, 0.08)),
+    negative: buildStyleSet(ramps.red, buildLayer(0.1, 1, 0.08)),
   };
 }
 
 function topLayer(ramps: RampSet, isLight: boolean): Layer {
-  let fgLayer = 1
-
   return {
-    base: buildStyleSet(ramps.neutral, buildLayer(fgLayer, 0, 1, 0.08)),
-    variant: buildStyleSet(ramps.neutral, buildLayer(fgLayer, 0, 0.7, 0.08)),
-    on: buildStyleSet(ramps.neutral, buildLayer(fgLayer, 0.1, 1, 0.08)),
-    info: buildStyleSet(ramps.blue, buildLayer(fgLayer, 0, 1, 0.08)),
-    positive: buildStyleSet(ramps.green, buildLayer(fgLayer, 0, 1, 0.08)),
-    warning: buildStyleSet(ramps.yellow, buildLayer(fgLayer, 0, 1, 0.08)),
-    negative: buildStyleSet(ramps.red, buildLayer(fgLayer, 0, 1, 0.08))
+    base: buildStyleSet(ramps.neutral, buildLayer(0, 1, 0.08)),
+    variant: buildStyleSet(ramps.neutral, buildLayer(0, 0.7, 0.08)),
+    on: buildStyleSet(ramps.neutral, buildLayer(0.1, 1, 0.08)),
+    info: buildStyleSet(ramps.blue, buildLayer(0.1, 1, 0.08)),
+    positive: buildStyleSet(ramps.green, buildLayer(0.1, 1, 0.08)),
+    warning: buildStyleSet(ramps.yellow, buildLayer(0.1, 1, 0.08)),
+    negative: buildStyleSet(ramps.red, buildLayer(0.1, 1, 0.08)),
   };
 }

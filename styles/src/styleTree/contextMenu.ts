@@ -1,10 +1,5 @@
 import { ColorScheme } from "../themes/common/colorScheme";
-import {
-  background,
-  border,
-  borderColor,
-  text,
-} from "./components";
+import { background, border, borderColor, text } from "./components";
 
 export default function contextMenu(colorScheme: ColorScheme) {
   let elevation = colorScheme.middle;

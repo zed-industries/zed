@@ -24,7 +24,7 @@ export default function app(colorScheme: ColorScheme): Object {
   return {
     meta: {
       name: colorScheme.name,
-      isLight: colorScheme.isLight
+      isLight: colorScheme.isLight,
     },
     picker: picker(colorScheme),
     workspace: workspace(colorScheme),
@@ -61,7 +61,7 @@ export default function app(colorScheme: ColorScheme): Object {
           blue: colorScheme.lowest.ramps.blue.colors(100, "hex"),
           violet: colorScheme.lowest.ramps.violet.colors(100, "hex"),
           magenta: colorScheme.lowest.ramps.magenta.colors(100, "hex"),
-        }
+        },
       },
       middle: {
         ...colorScheme.middle,
@@ -75,7 +75,7 @@ export default function app(colorScheme: ColorScheme): Object {
           blue: colorScheme.middle.ramps.blue.colors(100, "hex"),
           violet: colorScheme.middle.ramps.violet.colors(100, "hex"),
           magenta: colorScheme.middle.ramps.magenta.colors(100, "hex"),
-        }
+        },
       },
       highest: {
         ...colorScheme.highest,
@@ -89,7 +89,7 @@ export default function app(colorScheme: ColorScheme): Object {
           blue: colorScheme.highest.ramps.blue.colors(100, "hex"),
           violet: colorScheme.highest.ramps.violet.colors(100, "hex"),
           magenta: colorScheme.highest.ramps.magenta.colors(100, "hex"),
-        }
+        },
       },
       players: [
         colorScheme.players["0"],
@@ -100,7 +100,7 @@ export default function app(colorScheme: ColorScheme): Object {
         colorScheme.players["5"],
         colorScheme.players["6"],
         colorScheme.players["7"],
-      ]
-    }
+      ],
+    },
   };
 }
