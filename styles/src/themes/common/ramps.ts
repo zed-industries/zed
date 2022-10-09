@@ -139,9 +139,9 @@ function elevation(ramps: RampSet, isLight: boolean, shadow?: Shadow): Elevation
   return {
     ramps,
 
-    bottom: bottomLayer(ramps, isLight),
-    middle: middleLayer(ramps, isLight),
-    top: topLayer(ramps, isLight),
+    bottom: bottomLayer("bottom", ramps, isLight),
+    middle: middleLayer("middle", ramps, isLight),
+    top: topLayer("top", ramps, isLight),
 
     shadow,
   };
@@ -184,30 +184,52 @@ function buildStyleSet(ramp: Scale, styleDefinitions: {
   }
 }
 
-function bottomLayer(ramps: RampSet, isLight: boolean): Layer {
-  let baseSet = buildStyleSet(ramps.neutral, {
+function buildLayer(layer: string) {
+  let base: number
+  let step: number
+
+  if (layer == "bottom") {
+    base = 0.2
+    step = 0.05
+  }
+
+  if (layer == "middle") {
+    base = 0.1
+    step = 0.05
+  }
+
+  if (layer == "top") {
+    base = 0
+    step = 0.05
+  }
+
+  return {
     background: {
-      default: 0.16,
-      hovered: 0.31,
-      pressed: 0.41,
-      active: 1,
-      disabled: 0.16,
+      default: base,
+      hovered: base + step,
+      pressed: base + (step * 2),
+      active: base + (step * 3),
+      disabled: base,
     },
     border: {
-      default: 0.2,
-      hovered: 0.2,
-      pressed: 0.2,
-      active: 0.5,
-      disabled: 0.2,
+      default: base + step,
+      hovered: base + step,
+      pressed: base + step,
+      active: base + step,
+      disabled: base + step,
     },
     foreground: {
       default: 1,
-      hovered: 1,
-      pressed: 1,
-      active: 0,
-      disabled: 0.4,
+      hovered: 1 - step,
+      pressed: 1 - (step * 2),
+      active: 1 - (step * 4),
+      disabled: 1,
     },
-  });
+  }
+}
+
+function bottomLayer(layer = "bottom", ramps: RampSet, isLight: boolean): Layer {
+  let baseSet = buildStyleSet(ramps.neutral, buildLayer(layer));
 
   let variantSet = buildStyleSet(ramps.neutral, {
     background: {
@@ -257,29 +279,7 @@ function bottomLayer(ramps: RampSet, isLight: boolean): Layer {
     },
   });
 
-  let infoSet = buildStyleSet(ramps.blue, {
-    background: {
-      default: 0,
-      hovered: 0.1,
-      pressed: 0.2,
-      active: 0.4,
-      disabled: 0,
-    },
-    border: {
-      default: 0.2,
-      hovered: 0.2,
-      pressed: 0.2,
-      active: 0.6,
-      disabled: 0.1,
-    },
-    foreground: {
-      default: 0.9,
-      hovered: 0.9,
-      pressed: 0.9,
-      active: 0.9,
-      disabled: 0.2,
-    },
-  });
+  let infoSet = buildStyleSet(ramps.blue, buildLayer(layer))
 
   let positiveSet = buildStyleSet(ramps.green, {
     background: {
@@ -364,30 +364,8 @@ function bottomLayer(ramps: RampSet, isLight: boolean): Layer {
   };
 }
 
-function middleLayer(ramps: RampSet, isLight: boolean): Layer {
-  let baseSet = buildStyleSet(ramps.neutral, {
-    background: {
-      default: 0.08,
-      hovered: 0.23,
-      pressed: 0.33,
-      active: 1,
-      disabled: 0.08,
-    },
-    border: {
-      default: 0.2,
-      hovered: 0.2,
-      pressed: 0.2,
-      active: 0.5,
-      disabled: 0.2,
-    },
-    foreground: {
-      default: 1,
-      hovered: 1,
-      pressed: 1,
-      active: 0,
-      disabled: 0.4,
-    },
-  });
+function middleLayer(layer: string = "middle", ramps: RampSet, isLight: boolean): Layer {
+  let baseSet = buildStyleSet(ramps.neutral, buildLayer(layer));
 
   let variantSet = buildStyleSet(ramps.neutral, {
     background: {
@@ -437,29 +415,7 @@ function middleLayer(ramps: RampSet, isLight: boolean): Layer {
     },
   });
 
-  let infoSet = buildStyleSet(ramps.blue, {
-    background: {
-      default: 0,
-      hovered: 0.1,
-      pressed: 0.2,
-      active: 0.4,
-      disabled: 0,
-    },
-    border: {
-      default: 0.2,
-      hovered: 0.2,
-      pressed: 0.2,
-      active: 0.6,
-      disabled: 0.1,
-    },
-    foreground: {
-      default: 0.9,
-      hovered: 0.9,
-      pressed: 0.9,
-      active: 0.9,
-      disabled: 0.2,
-    },
-  });
+  let infoSet = buildStyleSet(ramps.blue, buildLayer(layer))
 
   let positiveSet = buildStyleSet(ramps.green, {
     background: {
@@ -544,31 +500,9 @@ function middleLayer(ramps: RampSet, isLight: boolean): Layer {
   };
 }
 
-function topLayer(ramps: RampSet, isLight: boolean): Layer {
+function topLayer(layer: string = "top", ramps: RampSet, isLight: boolean): Layer {
 
-  let baseSet = buildStyleSet(ramps.neutral, {
-    background: {
-      default: 0,
-      hovered: 0.15,
-      pressed: 0.25,
-      active: 1,
-      disabled: 0,
-    },
-    border: {
-      default: 0.2,
-      hovered: 0.2,
-      pressed: 0.2,
-      active: 0.5,
-      disabled: 0.2,
-    },
-    foreground: {
-      default: 1,
-      hovered: 1,
-      pressed: 1,
-      active: 0,
-      disabled: 0.4,
-    },
-  });
+  let baseSet = buildStyleSet(ramps.neutral, buildLayer(layer));
 
   let variantSet = buildStyleSet(ramps.neutral, {
     background: {
