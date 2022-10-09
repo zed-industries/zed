@@ -1,1 +1,1 @@
-[{"Text":""},{"Head":{"row":0,"column":0}},{"Mode":"Normal"},{"Text":"This is a test"},{"Head":{"row":0,"column":13}},{"Mode":"Normal"}]
+[{"Text":""},{"Mode":"Normal"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Normal"},{"Text":"This is a test"},{"Mode":"Normal"},{"Selection":{"start":[0,13],"end":[0,13]}},{"Mode":"Normal"}]

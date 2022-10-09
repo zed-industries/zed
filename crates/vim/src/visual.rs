@@ -280,220 +280,92 @@ pub fn paste(_: &mut Workspace, _: &VisualPaste, cx: &mut ViewContext<Workspace>
 mod test {
     use indoc::indoc;
 
-    use crate::{state::Mode, test_contexts::VimTestContext};
+    use crate::{
+        state::Mode,
+        test_contexts::{NeovimBackedTestContext, VimTestContext},
+    };
 
     #[gpui::test]
     async fn test_enter_visual_mode(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx
-            .binding(["v", "w", "j"])
-            .mode_after(Mode::Visual { line: false });
-        cx.assert(
-            indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx)
+            .await
+            .binding(["v", "w", "j"]);
+        cx.assert_all(indoc! {"
                 The ˇquick brown
-                fox jumps over
-                the lazy dog"},
-            indoc! {"
-                The «quick brown
-                fox jumps ˇ»over
-                the lazy dog"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick brown
-                fox jumps over
-                the ˇlazy dog"},
-            indoc! {"
-                The quick brown
-                fox jumps over
-                the «lazy ˇ»dog"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick brown
                 fox jumps ˇover
-                the lazy dog"},
-            indoc! {"
-                The quick brown
-                fox jumps «over
-                ˇ»the lazy dog"},
-        );
-        let mut cx = cx
-            .binding(["v", "b", "k"])
-            .mode_after(Mode::Visual { line: false });
-        cx.assert(
-            indoc! {"
+                the ˇlazy dog"})
+            .await;
+        let mut cx = cx.binding(["v", "b", "k"]);
+        cx.assert_all(indoc! {"
                 The ˇquick brown
-                fox jumps over
-                the lazy dog"},
-            indoc! {"
-                «ˇThe q»uick brown
-                fox jumps over
-                the lazy dog"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick brown
-                fox jumps over
-                the ˇlazy dog"},
-            indoc! {"
-                The quick brown
-                «ˇfox jumps over
-                the l»azy dog"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick brown
                 fox jumps ˇover
-                the lazy dog"},
-            indoc! {"
-                The «ˇquick brown
-                fox jumps o»ver
-                the lazy dog"},
-        );
+                the ˇlazy dog"})
+            .await;
     }
 
     #[gpui::test]
     async fn test_visual_delete(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["v", "w", "x"]);
-        cx.assert("The quick ˇbrown", "The quickˇ ");
+        let mut cx = NeovimBackedTestContext::new(cx)
+            .await
+            .binding(["v", "w", "x"]);
+        cx.assert("The quick ˇbrown").await;
         let mut cx = cx.binding(["v", "w", "j", "x"]);
-        cx.assert(
-            indoc! {"
+        cx.assert(indoc! {"
                 The ˇquick brown
                 fox jumps over
-                the lazy dog"},
-            indoc! {"
-                The ˇver
-                the lazy dog"},
-        );
+                the lazy dog"})
+            .await;
         // Test pasting code copied on delete
-        cx.simulate_keystrokes(["j", "p"]);
-        cx.assert_editor_state(indoc! {"
-            The ver
-            the lˇquick brown
-            fox jumps oazy dog"});
+        cx.simulate_shared_keystrokes(["j", "p"]).await;
+        cx.assert_state_matches().await;
 
-        cx.assert(
-            indoc! {"
-                The quick brown
-                fox jumps over
-                the ˇlazy dog"},
-            indoc! {"
-                The quick brown
-                fox jumps over
-                the ˇog"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick brown
-                fox jumps ˇover
-                the lazy dog"},
-            indoc! {"
-                The quick brown
-                fox jumps ˇhe lazy dog"},
-        );
-        let mut cx = cx.binding(["v", "b", "k", "x"]);
-        cx.assert(
-            indoc! {"
+        cx.assert_all(indoc! {"
                 The ˇquick brown
                 fox jumps over
-                the lazy dog"},
-            indoc! {"
-                ˇuick brown
-                fox jumps over
-                the lazy dog"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick brown
-                fox jumps over
-                the ˇlazy dog"},
-            indoc! {"
-                The quick brown
-                ˇazy dog"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick brown
+                the ˇlazy dog"})
+            .await;
+        let mut cx = cx.binding(["v", "b", "k", "x"]);
+        cx.assert_all(indoc! {"
+                The ˇquick brown
                 fox jumps ˇover
-                the lazy dog"},
-            indoc! {"
-                The ˇver
-                the lazy dog"},
-        );
+                the ˇlazy dog"})
+            .await;
     }
 
     #[gpui::test]
     async fn test_visual_line_delete(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["shift-v", "x"]);
-        cx.assert(
-            indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx)
+            .await
+            .binding(["shift-v", "x"]);
+        cx.assert(indoc! {"
                 The quˇick brown
                 fox jumps over
-                the lazy dog"},
-            indoc! {"
-                fox juˇmps over
-                the lazy dog"},
-        );
+                the lazy dog"})
+            .await;
         // Test pasting code copied on delete
-        cx.simulate_keystroke("p");
-        cx.assert_editor_state(indoc! {"
-            fox jumps over
-            ˇThe quick brown
-            the lazy dog"});
+        cx.simulate_shared_keystroke("p").await;
+        cx.assert_state_matches().await;
 
-        cx.assert(
-            indoc! {"
+        cx.assert_all(indoc! {"
                 The quick brown
                 fox juˇmps over
-                the lazy dog"},
-            indoc! {"
-                The quick brown
-                the laˇzy dog"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick brown
-                fox jumps over
-                the laˇzy dog"},
-            indoc! {"
-                The quick brown
-                fox juˇmps over"},
-        );
+                the laˇzy dog"})
+            .await;
         let mut cx = cx.binding(["shift-v", "j", "x"]);
-        cx.assert(
-            indoc! {"
+        cx.assert(indoc! {"
                 The quˇick brown
                 fox jumps over
-                the lazy dog"},
-            "the laˇzy dog",
-        );
+                the lazy dog"})
+            .await;
         // Test pasting code copied on delete
-        cx.simulate_keystroke("p");
-        cx.assert_editor_state(indoc! {"
-            the lazy dog
-            ˇThe quick brown
-            fox jumps over"});
+        cx.simulate_shared_keystroke("p").await;
+        cx.assert_state_matches().await;
 
-        cx.assert(
-            indoc! {"
+        cx.assert_all(indoc! {"
                 The quick brown
                 fox juˇmps over
-                the lazy dog"},
-            "The quˇick brown",
-        );
-        cx.assert(
-            indoc! {"
-                The quick brown
-                fox jumps over
-                the laˇzy dog"},
-            indoc! {"
-                The quick brown
-                fox juˇmps over"},
-        );
+                the laˇzy dog"})
+            .await;
     }
 
     #[gpui::test]

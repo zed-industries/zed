@@ -1,5 +1,5 @@
 use std::{
-    ops::{Deref, DerefMut},
+    ops::{Deref, DerefMut, Range},
     path::PathBuf,
 };
 
@@ -145,10 +145,17 @@ impl<'a> NeovimBackedTestContext<'a> {
             self.assertion_context.context()
         );
 
-        let zed_head = self.update_editor(|editor, cx| editor.selections.newest_display(cx).head());
+        let zed_selection = self.update_editor(|editor, cx| editor.selections.newest_display(cx));
+        let mut zed_selection_range = zed_selection.range();
+        // Zed selections adjust themselves to make the end point visually make sense
+        if zed_selection.reversed {
+            *zed_selection_range.end.column_mut() =
+                zed_selection_range.end.column().saturating_sub(1);
+        }
+        let neovim_selection = self.neovim.selection().await;
         assert_eq!(
-            self.neovim.head().await,
-            zed_head,
+            neovim_selection,
+            zed_selection_range,
             "{}",
             self.assertion_context.context()
         );
@@ -234,7 +241,7 @@ impl<'a> DerefMut for NeovimBackedTestContext<'a> {
 #[derive(Serialize, Deserialize)]
 pub enum NeovimData {
     Text(String),
-    Head { row: u32, column: u32 },
+    Selection { start: (u32, u32), end: (u32, u32) },
     Mode(Option<Mode>),
 }
 
@@ -267,6 +274,7 @@ impl NeovimConnection {
                 .await
                 .expect("Could not attach to ui");
 
+            // Makes system act a little more like zed in terms of indentation
             nvim.set_option("smartindent", nvim_rs::Value::Boolean(true))
                 .await
                 .expect("Could not set smartindent on startup");
@@ -319,36 +327,64 @@ impl NeovimConnection {
     }
 
     #[cfg(feature = "neovim")]
-    pub async fn head(&mut self) -> DisplayPoint {
-        let nvim_row: u32 = self
-            .nvim
-            .command_output("echo line('.')")
-            .await
-            .unwrap()
-            .parse::<u32>()
-            .unwrap()
-            - 1; // Neovim rows start at 1
-        let nvim_column: u32 = self
-            .nvim
-            .command_output("echo col('.')")
-            .await
-            .unwrap()
-            .parse::<u32>()
-            .unwrap()
-            - 1; // Neovim columns start at 1
+    pub async fn selection(&mut self) -> Range<DisplayPoint> {
+        let (start, end) = if let Some(Mode::Visual { .. }) = self.mode().await {
+            self.nvim
+                .input("<escape>")
+                .await
+                .expect("Could not exit visual mode");
+            let nvim_buffer = self
+                .nvim
+                .get_current_buf()
+                .await
+                .expect("Could not get neovim buffer");
+            let (start_row, start_col) = nvim_buffer
+                .get_mark("<")
+                .await
+                .expect("Could not get selection start");
+            let (end_row, end_col) = nvim_buffer
+                .get_mark(">")
+                .await
+                .expect("Could not get selection end");
+            self.nvim
+                .input("gv")
+                .await
+                .expect("Could not reselect visual selection");
 
-        self.data.push_back(NeovimData::Head {
-            row: nvim_row,
-            column: nvim_column,
-        });
+            (
+                (start_row as u32 - 1, start_col as u32),
+                (end_row as u32 - 1, end_col as u32),
+            )
+        } else {
+            let nvim_row: u32 = self
+                .nvim
+                .command_output("echo line('.')")
+                .await
+                .unwrap()
+                .parse::<u32>()
+                .unwrap()
+                - 1; // Neovim rows start at 1
+            let nvim_column: u32 = self
+                .nvim
+                .command_output("echo col('.')")
+                .await
+                .unwrap()
+                .parse::<u32>()
+                .unwrap()
+                - 1; // Neovim columns start at 1
 
-        DisplayPoint::new(nvim_row, nvim_column)
+            ((nvim_row, nvim_column), (nvim_row, nvim_column))
+        };
+
+        self.data.push_back(NeovimData::Selection { start, end });
+
+        DisplayPoint::new(start.0, start.1)..DisplayPoint::new(end.0, end.1)
     }
 
     #[cfg(not(feature = "neovim"))]
-    pub async fn head(&mut self) -> DisplayPoint {
-        if let Some(NeovimData::Head { row, column }) = self.data.pop_front() {
-            DisplayPoint::new(row, column)
+    pub async fn selection(&mut self) -> Range<DisplayPoint> {
+        if let Some(NeovimData::Selection { start, end }) = self.data.pop_front() {
+            DisplayPoint::new(start.0, start.1)..DisplayPoint::new(end.0, end.1)
         } else {
             panic!("Invalid test data. Is test deterministic? Try running with '--features neovim' to regenerate");
         }
