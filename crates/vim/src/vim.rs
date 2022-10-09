@@ -26,7 +26,10 @@ pub struct SwitchMode(pub Mode);
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct PushOperator(pub Operator);
 
-impl_actions!(vim, [SwitchMode, PushOperator]);
+#[derive(Clone, Deserialize, PartialEq)]
+struct Number(u8);
+
+impl_actions!(vim, [Number, SwitchMode, PushOperator]);
 
 pub fn init(cx: &mut MutableAppContext) {
     editor_events::init(cx);
@@ -45,6 +48,9 @@ pub fn init(cx: &mut MutableAppContext) {
             Vim::update(cx, |vim, cx| vim.push_operator(operator, cx))
         },
     );
+    cx.add_action(|_: &mut Workspace, n: &Number, cx: _| {
+        Vim::update(cx, |vim, cx| vim.push_number(n, cx));
+    });
 
     // Editor Actions
     cx.add_action(|_: &mut Editor, _: &Cancel, cx| {
@@ -145,11 +151,29 @@ impl Vim {
         self.sync_vim_settings(cx);
     }
 
+    fn push_number(&mut self, Number(number): &Number, cx: &mut MutableAppContext) {
+        if let Some(Operator::Number(current_number)) = self.active_operator() {
+            self.pop_operator(cx);
+            self.push_operator(Operator::Number(current_number * 10 + *number as usize), cx);
+        } else {
+            self.push_operator(Operator::Number(*number as usize), cx);
+        }
+    }
+
     fn pop_operator(&mut self, cx: &mut MutableAppContext) -> Operator {
         let popped_operator = self.state.operator_stack.pop()
             .expect("Operator popped when no operator was on the stack. This likely means there is an invalid keymap config");
         self.sync_vim_settings(cx);
         popped_operator
+    }
+
+    fn pop_number_operator(&mut self, cx: &mut MutableAppContext) -> usize {
+        let mut times = 1;
+        if let Some(Operator::Number(number)) = self.active_operator() {
+            times = number;
+            self.pop_operator(cx);
+        }
+        times
     }
 
     fn clear_operator(&mut self, cx: &mut MutableAppContext) {
@@ -227,7 +251,7 @@ mod test {
 
     #[gpui::test]
     async fn test_neovim(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new("test_neovim", cx).await;
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.simulate_shared_keystroke("i").await;
         cx.simulate_shared_keystrokes([

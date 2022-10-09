@@ -3,6 +3,7 @@ use std::{
     path::PathBuf,
 };
 
+use collections::{HashMap, HashSet, VecDeque};
 use editor::DisplayPoint;
 use gpui::keymap::Keystroke;
 
@@ -14,11 +15,13 @@ use async_trait::async_trait;
 use nvim_rs::{
     create::tokio::new_child_cmd, error::LoopError, Handler, Neovim, UiAttachOptions, Value,
 };
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "neovim")]
 use tokio::{
     process::{Child, ChildStdin, Command},
     task::JoinHandle,
 };
+use util::test::marked_text_offsets;
 
 use crate::state::Mode;
 
@@ -26,60 +29,43 @@ use super::{NeovimBackedBindingTestContext, VimTestContext};
 
 pub struct NeovimBackedTestContext<'a> {
     cx: VimTestContext<'a>,
-    test_case_id: &'static str,
-    data_counter: usize,
-    #[cfg(feature = "neovim")]
-    nvim: Neovim<nvim_rs::compat::tokio::Compat<ChildStdin>>,
-    #[cfg(feature = "neovim")]
-    _join_handle: JoinHandle<Result<(), Box<LoopError>>>,
-    #[cfg(feature = "neovim")]
-    _child: Child,
+    // Lookup for exempted assertions. Keyed by the insertion text, and with a value indicating which
+    // bindings are exempted. If None, all bindings are ignored for that insertion text.
+    exemptions: HashMap<String, Option<HashSet<String>>>,
+    neovim: NeovimConnection,
 }
 
 impl<'a> NeovimBackedTestContext<'a> {
-    pub async fn new(
-        test_case_id: &'static str,
-        cx: &'a mut gpui::TestAppContext,
-    ) -> NeovimBackedTestContext<'a> {
+    pub async fn new(cx: &'a mut gpui::TestAppContext) -> NeovimBackedTestContext<'a> {
+        let function_name = cx.function_name.clone();
         let cx = VimTestContext::new(cx, true).await;
-
-        #[cfg(feature = "neovim")]
-        let handler = NvimHandler {};
-        #[cfg(feature = "neovim")]
-        let (nvim, join_handle, child) = Compat::new(async {
-            let (nvim, join_handle, child) = new_child_cmd(
-                &mut Command::new("nvim").arg("--embed").arg("--clean"),
-                handler,
-            )
-            .await
-            .expect("Could not connect to neovim process");
-
-            nvim.ui_attach(100, 100, &UiAttachOptions::default())
-                .await
-                .expect("Could not attach to ui");
-
-            (nvim, join_handle, child)
-        })
-        .await;
-
-        let result = Self {
+        Self {
             cx,
-            test_case_id,
-            data_counter: 0,
-            #[cfg(feature = "neovim")]
-            nvim,
-            #[cfg(feature = "neovim")]
-            _join_handle: join_handle,
-            #[cfg(feature = "neovim")]
-            _child: child,
-        };
-
-        #[cfg(feature = "neovim")]
-        {
-            result.clear_test_data()
+            exemptions: Default::default(),
+            neovim: NeovimConnection::new(function_name).await,
         }
+    }
 
-        result
+    pub fn add_initial_state_exemption(&mut self, initial_state: &str) {
+        let initial_state = initial_state.to_string();
+        // None represents all keybindings being exempted for that initial state
+        self.exemptions.insert(initial_state, None);
+    }
+
+    pub fn add_keybinding_exemption<const COUNT: usize>(
+        &mut self,
+        keybinding: [&str; COUNT],
+        initial_state: &str,
+    ) {
+        let initial_state = initial_state.to_string();
+        let exempted_keybindings = self
+            .exemptions
+            .entry(initial_state)
+            .or_insert(Some(Default::default()));
+
+        if let Some(exempted_bindings) = exempted_keybindings.as_mut() {
+            exempted_bindings.insert(format!("{keybinding:?}"));
+        }
     }
 
     pub async fn simulate_shared_keystroke(&mut self, keystroke_text: &str) {
@@ -101,7 +87,7 @@ impl<'a> NeovimBackedTestContext<'a> {
 
             let key = format!("{start}{shift}{ctrl}{alt}{cmd}{}{end}", keystroke.key);
 
-            self.nvim
+            self.neovim
                 .input(&key)
                 .await
                 .expect("Could not input keystroke");
@@ -128,37 +114,32 @@ impl<'a> NeovimBackedTestContext<'a> {
             let cursor_point =
                 self.editor(|editor, cx| editor.selections.newest::<language::Point>(cx));
             let nvim_buffer = self
-                .nvim
+                .neovim
                 .get_current_buf()
                 .await
                 .expect("Could not get neovim buffer");
             let mut lines = self
                 .buffer_text()
-                .lines()
+                .split('\n')
                 .map(|line| line.to_string())
                 .collect::<Vec<_>>();
-
-            if lines.len() > 1 {
-                // Add final newline which is missing from buffer_text
-                lines.push("".to_string());
-            }
 
             nvim_buffer
                 .set_lines(0, -1, false, lines)
                 .await
                 .expect("Could not set nvim buffer text");
 
-            self.nvim
+            self.neovim
                 .input("<escape>")
                 .await
                 .expect("Could not send escape to nvim");
-            self.nvim
+            self.neovim
                 .input("<escape>")
                 .await
                 .expect("Could not send escape to nvim");
 
             let nvim_window = self
-                .nvim
+                .neovim
                 .get_current_win()
                 .await
                 .expect("Could not get neovim window");
@@ -173,18 +154,161 @@ impl<'a> NeovimBackedTestContext<'a> {
     }
 
     pub async fn assert_state_matches(&mut self) {
-        assert_eq!(self.neovim_text().await, self.buffer_text());
+        assert_eq!(
+            self.neovim.text().await,
+            self.buffer_text(),
+            "{}",
+            self.assertion_context.context()
+        );
 
         let zed_head = self.update_editor(|editor, cx| editor.selections.newest_display(cx).head());
-        assert_eq!(self.neovim_head().await, zed_head);
+        assert_eq!(
+            self.neovim.head().await,
+            zed_head,
+            "{}",
+            self.assertion_context.context()
+        );
 
-        if let Some(neovim_mode) = self.neovim_mode().await {
-            assert_eq!(neovim_mode, self.mode());
+        if let Some(neovim_mode) = self.neovim.mode().await {
+            assert_eq!(
+                neovim_mode,
+                self.mode(),
+                "{}",
+                self.assertion_context.context()
+            );
+        }
+    }
+
+    pub async fn assert_binding_matches<const COUNT: usize>(
+        &mut self,
+        keystrokes: [&str; COUNT],
+        initial_state: &str,
+    ) {
+        if let Some(possible_exempted_keystrokes) = self.exemptions.get(initial_state) {
+            match possible_exempted_keystrokes {
+                Some(exempted_keystrokes) => {
+                    if exempted_keystrokes.contains(&format!("{keystrokes:?}")) {
+                        // This keystroke was exempted for this insertion text
+                        return;
+                    }
+                }
+                None => {
+                    // All keystrokes for this insertion text are exempted
+                    return;
+                }
+            }
+        }
+
+        let _keybinding_context_handle =
+            self.add_assertion_context(format!("Key Binding Under Test: {:?}", keystrokes));
+        let _initial_state_context_handle = self.add_assertion_context(format!(
+            "Initial State: \"{}\"",
+            initial_state.escape_debug().to_string()
+        ));
+        self.set_shared_state(initial_state).await;
+        self.simulate_shared_keystrokes(keystrokes).await;
+        self.assert_state_matches().await;
+    }
+
+    pub async fn assert_binding_matches_all<const COUNT: usize>(
+        &mut self,
+        keystrokes: [&str; COUNT],
+        marked_positions: &str,
+    ) {
+        let (unmarked_text, cursor_offsets) = marked_text_offsets(marked_positions);
+
+        for cursor_offset in cursor_offsets.iter() {
+            let mut marked_text = unmarked_text.clone();
+            marked_text.insert(*cursor_offset, 'ˇ');
+
+            self.assert_binding_matches(keystrokes, &marked_text).await;
+        }
+    }
+
+    pub fn binding<const COUNT: usize>(
+        self,
+        keystrokes: [&'static str; COUNT],
+    ) -> NeovimBackedBindingTestContext<'a, COUNT> {
+        NeovimBackedBindingTestContext::new(keystrokes, self)
+    }
+}
+
+impl<'a> Deref for NeovimBackedTestContext<'a> {
+    type Target = VimTestContext<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.cx
+    }
+}
+
+impl<'a> DerefMut for NeovimBackedTestContext<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.cx
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum NeovimData {
+    Text(String),
+    Head { row: u32, column: u32 },
+    Mode(Option<Mode>),
+}
+
+struct NeovimConnection {
+    data: VecDeque<NeovimData>,
+    #[cfg(feature = "neovim")]
+    test_case_id: String,
+    #[cfg(feature = "neovim")]
+    nvim: Neovim<nvim_rs::compat::tokio::Compat<ChildStdin>>,
+    #[cfg(feature = "neovim")]
+    _join_handle: JoinHandle<Result<(), Box<LoopError>>>,
+    #[cfg(feature = "neovim")]
+    _child: Child,
+}
+
+impl NeovimConnection {
+    async fn new(test_case_id: String) -> Self {
+        #[cfg(feature = "neovim")]
+        let handler = NvimHandler {};
+        #[cfg(feature = "neovim")]
+        let (nvim, join_handle, child) = Compat::new(async {
+            let (nvim, join_handle, child) = new_child_cmd(
+                &mut Command::new("nvim").arg("--embed").arg("--clean"),
+                handler,
+            )
+            .await
+            .expect("Could not connect to neovim process");
+
+            nvim.ui_attach(100, 100, &UiAttachOptions::default())
+                .await
+                .expect("Could not attach to ui");
+
+            nvim.set_option("smartindent", nvim_rs::Value::Boolean(true))
+                .await
+                .expect("Could not set smartindent on startup");
+
+            (nvim, join_handle, child)
+        })
+        .await;
+
+        Self {
+            #[cfg(feature = "neovim")]
+            data: Default::default(),
+            #[cfg(not(feature = "neovim"))]
+            data: Self::read_test_data(&test_case_id),
+            #[cfg(feature = "neovim")]
+            test_case_id,
+            #[cfg(feature = "neovim")]
+            nvim,
+            #[cfg(feature = "neovim")]
+            _join_handle: join_handle,
+            #[cfg(feature = "neovim")]
+            _child: child,
         }
     }
 
     #[cfg(feature = "neovim")]
-    pub async fn neovim_text(&mut self) -> String {
+    pub async fn text(&mut self) -> String {
         let nvim_buffer = self
             .nvim
             .get_current_buf()
@@ -196,17 +320,22 @@ impl<'a> NeovimBackedTestContext<'a> {
             .expect("Could not get buffer text")
             .join("\n");
 
-        self.write_test_data(text.clone(), "text");
+        self.data.push_back(NeovimData::Text(text.clone()));
+
         text
     }
 
     #[cfg(not(feature = "neovim"))]
-    pub async fn neovim_text(&mut self) -> String {
-        self.read_test_data("text")
+    pub async fn text(&mut self) -> String {
+        if let Some(NeovimData::Text(text)) = self.data.pop_front() {
+            text
+        } else {
+            panic!("Invalid test data. Is test deterministic? Try running with '--features neovim' to regenerate");
+        }
     }
 
     #[cfg(feature = "neovim")]
-    pub async fn neovim_head(&mut self) -> DisplayPoint {
+    pub async fn head(&mut self) -> DisplayPoint {
         let nvim_row: u32 = self
             .nvim
             .command_output("echo line('.')")
@@ -224,24 +353,25 @@ impl<'a> NeovimBackedTestContext<'a> {
             .unwrap()
             - 1; // Neovim columns start at 1
 
-        let serialized = format!("{},{}", nvim_row.to_string(), nvim_column.to_string());
-        self.write_test_data(serialized, "head");
+        self.data.push_back(NeovimData::Head {
+            row: nvim_row,
+            column: nvim_column,
+        });
 
         DisplayPoint::new(nvim_row, nvim_column)
     }
 
     #[cfg(not(feature = "neovim"))]
-    pub async fn neovim_head(&mut self) -> DisplayPoint {
-        let serialized = self.read_test_data("head");
-        let mut components = serialized.split(',');
-        let nvim_row = components.next().unwrap().parse::<u32>().unwrap();
-        let nvim_column = components.next().unwrap().parse::<u32>().unwrap();
-
-        DisplayPoint::new(nvim_row, nvim_column)
+    pub async fn head(&mut self) -> DisplayPoint {
+        if let Some(NeovimData::Head { row, column }) = self.data.pop_front() {
+            DisplayPoint::new(row, column)
+        } else {
+            panic!("Invalid test data. Is test deterministic? Try running with '--features neovim' to regenerate");
+        }
     }
 
     #[cfg(feature = "neovim")]
-    pub async fn neovim_mode(&mut self) -> Option<Mode> {
+    pub async fn mode(&mut self) -> Option<Mode> {
         let nvim_mode_text = self
             .nvim
             .get_mode()
@@ -265,74 +395,67 @@ impl<'a> NeovimBackedTestContext<'a> {
             _ => None,
         };
 
-        let serialized = serde_json::to_string(&mode).expect("Could not serialize mode");
-
-        self.write_test_data(serialized, "mode");
+        self.data.push_back(NeovimData::Mode(mode.clone()));
 
         mode
     }
 
     #[cfg(not(feature = "neovim"))]
-    pub async fn neovim_mode(&mut self) -> Option<Mode> {
-        let serialized = self.read_test_data("mode");
-        serde_json::from_str(&serialized).expect("Could not deserialize test data")
+    pub async fn mode(&mut self) -> Option<Mode> {
+        if let Some(NeovimData::Mode(mode)) = self.data.pop_front() {
+            mode
+        } else {
+            panic!("Invalid test data. Is test deterministic? Try running with '--features neovim' to regenerate");
+        }
     }
 
-    fn test_data_directory(&self) -> PathBuf {
+    fn test_data_path(test_case_id: &str) -> PathBuf {
         let mut data_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         data_path.push("test_data");
-        data_path.push(self.test_case_id);
-        data_path
-    }
-
-    fn next_data_path(&mut self, kind: &str) -> PathBuf {
-        let mut data_path = self.test_data_directory();
-        data_path.push(format!("{}{}.txt", self.data_counter, kind));
-        self.data_counter += 1;
+        data_path.push(format!("{}.json", test_case_id));
         data_path
     }
 
     #[cfg(not(feature = "neovim"))]
-    fn read_test_data(&mut self, kind: &str) -> String {
-        let path = self.next_data_path(kind);
-        std::fs::read_to_string(path).expect(
+    fn read_test_data(test_case_id: &str) -> VecDeque<NeovimData> {
+        let path = Self::test_data_path(test_case_id);
+        let json = std::fs::read_to_string(path).expect(
             "Could not read test data. Is it generated? Try running test with '--features neovim'",
-        )
-    }
+        );
 
-    #[cfg(feature = "neovim")]
-    fn write_test_data(&mut self, data: String, kind: &str) {
-        let path = self.next_data_path(kind);
-        std::fs::create_dir_all(path.parent().unwrap())
-            .expect("Could not create test data directory");
-        std::fs::write(path, data).expect("Could not write out test data");
-    }
-
-    #[cfg(feature = "neovim")]
-    fn clear_test_data(&self) {
-        // If the path does not exist, no biggy, we will create it
-        std::fs::remove_dir_all(self.test_data_directory()).ok();
-    }
-
-    pub async fn assert_binding_matches<const COUNT: usize>(
-        &mut self,
-        keystrokes: [&str; COUNT],
-        initial_state: &str,
-    ) {
-        dbg!(keystrokes, initial_state);
-        self.set_shared_state(initial_state).await;
-        self.simulate_shared_keystrokes(keystrokes).await;
-        self.assert_state_matches().await;
-    }
-
-    pub fn binding<const COUNT: usize>(
-        self,
-        keystrokes: [&'static str; COUNT],
-    ) -> NeovimBackedBindingTestContext<'a, COUNT> {
-        NeovimBackedBindingTestContext::new(keystrokes, self)
+        serde_json::from_str(&json)
+            .expect("Test data corrupted. Try regenerating it with '--features neovim'")
     }
 }
 
+#[cfg(feature = "neovim")]
+impl Deref for NeovimConnection {
+    type Target = Neovim<nvim_rs::compat::tokio::Compat<ChildStdin>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.nvim
+    }
+}
+
+#[cfg(feature = "neovim")]
+impl DerefMut for NeovimConnection {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.nvim
+    }
+}
+
+#[cfg(feature = "neovim")]
+impl Drop for NeovimConnection {
+    fn drop(&mut self) {
+        let path = Self::test_data_path(&self.test_case_id);
+        std::fs::create_dir_all(path.parent().unwrap())
+            .expect("Could not create test data directory");
+        let json = serde_json::to_string(&self.data).expect("Could not serialize test data");
+        std::fs::write(path, json).expect("Could not write out test data");
+    }
+}
+
+#[cfg(feature = "neovim")]
 #[derive(Clone)]
 struct NvimHandler {}
 
@@ -359,16 +482,17 @@ impl Handler for NvimHandler {
     }
 }
 
-impl<'a> Deref for NeovimBackedTestContext<'a> {
-    type Target = VimTestContext<'a>;
+#[cfg(test)]
+mod test {
+    use gpui::TestAppContext;
 
-    fn deref(&self) -> &Self::Target {
-        &self.cx
-    }
-}
+    use crate::test_contexts::NeovimBackedTestContext;
 
-impl<'a> DerefMut for NeovimBackedTestContext<'a> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.cx
+    #[gpui::test]
+    async fn neovim_backed_test_context_works(cx: &mut TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.assert_state_matches().await;
+        cx.set_shared_state("This is a tesˇt").await;
+        cx.assert_state_matches().await;
     }
 }

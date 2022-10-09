@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
-use util::test::marked_text_offsets;
+use crate::state::Mode;
 
 use super::NeovimBackedTestContext;
 
@@ -24,20 +24,39 @@ impl<'a, const COUNT: usize> NeovimBackedBindingTestContext<'a, COUNT> {
         self.cx
     }
 
-    pub async fn assert(&mut self, initial_state: &str) {
+    pub fn binding<const NEW_COUNT: usize>(
+        self,
+        keystrokes: [&'static str; NEW_COUNT],
+    ) -> NeovimBackedBindingTestContext<'a, NEW_COUNT> {
+        self.consume().binding(keystrokes)
+    }
+
+    pub async fn assert(&mut self, marked_positions: &str) {
         self.cx
-            .assert_binding_matches(self.keystrokes_under_test, initial_state)
+            .assert_binding_matches(self.keystrokes_under_test, marked_positions)
             .await
     }
 
-    pub async fn assert_all(&mut self, marked_positions: &str) {
-        let (unmarked_text, cursor_offsets) = marked_text_offsets(marked_positions);
+    pub fn assert_manual(
+        &mut self,
+        initial_state: &str,
+        mode_before: Mode,
+        state_after: &str,
+        mode_after: Mode,
+    ) {
+        self.cx.assert_binding(
+            self.keystrokes_under_test,
+            initial_state,
+            mode_before,
+            state_after,
+            mode_after,
+        );
+    }
 
-        for cursor_offset in cursor_offsets.iter() {
-            let mut marked_text = unmarked_text.clone();
-            marked_text.insert(*cursor_offset, 'ˇ');
-            self.assert(&marked_text).await;
-        }
+    pub async fn assert_all(&mut self, marked_positions: &str) {
+        self.cx
+            .assert_binding_matches_all(self.keystrokes_under_test, marked_positions)
+            .await
     }
 }
 

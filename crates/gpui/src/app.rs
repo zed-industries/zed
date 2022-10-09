@@ -182,6 +182,7 @@ pub struct TestAppContext {
     cx: Rc<RefCell<MutableAppContext>>,
     foreground_platform: Rc<platform::test::ForegroundPlatform>,
     condition_duration: Option<Duration>,
+    pub function_name: String,
 }
 
 pub struct WindowInputHandler {
@@ -437,6 +438,7 @@ impl TestAppContext {
         font_cache: Arc<FontCache>,
         leak_detector: Arc<Mutex<LeakDetector>>,
         first_entity_id: usize,
+        function_name: String,
     ) -> Self {
         let mut cx = MutableAppContext::new(
             foreground,
@@ -456,6 +458,7 @@ impl TestAppContext {
             cx: Rc::new(RefCell::new(cx)),
             foreground_platform,
             condition_duration: None,
+            function_name,
         };
         cx.cx.borrow_mut().weak_self = Some(Rc::downgrade(&cx.cx));
         cx

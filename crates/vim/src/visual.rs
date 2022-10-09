@@ -17,14 +17,18 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(paste);
 }
 
-pub fn visual_motion(motion: Motion, cx: &mut MutableAppContext) {
+pub fn visual_motion(motion: Motion, times: usize, cx: &mut MutableAppContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_with(|map, selection| {
-                    let (new_head, goal) = motion.move_point(map, selection.head(), selection.goal);
                     let was_reversed = selection.reversed;
-                    selection.set_head(new_head, goal);
+
+                    for _ in 0..times {
+                        let (new_head, goal) =
+                            motion.move_point(map, selection.head(), selection.goal);
+                        selection.set_head(new_head, goal);
+                    }
 
                     if was_reversed && !selection.reversed {
                         // Head was at the start of the selection, and now is at the end. We need to move the start

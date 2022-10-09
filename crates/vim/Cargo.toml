@@ -33,6 +33,7 @@ workspace = { path = "../workspace" }
 
 [dev-dependencies]
 indoc = "1.0.4"
+parking_lot = "0.11.1"
 
 editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }

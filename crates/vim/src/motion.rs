@@ -18,6 +18,7 @@ use crate::{
 #[derive(Copy, Clone, Debug)]
 pub enum Motion {
     Left,
+    Backspace,
     Down,
     Up,
     Right,
@@ -58,6 +59,7 @@ actions!(
     vim,
     [
         Left,
+        Backspace,
         Down,
         Up,
         Right,
@@ -74,6 +76,7 @@ impl_actions!(vim, [NextWordStart, NextWordEnd, PreviousWordStart]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|_: &mut Workspace, _: &Left, cx: _| motion(Motion::Left, cx));
+    cx.add_action(|_: &mut Workspace, _: &Backspace, cx: _| motion(Motion::Backspace, cx));
     cx.add_action(|_: &mut Workspace, _: &Down, cx: _| motion(Motion::Down, cx));
     cx.add_action(|_: &mut Workspace, _: &Up, cx: _| motion(Motion::Up, cx));
     cx.add_action(|_: &mut Workspace, _: &Right, cx: _| motion(Motion::Right, cx));
@@ -106,19 +109,21 @@ pub fn init(cx: &mut MutableAppContext) {
     );
 }
 
-fn motion(motion: Motion, cx: &mut MutableAppContext) {
-    Vim::update(cx, |vim, cx| {
-        if let Some(Operator::Namespace(_)) = vim.active_operator() {
-            vim.pop_operator(cx);
-        }
-    });
+pub(crate) fn motion(motion: Motion, cx: &mut MutableAppContext) {
+    if let Some(Operator::Namespace(_)) = Vim::read(cx).active_operator() {
+        Vim::update(cx, |vim, cx| vim.pop_operator(cx));
+    }
+
+    let times = Vim::update(cx, |vim, cx| vim.pop_number_operator(cx));
+    let operator = Vim::read(cx).active_operator();
     match Vim::read(cx).state.mode {
-        Mode::Normal => normal_motion(motion, cx),
-        Mode::Visual { .. } => visual_motion(motion, cx),
+        Mode::Normal => normal_motion(motion, operator, times, cx),
+        Mode::Visual { .. } => visual_motion(motion, times, cx),
         Mode::Insert => {
             // Shouldn't execute a motion in insert mode. Ignoring
         }
     }
+    Vim::update(cx, |vim, cx| vim.clear_operator(cx));
 }
 
 // Motion handling is specified here:
@@ -154,6 +159,7 @@ impl Motion {
         use Motion::*;
         match self {
             Left => (left(map, point), SelectionGoal::None),
+            Backspace => (movement::left(map, point), SelectionGoal::None),
             Down => movement::down(map, point, goal, true),
             Up => movement::up(map, point, goal, true),
             Right => (right(map, point), SelectionGoal::None),
@@ -184,10 +190,13 @@ impl Motion {
         self,
         map: &DisplaySnapshot,
         selection: &mut Selection<DisplayPoint>,
+        times: usize,
         expand_to_surrounding_newline: bool,
     ) {
-        let (head, goal) = self.move_point(map, selection.head(), selection.goal);
-        selection.set_head(head, goal);
+        for _ in 0..times {
+            let (head, goal) = self.move_point(map, selection.head(), selection.goal);
+            selection.set_head(head, goal);
+        }
 
         if self.linewise() {
             selection.start = map.prev_line_boundary(selection.start.to_point(map)).1;
@@ -272,16 +281,12 @@ fn next_word_end(
     ignore_punctuation: bool,
 ) -> DisplayPoint {
     *point.column_mut() += 1;
-    dbg!(point);
     point = movement::find_boundary(map, point, |left, right| {
-        dbg!(left);
         let left_kind = char_kind(left).coerce_punctuation(ignore_punctuation);
         let right_kind = char_kind(right).coerce_punctuation(ignore_punctuation);
 
         left_kind != right_kind && left_kind != CharKind::Whitespace
     });
-
-    dbg!(point);
 
     // find_boundary clips, so if the character after the next character is a newline or at the end of the document, we know
     // we have backtraced already
@@ -293,7 +298,7 @@ fn next_word_end(
     {
         *point.column_mut() = point.column().saturating_sub(1);
     }
-    dbg!(map.clip_point(point, Bias::Left))
+    map.clip_point(point, Bias::Left)
 }
 
 fn previous_word_start(

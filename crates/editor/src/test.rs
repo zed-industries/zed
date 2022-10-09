@@ -4,19 +4,25 @@ use crate::{
     AnchorRangeExt, Autoscroll, DisplayPoint, Editor, EditorMode, MultiBuffer, ToPoint,
 };
 use anyhow::Result;
+use collections::BTreeMap;
 use futures::{Future, StreamExt};
 use gpui::{
     json, keymap::Keystroke, AppContext, ModelContext, ModelHandle, ViewContext, ViewHandle,
 };
 use indoc::indoc;
+use itertools::Itertools;
 use language::{point_to_lsp, Buffer, BufferSnapshot, FakeLspAdapter, Language, LanguageConfig};
 use lsp::{notification, request};
+use parking_lot::RwLock;
 use project::Project;
 use settings::Settings;
 use std::{
     any::TypeId,
     ops::{Deref, DerefMut, Range},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
 };
 use util::{
     assert_set_eq, set_eq,
@@ -85,6 +91,7 @@ pub struct EditorTestContext<'a> {
     pub cx: &'a mut gpui::TestAppContext,
     pub window_id: usize,
     pub editor: ViewHandle<Editor>,
+    pub assertion_context: AssertionContextManager,
 }
 
 impl<'a> EditorTestContext<'a> {
@@ -106,7 +113,12 @@ impl<'a> EditorTestContext<'a> {
             cx,
             window_id,
             editor,
+            assertion_context: AssertionContextManager::new(),
         }
+    }
+
+    pub fn add_assertion_context(&self, context: String) -> ContextHandle {
+        self.assertion_context.add_context(context)
     }
 
     pub fn condition(
@@ -394,6 +406,7 @@ impl<'a> EditorLspTestContext<'a> {
                 cx,
                 window_id,
                 editor,
+                assertion_context: AssertionContextManager::new(),
             },
             lsp,
             workspace,
@@ -505,5 +518,47 @@ impl<'a> Deref for EditorLspTestContext<'a> {
 impl<'a> DerefMut for EditorLspTestContext<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.cx
+    }
+}
+
+#[derive(Clone)]
+pub struct AssertionContextManager {
+    id: Arc<AtomicUsize>,
+    contexts: Arc<RwLock<BTreeMap<usize, String>>>,
+}
+
+impl AssertionContextManager {
+    pub fn new() -> Self {
+        Self {
+            id: Arc::new(AtomicUsize::new(0)),
+            contexts: Arc::new(RwLock::new(BTreeMap::new())),
+        }
+    }
+
+    pub fn add_context(&self, context: String) -> ContextHandle {
+        let id = self.id.fetch_add(1, Ordering::Relaxed);
+        let mut contexts = self.contexts.write();
+        contexts.insert(id, context);
+        ContextHandle {
+            id,
+            manager: self.clone(),
+        }
+    }
+
+    pub fn context(&self) -> String {
+        let contexts = self.contexts.read();
+        format!("\n{}\n", contexts.values().join("\n"))
+    }
+}
+
+pub struct ContextHandle {
+    id: usize,
+    manager: AssertionContextManager,
+}
+
+impl Drop for ContextHandle {
+    fn drop(&mut self) {
+        let mut contexts = self.manager.contexts.write();
+        contexts.remove(&self.id);
     }
 }

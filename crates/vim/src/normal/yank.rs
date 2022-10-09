@@ -2,7 +2,7 @@ use crate::{motion::Motion, object::Object, utils::copy_selections_content, Vim}
 use collections::HashMap;
 use gpui::MutableAppContext;
 
-pub fn yank_motion(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
+pub fn yank_motion(vim: &mut Vim, motion: Motion, times: usize, cx: &mut MutableAppContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.transact(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
@@ -10,8 +10,8 @@ pub fn yank_motion(vim: &mut Vim, motion: Motion, cx: &mut MutableAppContext) {
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
                     let original_position = (selection.head(), selection.goal);
-                    motion.expand_selection(map, selection, true);
                     original_positions.insert(selection.id, original_position);
+                    motion.expand_selection(map, selection, times, true);
                 });
             });
             copy_selections_content(editor, motion.linewise(), cx);

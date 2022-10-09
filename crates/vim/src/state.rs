@@ -22,6 +22,7 @@ pub enum Namespace {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
 pub enum Operator {
+    Number(usize),
     Namespace(Namespace),
     Change,
     Delete,
@@ -92,12 +93,14 @@ impl VimState {
 impl Operator {
     pub fn set_context(operator: Option<&Operator>, context: &mut Context) {
         let operator_context = match operator {
+            Some(Operator::Number(_)) => "n",
             Some(Operator::Namespace(Namespace::G)) => "g",
             Some(Operator::Object { around: false }) => "i",
             Some(Operator::Object { around: true }) => "a",
             Some(Operator::Change) => "c",
             Some(Operator::Delete) => "d",
             Some(Operator::Yank) => "y",
+
             None => "none",
         }
         .to_owned();

@@ -1,9 +1,0 @@
-The quick brown   
-fox jumps over
-the lazy dog  
-
-
-
-Thequick brown 
-  fox-jumps over
-the lazy dog

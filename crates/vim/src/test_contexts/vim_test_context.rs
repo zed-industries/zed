@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
-use editor::test::EditorTestContext;
+use editor::test::{AssertionContextManager, EditorTestContext};
 use gpui::{json::json, AppContext, ViewHandle};
 use project::Project;
 use search::{BufferSearchBar, ProjectSearchBar};
@@ -82,6 +82,7 @@ impl<'a> VimTestContext<'a> {
                 cx,
                 window_id,
                 editor,
+                assertion_context: AssertionContextManager::new(),
             },
             workspace,
         }

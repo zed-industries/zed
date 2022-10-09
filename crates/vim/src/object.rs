@@ -12,7 +12,6 @@ use crate::{motion, normal::normal_object, state::Mode, visual::visual_object, V
 pub enum Object {
     Word { ignore_punctuation: bool },
     Sentence,
-    Paragraph,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -22,7 +21,7 @@ struct Word {
     ignore_punctuation: bool,
 }
 
-actions!(vim, [Sentence, Paragraph]);
+actions!(vim, [Sentence]);
 impl_actions!(vim, [Word]);
 
 pub fn init(cx: &mut MutableAppContext) {
@@ -32,7 +31,6 @@ pub fn init(cx: &mut MutableAppContext) {
         },
     );
     cx.add_action(|_: &mut Workspace, _: &Sentence, cx: _| object(Object::Sentence, cx));
-    cx.add_action(|_: &mut Workspace, _: &Paragraph, cx: _| object(Object::Paragraph, cx));
 }
 
 fn object(object: Object, cx: &mut MutableAppContext) {
@@ -61,7 +59,6 @@ impl Object {
                 }
             }
             Object::Sentence => sentence(map, relative_to, around),
-            _ => relative_to..relative_to,
         }
     }
 
@@ -172,71 +169,19 @@ fn around_next_word(
     start..end
 }
 
-// /// Return the range containing a sentence.
-// fn sentence(map: &DisplaySnapshot, relative_to: DisplayPoint, around: bool) -> Range<DisplayPoint> {
-//     let mut previous_end = relative_to;
-//     let mut start = None;
-
-//     // Seek backwards to find a period or double newline. Record the last non whitespace character as the
-//     // possible start of the sentence. Alternatively if two newlines are found right after each other, return that.
-//     let mut rev_chars = map.reverse_chars_at(relative_to).peekable();
-//     while let Some((char, point)) = rev_chars.next() {
-//         dbg!(char, point);
-//         if char == '.' {
-//             break;
-//         }
-
-//         if char == '\n'
-//             && (rev_chars.peek().map(|(c, _)| c == &'\n').unwrap_or(false) || start.is_none())
-//         {
-//             break;
-//         }
-
-//         if !char.is_whitespace() {
-//             start = Some(point);
-//         }
-
-//         previous_end = point;
-//     }
-
-//     let mut end = relative_to;
-//     let mut chars = map.chars_at(relative_to).peekable();
-//     while let Some((char, point)) = chars.next() {
-//         if !char.is_whitespace() {
-//             if start.is_none() {
-//                 start = Some(point);
-//             }
-
-//             // Set the end to the point after the current non whitespace character
-//             end = point;
-//             *end.column_mut() += char.len_utf8() as u32;
-//         }
-
-//         if char == '.' {
-//             break;
-//         }
-
-//         if char == '\n' {
-//             if start.is_none() {
-//                 if let Some((_, next_point)) = chars.peek() {
-//                     end = *next_point;
-//                 }
-//                 break;
-
-//             if chars.peek().map(|(c, _)| c == &'\n').unwrap_or(false) {
-//                 break;
-//             }
-//         }
-//     }
-
-//     start.unwrap_or(previous_end)..end
-// }
-
 fn sentence(map: &DisplaySnapshot, relative_to: DisplayPoint, around: bool) -> Range<DisplayPoint> {
     let mut start = None;
     let mut previous_end = relative_to;
 
-    for (char, point) in map.reverse_chars_at(relative_to) {
+    let mut chars = map.chars_at(relative_to).peekable();
+
+    // Search backwards for the previous sentence end or current sentence start. Include the character under relative_to
+    for (char, point) in chars
+        .peek()
+        .cloned()
+        .into_iter()
+        .chain(map.reverse_chars_at(relative_to))
+    {
         if is_sentence_end(map, point) {
             break;
         }
@@ -248,35 +193,25 @@ fn sentence(map: &DisplaySnapshot, relative_to: DisplayPoint, around: bool) -> R
         previous_end = point;
     }
 
-    // Handle case where cursor was before the sentence start
-    let mut chars = map.chars_at(relative_to).peekable();
-    if start.is_none() {
-        if let Some((char, point)) = chars.peek() {
-            if is_possible_sentence_start(*char) {
-                start = Some(*point);
-            }
-        }
-    }
-
+    // Search forward for the end of the current sentence or if we are between sentences, the start of the next one
     let mut end = relative_to;
     for (char, point) in chars {
-        if start.is_some() {
-            if !char.is_whitespace() {
-                end = point;
-                *end.column_mut() += char.len_utf8() as u32;
-                end = map.clip_point(end, Bias::Left);
-            }
-
-            if is_sentence_end(map, point) {
-                break;
-            }
-        } else if is_possible_sentence_start(char) {
+        if start.is_none() && is_possible_sentence_start(char) {
             if around {
                 start = Some(point);
+                continue;
             } else {
                 end = point;
                 break;
             }
+        }
+
+        end = point;
+        *end.column_mut() += char.len_utf8() as u32;
+        end = map.clip_point(end, Bias::Left);
+
+        if is_sentence_end(map, end) {
+            break;
         }
     }
 
@@ -296,22 +231,21 @@ const SENTENCE_END_PUNCTUATION: &[char] = &['.', '!', '?'];
 const SENTENCE_END_FILLERS: &[char] = &[')', ']', '"', '\''];
 const SENTENCE_END_WHITESPACE: &[char] = &[' ', '\t', '\n'];
 fn is_sentence_end(map: &DisplaySnapshot, point: DisplayPoint) -> bool {
-    let mut chars = map.chars_at(point).peekable();
-
-    if let Some((char, _)) = chars.next() {
-        if char == '\n' && chars.peek().map(|(c, _)| c == &'\n').unwrap_or(false) {
+    let mut next_chars = map.chars_at(point).peekable();
+    if let Some((char, _)) = next_chars.next() {
+        // We are at a double newline. This position is a sentence end.
+        if char == '\n' && next_chars.peek().map(|(c, _)| c == &'\n').unwrap_or(false) {
             return true;
         }
 
-        if !SENTENCE_END_PUNCTUATION.contains(&char) {
+        // The next text is not a valid whitespace. This is not a sentence end
+        if !SENTENCE_END_WHITESPACE.contains(&char) {
             return false;
         }
-    } else {
-        return false;
     }
 
-    for (char, _) in chars {
-        if SENTENCE_END_WHITESPACE.contains(&char) {
+    for (char, _) in map.reverse_chars_at(point) {
+        if SENTENCE_END_PUNCTUATION.contains(&char) {
             return true;
         }
 
@@ -320,7 +254,7 @@ fn is_sentence_end(map: &DisplaySnapshot, point: DisplayPoint) -> bool {
         }
     }
 
-    return true;
+    return false;
 }
 
 /// Expands the passed range to include whitespace on one side or the other in a line. Attempts to add the
@@ -331,16 +265,26 @@ fn expand_to_include_whitespace(
     stop_at_newline: bool,
 ) -> Range<DisplayPoint> {
     let mut whitespace_included = false;
-    for (char, point) in map.chars_at(range.end) {
-        range.end = point;
 
+    let mut chars = map.chars_at(range.end).peekable();
+    while let Some((char, point)) = chars.next() {
         if char == '\n' && stop_at_newline {
             break;
         }
 
         if char.is_whitespace() {
-            whitespace_included = true;
+            // Set end to the next display_point or the character position after the current display_point
+            range.end = chars.peek().map(|(_, point)| *point).unwrap_or_else(|| {
+                let mut end = point;
+                *end.column_mut() += char.len_utf8() as u32;
+                map.clip_point(end, Bias::Left)
+            });
+
+            if char != '\n' {
+                whitespace_included = true;
+            }
         } else {
+            // Found non whitespace. Quit out.
             break;
         }
     }
@@ -385,7 +329,7 @@ mod test {
 
     #[gpui::test]
     async fn test_change_in_word(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new("test_change_in_word", cx)
+        let mut cx = NeovimBackedTestContext::new(cx)
             .await
             .binding(["c", "i", "w"]);
         cx.assert_all(WORD_LOCATIONS).await;
@@ -395,7 +339,7 @@ mod test {
 
     #[gpui::test]
     async fn test_delete_in_word(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new("test_delete_in_word", cx)
+        let mut cx = NeovimBackedTestContext::new(cx)
             .await
             .binding(["d", "i", "w"]);
         cx.assert_all(WORD_LOCATIONS).await;
@@ -405,7 +349,7 @@ mod test {
 
     #[gpui::test]
     async fn test_change_around_word(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new("test_change_around_word", cx)
+        let mut cx = NeovimBackedTestContext::new(cx)
             .await
             .binding(["c", "a", "w"]);
         cx.assert_all(WORD_LOCATIONS).await;
@@ -415,7 +359,7 @@ mod test {
 
     #[gpui::test]
     async fn test_delete_around_word(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new("test_delete_around_word", cx)
+        let mut cx = NeovimBackedTestContext::new(cx)
             .await
             .binding(["d", "a", "w"]);
         cx.assert_all(WORD_LOCATIONS).await;
@@ -431,7 +375,8 @@ mod test {
             the lazy doˇgˇ.ˇ ˇThe quick ˇ
             brown fox jumps over
         "},
-        // Double newlines are broken currently
+        // Position of the cursor after deletion between lines isn't quite right.
+        // Deletion in a sentence at the start of a line with whitespace is incorrect.
         // indoc! {"
         //     The quick brown fox jumps.
         //     Over the lazy dog
@@ -441,12 +386,12 @@ mod test {
         //     the lazy dog.ˇ
         //     ˇ
         // "},
-        r#"The quick brown.)]'" Brown fox jumps."#,
+        r#"ˇThe ˇquick brownˇ.)ˇ]ˇ'ˇ" Brown ˇfox jumpsˇ.ˇ "#,
     ];
 
     #[gpui::test]
     async fn test_change_in_sentence(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new("test_change_in_sentence", cx)
+        let mut cx = NeovimBackedTestContext::new(cx)
             .await
             .binding(["c", "i", "s"]);
         for sentence_example in SENTENCE_EXAMPLES {
@@ -456,31 +401,42 @@ mod test {
 
     #[gpui::test]
     async fn test_delete_in_sentence(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new("test_delete_in_sentence", cx)
+        let mut cx = NeovimBackedTestContext::new(cx)
             .await
             .binding(["d", "i", "s"]);
+
         for sentence_example in SENTENCE_EXAMPLES {
             cx.assert_all(sentence_example).await;
         }
     }
 
     #[gpui::test]
-    #[ignore] // End cursor position is incorrect
     async fn test_change_around_sentence(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new("test_change_around_sentence", cx)
+        let mut cx = NeovimBackedTestContext::new(cx)
             .await
             .binding(["c", "a", "s"]);
+
+        // Resulting position is slightly incorrect for unintuitive reasons.
+        cx.add_initial_state_exemption("The quick brown?ˇ Fox Jumps! Over the lazy.");
+        // Changing around the sentence at the end of the line doesn't remove whitespace.'
+        cx.add_initial_state_exemption("The quick brown.)]\'\" Brown fox jumps.ˇ ");
+
         for sentence_example in SENTENCE_EXAMPLES {
             cx.assert_all(sentence_example).await;
         }
     }
 
     #[gpui::test]
-    #[ignore] // End cursor position is incorrect
     async fn test_delete_around_sentence(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new("test_delete_around_sentence", cx)
+        let mut cx = NeovimBackedTestContext::new(cx)
             .await
             .binding(["d", "a", "s"]);
+
+        // Resulting position is slightly incorrect for unintuitive reasons.
+        cx.add_initial_state_exemption("The quick brown?ˇ Fox Jumps! Over the lazy.");
+        // Changing around the sentence at the end of the line doesn't remove whitespace.'
+        cx.add_initial_state_exemption("The quick brown.)]\'\" Brown fox jumps.ˇ ");
+
         for sentence_example in SENTENCE_EXAMPLES {
             cx.assert_all(sentence_example).await;
         }
