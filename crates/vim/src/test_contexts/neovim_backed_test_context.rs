@@ -52,22 +52,6 @@ impl<'a> NeovimBackedTestContext<'a> {
         self.exemptions.insert(initial_state, None);
     }
 
-    pub fn add_keybinding_exemption<const COUNT: usize>(
-        &mut self,
-        keybinding: [&str; COUNT],
-        initial_state: &str,
-    ) {
-        let initial_state = initial_state.to_string();
-        let exempted_keybindings = self
-            .exemptions
-            .entry(initial_state)
-            .or_insert(Some(Default::default()));
-
-        if let Some(exempted_bindings) = exempted_keybindings.as_mut() {
-            exempted_bindings.insert(format!("{keybinding:?}"));
-        }
-    }
-
     pub async fn simulate_shared_keystroke(&mut self, keystroke_text: &str) {
         let keystroke = Keystroke::parse(keystroke_text).unwrap();
 
@@ -118,7 +102,7 @@ impl<'a> NeovimBackedTestContext<'a> {
                 .get_current_buf()
                 .await
                 .expect("Could not get neovim buffer");
-            let mut lines = self
+            let lines = self
                 .buffer_text()
                 .split('\n')
                 .map(|line| line.to_string())
