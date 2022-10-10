@@ -90,13 +90,13 @@ export default function contactList(theme: Theme) {
       cornerRadius: 4,
       padding: 4,
       margin: { top: 12, left: 12 },
-      background: iconColor(theme, "success"),
+      background: iconColor(theme, "ok"),
     },
     contactStatusBusy: {
       cornerRadius: 4,
       padding: 4,
       margin: { top: 12, left: 12 },
-      background: iconColor(theme, "warning"),
+      background: iconColor(theme, "error"),
     },
     contactUsername: {
       ...text(theme, "mono", "primary", { size: "sm" }),

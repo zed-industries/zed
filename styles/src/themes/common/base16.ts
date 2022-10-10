@@ -137,7 +137,6 @@ export function createTheme(
     ok: sample(ramps.green, 0.5),
     error: sample(ramps.red, 0.5),
     warning: sample(ramps.yellow, 0.5),
-    success: sample(ramps.green, 0.5),
     info: sample(ramps.blue, 0.5),
     onMedia: darkest,
   };
