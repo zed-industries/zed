@@ -1,22 +1,38 @@
 import Theme from "../themes/common/theme";
-import { text } from "./components";
+import { backgroundColor, borderColor, text } from "./components";
 
 export default function projectSharedNotification(theme: Theme): Object {
-  const avatarSize = 12;
+  const avatarSize = 32;
   return {
+    background: backgroundColor(theme, 300),
+    ownerContainer: {
+      padding: 12,
+    },
     ownerAvatar: {
       height: avatarSize,
       width: avatarSize,
-      cornerRadius: 6,
+      cornerRadius: avatarSize / 2,
+    },
+    ownerMetadata: {
+      margin: { left: 10 },
+    },
+    ownerUsername: {
+      ...text(theme, "sans", "active", { size: "sm", weight: "bold" }),
+      margin: { top: -3 },
     },
     message: {
-      ...text(theme, "sans", "primary", { size: "xs" }),
+      ...text(theme, "sans", "secondary", { size: "xs" }),
+      margin: { top: -3 },
     },
+    buttonWidth: 96,
     joinButton: {
-      ...text(theme, "sans", "primary", { size: "xs" })
+      background: backgroundColor(theme, "info", "active"),
+      border: { left: true, bottom: true, width: 1, color: borderColor(theme, "primary") },
+      ...text(theme, "sans", "info", { size: "xs", weight: "extra_bold" })
     },
     dismissButton: {
-      ...text(theme, "sans", "primary", { size: "xs" })
+      border: { left: true, width: 1, color: borderColor(theme, "primary") },
+      ...text(theme, "sans", "secondary", { size: "xs", weight: "extra_bold" })
     },
   };
 }

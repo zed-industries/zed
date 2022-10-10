@@ -471,8 +471,14 @@ pub struct UpdateNotification {
 
 #[derive(Deserialize, Default)]
 pub struct ProjectSharedNotification {
+    #[serde(default)]
+    pub background: Color,
+    pub owner_container: ContainerStyle,
     pub owner_avatar: ImageStyle,
+    pub owner_metadata: ContainerStyle,
+    pub owner_username: ContainedText,
     pub message: ContainedText,
+    pub button_width: f32,
     pub join_button: ContainedText,
     pub dismiss_button: ContainedText,
 }

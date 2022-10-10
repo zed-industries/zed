@@ -26,7 +26,7 @@ pub fn init(cx: &mut MutableAppContext) {
             if let Some(incoming_call) = incoming_call {
                 const PADDING: f32 = 16.;
                 let screen_size = cx.platform().screen_size();
-                let window_size = vec2f(304., 64.);
+                let window_size = vec2f(274., 64.);
                 let (window_id, _) = cx.add_window(
                     WindowOptions {
                         bounds: WindowBounds::Fixed(RectF::new(
@@ -108,13 +108,10 @@ impl IncomingCallNotification {
                         .boxed(),
                     )
                     .with_child(
-                        Label::new(
-                            "Incoming Zed call...".into(),
-                            theme.caller_message.text.clone(),
-                        )
-                        .contained()
-                        .with_style(theme.caller_message.container)
-                        .boxed(),
+                        Label::new("is calling you".into(), theme.caller_message.text.clone())
+                            .contained()
+                            .with_style(theme.caller_message.container)
+                            .boxed(),
                     )
                     .contained()
                     .with_style(theme.caller_metadata)
