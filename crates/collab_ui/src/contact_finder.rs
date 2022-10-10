@@ -1,19 +1,15 @@
 use client::{ContactRequestStatus, User, UserStore};
 use gpui::{
-    actions, elements::*, AnyViewHandle, Entity, ModelHandle, MouseState, MutableAppContext,
-    RenderContext, Task, View, ViewContext, ViewHandle,
+    elements::*, AnyViewHandle, Entity, ModelHandle, MouseState, MutableAppContext, RenderContext,
+    Task, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
 use std::sync::Arc;
 use util::TryFutureExt;
-use workspace::Workspace;
-
-actions!(contact_finder, [Toggle]);
 
 pub fn init(cx: &mut MutableAppContext) {
     Picker::<ContactFinder>::init(cx);
-    cx.add_action(ContactFinder::toggle);
 }
 
 pub struct ContactFinder {
@@ -166,34 +162,16 @@ impl PickerDelegate for ContactFinder {
 }
 
 impl ContactFinder {
-    fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
-        workspace.toggle_modal(cx, |workspace, cx| {
-            let finder = cx.add_view(|cx| Self::new(workspace.user_store().clone(), cx));
-            cx.subscribe(&finder, Self::on_event).detach();
-            finder
-        });
-    }
-
     pub fn new(user_store: ModelHandle<UserStore>, cx: &mut ViewContext<Self>) -> Self {
         let this = cx.weak_handle();
         Self {
-            picker: cx.add_view(|cx| Picker::new(this, cx)),
+            picker: cx.add_view(|cx| {
+                Picker::new(this, cx)
+                    .with_theme(|cx| &cx.global::<Settings>().theme.contact_finder.picker)
+            }),
             potential_contacts: Arc::from([]),
             user_store,
             selected_index: 0,
-        }
-    }
-
-    fn on_event(
-        workspace: &mut Workspace,
-        _: ViewHandle<Self>,
-        event: &Event,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        match event {
-            Event::Dismissed => {
-                workspace.dismiss_modal(cx);
-            }
         }
     }
 }

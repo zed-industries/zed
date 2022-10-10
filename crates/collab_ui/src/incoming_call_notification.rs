@@ -82,20 +82,22 @@ impl IncomingCallNotification {
     }
 
     fn render_caller(&self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &cx.global::<Settings>().theme.contacts_popover;
+        let theme = &cx.global::<Settings>().theme.incoming_call_notification;
         Flex::row()
             .with_children(
                 self.call
                     .caller
                     .avatar
                     .clone()
-                    .map(|avatar| Image::new(avatar).with_style(theme.contact_avatar).boxed()),
+                    .map(|avatar| Image::new(avatar).with_style(theme.caller_avatar).boxed()),
             )
             .with_child(
                 Label::new(
                     self.call.caller.github_login.clone(),
-                    theme.contact_username.text.clone(),
+                    theme.caller_username.text.clone(),
                 )
+                .contained()
+                .with_style(theme.caller_username.container)
                 .boxed(),
             )
             .boxed()
@@ -108,8 +110,11 @@ impl IncomingCallNotification {
         Flex::row()
             .with_child(
                 MouseEventHandler::<Accept>::new(0, cx, |_, cx| {
-                    let theme = &cx.global::<Settings>().theme.contacts_popover;
-                    Label::new("Accept".to_string(), theme.contact_username.text.clone()).boxed()
+                    let theme = &cx.global::<Settings>().theme.incoming_call_notification;
+                    Label::new("Accept".to_string(), theme.accept_button.text.clone())
+                        .contained()
+                        .with_style(theme.accept_button.container)
+                        .boxed()
                 })
                 .on_click(MouseButton::Left, |_, cx| {
                     cx.dispatch_action(RespondToCall { accept: true });
@@ -118,8 +123,11 @@ impl IncomingCallNotification {
             )
             .with_child(
                 MouseEventHandler::<Decline>::new(0, cx, |_, cx| {
-                    let theme = &cx.global::<Settings>().theme.contacts_popover;
-                    Label::new("Decline".to_string(), theme.contact_username.text.clone()).boxed()
+                    let theme = &cx.global::<Settings>().theme.incoming_call_notification;
+                    Label::new("Decline".to_string(), theme.decline_button.text.clone())
+                        .contained()
+                        .with_style(theme.decline_button.container)
+                        .boxed()
                 })
                 .on_click(MouseButton::Left, |_, cx| {
                     cx.dispatch_action(RespondToCall { accept: false });

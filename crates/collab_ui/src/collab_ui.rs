@@ -1,6 +1,7 @@
 mod active_call_popover;
 mod collab_titlebar_item;
 mod contact_finder;
+mod contact_list;
 mod contact_notification;
 mod contacts_popover;
 mod incoming_call_notification;
@@ -18,6 +19,7 @@ use workspace::{AppState, JoinProject, ToggleFollow, Workspace};
 pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     collab_titlebar_item::init(cx);
     contact_notification::init(cx);
+    contact_list::init(cx);
     contact_finder::init(cx);
     contacts_popover::init(cx);
     incoming_call_notification::init(cx);

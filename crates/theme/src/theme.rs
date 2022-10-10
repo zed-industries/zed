@@ -20,6 +20,7 @@ pub struct Theme {
     pub context_menu: ContextMenu,
     pub chat_panel: ChatPanel,
     pub contacts_popover: ContactsPopover,
+    pub contact_list: ContactList,
     pub contact_finder: ContactFinder,
     pub project_panel: ProjectPanel,
     pub command_palette: CommandPalette,
@@ -31,6 +32,7 @@ pub struct Theme {
     pub contact_notification: ContactNotification,
     pub update_notification: UpdateNotification,
     pub project_shared_notification: ProjectSharedNotification,
+    pub incoming_call_notification: IncomingCallNotification,
     pub tooltip: TooltipStyle,
     pub terminal: TerminalStyle,
 }
@@ -87,6 +89,10 @@ pub struct ContactsPopover {
     pub container: ContainerStyle,
     pub height: f32,
     pub width: f32,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ContactList {
     pub user_query_editor: FieldEditor,
     pub user_query_editor_height: f32,
     pub add_contact_button: IconButton,
@@ -103,6 +109,16 @@ pub struct ContactsPopover {
     pub section_icon_size: f32,
     pub invite_row: Interactive<ContainedLabel>,
     pub calling_indicator: ContainedText,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ContactFinder {
+    pub picker: Picker,
+    pub row_height: f32,
+    pub contact_avatar: ImageStyle,
+    pub contact_username: ContainerStyle,
+    pub contact_button: IconButton,
+    pub disabled_contact_button: IconButton,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -354,15 +370,6 @@ pub struct InviteLink {
 }
 
 #[derive(Deserialize, Default)]
-pub struct ContactFinder {
-    pub row_height: f32,
-    pub contact_avatar: ImageStyle,
-    pub contact_username: ContainerStyle,
-    pub contact_button: IconButton,
-    pub disabled_contact_button: IconButton,
-}
-
-#[derive(Deserialize, Default)]
 pub struct Icon {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -467,6 +474,14 @@ pub struct ProjectSharedNotification {
     pub message: ContainedText,
     pub join_button: ContainedText,
     pub dismiss_button: ContainedText,
+}
+
+#[derive(Deserialize, Default)]
+pub struct IncomingCallNotification {
+    pub caller_avatar: ImageStyle,
+    pub caller_username: ContainedText,
+    pub accept_button: ContainedText,
+    pub decline_button: ContainedText,
 }
 
 #[derive(Clone, Deserialize, Default)]

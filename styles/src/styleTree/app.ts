@@ -16,6 +16,8 @@ import updateNotification from "./updateNotification";
 import projectSharedNotification from "./projectSharedNotification";
 import tooltip from "./tooltip";
 import terminal from "./terminal";
+import contactList from "./contactList";
+import incomingCallNotification from "./incomingCallNotification";
 
 export const panel = {
   padding: { top: 12, bottom: 12 },
@@ -36,6 +38,7 @@ export default function app(theme: Theme): Object {
     projectPanel: projectPanel(theme),
     chatPanel: chatPanel(theme),
     contactsPopover: contactsPopover(theme),
+    contactList: contactList(theme),
     contactFinder: contactFinder(theme),
     search: search(theme),
     breadcrumbs: {
@@ -47,6 +50,7 @@ export default function app(theme: Theme): Object {
     contactNotification: contactNotification(theme),
     updateNotification: updateNotification(theme),
     projectSharedNotification: projectSharedNotification(theme),
+    incomingCallNotification: incomingCallNotification(theme),
     tooltip: tooltip(theme),
     terminal: terminal(theme),
   };
