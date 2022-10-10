@@ -43,7 +43,7 @@ use std::{
     cmp::{self, Ordering},
     fmt::Write,
     iter,
-    ops::Range,
+    ops::{DerefMut, Range},
     sync::Arc,
 };
 use theme::DiffStyle;
@@ -909,6 +909,96 @@ impl EditorElement {
         cx.scene.pop_layer();
     }
 
+    fn paint_scrollbar(&mut self, bounds: RectF, layout: &mut LayoutState, cx: &mut PaintContext) {
+        enum ScrollbarMouseHandlers {}
+        let row_range = if let Some(row_range) = &layout.scrollbar_row_range {
+            row_range
+        } else {
+            return;
+        };
+
+        let style = &self.style.theme.scrollbar;
+        let top = bounds.min_y();
+        let bottom = bounds.max_y();
+        let height = bounds.height();
+
+        let max_row = layout.max_row + row_range.len() as u32;
+        let scrollbar_start = row_range.start as f32 / max_row as f32;
+        let scrollbar_end = row_range.end as f32 / max_row as f32;
+
+        let thumb_top = top + scrollbar_start * height;
+        let thumb_bottom = top + scrollbar_end * height;
+        let right = bounds.max_x();
+        let left = right - style.width;
+        let track_bounds = RectF::from_points(vec2f(left, top), vec2f(right, bottom));
+        let thumb_bounds = RectF::from_points(vec2f(left, thumb_top), vec2f(right, thumb_bottom));
+
+        cx.scene.push_quad(Quad {
+            bounds: track_bounds,
+            border: style.track.border,
+            background: style.track.background_color,
+            ..Default::default()
+        });
+        cx.scene.push_quad(Quad {
+            bounds: thumb_bounds,
+            border: style.thumb.border,
+            background: style.thumb.background_color,
+            corner_radius: style.thumb.corner_radius,
+        });
+        cx.scene.push_cursor_region(CursorRegion {
+            bounds: track_bounds,
+            style: CursorStyle::Arrow,
+        });
+
+        let view = self.view.clone();
+        cx.scene.push_mouse_region(
+            MouseRegion::new::<ScrollbarMouseHandlers>(
+                self.view.id(),
+                self.view.id(),
+                track_bounds,
+            )
+            .on_down(MouseButton::Left, {
+                let view = view.clone();
+                let row_range_len = row_range.len();
+                move |e, cx| {
+                    let y = e.position.y();
+                    if y < thumb_top || thumb_bottom < y {
+                        if let Some(view) = view.upgrade(cx.deref_mut()) {
+                            view.update(cx.deref_mut(), |view, cx| {
+                                let center_row =
+                                    ((y - top) * max_row as f32 / height).round() as u32;
+                                let top_row = center_row.saturating_sub(row_range_len as u32 / 2);
+                                let mut position = view.scroll_position(cx);
+                                position.set_y(top_row as f32);
+                                view.set_scroll_position(position, cx);
+                            });
+                        }
+                    }
+                }
+            })
+            .on_drag(MouseButton::Left, {
+                let view = view.clone();
+                move |e, cx| {
+                    let y = e.prev_mouse_position.y();
+                    let new_y = e.position.y();
+                    if thumb_top < y && y < thumb_bottom {
+                        if let Some(view) = view.upgrade(cx.deref_mut()) {
+                            view.update(cx.deref_mut(), |view, cx| {
+                                let mut position = view.scroll_position(cx);
+                                position
+                                    .set_y(position.y() + (new_y - y) * (max_row as f32) / height);
+                                if position.y() < 0.0 {
+                                    position.set_y(0.);
+                                }
+                                view.set_scroll_position(position, cx);
+                            });
+                        }
+                    }
+                }
+            }),
+        );
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn paint_highlighted_range(
         &self,
@@ -1467,13 +1557,11 @@ impl Element for EditorElement {
         // The scroll position is a fractional point, the whole number of which represents
         // the top of the window in terms of display rows.
         let start_row = scroll_position.y() as u32;
-        let scroll_top = scroll_position.y() * line_height;
+        let visible_row_count = (size.y() / line_height).ceil() as u32;
+        let max_row = snapshot.max_point().row();
 
         // Add 1 to ensure selections bleed off screen
-        let end_row = 1 + cmp::min(
-            ((scroll_top + size.y()) / line_height).ceil() as u32,
-            snapshot.max_point().row(),
-        );
+        let end_row = 1 + cmp::min(start_row + visible_row_count, max_row);
 
         let start_anchor = if start_row == 0 {
             Anchor::min()
@@ -1482,7 +1570,7 @@ impl Element for EditorElement {
                 .buffer_snapshot
                 .anchor_before(DisplayPoint::new(start_row, 0).to_offset(&snapshot, Bias::Left))
         };
-        let end_anchor = if end_row > snapshot.max_point().row() {
+        let end_anchor = if end_row > max_row {
             Anchor::max()
         } else {
             snapshot
@@ -1564,6 +1652,12 @@ impl Element for EditorElement {
             .git_diff_hunks_in_range(start_row..end_row)
             .collect();
 
+        let scrollbar_row_range = if snapshot.mode == EditorMode::Full {
+            Some(start_row..(start_row + visible_row_count))
+        } else {
+            None
+        };
+
         let mut max_visible_line_width = 0.0;
         let line_layouts = self.layout_lines(start_row..end_row, &snapshot, cx);
         for line in &line_layouts {
@@ -1597,7 +1691,6 @@ impl Element for EditorElement {
             cx,
         );
 
-        let max_row = snapshot.max_point().row();
         let scroll_max = vec2f(
             ((scroll_width - text_size.x()) / em_width).max(0.0),
             max_row.saturating_sub(1) as f32,
@@ -1707,6 +1800,8 @@ impl Element for EditorElement {
                 gutter_size,
                 gutter_padding,
                 text_size,
+                scrollbar_row_range,
+                max_row,
                 gutter_margin,
                 active_rows,
                 highlighted_rows,
@@ -1753,11 +1848,12 @@ impl Element for EditorElement {
         }
         self.paint_text(text_bounds, visible_bounds, layout, cx);
 
+        cx.scene.push_layer(Some(bounds));
         if !layout.blocks.is_empty() {
-            cx.scene.push_layer(Some(bounds));
             self.paint_blocks(bounds, visible_bounds, layout, cx);
-            cx.scene.pop_layer();
         }
+        self.paint_scrollbar(bounds, layout, cx);
+        cx.scene.pop_layer();
 
         cx.scene.pop_layer();
     }
@@ -1849,6 +1945,8 @@ pub struct LayoutState {
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
     selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
+    scrollbar_row_range: Option<Range<u32>>,
+    max_row: u32,
     context_menu: Option<(DisplayPoint, ElementBox)>,
     diff_hunks: Vec<DiffHunk<u32>>,
     code_actions_indicator: Option<(u32, ElementBox)>,
