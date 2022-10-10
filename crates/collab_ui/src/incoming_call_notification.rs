@@ -3,8 +3,8 @@ use futures::StreamExt;
 use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
-    impl_internal_actions, Entity, MouseButton, MutableAppContext, RenderContext, View,
-    ViewContext, WindowBounds, WindowKind, WindowOptions,
+    impl_internal_actions, CursorStyle, Entity, MouseButton, MutableAppContext, RenderContext,
+    View, ViewContext, WindowBounds, WindowKind, WindowOptions,
 };
 use settings::Settings;
 use util::ResultExt;
@@ -24,11 +24,17 @@ pub fn init(cx: &mut MutableAppContext) {
             }
 
             if let Some(incoming_call) = incoming_call {
+                const PADDING: f32 = 16.;
+                let screen_size = cx.platform().screen_size();
+                let window_size = vec2f(304., 64.);
                 let (window_id, _) = cx.add_window(
                     WindowOptions {
-                        bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), vec2f(300., 400.))),
+                        bounds: WindowBounds::Fixed(RectF::new(
+                            vec2f(screen_size.x() - window_size.x() - PADDING, PADDING),
+                            window_size,
+                        )),
                         titlebar: None,
-                        center: true,
+                        center: false,
                         kind: WindowKind::PopUp,
                         is_movable: false,
                     },
@@ -84,22 +90,40 @@ impl IncomingCallNotification {
     fn render_caller(&self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = &cx.global::<Settings>().theme.incoming_call_notification;
         Flex::row()
-            .with_children(
-                self.call
-                    .caller
-                    .avatar
-                    .clone()
-                    .map(|avatar| Image::new(avatar).with_style(theme.caller_avatar).boxed()),
-            )
+            .with_children(self.call.caller.avatar.clone().map(|avatar| {
+                Image::new(avatar)
+                    .with_style(theme.caller_avatar)
+                    .aligned()
+                    .boxed()
+            }))
             .with_child(
-                Label::new(
-                    self.call.caller.github_login.clone(),
-                    theme.caller_username.text.clone(),
-                )
-                .contained()
-                .with_style(theme.caller_username.container)
-                .boxed(),
+                Flex::column()
+                    .with_child(
+                        Label::new(
+                            self.call.caller.github_login.clone(),
+                            theme.caller_username.text.clone(),
+                        )
+                        .contained()
+                        .with_style(theme.caller_username.container)
+                        .boxed(),
+                    )
+                    .with_child(
+                        Label::new(
+                            "Incoming Zed call...".into(),
+                            theme.caller_message.text.clone(),
+                        )
+                        .contained()
+                        .with_style(theme.caller_message.container)
+                        .boxed(),
+                    )
+                    .contained()
+                    .with_style(theme.caller_metadata)
+                    .aligned()
+                    .boxed(),
             )
+            .contained()
+            .with_style(theme.caller_container)
+            .flex(1., true)
             .boxed()
     }
 
@@ -107,32 +131,45 @@ impl IncomingCallNotification {
         enum Accept {}
         enum Decline {}
 
-        Flex::row()
+        Flex::column()
             .with_child(
                 MouseEventHandler::<Accept>::new(0, cx, |_, cx| {
                     let theme = &cx.global::<Settings>().theme.incoming_call_notification;
                     Label::new("Accept".to_string(), theme.accept_button.text.clone())
+                        .aligned()
                         .contained()
                         .with_style(theme.accept_button.container)
                         .boxed()
                 })
+                .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, |_, cx| {
                     cx.dispatch_action(RespondToCall { accept: true });
                 })
+                .flex(1., true)
                 .boxed(),
             )
             .with_child(
                 MouseEventHandler::<Decline>::new(0, cx, |_, cx| {
                     let theme = &cx.global::<Settings>().theme.incoming_call_notification;
                     Label::new("Decline".to_string(), theme.decline_button.text.clone())
+                        .aligned()
                         .contained()
                         .with_style(theme.decline_button.container)
                         .boxed()
                 })
+                .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, |_, cx| {
                     cx.dispatch_action(RespondToCall { accept: false });
                 })
+                .flex(1., true)
                 .boxed(),
+            )
+            .constrained()
+            .with_width(
+                cx.global::<Settings>()
+                    .theme
+                    .incoming_call_notification
+                    .button_width,
             )
             .boxed()
     }
@@ -148,9 +185,17 @@ impl View for IncomingCallNotification {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> gpui::ElementBox {
-        Flex::column()
+        let background = cx
+            .global::<Settings>()
+            .theme
+            .incoming_call_notification
+            .background;
+        Flex::row()
             .with_child(self.render_caller(cx))
             .with_child(self.render_buttons(cx))
+            .contained()
+            .with_background_color(background)
+            .expanded()
             .boxed()
     }
 }

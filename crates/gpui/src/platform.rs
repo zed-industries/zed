@@ -44,6 +44,8 @@ pub trait Platform: Send + Sync {
     fn unhide_other_apps(&self);
     fn quit(&self);
 
+    fn screen_size(&self) -> Vector2F;
+
     fn open_window(
         &self,
         id: usize,

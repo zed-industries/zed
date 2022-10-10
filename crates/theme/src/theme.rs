@@ -479,8 +479,14 @@ pub struct ProjectSharedNotification {
 
 #[derive(Deserialize, Default)]
 pub struct IncomingCallNotification {
+    #[serde(default)]
+    pub background: Color,
+    pub caller_container: ContainerStyle,
     pub caller_avatar: ImageStyle,
+    pub caller_metadata: ContainerStyle,
     pub caller_username: ContainedText,
+    pub caller_message: ContainedText,
+    pub button_width: f32,
     pub accept_button: ContainedText,
     pub decline_button: ContainedText,
 }
