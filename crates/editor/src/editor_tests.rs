@@ -3016,6 +3016,11 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|view, cx| view.handle_input("{", cx));
     cx.assert_editor_state("{ˇa b");
 
+    // Don't autoclose if `close` is false for the bracket pair
+    cx.set_state("ˇ");
+    cx.update_editor(|view, cx| view.handle_input("[", cx));
+    cx.assert_editor_state("[ˇ");
+
     // Surround with brackets if text is selected
     cx.set_state("«aˇ» b");
     cx.update_editor(|view, cx| view.handle_input("{", cx));
