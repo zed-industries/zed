@@ -1,6 +1,6 @@
 use crate::{contact_notification::ContactNotification, contacts_popover};
 use call::{ActiveCall, ParticipantLocation};
-use client::{Authenticate, ContactEventKind, PeerId, UserStore};
+use client::{Authenticate, ContactEventKind, PeerId, User, UserStore};
 use clock::ReplicaId;
 use contacts_popover::ContactsPopover;
 use gpui::{
@@ -9,13 +9,13 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
     json::{self, ToJson},
-    Border, CursorStyle, Entity, ImageData, ModelHandle, MouseButton, MutableAppContext,
-    RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
+    Border, CursorStyle, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext,
+    Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
-use std::{ops::Range, sync::Arc};
+use std::ops::Range;
 use theme::Theme;
-use workspace::{FollowNextCollaborator, ToggleFollow, Workspace};
+use workspace::{FollowNextCollaborator, JoinProject, ToggleFollow, Workspace};
 
 actions!(
     contacts_titlebar_item,
@@ -282,29 +282,27 @@ impl CollabTitlebarItem {
         let active_call = ActiveCall::global(cx);
         if let Some(room) = active_call.read(cx).room().cloned() {
             let project = workspace.read(cx).project().read(cx);
-            let project_id = project.remote_id();
-            let mut collaborators = project
-                .collaborators()
-                .values()
-                .cloned()
+            let mut participants = room
+                .read(cx)
+                .remote_participants()
+                .iter()
+                .map(|(peer_id, collaborator)| (*peer_id, collaborator.clone()))
                 .collect::<Vec<_>>();
-            collaborators.sort_by_key(|collaborator| collaborator.replica_id);
-            collaborators
+            participants
+                .sort_by_key(|(peer_id, _)| Some(project.collaborators().get(peer_id)?.replica_id));
+            participants
                 .into_iter()
-                .filter_map(|collaborator| {
-                    let participant = room
-                        .read(cx)
-                        .remote_participants()
-                        .get(&collaborator.peer_id)?;
+                .filter_map(|(peer_id, participant)| {
+                    let project = workspace.read(cx).project().read(cx);
+                    let replica_id = project
+                        .collaborators()
+                        .get(&peer_id)
+                        .map(|collaborator| collaborator.replica_id);
                     let user = participant.user.clone();
-                    let is_active = project_id.map_or(false, |project_id| {
-                        participant.location == ParticipantLocation::Project { project_id }
-                    });
                     Some(self.render_avatar(
-                        user.avatar.clone()?,
-                        collaborator.replica_id,
-                        Some((collaborator.peer_id, &user.github_login)),
-                        is_active,
+                        &user,
+                        replica_id,
+                        Some((peer_id, &user.github_login, participant.location)),
                         workspace,
                         theme,
                         cx,
@@ -325,8 +323,8 @@ impl CollabTitlebarItem {
         let user = workspace.read(cx).user_store().read(cx).current_user();
         let replica_id = workspace.read(cx).project().read(cx).replica_id();
         let status = *workspace.read(cx).client().status().borrow();
-        if let Some(avatar) = user.and_then(|user| user.avatar.clone()) {
-            Some(self.render_avatar(avatar, replica_id, None, true, workspace, theme, cx))
+        if let Some(user) = user {
+            Some(self.render_avatar(&user, Some(replica_id), None, workspace, theme, cx))
         } else if matches!(status, client::Status::UpgradeRequired) {
             None
         } else {
@@ -352,72 +350,105 @@ impl CollabTitlebarItem {
 
     fn render_avatar(
         &self,
-        avatar: Arc<ImageData>,
-        replica_id: ReplicaId,
-        peer: Option<(PeerId, &str)>,
-        is_active: bool,
+        user: &User,
+        replica_id: Option<ReplicaId>,
+        peer: Option<(PeerId, &str, ParticipantLocation)>,
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
-        let replica_color = theme.editor.replica_selection_style(replica_id).cursor;
-        let is_followed = peer.map_or(false, |(peer_id, _)| {
+        let is_followed = peer.map_or(false, |(peer_id, _, _)| {
             workspace.read(cx).is_following(peer_id)
         });
-        let mut avatar_style;
 
-        if is_active {
-            avatar_style = theme.workspace.titlebar.avatar;
+        let mut avatar_style;
+        if let Some((_, _, location)) = peer.as_ref() {
+            if let ParticipantLocation::Project { project_id } = *location {
+                if Some(project_id) == workspace.read(cx).project().read(cx).remote_id() {
+                    avatar_style = theme.workspace.titlebar.avatar;
+                } else {
+                    avatar_style = theme.workspace.titlebar.inactive_avatar;
+                }
+            } else {
+                avatar_style = theme.workspace.titlebar.inactive_avatar;
+            }
         } else {
-            avatar_style = theme.workspace.titlebar.inactive_avatar;
+            avatar_style = theme.workspace.titlebar.avatar;
         }
 
-        if is_followed {
-            avatar_style.border = Border::all(1.0, replica_color);
+        let mut replica_color = None;
+        if let Some(replica_id) = replica_id {
+            let color = theme.editor.replica_selection_style(replica_id).cursor;
+            replica_color = Some(color);
+            if is_followed {
+                avatar_style.border = Border::all(1.0, color);
+            }
         }
 
         let content = Stack::new()
-            .with_child(
-                Image::new(avatar)
+            .with_children(user.avatar.as_ref().map(|avatar| {
+                Image::new(avatar.clone())
                     .with_style(avatar_style)
                     .constrained()
                     .with_width(theme.workspace.titlebar.avatar_width)
                     .aligned()
-                    .boxed(),
-            )
-            .with_child(
+                    .boxed()
+            }))
+            .with_children(replica_color.map(|replica_color| {
                 AvatarRibbon::new(replica_color)
                     .constrained()
                     .with_width(theme.workspace.titlebar.avatar_ribbon.width)
                     .with_height(theme.workspace.titlebar.avatar_ribbon.height)
                     .aligned()
                     .bottom()
-                    .boxed(),
-            )
+                    .boxed()
+            }))
             .constrained()
             .with_width(theme.workspace.titlebar.avatar_width)
             .contained()
             .with_margin_left(theme.workspace.titlebar.avatar_margin)
             .boxed();
 
-        if let Some((peer_id, peer_github_login)) = peer {
-            MouseEventHandler::<ToggleFollow>::new(replica_id.into(), cx, move |_, _| content)
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, cx| {
-                    cx.dispatch_action(ToggleFollow(peer_id))
-                })
-                .with_tooltip::<ToggleFollow, _>(
-                    peer_id.0 as usize,
-                    if is_followed {
-                        format!("Unfollow {}", peer_github_login)
-                    } else {
-                        format!("Follow {}", peer_github_login)
-                    },
-                    Some(Box::new(FollowNextCollaborator)),
-                    theme.tooltip.clone(),
-                    cx,
-                )
-                .boxed()
+        if let Some((peer_id, peer_github_login, location)) = peer {
+            if let Some(replica_id) = replica_id {
+                MouseEventHandler::<ToggleFollow>::new(replica_id.into(), cx, move |_, _| content)
+                    .with_cursor_style(CursorStyle::PointingHand)
+                    .on_click(MouseButton::Left, move |_, cx| {
+                        cx.dispatch_action(ToggleFollow(peer_id))
+                    })
+                    .with_tooltip::<ToggleFollow, _>(
+                        peer_id.0 as usize,
+                        if is_followed {
+                            format!("Unfollow {}", peer_github_login)
+                        } else {
+                            format!("Follow {}", peer_github_login)
+                        },
+                        Some(Box::new(FollowNextCollaborator)),
+                        theme.tooltip.clone(),
+                        cx,
+                    )
+                    .boxed()
+            } else if let ParticipantLocation::Project { project_id } = location {
+                let user_id = user.id;
+                MouseEventHandler::<JoinProject>::new(peer_id.0 as usize, cx, move |_, _| content)
+                    .with_cursor_style(CursorStyle::PointingHand)
+                    .on_click(MouseButton::Left, move |_, cx| {
+                        cx.dispatch_action(JoinProject {
+                            project_id,
+                            follow_user_id: user_id,
+                        })
+                    })
+                    .with_tooltip::<JoinProject, _>(
+                        peer_id.0 as usize,
+                        format!("Follow {} into external project", peer_github_login),
+                        Some(Box::new(FollowNextCollaborator)),
+                        theme.tooltip.clone(),
+                        cx,
+                    )
+                    .boxed()
+            } else {
+                content
+            }
         } else {
             content
         }

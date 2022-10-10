@@ -36,6 +36,7 @@ export default function workspace(theme: Theme) {
       border: border(theme, "primary"),
     },
   };
+  const avatarWidth = 18;
 
   return {
     background: backgroundColor(theme, 300),
@@ -80,7 +81,7 @@ export default function workspace(theme: Theme) {
     },
     statusBar: statusBar(theme),
     titlebar: {
-      avatarWidth: 18,
+      avatarWidth,
       avatarMargin: 8,
       height: 33,
       background: backgroundColor(theme, 100),
@@ -90,15 +91,19 @@ export default function workspace(theme: Theme) {
       },
       title: text(theme, "sans", "primary"),
       avatar: {
-        cornerRadius: 10,
+        cornerRadius: avatarWidth / 2,
         border: {
           color: "#00000088",
           width: 1,
         },
       },
       inactiveAvatar: {
-        cornerRadius: 10,
-        opacity: 0.65,
+        cornerRadius: avatarWidth / 2,
+        border: {
+          color: "#00000088",
+          width: 1,
+        },
+        grayscale: true,
       },
       avatarRibbon: {
         height: 3,

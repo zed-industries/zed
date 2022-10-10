@@ -27,6 +27,8 @@ pub struct ImageStyle {
     pub height: Option<f32>,
     #[serde(default)]
     pub width: Option<f32>,
+    #[serde(default)]
+    pub grayscale: bool,
 }
 
 impl Image {
@@ -74,6 +76,7 @@ impl Element for Image {
             bounds,
             border: self.style.border,
             corner_radius: self.style.corner_radius,
+            grayscale: self.style.grayscale,
             data: self.data.clone(),
         });
     }
