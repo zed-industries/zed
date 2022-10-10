@@ -204,6 +204,7 @@
     {
         "context": "Editor && vim_mode == visual",
         "bindings": {
+            "u": "editor::Undo",
             "c": "vim::VisualChange",
             "d": "vim::VisualDelete",
             "x": "vim::VisualDelete",
