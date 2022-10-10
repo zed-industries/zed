@@ -1,7 +1,6 @@
 import { fontWeights } from "../common";
 import {
   ColorScheme,
-  Elevation,
   Layer,
   StyleSets,
 } from "../themes/common/colorScheme";
@@ -173,23 +172,23 @@ export default function editor(colorScheme: ColorScheme) {
       colorScheme.players[7],
     ],
     autocomplete: {
-      background: background(elevation.above.top),
+      background: background(elevation.bottom),
       cornerRadius: 8,
       padding: 4,
       margin: {
         left: -14,
       },
-      border: border(elevation.above.top),
+      border: border(elevation.bottom),
       shadow: elevation.above.shadow,
       matchHighlight: elevation.above.ramps.blue(0.5).hex(),
       item: autocompleteItem,
       hoveredItem: {
         ...autocompleteItem,
-        background: background(elevation.above.top, "hovered"),
+        background: background(elevation.bottom, "hovered"),
       },
       selectedItem: {
         ...autocompleteItem,
-        background: withOpacity(background(elevation.above.top, "active"), 0.2),
+        background: background(elevation.bottom, "active"),
       },
     },
     diagnosticHeader: {
