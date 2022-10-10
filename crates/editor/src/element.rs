@@ -1422,6 +1422,8 @@ impl Element for EditorElement {
         let em_advance = style.text.em_advance(cx.font_cache);
         let overscroll = vec2f(em_width, 0.);
         let snapshot = self.update_view(cx.app, |view, cx| {
+            view.set_visible_line_count(size.y() / line_height);
+
             let wrap_width = match view.soft_wrap_mode(cx) {
                 SoftWrap::None => Some((MAX_LINE_LEN / 2) as f32 * em_advance),
                 SoftWrap::EditorWidth => {
