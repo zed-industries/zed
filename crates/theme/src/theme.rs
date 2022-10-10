@@ -97,6 +97,7 @@ pub struct ContactList {
     pub user_query_editor_height: f32,
     pub add_contact_button: IconButton,
     pub header_row: Interactive<ContainedText>,
+    pub leave_call: Interactive<ContainedText>,
     pub contact_row: Interactive<ContainerStyle>,
     pub row_height: f32,
     pub contact_avatar: ImageStyle,

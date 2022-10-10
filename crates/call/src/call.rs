@@ -201,6 +201,7 @@ impl ActiveCall {
     pub fn hang_up(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
         if let Some((room, _)) = self.room.take() {
             room.update(cx, |room, cx| room.leave(cx))?;
+            cx.notify();
         }
         Ok(())
     }
