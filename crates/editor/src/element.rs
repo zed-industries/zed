@@ -1495,6 +1495,8 @@ impl Element for EditorElement {
         let mut highlighted_rows = None;
         let mut highlighted_ranges = Vec::new();
         self.update_view(cx.app, |view, cx| {
+            view.set_lines(size.y() / line_height);
+
             let display_map = view.display_map.update(cx, |map, cx| map.snapshot(cx));
 
             highlighted_rows = view.highlighted_rows();

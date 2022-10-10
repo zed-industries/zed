@@ -451,6 +451,7 @@ pub struct Editor {
     leader_replica_id: Option<u16>,
     hover_state: HoverState,
     link_go_to_definition_state: LinkGoToDefinitionState,
+    lines: Option<f32>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1052,6 +1053,7 @@ impl Editor {
             leader_replica_id: None,
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
+            lines: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -1163,9 +1165,9 @@ impl Editor {
     ) {
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-        if scroll_position.y() == 0. {
+        if scroll_position.y() <= 0. {
             self.scroll_top_anchor = Anchor::min();
-            self.scroll_position = scroll_position;
+            self.scroll_position = scroll_position.max(vec2f(0., 0.));
         } else {
             let scroll_top_buffer_offset =
                 DisplayPoint::new(scroll_position.y() as u32, 0).to_offset(&map, Bias::Right);
@@ -1184,6 +1186,10 @@ impl Editor {
 
         cx.emit(Event::ScrollPositionChanged { local });
         cx.notify();
+    }
+
+    fn set_lines(&mut self, lines: f32) {
+        self.lines = Some(lines)
     }
 
     fn set_scroll_top_anchor(
@@ -5514,12 +5520,28 @@ impl Editor {
         }
     }
 
-    pub fn page_up(&mut self, _: &PageUp, _: &mut ViewContext<Self>) {
+    pub fn page_up(&mut self, _: &PageUp, cx: &mut ViewContext<Self>) {
         log::info!("Editor::page_up");
+        let lines = match self.lines {
+            Some(lines) => lines,
+            None => return,
+        };
+
+        let cur_position = self.scroll_position(cx);
+        let new_pos = cur_position - vec2f(0., lines + 1.);
+        self.set_scroll_position(new_pos, cx);
     }
 
-    pub fn page_down(&mut self, _: &PageDown, _: &mut ViewContext<Self>) {
-        log::info!("Editor::page_down");
+    pub fn page_down(&mut self, _: &PageDown, cx: &mut ViewContext<Self>) {
+        log::info!("Editor::page_up");
+        let lines = match self.lines {
+            Some(lines) => lines,
+            None => return,
+        };
+
+        let cur_position = self.scroll_position(cx);
+        let new_pos = cur_position + vec2f(0., lines - 1.);
+        self.set_scroll_position(new_pos, cx);
     }
 
     pub fn fold(&mut self, _: &Fold, cx: &mut ViewContext<Self>) {
