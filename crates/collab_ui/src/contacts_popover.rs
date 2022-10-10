@@ -23,28 +23,39 @@ enum Child {
 }
 
 pub struct ContactsPopover {
+    is_popup: bool,
     child: Child,
-    project: ModelHandle<Project>,
+    project: Option<ModelHandle<Project>>,
     user_store: ModelHandle<UserStore>,
     _subscription: Option<gpui::Subscription>,
+    _window_subscription: gpui::Subscription,
 }
 
 impl ContactsPopover {
     pub fn new(
-        project: ModelHandle<Project>,
+        is_popup: bool,
+        project: Option<ModelHandle<Project>>,
         user_store: ModelHandle<UserStore>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let mut this = Self {
+            is_popup,
             child: Child::ContactList(
                 cx.add_view(|cx| ContactList::new(project.clone(), user_store.clone(), cx)),
             ),
             project,
             user_store,
             _subscription: None,
+            _window_subscription: cx.observe_window_activation(Self::window_activation_changed),
         };
         this.show_contact_list(cx);
         this
+    }
+
+    fn window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {
+        if !active {
+            cx.emit(Event::Dismissed);
+        }
     }
 
     fn toggle_contact_finder(&mut self, _: &ToggleContactFinder, cx: &mut ViewContext<Self>) {
@@ -92,13 +103,21 @@ impl View for ContactsPopover {
             Child::ContactFinder(child) => ChildView::new(child),
         };
 
-        child
-            .contained()
-            .with_style(theme.contacts_popover.container)
-            .constrained()
-            .with_width(theme.contacts_popover.width)
-            .with_height(theme.contacts_popover.height)
-            .boxed()
+        let mut container_style = theme.contacts_popover.container;
+        if self.is_popup {
+            container_style.shadow = Default::default();
+            container_style.border = Default::default();
+            container_style.corner_radius = Default::default();
+            child.contained().with_style(container_style).boxed()
+        } else {
+            child
+                .contained()
+                .with_style(container_style)
+                .constrained()
+                .with_width(theme.contacts_popover.width)
+                .with_height(theme.contacts_popover.height)
+                .boxed()
+        }
     }
 
     fn on_focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {

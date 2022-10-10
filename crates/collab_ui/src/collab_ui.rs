@@ -1,4 +1,3 @@
-mod active_call_popover;
 mod collab_titlebar_item;
 mod contact_finder;
 mod contact_list;
@@ -23,7 +22,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     contact_finder::init(cx);
     contacts_popover::init(cx);
     incoming_call_notification::init(cx);
-    menu_bar_extra::init(cx);
+    menu_bar_extra::init(app_state.user_store.clone(), cx);
     project_shared_notification::init(cx);
 
     cx.add_global_action(move |action: &JoinProject, cx| {

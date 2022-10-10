@@ -1,17 +1,18 @@
-use crate::active_call_popover::{self, ActiveCallPopover};
+use crate::contacts_popover::{self, ContactsPopover};
 use call::ActiveCall;
+use client::UserStore;
 use gpui::{
     actions,
     color::Color,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
-    Appearance, Entity, MouseButton, MutableAppContext, RenderContext, View, ViewContext,
-    ViewHandle, WindowKind,
+    Appearance, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext, View,
+    ViewContext, ViewHandle, WindowKind,
 };
 
 actions!(menu_bar_extra, [ToggleActiveCallPopover]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(user_store: ModelHandle<UserStore>, cx: &mut MutableAppContext) {
     cx.add_action(MenuBarExtra::toggle_active_call_popover);
 
     let mut status_bar_item_id = None;
@@ -24,7 +25,7 @@ pub fn init(cx: &mut MutableAppContext) {
             }
 
             if has_room {
-                let (id, _) = cx.add_status_bar_item(|_| MenuBarExtra::new());
+                let (id, _) = cx.add_status_bar_item(|_| MenuBarExtra::new(user_store.clone()));
                 status_bar_item_id = Some(id);
             }
         }
@@ -33,7 +34,8 @@ pub fn init(cx: &mut MutableAppContext) {
 }
 
 struct MenuBarExtra {
-    popover: Option<ViewHandle<ActiveCallPopover>>,
+    popover: Option<ViewHandle<ContactsPopover>>,
+    user_store: ModelHandle<UserStore>,
 }
 
 impl Entity for MenuBarExtra {
@@ -70,8 +72,11 @@ impl View for MenuBarExtra {
 }
 
 impl MenuBarExtra {
-    fn new() -> Self {
-        Self { popover: None }
+    fn new(user_store: ModelHandle<UserStore>) -> Self {
+        Self {
+            popover: None,
+            user_store,
+        }
     }
 
     fn toggle_active_call_popover(
@@ -85,7 +90,7 @@ impl MenuBarExtra {
             }
             None => {
                 let window_bounds = cx.window_bounds();
-                let size = vec2f(360., 460.);
+                let size = vec2f(300., 350.);
                 let origin = window_bounds.lower_left()
                     + vec2f(window_bounds.width() / 2. - size.x() / 2., 0.);
                 let (_, popover) = cx.add_window(
@@ -96,7 +101,7 @@ impl MenuBarExtra {
                         kind: WindowKind::PopUp,
                         is_movable: false,
                     },
-                    |cx| ActiveCallPopover::new(cx),
+                    |cx| ContactsPopover::new(true, None, self.user_store.clone(), cx),
                 );
                 cx.subscribe(&popover, Self::on_popover_event).detach();
                 self.popover = Some(popover);
@@ -106,12 +111,12 @@ impl MenuBarExtra {
 
     fn on_popover_event(
         &mut self,
-        popover: ViewHandle<ActiveCallPopover>,
-        event: &active_call_popover::Event,
+        popover: ViewHandle<ContactsPopover>,
+        event: &contacts_popover::Event,
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            active_call_popover::Event::Deactivated => {
+            contacts_popover::Event::Dismissed => {
                 self.popover.take();
                 cx.remove_window(popover.window_id());
             }
