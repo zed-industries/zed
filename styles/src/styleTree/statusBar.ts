@@ -46,7 +46,7 @@ export default function statusBar(colorScheme: ColorScheme) {
     },
     feedback: {
       ...text(layer, "sans", "variant"),
-      hover: text(layer, "sans", "variant", "hovered"),
+      hover: text(layer, "sans", "hovered"),
     },
     diagnosticSummary: {
       height: 20,
