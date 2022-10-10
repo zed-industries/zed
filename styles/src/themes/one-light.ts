@@ -24,21 +24,9 @@ const base0E = "#a626a4";
 const base0F = "#986801";
 
 const ramps = {
-  neutral: chroma.scale([
-    base00,
-    base01,
-    base02,
-    base03,
-    base04,
-    base05,
-    base06,
-    base07,
-  ]).domain([
-    0,
-    0.05,
-    0.77,
-    1
-  ]),
+  neutral: chroma
+    .scale([base00, base01, base02, base03, base04, base05, base06, base07])
+    .domain([0, 0.05, 0.77, 1]),
   red: colorRamp(chroma(base08)),
   orange: colorRamp(chroma(base09)),
   yellow: colorRamp(chroma(base0A)),

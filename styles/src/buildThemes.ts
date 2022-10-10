@@ -2,7 +2,10 @@ import * as fs from "fs";
 import * as path from "path";
 import { tmpdir } from "os";
 import app from "./styleTree/app";
-import colorSchemes, { internalColorSchemes, experimentalColorSchemes } from "./colorSchemes";
+import colorSchemes, {
+  internalColorSchemes,
+  experimentalColorSchemes,
+} from "./colorSchemes";
 import snakeCase from "./utils/snakeCase";
 import { ColorScheme } from "./themes/common/colorScheme";
 

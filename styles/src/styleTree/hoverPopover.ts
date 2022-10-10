@@ -10,7 +10,7 @@ export default function HoverPopover(elevation: Elevation) {
       left: 8,
       right: 8,
       top: 4,
-      bottom: 4
+      bottom: 4,
     },
     shadow: elevation.shadow,
     border: border(layer),

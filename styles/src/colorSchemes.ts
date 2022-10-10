@@ -6,11 +6,10 @@ const colorSchemes: ColorScheme[] = [];
 export default colorSchemes;
 
 const internalColorSchemes: ColorScheme[] = [];
-export { internalColorSchemes }
+export { internalColorSchemes };
 
 const experimentalColorSchemes: ColorScheme[] = [];
-export { experimentalColorSchemes }
-
+export { experimentalColorSchemes };
 
 function fillColorSchemes(themesPath: string, colorSchemes: ColorScheme[]) {
   for (const fileName of fs.readdirSync(themesPath)) {
@@ -25,7 +24,12 @@ function fillColorSchemes(themesPath: string, colorSchemes: ColorScheme[]) {
   }
 }
 
-fillColorSchemes(path.resolve(`${__dirname}/themes`), colorSchemes)
-fillColorSchemes(path.resolve(`${__dirname}/themes/internal`), internalColorSchemes)
-fillColorSchemes(path.resolve(`${__dirname}/themes/experiments`), experimentalColorSchemes)
-
+fillColorSchemes(path.resolve(`${__dirname}/themes`), colorSchemes);
+fillColorSchemes(
+  path.resolve(`${__dirname}/themes/internal`),
+  internalColorSchemes
+);
+fillColorSchemes(
+  path.resolve(`${__dirname}/themes/experiments`),
+  experimentalColorSchemes
+);

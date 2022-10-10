@@ -6,16 +6,14 @@ export default function tabBar(colorScheme: ColorScheme) {
   const height = 32;
 
   let elevation = colorScheme.lowest;
-  let activeLayerActiveTab = elevation.top;
-  let activeLayerInactiveTab = elevation.middle;
-  let inactiveLayerActiveTab = elevation.middle;
-  let inactiveLayerInactiveTab = elevation.bottom;
+  let activeLayer = elevation.top;
+  let layer = elevation.middle;
 
   const tab = {
     height,
-    text: text(activeLayerInactiveTab, "sans", "variant", { size: "sm" }),
-    background: background(activeLayerInactiveTab),
-    border: border(activeLayerInactiveTab, {
+    text: text(layer, "sans", "variant", { size: "sm" }),
+    background: background(layer),
+    border: border(layer, {
       right: true,
       bottom: true,
       overlay: true,
@@ -28,57 +26,60 @@ export default function tabBar(colorScheme: ColorScheme) {
 
     // Close icons
     iconWidth: 8,
-    iconClose: foreground(activeLayerInactiveTab, "variant"),
-    iconCloseActive: foreground(activeLayerInactiveTab),
+    iconClose: foreground(layer, "variant"),
+    iconCloseActive: foreground(layer),
 
     // Indicators
-    iconConflict: foreground(activeLayerInactiveTab, "warning"),
-    iconDirty: foreground(activeLayerInactiveTab, "info"),
+    iconConflict: foreground(layer, "warning"),
+    iconDirty: foreground(layer, "info"),
 
     // When two tabs of the same name are open, a label appears next to them
     description: {
       margin: { left: 8 },
-      ...text(activeLayerInactiveTab, "sans", "disabled", { size: "2xs" })
-    }
+      ...text(layer, "sans", "disabled", { size: "2xs" }),
+    },
   };
 
   const activePaneActiveTab = {
     ...tab,
-    background: background(activeLayerActiveTab),
-    text: text(activeLayerActiveTab, "sans", { size: "sm" }),
+    background: background(activeLayer),
+    text: text(activeLayer, "sans", "active", { size: "sm" }),
     border: {
       ...tab.border,
-      bottom: false
+      bottom: false,
     },
   };
 
   const inactivePaneInactiveTab = {
     ...tab,
-    background: background(inactiveLayerInactiveTab),
-    text: text(inactiveLayerInactiveTab, "sans", "variant", { size: "sm" }),
+    background: background(layer),
+    text: text(layer, "sans", "variant", { size: "sm" }),
   };
 
   const inactivePaneActiveTab = {
     ...tab,
-    background: background(inactiveLayerActiveTab),
-    text: text(inactiveLayerActiveTab, "sans", "variant", { size: "sm" }),
+    background: background(activeLayer),
+    text: text(layer, "sans", "variant", { size: "sm" }),
     border: {
       ...tab.border,
-      bottom: false
+      bottom: false,
     },
-  }
+  };
 
   const draggedTab = {
     ...activePaneActiveTab,
-    background: withOpacity(tab.background, 0.8),
+    background: withOpacity(tab.background, 0.95),
     border: undefined as any,
     shadow: elevation.above.shadow,
-  }
+  };
 
   return {
     height,
-    background: background(activeLayerInactiveTab),
-    dropTargetOverlayColor: withOpacity(foreground(activeLayerInactiveTab), 0.6),
+    background: background(layer),
+    dropTargetOverlayColor: withOpacity(
+      foreground(layer),
+      0.6
+    ),
     activePane: {
       activeTab: activePaneActiveTab,
       inactiveTab: tab,
@@ -89,11 +90,11 @@ export default function tabBar(colorScheme: ColorScheme) {
     },
     draggedTab,
     paneButton: {
-      color: foreground(activeLayerInactiveTab, "variant"),
+      color: foreground(layer, "variant"),
       iconWidth: 12,
       buttonWidth: activePaneActiveTab.height,
       hover: {
-        color: foreground(activeLayerInactiveTab, "hovered"),
+        color: foreground(layer, "hovered"),
       },
     },
     paneButtonContainer: {
@@ -101,7 +102,7 @@ export default function tabBar(colorScheme: ColorScheme) {
       border: {
         ...tab.border,
         right: false,
-      }
-    }
-  }
+      },
+    },
+  };
 }

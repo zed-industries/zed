@@ -5,7 +5,7 @@ import {
   border,
   borderColor,
   foreground,
-  text
+  text,
 } from "./components";
 import statusBar from "./statusBar";
 import tabBar from "./tabBar";
@@ -37,10 +37,7 @@ export default function workspace(colorScheme: ColorScheme) {
     },
     sidebar: {
       initialSize: 240,
-      border: border(
-        layer,
-        { left: true, right: true }
-      ),
+      border: border(layer, { left: true, right: true }),
     },
     paneDivider: {
       color: borderColor(layer),
@@ -171,9 +168,9 @@ export default function workspace(colorScheme: ColorScheme) {
       },
       maximized: {
         margin: 32,
-        border: border(elevation.above.top, { "overlay": true }),
+        border: border(elevation.above.top, { overlay: true }),
         shadow: elevation.above.shadow,
-      }
-    }
+      },
+    },
   };
 }

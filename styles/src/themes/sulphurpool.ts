@@ -4,25 +4,18 @@ import { colorRamp, createColorScheme } from "./common/ramps";
 const name = "sulphurpool";
 
 const ramps = {
-  neutral: chroma.scale([
-    "#202746",
-    "#293256",
-    "#5e6687",
-    "#6b7394",
-    "#898ea4",
-    "#979db4",
-    "#dfe2f1",
-    "#f5f7ff",
-  ]).domain([
-    0,
-    0.2,
-    0.38,
-    0.45,
-    0.65,
-    0.7,
-    0.85,
-    1
-  ]),
+  neutral: chroma
+    .scale([
+      "#202746",
+      "#293256",
+      "#5e6687",
+      "#6b7394",
+      "#898ea4",
+      "#979db4",
+      "#dfe2f1",
+      "#f5f7ff",
+    ])
+    .domain([0, 0.2, 0.38, 0.45, 0.65, 0.7, 0.85, 1]),
   red: colorRamp(chroma("#c94922")),
   orange: colorRamp(chroma("#c76b29")),
   yellow: colorRamp(chroma("#c08b30")),

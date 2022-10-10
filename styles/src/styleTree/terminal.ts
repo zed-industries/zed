@@ -2,12 +2,12 @@ import { Elevation } from "../themes/common/colorScheme";
 
 export default function terminal(elevation: Elevation) {
   /**
-  * Colors are controlled per-cell in the terminal grid. 
-  * Cells can be set to any of these more 'theme-capable' colors
-  * or can be set directly with RGB values. 
-  * Here are the common interpretations of these names:
-  * https://en.wikipedia.org/wiki/ANSI_escape_code#Colors
-  */
+   * Colors are controlled per-cell in the terminal grid.
+   * Cells can be set to any of these more 'theme-capable' colors
+   * or can be set directly with RGB values.
+   * Here are the common interpretations of these names:
+   * https://en.wikipedia.org/wiki/ANSI_escape_code#Colors
+   */
   return {
     black: elevation.ramps.neutral(0).hex(),
     red: elevation.ramps.red(0.5).hex(),

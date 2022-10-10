@@ -4,25 +4,18 @@ import { colorRamp, createColorScheme } from "./common/ramps";
 const name = "cave";
 
 const ramps = {
-  neutral: chroma.scale([
-    "#19171c",
-    "#26232a",
-    "#585260",
-    "#655f6d",
-    "#7e7887",
-    "#8b8792",
-    "#e2dfe7",
-    "#efecf4",
-  ]).domain([
-    0,
-    0.3,
-    0.45,
-    0.6,
-    0.65,
-    0.7,
-    0.85,
-    1
-  ]),
+  neutral: chroma
+    .scale([
+      "#19171c",
+      "#26232a",
+      "#585260",
+      "#655f6d",
+      "#7e7887",
+      "#8b8792",
+      "#e2dfe7",
+      "#efecf4",
+    ])
+    .domain([0, 0.3, 0.45, 0.6, 0.65, 0.7, 0.85, 1]),
   red: colorRamp(chroma("#be4678")),
   orange: colorRamp(chroma("#aa573c")),
   yellow: colorRamp(chroma("#a06e3b")),
