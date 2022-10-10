@@ -400,7 +400,7 @@ mod tests {
     use indoc::indoc;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
 
-    use crate::test::EditorLspTestContext;
+    use crate::test::editor_lsp_test_context::EditorLspTestContext;
 
     use super::*;
 

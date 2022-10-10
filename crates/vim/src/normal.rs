@@ -10,8 +10,10 @@ use crate::{
     state::{Mode, Operator},
     Vim,
 };
-use collections::HashSet;
-use editor::{Autoscroll, Bias, ClipboardSelection, DisplayPoint};
+use collections::{HashMap, HashSet};
+use editor::{
+    display_map::ToDisplayPoint, Anchor, Autoscroll, Bias, ClipboardSelection, DisplayPoint,
+};
 use gpui::{actions, MutableAppContext, ViewContext};
 use language::{AutoindentMode, Point, SelectionGoal};
 use workspace::Workspace;
@@ -258,7 +260,18 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
                             clipboard_text = Cow::Owned(newline_separated_text);
                         }
 
-                        let mut new_selections = Vec::new();
+                        // If the pasted text is a single line, the cursor should be placed after
+                        // the newly pasted text. This is easiest done with an anchor after the
+                        // insertion, and then with a fixup to move the selection back one position.
+                        // However if the pasted text is linewise, the cursor should be placed at the start
+                        // of the new text on the following line. This is easiest done with a manually adjusted
+                        // point.
+                        // This enum lets us represent both cases
+                        enum NewPosition {
+                            Inside(Point),
+                            After(Anchor),
+                        }
+                        let mut new_selections: HashMap<usize, NewPosition> = Default::default();
                         editor.buffer().update(cx, |buffer, cx| {
                             let snapshot = buffer.snapshot(cx);
                             let mut start_offset = 0;
@@ -288,8 +301,10 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
                                         edits.push((point..point, "\n"));
                                     }
                                     // Drop selection at the start of the next line
-                                    let selection_point = Point::new(point.row + 1, 0);
-                                    new_selections.push(selection.map(|_| selection_point));
+                                    new_selections.insert(
+                                        selection.id,
+                                        NewPosition::Inside(Point::new(point.row + 1, 0)),
+                                    );
                                     point
                                 } else {
                                     let mut point = selection.end;
@@ -299,7 +314,14 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
                                         .clip_point(point, Bias::Right)
                                         .to_point(&display_map);
 
-                                    new_selections.push(selection.map(|_| point));
+                                    new_selections.insert(
+                                        selection.id,
+                                        if to_insert.contains('\n') {
+                                            NewPosition::Inside(point)
+                                        } else {
+                                            NewPosition::After(snapshot.anchor_after(point))
+                                        },
+                                    );
                                     point
                                 };
 
@@ -317,7 +339,25 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
                         });
 
                         editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
-                            s.select(new_selections)
+                            s.move_with(|map, selection| {
+                                if let Some(new_position) = new_selections.get(&selection.id) {
+                                    match new_position {
+                                        NewPosition::Inside(new_point) => {
+                                            selection.collapse_to(
+                                                new_point.to_display_point(map),
+                                                SelectionGoal::None,
+                                            );
+                                        }
+                                        NewPosition::After(after_point) => {
+                                            let mut new_point = after_point.to_display_point(map);
+                                            *new_point.column_mut() =
+                                                new_point.column().saturating_sub(1);
+                                            new_point = map.clip_point(new_point, Bias::Left);
+                                            selection.collapse_to(new_point, SelectionGoal::None);
+                                        }
+                                    }
+                                }
+                            });
                         });
                     } else {
                         editor.insert(&clipboard_text, cx);
@@ -332,14 +372,13 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
 #[cfg(test)]
 mod test {
     use indoc::indoc;
-    use util::test::marked_text_offsets;
 
     use crate::{
         state::{
             Mode::{self, *},
             Namespace, Operator,
         },
-        test_contexts::{NeovimBackedTestContext, VimTestContext},
+        test::{NeovimBackedTestContext, VimTestContext},
     };
 
     #[gpui::test]
@@ -476,48 +515,22 @@ mod test {
 
     #[gpui::test]
     async fn test_b(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
-        let (_, cursor_offsets) = marked_text_offsets(indoc! {"
-            ˇˇThe ˇquickˇ-ˇbrown
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["b"]);
+        cx.assert_all(indoc! {"
+            ˇThe ˇquickˇ-ˇbrown
             ˇ
             ˇ
             ˇfox_jumps ˇover
-            ˇthe"});
-        cx.set_state(
-            indoc! {"
-            The quick-brown
-            
-            
-            fox_jumps over
-            thˇe"},
-            Mode::Normal,
-        );
-
-        for cursor_offset in cursor_offsets.into_iter().rev() {
-            cx.simulate_keystroke("b");
-            cx.assert_editor_selections(vec![cursor_offset..cursor_offset]);
-        }
-
-        // Reset and test ignoring punctuation
-        let (_, cursor_offsets) = marked_text_offsets(indoc! {"
-            ˇˇThe ˇquick-brown
+            ˇthe"})
+            .await;
+        let mut cx = cx.binding(["shift-b"]);
+        cx.assert_all(indoc! {"
+            ˇThe ˇquickˇ-ˇbrown
             ˇ
             ˇ
             ˇfox_jumps ˇover
-            ˇthe"});
-        cx.set_state(
-            indoc! {"
-            The quick-brown
-            
-            
-            fox_jumps over
-            thˇe"},
-            Mode::Normal,
-        );
-        for cursor_offset in cursor_offsets.into_iter().rev() {
-            cx.simulate_keystroke("shift-b");
-            cx.assert_editor_selections(vec![cursor_offset..cursor_offset]);
-        }
+            ˇthe"})
+            .await;
     }
 
     #[gpui::test]
@@ -571,199 +584,98 @@ mod test {
 
     #[gpui::test]
     async fn test_jump_to_first_non_whitespace(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["^"]);
-        cx.assert("The qˇuick", "ˇThe quick");
-        cx.assert(" The qˇuick", " ˇThe quick");
-        cx.assert("ˇ", "ˇ");
-        cx.assert(
-            indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["^"]);
+        cx.assert("The qˇuick").await;
+        cx.assert(" The qˇuick").await;
+        cx.assert("ˇ").await;
+        cx.assert(indoc! {"
                 The qˇuick
-                brown fox"},
-            indoc! {"
-                ˇThe quick
-                brown fox"},
-        );
-        cx.assert(
-            indoc! {"
+                brown fox"})
+            .await;
+        cx.assert(indoc! {"
                 ˇ
-                The quick"},
-            indoc! {"
-                ˇ
-                The quick"},
-        );
+                The quick"})
+            .await;
         // Indoc disallows trailing whitspace.
-        cx.assert("   ˇ \nThe quick", "   ˇ \nThe quick");
+        cx.assert("   ˇ \nThe quick").await;
     }
 
     #[gpui::test]
     async fn test_insert_first_non_whitespace(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["shift-i"]).mode_after(Mode::Insert);
-        cx.assert("The qˇuick", "ˇThe quick");
-        cx.assert(" The qˇuick", " ˇThe quick");
-        cx.assert("ˇ", "ˇ");
-        cx.assert(
-            indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["shift-i"]);
+        cx.assert("The qˇuick").await;
+        cx.assert(" The qˇuick").await;
+        cx.assert("ˇ").await;
+        cx.assert(indoc! {"
                 The qˇuick
-                brown fox"},
-            indoc! {"
-                ˇThe quick
-                brown fox"},
-        );
-        cx.assert(
-            indoc! {"
+                brown fox"})
+            .await;
+        cx.assert(indoc! {"
                 ˇ
-                The quick"},
-            indoc! {"
-                ˇ
-                The quick"},
-        );
+                The quick"})
+            .await;
     }
 
     #[gpui::test]
     async fn test_delete_to_end_of_line(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["shift-d"]);
-        cx.assert(
-            indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["shift-d"]);
+        cx.assert(indoc! {"
                 The qˇuick
-                brown fox"},
-            indoc! {"
-                The ˇq
-                brown fox"},
-        );
-        cx.assert(
-            indoc! {"
+                brown fox"})
+            .await;
+        cx.assert(indoc! {"
                 The quick
                 ˇ
-                brown fox"},
-            indoc! {"
-                The quick
-                ˇ
-                brown fox"},
-        );
+                brown fox"})
+            .await;
     }
 
     #[gpui::test]
     async fn test_x(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["x"]);
-        cx.assert("ˇTest", "ˇest");
-        cx.assert("Teˇst", "Teˇt");
-        cx.assert("Tesˇt", "Teˇs");
-        cx.assert(
-            indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["x"]);
+        cx.assert_all("ˇTeˇsˇt").await;
+        cx.assert(indoc! {"
                 Tesˇt
-                test"},
-            indoc! {"
-                Teˇs
-                test"},
-        );
+                test"})
+            .await;
     }
 
     #[gpui::test]
     async fn test_delete_left(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["shift-x"]);
-        cx.assert("Teˇst", "Tˇst");
-        cx.assert("Tˇest", "ˇest");
-        cx.assert("ˇTest", "ˇTest");
-        cx.assert(
-            indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["shift-x"]);
+        cx.assert_all("ˇTˇeˇsˇt").await;
+        cx.assert(indoc! {"
                 Test
-                ˇtest"},
-            indoc! {"
-                Test
-                ˇtest"},
-        );
+                ˇtest"})
+            .await;
     }
 
     #[gpui::test]
     async fn test_o(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["o"]).mode_after(Mode::Insert);
-
-        cx.assert(
-            "ˇ",
-            indoc! {"
-                
-                ˇ"},
-        );
-        cx.assert(
-            "The ˇquick",
-            indoc! {"
-                The quick
-                ˇ"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                brown ˇfox
-                jumps over"},
-            indoc! {"
-                The quick
-                brown fox
-                ˇ
-                jumps over"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                brown fox
-                jumps ˇover"},
-            indoc! {"
-                The quick
-                brown fox
-                jumps over
-                ˇ"},
-        );
-        cx.assert(
-            indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["o"]);
+        cx.assert("ˇ").await;
+        cx.assert("The ˇquick").await;
+        cx.assert_all(indoc! {"
                 The qˇuick
-                brown fox
-                jumps over"},
-            indoc! {"
+                brown ˇfox
+                jumps ˇover"})
+            .await;
+        cx.assert(indoc! {"
                 The quick
                 ˇ
-                brown fox
-                jumps over"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                ˇ
-                brown fox"},
-            indoc! {"
-                The quick
-                
-                ˇ
-                brown fox"},
-        );
-        cx.assert(
-            indoc! {"
+                brown fox"})
+            .await;
+        cx.assert(indoc! {"
                 fn test() {
                     println!(ˇ);
                 }
-            "},
-            indoc! {"
-                fn test() {
-                    println!();
-                    ˇ
-                }
-            "},
-        );
-        cx.assert(
-            indoc! {"
+            "})
+            .await;
+        cx.assert(indoc! {"
                 fn test(ˇ) {
                     println!();
-                }"},
-            indoc! {"
-                fn test() {
-                ˇ
-                    println!();
-                }"},
-        );
+                }"})
+            .await;
     }
 
     #[gpui::test]
@@ -812,146 +724,66 @@ mod test {
 
     #[gpui::test]
     async fn test_dd(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["d", "d"]);
-
-        cx.assert("ˇ", "ˇ");
-        cx.assert("The ˇquick", "ˇ");
-        cx.assert(
-            indoc! {"
-                The quick
-                brown ˇfox
-                jumps over"},
-            indoc! {"
-                The quick
-                jumps ˇover"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                brown fox
-                jumps ˇover"},
-            indoc! {"
-                The quick
-                brown ˇfox"},
-        );
-        cx.assert(
-            indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["d", "d"]);
+        cx.assert("ˇ").await;
+        cx.assert("The ˇquick").await;
+        cx.assert_all(indoc! {"
                 The qˇuick
-                brown fox
-                jumps over"},
-            indoc! {"
-                brownˇ fox
-                jumps over"},
-        );
-        cx.assert(
-            indoc! {"
+                brown ˇfox
+                jumps ˇover"})
+            .await;
+        cx.assert(indoc! {"
                 The quick
                 ˇ
-                brown fox"},
-            indoc! {"
-                The quick
-                ˇbrown fox"},
-        );
+                brown fox"})
+            .await;
     }
 
     #[gpui::test]
     async fn test_cc(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["c", "c"]).mode_after(Mode::Insert);
-
-        cx.assert("ˇ", "ˇ");
-        cx.assert("The ˇquick", "ˇ");
-        cx.assert(
-            indoc! {"
-                The quick
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["c", "c"]);
+        cx.assert("ˇ").await;
+        cx.assert("The ˇquick").await;
+        cx.assert_all(indoc! {"
+                The quˇick
                 brown ˇfox
-                jumps over"},
-            indoc! {"
+                jumps ˇover"})
+            .await;
+        cx.assert(indoc! {"
                 The quick
                 ˇ
-                jumps over"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                brown fox
-                jumps ˇover"},
-            indoc! {"
-                The quick
-                brown fox
-                ˇ"},
-        );
-        cx.assert(
-            indoc! {"
-                The qˇuick
-                brown fox
-                jumps over"},
-            indoc! {"
-                ˇ
-                brown fox
-                jumps over"},
-        );
-        cx.assert(
-            indoc! {"
-                The quick
-                ˇ
-                brown fox"},
-            indoc! {"
-                The quick
-                ˇ
-                brown fox"},
-        );
+                brown fox"})
+            .await;
     }
 
     #[gpui::test]
     async fn test_p(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
-        cx.set_state(
-            indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {"
                 The quick brown
                 fox juˇmps over
-                the lazy dog"},
-            Mode::Normal,
-        );
+                the lazy dog"})
+            .await;
 
-        cx.simulate_keystrokes(["d", "d"]);
-        cx.assert_editor_state(indoc! {"
-            The quick brown
-            the laˇzy dog"});
+        cx.simulate_shared_keystrokes(["d", "d"]).await;
+        cx.assert_state_matches().await;
 
-        cx.simulate_keystroke("p");
-        cx.assert_state(
-            indoc! {"
+        cx.simulate_shared_keystroke("p").await;
+        cx.assert_state_matches().await;
+
+        cx.set_shared_state(indoc! {"
                 The quick brown
-                the lazy dog
-                ˇfox jumps over"},
-            Mode::Normal,
-        );
-
-        cx.set_state(
-            indoc! {"
-                The quick brown
-                fox «jumpˇ»s over
-                the lazy dog"},
-            Mode::Visual { line: false },
-        );
-        cx.simulate_keystroke("y");
-        cx.set_state(
-            indoc! {"
+                fox ˇjumps over
+                the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes(["v", "w", "y"]).await;
+        cx.set_shared_state(indoc! {"
                 The quick brown
                 fox jumps oveˇr
-                the lazy dog"},
-            Mode::Normal,
-        );
-        cx.simulate_keystroke("p");
-        cx.assert_state(
-            indoc! {"
-                The quick brown
-                fox jumps overˇjumps
-                the lazy dog"},
-            Mode::Normal,
-        );
+                the lazy dog"})
+            .await;
+        cx.simulate_shared_keystroke("p").await;
+        cx.assert_state_matches().await;
     }
 
     #[gpui::test]

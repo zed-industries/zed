@@ -1,5 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
+use gpui::ContextHandle;
+
 use crate::state::Mode;
 
 use super::NeovimBackedTestContext;
@@ -31,7 +33,10 @@ impl<'a, const COUNT: usize> NeovimBackedBindingTestContext<'a, COUNT> {
         self.consume().binding(keystrokes)
     }
 
-    pub async fn assert(&mut self, marked_positions: &str) {
+    pub async fn assert(
+        &mut self,
+        marked_positions: &str,
+    ) -> Option<(ContextHandle, ContextHandle)> {
         self.cx
             .assert_binding_matches(self.keystrokes_under_test, marked_positions)
             .await

@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
-use editor::test::{AssertionContextManager, EditorTestContext};
-use gpui::{json::json, AppContext, ViewHandle};
+use editor::test::editor_test_context::EditorTestContext;
+use gpui::{json::json, AppContext, ContextHandle, ViewHandle};
 use project::Project;
 use search::{BufferSearchBar, ProjectSearchBar};
 use workspace::{pane, AppState, WorkspaceHandle};
@@ -82,7 +82,6 @@ impl<'a> VimTestContext<'a> {
                 cx,
                 window_id,
                 editor,
-                assertion_context: AssertionContextManager::new(),
             },
             workspace,
         }
@@ -120,18 +119,18 @@ impl<'a> VimTestContext<'a> {
             .read(|cx| cx.global::<Vim>().state.operator_stack.last().copied())
     }
 
-    pub fn set_state(&mut self, text: &str, mode: Mode) {
+    pub fn set_state(&mut self, text: &str, mode: Mode) -> ContextHandle {
         self.cx.update(|cx| {
             Vim::update(cx, |vim, cx| {
                 vim.switch_mode(mode, false, cx);
             })
         });
-        self.cx.set_state(text);
+        self.cx.set_state(text)
     }
 
     pub fn assert_state(&mut self, text: &str, mode: Mode) {
         self.assert_editor_state(text);
-        assert_eq!(self.mode(), mode);
+        assert_eq!(self.mode(), mode, "{}", self.assertion_context());
     }
 
     pub fn assert_binding<const COUNT: usize>(
@@ -145,8 +144,8 @@ impl<'a> VimTestContext<'a> {
         self.set_state(initial_state, initial_mode);
         self.cx.simulate_keystrokes(keystrokes);
         self.cx.assert_editor_state(state_after);
-        assert_eq!(self.mode(), mode_after);
-        assert_eq!(self.active_operator(), None);
+        assert_eq!(self.mode(), mode_after, "{}", self.assertion_context());
+        assert_eq!(self.active_operator(), None, "{}", self.assertion_context());
     }
 
     pub fn binding<const COUNT: usize>(

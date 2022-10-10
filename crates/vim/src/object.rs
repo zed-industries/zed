@@ -310,7 +310,7 @@ fn expand_to_include_whitespace(
 mod test {
     use indoc::indoc;
 
-    use crate::test_contexts::NeovimBackedTestContext;
+    use crate::test::NeovimBackedTestContext;
 
     const WORD_LOCATIONS: &'static str = indoc! {"
         The quick ˇbrowˇnˇ   

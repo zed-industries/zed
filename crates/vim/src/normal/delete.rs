@@ -96,7 +96,7 @@ pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Mutab
 mod test {
     use indoc::indoc;
 
-    use crate::{state::Mode, test_contexts::VimTestContext};
+    use crate::{state::Mode, test::VimTestContext};
 
     #[gpui::test]
     async fn test_delete_h(cx: &mut gpui::TestAppContext) {

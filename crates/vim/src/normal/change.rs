@@ -79,7 +79,7 @@ mod test {
 
     use crate::{
         state::Mode,
-        test_contexts::{NeovimBackedTestContext, VimTestContext},
+        test::{NeovimBackedTestContext, VimTestContext},
     };
 
     #[gpui::test]
