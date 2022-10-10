@@ -424,8 +424,8 @@ impl TerminalElement {
                 TerminalElement::generic_button_handler(
                     connection,
                     origin,
-                    move |terminal, origin, e, _cx| {
-                        terminal.mouse_up(&e, origin);
+                    move |terminal, origin, e, cx| {
+                        terminal.mouse_up(&e, origin, cx);
                     },
                 ),
             )
@@ -492,8 +492,8 @@ impl TerminalElement {
                     TerminalElement::generic_button_handler(
                         connection,
                         origin,
-                        move |terminal, origin, e, _cx| {
-                            terminal.mouse_up(&e, origin);
+                        move |terminal, origin, e, cx| {
+                            terminal.mouse_up(&e, origin, cx);
                         },
                     ),
                 )
@@ -502,8 +502,8 @@ impl TerminalElement {
                     TerminalElement::generic_button_handler(
                         connection,
                         origin,
-                        move |terminal, origin, e, _cx| {
-                            terminal.mouse_up(&e, origin);
+                        move |terminal, origin, e, cx| {
+                            terminal.mouse_up(&e, origin, cx);
                         },
                     ),
                 )
