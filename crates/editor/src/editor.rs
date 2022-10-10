@@ -451,7 +451,7 @@ pub struct Editor {
     leader_replica_id: Option<u16>,
     hover_state: HoverState,
     link_go_to_definition_state: LinkGoToDefinitionState,
-    lines: Option<f32>,
+    visible_line_count: Option<f32>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1053,7 +1053,7 @@ impl Editor {
             leader_replica_id: None,
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
-            lines: None,
+            visible_line_count: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -1188,8 +1188,8 @@ impl Editor {
         cx.notify();
     }
 
-    fn set_lines(&mut self, lines: f32) {
-        self.lines = Some(lines)
+    fn set_visible_line_count(&mut self, lines: f32) {
+        self.visible_line_count = Some(lines)
     }
 
     fn set_scroll_top_anchor(
@@ -5521,8 +5521,7 @@ impl Editor {
     }
 
     pub fn page_up(&mut self, _: &PageUp, cx: &mut ViewContext<Self>) {
-        log::info!("Editor::page_up");
-        let lines = match self.lines {
+        let lines = match self.visible_line_count {
             Some(lines) => lines,
             None => return,
         };
@@ -5533,8 +5532,7 @@ impl Editor {
     }
 
     pub fn page_down(&mut self, _: &PageDown, cx: &mut ViewContext<Self>) {
-        log::info!("Editor::page_up");
-        let lines = match self.lines {
+        let lines = match self.visible_line_count {
             Some(lines) => lines,
             None => return,
         };
