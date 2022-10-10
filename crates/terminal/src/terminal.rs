@@ -1071,7 +1071,18 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_up(&mut self, e: &UpRegionEvent, origin: Vector2F) {
+    pub fn mouse_up(&mut self, e: &UpRegionEvent, origin: Vector2F, cx: &mut ModelContext<Self>) {
+        let settings = cx.global::<Settings>();
+        let copy_on_select = settings
+            .terminal_overrides
+            .copy_on_select
+            .unwrap_or_else(|| {
+                settings
+                    .terminal_defaults
+                    .copy_on_select
+                    .expect("Should be set in defaults")
+            });
+
         let position = e.position.sub(origin);
         if self.mouse_mode(e.shift) {
             let point = grid_point(
@@ -1083,11 +1094,10 @@ impl Terminal {
             if let Some(bytes) = mouse_button_report(point, e, false, self.last_content.mode) {
                 self.pty_tx.notify(bytes);
             }
-        } else if e.button == MouseButton::Left {
-            // Seems pretty standard to automatically copy on mouse_up for terminals,
-            // so let's do that here
+        } else if e.button == MouseButton::Left && copy_on_select {
             self.copy();
         }
+
         self.selection_phase = SelectionPhase::Ended;
         self.last_mouse = None;
     }

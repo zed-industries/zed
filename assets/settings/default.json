@@ -148,6 +148,9 @@
         //  2. Make the option keys behave as a 'meta' key, e.g. for emacs
         //         "option_to_meta": true,
         "option_as_meta": false,
+        // Whether or not selecting text in the terminal will automatically
+        // copy to the system clipboard.
+        "copy_on_select": false,
         // Any key-value pairs added to this list will be added to the terminal's
         // enviroment. Use `:` to seperate multiple values.
         "env": {

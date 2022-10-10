@@ -129,6 +129,7 @@ pub struct TerminalSettings {
     pub blinking: Option<TerminalBlink>,
     pub alternate_scroll: Option<AlternateScroll>,
     pub option_as_meta: Option<bool>,
+    pub copy_on_select: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -274,7 +275,7 @@ impl Settings {
             editor_overrides: Default::default(),
             git: defaults.git.unwrap(),
             git_overrides: Default::default(),
-            terminal_defaults: Default::default(),
+            terminal_defaults: defaults.terminal,
             terminal_overrides: Default::default(),
             language_defaults: defaults.languages,
             language_overrides: Default::default(),
@@ -327,6 +328,7 @@ impl Settings {
         self.editor_overrides = data.editor;
         self.git_overrides = data.git.unwrap_or_default();
         self.terminal_defaults.font_size = data.terminal.font_size;
+        self.terminal_overrides.copy_on_select = data.terminal.copy_on_select;
         self.terminal_overrides = data.terminal;
         self.language_overrides = data.languages;
         self.lsp = data.lsp;
