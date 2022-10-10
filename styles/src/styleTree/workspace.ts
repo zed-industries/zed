@@ -48,8 +48,12 @@ export default function workspace(theme: Theme) {
       ...text(theme, "sans", "primary", { size: "lg" }),
     },
     externalLocationMessage: {
+      background: backgroundColor(theme, "info"),
+      border: border(theme, "secondary"),
+      cornerRadius: 6,
       padding: 12,
-      ...text(theme, "sans", "primary", { size: "lg" }),
+      margin: { bottom: 8, right: 8 },
+      ...text(theme, "sans", "secondary", { size: "xs" }),
     },
     leaderBorderOpacity: 0.7,
     leaderBorderWidth: 2.0,

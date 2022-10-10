@@ -127,68 +127,86 @@ impl Member {
                         Some((collaborator.replica_id, participant))
                     });
 
-                if let Some((replica_id, leader)) = leader {
-                    let view = match leader.location {
-                        call::ParticipantLocation::Project {
-                            project_id: leader_project_id,
-                        } => {
-                            if Some(leader_project_id) == project.read(cx).remote_id() {
-                                ChildView::new(pane).boxed()
-                            } else {
-                                let leader_user = leader.user.clone();
-                                let leader_user_id = leader.user.id;
-                                MouseEventHandler::<FollowIntoExternalProject>::new(
-                                    pane.id(),
-                                    cx,
-                                    |_, _| {
-                                        Label::new(
-                                            format!(
-                                                "Follow {} on their currently active project",
-                                                leader_user.github_login,
-                                            ),
-                                            theme.workspace.external_location_message.text.clone(),
-                                        )
-                                        .contained()
-                                        .with_style(
-                                            theme.workspace.external_location_message.container,
-                                        )
-                                        .boxed()
-                                    },
-                                )
-                                .with_cursor_style(CursorStyle::PointingHand)
-                                .on_click(MouseButton::Left, move |_, cx| {
-                                    cx.dispatch_action(JoinProject {
-                                        project_id: leader_project_id,
-                                        follow_user_id: leader_user_id,
-                                    })
-                                })
-                                .aligned()
-                                .boxed()
-                            }
-                        }
-                        call::ParticipantLocation::External => Label::new(
-                            format!(
-                                "{} is viewing a window outside of Zed",
-                                leader.user.github_login
-                            ),
-                            theme.workspace.external_location_message.text.clone(),
-                        )
-                        .contained()
-                        .with_style(theme.workspace.external_location_message.container)
-                        .aligned()
-                        .boxed(),
-                    };
+                let mut border = Border::default();
 
+                let prompt = if let Some((replica_id, leader)) = leader {
                     let leader_color = theme.editor.replica_selection_style(replica_id).cursor;
-                    let mut border = Border::all(theme.workspace.leader_border_width, leader_color);
+                    border = Border::all(theme.workspace.leader_border_width, leader_color);
                     border
                         .color
                         .fade_out(1. - theme.workspace.leader_border_opacity);
                     border.overlay = true;
-                    Container::new(view).with_border(border).boxed()
+
+                    match leader.location {
+                        call::ParticipantLocation::Project {
+                            project_id: leader_project_id,
+                        } => {
+                            if Some(leader_project_id) == project.read(cx).remote_id() {
+                                None
+                            } else {
+                                let leader_user = leader.user.clone();
+                                let leader_user_id = leader.user.id;
+                                Some(
+                                    MouseEventHandler::<FollowIntoExternalProject>::new(
+                                        pane.id(),
+                                        cx,
+                                        |_, _| {
+                                            Label::new(
+                                                format!(
+                                                    "Follow {} on their currently active project",
+                                                    leader_user.github_login,
+                                                ),
+                                                theme
+                                                    .workspace
+                                                    .external_location_message
+                                                    .text
+                                                    .clone(),
+                                            )
+                                            .contained()
+                                            .with_style(
+                                                theme.workspace.external_location_message.container,
+                                            )
+                                            .boxed()
+                                        },
+                                    )
+                                    .with_cursor_style(CursorStyle::PointingHand)
+                                    .on_click(MouseButton::Left, move |_, cx| {
+                                        cx.dispatch_action(JoinProject {
+                                            project_id: leader_project_id,
+                                            follow_user_id: leader_user_id,
+                                        })
+                                    })
+                                    .aligned()
+                                    .bottom()
+                                    .right()
+                                    .boxed(),
+                                )
+                            }
+                        }
+                        call::ParticipantLocation::External => Some(
+                            Label::new(
+                                format!(
+                                    "{} is viewing a window outside of Zed",
+                                    leader.user.github_login
+                                ),
+                                theme.workspace.external_location_message.text.clone(),
+                            )
+                            .contained()
+                            .with_style(theme.workspace.external_location_message.container)
+                            .aligned()
+                            .bottom()
+                            .right()
+                            .boxed(),
+                        ),
+                    }
                 } else {
-                    ChildView::new(pane).boxed()
-                }
+                    None
+                };
+
+                Stack::new()
+                    .with_child(ChildView::new(pane).contained().with_border(border).boxed())
+                    .with_children(prompt)
+                    .boxed()
             }
             Member::Axis(axis) => axis.render(project, theme, follower_states, cx),
         }
