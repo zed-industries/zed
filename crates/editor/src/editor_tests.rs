@@ -3039,16 +3039,19 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
                     BracketPair {
                         start: "<".into(),
                         end: ">".into(),
+                        close: true,
                         ..Default::default()
                     },
                     BracketPair {
                         start: "{".into(),
                         end: "}".into(),
+                        close: true,
                         ..Default::default()
                     },
                     BracketPair {
                         start: "(".into(),
                         end: ")".into(),
+                        close: true,
                         ..Default::default()
                     },
                 ],
@@ -3074,16 +3077,19 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
                 BracketPair {
                     start: "/*".into(),
                     end: " */".into(),
+                    close: true,
                     ..Default::default()
                 },
                 BracketPair {
                     start: "{".into(),
                     end: "}".into(),
+                    close: true,
                     ..Default::default()
                 },
                 BracketPair {
                     start: "(".into(),
                     end: ")".into(),
+                    close: true,
                     ..Default::default()
                 },
             ],
