@@ -19,10 +19,16 @@ pub fn init(cx: &mut MutableAppContext) {
 
     let active_call = ActiveCall::global(cx);
     cx.subscribe(&active_call, move |_, event, cx| match event {
-        room::Event::RemoteProjectShared { owner, project_id } => {
+        room::Event::RemoteProjectShared {
+            owner,
+            project_id,
+            worktree_root_names,
+        } => {
             const PADDING: f32 = 16.;
             let screen_size = cx.platform().screen_size();
-            let window_size = vec2f(366., 64.);
+
+            let theme = &cx.global::<Settings>().theme.project_shared_notification;
+            let window_size = vec2f(theme.window_width, theme.window_height);
             cx.add_window(
                 WindowOptions {
                     bounds: WindowBounds::Fixed(RectF::new(
@@ -34,7 +40,13 @@ pub fn init(cx: &mut MutableAppContext) {
                     kind: WindowKind::PopUp,
                     is_movable: false,
                 },
-                |_| ProjectSharedNotification::new(*project_id, owner.clone()),
+                |_| {
+                    ProjectSharedNotification::new(
+                        owner.clone(),
+                        *project_id,
+                        worktree_root_names.clone(),
+                    )
+                },
             );
         }
     })
@@ -43,12 +55,17 @@ pub fn init(cx: &mut MutableAppContext) {
 
 pub struct ProjectSharedNotification {
     project_id: u64,
+    worktree_root_names: Vec<String>,
     owner: Arc<User>,
 }
 
 impl ProjectSharedNotification {
-    fn new(project_id: u64, owner: Arc<User>) -> Self {
-        Self { project_id, owner }
+    fn new(owner: Arc<User>, project_id: u64, worktree_root_names: Vec<String>) -> Self {
+        Self {
+            project_id,
+            worktree_root_names,
+            owner,
+        }
     }
 
     fn join(&mut self, _: &JoinProject, cx: &mut ViewContext<Self>) {
@@ -84,13 +101,33 @@ impl ProjectSharedNotification {
                     )
                     .with_child(
                         Label::new(
-                            "has shared a project with you".into(),
+                            format!(
+                                "shared a project in Zed{}",
+                                if self.worktree_root_names.is_empty() {
+                                    ""
+                                } else {
+                                    ":"
+                                }
+                            ),
                             theme.message.text.clone(),
                         )
                         .contained()
                         .with_style(theme.message.container)
                         .boxed(),
                     )
+                    .with_children(if self.worktree_root_names.is_empty() {
+                        None
+                    } else {
+                        Some(
+                            Label::new(
+                                self.worktree_root_names.join(", "),
+                                theme.worktree_roots.text.clone(),
+                            )
+                            .contained()
+                            .with_style(theme.worktree_roots.container)
+                            .boxed(),
+                        )
+                    })
                     .contained()
                     .with_style(theme.owner_metadata)
                     .aligned()

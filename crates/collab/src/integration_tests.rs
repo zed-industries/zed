@@ -819,6 +819,7 @@ async fn test_active_call_events(
                 avatar: None,
             }),
             project_id: project_a_id,
+            worktree_root_names: vec!["a".to_string()],
         }]
     );
 
@@ -836,6 +837,7 @@ async fn test_active_call_events(
                 avatar: None,
             }),
             project_id: project_b_id,
+            worktree_root_names: vec!["b".to_string()]
         }]
     );
     assert_eq!(mem::take(&mut *events_b.borrow_mut()), vec![]);

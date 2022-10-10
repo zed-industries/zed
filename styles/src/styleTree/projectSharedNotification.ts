@@ -2,8 +2,10 @@ import Theme from "../themes/common/theme";
 import { backgroundColor, borderColor, text } from "./components";
 
 export default function projectSharedNotification(theme: Theme): Object {
-  const avatarSize = 32;
+  const avatarSize = 48;
   return {
+    windowHeight: 72,
+    windowWidth: 360,
     background: backgroundColor(theme, 300),
     ownerContainer: {
       padding: 12,
@@ -22,6 +24,10 @@ export default function projectSharedNotification(theme: Theme): Object {
     },
     message: {
       ...text(theme, "sans", "secondary", { size: "xs" }),
+      margin: { top: -3 },
+    },
+    worktreeRoots: {
+      ...text(theme, "sans", "secondary", { size: "xs", weight: "bold" }),
       margin: { top: -3 },
     },
     buttonWidth: 96,

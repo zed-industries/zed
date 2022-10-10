@@ -13,7 +13,11 @@ use util::ResultExt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
-    RemoteProjectShared { owner: Arc<User>, project_id: u64 },
+    RemoteProjectShared {
+        owner: Arc<User>,
+        project_id: u64,
+        worktree_root_names: Vec<String>,
+    },
 }
 
 pub struct Room {
@@ -219,16 +223,19 @@ impl Room {
                         let peer_id = PeerId(participant.peer_id);
                         this.participant_user_ids.insert(participant.user_id);
 
-                        let existing_project_ids = this
+                        let existing_projects = this
                             .remote_participants
                             .get(&peer_id)
-                            .map(|existing| existing.project_ids.clone())
-                            .unwrap_or_default();
-                        for project_id in &participant.project_ids {
-                            if !existing_project_ids.contains(project_id) {
+                            .into_iter()
+                            .flat_map(|existing| &existing.projects)
+                            .map(|project| project.id)
+                            .collect::<HashSet<_>>();
+                        for project in &participant.projects {
+                            if !existing_projects.contains(&project.id) {
                                 cx.emit(Event::RemoteProjectShared {
                                     owner: user.clone(),
-                                    project_id: *project_id,
+                                    project_id: project.id,
+                                    worktree_root_names: project.worktree_root_names.clone(),
                                 });
                             }
                         }
@@ -237,7 +244,7 @@ impl Room {
                             peer_id,
                             RemoteParticipant {
                                 user: user.clone(),
-                                project_ids: participant.project_ids,
+                                projects: participant.projects,
                                 location: ParticipantLocation::from_proto(participant.location)
                                     .unwrap_or(ParticipantLocation::External),
                             },
@@ -334,9 +341,21 @@ impl Room {
             return Task::ready(Ok(project_id));
         }
 
-        let request = self
-            .client
-            .request(proto::ShareProject { room_id: self.id() });
+        let request = self.client.request(proto::ShareProject {
+            room_id: self.id(),
+            worktrees: project
+                .read(cx)
+                .worktrees(cx)
+                .map(|worktree| {
+                    let worktree = worktree.read(cx);
+                    proto::WorktreeMetadata {
+                        id: worktree.id().to_proto(),
+                        root_name: worktree.root_name().into(),
+                        visible: worktree.is_visible(),
+                    }
+                })
+                .collect(),
+        });
         cx.spawn_weak(|_, mut cx| async move {
             let response = request.await?;
             project

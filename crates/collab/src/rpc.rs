@@ -827,7 +827,12 @@ impl Server {
             .user_id_for_connection(request.sender_id)?;
         let project_id = self.app_state.db.register_project(user_id).await?;
         let mut store = self.store().await;
-        let room = store.share_project(request.payload.room_id, project_id, request.sender_id)?;
+        let room = store.share_project(
+            request.payload.room_id,
+            project_id,
+            request.payload.worktrees,
+            request.sender_id,
+        )?;
         response.send(proto::ShareProjectResponse {
             project_id: project_id.to_proto(),
         })?;
@@ -1036,11 +1041,13 @@ impl Server {
             let guest_connection_ids = state
                 .read_project(project_id, request.sender_id)?
                 .guest_connection_ids();
-            state.update_project(project_id, &request.payload.worktrees, request.sender_id)?;
+            let room =
+                state.update_project(project_id, &request.payload.worktrees, request.sender_id)?;
             broadcast(request.sender_id, guest_connection_ids, |connection_id| {
                 self.peer
                     .forward_send(request.sender_id, connection_id, request.payload.clone())
             });
+            self.room_updated(room);
         };
 
         Ok(())

@@ -163,8 +163,13 @@ message Room {
 message Participant {
     uint64 user_id = 1;
     uint32 peer_id = 2;
-    repeated uint64 project_ids = 3;
+    repeated ParticipantProject projects = 3;
     ParticipantLocation location = 4;
+}
+
+message ParticipantProject {
+    uint64 id = 1;
+    repeated string worktree_root_names = 2;
 }
 
 message ParticipantLocation {
@@ -215,6 +220,7 @@ message RoomUpdated {
 
 message ShareProject {
     uint64 room_id = 1;
+    repeated WorktreeMetadata worktrees = 2;
 }
 
 message ShareProjectResponse {

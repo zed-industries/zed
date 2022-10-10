@@ -383,7 +383,7 @@ impl Store {
         room.participants.push(proto::Participant {
             user_id: connection.user_id.to_proto(),
             peer_id: creator_connection_id.0,
-            project_ids: Default::default(),
+            projects: Default::default(),
             location: Some(proto::ParticipantLocation {
                 variant: Some(proto::participant_location::Variant::External(
                     proto::participant_location::External {},
@@ -441,7 +441,7 @@ impl Store {
         room.participants.push(proto::Participant {
             user_id: user_id.to_proto(),
             peer_id: connection_id.0,
-            project_ids: Default::default(),
+            projects: Default::default(),
             location: Some(proto::ParticipantLocation {
                 variant: Some(proto::participant_location::Variant::External(
                     proto::participant_location::External {},
@@ -689,7 +689,8 @@ impl Store {
             anyhow::ensure!(
                 room.participants
                     .iter()
-                    .any(|participant| participant.project_ids.contains(&project.id)),
+                    .flat_map(|participant| &participant.projects)
+                    .any(|participant_project| participant_project.id == project.id),
                 "no such project"
             );
         }
@@ -708,6 +709,7 @@ impl Store {
         &mut self,
         room_id: RoomId,
         project_id: ProjectId,
+        worktrees: Vec<proto::WorktreeMetadata>,
         host_connection_id: ConnectionId,
     ) -> Result<&proto::Room> {
         let connection = self
@@ -724,7 +726,14 @@ impl Store {
             .iter_mut()
             .find(|participant| participant.peer_id == host_connection_id.0)
             .ok_or_else(|| anyhow!("no such room"))?;
-        participant.project_ids.push(project_id.to_proto());
+        participant.projects.push(proto::ParticipantProject {
+            id: project_id.to_proto(),
+            worktree_root_names: worktrees
+                .iter()
+                .filter(|worktree| worktree.visible)
+                .map(|worktree| worktree.root_name.clone())
+                .collect(),
+        });
 
         connection.projects.insert(project_id);
         self.projects.insert(
@@ -741,7 +750,19 @@ impl Store {
                 },
                 guests: Default::default(),
                 active_replica_ids: Default::default(),
-                worktrees: Default::default(),
+                worktrees: worktrees
+                    .into_iter()
+                    .map(|worktree| {
+                        (
+                            worktree.id,
+                            Worktree {
+                                root_name: worktree.root_name,
+                                visible: worktree.visible,
+                                ..Default::default()
+                            },
+                        )
+                    })
+                    .collect(),
                 language_servers: Default::default(),
             },
         );
@@ -779,8 +800,8 @@ impl Store {
                         .find(|participant| participant.peer_id == connection_id.0)
                         .ok_or_else(|| anyhow!("no such room"))?;
                     participant
-                        .project_ids
-                        .retain(|id| *id != project_id.to_proto());
+                        .projects
+                        .retain(|project| project.id != project_id.to_proto());
 
                     Ok((room, project))
                 } else {
@@ -796,7 +817,7 @@ impl Store {
         project_id: ProjectId,
         worktrees: &[proto::WorktreeMetadata],
         connection_id: ConnectionId,
-    ) -> Result<()> {
+    ) -> Result<&proto::Room> {
         let project = self
             .projects
             .get_mut(&project_id)
@@ -818,7 +839,23 @@ impl Store {
                 }
             }
 
-            Ok(())
+            let room = self
+                .rooms
+                .get_mut(&project.room_id)
+                .ok_or_else(|| anyhow!("no such room"))?;
+            let participant_project = room
+                .participants
+                .iter_mut()
+                .flat_map(|participant| &mut participant.projects)
+                .find(|project| project.id == project_id.to_proto())
+                .ok_or_else(|| anyhow!("no such project"))?;
+            participant_project.worktree_root_names = worktrees
+                .iter()
+                .filter(|worktree| worktree.visible)
+                .map(|worktree| worktree.root_name.clone())
+                .collect();
+
+            Ok(room)
         } else {
             Err(anyhow!("no such project"))?
         }
@@ -1132,8 +1169,8 @@ impl Store {
                     "room contains participant that has disconnected"
                 );
 
-                for project_id in &participant.project_ids {
-                    let project = &self.projects[&ProjectId::from_proto(*project_id)];
+                for participant_project in &participant.projects {
+                    let project = &self.projects[&ProjectId::from_proto(participant_project.id)];
                     assert_eq!(
                         project.room_id, *room_id,
                         "project was shared on a different room"
@@ -1173,8 +1210,9 @@ impl Store {
                 .unwrap();
             assert!(
                 room_participant
-                    .project_ids
-                    .contains(&project_id.to_proto()),
+                    .projects
+                    .iter()
+                    .any(|project| project.id == project_id.to_proto()),
                 "project was not shared in room"
             );
         }
