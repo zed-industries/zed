@@ -224,10 +224,10 @@ function bottomLayer(ramps: RampSet, isLight: boolean): Layer {
     base: buildStyleSet(ramps.neutral, buildLayer(0.2, 1, 0.08)),
     variant: buildStyleSet(ramps.neutral, buildLayer(0.2, 0.7, 0.08)),
     on: buildStyleSet(ramps.neutral, buildLayer(0.1, 1, 0.08)),
-    info: buildStyleSet(ramps.blue, buildLayer(0.1, 1, 0.08)),
-    positive: buildStyleSet(ramps.green, buildLayer(0.1, 1, 0.08)),
-    warning: buildStyleSet(ramps.yellow, buildLayer(0.1, 1, 0.08)),
-    negative: buildStyleSet(ramps.red, buildLayer(0.1, 1, 0.08)),
+    info: buildStyleSet(ramps.blue, buildLayer(0.1, 0.5, 0.08)),
+    positive: buildStyleSet(ramps.green, buildLayer(0.1, 0.5, 0.08)),
+    warning: buildStyleSet(ramps.yellow, buildLayer(0.1, 0.5, 0.08)),
+    negative: buildStyleSet(ramps.red, buildLayer(0.1, 0.5, 0.08)),
   };
 }
 
@@ -236,10 +236,10 @@ function middleLayer(ramps: RampSet, isLight: boolean): Layer {
     base: buildStyleSet(ramps.neutral, buildLayer(0.1, 1, 0.08)),
     variant: buildStyleSet(ramps.neutral, buildLayer(0.1, 0.7, 0.08)),
     on: buildStyleSet(ramps.neutral, buildLayer(0, 1, 0.08)),
-    info: buildStyleSet(ramps.blue, buildLayer(0.1, 1, 0.08)),
-    positive: buildStyleSet(ramps.green, buildLayer(0.1, 1, 0.08)),
-    warning: buildStyleSet(ramps.yellow, buildLayer(0.1, 1, 0.08)),
-    negative: buildStyleSet(ramps.red, buildLayer(0.1, 1, 0.08)),
+    info: buildStyleSet(ramps.blue, buildLayer(0.1, 0.5, 0.08)),
+    positive: buildStyleSet(ramps.green, buildLayer(0.1, 0.5, 0.08)),
+    warning: buildStyleSet(ramps.yellow, buildLayer(0.1, 0.5, 0.08)),
+    negative: buildStyleSet(ramps.red, buildLayer(0.1, 0.5, 0.08)),
   };
 }
 
@@ -248,9 +248,9 @@ function topLayer(ramps: RampSet, isLight: boolean): Layer {
     base: buildStyleSet(ramps.neutral, buildLayer(0, 1, 0.08)),
     variant: buildStyleSet(ramps.neutral, buildLayer(0, 0.7, 0.08)),
     on: buildStyleSet(ramps.neutral, buildLayer(0.1, 1, 0.08)),
-    info: buildStyleSet(ramps.blue, buildLayer(0.1, 1, 0.08)),
-    positive: buildStyleSet(ramps.green, buildLayer(0.1, 1, 0.08)),
-    warning: buildStyleSet(ramps.yellow, buildLayer(0.1, 1, 0.08)),
-    negative: buildStyleSet(ramps.red, buildLayer(0.1, 1, 0.08)),
+    info: buildStyleSet(ramps.blue, buildLayer(0.1, 0.5, 0.08)),
+    positive: buildStyleSet(ramps.green, buildLayer(0.1, 0.5, 0.08)),
+    warning: buildStyleSet(ramps.yellow, buildLayer(0.1, 0.5, 0.08)),
+    negative: buildStyleSet(ramps.red, buildLayer(0.1, 0.5, 0.08)),
   };
 }

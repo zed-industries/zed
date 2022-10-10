@@ -4,7 +4,6 @@ import {
   Layer,
   StyleSets,
 } from "../themes/common/colorScheme";
-import { withOpacity } from "../utils/color";
 import {
   background,
   border,
@@ -227,7 +226,7 @@ export default function editor(colorScheme: ColorScheme) {
     errorDiagnostic: diagnostic(elevation.middle, "negative"),
     warningDiagnostic: diagnostic(elevation.middle, "warning"),
     informationDiagnostic: diagnostic(elevation.middle, "info"),
-    hintDiagnostic: diagnostic(elevation.middle, "positive"),
+    hintDiagnostic: diagnostic(elevation.middle, "warning"),
     invalidErrorDiagnostic: diagnostic(elevation.middle, "base"),
     invalidHintDiagnostic: diagnostic(elevation.middle, "base"),
     invalidInformationDiagnostic: diagnostic(elevation.middle, "base"),
