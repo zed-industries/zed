@@ -211,8 +211,8 @@ function buildLayer(bgBase: number, fgBase: number, step: number) {
     },
     foreground: {
       default: fgBase,
-      hovered: fgBase - step,
-      pressed: fgBase - step,
+      hovered: fgBase,
+      pressed: fgBase,
       active: fgBase,
       disabled: bgBase + step * 4,
     },
