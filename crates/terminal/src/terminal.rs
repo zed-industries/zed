@@ -618,8 +618,34 @@ impl Terminal {
                 term.resize(new_size);
             }
             InternalEvent::Clear => {
-                self.write_to_pty("\x0c".to_string());
+                // Clear back buffer
                 term.clear_screen(ClearMode::Saved);
+
+                let cursor = term.grid().cursor.point;
+
+                // Clear the lines above
+                term.grid_mut().reset_region(..cursor.line);
+
+                // Copy the current line up
+                let line = term.grid()[cursor.line][..cursor.column]
+                    .iter()
+                    .cloned()
+                    .enumerate()
+                    .collect::<Vec<(usize, Cell)>>();
+
+                for (i, cell) in line {
+                    term.grid_mut()[Line(0)][Column(i)] = cell;
+                }
+
+                // Reset the cursor
+                term.grid_mut().cursor.point =
+                    Point::new(Line(0), term.grid_mut().cursor.point.column);
+                let new_cursor = term.grid().cursor.point;
+
+                // Clear the lines below the new cursor
+                if (new_cursor.line.0 as usize) < term.screen_lines() - 1 {
+                    term.grid_mut().reset_region((new_cursor.line + 1)..);
+                }
             }
             InternalEvent::Scroll(scroll) => {
                 term.scroll_display(*scroll);

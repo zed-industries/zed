@@ -959,6 +959,7 @@ dependencies = [
  "async-recursion",
  "async-tungstenite",
  "collections",
+ "db",
  "futures",
  "gpui",
  "image",
@@ -969,13 +970,16 @@ dependencies = [
  "postage",
  "rand 0.8.5",
  "rpc",
+ "serde",
  "smol",
  "sum_tree",
+ "tempfile",
  "thiserror",
  "time 0.3.11",
  "tiny_http",
  "url",
  "util",
+ "uuid 1.1.2",
 ]
 
 [[package]]
@@ -1042,6 +1046,7 @@ dependencies = [
  "env_logger",
  "envy",
  "futures",
+ "git",
  "gpui",
  "hyper",
  "language",
@@ -1072,6 +1077,7 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
+ "unindent",
  "util",
  "workspace",
 ]
@@ -1496,6 +1502,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "db"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "collections",
+ "gpui",
+ "parking_lot 0.11.2",
+ "rocksdb",
+ "tempdir",
+]
+
+[[package]]
 name = "deflate"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1672,6 +1691,7 @@ dependencies = [
  "env_logger",
  "futures",
  "fuzzy",
+ "git",
  "gpui",
  "indoc",
  "itertools",
@@ -1694,6 +1714,8 @@ dependencies = [
  "text",
  "theme",
  "tree-sitter",
+ "tree-sitter-html",
+ "tree-sitter-javascript",
  "tree-sitter-rust",
  "unindent",
  "util",
@@ -2197,6 +2219,39 @@ dependencies = [
  "fallible-iterator",
  "indexmap",
  "stable_deref_trait",
+]
+
+[[package]]
+name = "git"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clock",
+ "collections",
+ "futures",
+ "git2",
+ "lazy_static",
+ "log",
+ "parking_lot 0.11.2",
+ "smol",
+ "sum_tree",
+ "text",
+ "unindent",
+ "util",
+]
+
+[[package]]
+name = "git2"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2994bee4a3a6a51eb90c218523be382fd7ea09b16380b9312e9dbe955ff7c7d1"
+dependencies = [
+ "bitflags",
+ "libc",
+ "libgit2-sys",
+ "log",
+ "url",
 ]
 
 [[package]]
@@ -2815,6 +2870,7 @@ dependencies = [
  "env_logger",
  "futures",
  "fuzzy",
+ "git",
  "gpui",
  "lazy_static",
  "log",
@@ -2834,6 +2890,8 @@ dependencies = [
  "text",
  "theme",
  "tree-sitter",
+ "tree-sitter-html",
+ "tree-sitter-javascript",
  "tree-sitter-json 0.19.0",
  "tree-sitter-python",
  "tree-sitter-rust",
@@ -2868,6 +2926,18 @@ name = "libc"
 version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "349d5a591cd28b49e1d1037471617a32ddcda5731b99419008085f72d5a53836"
+
+[[package]]
+name = "libgit2-sys"
+version = "0.14.0+1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47a00859c70c8a4f7218e6d1cc32875c4b55f6799445b842b0d8ed5e4c3d959b"
+dependencies = [
+ "cc",
+ "libc",
+ "libz-sys",
+ "pkg-config",
+]
 
 [[package]]
 name = "libloading"
@@ -3941,9 +4011,11 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "db",
  "fsevent",
  "futures",
  "fuzzy",
+ "git",
  "gpui",
  "ignore",
  "language",
@@ -6000,6 +6072,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-css"
+version = "0.19.0"
+source = "git+https://github.com/tree-sitter/tree-sitter-css?rev=769203d0f9abe1a9a691ac2b9fe4bb4397a73c51#769203d0f9abe1a9a691ac2b9fe4bb4397a73c51"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-elixir"
 version = "0.19.0"
 source = "git+https://github.com/elixir-lang/tree-sitter-elixir?rev=05e3631c6a0701c1fa518b0fee7be95a2ceef5e2#05e3631c6a0701c1fa518b0fee7be95a2ceef5e2"
@@ -6012,6 +6093,26 @@ dependencies = [
 name = "tree-sitter-go"
 version = "0.19.1"
 source = "git+https://github.com/tree-sitter/tree-sitter-go?rev=aeb2f33b366fd78d5789ff104956ce23508b85db#aeb2f33b366fd78d5789ff104956ce23508b85db"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-html"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "184e6b77953a354303dc87bf5fe36558c83569ce92606e7b382a0dc1b7443443"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-javascript"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2490fab08630b2c8943c320f7b63473cbf65511c8d83aec551beb9b4375906ed"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -6306,6 +6407,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures",
+ "git2",
+ "lazy_static",
  "log",
  "rand 0.8.5",
  "serde_json",
@@ -6326,6 +6429,9 @@ name = "uuid"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd6469f4314d5f1ffec476e05f17cc9a78bc7a27a6a857842170bdf8d6f98d2f"
+dependencies = [
+ "getrandom 0.2.7",
+]
 
 [[package]]
 name = "valuable"
@@ -7122,7 +7228,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.55.0"
+version = "0.59.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -7198,8 +7304,10 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-c",
  "tree-sitter-cpp",
+ "tree-sitter-css",
  "tree-sitter-elixir",
  "tree-sitter-go",
+ "tree-sitter-html",
  "tree-sitter-json 0.20.0",
  "tree-sitter-markdown",
  "tree-sitter-python",

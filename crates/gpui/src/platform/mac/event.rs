@@ -14,8 +14,10 @@ use core_graphics::{
     event::{CGEvent, CGEventFlags, CGKeyCode},
     event_source::{CGEventSource, CGEventSourceStateID},
 };
+use ctor::ctor;
+use foreign_types::ForeignType;
 use objc::{class, msg_send, sel, sel_impl};
-use std::{borrow::Cow, ffi::CStr, os::raw::c_char};
+use std::{borrow::Cow, ffi::CStr, mem, os::raw::c_char, ptr};
 
 const BACKSPACE_KEY: u16 = 0x7f;
 const SPACE_KEY: u16 = b' ' as u16;
@@ -24,6 +26,15 @@ const NUMPAD_ENTER_KEY: u16 = 0x03;
 const ESCAPE_KEY: u16 = 0x1b;
 const TAB_KEY: u16 = 0x09;
 const SHIFT_TAB_KEY: u16 = 0x19;
+
+static mut EVENT_SOURCE: core_graphics::sys::CGEventSourceRef = ptr::null_mut();
+
+#[ctor]
+unsafe fn build_event_source() {
+    let source = CGEventSource::new(CGEventSourceStateID::Private).unwrap();
+    EVENT_SOURCE = source.as_ptr();
+    mem::forget(source);
+}
 
 pub fn key_to_native(key: &str) -> Cow<str> {
     use cocoa::appkit::*;
@@ -228,7 +239,8 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     let mut chars_ignoring_modifiers =
         CStr::from_ptr(native_event.charactersIgnoringModifiers().UTF8String() as *mut c_char)
             .to_str()
-            .unwrap();
+            .unwrap()
+            .to_string();
     let first_char = chars_ignoring_modifiers.chars().next().map(|ch| ch as u16);
     let modifiers = native_event.modifierFlags();
 
@@ -243,31 +255,31 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
 
     #[allow(non_upper_case_globals)]
     let key = match first_char {
-        Some(SPACE_KEY) => "space",
-        Some(BACKSPACE_KEY) => "backspace",
-        Some(ENTER_KEY) | Some(NUMPAD_ENTER_KEY) => "enter",
-        Some(ESCAPE_KEY) => "escape",
-        Some(TAB_KEY) => "tab",
-        Some(SHIFT_TAB_KEY) => "tab",
-        Some(NSUpArrowFunctionKey) => "up",
-        Some(NSDownArrowFunctionKey) => "down",
-        Some(NSLeftArrowFunctionKey) => "left",
-        Some(NSRightArrowFunctionKey) => "right",
-        Some(NSPageUpFunctionKey) => "pageup",
-        Some(NSPageDownFunctionKey) => "pagedown",
-        Some(NSDeleteFunctionKey) => "delete",
-        Some(NSF1FunctionKey) => "f1",
-        Some(NSF2FunctionKey) => "f2",
-        Some(NSF3FunctionKey) => "f3",
-        Some(NSF4FunctionKey) => "f4",
-        Some(NSF5FunctionKey) => "f5",
-        Some(NSF6FunctionKey) => "f6",
-        Some(NSF7FunctionKey) => "f7",
-        Some(NSF8FunctionKey) => "f8",
-        Some(NSF9FunctionKey) => "f9",
-        Some(NSF10FunctionKey) => "f10",
-        Some(NSF11FunctionKey) => "f11",
-        Some(NSF12FunctionKey) => "f12",
+        Some(SPACE_KEY) => "space".to_string(),
+        Some(BACKSPACE_KEY) => "backspace".to_string(),
+        Some(ENTER_KEY) | Some(NUMPAD_ENTER_KEY) => "enter".to_string(),
+        Some(ESCAPE_KEY) => "escape".to_string(),
+        Some(TAB_KEY) => "tab".to_string(),
+        Some(SHIFT_TAB_KEY) => "tab".to_string(),
+        Some(NSUpArrowFunctionKey) => "up".to_string(),
+        Some(NSDownArrowFunctionKey) => "down".to_string(),
+        Some(NSLeftArrowFunctionKey) => "left".to_string(),
+        Some(NSRightArrowFunctionKey) => "right".to_string(),
+        Some(NSPageUpFunctionKey) => "pageup".to_string(),
+        Some(NSPageDownFunctionKey) => "pagedown".to_string(),
+        Some(NSDeleteFunctionKey) => "delete".to_string(),
+        Some(NSF1FunctionKey) => "f1".to_string(),
+        Some(NSF2FunctionKey) => "f2".to_string(),
+        Some(NSF3FunctionKey) => "f3".to_string(),
+        Some(NSF4FunctionKey) => "f4".to_string(),
+        Some(NSF5FunctionKey) => "f5".to_string(),
+        Some(NSF6FunctionKey) => "f6".to_string(),
+        Some(NSF7FunctionKey) => "f7".to_string(),
+        Some(NSF8FunctionKey) => "f8".to_string(),
+        Some(NSF9FunctionKey) => "f9".to_string(),
+        Some(NSF10FunctionKey) => "f10".to_string(),
+        Some(NSF11FunctionKey) => "f11".to_string(),
+        Some(NSF12FunctionKey) => "f12".to_string(),
         _ => {
             let mut chars_ignoring_modifiers_and_shift =
                 chars_for_modified_key(native_event.keyCode(), false, false);
@@ -303,21 +315,19 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         shift,
         cmd,
         function,
-        key: key.into(),
+        key,
     }
 }
 
-fn chars_for_modified_key<'a>(code: CGKeyCode, cmd: bool, shift: bool) -> &'a str {
+fn chars_for_modified_key(code: CGKeyCode, cmd: bool, shift: bool) -> String {
     // Ideally, we would use `[NSEvent charactersByApplyingModifiers]` but that
     // always returns an empty string with certain keyboards, e.g. Japanese. Synthesizing
     // an event with the given flags instead lets us access `characters`, which always
     // returns a valid string.
-    let event = CGEvent::new_keyboard_event(
-        CGEventSource::new(CGEventSourceStateID::Private).unwrap(),
-        code,
-        true,
-    )
-    .unwrap();
+    let source = unsafe { core_graphics::event_source::CGEventSource::from_ptr(EVENT_SOURCE) };
+    let event = CGEvent::new_keyboard_event(source.clone(), code, true).unwrap();
+    mem::forget(source);
+
     let mut flags = CGEventFlags::empty();
     if cmd {
         flags |= CGEventFlags::CGEventFlagCommand;
@@ -327,10 +337,11 @@ fn chars_for_modified_key<'a>(code: CGKeyCode, cmd: bool, shift: bool) -> &'a st
     }
     event.set_flags(flags);
 
-    let event: id = unsafe { msg_send![class!(NSEvent), eventWithCGEvent: event] };
     unsafe {
+        let event: id = msg_send![class!(NSEvent), eventWithCGEvent: &*event];
         CStr::from_ptr(event.characters().UTF8String())
             .to_str()
             .unwrap()
+            .to_string()
     }
 }

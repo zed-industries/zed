@@ -510,8 +510,7 @@ pub struct Editor {
     pub rename_fade: f32,
     pub document_highlight_read_background: Color,
     pub document_highlight_write_background: Color,
-    pub diff_background_deleted: Color,
-    pub diff_background_inserted: Color,
+    pub diff: DiffStyle,
     pub line_number: Color,
     pub line_number_active: Color,
     pub guest_selections: Vec<SelectionStyle>,
@@ -593,6 +592,16 @@ pub struct CodeActions {
     #[serde(default)]
     pub indicator: Color,
     pub vertical_scale: f32,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct DiffStyle {
+    pub inserted: Color,
+    pub modified: Color,
+    pub deleted: Color,
+    pub removed_width_em: f32,
+    pub width_em: f32,
+    pub corner_radius: f32,
 }
 
 #[derive(Debug, Default, Clone, Copy)]

@@ -1,5 +1,5 @@
 [package]
-authors = ["Nathan Sobo <nathan@warp.dev>"]
+authors = ["Nathan Sobo <nathan@zed.dev>"]
 default-run = "collab"
 edition = "2021"
 name = "collab"
@@ -26,6 +26,7 @@ base64 = "0.13"
 clap = { version = "3.1", features = ["derive"], optional = true }
 envy = "0.4.2"
 futures = "0.3"
+git = { path = "../git" }
 hyper = "0.14"
 lazy_static = "1.4"
 lipsum = { version = "0.8", optional = true }
@@ -66,11 +67,13 @@ rpc = { path = "../rpc", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 theme = { path = "../theme" }
 workspace = { path = "../workspace", features = ["test-support"] }
+git = { path = "../git", features = ["test-support"] }
 ctor = "0.1"
 env_logger = "0.9"
 util = { path = "../util" }
 lazy_static = "1.4"
 serde_json = { version = "1.0", features = ["preserve_order"] }
+unindent = "0.1"
 
 [features]
 seed-support = ["clap", "lipsum", "reqwest"]

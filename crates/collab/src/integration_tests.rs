@@ -1,5 +1,5 @@
 use crate::{
-    db::{tests::TestDb, ProjectId, UserId},
+    db::{NewUserParams, ProjectId, TestDb, UserId},
     rpc::{Executor, Server, Store},
     AppState,
 };
@@ -52,6 +52,7 @@ use std::{
     time::Duration,
 };
 use theme::ThemeRegistry;
+use unindent::Unindent as _;
 use workspace::{Item, SplitDirection, ToggleFollow, Workspace};
 
 #[ctor::ctor]
@@ -329,6 +330,7 @@ async fn test_room_uniqueness(
         })
         .await
         .unwrap();
+    deterministic.run_until_parked();
     let call_b2 = incoming_call_b.next().await.unwrap().unwrap();
     assert_eq!(call_b2.caller.github_login, "user_c");
 }
@@ -1172,6 +1174,258 @@ async fn test_propagate_saves_and_fs_changes(
             buf.file().unwrap().path().to_str() == Some("file1-renamed")
         })
         .await;
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_git_diff_base_change(
+    executor: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    executor.forbid_parking();
+    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs
+        .insert_tree(
+            "/dir",
+            json!({
+            ".git": {},
+            "sub": {
+                ".git": {},
+                "b.txt": "
+                    one
+                    two
+                    three
+                ".unindent(),
+            },
+            "a.txt": "
+                    one
+                    two
+                    three
+                ".unindent(),
+            }),
+        )
+        .await;
+
+    let (project_local, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| {
+            call.share_project(project_local.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    let project_remote = client_b.build_remote_project(project_id, cx_b).await;
+
+    let diff_base = "
+        one
+        three
+    "
+    .unindent();
+
+    let new_diff_base = "
+        one
+        two
+    "
+    .unindent();
+
+    client_a
+        .fs
+        .as_fake()
+        .set_index_for_repo(
+            Path::new("/dir/.git"),
+            &[(Path::new("a.txt"), diff_base.clone())],
+        )
+        .await;
+
+    // Create the buffer
+    let buffer_local_a = project_local
+        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+        .await
+        .unwrap();
+
+    // Wait for it to catch up to the new diff
+    executor.run_until_parked();
+
+    // Smoke test diffing
+    buffer_local_a.read_with(cx_a, |buffer, _| {
+        assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
+        git::diff::assert_hunks(
+            buffer.snapshot().git_diff_hunks_in_range(0..4),
+            &buffer,
+            &diff_base,
+            &[(1..2, "", "two\n")],
+        );
+    });
+
+    // Create remote buffer
+    let buffer_remote_a = project_remote
+        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+        .await
+        .unwrap();
+
+    // Wait remote buffer to catch up to the new diff
+    executor.run_until_parked();
+
+    // Smoke test diffing
+    buffer_remote_a.read_with(cx_b, |buffer, _| {
+        assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
+        git::diff::assert_hunks(
+            buffer.snapshot().git_diff_hunks_in_range(0..4),
+            &buffer,
+            &diff_base,
+            &[(1..2, "", "two\n")],
+        );
+    });
+
+    client_a
+        .fs
+        .as_fake()
+        .set_index_for_repo(
+            Path::new("/dir/.git"),
+            &[(Path::new("a.txt"), new_diff_base.clone())],
+        )
+        .await;
+
+    // Wait for buffer_local_a to receive it
+    executor.run_until_parked();
+
+    // Smoke test new diffing
+    buffer_local_a.read_with(cx_a, |buffer, _| {
+        assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
+
+        git::diff::assert_hunks(
+            buffer.snapshot().git_diff_hunks_in_range(0..4),
+            &buffer,
+            &diff_base,
+            &[(2..3, "", "three\n")],
+        );
+    });
+
+    // Smoke test B
+    buffer_remote_a.read_with(cx_b, |buffer, _| {
+        assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
+        git::diff::assert_hunks(
+            buffer.snapshot().git_diff_hunks_in_range(0..4),
+            &buffer,
+            &diff_base,
+            &[(2..3, "", "three\n")],
+        );
+    });
+
+    //Nested git dir
+
+    let diff_base = "
+        one
+        three
+    "
+    .unindent();
+
+    let new_diff_base = "
+        one
+        two
+    "
+    .unindent();
+
+    client_a
+        .fs
+        .as_fake()
+        .set_index_for_repo(
+            Path::new("/dir/sub/.git"),
+            &[(Path::new("b.txt"), diff_base.clone())],
+        )
+        .await;
+
+    // Create the buffer
+    let buffer_local_b = project_local
+        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "sub/b.txt"), cx))
+        .await
+        .unwrap();
+
+    // Wait for it to catch up to the new diff
+    executor.run_until_parked();
+
+    // Smoke test diffing
+    buffer_local_b.read_with(cx_a, |buffer, _| {
+        assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
+        git::diff::assert_hunks(
+            buffer.snapshot().git_diff_hunks_in_range(0..4),
+            &buffer,
+            &diff_base,
+            &[(1..2, "", "two\n")],
+        );
+    });
+
+    // Create remote buffer
+    let buffer_remote_b = project_remote
+        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "sub/b.txt"), cx))
+        .await
+        .unwrap();
+
+    // Wait remote buffer to catch up to the new diff
+    executor.run_until_parked();
+
+    // Smoke test diffing
+    buffer_remote_b.read_with(cx_b, |buffer, _| {
+        assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
+        git::diff::assert_hunks(
+            buffer.snapshot().git_diff_hunks_in_range(0..4),
+            &buffer,
+            &diff_base,
+            &[(1..2, "", "two\n")],
+        );
+    });
+
+    client_a
+        .fs
+        .as_fake()
+        .set_index_for_repo(
+            Path::new("/dir/sub/.git"),
+            &[(Path::new("b.txt"), new_diff_base.clone())],
+        )
+        .await;
+
+    // Wait for buffer_local_b to receive it
+    executor.run_until_parked();
+
+    // Smoke test new diffing
+    buffer_local_b.read_with(cx_a, |buffer, _| {
+        assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
+        println!("{:?}", buffer.as_rope().to_string());
+        println!("{:?}", buffer.diff_base());
+        println!(
+            "{:?}",
+            buffer
+                .snapshot()
+                .git_diff_hunks_in_range(0..4)
+                .collect::<Vec<_>>()
+        );
+
+        git::diff::assert_hunks(
+            buffer.snapshot().git_diff_hunks_in_range(0..4),
+            &buffer,
+            &diff_base,
+            &[(2..3, "", "three\n")],
+        );
+    });
+
+    // Smoke test B
+    buffer_remote_b.read_with(cx_b, |buffer, _| {
+        assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
+        git::diff::assert_hunks(
+            buffer.snapshot().git_diff_hunks_in_range(0..4),
+            &buffer,
+            &diff_base,
+            &[(2..3, "", "three\n")],
+        );
+    });
 }
 
 #[gpui::test(iterations = 10)]
@@ -5092,7 +5346,19 @@ async fn test_random_collaboration(
     let mut server = TestServer::start(cx.foreground(), cx.background()).await;
     let db = server.app_state.db.clone();
 
-    let room_creator_user_id = db.create_user("room-creator", None, false).await.unwrap();
+    let room_creator_user_id = db
+        .create_user(
+            "room-creator@example.com",
+            false,
+            NewUserParams {
+                github_login: "room-creator".into(),
+                github_user_id: 0,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap()
+        .user_id;
     let mut available_guests = vec![
         "guest-1".to_string(),
         "guest-2".to_string(),
@@ -5100,11 +5366,24 @@ async fn test_random_collaboration(
         "guest-4".to_string(),
     ];
 
-    for username in Some(&"host".to_string())
+    for (ix, username) in Some(&"host".to_string())
         .into_iter()
         .chain(&available_guests)
+        .enumerate()
     {
-        let user_id = db.create_user(username, None, false).await.unwrap();
+        let user_id = db
+            .create_user(
+                &format!("{username}@example.com"),
+                false,
+                NewUserParams {
+                    github_login: username.into(),
+                    github_user_id: (ix + 1) as i32,
+                    invite_count: 0,
+                },
+            )
+            .await
+            .unwrap()
+            .user_id;
         server
             .app_state
             .db
@@ -5632,18 +5911,31 @@ impl TestServer {
         });
 
         let http = FakeHttpClient::with_404_response();
-        let user_id = if let Ok(Some(user)) = self.app_state.db.get_user_by_github_login(name).await
+        let user_id = if let Ok(Some(user)) = self
+            .app_state
+            .db
+            .get_user_by_github_account(name, None)
+            .await
         {
             user.id
         } else {
             self.app_state
                 .db
-                .create_user(name, None, false)
+                .create_user(
+                    &format!("{name}@example.com"),
+                    false,
+                    NewUserParams {
+                        github_login: name.into(),
+                        github_user_id: 0,
+                        invite_count: 0,
+                    },
+                )
                 .await
                 .unwrap()
+                .user_id
         };
         let client_name = name.to_string();
-        let mut client = Client::new(http.clone());
+        let mut client = cx.read(|cx| Client::new(http.clone(), cx));
         let server = self.server.clone();
         let db = self.app_state.db.clone();
         let connection_killers = self.connection_killers.clone();

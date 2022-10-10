@@ -7,6 +7,7 @@ import {
   player,
   popoverShadow,
   text,
+  textColor,
   TextColor,
 } from "./components";
 import hoverPopover from "./hoverPopover";
@@ -59,8 +60,14 @@ export default function editor(theme: Theme) {
       indicator: iconColor(theme, "secondary"),
       verticalScale: 0.618
     },
-    diffBackgroundDeleted: backgroundColor(theme, "error"),
-    diffBackgroundInserted: backgroundColor(theme, "ok"),
+    diff: {
+      deleted: theme.iconColor.error,
+      inserted: theme.iconColor.ok,
+      modified: theme.iconColor.warning,
+      removedWidthEm: 0.275,
+      widthEm: 0.16,
+      cornerRadius: 0.05,
+    },
     documentHighlightReadBackground: theme.editor.highlight.occurrence,
     documentHighlightWriteBackground: theme.editor.highlight.activeOccurrence,
     errorColor: theme.textColor.error,

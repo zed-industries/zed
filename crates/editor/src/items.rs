@@ -404,6 +404,8 @@ impl Item for Editor {
         project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
+        self.report_event("save editor", cx);
+
         let buffer = self.buffer().clone();
         let buffers = buffer.read(cx).all_buffers();
         let mut timeout = cx.background().timer(FORMAT_TIMEOUT).fuse();
@@ -474,6 +476,17 @@ impl Item for Editor {
             });
             Ok(())
         })
+    }
+
+    fn git_diff_recalc(
+        &mut self,
+        _project: ModelHandle<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        self.buffer().update(cx, |multibuffer, cx| {
+            multibuffer.git_diff_recalc(cx);
+        });
+        Task::ready(Ok(()))
     }
 
     fn to_item_events(event: &Self::Event) -> Vec<workspace::ItemEvent> {

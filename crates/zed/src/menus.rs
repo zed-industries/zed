@@ -329,6 +329,11 @@ pub fn menus() -> Vec<Menu<'static>> {
                 },
                 MenuItem::Separator,
                 MenuItem::Action {
+                    name: "View Telemetry Log",
+                    action: Box::new(crate::OpenTelemetryLog),
+                },
+                MenuItem::Separator,
+                MenuItem::Action {
                     name: "Documentation",
                     action: Box::new(crate::OpenBrowser {
                         url: "https://zed.dev/docs".into(),

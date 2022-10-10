@@ -10,6 +10,7 @@ doctest = false
 [features]
 test-support = [
     "client/test-support",
+    "db/test-support",
     "language/test-support",
     "settings/test-support",
     "text/test-support",
@@ -20,8 +21,10 @@ text = { path = "../text" }
 client = { path = "../client" }
 clock = { path = "../clock" }
 collections = { path = "../collections" }
+db = { path = "../db" }
 fsevent = { path = "../fsevent" }
 fuzzy = { path = "../fuzzy" }
+git = { path = "../git" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
@@ -54,6 +57,7 @@ rocksdb = "0.18"
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }
+db = { path = "../db", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }

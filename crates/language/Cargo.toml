@@ -25,6 +25,7 @@ client = { path = "../client" }
 clock = { path = "../clock" }
 collections = { path = "../collections" }
 fuzzy = { path = "../fuzzy" }
+git = { path = "../git" }
 gpui = { path = "../gpui" }
 lsp = { path = "../lsp" }
 rpc = { path = "../rpc" }
@@ -63,6 +64,8 @@ util = { path = "../util", features = ["test-support"] }
 ctor = "0.1"
 env_logger = "0.9"
 rand = "0.8.3"
+tree-sitter-html = "*"
+tree-sitter-javascript = "*"
 tree-sitter-json = "*"
 tree-sitter-rust = "*"
 tree-sitter-python = "*"

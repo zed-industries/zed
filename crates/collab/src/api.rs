@@ -1,6 +1,6 @@
 use crate::{
     auth,
-    db::{ProjectId, User, UserId},
+    db::{Invite, NewUserParams, ProjectId, Signup, User, UserId, WaitlistSummary},
     rpc::{self, ResultExt},
     AppState, Error, Result,
 };
@@ -24,13 +24,10 @@ use tracing::instrument;
 
 pub fn routes(rpc_server: &Arc<rpc::Server>, state: Arc<AppState>) -> Router<Body> {
     Router::new()
+        .route("/user", get(get_authenticated_user))
         .route("/users", get(get_users).post(create_user))
-        .route(
-            "/users/:id",
-            put(update_user).delete(destroy_user).get(get_user),
-        )
+        .route("/users/:id", put(update_user).delete(destroy_user))
         .route("/users/:id/access_tokens", post(create_access_token))
-        .route("/bulk_users", post(create_users))
         .route("/users_with_no_invites", get(get_users_with_no_invites))
         .route("/invite_codes/:code", get(get_user_for_invite_code))
         .route("/panic", post(trace_panic))
@@ -45,6 +42,11 @@ pub fn routes(rpc_server: &Arc<rpc::Server>, state: Arc<AppState>) -> Router<Bod
         )
         .route("/user_activity/counts", get(get_active_user_counts))
         .route("/project_metadata", get(get_project_metadata))
+        .route("/signups", post(create_signup))
+        .route("/signups_summary", get(get_waitlist_summary))
+        .route("/user_invites", post(create_invite_from_code))
+        .route("/unsent_invites", get(get_unsent_invites))
+        .route("/sent_invites", post(record_sent_invites))
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(state))
@@ -85,6 +87,31 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
 }
 
 #[derive(Debug, Deserialize)]
+struct AuthenticatedUserParams {
+    github_user_id: i32,
+    github_login: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AuthenticatedUserResponse {
+    user: User,
+    metrics_id: String,
+}
+
+async fn get_authenticated_user(
+    Query(params): Query<AuthenticatedUserParams>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<Json<AuthenticatedUserResponse>> {
+    let user = app
+        .db
+        .get_user_by_github_account(&params.github_login, Some(params.github_user_id))
+        .await?
+        .ok_or_else(|| Error::Http(StatusCode::NOT_FOUND, "user not found".into()))?;
+    let metrics_id = app.db.get_user_metrics_id(user.id).await?;
+    return Ok(Json(AuthenticatedUserResponse { user, metrics_id }));
+}
+
+#[derive(Debug, Deserialize)]
 struct GetUsersQueryParams {
     query: Option<String>,
     page: Option<u32>,
@@ -108,48 +135,76 @@ async fn get_users(
 
 #[derive(Deserialize, Debug)]
 struct CreateUserParams {
+    github_user_id: i32,
     github_login: String,
-    invite_code: Option<String>,
-    email_address: Option<String>,
+    email_address: String,
+    email_confirmation_code: Option<String>,
+    #[serde(default)]
     admin: bool,
+    #[serde(default)]
+    invite_count: i32,
+}
+
+#[derive(Serialize, Debug)]
+struct CreateUserResponse {
+    user: User,
+    signup_device_id: Option<String>,
+    metrics_id: String,
 }
 
 async fn create_user(
     Json(params): Json<CreateUserParams>,
     Extension(app): Extension<Arc<AppState>>,
     Extension(rpc_server): Extension<Arc<rpc::Server>>,
-) -> Result<Json<User>> {
-    let user_id = if let Some(invite_code) = params.invite_code {
-        let invitee_id = app
-            .db
-            .redeem_invite_code(
-                &invite_code,
-                &params.github_login,
-                params.email_address.as_deref(),
-            )
-            .await?;
-        rpc_server
-            .invite_code_redeemed(&invite_code, invitee_id)
-            .await
-            .trace_err();
-        invitee_id
-    } else {
+) -> Result<Json<CreateUserResponse>> {
+    let user = NewUserParams {
+        github_login: params.github_login,
+        github_user_id: params.github_user_id,
+        invite_count: params.invite_count,
+    };
+
+    // Creating a user via the normal signup process
+    let result = if let Some(email_confirmation_code) = params.email_confirmation_code {
         app.db
-            .create_user(
-                &params.github_login,
-                params.email_address.as_deref(),
-                params.admin,
+            .create_user_from_invite(
+                &Invite {
+                    email_address: params.email_address,
+                    email_confirmation_code,
+                },
+                user,
             )
             .await?
+    }
+    // Creating a user as an admin
+    else if params.admin {
+        app.db
+            .create_user(&params.email_address, false, user)
+            .await?
+    } else {
+        Err(Error::Http(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "email confirmation code is required".into(),
+        ))?
     };
+
+    if let Some(inviter_id) = result.inviting_user_id {
+        rpc_server
+            .invite_code_redeemed(inviter_id, result.user_id)
+            .await
+            .trace_err();
+    }
 
     let user = app
         .db
-        .get_user_by_id(user_id)
+        .get_user_by_id(result.user_id)
         .await?
         .ok_or_else(|| anyhow!("couldn't find the user we just created"))?;
 
-    Ok(Json(user))
+    Ok(Json(CreateUserResponse {
+        user,
+        metrics_id: result.metrics_id,
+        signup_device_id: result.signup_device_id,
+    }))
 }
 
 #[derive(Deserialize)]
@@ -171,7 +226,9 @@ async fn update_user(
     }
 
     if let Some(invite_count) = params.invite_count {
-        app.db.set_invite_count(user_id, invite_count).await?;
+        app.db
+            .set_invite_count_for_user(user_id, invite_count)
+            .await?;
         rpc_server.invite_count_updated(user_id).await.trace_err();
     }
 
@@ -184,54 +241,6 @@ async fn destroy_user(
 ) -> Result<()> {
     app.db.destroy_user(UserId(user_id)).await?;
     Ok(())
-}
-
-async fn get_user(
-    Path(login): Path<String>,
-    Extension(app): Extension<Arc<AppState>>,
-) -> Result<Json<User>> {
-    let user = app
-        .db
-        .get_user_by_github_login(&login)
-        .await?
-        .ok_or_else(|| Error::Http(StatusCode::NOT_FOUND, "User not found".to_string()))?;
-    Ok(Json(user))
-}
-
-#[derive(Deserialize)]
-struct CreateUsersParams {
-    users: Vec<CreateUsersEntry>,
-}
-
-#[derive(Deserialize)]
-struct CreateUsersEntry {
-    github_login: String,
-    email_address: String,
-    invite_count: usize,
-}
-
-async fn create_users(
-    Json(params): Json<CreateUsersParams>,
-    Extension(app): Extension<Arc<AppState>>,
-) -> Result<Json<Vec<User>>> {
-    let user_ids = app
-        .db
-        .create_users(
-            params
-                .users
-                .into_iter()
-                .map(|params| {
-                    (
-                        params.github_login,
-                        params.email_address,
-                        params.invite_count,
-                    )
-                })
-                .collect(),
-        )
-        .await?;
-    let users = app.db.get_users_by_ids(user_ids).await?;
-    Ok(Json(users))
 }
 
 #[derive(Debug, Deserialize)]
@@ -368,22 +377,24 @@ struct CreateAccessTokenResponse {
 }
 
 async fn create_access_token(
-    Path(login): Path<String>,
+    Path(user_id): Path<UserId>,
     Query(params): Query<CreateAccessTokenQueryParams>,
     Extension(app): Extension<Arc<AppState>>,
 ) -> Result<Json<CreateAccessTokenResponse>> {
-    //     request.require_token().await?;
-
     let user = app
         .db
-        .get_user_by_github_login(&login)
+        .get_user_by_id(user_id)
         .await?
         .ok_or_else(|| anyhow!("user not found"))?;
 
     let mut user_id = user.id;
     if let Some(impersonate) = params.impersonate {
         if user.admin {
-            if let Some(impersonated_user) = app.db.get_user_by_github_login(&impersonate).await? {
+            if let Some(impersonated_user) = app
+                .db
+                .get_user_by_github_account(&impersonate, None)
+                .await?
+            {
                 user_id = impersonated_user.id;
             } else {
                 return Err(Error::Http(
@@ -414,4 +425,60 @@ async fn get_user_for_invite_code(
     Extension(app): Extension<Arc<AppState>>,
 ) -> Result<Json<User>> {
     Ok(Json(app.db.get_user_for_invite_code(&code).await?))
+}
+
+async fn create_signup(
+    Json(params): Json<Signup>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<()> {
+    app.db.create_signup(params).await?;
+    Ok(())
+}
+
+async fn get_waitlist_summary(
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<Json<WaitlistSummary>> {
+    Ok(Json(app.db.get_waitlist_summary().await?))
+}
+
+#[derive(Deserialize)]
+pub struct CreateInviteFromCodeParams {
+    invite_code: String,
+    email_address: String,
+    device_id: Option<String>,
+}
+
+async fn create_invite_from_code(
+    Json(params): Json<CreateInviteFromCodeParams>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<Json<Invite>> {
+    Ok(Json(
+        app.db
+            .create_invite_from_code(
+                &params.invite_code,
+                &params.email_address,
+                params.device_id.as_deref(),
+            )
+            .await?,
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct GetUnsentInvitesParams {
+    pub count: usize,
+}
+
+async fn get_unsent_invites(
+    Query(params): Query<GetUnsentInvitesParams>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<Json<Vec<Invite>>> {
+    Ok(Json(app.db.get_unsent_invites(params.count).await?))
+}
+
+async fn record_sent_invites(
+    Json(params): Json<Vec<Invite>>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<()> {
+    app.db.record_sent_invites(&params).await?;
+    Ok(())
 }

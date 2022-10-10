@@ -20,7 +20,7 @@ use futures::{
     FutureExt, SinkExt, StreamExt,
 };
 use gpui::{executor::Background, App, AssetSource, AsyncAppContext, Task, ViewContext};
-use isahc::{config::Configurable, AsyncBody, Request};
+use isahc::{config::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
 use parking_lot::Mutex;
@@ -88,7 +88,7 @@ fn main() {
     });
 
     app.run(move |cx| {
-        let client = client::Client::new(http.clone());
+        let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         languages.set_language_server_download_dir(zed::paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
@@ -120,7 +120,6 @@ fn main() {
         vim::init(cx);
         terminal::init(cx);
 
-        let db = cx.background().block(db);
         cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
             .detach();
 
@@ -139,6 +138,10 @@ fn main() {
         .detach();
 
         let project_store = cx.add_model(|_| ProjectStore::new());
+        let db = cx.background().block(db);
+        client.start_telemetry(db.clone());
+        client.report_event("start app", Default::default());
+
         let app_state = Arc::new(AppState {
             languages,
             themes,
@@ -280,12 +283,10 @@ fn init_panic_hook(app_version: String, http: Arc<dyn HttpClient>, background: A
                         "token": ZED_SECRET_CLIENT_TOKEN,
                     }))
                     .unwrap();
-                    let request = Request::builder()
-                        .uri(&panic_report_url)
-                        .method(http::Method::POST)
+                    let request = Request::post(&panic_report_url)
                         .redirect_policy(isahc::config::RedirectPolicy::Follow)
                         .header("Content-Type", "application/json")
-                        .body(AsyncBody::from(body))?;
+                        .body(body.into())?;
                     let response = http.send(request).await.context("error sending panic")?;
                     if response.status().is_success() {
                         fs::remove_file(child_path)

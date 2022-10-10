@@ -55,6 +55,7 @@ actions!(
         DebugElements,
         OpenSettings,
         OpenLog,
+        OpenTelemetryLog,
         OpenKeymap,
         OpenDefaultSettings,
         OpenDefaultKeymap,
@@ -143,6 +144,12 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
         let app_state = app_state.clone();
         move |workspace: &mut Workspace, _: &OpenLog, cx: &mut ViewContext<Workspace>| {
             open_log_file(workspace, app_state.clone(), cx);
+        }
+    });
+    cx.add_action({
+        let app_state = app_state.clone();
+        move |workspace: &mut Workspace, _: &OpenTelemetryLog, cx: &mut ViewContext<Workspace>| {
+            open_telemetry_log_file(workspace, app_state.clone(), cx);
         }
     });
     cx.add_action({
@@ -480,6 +487,62 @@ fn open_log_file(
                     );
                 });
             }
+        })
+        .detach();
+    });
+}
+
+fn open_telemetry_log_file(
+    workspace: &mut Workspace,
+    app_state: Arc<AppState>,
+    cx: &mut ViewContext<Workspace>,
+) {
+    workspace.with_local_workspace(cx, app_state.clone(), |_, cx| {
+        cx.spawn_weak(|workspace, mut cx| async move {
+            let workspace = workspace.upgrade(&cx)?;
+            let path = app_state.client.telemetry_log_file_path()?;
+            let log = app_state.fs.load(&path).await.log_err()?;
+
+            const MAX_TELEMETRY_LOG_LEN: usize = 5 * 1024 * 1024;
+            let mut start_offset = log.len().saturating_sub(MAX_TELEMETRY_LOG_LEN);
+            if let Some(newline_offset) = log[start_offset..].find('\n') {
+                start_offset += newline_offset + 1;
+            }
+            let log_suffix = &log[start_offset..];
+
+            workspace.update(&mut cx, |workspace, cx| {
+                let project = workspace.project().clone();
+                let buffer = project
+                    .update(cx, |project, cx| project.create_buffer("", None, cx))
+                    .expect("creating buffers on a local workspace always succeeds");
+                buffer.update(cx, |buffer, cx| {
+                    buffer.set_language(app_state.languages.get_language("JSON"), cx);
+                    buffer.edit(
+                        [(
+                            0..0,
+                            concat!(
+                                "// Zed collects anonymous usage data to help us understand how people are using the app.\n",
+                                "// After the beta release, we'll provide the ability to opt out of this telemetry.\n",
+                                "// Here is the data that has been reported for the current session:\n",
+                                "\n"
+                            ),
+                        )],
+                        None,
+                        cx,
+                    );
+                    buffer.edit([(buffer.len()..buffer.len(), log_suffix)], None, cx);
+                });
+
+                let buffer = cx.add_model(|cx| {
+                    MultiBuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
+                });
+                workspace.add_item(
+                    Box::new(cx.add_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx))),
+                    cx,
+                );
+            });
+
+            Some(())
         })
         .detach();
     });
@@ -1051,7 +1114,7 @@ mod tests {
             assert!(!editor.is_dirty(cx));
             assert_eq!(editor.title(cx), "untitled");
             assert!(Arc::ptr_eq(
-                editor.language_at(0, cx).unwrap(),
+                &editor.language_at(0, cx).unwrap(),
                 &languages::PLAIN_TEXT
             ));
             editor.handle_input("hi", cx);
@@ -1138,7 +1201,7 @@ mod tests {
 
         editor.update(cx, |editor, cx| {
             assert!(Arc::ptr_eq(
-                editor.language_at(0, cx).unwrap(),
+                &editor.language_at(0, cx).unwrap(),
                 &languages::PLAIN_TEXT
             ));
             editor.handle_input("hi", cx);

@@ -601,7 +601,7 @@ mod tests {
 
         let user_id = 5;
         let http_client = FakeHttpClient::with_404_response();
-        let client = Client::new(http_client.clone());
+        let client = cx.update(|cx| Client::new(http_client.clone(), cx));
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
         Channel::init(&client);

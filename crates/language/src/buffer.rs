@@ -45,8 +45,16 @@ pub use {tree_sitter_rust, tree_sitter_typescript};
 
 pub use lsp::DiagnosticSeverity;
 
+struct GitDiffStatus {
+    diff: git::diff::BufferDiff,
+    update_in_progress: bool,
+    update_requested: bool,
+}
+
 pub struct Buffer {
     text: TextBuffer,
+    diff_base: Option<String>,
+    git_diff_status: GitDiffStatus,
     file: Option<Arc<dyn File>>,
     saved_version: clock::Global,
     saved_version_fingerprint: String,
@@ -66,6 +74,7 @@ pub struct Buffer {
     diagnostics_update_count: usize,
     diagnostics_timestamp: clock::Lamport,
     file_update_count: usize,
+    git_diff_update_count: usize,
     completion_triggers: Vec<String>,
     completion_triggers_timestamp: clock::Lamport,
     deferred_ops: OperationQueue<Operation>,
@@ -73,25 +82,28 @@ pub struct Buffer {
 
 pub struct BufferSnapshot {
     text: text::BufferSnapshot,
+    pub git_diff: git::diff::BufferDiff,
     pub(crate) syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: DiagnosticSet,
     diagnostics_update_count: usize,
     file_update_count: usize,
+    git_diff_update_count: usize,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     selections_update_count: usize,
     language: Option<Arc<Language>>,
     parse_count: usize,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct IndentSize {
     pub len: u32,
     pub kind: IndentKind,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum IndentKind {
+    #[default]
     Space,
     Tab,
 }
@@ -236,7 +248,6 @@ pub enum AutoindentMode {
 struct AutoindentRequest {
     before_edit: BufferSnapshot,
     entries: Vec<AutoindentRequestEntry>,
-    indent_size: IndentSize,
     is_block_mode: bool,
 }
 
@@ -249,6 +260,7 @@ struct AutoindentRequestEntry {
     /// only be adjusted if the suggested indentation level has *changed*
     /// since the edit was made.
     first_line_is_new: bool,
+    indent_size: IndentSize,
     original_indent_column: Option<u32>,
 }
 
@@ -288,10 +300,8 @@ pub struct Chunk<'a> {
 
 pub struct Diff {
     base_version: clock::Global,
-    new_text: Arc<str>,
-    changes: Vec<(ChangeTag, usize)>,
     line_ending: LineEnding,
-    start_offset: usize,
+    edits: Vec<(Range<usize>, Arc<str>)>,
 }
 
 #[derive(Clone, Copy)]
@@ -328,17 +338,20 @@ impl Buffer {
         Self::build(
             TextBuffer::new(replica_id, cx.model_id() as u64, base_text.into()),
             None,
+            None,
         )
     }
 
     pub fn from_file<T: Into<String>>(
         replica_id: ReplicaId,
         base_text: T,
+        diff_base: Option<T>,
         file: Arc<dyn File>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         Self::build(
             TextBuffer::new(replica_id, cx.model_id() as u64, base_text.into()),
+            diff_base.map(|h| h.into().into_boxed_str().into()),
             Some(file),
         )
     }
@@ -349,7 +362,11 @@ impl Buffer {
         file: Option<Arc<dyn File>>,
     ) -> Result<Self> {
         let buffer = TextBuffer::new(replica_id, message.id, message.base_text);
-        let mut this = Self::build(buffer, file);
+        let mut this = Self::build(
+            buffer,
+            message.diff_base.map(|text| text.into_boxed_str().into()),
+            file,
+        );
         this.text.set_line_ending(proto::deserialize_line_ending(
             proto::LineEnding::from_i32(message.line_ending)
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
@@ -362,6 +379,7 @@ impl Buffer {
             id: self.remote_id(),
             file: self.file.as_ref().map(|f| f.to_proto()),
             base_text: self.base_text().to_string(),
+            diff_base: self.diff_base.as_ref().map(|h| h.to_string()),
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
         }
     }
@@ -404,7 +422,7 @@ impl Buffer {
         self
     }
 
-    fn build(buffer: TextBuffer, file: Option<Arc<dyn File>>) -> Self {
+    fn build(buffer: TextBuffer, diff_base: Option<String>, file: Option<Arc<dyn File>>) -> Self {
         let saved_mtime = if let Some(file) = file.as_ref() {
             file.mtime()
         } else {
@@ -418,6 +436,12 @@ impl Buffer {
             transaction_depth: 0,
             was_dirty_before_starting_transaction: None,
             text: buffer,
+            diff_base,
+            git_diff_status: GitDiffStatus {
+                diff: git::diff::BufferDiff::new(),
+                update_in_progress: false,
+                update_requested: false,
+            },
             file,
             syntax_map: Mutex::new(SyntaxMap::new()),
             parsing_in_background: false,
@@ -432,6 +456,7 @@ impl Buffer {
             diagnostics_update_count: 0,
             diagnostics_timestamp: Default::default(),
             file_update_count: 0,
+            git_diff_update_count: 0,
             completion_triggers: Default::default(),
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
@@ -447,11 +472,13 @@ impl Buffer {
         BufferSnapshot {
             text,
             syntax,
+            git_diff: self.git_diff_status.diff.clone(),
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
             diagnostics_update_count: self.diagnostics_update_count,
             file_update_count: self.file_update_count,
+            git_diff_update_count: self.git_diff_update_count,
             language: self.language.clone(),
             parse_count: self.parse_count,
             selections_update_count: self.selections_update_count,
@@ -584,6 +611,7 @@ impl Buffer {
                 cx,
             );
         }
+        self.git_diff_recalc(cx);
         cx.emit(Event::Reloaded);
         cx.notify();
     }
@@ -633,12 +661,76 @@ impl Buffer {
         task
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn diff_base(&self) -> Option<&str> {
+        self.diff_base.as_deref()
+    }
+
+    pub fn update_diff_base(&mut self, diff_base: Option<String>, cx: &mut ModelContext<Self>) {
+        self.diff_base = diff_base;
+        self.git_diff_recalc(cx);
+    }
+
+    pub fn needs_git_diff_recalc(&self) -> bool {
+        self.git_diff_status.diff.needs_update(self)
+    }
+
+    pub fn git_diff_recalc(&mut self, cx: &mut ModelContext<Self>) {
+        if self.git_diff_status.update_in_progress {
+            self.git_diff_status.update_requested = true;
+            return;
+        }
+
+        if let Some(diff_base) = &self.diff_base {
+            let snapshot = self.snapshot();
+            let diff_base = diff_base.clone();
+
+            let mut diff = self.git_diff_status.diff.clone();
+            let diff = cx.background().spawn(async move {
+                diff.update(&diff_base, &snapshot).await;
+                diff
+            });
+
+            cx.spawn_weak(|this, mut cx| async move {
+                let buffer_diff = diff.await;
+                if let Some(this) = this.upgrade(&cx) {
+                    this.update(&mut cx, |this, cx| {
+                        this.git_diff_status.diff = buffer_diff;
+                        this.git_diff_update_count += 1;
+                        cx.notify();
+
+                        this.git_diff_status.update_in_progress = false;
+                        if this.git_diff_status.update_requested {
+                            this.git_diff_recalc(cx);
+                        }
+                    })
+                }
+            })
+            .detach()
+        } else {
+            let snapshot = self.snapshot();
+            self.git_diff_status.diff.clear(&snapshot);
+            self.git_diff_update_count += 1;
+            cx.notify();
+        }
+    }
+
     pub fn close(&mut self, cx: &mut ModelContext<Self>) {
         cx.emit(Event::Closed);
     }
 
     pub fn language(&self) -> Option<&Arc<Language>> {
         self.language.as_ref()
+    }
+
+    pub fn language_at<D: ToOffset>(&self, position: D) -> Option<Arc<Language>> {
+        let offset = position.to_offset(self);
+        self.syntax_map
+            .lock()
+            .layers_for_range(offset..offset, &self.text)
+            .last()
+            .map(|info| info.language.clone())
+            .or_else(|| self.language.clone())
     }
 
     pub fn parse_count(&self) -> usize {
@@ -655,6 +747,10 @@ impl Buffer {
 
     pub fn file_update_count(&self) -> usize {
         self.file_update_count
+    }
+
+    pub fn git_diff_update_count(&self) -> usize {
+        self.git_diff_update_count
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -784,10 +880,13 @@ impl Buffer {
                 // buffer before this batch of edits.
                 let mut row_ranges = Vec::new();
                 let mut old_to_new_rows = BTreeMap::new();
+                let mut language_indent_sizes_by_new_row = Vec::new();
                 for entry in &request.entries {
                     let position = entry.range.start;
                     let new_row = position.to_point(&snapshot).row;
                     let new_end_row = entry.range.end.to_point(&snapshot).row + 1;
+                    language_indent_sizes_by_new_row.push((new_row, entry.indent_size));
+
                     if !entry.first_line_is_new {
                         let old_row = position.to_point(&request.before_edit).row;
                         old_to_new_rows.insert(old_row, new_row);
@@ -801,6 +900,8 @@ impl Buffer {
                 let mut old_suggestions = BTreeMap::<u32, IndentSize>::default();
                 let old_edited_ranges =
                     contiguous_ranges(old_to_new_rows.keys().copied(), max_rows_between_yields);
+                let mut language_indent_sizes = language_indent_sizes_by_new_row.iter().peekable();
+                let mut language_indent_size = IndentSize::default();
                 for old_edited_range in old_edited_ranges {
                     let suggestions = request
                         .before_edit
@@ -809,6 +910,17 @@ impl Buffer {
                         .flatten();
                     for (old_row, suggestion) in old_edited_range.zip(suggestions) {
                         if let Some(suggestion) = suggestion {
+                            let new_row = *old_to_new_rows.get(&old_row).unwrap();
+
+                            // Find the indent size based on the language for this row.
+                            while let Some((row, size)) = language_indent_sizes.peek() {
+                                if *row > new_row {
+                                    break;
+                                }
+                                language_indent_size = *size;
+                                language_indent_sizes.next();
+                            }
+
                             let suggested_indent = old_to_new_rows
                                 .get(&suggestion.basis_row)
                                 .and_then(|from_row| old_suggestions.get(from_row).copied())
@@ -817,9 +929,8 @@ impl Buffer {
                                         .before_edit
                                         .indent_size_for_line(suggestion.basis_row)
                                 })
-                                .with_delta(suggestion.delta, request.indent_size);
-                            old_suggestions
-                                .insert(*old_to_new_rows.get(&old_row).unwrap(), suggested_indent);
+                                .with_delta(suggestion.delta, language_indent_size);
+                            old_suggestions.insert(new_row, suggested_indent);
                         }
                     }
                     yield_now().await;
@@ -840,6 +951,8 @@ impl Buffer {
 
                 // Compute new suggestions for each line, but only include them in the result
                 // if they differ from the old suggestion for that line.
+                let mut language_indent_sizes = language_indent_sizes_by_new_row.iter().peekable();
+                let mut language_indent_size = IndentSize::default();
                 for new_edited_row_range in new_edited_row_ranges {
                     let suggestions = snapshot
                         .suggest_autoindents(new_edited_row_range.clone())
@@ -847,13 +960,22 @@ impl Buffer {
                         .flatten();
                     for (new_row, suggestion) in new_edited_row_range.zip(suggestions) {
                         if let Some(suggestion) = suggestion {
+                            // Find the indent size based on the language for this row.
+                            while let Some((row, size)) = language_indent_sizes.peek() {
+                                if *row > new_row {
+                                    break;
+                                }
+                                language_indent_size = *size;
+                                language_indent_sizes.next();
+                            }
+
                             let suggested_indent = indent_sizes
                                 .get(&suggestion.basis_row)
                                 .copied()
                                 .unwrap_or_else(|| {
                                     snapshot.indent_size_for_line(suggestion.basis_row)
                                 })
-                                .with_delta(suggestion.delta, request.indent_size);
+                                .with_delta(suggestion.delta, language_indent_size);
                             if old_suggestions
                                 .get(&new_row)
                                 .map_or(true, |old_indentation| {
@@ -965,16 +1087,30 @@ impl Buffer {
             let old_text = old_text.to_string();
             let line_ending = LineEnding::detect(&new_text);
             LineEnding::normalize(&mut new_text);
-            let changes = TextDiff::from_chars(old_text.as_str(), new_text.as_str())
-                .iter_all_changes()
-                .map(|c| (c.tag(), c.value().len()))
-                .collect::<Vec<_>>();
+            let diff = TextDiff::from_chars(old_text.as_str(), new_text.as_str());
+            let mut edits = Vec::new();
+            let mut offset = 0;
+            let empty: Arc<str> = "".into();
+            for change in diff.iter_all_changes() {
+                let value = change.value();
+                let end_offset = offset + value.len();
+                match change.tag() {
+                    ChangeTag::Equal => {
+                        offset = end_offset;
+                    }
+                    ChangeTag::Delete => {
+                        edits.push((offset..end_offset, empty.clone()));
+                        offset = end_offset;
+                    }
+                    ChangeTag::Insert => {
+                        edits.push((offset..offset, value.into()));
+                    }
+                }
+            }
             Diff {
                 base_version,
-                new_text: new_text.into(),
-                changes,
                 line_ending,
-                start_offset: 0,
+                edits,
             }
         })
     }
@@ -984,28 +1120,7 @@ impl Buffer {
             self.finalize_last_transaction();
             self.start_transaction();
             self.text.set_line_ending(diff.line_ending);
-            let mut offset = diff.start_offset;
-            for (tag, len) in diff.changes {
-                let range = offset..(offset + len);
-                match tag {
-                    ChangeTag::Equal => offset += len,
-                    ChangeTag::Delete => {
-                        self.edit([(range, "")], None, cx);
-                    }
-                    ChangeTag::Insert => {
-                        self.edit(
-                            [(
-                                offset..offset,
-                                &diff.new_text[range.start - diff.start_offset
-                                    ..range.end - diff.start_offset],
-                            )],
-                            None,
-                            cx,
-                        );
-                        offset += len;
-                    }
-                }
-            }
+            self.edit(diff.edits, None, cx);
             if self.end_transaction(cx).is_some() {
                 self.finalize_last_transaction()
             } else {
@@ -1184,7 +1299,6 @@ impl Buffer {
         let edit_id = edit_operation.local_timestamp();
 
         if let Some((before_edit, mode)) = autoindent_request {
-            let indent_size = before_edit.single_indent_size(cx);
             let (start_columns, is_block_mode) = match mode {
                 AutoindentMode::Block {
                     original_indent_columns: start_columns,
@@ -1233,6 +1347,7 @@ impl Buffer {
                     AutoindentRequestEntry {
                         first_line_is_new,
                         original_indent_column: start_column,
+                        indent_size: before_edit.language_indent_size_at(range.start, cx),
                         range: self.anchor_before(new_start + range_of_insertion_to_indent.start)
                             ..self.anchor_after(new_start + range_of_insertion_to_indent.end),
                     }
@@ -1242,7 +1357,6 @@ impl Buffer {
             self.autoindent_requests.push(Arc::new(AutoindentRequest {
                 before_edit,
                 entries,
-                indent_size,
                 is_block_mode,
             }));
         }
@@ -1560,8 +1674,8 @@ impl BufferSnapshot {
         indent_size_for_line(self, row)
     }
 
-    pub fn single_indent_size(&self, cx: &AppContext) -> IndentSize {
-        let language_name = self.language().map(|language| language.name());
+    pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &AppContext) -> IndentSize {
+        let language_name = self.language_at(position).map(|language| language.name());
         let settings = cx.global::<Settings>();
         if settings.hard_tabs(language_name.as_deref()) {
             IndentSize::tab()
@@ -1631,6 +1745,8 @@ impl BufferSnapshot {
                 if capture.index == config.indent_capture_ix {
                     start.get_or_insert(Point::from_ts_point(capture.node.start_position()));
                     end.get_or_insert(Point::from_ts_point(capture.node.end_position()));
+                } else if Some(capture.index) == config.start_capture_ix {
+                    start = Some(Point::from_ts_point(capture.node.end_position()));
                 } else if Some(capture.index) == config.end_capture_ix {
                     end = Some(Point::from_ts_point(capture.node.start_position()));
                 }
@@ -1820,8 +1936,14 @@ impl BufferSnapshot {
         }
     }
 
-    pub fn language(&self) -> Option<&Arc<Language>> {
-        self.language.as_ref()
+    pub fn language_at<D: ToOffset>(&self, position: D) -> Option<&Arc<Language>> {
+        let offset = position.to_offset(self);
+        self.syntax
+            .layers_for_range(offset..offset, &self.text)
+            .filter(|l| l.node.end_byte() > offset)
+            .last()
+            .map(|info| info.language)
+            .or(self.language.as_ref())
     }
 
     pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {
@@ -1856,8 +1978,8 @@ impl BufferSnapshot {
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut result: Option<Range<usize>> = None;
-        'outer: for (_, _, node) in self.syntax.layers_for_range(range.clone(), &self.text) {
-            let mut cursor = node.walk();
+        'outer: for layer in self.syntax.layers_for_range(range.clone(), &self.text) {
+            let mut cursor = layer.node.walk();
 
             // Descend to the first leaf that touches the start of the range,
             // and if the range is non-empty, extends beyond the start.
@@ -2139,6 +2261,13 @@ impl BufferSnapshot {
             })
     }
 
+    pub fn git_diff_hunks_in_range<'a>(
+        &'a self,
+        query_row_range: Range<u32>,
+    ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
+        self.git_diff.hunks_in_range(query_row_range, self)
+    }
+
     pub fn diagnostics_in_range<'a, T, O>(
         &'a self,
         search_range: Range<T>,
@@ -2186,6 +2315,10 @@ impl BufferSnapshot {
     pub fn file_update_count(&self) -> usize {
         self.file_update_count
     }
+
+    pub fn git_diff_update_count(&self) -> usize {
+        self.git_diff_update_count
+    }
 }
 
 pub fn indent_size_for_line(text: &text::BufferSnapshot, row: u32) -> IndentSize {
@@ -2212,6 +2345,7 @@ impl Clone for BufferSnapshot {
     fn clone(&self) -> Self {
         Self {
             text: self.text.clone(),
+            git_diff: self.git_diff.clone(),
             syntax: self.syntax.clone(),
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
@@ -2219,6 +2353,7 @@ impl Clone for BufferSnapshot {
             selections_update_count: self.selections_update_count,
             diagnostics_update_count: self.diagnostics_update_count,
             file_update_count: self.file_update_count,
+            git_diff_update_count: self.git_diff_update_count,
             language: self.language.clone(),
             parse_count: self.parse_count,
         }

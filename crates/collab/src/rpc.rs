@@ -206,7 +206,9 @@ impl Server {
             .add_request_handler(Server::follow)
             .add_message_handler(Server::unfollow)
             .add_message_handler(Server::update_followers)
-            .add_request_handler(Server::get_channel_messages);
+            .add_request_handler(Server::get_channel_messages)
+            .add_message_handler(Server::update_diff_base)
+            .add_request_handler(Server::get_private_user_info);
 
         Arc::new(server)
     }
@@ -528,27 +530,30 @@ impl Server {
 
     pub async fn invite_code_redeemed(
         self: &Arc<Self>,
-        code: &str,
+        inviter_id: UserId,
         invitee_id: UserId,
     ) -> Result<()> {
-        let user = self.app_state.db.get_user_for_invite_code(code).await?;
-        let store = self.store().await;
-        let invitee_contact = store.contact_for_user(invitee_id, true);
-        for connection_id in store.connection_ids_for_user(user.id) {
-            self.peer.send(
-                connection_id,
-                proto::UpdateContacts {
-                    contacts: vec![invitee_contact.clone()],
-                    ..Default::default()
-                },
-            )?;
-            self.peer.send(
-                connection_id,
-                proto::UpdateInviteInfo {
-                    url: format!("{}{}", self.app_state.invite_link_prefix, code),
-                    count: user.invite_count as u32,
-                },
-            )?;
+        if let Some(user) = self.app_state.db.get_user_by_id(inviter_id).await? {
+            if let Some(code) = &user.invite_code {
+                let store = self.store().await;
+                let invitee_contact = store.contact_for_user(invitee_id, true);
+                for connection_id in store.connection_ids_for_user(inviter_id) {
+                    self.peer.send(
+                        connection_id,
+                        proto::UpdateContacts {
+                            contacts: vec![invitee_contact.clone()],
+                            ..Default::default()
+                        },
+                    )?;
+                    self.peer.send(
+                        connection_id,
+                        proto::UpdateInviteInfo {
+                            url: format!("{}{}", self.app_state.invite_link_prefix, &code),
+                            count: user.invite_count as u32,
+                        },
+                    )?;
+                }
+            }
         }
         Ok(())
     }
@@ -1427,7 +1432,7 @@ impl Server {
         let users = match query.len() {
             0 => vec![],
             1 | 2 => db
-                .get_user_by_github_login(&query)
+                .get_user_by_github_account(&query, None)
                 .await?
                 .into_iter()
                 .collect(),
@@ -1746,6 +1751,44 @@ impl Server {
         response.send(proto::GetChannelMessagesResponse {
             done: messages.len() < MESSAGE_COUNT_PER_PAGE,
             messages,
+        })?;
+        Ok(())
+    }
+
+    async fn update_diff_base(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::UpdateDiffBase>,
+    ) -> Result<()> {
+        let receiver_ids = self.store().await.project_connection_ids(
+            ProjectId::from_proto(request.payload.project_id),
+            request.sender_id,
+        )?;
+        broadcast(request.sender_id, receiver_ids, |connection_id| {
+            self.peer
+                .forward_send(request.sender_id, connection_id, request.payload.clone())
+        });
+        Ok(())
+    }
+
+    async fn get_private_user_info(
+        self: Arc<Self>,
+        request: TypedEnvelope<proto::GetPrivateUserInfo>,
+        response: Response<proto::GetPrivateUserInfo>,
+    ) -> Result<()> {
+        let user_id = self
+            .store()
+            .await
+            .user_id_for_connection(request.sender_id)?;
+        let metrics_id = self.app_state.db.get_user_metrics_id(user_id).await?;
+        let user = self
+            .app_state
+            .db
+            .get_user_by_id(user_id)
+            .await?
+            .ok_or_else(|| anyhow!("user not found"))?;
+        response.send(proto::GetPrivateUserInfoResponse {
+            metrics_id,
+            staff: user.admin,
         })?;
         Ok(())
     }

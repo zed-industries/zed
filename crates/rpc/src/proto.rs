@@ -175,6 +175,9 @@ messages!(
     (UpdateProject, Foreground),
     (UpdateWorktree, Foreground),
     (UpdateWorktreeExtensions, Background),
+    (UpdateDiffBase, Background),
+    (GetPrivateUserInfo, Foreground),
+    (GetPrivateUserInfoResponse, Foreground),
 );
 
 request_messages!(
@@ -201,6 +204,7 @@ request_messages!(
     (GetTypeDefinition, GetTypeDefinitionResponse),
     (GetDocumentHighlights, GetDocumentHighlightsResponse),
     (GetReferences, GetReferencesResponse),
+    (GetPrivateUserInfo, GetPrivateUserInfoResponse),
     (GetProjectSymbols, GetProjectSymbolsResponse),
     (FuzzySearchUsers, UsersResponse),
     (GetUsers, UsersResponse),
@@ -274,6 +278,7 @@ entity_messages!(
     UpdateProject,
     UpdateWorktree,
     UpdateWorktreeExtensions,
+    UpdateDiffBase
 );
 
 entity_messages!(channel_id, ChannelMessageSent);

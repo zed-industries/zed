@@ -1,4 +1,3 @@
-mod db;
 pub mod fs;
 mod ignore;
 mod lsp_command;
@@ -13,6 +12,7 @@ use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use futures::{future::Shared, AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt};
+
 use gpui::{
     AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
     MutableAppContext, Task, UpgradeModelHandle, WeakModelHandle,
@@ -62,7 +62,7 @@ use std::{
     time::Instant,
 };
 use thiserror::Error;
-use util::{post_inc, ResultExt, TryFutureExt as _};
+use util::{defer, post_inc, ResultExt, TryFutureExt as _};
 
 pub use db::Db;
 pub use fs::*;
@@ -123,6 +123,7 @@ pub struct Project {
     opened_buffers: HashMap<u64, OpenBuffer>,
     incomplete_buffers: HashMap<u64, ModelHandle<Buffer>>,
     buffer_snapshots: HashMap<u64, Vec<(i32, TextBufferSnapshot)>>,
+    buffers_being_formatted: HashSet<usize>,
     nonce: u128,
     _maintain_buffer_languages: Task<()>,
 }
@@ -407,6 +408,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_open_buffer_by_id);
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
         client.add_model_request_handler(Self::handle_save_buffer);
+        client.add_model_message_handler(Self::handle_update_diff_base);
     }
 
     pub fn local(
@@ -466,6 +468,7 @@ impl Project {
                 language_server_statuses: Default::default(),
                 last_workspace_edits_by_language_server: Default::default(),
                 language_server_settings: Default::default(),
+                buffers_being_formatted: Default::default(),
                 next_language_server_id: 0,
                 nonce: StdRng::from_entropy().gen(),
             }
@@ -562,6 +565,7 @@ impl Project {
                 last_workspace_edits_by_language_server: Default::default(),
                 next_language_server_id: 0,
                 opened_buffers: Default::default(),
+                buffers_being_formatted: Default::default(),
                 buffer_snapshots: Default::default(),
                 nonce: StdRng::from_entropy().gen(),
             };
@@ -604,7 +608,7 @@ impl Project {
 
         let languages = Arc::new(LanguageRegistry::test());
         let http_client = client::test::FakeHttpClient::with_404_response();
-        let client = client::Client::new(http_client.clone());
+        let client = cx.update(|cx| client::Client::new(http_client.clone(), cx));
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
         let project_store = cx.add_model(|_| ProjectStore::new());
         let project =
@@ -2804,7 +2808,26 @@ impl Project {
                     .await?;
             }
 
-            for (buffer, buffer_abs_path, language_server) in local_buffers {
+            // Do not allow multiple concurrent formatting requests for the
+            // same buffer.
+            this.update(&mut cx, |this, _| {
+                local_buffers
+                    .retain(|(buffer, _, _)| this.buffers_being_formatted.insert(buffer.id()));
+            });
+            let _cleanup = defer({
+                let this = this.clone();
+                let mut cx = cx.clone();
+                let local_buffers = &local_buffers;
+                move || {
+                    this.update(&mut cx, |this, _| {
+                        for (buffer, _, _) in local_buffers {
+                            this.buffers_being_formatted.remove(&buffer.id());
+                        }
+                    });
+                }
+            });
+
+            for (buffer, buffer_abs_path, language_server) in &local_buffers {
                 let (format_on_save, formatter, tab_size) = buffer.read_with(&cx, |buffer, cx| {
                     let settings = cx.global::<Settings>();
                     let language_name = buffer.language().map(|language| language.name());
@@ -2856,7 +2879,7 @@ impl Project {
                             buffer.forget_transaction(transaction.id)
                         });
                     }
-                    project_transaction.0.insert(buffer, transaction);
+                    project_transaction.0.insert(buffer.clone(), transaction);
                 }
             }
 
@@ -4229,8 +4252,11 @@ impl Project {
     fn add_worktree(&mut self, worktree: &ModelHandle<Worktree>, cx: &mut ModelContext<Self>) {
         cx.observe(worktree, |_, _, cx| cx.notify()).detach();
         if worktree.read(cx).is_local() {
-            cx.subscribe(worktree, |this, worktree, _, cx| {
-                this.update_local_worktree_buffers(worktree, cx);
+            cx.subscribe(worktree, |this, worktree, event, cx| match event {
+                worktree::Event::UpdatedEntries => this.update_local_worktree_buffers(worktree, cx),
+                worktree::Event::UpdatedGitRepositories(updated_repos) => {
+                    this.update_local_worktree_buffers_git_repos(worktree, updated_repos, cx)
+                }
             })
             .detach();
         }
@@ -4335,6 +4361,63 @@ impl Project {
             self.unregister_buffer_from_language_server(&buffer, old_path, cx);
             self.assign_language_to_buffer(&buffer, cx);
             self.register_buffer_with_language_server(&buffer, cx);
+        }
+    }
+
+    fn update_local_worktree_buffers_git_repos(
+        &mut self,
+        worktree: ModelHandle<Worktree>,
+        repos: &[GitRepositoryEntry],
+        cx: &mut ModelContext<Self>,
+    ) {
+        for (_, buffer) in &self.opened_buffers {
+            if let Some(buffer) = buffer.upgrade(cx) {
+                let file = match File::from_dyn(buffer.read(cx).file()) {
+                    Some(file) => file,
+                    None => continue,
+                };
+                if file.worktree != worktree {
+                    continue;
+                }
+
+                let path = file.path().clone();
+
+                let repo = match repos.iter().find(|repo| repo.manages(&path)) {
+                    Some(repo) => repo.clone(),
+                    None => return,
+                };
+
+                let relative_repo = match path.strip_prefix(repo.content_path) {
+                    Ok(relative_repo) => relative_repo.to_owned(),
+                    Err(_) => return,
+                };
+
+                let remote_id = self.remote_id();
+                let client = self.client.clone();
+
+                cx.spawn(|_, mut cx| async move {
+                    let diff_base = cx
+                        .background()
+                        .spawn(async move { repo.repo.lock().load_index_text(&relative_repo) })
+                        .await;
+
+                    let buffer_id = buffer.update(&mut cx, |buffer, cx| {
+                        buffer.update_diff_base(diff_base.clone(), cx);
+                        buffer.remote_id()
+                    });
+
+                    if let Some(project_id) = remote_id {
+                        client
+                            .send(proto::UpdateDiffBase {
+                                project_id,
+                                buffer_id: buffer_id as u64,
+                                diff_base,
+                            })
+                            .log_err();
+                    }
+                })
+                .detach();
+            }
         }
     }
 
@@ -4856,6 +4939,27 @@ impl Project {
                     }
                 }
             }
+
+            Ok(())
+        })
+    }
+
+    async fn handle_update_diff_base(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::UpdateDiffBase>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            let buffer_id = envelope.payload.buffer_id;
+            let diff_base = envelope.payload.diff_base;
+            let buffer = this
+                .opened_buffers
+                .get_mut(&buffer_id)
+                .and_then(|b| b.upgrade(cx))
+                .ok_or_else(|| anyhow!("No such buffer {}", buffer_id))?;
+
+            buffer.update(cx, |buffer, cx| buffer.update_diff_base(diff_base, cx));
 
             Ok(())
         })
@@ -5427,7 +5531,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
         let mut opened_buffer_rx = self.opened_buffer.1.clone();
-        cx.spawn(|this, cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let buffer = loop {
                 let buffer = this.read_with(&cx, |this, cx| {
                     this.opened_buffers
@@ -5445,6 +5549,7 @@ impl Project {
                     .await
                     .ok_or_else(|| anyhow!("project dropped while waiting for buffer"))?;
             };
+            buffer.update(&mut cx, |buffer, cx| buffer.git_diff_recalc(cx));
             Ok(buffer)
         })
     }
