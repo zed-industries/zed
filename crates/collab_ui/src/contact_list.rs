@@ -114,7 +114,7 @@ pub struct ContactList {
     entries: Vec<ContactEntry>,
     match_candidates: Vec<StringMatchCandidate>,
     list_state: ListState,
-    project: Option<ModelHandle<Project>>,
+    project: ModelHandle<Project>,
     user_store: ModelHandle<UserStore>,
     filter_editor: ViewHandle<Editor>,
     collapsed_sections: Vec<Section>,
@@ -124,7 +124,7 @@ pub struct ContactList {
 
 impl ContactList {
     pub fn new(
-        project: Option<ModelHandle<Project>>,
+        project: ModelHandle<Project>,
         user_store: ModelHandle<UserStore>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -195,7 +195,7 @@ impl ContactList {
                 ),
                 ContactEntry::Contact(contact) => Self::render_contact(
                     contact,
-                    this.project.as_ref(),
+                    &this.project,
                     &theme.contact_list,
                     is_selected,
                     cx,
@@ -292,7 +292,7 @@ impl ContactList {
                             self.call(
                                 &Call {
                                     recipient_user_id: contact.user.id,
-                                    initial_project: self.project.clone(),
+                                    initial_project: Some(self.project.clone()),
                                 },
                                 cx,
                             );
@@ -664,7 +664,7 @@ impl ContactList {
 
     fn render_contact(
         contact: &Contact,
-        project: Option<&ModelHandle<Project>>,
+        project: &ModelHandle<Project>,
         theme: &theme::ContactList,
         is_selected: bool,
         cx: &mut RenderContext<Self>,
@@ -672,7 +672,7 @@ impl ContactList {
         let online = contact.online;
         let busy = contact.busy;
         let user_id = contact.user.id;
-        let initial_project = project.cloned();
+        let initial_project = project.clone();
         let mut element =
             MouseEventHandler::<Contact>::new(contact.user.id as usize, cx, |_, _| {
                 Flex::row()
@@ -726,7 +726,7 @@ impl ContactList {
                 if online && !busy {
                     cx.dispatch_action(Call {
                         recipient_user_id: user_id,
-                        initial_project: initial_project.clone(),
+                        initial_project: Some(initial_project.clone()),
                     });
                 }
             });

@@ -4,7 +4,6 @@ mod contact_list;
 mod contact_notification;
 mod contacts_popover;
 mod incoming_call_notification;
-mod menu_bar_extra;
 mod notifications;
 mod project_shared_notification;
 
@@ -22,7 +21,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     contact_finder::init(cx);
     contacts_popover::init(cx);
     incoming_call_notification::init(cx);
-    menu_bar_extra::init(app_state.user_store.clone(), cx);
     project_shared_notification::init(cx);
 
     cx.add_global_action(move |action: &JoinProject, cx| {

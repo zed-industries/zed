@@ -23,9 +23,8 @@ enum Child {
 }
 
 pub struct ContactsPopover {
-    is_popup: bool,
     child: Child,
-    project: Option<ModelHandle<Project>>,
+    project: ModelHandle<Project>,
     user_store: ModelHandle<UserStore>,
     _subscription: Option<gpui::Subscription>,
     _window_subscription: gpui::Subscription,
@@ -33,13 +32,11 @@ pub struct ContactsPopover {
 
 impl ContactsPopover {
     pub fn new(
-        is_popup: bool,
-        project: Option<ModelHandle<Project>>,
+        project: ModelHandle<Project>,
         user_store: ModelHandle<UserStore>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let mut this = Self {
-            is_popup,
             child: Child::ContactList(
                 cx.add_view(|cx| ContactList::new(project.clone(), user_store.clone(), cx)),
             ),
@@ -103,21 +100,13 @@ impl View for ContactsPopover {
             Child::ContactFinder(child) => ChildView::new(child),
         };
 
-        let mut container_style = theme.contacts_popover.container;
-        if self.is_popup {
-            container_style.shadow = Default::default();
-            container_style.border = Default::default();
-            container_style.corner_radius = Default::default();
-            child.contained().with_style(container_style).boxed()
-        } else {
-            child
-                .contained()
-                .with_style(container_style)
-                .constrained()
-                .with_width(theme.contacts_popover.width)
-                .with_height(theme.contacts_popover.height)
-                .boxed()
-        }
+        child
+            .contained()
+            .with_style(theme.contacts_popover.container)
+            .constrained()
+            .with_width(theme.contacts_popover.width)
+            .with_height(theme.contacts_popover.height)
+            .boxed()
     }
 
     fn on_focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
