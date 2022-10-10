@@ -26,6 +26,7 @@ async fn test_neovim(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
 
     cx.simulate_shared_keystroke("i").await;
+    cx.assert_state_matches().await;
     cx.simulate_shared_keystrokes([
         "shift-T", "e", "s", "t", " ", "t", "e", "s", "t", "escape", "0", "d", "w",
     ])

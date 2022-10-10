@@ -6,7 +6,13 @@ use gpui::{actions, MutableAppContext, ViewContext};
 use language::{AutoindentMode, SelectionGoal};
 use workspace::Workspace;
 
-use crate::{motion::Motion, object::Object, state::Mode, utils::copy_selections_content, Vim};
+use crate::{
+    motion::Motion,
+    object::Object,
+    state::{Mode, Operator},
+    utils::copy_selections_content,
+    Vim,
+};
 
 actions!(vim, [VisualDelete, VisualChange, VisualYank, VisualPaste]);
 
@@ -47,7 +53,34 @@ pub fn visual_motion(motion: Motion, times: usize, cx: &mut MutableAppContext) {
     });
 }
 
-pub fn visual_object(_object: Object, _cx: &mut MutableAppContext) {}
+pub fn visual_object(object: Object, cx: &mut MutableAppContext) {
+    Vim::update(cx, |vim, cx| {
+        if let Operator::Object { around } = vim.pop_operator(cx) {
+            vim.update_active_editor(cx, |editor, cx| {
+                editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
+                    s.move_with(|map, selection| {
+                        let head = selection.head();
+                        let mut range = object.range(map, head, around);
+                        if !range.is_empty() {
+                            if let Some((_, end)) = map.reverse_chars_at(range.end).next() {
+                                range.end = end;
+                            }
+
+                            if selection.is_empty() {
+                                selection.start = range.start;
+                                selection.end = range.end;
+                            } else if selection.reversed {
+                                selection.start = range.start;
+                            } else {
+                                selection.end = range.end;
+                            }
+                        }
+                    })
+                });
+            });
+        }
+    });
+}
 
 pub fn change(_: &mut Workspace, _: &VisualChange, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {

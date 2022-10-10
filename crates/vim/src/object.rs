@@ -44,7 +44,7 @@ fn object(object: Object, cx: &mut MutableAppContext) {
 }
 
 impl Object {
-    pub fn object_range(
+    pub fn range(
         self,
         map: &DisplaySnapshot,
         relative_to: DisplayPoint,
@@ -68,7 +68,7 @@ impl Object {
         selection: &mut Selection<DisplayPoint>,
         around: bool,
     ) {
-        let range = self.object_range(map, selection.head(), around);
+        let range = self.range(map, selection.head(), around);
         selection.start = range.start;
         selection.end = range.end;
     }
@@ -328,43 +328,58 @@ mod test {
         "};
 
     #[gpui::test]
-    async fn test_change_in_word(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx)
-            .await
-            .binding(["c", "i", "w"]);
-        cx.assert_all(WORD_LOCATIONS).await;
-        let mut cx = cx.consume().binding(["c", "i", "shift-w"]);
-        cx.assert_all(WORD_LOCATIONS).await;
+    async fn test_change_word_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.assert_binding_matches_all(["c", "i", "w"], WORD_LOCATIONS)
+            .await;
+        cx.assert_binding_matches_all(["c", "i", "shift-w"], WORD_LOCATIONS)
+            .await;
+        cx.assert_binding_matches_all(["c", "a", "w"], WORD_LOCATIONS)
+            .await;
+        cx.assert_binding_matches_all(["c", "a", "shift-w"], WORD_LOCATIONS)
+            .await;
     }
 
     #[gpui::test]
-    async fn test_delete_in_word(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx)
-            .await
-            .binding(["d", "i", "w"]);
-        cx.assert_all(WORD_LOCATIONS).await;
-        let mut cx = cx.consume().binding(["d", "i", "shift-w"]);
-        cx.assert_all(WORD_LOCATIONS).await;
+    async fn test_delete_word_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.assert_binding_matches_all(["d", "i", "w"], WORD_LOCATIONS)
+            .await;
+        cx.assert_binding_matches_all(["d", "i", "shift-w"], WORD_LOCATIONS)
+            .await;
+        cx.assert_binding_matches_all(["d", "a", "w"], WORD_LOCATIONS)
+            .await;
+        cx.assert_binding_matches_all(["d", "a", "shift-w"], WORD_LOCATIONS)
+            .await;
     }
 
     #[gpui::test]
-    async fn test_change_around_word(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx)
-            .await
-            .binding(["c", "a", "w"]);
-        cx.assert_all(WORD_LOCATIONS).await;
-        let mut cx = cx.consume().binding(["c", "a", "shift-w"]);
-        cx.assert_all(WORD_LOCATIONS).await;
-    }
+    async fn test_visual_word_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
-    #[gpui::test]
-    async fn test_delete_around_word(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx)
-            .await
-            .binding(["d", "a", "w"]);
-        cx.assert_all(WORD_LOCATIONS).await;
-        let mut cx = cx.consume().binding(["d", "a", "shift-w"]);
-        cx.assert_all(WORD_LOCATIONS).await;
+        cx.assert_binding_matches_all(["v", "i", "w"], WORD_LOCATIONS)
+            .await;
+        // Visual text objects are slightly broken when used with non empty selections
+        // cx.assert_binding_matches_all(["v", "h", "i", "w"], WORD_LOCATIONS)
+        //     .await;
+        // cx.assert_binding_matches_all(["v", "l", "i", "w"], WORD_LOCATIONS)
+        //     .await;
+        cx.assert_binding_matches_all(["v", "i", "shift-w"], WORD_LOCATIONS)
+            .await;
+
+        // Visual text objects are slightly broken when used with non empty selections
+        // cx.assert_binding_matches_all(["v", "i", "h", "shift-w"], WORD_LOCATIONS)
+        //     .await;
+        // cx.assert_binding_matches_all(["v", "i", "l", "shift-w"], WORD_LOCATIONS)
+        //     .await;
+
+        // Visual around words is somewhat broken right now when it comes to newlines
+        // cx.assert_binding_matches_all(["v", "a", "w"], WORD_LOCATIONS)
+        //     .await;
+        // cx.assert_binding_matches_all(["v", "a", "shift-w"], WORD_LOCATIONS)
+        //     .await;
     }
 
     const SENTENCE_EXAMPLES: &[&'static str] = &[
@@ -390,32 +405,35 @@ mod test {
     ];
 
     #[gpui::test]
-    async fn test_change_in_sentence(cx: &mut gpui::TestAppContext) {
+    async fn test_change_sentence_object(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx)
             .await
             .binding(["c", "i", "s"]);
         for sentence_example in SENTENCE_EXAMPLES {
             cx.assert_all(sentence_example).await;
         }
+
+        let mut cx = cx.binding(["c", "a", "s"]);
+        // Resulting position is slightly incorrect for unintuitive reasons.
+        cx.add_initial_state_exemption("The quick brown?ˇ Fox Jumps! Over the lazy.");
+        // Changing around the sentence at the end of the line doesn't remove whitespace.'
+        cx.add_initial_state_exemption("The quick brown.)]\'\" Brown fox jumps.ˇ ");
+
+        for sentence_example in SENTENCE_EXAMPLES {
+            cx.assert_all(sentence_example).await;
+        }
     }
 
     #[gpui::test]
-    async fn test_delete_in_sentence(cx: &mut gpui::TestAppContext) {
+    async fn test_delete_sentence_object(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx)
             .await
             .binding(["d", "i", "s"]);
-
         for sentence_example in SENTENCE_EXAMPLES {
             cx.assert_all(sentence_example).await;
         }
-    }
 
-    #[gpui::test]
-    async fn test_change_around_sentence(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx)
-            .await
-            .binding(["c", "a", "s"]);
-
+        let mut cx = cx.binding(["d", "a", "s"]);
         // Resulting position is slightly incorrect for unintuitive reasons.
         cx.add_initial_state_exemption("The quick brown?ˇ Fox Jumps! Over the lazy.");
         // Changing around the sentence at the end of the line doesn't remove whitespace.'
@@ -427,18 +445,18 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_delete_around_sentence(cx: &mut gpui::TestAppContext) {
+    async fn test_visual_sentence_object(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx)
             .await
-            .binding(["d", "a", "s"]);
-
-        // Resulting position is slightly incorrect for unintuitive reasons.
-        cx.add_initial_state_exemption("The quick brown?ˇ Fox Jumps! Over the lazy.");
-        // Changing around the sentence at the end of the line doesn't remove whitespace.'
-        cx.add_initial_state_exemption("The quick brown.)]\'\" Brown fox jumps.ˇ ");
-
+            .binding(["v", "i", "s"]);
         for sentence_example in SENTENCE_EXAMPLES {
             cx.assert_all(sentence_example).await;
         }
+
+        // Visual around sentences is somewhat broken right now when it comes to newlines
+        // let mut cx = cx.binding(["d", "a", "s"]);
+        // for sentence_example in SENTENCE_EXAMPLES {
+        //     cx.assert_all(sentence_example).await;
+        // }
     }
 }
