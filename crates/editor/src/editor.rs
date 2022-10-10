@@ -1874,7 +1874,7 @@ impl Editor {
                 let mut bracket_pair = None;
                 let mut is_bracket_pair_start = false;
                 for pair in language.brackets() {
-                    if pair.start.ends_with(text.as_ref()) {
+                    if pair.close && pair.start.ends_with(text.as_ref()) {
                         bracket_pair = Some(pair.clone());
                         is_bracket_pair_start = true;
                         break;
