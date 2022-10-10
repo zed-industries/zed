@@ -3,6 +3,7 @@ import picker from "./picker";
 import { backgroundColor, border, iconColor, player, text } from "./components";
 
 export default function contactFinder(theme: Theme) {
+  const sideMargin = 12;
   const contactButton = {
     background: backgroundColor(theme, 100),
     color: iconColor(theme, "primary"),
@@ -13,7 +14,10 @@ export default function contactFinder(theme: Theme) {
 
   return {
     picker: {
-      item: picker(theme).item,
+      item: {
+        ...picker(theme).item,
+        margin: { left: sideMargin, right: sideMargin }
+      },
       empty: picker(theme).empty,
       inputEditor: {
         background: backgroundColor(theme, 500),
