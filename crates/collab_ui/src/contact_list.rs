@@ -776,8 +776,8 @@ impl ContactList {
 
         let header_style = theme.header_row.style_for(Default::default(), is_selected);
         let text = match section {
-            Section::ActiveCall => "Call",
-            Section::Requests => "Requests",
+            Section::ActiveCall => "Collaborators",
+            Section::Requests => "Contact Requests",
             Section::Online => "Online",
             Section::Offline => "Offline",
         };
@@ -785,7 +785,7 @@ impl ContactList {
             Some(
                 MouseEventHandler::<LeaveCall>::new(0, cx, |state, _| {
                     let style = theme.leave_call.style_for(state, false);
-                    Label::new("Leave".into(), style.text.clone())
+                    Label::new("Leave Session".into(), style.text.clone())
                         .contained()
                         .with_style(style.container)
                         .boxed()
@@ -1096,6 +1096,13 @@ impl View for ContactList {
                         .on_click(MouseButton::Left, |_, cx| {
                             cx.dispatch_action(contacts_popover::ToggleContactFinder)
                         })
+                        .with_tooltip::<AddContact, _>(
+                            0,
+                            "Add contact".into(),
+                            None,
+                            theme.tooltip.clone(),
+                            cx,
+                        )
                         .boxed(),
                     )
                     .constrained()
