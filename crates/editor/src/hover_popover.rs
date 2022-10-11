@@ -427,13 +427,13 @@ impl DiagnosticPopover {
 
 #[cfg(test)]
 mod tests {
-    use futures::StreamExt;
     use indoc::indoc;
 
     use language::{Diagnostic, DiagnosticSet};
     use project::HoverBlock;
+    use smol::stream::StreamExt;
 
-    use crate::test::EditorLspTestContext;
+    use crate::test::editor_lsp_test_context::EditorLspTestContext;
 
     use super::*;
 

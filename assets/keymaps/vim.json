@@ -9,11 +9,10 @@
                 }
             ],
             "h": "vim::Left",
-            "backspace": "vim::Left",
+            "backspace": "vim::Backspace",
             "j": "vim::Down",
             "k": "vim::Up",
             "l": "vim::Right",
-            "0": "vim::StartOfLine",
             "$": "vim::EndOfLine",
             "shift-g": "vim::EndOfDocument",
             "w": "vim::NextWordStart",
@@ -38,7 +37,60 @@
                 }
             ],
             "%": "vim::Matching",
-            "escape": "editor::Cancel"
+            "escape": "editor::Cancel",
+            "i": [
+                "vim::PushOperator",
+                {
+                    "Object": {
+                        "around": false
+                    }
+                }
+            ],
+            "a": [
+                "vim::PushOperator",
+                {
+                    "Object": {
+                        "around": true
+                    }
+                }
+            ],
+            "0": "vim::StartOfLine", // When no number operator present, use start of line motion
+            "1": [
+                "vim::Number",
+                1
+            ],
+            "2": [
+                "vim::Number",
+                2
+            ],
+            "3": [
+                "vim::Number",
+                3
+            ],
+            "4": [
+                "vim::Number",
+                4
+            ],
+            "5": [
+                "vim::Number",
+                5
+            ],
+            "6": [
+                "vim::Number",
+                6
+            ],
+            "7": [
+                "vim::Number",
+                7
+            ],
+            "8": [
+                "vim::Number",
+                8
+            ],
+            "9": [
+                "vim::Number",
+                9
+            ]
         }
     },
     {
@@ -99,6 +151,15 @@
         }
     },
     {
+        "context": "Editor && vim_operator == n",
+        "bindings": {
+            "0": [
+                "vim::Number",
+                0
+            ]
+        }
+    },
+    {
         "context": "Editor && vim_operator == g",
         "bindings": {
             "g": "vim::StartOfDocument",
@@ -112,13 +173,6 @@
     {
         "context": "Editor && vim_operator == c",
         "bindings": {
-            "w": "vim::ChangeWord",
-            "shift-w": [
-                "vim::ChangeWord",
-                {
-                    "ignorePunctuation": true
-                }
-            ],
             "c": "vim::CurrentLine"
         }
     },
@@ -135,8 +189,33 @@
         }
     },
     {
+        "context": "Editor && VimObject",
+        "bindings": {
+            "w": "vim::Word",
+            "shift-w": [
+                "vim::Word",
+                {
+                    "ignorePunctuation": true
+                }
+            ],
+            "s": "vim::Sentence",
+            "'": "vim::Quotes",
+            "`": "vim::BackQuotes",
+            "\"": "vim::DoubleQuotes",
+            "(": "vim::Parentheses",
+            ")": "vim::Parentheses",
+            "[": "vim::SquareBrackets",
+            "]": "vim::SquareBrackets",
+            "{": "vim::CurlyBrackets",
+            "}": "vim::CurlyBrackets",
+            "<": "vim::AngleBrackets",
+            ">": "vim::AngleBrackets"
+        }
+    },
+    {
         "context": "Editor && vim_mode == visual",
         "bindings": {
+            "u": "editor::Undo",
             "c": "vim::VisualChange",
             "d": "vim::VisualDelete",
             "x": "vim::VisualDelete",

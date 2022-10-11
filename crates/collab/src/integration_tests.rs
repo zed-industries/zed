@@ -5523,6 +5523,7 @@ async fn test_random_collaboration(
         cx.font_cache(),
         cx.leak_detector(),
         next_entity_id,
+        cx.function_name.clone(),
     );
     let host = server.create_client(&mut host_cx, "host").await;
     let host_project = host_cx.update(|cx| {
@@ -5764,6 +5765,7 @@ async fn test_random_collaboration(
                     cx.font_cache(),
                     cx.leak_detector(),
                     next_entity_id,
+                    cx.function_name.clone(),
                 );
 
                 deterministic.start_waiting();
