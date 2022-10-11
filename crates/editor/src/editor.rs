@@ -330,10 +330,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_async_action(Editor::confirm_rename);
     cx.add_async_action(Editor::find_all_references);
 
-    cx.set_global(ScrollbarAutoHide(
-        cx.platform().should_auto_hide_scrollbars(),
-    ));
-
     hover_popover::init(cx);
     link_go_to_definition::init(cx);
     mouse_context_menu::init(cx);
@@ -1075,6 +1071,11 @@ impl Editor {
 
         let editor_created_event = EditorCreated(cx.handle());
         cx.emit_global(editor_created_event);
+
+        if mode == EditorMode::Full {
+            let should_auto_hide_scrollbars = cx.platform().should_auto_hide_scrollbars();
+            cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
+        }
 
         this.report_event("open editor", cx);
         this
