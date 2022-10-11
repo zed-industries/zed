@@ -9,3 +9,4 @@
 /assets/themes/*.json
 /assets/themes/internal/*.json
 /assets/themes/experiments/*.json
+**/venv
