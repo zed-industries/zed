@@ -59,6 +59,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
             };
 
             cx.activate_window(workspace.window_id());
+            cx.platform().activate(true);
 
             workspace.update(&mut cx, |workspace, cx| {
                 if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
