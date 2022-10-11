@@ -4687,6 +4687,12 @@ impl<T> PartialEq for WeakModelHandle<T> {
 
 impl<T> Eq for WeakModelHandle<T> {}
 
+impl<T: Entity> PartialEq<ModelHandle<T>> for WeakModelHandle<T> {
+    fn eq(&self, other: &ModelHandle<T>) -> bool {
+        self.model_id == other.model_id
+    }
+}
+
 impl<T> Clone for WeakModelHandle<T> {
     fn clone(&self) -> Self {
         Self {

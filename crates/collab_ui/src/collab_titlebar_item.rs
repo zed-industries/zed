@@ -121,14 +121,11 @@ impl CollabTitlebarItem {
         let room = ActiveCall::global(cx).read(cx).room().cloned();
         if let Some((workspace, room)) = workspace.zip(room) {
             let workspace = workspace.read(cx);
-            let project = if !active {
-                None
-            } else if workspace.project().read(cx).remote_id().is_some() {
+            let project = if active {
                 Some(workspace.project().clone())
             } else {
                 None
             };
-
             room.update(cx, |room, cx| {
                 room.set_location(project.as_ref(), cx)
                     .detach_and_log_err(cx);
@@ -139,20 +136,10 @@ impl CollabTitlebarItem {
     fn share_project(&mut self, _: &ShareProject, cx: &mut ViewContext<Self>) {
         if let Some(workspace) = self.workspace.upgrade(cx) {
             let active_call = ActiveCall::global(cx);
-
-            let window_id = cx.window_id();
             let project = workspace.read(cx).project().clone();
-            let share = active_call.update(cx, |call, cx| call.share_project(project.clone(), cx));
-            cx.spawn_weak(|_, mut cx| async move {
-                share.await?;
-                if cx.update(|cx| cx.window_is_active(window_id)) {
-                    active_call.update(&mut cx, |call, cx| {
-                        call.set_location(Some(&project), cx).detach_and_log_err(cx);
-                    });
-                }
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
+            active_call
+                .update(cx, |call, cx| call.share_project(project, cx))
+                .detach_and_log_err(cx);
         }
     }
 
@@ -363,7 +350,7 @@ impl CollabTitlebarItem {
 
         let mut avatar_style;
         if let Some((_, _, location)) = peer.as_ref() {
-            if let ParticipantLocation::Project { project_id } = *location {
+            if let ParticipantLocation::SharedProject { project_id } = *location {
                 if Some(project_id) == workspace.read(cx).project().read(cx).remote_id() {
                     avatar_style = theme.workspace.titlebar.avatar;
                 } else {
@@ -428,7 +415,7 @@ impl CollabTitlebarItem {
                         cx,
                     )
                     .boxed()
-            } else if let ParticipantLocation::Project { project_id } = location {
+            } else if let ParticipantLocation::SharedProject { project_id } = location {
                 let user_id = user.id;
                 MouseEventHandler::<JoinProject>::new(peer_id.0 as usize, cx, move |_, _| content)
                     .with_cursor_style(CursorStyle::PointingHand)

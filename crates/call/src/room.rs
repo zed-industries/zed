@@ -395,13 +395,26 @@ impl Room {
                 })
                 .collect(),
         });
-        cx.spawn_weak(|_, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let response = request.await?;
+
             project
                 .update(&mut cx, |project, cx| {
                     project.shared(response.project_id, cx)
                 })
                 .await?;
+
+            // If the user's location is in this project, it changes from UnsharedProject to SharedProject.
+            this.update(&mut cx, |this, cx| {
+                let active_project = this.local_participant.active_project.as_ref();
+                if active_project.map_or(false, |location| *location == project) {
+                    this.set_location(Some(&project), cx)
+                } else {
+                    Task::ready(Ok(()))
+                }
+            })
+            .await?;
+
             Ok(response.project_id)
         })
     }
@@ -418,17 +431,22 @@ impl Room {
         let client = self.client.clone();
         let room_id = self.id;
         let location = if let Some(project) = project {
+            self.local_participant.active_project = Some(project.downgrade());
             if let Some(project_id) = project.read(cx).remote_id() {
-                proto::participant_location::Variant::Project(
-                    proto::participant_location::Project { id: project_id },
+                proto::participant_location::Variant::SharedProject(
+                    proto::participant_location::SharedProject { id: project_id },
                 )
             } else {
-                return Task::ready(Err(anyhow!("project is not shared")));
+                proto::participant_location::Variant::UnsharedProject(
+                    proto::participant_location::UnsharedProject {},
+                )
             }
         } else {
+            self.local_participant.active_project = None;
             proto::participant_location::Variant::External(proto::participant_location::External {})
         };
 
+        cx.notify();
         cx.foreground().spawn(async move {
             client
                 .request(proto::UpdateParticipantLocation {

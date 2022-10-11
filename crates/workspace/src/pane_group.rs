@@ -138,7 +138,7 @@ impl Member {
                     border.overlay = true;
 
                     match leader.location {
-                        call::ParticipantLocation::Project {
+                        call::ParticipantLocation::SharedProject {
                             project_id: leader_project_id,
                         } => {
                             if Some(leader_project_id) == project.read(cx).remote_id() {
@@ -183,6 +183,21 @@ impl Member {
                                 )
                             }
                         }
+                        call::ParticipantLocation::UnsharedProject => Some(
+                            Label::new(
+                                format!(
+                                    "{} is viewing an unshared Zed project",
+                                    leader.user.github_login
+                                ),
+                                theme.workspace.external_location_message.text.clone(),
+                            )
+                            .contained()
+                            .with_style(theme.workspace.external_location_message.container)
+                            .aligned()
+                            .bottom()
+                            .right()
+                            .boxed(),
+                        ),
                         call::ParticipantLocation::External => Some(
                             Label::new(
                                 format!(

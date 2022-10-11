@@ -946,6 +946,22 @@ async fn test_room_location(
         }
     });
 
+    room_a
+        .update(cx_a, |room, cx| room.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert!(a_notified.take());
+    assert_eq!(
+        participant_locations(&room_a, cx_a),
+        vec![("user_b".to_string(), ParticipantLocation::External)]
+    );
+    assert!(b_notified.take());
+    assert_eq!(
+        participant_locations(&room_b, cx_b),
+        vec![("user_a".to_string(), ParticipantLocation::UnsharedProject)]
+    );
+
     let project_a_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -959,7 +975,12 @@ async fn test_room_location(
     assert!(b_notified.take());
     assert_eq!(
         participant_locations(&room_b, cx_b),
-        vec![("user_a".to_string(), ParticipantLocation::External)]
+        vec![(
+            "user_a".to_string(),
+            ParticipantLocation::SharedProject {
+                project_id: project_a_id
+            }
+        )]
     );
 
     let project_b_id = active_call_b
@@ -975,25 +996,9 @@ async fn test_room_location(
     assert!(b_notified.take());
     assert_eq!(
         participant_locations(&room_b, cx_b),
-        vec![("user_a".to_string(), ParticipantLocation::External)]
-    );
-
-    room_a
-        .update(cx_a, |room, cx| room.set_location(Some(&project_a), cx))
-        .await
-        .unwrap();
-    deterministic.run_until_parked();
-    assert!(a_notified.take());
-    assert_eq!(
-        participant_locations(&room_a, cx_a),
-        vec![("user_b".to_string(), ParticipantLocation::External)]
-    );
-    assert!(b_notified.take());
-    assert_eq!(
-        participant_locations(&room_b, cx_b),
         vec![(
             "user_a".to_string(),
-            ParticipantLocation::Project {
+            ParticipantLocation::SharedProject {
                 project_id: project_a_id
             }
         )]
@@ -1009,7 +1014,7 @@ async fn test_room_location(
         participant_locations(&room_a, cx_a),
         vec![(
             "user_b".to_string(),
-            ParticipantLocation::Project {
+            ParticipantLocation::SharedProject {
                 project_id: project_b_id
             }
         )]
@@ -1019,7 +1024,7 @@ async fn test_room_location(
         participant_locations(&room_b, cx_b),
         vec![(
             "user_a".to_string(),
-            ParticipantLocation::Project {
+            ParticipantLocation::SharedProject {
                 project_id: project_a_id
             }
         )]
@@ -1040,7 +1045,7 @@ async fn test_room_location(
         participant_locations(&room_b, cx_b),
         vec![(
             "user_a".to_string(),
-            ParticipantLocation::Project {
+            ParticipantLocation::SharedProject {
                 project_id: project_a_id
             }
         )]

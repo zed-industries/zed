@@ -174,13 +174,16 @@ message ParticipantProject {
 
 message ParticipantLocation {
     oneof variant {
-        Project project = 1;
-        External external = 2;
+        SharedProject shared_project = 1;
+        UnsharedProject unshared_project = 2;
+        External external = 3;
     }
     
-    message Project {
+    message SharedProject {
         uint64 id = 1;
     }
+    
+    message UnsharedProject {}
     
     message External {}
 }

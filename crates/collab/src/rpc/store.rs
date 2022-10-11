@@ -684,7 +684,7 @@ impl Store {
             .rooms
             .get_mut(&room_id)
             .ok_or_else(|| anyhow!("no such room"))?;
-        if let Some(proto::participant_location::Variant::Project(project)) =
+        if let Some(proto::participant_location::Variant::SharedProject(project)) =
             location.variant.as_ref()
         {
             anyhow::ensure!(
