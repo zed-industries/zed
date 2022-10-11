@@ -1,7 +1,8 @@
 import Theme from "../themes/common/theme";
-import { backgroundColor, border, popoverShadow } from "./components";
+import { backgroundColor, border, borderColor, popoverShadow, text } from "./components";
 
 export default function contactsPopover(theme: Theme) {
+  const sidePadding = 12;
   return {
     background: backgroundColor(theme, 300, "base"),
     cornerRadius: 6,
@@ -11,5 +12,17 @@ export default function contactsPopover(theme: Theme) {
     border: border(theme, "primary"),
     width: 300,
     height: 400,
+    inviteRowHeight: 28,
+    inviteRow: {
+      padding: {
+        left: sidePadding,
+        right: sidePadding,
+      },
+      border: { top: true, width: 1, color: borderColor(theme, "primary") },
+      text: text(theme, "sans", "secondary", { size: "sm" }),
+      hover: {
+        text: text(theme, "sans", "active", { size: "sm" }),
+      },
+    },
   }
 }

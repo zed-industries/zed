@@ -89,6 +89,8 @@ pub struct ContactsPopover {
     pub container: ContainerStyle,
     pub height: f32,
     pub width: f32,
+    pub invite_row_height: f32,
+    pub invite_row: Interactive<ContainedLabel>,
 }
 
 #[derive(Deserialize, Default)]
@@ -110,7 +112,6 @@ pub struct ContactList {
     pub contact_button_spacing: f32,
     pub disabled_button: IconButton,
     pub section_icon_size: f32,
-    pub invite_row: Interactive<ContainedLabel>,
     pub calling_indicator: ContainedText,
 }
 

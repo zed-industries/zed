@@ -139,17 +139,6 @@ export default function contactList(theme: Theme) {
       background: backgroundColor(theme, 100),
       color: iconColor(theme, "muted"),
     },
-    inviteRow: {
-      padding: {
-        left: sidePadding,
-        right: sidePadding,
-      },
-      border: { top: true, width: 1, color: borderColor(theme, "primary") },
-      text: text(theme, "sans", "secondary", { size: "sm" }),
-      hover: {
-        text: text(theme, "sans", "active", { size: "sm" }),
-      },
-    },
     callingIndicator: {
       ...text(theme, "mono", "muted", { size: "xs" })
     },
