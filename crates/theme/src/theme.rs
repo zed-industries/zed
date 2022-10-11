@@ -482,7 +482,7 @@ pub struct ProjectSharedNotification {
     pub message: ContainedText,
     pub worktree_roots: ContainedText,
     pub button_width: f32,
-    pub join_button: ContainedText,
+    pub open_button: ContainedText,
     pub dismiss_button: ContainedText,
 }
 

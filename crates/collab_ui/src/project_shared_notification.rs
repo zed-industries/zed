@@ -102,7 +102,7 @@ impl ProjectSharedNotification {
                     .with_child(
                         Label::new(
                             format!(
-                                "shared a project in Zed{}",
+                                "is sharing a project in Zed{}",
                                 if self.worktree_root_names.is_empty() {
                                     ""
                                 } else {
@@ -140,7 +140,7 @@ impl ProjectSharedNotification {
     }
 
     fn render_buttons(&self, cx: &mut RenderContext<Self>) -> ElementBox {
-        enum Join {}
+        enum Open {}
         enum Dismiss {}
 
         let project_id = self.project_id;
@@ -148,12 +148,12 @@ impl ProjectSharedNotification {
 
         Flex::column()
             .with_child(
-                MouseEventHandler::<Join>::new(0, cx, |_, cx| {
+                MouseEventHandler::<Open>::new(0, cx, |_, cx| {
                     let theme = &cx.global::<Settings>().theme.project_shared_notification;
-                    Label::new("Join".to_string(), theme.join_button.text.clone())
+                    Label::new("Open".to_string(), theme.open_button.text.clone())
                         .aligned()
                         .contained()
-                        .with_style(theme.join_button.container)
+                        .with_style(theme.open_button.container)
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)

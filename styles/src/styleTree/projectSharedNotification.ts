@@ -5,7 +5,7 @@ export default function projectSharedNotification(theme: Theme): Object {
   const avatarSize = 48;
   return {
     windowHeight: 72,
-    windowWidth: 360,
+    windowWidth: 380,
     background: backgroundColor(theme, 300),
     ownerContainer: {
       padding: 12,
@@ -31,7 +31,7 @@ export default function projectSharedNotification(theme: Theme): Object {
       margin: { top: -3 },
     },
     buttonWidth: 96,
-    joinButton: {
+    openButton: {
       background: backgroundColor(theme, "info", "active"),
       border: { left: true, bottom: true, width: 1, color: borderColor(theme, "primary") },
       ...text(theme, "sans", "info", { size: "xs", weight: "extra_bold" })
