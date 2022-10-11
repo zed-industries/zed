@@ -53,22 +53,20 @@ export default function contactList(theme: Theme) {
         top: 4,
       },
       margin: {
-        left: sidePadding,
-        right: sidePadding,
+        left: 6
       },
     },
     userQueryEditorHeight: 33,
     addContactButton: {
-      margin: { left: 6, right: 12 },
       color: iconColor(theme, "primary"),
-      buttonWidth: 16,
+      buttonWidth: 28,
       iconWidth: 16,
     },
     rowHeight: 28,
     sectionIconSize: 8,
     headerRow: {
       ...text(theme, "mono", "secondary", { size: "sm" }),
-      margin: { top: 14 },
+      margin: { top: 6 },
       padding: {
         left: sidePadding,
         right: sidePadding,

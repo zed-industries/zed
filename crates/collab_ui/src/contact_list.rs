@@ -1087,14 +1087,11 @@ impl View for ContactList {
                     )
                     .with_child(
                         MouseEventHandler::<AddContact>::new(0, cx, |_, _| {
-                            Svg::new("icons/user_plus_16.svg")
-                                .with_color(theme.contact_list.add_contact_button.color)
-                                .constrained()
-                                .with_height(16.)
-                                .contained()
-                                .with_style(theme.contact_list.add_contact_button.container)
-                                .aligned()
-                                .boxed()
+                            render_icon_button(
+                                &theme.contact_list.add_contact_button,
+                                "icons/user_plus_16.svg",
+                            )
+                            .boxed()
                         })
                         .with_cursor_style(CursorStyle::PointingHand)
                         .on_click(MouseButton::Left, |_, cx| {

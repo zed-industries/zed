@@ -3,7 +3,7 @@ import picker from "./picker";
 import { backgroundColor, border, iconColor, player, text } from "./components";
 
 export default function contactFinder(theme: Theme) {
-  const sideMargin = 12;
+  const sideMargin = 6;
   const contactButton = {
     background: backgroundColor(theme, 100),
     color: iconColor(theme, "primary"),
@@ -33,8 +33,8 @@ export default function contactFinder(theme: Theme) {
           top: 4,
         },
         margin: {
-          left: 12,
-          right: 12,
+          left: sideMargin,
+          right: sideMargin,
         }
       }
     },
