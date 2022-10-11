@@ -931,13 +931,13 @@ impl EditorElement {
         let track_bounds = RectF::from_points(vec2f(left, top), vec2f(right, bottom));
         let thumb_bounds = RectF::from_points(vec2f(left, thumb_top), vec2f(right, thumb_bottom));
 
-        cx.scene.push_quad(Quad {
-            bounds: track_bounds,
-            border: style.track.border,
-            background: style.track.background_color,
-            ..Default::default()
-        });
         if layout.show_scrollbars {
+            cx.scene.push_quad(Quad {
+                bounds: track_bounds,
+                border: style.track.border,
+                background: style.track.background_color,
+                ..Default::default()
+            });
             cx.scene.push_quad(Quad {
                 bounds: thumb_bounds,
                 border: style.thumb.border,
