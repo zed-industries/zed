@@ -96,12 +96,6 @@ pub struct Transaction {
     pub start: clock::Global,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum LineEnding {
-    Unix,
-    Windows,
-}
-
 impl HistoryEntry {
     pub fn transaction_id(&self) -> TransactionId {
         self.transaction.id
@@ -2366,56 +2360,6 @@ impl operation_queue::Operation for Operation {
             Operation::Undo {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
-        }
-    }
-}
-
-impl Default for LineEnding {
-    fn default() -> Self {
-        #[cfg(unix)]
-        return Self::Unix;
-
-        #[cfg(not(unix))]
-        return Self::CRLF;
-    }
-}
-
-impl LineEnding {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            LineEnding::Unix => "\n",
-            LineEnding::Windows => "\r\n",
-        }
-    }
-
-    pub fn detect(text: &str) -> Self {
-        let mut max_ix = cmp::min(text.len(), 1000);
-        while !text.is_char_boundary(max_ix) {
-            max_ix -= 1;
-        }
-
-        if let Some(ix) = text[..max_ix].find(&['\n']) {
-            if ix > 0 && text.as_bytes()[ix - 1] == b'\r' {
-                Self::Windows
-            } else {
-                Self::Unix
-            }
-        } else {
-            Self::default()
-        }
-    }
-
-    pub fn normalize(text: &mut String) {
-        if let Cow::Owned(replaced) = CARRIAGE_RETURNS_REGEX.replace_all(text, "\n") {
-            *text = replaced;
-        }
-    }
-
-    fn normalize_arc(text: Arc<str>) -> Arc<str> {
-        if let Cow::Owned(replaced) = CARRIAGE_RETURNS_REGEX.replace_all(&text, "\n") {
-            replaced.into()
-        } else {
-            text
         }
     }
 }

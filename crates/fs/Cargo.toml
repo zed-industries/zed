@@ -1,0 +1,18 @@
+[package]
+name = "fs"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/fs.rs"
+
+[dependencies]
+collections = { path = "../collections" }
+fsevent = { path = "../fsevent" }
+anyhow = "1.0.57"
+async-trait = "0.1"
+futures = "0.3"
+parking_lot = "0.11.1"
+smol = "1.2.5"
+text = { path = "../text" }
+util = { path = "../util" }

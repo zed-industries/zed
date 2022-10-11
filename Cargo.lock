@@ -1985,6 +1985,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "collections",
+ "fsevent",
+ "futures",
+ "git",
+ "parking_lot 0.11.2",
+ "smol",
+ "text",
+ "util",
+]
+
+[[package]]
 name = "fs-set-times"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

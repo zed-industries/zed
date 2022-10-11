@@ -1,8 +1,8 @@
+pub mod repository;
+
 use anyhow::{anyhow, Result};
 use fsevent::EventStream;
 use futures::{future::BoxFuture, Stream, StreamExt};
-use git::repository::{GitRepository, LibGitRepository};
-use language::LineEnding;
 use parking_lot::Mutex as SyncMutex;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::sync::Arc;
@@ -25,6 +25,61 @@ use git::repository::FakeGitRepositoryState;
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::Weak;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LineEnding {
+    Unix,
+    Windows,
+}
+
+impl Default for LineEnding {
+    fn default() -> Self {
+        #[cfg(unix)]
+        return Self::Unix;
+
+        #[cfg(not(unix))]
+        return Self::CRLF;
+    }
+}
+
+impl LineEnding {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LineEnding::Unix => "\n",
+            LineEnding::Windows => "\r\n",
+        }
+    }
+
+    pub fn detect(text: &str) -> Self {
+        let mut max_ix = cmp::min(text.len(), 1000);
+        while !text.is_char_boundary(max_ix) {
+            max_ix -= 1;
+        }
+
+        if let Some(ix) = text[..max_ix].find(&['\n']) {
+            if ix > 0 && text.as_bytes()[ix - 1] == b'\r' {
+                Self::Windows
+            } else {
+                Self::Unix
+            }
+        } else {
+            Self::default()
+        }
+    }
+
+    pub fn normalize(text: &mut String) {
+        if let Cow::Owned(replaced) = CARRIAGE_RETURNS_REGEX.replace_all(text, "\n") {
+            *text = replaced;
+        }
+    }
+
+    fn normalize_arc(text: Arc<str>) -> Arc<str> {
+        if let Cow::Owned(replaced) = CARRIAGE_RETURNS_REGEX.replace_all(&text, "\n") {
+            replaced.into()
+        } else {
+            text
+        }
+    }
+}
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {
     async fn create_dir(&self, path: &Path) -> Result<()>;

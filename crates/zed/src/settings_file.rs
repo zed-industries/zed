@@ -12,6 +12,10 @@ use util::ResultExt;
 #[derive(Clone)]
 pub struct WatchedJsonFile<T>(pub watch::Receiver<T>);
 
+// 1) Do the refactoring to pull WatchedJSON and fs out and into everything else
+// 2) Scaffold this by making the basic structs we'll need SettingsFile::atomic_write_theme()
+// 3) Fix the overeager settings writing, if that works, and there's no data loss, call it?
+
 impl<T> WatchedJsonFile<T>
 where
     T: 'static + for<'de> Deserialize<'de> + Clone + Default + Send + Sync,
