@@ -13,4 +13,4 @@ jobs:
           architecture: "x64"
           cache: "pip"
       - run: pip install -r script/amplitude_release/requirements.txt
-      - run: python scripts/amplitude_release/main.py ${{ github.event.release.tag_name }} ${{ secrets.ZED_AMPLITUDE_API_KEY }} ${{ secrets.ZED_AMPLITUDE_SECRET_KEY }}
+      - run: python script/amplitude_release/main.py ${{ github.event.release.tag_name }} ${{ secrets.ZED_AMPLITUDE_API_KEY }} ${{ secrets.ZED_AMPLITUDE_SECRET_KEY }}
