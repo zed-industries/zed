@@ -17,7 +17,7 @@ use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use collections::{hash_map, HashMap, HashSet};
 use dock::{DefaultItemFactory, Dock, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
-use futures::{channel::oneshot, FutureExt};
+use futures::{channel::oneshot, FutureExt, StreamExt};
 use gpui::{
     actions,
     elements::*,
@@ -1231,7 +1231,7 @@ impl Workspace {
         _: &CloseWindow,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let prepare = self.prepare_to_close(cx);
+        let prepare = self.prepare_to_close(false, cx);
         Some(cx.spawn(|this, mut cx| async move {
             if prepare.await? {
                 this.update(&mut cx, |_, cx| {
@@ -1243,8 +1243,42 @@ impl Workspace {
         }))
     }
 
-    pub fn prepare_to_close(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<bool>> {
-        self.save_all_internal(true, cx)
+    pub fn prepare_to_close(
+        &mut self,
+        quitting: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<bool>> {
+        let active_call = ActiveCall::global(cx);
+        let window_id = cx.window_id();
+        let workspace_count = cx
+            .window_ids()
+            .flat_map(|window_id| cx.root_view::<Workspace>(window_id))
+            .count();
+        cx.spawn(|this, mut cx| async move {
+            if !quitting
+                && workspace_count == 1
+                && active_call.read_with(&cx, |call, _| call.room().is_some())
+            {
+                let answer = cx
+                    .prompt(
+                        window_id,
+                        PromptLevel::Warning,
+                        "Do you want to leave the current call?",
+                        &["Close window and hang up", "Cancel"],
+                    )
+                    .next()
+                    .await;
+                if answer == Some(1) {
+                    return anyhow::Ok(false);
+                } else {
+                    active_call.update(&mut cx, |call, cx| call.hang_up(cx))?;
+                }
+            }
+
+            Ok(this
+                .update(&mut cx, |this, cx| this.save_all_internal(true, cx))
+                .await?)
+        })
     }
 
     fn save_all(&mut self, _: &SaveAll, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
@@ -2944,7 +2978,7 @@ mod tests {
         // When there are no dirty items, there's nothing to do.
         let item1 = cx.add_view(&workspace, |_| TestItem::new());
         workspace.update(cx, |w, cx| w.add_item(Box::new(item1.clone()), cx));
-        let task = workspace.update(cx, |w, cx| w.prepare_to_close(cx));
+        let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
         assert!(task.await.unwrap());
 
         // When there are dirty untitled items, prompt to save each one. If the user
@@ -2964,7 +2998,7 @@ mod tests {
             w.add_item(Box::new(item2.clone()), cx);
             w.add_item(Box::new(item3.clone()), cx);
         });
-        let task = workspace.update(cx, |w, cx| w.prepare_to_close(cx));
+        let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
         cx.foreground().run_until_parked();
         cx.simulate_prompt_answer(window_id, 2 /* cancel */);
         cx.foreground().run_until_parked();

@@ -344,7 +344,9 @@ fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
         // If the user cancels any save prompt, then keep the app open.
         for workspace in workspaces {
             if !workspace
-                .update(&mut cx, |workspace, cx| workspace.prepare_to_close(cx))
+                .update(&mut cx, |workspace, cx| {
+                    workspace.prepare_to_close(true, cx)
+                })
                 .await?
             {
                 return Ok(());

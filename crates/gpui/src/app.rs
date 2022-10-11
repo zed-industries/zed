@@ -794,6 +794,16 @@ impl AsyncAppContext {
         self.update(|cx| cx.activate_window(window_id))
     }
 
+    pub fn prompt(
+        &mut self,
+        window_id: usize,
+        level: PromptLevel,
+        msg: &str,
+        answers: &[&str],
+    ) -> oneshot::Receiver<usize> {
+        self.update(|cx| cx.prompt(window_id, level, msg, answers))
+    }
+
     pub fn platform(&self) -> Arc<dyn Platform> {
         self.0.borrow().platform()
     }

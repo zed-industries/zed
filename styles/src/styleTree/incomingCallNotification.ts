@@ -2,7 +2,7 @@ import Theme from "../themes/common/theme";
 import { backgroundColor, borderColor, text } from "./components";
 
 export default function incomingCallNotification(theme: Theme): Object {
-  const avatarSize = 32;
+  const avatarSize = 48;
   return {
     windowHeight: 74,
     windowWidth: 380,
