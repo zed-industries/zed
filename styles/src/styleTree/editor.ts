@@ -172,7 +172,7 @@ export default function editor(theme: Theme) {
       },
     },
     scrollbar: {
-      width: 14,
+      width: 12,
       track: {
         border: {
           left: true,
