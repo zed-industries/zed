@@ -3739,6 +3739,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "paths"
+version = "0.1.0"
+dependencies = [
+ "dirs 3.0.2",
+ "lazy_static",
+]
+
+[[package]]
 name = "pbkdf2"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5021,6 +5029,9 @@ dependencies = [
  "serde_path_to_error",
  "theme",
  "toml",
+ "tree-sitter",
+ "tree-sitter-json 0.19.0",
+ "unindent",
  "util",
 ]
 
@@ -5626,6 +5637,7 @@ dependencies = [
  "gpui",
  "log",
  "parking_lot 0.11.2",
+ "paths",
  "picker",
  "postage",
  "settings",
@@ -7251,7 +7263,6 @@ dependencies = [
  "context_menu",
  "ctor",
  "diagnostics",
- "dirs 3.0.2",
  "easy-parallel",
  "editor",
  "env_logger",
@@ -7274,6 +7285,7 @@ dependencies = [
  "num_cpus",
  "outline",
  "parking_lot 0.11.2",
+ "paths",
  "plugin_runtime",
  "postage",
  "project",

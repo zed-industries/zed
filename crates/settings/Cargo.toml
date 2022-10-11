@@ -19,7 +19,13 @@ util = { path = "../util" }
 anyhow = "1.0.38"
 json_comments = "0.2"
 schemars = "0.8"
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_json = { version = "1.0", features = ["preserve_order"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
 serde_path_to_error = "0.1.4"
 toml = "0.5"
+tree-sitter = "*"
+tree-sitter-json = "*"
+
+[dev-dependencies]
+unindent = "0.1"
+gpui = { path = "../gpui", features = ["test-support"] }

@@ -1,0 +1,12 @@
+[package]
+name = "paths"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/paths.rs"
+
+[dependencies]
+lazy_static = "1.4.0"
+dirs = "3.0"
+

@@ -1,10 +1,12 @@
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, elements::*, AnyViewHandle, AppContext, Element, ElementBox, Entity, MouseState,
-    MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
+    actions, anyhow::Result, elements::*, AnyViewHandle, AppContext, Element, ElementBox, Entity,
+    MouseState, MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
 };
+use paths::SETTINGS;
 use picker::{Picker, PickerDelegate};
-use settings::Settings;
+use settings::{write_theme, Settings};
+use smol::{fs::read_to_string, io::AsyncWriteExt};
 use std::sync::Arc;
 use theme::{Theme, ThemeMeta, ThemeRegistry};
 use workspace::{AppState, Workspace};
@@ -107,7 +109,20 @@ impl ThemeSelector {
     fn show_selected_theme(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
             match self.registry.get(&mat.string) {
-                Ok(theme) => Self::set_theme(theme, cx),
+                Ok(theme) => {
+                    Self::set_theme(theme, cx);
+
+                    let theme_name = mat.string.clone();
+
+                    cx.background()
+                        .spawn(async move {
+                            match write_theme_name(theme_name).await {
+                                Ok(_) => {}
+                                Err(_) => return, //TODO Pop toast
+                            }
+                        })
+                        .detach()
+                }
                 Err(error) => {
                     log::error!("error loading theme {}: {}", mat.string, error)
                 }
@@ -263,4 +278,19 @@ impl View for ThemeSelector {
             cx.focus(&self.picker);
         }
     }
+}
+
+async fn write_theme_name(theme_name: String) -> Result<()> {
+    let mut settings = read_to_string(SETTINGS.as_path()).await?;
+    settings = write_theme(settings, &theme_name);
+
+    let mut file = smol::fs::OpenOptions::new()
+        .truncate(true)
+        .write(true)
+        .open(SETTINGS.as_path())
+        .await?;
+
+    file.write_all(settings.as_bytes()).await?;
+
+    Ok(())
 }
