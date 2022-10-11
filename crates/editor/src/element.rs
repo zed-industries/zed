@@ -916,6 +916,9 @@ impl EditorElement {
 
         let view = self.view.clone();
         let style = &self.style.theme.scrollbar;
+        let min_thumb_height =
+            style.min_height_factor * cx.font_cache.line_height(self.style.text.font_size);
+
         let top = bounds.min_y();
         let bottom = bounds.max_y();
         let right = bounds.max_x();
@@ -925,8 +928,23 @@ impl EditorElement {
         let max_row = layout.max_row + ((row_range.end - row_range.start) as u32);
         let scrollbar_start = row_range.start as f32 / max_row as f32;
         let scrollbar_end = row_range.end as f32 / max_row as f32;
-        let thumb_top = top + scrollbar_start * height;
-        let thumb_bottom = top + scrollbar_end * height;
+
+        let mut thumb_top = top + scrollbar_start * height;
+        let mut thumb_bottom = top + scrollbar_end * height;
+        let thumb_center = (thumb_top + thumb_bottom) / 2.0;
+
+        if thumb_bottom - thumb_top < min_thumb_height {
+            thumb_top = thumb_center - min_thumb_height / 2.0;
+            thumb_bottom = thumb_center + min_thumb_height / 2.0;
+            if thumb_top < top {
+                thumb_top = top;
+                thumb_bottom = top + min_thumb_height;
+            }
+            if thumb_bottom > bottom {
+                thumb_bottom = bottom;
+                thumb_top = bottom - min_thumb_height;
+            }
+        }
 
         let track_bounds = RectF::from_points(vec2f(left, top), vec2f(right, bottom));
         let thumb_bounds = RectF::from_points(vec2f(left, thumb_top), vec2f(right, thumb_bottom));

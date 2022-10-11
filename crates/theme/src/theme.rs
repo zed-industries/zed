@@ -518,6 +518,7 @@ pub struct Scrollbar {
     pub track: ContainerStyle,
     pub thumb: ContainerStyle,
     pub width: f32,
+    pub min_height_factor: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]
