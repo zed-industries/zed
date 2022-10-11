@@ -2,6 +2,7 @@ mod feedback;
 pub mod languages;
 pub mod menus;
 pub mod settings_file;
+pub mod paths;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 

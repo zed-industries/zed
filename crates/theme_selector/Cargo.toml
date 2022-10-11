@@ -14,7 +14,6 @@ gpui = { path = "../gpui" }
 picker = { path = "../picker" }
 theme = { path = "../theme" }
 settings = { path = "../settings" }
-paths = { path = "../paths" }
 workspace = { path = "../workspace" }
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 parking_lot = "0.11.1"

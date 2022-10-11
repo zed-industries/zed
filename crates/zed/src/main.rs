@@ -53,7 +53,7 @@ fn main() {
         .map_or("dev".to_string(), |v| v.to_string());
     init_panic_hook(app_version, http.clone(), app.background());
     let db = app.background().spawn(async move {
-        project::Db::open(&*paths::DB)
+        project::Db::open(&*zed::paths::DB)
             .log_err()
             .unwrap_or_else(project::Db::null)
     });
@@ -90,7 +90,7 @@ fn main() {
     app.run(move |cx| {
         let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
-        languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
+        languages.set_language_server_download_dir(zed::paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
         let init_languages = cx
             .background()
@@ -200,21 +200,23 @@ fn main() {
 }
 
 fn init_paths() {
-    fs::create_dir_all(&*paths::CONFIG_DIR).expect("could not create config path");
-    fs::create_dir_all(&*paths::LANGUAGES_DIR).expect("could not create languages path");
-    fs::create_dir_all(&*paths::DB_DIR).expect("could not create database path");
-    fs::create_dir_all(&*paths::LOGS_DIR).expect("could not create logs path");
+    fs::create_dir_all(&*zed::paths::CONFIG_DIR).expect("could not create config path");
+    fs::create_dir_all(&*zed::paths::LANGUAGES_DIR).expect("could not create languages path");
+    fs::create_dir_all(&*zed::paths::DB_DIR).expect("could not create database path");
+    fs::create_dir_all(&*zed::paths::LOGS_DIR).expect("could not create logs path");
 
     // Copy setting files from legacy locations. TODO: remove this after a few releases.
     thread::spawn(|| {
-        if fs::metadata(&*paths::legacy::SETTINGS).is_ok()
-            && fs::metadata(&*paths::SETTINGS).is_err()
+        if fs::metadata(&*zed::paths::legacy::SETTINGS).is_ok()
+            && fs::metadata(&*zed::paths::SETTINGS).is_err()
         {
-            fs::copy(&*paths::legacy::SETTINGS, &*paths::SETTINGS).log_err();
+            fs::copy(&*zed::paths::legacy::SETTINGS, &*zed::paths::SETTINGS).log_err();
         }
 
-        if fs::metadata(&*paths::legacy::KEYMAP).is_ok() && fs::metadata(&*paths::KEYMAP).is_err() {
-            fs::copy(&*paths::legacy::KEYMAP, &*paths::KEYMAP).log_err();
+        if fs::metadata(&*zed::paths::legacy::KEYMAP).is_ok()
+            && fs::metadata(&*zed::paths::KEYMAP).is_err()
+        {
+            fs::copy(&*zed::paths::legacy::KEYMAP, &*zed::paths::KEYMAP).log_err();
         }
     });
 }
@@ -229,14 +231,15 @@ fn init_logger() {
         const KIB: u64 = 1024;
         const MIB: u64 = 1024 * KIB;
         const MAX_LOG_BYTES: u64 = MIB;
-        if fs::metadata(&*paths::LOG).map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES) {
-            let _ = fs::rename(&*paths::LOG, &*paths::OLD_LOG);
+        if fs::metadata(&*zed::paths::LOG).map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES)
+        {
+            let _ = fs::rename(&*zed::paths::LOG, &*zed::paths::OLD_LOG);
         }
 
         let log_file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&*paths::LOG)
+            .open(&*zed::paths::LOG)
             .expect("could not open logfile");
         simplelog::WriteLogger::init(level, simplelog::Config::default(), log_file)
             .expect("could not initialize logger");
@@ -248,7 +251,7 @@ fn init_panic_hook(app_version: String, http: Arc<dyn HttpClient>, background: A
         .spawn({
             async move {
                 let panic_report_url = format!("{}/api/panic", &*client::ZED_SERVER_URL);
-                let mut children = smol::fs::read_dir(&*paths::LOGS_DIR).await?;
+                let mut children = smol::fs::read_dir(&*zed::paths::LOGS_DIR).await?;
                 while let Some(child) = children.next().await {
                     let child = child?;
                     let child_path = child.path();
@@ -336,7 +339,7 @@ fn init_panic_hook(app_version: String, http: Arc<dyn HttpClient>, background: A
 
         let panic_filename = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
         fs::write(
-            paths::LOGS_DIR.join(format!("zed-{}-{}.panic", app_version, panic_filename)),
+            zed::paths::LOGS_DIR.join(format!("zed-{}-{}.panic", app_version, panic_filename)),
             &message,
         )
         .context("error writing panic to disk")
@@ -470,8 +473,8 @@ fn load_config_files(
         .clone()
         .spawn(async move {
             let settings_file =
-                WatchedJsonFile::new(fs.clone(), &executor, paths::SETTINGS.clone()).await;
-            let keymap_file = WatchedJsonFile::new(fs, &executor, paths::KEYMAP.clone()).await;
+                WatchedJsonFile::new(fs.clone(), &executor, zed::paths::SETTINGS.clone()).await;
+            let keymap_file = WatchedJsonFile::new(fs, &executor, zed::paths::KEYMAP.clone()).await;
             tx.send((settings_file, keymap_file)).ok()
         })
         .detach();

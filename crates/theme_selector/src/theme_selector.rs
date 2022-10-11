@@ -1,12 +1,10 @@
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, anyhow::Result, elements::*, AnyViewHandle, AppContext, Element, ElementBox, Entity,
-    MouseState, MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
+    actions, elements::*, AnyViewHandle, AppContext, Element, ElementBox, Entity, MouseState,
+    MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
 };
-use paths::SETTINGS;
 use picker::{Picker, PickerDelegate};
-use settings::{write_theme, Settings};
-use smol::{fs::read_to_string, io::AsyncWriteExt};
+use settings::Settings;
 use std::sync::Arc;
 use theme::{Theme, ThemeMeta, ThemeRegistry};
 use workspace::{AppState, Workspace};
@@ -111,75 +109,6 @@ impl ThemeSelector {
             match self.registry.get(&mat.string) {
                 Ok(theme) => {
                     Self::set_theme(theme, cx);
-
-                    let theme_name = mat.string.clone();
-
-                    // cx.global::<SettingsLock()>
-                    // cx.global::<SettingsFile>() // lock
-
-                    // 1) Truncation can cause data loss, make it atomic by creating tmp file and moving
-                    // 2) Maybe firing too often? Conceptually want to commit
-                    // Having a lock on the settings file
-
-                    //    -
-                    //   | |
-                    // FS _
-
-                    // General problem: whenever we want to persist stuff
-                    // In memory representation -> File on disk
-                    // Write font size,
-                    // Write theme to disk
-                    // Write -> See your own write -> Another Write
-
-                    // Memory Write 1 -> Write To Disk 1, | Memory Write 2,
-                    //                                    Blocking ->>>>>> | Read From Disk 1,
-                    //                                    Discard          | Read WHATEVER is from disk |
-
-                    // Blocking lock ->
-
-                    // Whenever we update the settings in memory, we enqueue a write to disk
-                    // When we receive a file system event, we only honor it if all pending disk writes are complete.
-
-                    // When the settings become dirty in memory, schedule a write to disk
-                    // When we are sure the write is completed, consider the settings clean
-                    // Only read settings from disk into memory when in memory settings are clean
-                    // read settings just does not happen, if the settings are dirty
-
-                    // 10 settings queued up:
-                    // lock() -> Only needs to be on the file
-                    // How to set a setting:
-                    // write to memory
-                    // Read the whole file from disk
-                    // Surgically inject the setting string
-                    // Write to disk
-                    // unlock()
-
-                    // Write 10 x change font size
-                    // Read-open-write font size
-                    // Read-open-write font size
-                    // Read-open-write font size
-                    // Read-open-write font size
-                    // Read-open-write font size
-                    // ..
-                    // Read from file system, only gets the latest font size and uselessly sets font size
-
-                    // `SettingsFile`
-                    // You can non-blocking, write to it as much as you need
-                    // Debounces your changes, waits for you to be done, and then flushes them all to the file system
-                    // And blocks the read
-
-                    // Read and write to memory. ^ up from the file system
-
-                    // If there's pendings writes, we need to wait until this whole thing is done'
-
-                    cx.background()
-                        .spawn(async move {
-                            match write_theme_name(theme_name).await {
-                                Ok(_) => {}
-                                Err(_) => return, //TODO Pop toast
-                            }
-                        })
-                        .detach()
                 }
                 Err(error) => {
                     log::error!("error loading theme {}: {}", mat.string, error)
@@ -336,19 +265,4 @@ impl View for ThemeSelector {
             cx.focus(&self.picker);
         }
     }
-}
-
-async fn write_theme_name(theme_name: String) -> Result<()> {
-    let mut settings = read_to_string(SETTINGS.as_path()).await?;
-    settings = write_theme(settings, &theme_name);
-
-    let mut file = smol::fs::OpenOptions::new()
-        .truncate(true)
-        .write(true)
-        .open(SETTINGS.as_path())
-        .await?;
-
-    file.write_all(settings.as_bytes()).await?;
-
-    Ok(())
 }
