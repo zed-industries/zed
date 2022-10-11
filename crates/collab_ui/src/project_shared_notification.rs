@@ -1,5 +1,6 @@
 use call::{room, ActiveCall};
 use client::User;
+use collections::HashMap;
 use gpui::{
     actions,
     elements::*,
@@ -18,6 +19,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectSharedNotification::dismiss);
 
     let active_call = ActiveCall::global(cx);
+    let mut notification_windows = HashMap::default();
     cx.subscribe(&active_call, move |_, event, cx| match event {
         room::Event::RemoteProjectShared {
             owner,
@@ -29,7 +31,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
             let theme = &cx.global::<Settings>().theme.project_shared_notification;
             let window_size = vec2f(theme.window_width, theme.window_height);
-            cx.add_window(
+            let (window_id, _) = cx.add_window(
                 WindowOptions {
                     bounds: WindowBounds::Fixed(RectF::new(
                         vec2f(screen_size.x() - window_size.x() - PADDING, PADDING),
@@ -48,6 +50,17 @@ pub fn init(cx: &mut MutableAppContext) {
                     )
                 },
             );
+            notification_windows.insert(*project_id, window_id);
+        }
+        room::Event::RemoteProjectUnshared { project_id } => {
+            if let Some(window_id) = notification_windows.remove(&project_id) {
+                cx.remove_window(window_id);
+            }
+        }
+        room::Event::Left => {
+            for (_, window_id) in notification_windows.drain() {
+                cx.remove_window(window_id);
+            }
         }
     })
     .detach();

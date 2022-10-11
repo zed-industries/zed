@@ -18,6 +18,10 @@ pub enum Event {
         project_id: u64,
         worktree_root_names: Vec<String>,
     },
+    RemoteProjectUnshared {
+        project_id: u64,
+    },
+    Left,
 }
 
 pub struct Room {
@@ -148,6 +152,7 @@ impl Room {
         }
 
         cx.notify();
+        cx.emit(Event::Left);
         self.status = RoomStatus::Offline;
         self.remote_participants.clear();
         self.pending_participants.clear();
@@ -223,21 +228,33 @@ impl Room {
                         let peer_id = PeerId(participant.peer_id);
                         this.participant_user_ids.insert(participant.user_id);
 
-                        let existing_projects = this
+                        let old_projects = this
                             .remote_participants
                             .get(&peer_id)
                             .into_iter()
                             .flat_map(|existing| &existing.projects)
                             .map(|project| project.id)
                             .collect::<HashSet<_>>();
+                        let new_projects = participant
+                            .projects
+                            .iter()
+                            .map(|project| project.id)
+                            .collect::<HashSet<_>>();
+
                         for project in &participant.projects {
-                            if !existing_projects.contains(&project.id) {
+                            if !old_projects.contains(&project.id) {
                                 cx.emit(Event::RemoteProjectShared {
                                     owner: user.clone(),
                                     project_id: project.id,
                                     worktree_root_names: project.worktree_root_names.clone(),
                                 });
                             }
+                        }
+
+                        for unshared_project_id in old_projects.difference(&new_projects) {
+                            cx.emit(Event::RemoteProjectUnshared {
+                                project_id: *unshared_project_id,
+                            });
                         }
 
                         this.remote_participants.insert(
@@ -252,7 +269,16 @@ impl Room {
                     }
 
                     this.remote_participants.retain(|_, participant| {
-                        this.participant_user_ids.contains(&participant.user.id)
+                        if this.participant_user_ids.contains(&participant.user.id) {
+                            true
+                        } else {
+                            for project in &participant.projects {
+                                cx.emit(Event::RemoteProjectUnshared {
+                                    project_id: project.id,
+                                });
+                            }
+                            false
+                        }
                     });
 
                     cx.notify();
