@@ -3874,6 +3874,7 @@ async fn test_language_server_statuses(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
+    deterministic.run_until_parked();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
     project_b.read_with(cx_b, |project, _| {
         let status = project.language_server_statuses().next().unwrap();
