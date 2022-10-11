@@ -226,6 +226,7 @@ impl CollabTitlebarItem {
                     ChildView::new(popover)
                         .contained()
                         .with_margin_top(titlebar.height)
+                        .with_margin_left(titlebar.toggle_contacts_button.default.button_width)
                         .with_margin_right(-titlebar.toggle_contacts_button.default.button_width)
                         .boxed(),
                 )
