@@ -1,5 +1,5 @@
 use crate::{
-    participant::{ParticipantLocation, RemoteParticipant},
+    participant::{LocalParticipant, ParticipantLocation, RemoteParticipant},
     IncomingCall,
 };
 use anyhow::{anyhow, Result};
@@ -27,6 +27,7 @@ pub enum Event {
 pub struct Room {
     id: u64,
     status: RoomStatus,
+    local_participant: LocalParticipant,
     remote_participants: BTreeMap<PeerId, RemoteParticipant>,
     pending_participants: Vec<Arc<User>>,
     participant_user_ids: HashSet<u64>,
@@ -72,6 +73,7 @@ impl Room {
             id,
             status: RoomStatus::Online,
             participant_user_ids: Default::default(),
+            local_participant: Default::default(),
             remote_participants: Default::default(),
             pending_participants: Default::default(),
             pending_call_count: 0,
@@ -170,6 +172,10 @@ impl Room {
         self.status
     }
 
+    pub fn local_participant(&self) -> &LocalParticipant {
+        &self.local_participant
+    }
+
     pub fn remote_participants(&self) -> &BTreeMap<PeerId, RemoteParticipant> {
         &self.remote_participants
     }
@@ -201,8 +207,11 @@ impl Room {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         // Filter ourselves out from the room's participants.
-        room.participants
-            .retain(|participant| Some(participant.user_id) != self.client.user_id());
+        let local_participant_ix = room
+            .participants
+            .iter()
+            .position(|participant| Some(participant.user_id) == self.client.user_id());
+        let local_participant = local_participant_ix.map(|ix| room.participants.swap_remove(ix));
 
         let remote_participant_user_ids = room
             .participants
@@ -222,6 +231,12 @@ impl Room {
 
             this.update(&mut cx, |this, cx| {
                 this.participant_user_ids.clear();
+
+                if let Some(participant) = local_participant {
+                    this.local_participant.projects = participant.projects;
+                } else {
+                    this.local_participant.projects.clear();
+                }
 
                 if let Some(participants) = remote_participants.log_err() {
                     for (participant, user) in room.participants.into_iter().zip(participants) {
@@ -280,8 +295,6 @@ impl Room {
                             false
                         }
                     });
-
-                    cx.notify();
                 }
 
                 if let Some(pending_participants) = pending_participants.log_err() {
@@ -289,7 +302,6 @@ impl Room {
                     for participant in &this.pending_participants {
                         this.participant_user_ids.insert(participant.id);
                     }
-                    cx.notify();
                 }
 
                 this.pending_room_update.take();
@@ -298,6 +310,7 @@ impl Room {
                 }
 
                 this.check_invariants();
+                cx.notify();
             });
         }));
 

@@ -12,6 +12,31 @@ export default function contactList(theme: Theme) {
     buttonWidth: 16,
     cornerRadius: 8,
   };
+  const projectRow = {
+    guestAvatarSpacing: 4,
+    height: 24,
+    guestAvatar: {
+      cornerRadius: 8,
+      width: 14,
+    },
+    name: {
+      ...text(theme, "mono", "placeholder", { size: "sm" }),
+      margin: {
+        left: nameMargin,
+        right: 6,
+      },
+    },
+    guests: {
+      margin: {
+        left: nameMargin,
+        right: nameMargin,
+      },
+    },
+    padding: {
+      left: sidePadding,
+      right: sidePadding,
+    },
+  };
 
   return {
     userQueryEditor: {
@@ -129,6 +154,30 @@ export default function contactList(theme: Theme) {
     },
     callingIndicator: {
       ...text(theme, "mono", "muted", { size: "xs" })
-    }
+    },
+    treeBranch: {
+      color: borderColor(theme, "active"),
+      width: 1,
+      hover: {
+        color: borderColor(theme, "active"),
+      },
+      active: {
+        color: borderColor(theme, "active"),
+      },
+    },
+    projectRow: {
+      ...projectRow,
+      background: backgroundColor(theme, 300),
+      name: {
+        ...projectRow.name,
+        ...text(theme, "mono", "secondary", { size: "sm" }),
+      },
+      hover: {
+        background: backgroundColor(theme, 300, "hovered"),
+      },
+      active: {
+        background: backgroundColor(theme, 300, "active"),
+      },
+    },
   }
 }

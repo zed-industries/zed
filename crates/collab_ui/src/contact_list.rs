@@ -6,9 +6,11 @@ use client::{Contact, PeerId, User, UserStore};
 use editor::{Cancel, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    elements::*, impl_actions, impl_internal_actions, keymap, AppContext, ClipboardItem,
-    CursorStyle, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription,
-    View, ViewContext, ViewHandle,
+    elements::*,
+    geometry::{rect::RectF, vector::vec2f},
+    impl_actions, impl_internal_actions, keymap, AppContext, ClipboardItem, CursorStyle, Entity,
+    ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, View, ViewContext,
+    ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::Project;
@@ -16,6 +18,7 @@ use serde::Deserialize;
 use settings::Settings;
 use theme::IconButton;
 use util::ResultExt;
+use workspace::JoinProject;
 
 impl_actions!(contact_list, [RemoveContact, RespondToContactRequest]);
 impl_internal_actions!(contact_list, [ToggleExpanded, Call, LeaveCall]);
@@ -55,7 +58,17 @@ enum Section {
 #[derive(Clone)]
 enum ContactEntry {
     Header(Section),
-    CallParticipant { user: Arc<User>, is_pending: bool },
+    CallParticipant {
+        user: Arc<User>,
+        is_pending: bool,
+    },
+    ParticipantProject {
+        project_id: u64,
+        worktree_root_names: Vec<String>,
+        host_user_id: u64,
+        is_host: bool,
+        is_last: bool,
+    },
     IncomingRequest(Arc<User>),
     OutgoingRequest(Arc<User>),
     Contact(Arc<Contact>),
@@ -72,6 +85,18 @@ impl PartialEq for ContactEntry {
             ContactEntry::CallParticipant { user: user_1, .. } => {
                 if let ContactEntry::CallParticipant { user: user_2, .. } = other {
                     return user_1.id == user_2.id;
+                }
+            }
+            ContactEntry::ParticipantProject {
+                project_id: project_id_1,
+                ..
+            } => {
+                if let ContactEntry::ParticipantProject {
+                    project_id: project_id_2,
+                    ..
+                } = other
+                {
+                    return project_id_1 == project_id_2;
                 }
             }
             ContactEntry::IncomingRequest(user_1) => {
@@ -177,6 +202,22 @@ impl ContactList {
                         &theme.contact_list,
                     )
                 }
+                ContactEntry::ParticipantProject {
+                    project_id,
+                    worktree_root_names,
+                    host_user_id,
+                    is_host,
+                    is_last,
+                } => Self::render_participant_project(
+                    *project_id,
+                    worktree_root_names,
+                    *host_user_id,
+                    *is_host,
+                    *is_last,
+                    is_selected,
+                    &theme.contact_list,
+                    cx,
+                ),
                 ContactEntry::IncomingRequest(user) => Self::render_contact_request(
                     user.clone(),
                     this.user_store.clone(),
@@ -298,6 +339,19 @@ impl ContactList {
                             );
                         }
                     }
+                    ContactEntry::ParticipantProject {
+                        project_id,
+                        host_user_id,
+                        is_host,
+                        ..
+                    } => {
+                        if !is_host {
+                            cx.dispatch_global_action(JoinProject {
+                                project_id: *project_id,
+                                follow_user_id: *host_user_id,
+                            });
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -324,7 +378,7 @@ impl ContactList {
 
         if let Some(room) = ActiveCall::global(cx).read(cx).room() {
             let room = room.read(cx);
-            let mut call_participants = Vec::new();
+            let mut participant_entries = Vec::new();
 
             // Populate the active user.
             if let Some(user) = user_store.current_user() {
@@ -343,10 +397,21 @@ impl ContactList {
                     executor.clone(),
                 ));
                 if !matches.is_empty() {
-                    call_participants.push(ContactEntry::CallParticipant {
+                    let user_id = user.id;
+                    participant_entries.push(ContactEntry::CallParticipant {
                         user,
                         is_pending: false,
                     });
+                    let mut projects = room.local_participant().projects.iter().peekable();
+                    while let Some(project) = projects.next() {
+                        participant_entries.push(ContactEntry::ParticipantProject {
+                            project_id: project.id,
+                            worktree_root_names: project.worktree_root_names.clone(),
+                            host_user_id: user_id,
+                            is_host: true,
+                            is_last: projects.peek().is_none(),
+                        });
+                    }
                 }
             }
 
@@ -370,14 +435,25 @@ impl ContactList {
                 &Default::default(),
                 executor.clone(),
             ));
-            call_participants.extend(matches.iter().map(|mat| {
-                ContactEntry::CallParticipant {
+            for mat in matches {
+                let participant = &room.remote_participants()[&PeerId(mat.candidate_id as u32)];
+                participant_entries.push(ContactEntry::CallParticipant {
                     user: room.remote_participants()[&PeerId(mat.candidate_id as u32)]
                         .user
                         .clone(),
                     is_pending: false,
+                });
+                let mut projects = participant.projects.iter().peekable();
+                while let Some(project) = projects.next() {
+                    participant_entries.push(ContactEntry::ParticipantProject {
+                        project_id: project.id,
+                        worktree_root_names: project.worktree_root_names.clone(),
+                        host_user_id: participant.user.id,
+                        is_host: false,
+                        is_last: projects.peek().is_none(),
+                    });
                 }
-            }));
+            }
 
             // Populate pending participants.
             self.match_candidates.clear();
@@ -400,15 +476,15 @@ impl ContactList {
                 &Default::default(),
                 executor.clone(),
             ));
-            call_participants.extend(matches.iter().map(|mat| ContactEntry::CallParticipant {
+            participant_entries.extend(matches.iter().map(|mat| ContactEntry::CallParticipant {
                 user: room.pending_participants()[mat.candidate_id].clone(),
                 is_pending: true,
             }));
 
-            if !call_participants.is_empty() {
+            if !participant_entries.is_empty() {
                 self.entries.push(ContactEntry::Header(Section::ActiveCall));
                 if !self.collapsed_sections.contains(&Section::ActiveCall) {
-                    self.entries.extend(call_participants);
+                    self.entries.extend(participant_entries);
                 }
             }
         }
@@ -586,6 +662,108 @@ impl ContactList {
             .contained()
             .with_style(*theme.contact_row.style_for(Default::default(), is_selected))
             .boxed()
+    }
+
+    fn render_participant_project(
+        project_id: u64,
+        worktree_root_names: &[String],
+        host_user_id: u64,
+        is_host: bool,
+        is_last: bool,
+        is_selected: bool,
+        theme: &theme::ContactList,
+        cx: &mut RenderContext<Self>,
+    ) -> ElementBox {
+        let font_cache = cx.font_cache();
+        let host_avatar_height = theme
+            .contact_avatar
+            .width
+            .or(theme.contact_avatar.height)
+            .unwrap_or(0.);
+        let row = &theme.project_row.default;
+        let tree_branch = theme.tree_branch;
+        let line_height = row.name.text.line_height(font_cache);
+        let cap_height = row.name.text.cap_height(font_cache);
+        let baseline_offset =
+            row.name.text.baseline_offset(font_cache) + (theme.row_height - line_height) / 2.;
+        let project_name = if worktree_root_names.is_empty() {
+            "untitled".to_string()
+        } else {
+            worktree_root_names.join(", ")
+        };
+
+        MouseEventHandler::<JoinProject>::new(project_id as usize, cx, |mouse_state, _| {
+            let tree_branch = *tree_branch.style_for(mouse_state, is_selected);
+            let row = theme.project_row.style_for(mouse_state, is_selected);
+
+            Flex::row()
+                .with_child(
+                    Stack::new()
+                        .with_child(
+                            Canvas::new(move |bounds, _, cx| {
+                                let start_x = bounds.min_x() + (bounds.width() / 2.)
+                                    - (tree_branch.width / 2.);
+                                let end_x = bounds.max_x();
+                                let start_y = bounds.min_y();
+                                let end_y = bounds.min_y() + baseline_offset - (cap_height / 2.);
+
+                                cx.scene.push_quad(gpui::Quad {
+                                    bounds: RectF::from_points(
+                                        vec2f(start_x, start_y),
+                                        vec2f(
+                                            start_x + tree_branch.width,
+                                            if is_last { end_y } else { bounds.max_y() },
+                                        ),
+                                    ),
+                                    background: Some(tree_branch.color),
+                                    border: gpui::Border::default(),
+                                    corner_radius: 0.,
+                                });
+                                cx.scene.push_quad(gpui::Quad {
+                                    bounds: RectF::from_points(
+                                        vec2f(start_x, end_y),
+                                        vec2f(end_x, end_y + tree_branch.width),
+                                    ),
+                                    background: Some(tree_branch.color),
+                                    border: gpui::Border::default(),
+                                    corner_radius: 0.,
+                                });
+                            })
+                            .boxed(),
+                        )
+                        .constrained()
+                        .with_width(host_avatar_height)
+                        .boxed(),
+                )
+                .with_child(
+                    Label::new(project_name, row.name.text.clone())
+                        .aligned()
+                        .left()
+                        .contained()
+                        .with_style(row.name.container)
+                        .flex(1., false)
+                        .boxed(),
+                )
+                .constrained()
+                .with_height(theme.row_height)
+                .contained()
+                .with_style(row.container)
+                .boxed()
+        })
+        .with_cursor_style(if !is_host {
+            CursorStyle::PointingHand
+        } else {
+            CursorStyle::Arrow
+        })
+        .on_click(MouseButton::Left, move |_, cx| {
+            if !is_host {
+                cx.dispatch_global_action(JoinProject {
+                    project_id,
+                    follow_user_id: host_user_id,
+                });
+            }
+        })
+        .boxed()
     }
 
     fn render_header(

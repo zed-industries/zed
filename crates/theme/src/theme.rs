@@ -100,6 +100,8 @@ pub struct ContactList {
     pub leave_call: Interactive<ContainedText>,
     pub contact_row: Interactive<ContainerStyle>,
     pub row_height: f32,
+    pub project_row: Interactive<ProjectRow>,
+    pub tree_branch: Interactive<TreeBranch>,
     pub contact_avatar: ImageStyle,
     pub contact_status_free: ContainerStyle,
     pub contact_status_busy: ContainerStyle,
@@ -110,6 +112,19 @@ pub struct ContactList {
     pub section_icon_size: f32,
     pub invite_row: Interactive<ContainedLabel>,
     pub calling_indicator: ContainedText,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ProjectRow {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub name: ContainedText,
+}
+
+#[derive(Deserialize, Default, Clone, Copy)]
+pub struct TreeBranch {
+    pub width: f32,
+    pub color: Color,
 }
 
 #[derive(Deserialize, Default)]

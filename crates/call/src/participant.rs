@@ -20,6 +20,11 @@ impl ParticipantLocation {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct LocalParticipant {
+    pub projects: Vec<proto::ParticipantProject>,
+}
+
 #[derive(Clone, Debug)]
 pub struct RemoteParticipant {
     pub user: Arc<User>,
