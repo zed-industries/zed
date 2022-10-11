@@ -980,8 +980,9 @@ pub struct Workspace {
     follower_states_by_leader: FollowerStatesByLeader,
     last_leaders_by_pane: HashMap<WeakViewHandle<Pane>, PeerId>,
     window_edited: bool,
+    active_call: Option<ModelHandle<ActiveCall>>,
     _observe_current_user: Task<()>,
-    _active_call_observation: gpui::Subscription,
+    _active_call_observation: Option<gpui::Subscription>,
 }
 
 #[derive(Default)]
@@ -1090,6 +1091,14 @@ impl Workspace {
             drag_and_drop.register_container(weak_handle.clone());
         });
 
+        let mut active_call = None;
+        let mut active_call_observation = None;
+        if cx.has_global::<ModelHandle<ActiveCall>>() {
+            let call = cx.global::<ModelHandle<ActiveCall>>().clone();
+            active_call_observation = Some(cx.observe(&call, |_, _, cx| cx.notify()));
+            active_call = Some(call);
+        }
+
         let mut this = Workspace {
             modal: None,
             weak_self: weak_handle,
@@ -1116,8 +1125,9 @@ impl Workspace {
             follower_states_by_leader: Default::default(),
             last_leaders_by_pane: Default::default(),
             window_edited: false,
+            active_call,
             _observe_current_user,
-            _active_call_observation: cx.observe(&ActiveCall::global(cx), |_, _, cx| cx.notify()),
+            _active_call_observation: active_call_observation,
         };
         this.project_remote_id_changed(this.project.read(cx).remote_id(), cx);
         cx.defer(|this, cx| this.update_window_title(cx));
@@ -1248,30 +1258,32 @@ impl Workspace {
         quitting: bool,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
-        let active_call = ActiveCall::global(cx);
+        let active_call = self.active_call.clone();
         let window_id = cx.window_id();
         let workspace_count = cx
             .window_ids()
             .flat_map(|window_id| cx.root_view::<Workspace>(window_id))
             .count();
         cx.spawn(|this, mut cx| async move {
-            if !quitting
-                && workspace_count == 1
-                && active_call.read_with(&cx, |call, _| call.room().is_some())
-            {
-                let answer = cx
-                    .prompt(
-                        window_id,
-                        PromptLevel::Warning,
-                        "Do you want to leave the current call?",
-                        &["Close window and hang up", "Cancel"],
-                    )
-                    .next()
-                    .await;
-                if answer == Some(1) {
-                    return anyhow::Ok(false);
-                } else {
-                    active_call.update(&mut cx, |call, cx| call.hang_up(cx))?;
+            if let Some(active_call) = active_call {
+                if !quitting
+                    && workspace_count == 1
+                    && active_call.read_with(&cx, |call, _| call.room().is_some())
+                {
+                    let answer = cx
+                        .prompt(
+                            window_id,
+                            PromptLevel::Warning,
+                            "Do you want to leave the current call?",
+                            &["Close window and hang up", "Cancel"],
+                        )
+                        .next()
+                        .await;
+                    if answer == Some(1) {
+                        return anyhow::Ok(false);
+                    } else {
+                        active_call.update(&mut cx, |call, cx| call.hang_up(cx))?;
+                    }
                 }
             }
 
@@ -2571,6 +2583,7 @@ impl View for Workspace {
                                                         &project,
                                                         &theme,
                                                         &self.follower_states_by_leader,
+                                                        self.active_call.as_ref(),
                                                         cx,
                                                     ))
                                                     .flex(1., true)

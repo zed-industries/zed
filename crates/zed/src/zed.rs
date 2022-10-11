@@ -1755,6 +1755,7 @@ mod tests {
             let state = Arc::get_mut(&mut app_state).unwrap();
             state.initialize_workspace = initialize_workspace;
             state.build_window_options = build_window_options;
+            call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
             editor::init(cx);
             pane::init(cx);

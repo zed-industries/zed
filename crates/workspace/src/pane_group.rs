@@ -60,9 +60,11 @@ impl PaneGroup {
         project: &ModelHandle<Project>,
         theme: &Theme,
         follower_states: &FollowerStatesByLeader,
+        active_call: Option<&ModelHandle<ActiveCall>>,
         cx: &mut RenderContext<Workspace>,
     ) -> ElementBox {
-        self.root.render(project, theme, follower_states, cx)
+        self.root
+            .render(project, theme, follower_states, active_call, cx)
     }
 
     pub(crate) fn panes(&self) -> Vec<&ViewHandle<Pane>> {
@@ -105,6 +107,7 @@ impl Member {
         project: &ModelHandle<Project>,
         theme: &Theme,
         follower_states: &FollowerStatesByLeader,
+        active_call: Option<&ModelHandle<ActiveCall>>,
         cx: &mut RenderContext<Workspace>,
     ) -> ElementBox {
         enum FollowIntoExternalProject {}
@@ -121,7 +124,7 @@ impl Member {
                         }
                     })
                     .and_then(|leader_id| {
-                        let room = ActiveCall::global(cx).read(cx).room()?.read(cx);
+                        let room = active_call?.read(cx).room()?.read(cx);
                         let collaborator = project.read(cx).collaborators().get(leader_id)?;
                         let participant = room.remote_participants().get(&leader_id)?;
                         Some((collaborator.replica_id, participant))
@@ -223,7 +226,7 @@ impl Member {
                     .with_children(prompt)
                     .boxed()
             }
-            Member::Axis(axis) => axis.render(project, theme, follower_states, cx),
+            Member::Axis(axis) => axis.render(project, theme, follower_states, active_call, cx),
         }
     }
 
@@ -328,12 +331,13 @@ impl PaneAxis {
         project: &ModelHandle<Project>,
         theme: &Theme,
         follower_state: &FollowerStatesByLeader,
+        active_call: Option<&ModelHandle<ActiveCall>>,
         cx: &mut RenderContext<Workspace>,
     ) -> ElementBox {
         let last_member_ix = self.members.len() - 1;
         Flex::new(self.axis)
             .with_children(self.members.iter().enumerate().map(|(ix, member)| {
-                let mut member = member.render(project, theme, follower_state, cx);
+                let mut member = member.render(project, theme, follower_state, active_call, cx);
                 if ix < last_member_ix {
                     let mut border = theme.workspace.pane_divider;
                     border.left = false;
