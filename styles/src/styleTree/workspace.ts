@@ -16,6 +16,27 @@ export function workspaceBackground(theme: Theme) {
 
 export default function workspace(theme: Theme) {
   const titlebarPadding = 6;
+  const titlebarButton = {
+    background: backgroundColor(theme, 100),
+    border: border(theme, "secondary"),
+    cornerRadius: 6,
+    margin: {
+      top: 1,
+    },
+    padding: {
+      top: 1,
+      bottom: 1,
+      left: 7,
+      right: 7,
+    },
+    ...text(theme, "sans", "secondary", { size: "xs" }),
+    hover: {
+      ...text(theme, "sans", "active", { size: "xs" }),
+      background: backgroundColor(theme, "on300", "hovered"),
+      border: border(theme, "primary"),
+    },
+  };
+  const avatarWidth = 18;
 
   return {
     background: backgroundColor(theme, 300),
@@ -26,6 +47,14 @@ export default function workspace(theme: Theme) {
     joiningProjectMessage: {
       padding: 12,
       ...text(theme, "sans", "primary", { size: "lg" }),
+    },
+    externalLocationMessage: {
+      background: backgroundColor(theme, "info"),
+      border: border(theme, "secondary"),
+      cornerRadius: 6,
+      padding: 12,
+      margin: { bottom: 8, right: 8 },
+      ...text(theme, "sans", "secondary", { size: "xs" }),
     },
     leaderBorderOpacity: 0.7,
     leaderBorderWidth: 2.0,
@@ -52,7 +81,7 @@ export default function workspace(theme: Theme) {
     },
     statusBar: statusBar(theme),
     titlebar: {
-      avatarWidth: 18,
+      avatarWidth,
       avatarMargin: 8,
       height: 33,
       background: backgroundColor(theme, 100),
@@ -62,11 +91,19 @@ export default function workspace(theme: Theme) {
       },
       title: text(theme, "sans", "primary"),
       avatar: {
-        cornerRadius: 10,
+        cornerRadius: avatarWidth / 2,
         border: {
           color: "#00000088",
           width: 1,
         },
+      },
+      inactiveAvatar: {
+        cornerRadius: avatarWidth / 2,
+        border: {
+          color: "#00000088",
+          width: 1,
+        },
+        grayscale: true,
       },
       avatarRibbon: {
         height: 3,
@@ -76,24 +113,7 @@ export default function workspace(theme: Theme) {
       },
       border: border(theme, "primary", { bottom: true, overlay: true }),
       signInPrompt: {
-        background: backgroundColor(theme, 100),
-        border: border(theme, "secondary"),
-        cornerRadius: 6,
-        margin: {
-          top: 1,
-        },
-        padding: {
-          top: 1,
-          bottom: 1,
-          left: 7,
-          right: 7,
-        },
-        ...text(theme, "sans", "secondary", { size: "xs" }),
-        hover: {
-          ...text(theme, "sans", "active", { size: "xs" }),
-          background: backgroundColor(theme, "on300", "hovered"),
-          border: border(theme, "primary"),
-        },
+        ...titlebarButton
       },
       offlineIcon: {
         color: iconColor(theme, "secondary"),
@@ -118,6 +138,30 @@ export default function workspace(theme: Theme) {
         },
         cornerRadius: 6,
       },
+      toggleContactsButton: {
+        cornerRadius: 6,
+        color: iconColor(theme, "secondary"),
+        iconWidth: 8,
+        buttonWidth: 20,
+        active: {
+          background: backgroundColor(theme, "on300", "active"),
+          color: iconColor(theme, "active"),
+        },
+        hover: {
+          background: backgroundColor(theme, "on300", "hovered"),
+          color: iconColor(theme, "active"),
+        },
+      },
+      toggleContactsBadge: {
+        cornerRadius: 3,
+        padding: 2,
+        margin: { top: 3, left: 3 },
+        border: { width: 1, color: workspaceBackground(theme) },
+        background: iconColor(theme, "feature"),
+      },
+      shareButton: {
+        ...titlebarButton
+      }
     },
     toolbar: {
       height: 34,

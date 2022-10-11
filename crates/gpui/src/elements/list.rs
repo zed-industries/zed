@@ -261,7 +261,8 @@ impl Element for List {
         scroll_top: &mut ListOffset,
         cx: &mut PaintContext,
     ) {
-        cx.scene.push_layer(Some(bounds));
+        let visible_bounds = visible_bounds.intersection(bounds).unwrap_or_default();
+        cx.scene.push_layer(Some(visible_bounds));
 
         cx.scene
             .push_mouse_region(MouseRegion::new::<Self>(10, 0, bounds).on_scroll({

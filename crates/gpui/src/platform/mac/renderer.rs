@@ -747,6 +747,7 @@ impl Renderer {
                     border_left: border_width * (image.border.left as usize as f32),
                     border_color: image.border.color.to_uchar4(),
                     corner_radius,
+                    grayscale: image.grayscale as u8,
                 });
         }
 
@@ -769,6 +770,7 @@ impl Renderer {
                         border_left: 0.,
                         border_color: Default::default(),
                         corner_radius: 0.,
+                        grayscale: false as u8,
                     });
             } else {
                 log::warn!("could not render glyph with id {}", image_glyph.id);

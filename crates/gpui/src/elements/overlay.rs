@@ -217,7 +217,11 @@ impl Element for Overlay {
                 ));
         }
 
-        self.child.paint(bounds.origin(), bounds, cx);
+        self.child.paint(
+            bounds.origin(),
+            RectF::new(Vector2F::zero(), cx.window_size),
+            cx,
+        );
         cx.scene.pop_stacking_context();
     }
 

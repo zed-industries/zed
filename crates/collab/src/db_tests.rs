@@ -666,13 +666,7 @@ async fn test_add_contacts() {
         let user_3 = user_ids[2];
 
         // User starts with no contacts
-        assert_eq!(
-            db.get_contacts(user_1).await.unwrap(),
-            vec![Contact::Accepted {
-                user_id: user_1,
-                should_notify: false
-            }],
-        );
+        assert_eq!(db.get_contacts(user_1).await.unwrap(), &[]);
 
         // User requests a contact. Both users see the pending request.
         db.send_contact_request(user_1, user_2).await.unwrap();
@@ -680,26 +674,14 @@ async fn test_add_contacts() {
         assert!(!db.has_contact(user_2, user_1).await.unwrap());
         assert_eq!(
             db.get_contacts(user_1).await.unwrap(),
-            &[
-                Contact::Accepted {
-                    user_id: user_1,
-                    should_notify: false
-                },
-                Contact::Outgoing { user_id: user_2 }
-            ],
+            &[Contact::Outgoing { user_id: user_2 }],
         );
         assert_eq!(
             db.get_contacts(user_2).await.unwrap(),
-            &[
-                Contact::Incoming {
-                    user_id: user_1,
-                    should_notify: true
-                },
-                Contact::Accepted {
-                    user_id: user_2,
-                    should_notify: false
-                },
-            ]
+            &[Contact::Incoming {
+                user_id: user_1,
+                should_notify: true
+            }]
         );
 
         // User 2 dismisses the contact request notification without accepting or rejecting.
@@ -712,16 +694,10 @@ async fn test_add_contacts() {
             .unwrap();
         assert_eq!(
             db.get_contacts(user_2).await.unwrap(),
-            &[
-                Contact::Incoming {
-                    user_id: user_1,
-                    should_notify: false
-                },
-                Contact::Accepted {
-                    user_id: user_2,
-                    should_notify: false
-                },
-            ]
+            &[Contact::Incoming {
+                user_id: user_1,
+                should_notify: false
+            }]
         );
 
         // User can't accept their own contact request
@@ -735,31 +711,19 @@ async fn test_add_contacts() {
             .unwrap();
         assert_eq!(
             db.get_contacts(user_1).await.unwrap(),
-            &[
-                Contact::Accepted {
-                    user_id: user_1,
-                    should_notify: false
-                },
-                Contact::Accepted {
-                    user_id: user_2,
-                    should_notify: true
-                }
-            ],
+            &[Contact::Accepted {
+                user_id: user_2,
+                should_notify: true
+            }],
         );
         assert!(db.has_contact(user_1, user_2).await.unwrap());
         assert!(db.has_contact(user_2, user_1).await.unwrap());
         assert_eq!(
             db.get_contacts(user_2).await.unwrap(),
-            &[
-                Contact::Accepted {
-                    user_id: user_1,
-                    should_notify: false,
-                },
-                Contact::Accepted {
-                    user_id: user_2,
-                    should_notify: false,
-                },
-            ]
+            &[Contact::Accepted {
+                user_id: user_1,
+                should_notify: false,
+            }]
         );
 
         // Users cannot re-request existing contacts.
@@ -772,16 +736,10 @@ async fn test_add_contacts() {
             .unwrap_err();
         assert_eq!(
             db.get_contacts(user_1).await.unwrap(),
-            &[
-                Contact::Accepted {
-                    user_id: user_1,
-                    should_notify: false
-                },
-                Contact::Accepted {
-                    user_id: user_2,
-                    should_notify: true,
-                },
-            ]
+            &[Contact::Accepted {
+                user_id: user_2,
+                should_notify: true,
+            }]
         );
 
         // Users can dismiss notifications of other users accepting their requests.
@@ -790,16 +748,10 @@ async fn test_add_contacts() {
             .unwrap();
         assert_eq!(
             db.get_contacts(user_1).await.unwrap(),
-            &[
-                Contact::Accepted {
-                    user_id: user_1,
-                    should_notify: false
-                },
-                Contact::Accepted {
-                    user_id: user_2,
-                    should_notify: false,
-                },
-            ]
+            &[Contact::Accepted {
+                user_id: user_2,
+                should_notify: false,
+            }]
         );
 
         // Users send each other concurrent contact requests and
@@ -810,31 +762,21 @@ async fn test_add_contacts() {
             db.get_contacts(user_1).await.unwrap(),
             &[
                 Contact::Accepted {
-                    user_id: user_1,
-                    should_notify: false
-                },
-                Contact::Accepted {
                     user_id: user_2,
                     should_notify: false,
                 },
                 Contact::Accepted {
                     user_id: user_3,
                     should_notify: false
-                },
+                }
             ]
         );
         assert_eq!(
             db.get_contacts(user_3).await.unwrap(),
-            &[
-                Contact::Accepted {
-                    user_id: user_1,
-                    should_notify: false
-                },
-                Contact::Accepted {
-                    user_id: user_3,
-                    should_notify: false
-                }
-            ],
+            &[Contact::Accepted {
+                user_id: user_1,
+                should_notify: false
+            }],
         );
 
         // User declines a contact request. Both users see that it is gone.
@@ -846,29 +788,17 @@ async fn test_add_contacts() {
         assert!(!db.has_contact(user_3, user_2).await.unwrap());
         assert_eq!(
             db.get_contacts(user_2).await.unwrap(),
-            &[
-                Contact::Accepted {
-                    user_id: user_1,
-                    should_notify: false
-                },
-                Contact::Accepted {
-                    user_id: user_2,
-                    should_notify: false
-                }
-            ]
+            &[Contact::Accepted {
+                user_id: user_1,
+                should_notify: false
+            }]
         );
         assert_eq!(
             db.get_contacts(user_3).await.unwrap(),
-            &[
-                Contact::Accepted {
-                    user_id: user_1,
-                    should_notify: false
-                },
-                Contact::Accepted {
-                    user_id: user_3,
-                    should_notify: false
-                }
-            ],
+            &[Contact::Accepted {
+                user_id: user_1,
+                should_notify: false
+            }],
         );
     }
 }
@@ -930,29 +860,17 @@ async fn test_invite_codes() {
     assert_eq!(db.get_user_metrics_id(user2).await.unwrap(), metrics_id);
     assert_eq!(
         db.get_contacts(user1).await.unwrap(),
-        [
-            Contact::Accepted {
-                user_id: user1,
-                should_notify: false
-            },
-            Contact::Accepted {
-                user_id: user2,
-                should_notify: true
-            }
-        ]
+        [Contact::Accepted {
+            user_id: user2,
+            should_notify: true
+        }]
     );
     assert_eq!(
         db.get_contacts(user2).await.unwrap(),
-        [
-            Contact::Accepted {
-                user_id: user1,
-                should_notify: false
-            },
-            Contact::Accepted {
-                user_id: user2,
-                should_notify: false
-            }
-        ]
+        [Contact::Accepted {
+            user_id: user1,
+            should_notify: false
+        }]
     );
     assert_eq!(
         db.get_invite_code_for_user(user2).await.unwrap().unwrap().1,
@@ -988,10 +906,6 @@ async fn test_invite_codes() {
         db.get_contacts(user1).await.unwrap(),
         [
             Contact::Accepted {
-                user_id: user1,
-                should_notify: false
-            },
-            Contact::Accepted {
                 user_id: user2,
                 should_notify: true
             },
@@ -1003,16 +917,10 @@ async fn test_invite_codes() {
     );
     assert_eq!(
         db.get_contacts(user3).await.unwrap(),
-        [
-            Contact::Accepted {
-                user_id: user1,
-                should_notify: false
-            },
-            Contact::Accepted {
-                user_id: user3,
-                should_notify: false
-            },
-        ]
+        [Contact::Accepted {
+            user_id: user1,
+            should_notify: false
+        }]
     );
     assert_eq!(
         db.get_invite_code_for_user(user3).await.unwrap().unwrap().1,
@@ -1054,10 +962,6 @@ async fn test_invite_codes() {
         db.get_contacts(user1).await.unwrap(),
         [
             Contact::Accepted {
-                user_id: user1,
-                should_notify: false
-            },
-            Contact::Accepted {
                 user_id: user2,
                 should_notify: true
             },
@@ -1073,16 +977,10 @@ async fn test_invite_codes() {
     );
     assert_eq!(
         db.get_contacts(user4).await.unwrap(),
-        [
-            Contact::Accepted {
-                user_id: user1,
-                should_notify: false
-            },
-            Contact::Accepted {
-                user_id: user4,
-                should_notify: false
-            },
-        ]
+        [Contact::Accepted {
+            user_id: user1,
+            should_notify: false
+        }]
     );
     assert_eq!(
         db.get_invite_code_for_user(user4).await.unwrap().unwrap().1,

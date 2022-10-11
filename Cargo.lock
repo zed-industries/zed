@@ -685,6 +685,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1db59621ec70f09c5e9b597b220c7a2b43611f4710dc03ceb8748637775692c"
 
 [[package]]
+name = "call"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "collections",
+ "futures",
+ "gpui",
+ "postage",
+ "project",
+ "util",
+]
+
+[[package]]
 name = "cap-fs-ext"
 version = "0.24.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1023,6 +1037,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "base64",
+ "call",
  "clap 3.2.8",
  "client",
  "collections",
@@ -1068,6 +1083,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "collab_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "call",
+ "client",
+ "clock",
+ "collections",
+ "editor",
+ "futures",
+ "fuzzy",
+ "gpui",
+ "log",
+ "menu",
+ "picker",
+ "postage",
+ "project",
+ "serde",
+ "settings",
+ "theme",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "collections"
 version = "0.1.0"
 dependencies = [
@@ -1106,54 +1146,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30ed07550be01594c6026cff2a1d7fe9c8f683caa798e12b68694ac9e88286a3"
 dependencies = [
  "cache-padded",
-]
-
-[[package]]
-name = "contacts_panel"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "collections",
- "editor",
- "futures",
- "fuzzy",
- "gpui",
- "language",
- "log",
- "menu",
- "picker",
- "postage",
- "project",
- "serde",
- "settings",
- "theme",
- "util",
- "workspace",
-]
-
-[[package]]
-name = "contacts_status_item"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "collections",
- "editor",
- "futures",
- "fuzzy",
- "gpui",
- "language",
- "log",
- "menu",
- "picker",
- "postage",
- "project",
- "serde",
- "settings",
- "theme",
- "util",
- "workspace",
 ]
 
 [[package]]
@@ -7176,8 +7168,8 @@ name = "workspace"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "call",
  "client",
- "clock",
  "collections",
  "context_menu",
  "drag_and_drop",
@@ -7247,15 +7239,15 @@ dependencies = [
  "auto_update",
  "backtrace",
  "breadcrumbs",
+ "call",
  "chat_panel",
  "chrono",
  "cli",
  "client",
  "clock",
+ "collab_ui",
  "collections",
  "command_palette",
- "contacts_panel",
- "contacts_status_item",
  "context_menu",
  "ctor",
  "diagnostics",

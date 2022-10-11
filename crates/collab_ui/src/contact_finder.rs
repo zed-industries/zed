@@ -1,21 +1,15 @@
 use client::{ContactRequestStatus, User, UserStore};
 use gpui::{
-    actions, elements::*, AnyViewHandle, Entity, ModelHandle, MouseState, MutableAppContext,
-    RenderContext, Task, View, ViewContext, ViewHandle,
+    elements::*, AnyViewHandle, Entity, ModelHandle, MouseState, MutableAppContext, RenderContext,
+    Task, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
 use std::sync::Arc;
 use util::TryFutureExt;
-use workspace::Workspace;
-
-use crate::render_icon_button;
-
-actions!(contact_finder, [Toggle]);
 
 pub fn init(cx: &mut MutableAppContext) {
     Picker::<ContactFinder>::init(cx);
-    cx.add_action(ContactFinder::toggle);
 }
 
 pub struct ContactFinder {
@@ -117,18 +111,21 @@ impl PickerDelegate for ContactFinder {
 
         let icon_path = match request_status {
             ContactRequestStatus::None | ContactRequestStatus::RequestReceived => {
-                "icons/check_8.svg"
+                Some("icons/check_8.svg")
             }
-            ContactRequestStatus::RequestSent | ContactRequestStatus::RequestAccepted => {
-                "icons/x_mark_8.svg"
-            }
+            ContactRequestStatus::RequestSent => Some("icons/x_mark_8.svg"),
+            ContactRequestStatus::RequestAccepted => None,
         };
         let button_style = if self.user_store.read(cx).is_contact_request_pending(user) {
             &theme.contact_finder.disabled_contact_button
         } else {
             &theme.contact_finder.contact_button
         };
-        let style = theme.picker.item.style_for(mouse_state, selected);
+        let style = theme
+            .contact_finder
+            .picker
+            .item
+            .style_for(mouse_state, selected);
         Flex::row()
             .with_children(user.avatar.clone().map(|avatar| {
                 Image::new(avatar)
@@ -145,12 +142,21 @@ impl PickerDelegate for ContactFinder {
                     .left()
                     .boxed(),
             )
-            .with_child(
-                render_icon_button(button_style, icon_path)
+            .with_children(icon_path.map(|icon_path| {
+                Svg::new(icon_path)
+                    .with_color(button_style.color)
+                    .constrained()
+                    .with_width(button_style.icon_width)
+                    .aligned()
+                    .contained()
+                    .with_style(button_style.container)
+                    .constrained()
+                    .with_width(button_style.button_width)
+                    .with_height(button_style.button_width)
                     .aligned()
                     .flex_float()
-                    .boxed(),
-            )
+                    .boxed()
+            }))
             .contained()
             .with_style(style.container)
             .constrained()
@@ -160,34 +166,16 @@ impl PickerDelegate for ContactFinder {
 }
 
 impl ContactFinder {
-    fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
-        workspace.toggle_modal(cx, |workspace, cx| {
-            let finder = cx.add_view(|cx| Self::new(workspace.user_store().clone(), cx));
-            cx.subscribe(&finder, Self::on_event).detach();
-            finder
-        });
-    }
-
     pub fn new(user_store: ModelHandle<UserStore>, cx: &mut ViewContext<Self>) -> Self {
         let this = cx.weak_handle();
         Self {
-            picker: cx.add_view(|cx| Picker::new(this, cx)),
+            picker: cx.add_view(|cx| {
+                Picker::new(this, cx)
+                    .with_theme(|cx| &cx.global::<Settings>().theme.contact_finder.picker)
+            }),
             potential_contacts: Arc::from([]),
             user_store,
             selected_index: 0,
-        }
-    }
-
-    fn on_event(
-        workspace: &mut Workspace,
-        _: ViewHandle<Self>,
-        event: &Event,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        match event {
-            Event::Dismissed => {
-                workspace.dismiss_modal(cx);
-            }
         }
     }
 }

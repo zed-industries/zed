@@ -10,28 +10,22 @@ pub mod searchable;
 pub mod sidebar;
 mod status_bar;
 mod toolbar;
-mod waiting_room;
 
 use anyhow::{anyhow, Context, Result};
-use client::{
-    proto, Authenticate, Client, Contact, PeerId, Subscription, TypedEnvelope, User, UserStore,
-};
-use clock::ReplicaId;
+use call::ActiveCall;
+use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use collections::{hash_map, HashMap, HashSet};
 use dock::{DefaultItemFactory, Dock, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
-use futures::{channel::oneshot, FutureExt};
+use futures::{channel::oneshot, FutureExt, StreamExt};
 use gpui::{
     actions,
-    color::Color,
     elements::*,
-    geometry::{rect::RectF, vector::vec2f, PathBuilder},
     impl_actions, impl_internal_actions,
-    json::{self, ToJson},
     platform::{CursorStyle, WindowOptions},
-    AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Border, Entity, ImageData,
-    ModelContext, ModelHandle, MouseButton, MutableAppContext, PathPromptOptions, PromptLevel,
-    RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
+    MouseButton, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::LanguageRegistry;
 use log::{error, warn};
@@ -52,7 +46,6 @@ use std::{
     cell::RefCell,
     fmt,
     future::Future,
-    ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
@@ -64,7 +57,6 @@ use std::{
 use theme::{Theme, ThemeRegistry};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
-use waiting_room::WaitingRoom;
 
 type ProjectItemBuilders = HashMap<
     TypeId,
@@ -116,12 +108,6 @@ pub struct OpenPaths {
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
-pub struct ToggleProjectOnline {
-    #[serde(skip_deserializing)]
-    pub project: Option<ModelHandle<Project>>,
-}
-
-#[derive(Clone, Deserialize, PartialEq)]
 pub struct ActivatePane(pub usize);
 
 #[derive(Clone, PartialEq)]
@@ -129,8 +115,8 @@ pub struct ToggleFollow(pub PeerId);
 
 #[derive(Clone, PartialEq)]
 pub struct JoinProject {
-    pub contact: Arc<Contact>,
-    pub project_index: usize,
+    pub project_id: u64,
+    pub follow_user_id: u64,
 }
 
 impl_internal_actions!(
@@ -142,7 +128,7 @@ impl_internal_actions!(
         RemoveWorktreeFromProject
     ]
 );
-impl_actions!(workspace, [ToggleProjectOnline, ActivatePane]);
+impl_actions!(workspace, [ActivatePane]);
 
 pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     pane::init(cx);
@@ -173,14 +159,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
             }
         }
     });
-    cx.add_global_action({
-        let app_state = Arc::downgrade(&app_state);
-        move |action: &JoinProject, cx: &mut MutableAppContext| {
-            if let Some(app_state) = app_state.upgrade() {
-                join_project(action.contact.clone(), action.project_index, &app_state, cx);
-            }
-        }
-    });
 
     cx.add_async_action(Workspace::toggle_follow);
     cx.add_async_action(Workspace::follow_next_collaborator);
@@ -188,7 +166,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_async_action(Workspace::save_all);
     cx.add_action(Workspace::add_folder_to_project);
     cx.add_action(Workspace::remove_folder_from_project);
-    cx.add_action(Workspace::toggle_project_online);
     cx.add_action(
         |workspace: &mut Workspace, _: &Unfollow, cx: &mut ViewContext<Workspace>| {
             let pane = workspace.active_pane().clone();
@@ -957,7 +934,7 @@ impl AppState {
         let languages = Arc::new(LanguageRegistry::test());
         let http_client = client::test::FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone(), cx);
-        let project_store = cx.add_model(|_| ProjectStore::new(project::Db::open_fake()));
+        let project_store = cx.add_model(|_| ProjectStore::new());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
         let themes = ThemeRegistry::new((), cx.font_cache().clone());
         Arc::new(Self {
@@ -984,7 +961,7 @@ pub struct Workspace {
     weak_self: WeakViewHandle<Self>,
     client: Arc<Client>,
     user_store: ModelHandle<client::UserStore>,
-    remote_entity_subscription: Option<Subscription>,
+    remote_entity_subscription: Option<client::Subscription>,
     fs: Arc<dyn Fs>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
@@ -995,6 +972,7 @@ pub struct Workspace {
     active_pane: ViewHandle<Pane>,
     last_active_center_pane: Option<ViewHandle<Pane>>,
     status_bar: ViewHandle<StatusBar>,
+    titlebar_item: Option<AnyViewHandle>,
     dock: Dock,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: ModelHandle<Project>,
@@ -1002,7 +980,9 @@ pub struct Workspace {
     follower_states_by_leader: FollowerStatesByLeader,
     last_leaders_by_pane: HashMap<WeakViewHandle<Pane>, PeerId>,
     window_edited: bool,
+    active_call: Option<ModelHandle<ActiveCall>>,
     _observe_current_user: Task<()>,
+    _active_call_observation: Option<gpui::Subscription>,
 }
 
 #[derive(Default)]
@@ -1111,6 +1091,14 @@ impl Workspace {
             drag_and_drop.register_container(weak_handle.clone());
         });
 
+        let mut active_call = None;
+        let mut active_call_observation = None;
+        if cx.has_global::<ModelHandle<ActiveCall>>() {
+            let call = cx.global::<ModelHandle<ActiveCall>>().clone();
+            active_call_observation = Some(cx.observe(&call, |_, _, cx| cx.notify()));
+            active_call = Some(call);
+        }
+
         let mut this = Workspace {
             modal: None,
             weak_self: weak_handle,
@@ -1124,6 +1112,7 @@ impl Workspace {
             active_pane: center_pane.clone(),
             last_active_center_pane: Some(center_pane.clone()),
             status_bar,
+            titlebar_item: None,
             notifications: Default::default(),
             client,
             remote_entity_subscription: None,
@@ -1136,7 +1125,9 @@ impl Workspace {
             follower_states_by_leader: Default::default(),
             last_leaders_by_pane: Default::default(),
             window_edited: false,
+            active_call,
             _observe_current_user,
+            _active_call_observation: active_call_observation,
         };
         this.project_remote_id_changed(this.project.read(cx).remote_id(), cx);
         cx.defer(|this, cx| this.update_window_title(cx));
@@ -1168,6 +1159,19 @@ impl Workspace {
         &self.project
     }
 
+    pub fn client(&self) -> &Arc<Client> {
+        &self.client
+    }
+
+    pub fn set_titlebar_item(
+        &mut self,
+        item: impl Into<AnyViewHandle>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.titlebar_item = Some(item.into());
+        cx.notify();
+    }
+
     /// Call the given callback with a workspace whose project is local.
     ///
     /// If the given workspace has a local project, then it will be passed
@@ -1188,7 +1192,6 @@ impl Workspace {
             let (_, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
                 let mut workspace = Workspace::new(
                     Project::local(
-                        false,
                         app_state.client.clone(),
                         app_state.user_store.clone(),
                         app_state.project_store.clone(),
@@ -1238,7 +1241,7 @@ impl Workspace {
         _: &CloseWindow,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let prepare = self.prepare_to_close(cx);
+        let prepare = self.prepare_to_close(false, cx);
         Some(cx.spawn(|this, mut cx| async move {
             if prepare.await? {
                 this.update(&mut cx, |_, cx| {
@@ -1250,8 +1253,44 @@ impl Workspace {
         }))
     }
 
-    pub fn prepare_to_close(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<bool>> {
-        self.save_all_internal(true, cx)
+    pub fn prepare_to_close(
+        &mut self,
+        quitting: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<bool>> {
+        let active_call = self.active_call.clone();
+        let window_id = cx.window_id();
+        let workspace_count = cx
+            .window_ids()
+            .flat_map(|window_id| cx.root_view::<Workspace>(window_id))
+            .count();
+        cx.spawn(|this, mut cx| async move {
+            if let Some(active_call) = active_call {
+                if !quitting
+                    && workspace_count == 1
+                    && active_call.read_with(&cx, |call, _| call.room().is_some())
+                {
+                    let answer = cx
+                        .prompt(
+                            window_id,
+                            PromptLevel::Warning,
+                            "Do you want to leave the current call?",
+                            &["Close window and hang up", "Cancel"],
+                        )
+                        .next()
+                        .await;
+                    if answer == Some(1) {
+                        return anyhow::Ok(false);
+                    } else {
+                        active_call.update(&mut cx, |call, cx| call.hang_up(cx))?;
+                    }
+                }
+            }
+
+            Ok(this
+                .update(&mut cx, |this, cx| this.save_all_internal(true, cx))
+                .await?)
+        })
     }
 
     fn save_all(&mut self, _: &SaveAll, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
@@ -1391,17 +1430,6 @@ impl Workspace {
     ) {
         self.project
             .update(cx, |project, cx| project.remove_worktree(*worktree_id, cx));
-    }
-
-    fn toggle_project_online(&mut self, action: &ToggleProjectOnline, cx: &mut ViewContext<Self>) {
-        let project = action
-            .project
-            .clone()
-            .unwrap_or_else(|| self.project.clone());
-        project.update(cx, |project, cx| {
-            let public = !project.is_online();
-            project.set_online(public, cx);
-        });
     }
 
     fn project_path_for_path(
@@ -2068,46 +2096,12 @@ impl Workspace {
         None
     }
 
-    fn render_connection_status(&self, cx: &mut RenderContext<Self>) -> Option<ElementBox> {
-        let theme = &cx.global::<Settings>().theme;
-        match &*self.client.status().borrow() {
-            client::Status::ConnectionError
-            | client::Status::ConnectionLost
-            | client::Status::Reauthenticating { .. }
-            | client::Status::Reconnecting { .. }
-            | client::Status::ReconnectionError { .. } => Some(
-                Container::new(
-                    Align::new(
-                        ConstrainedBox::new(
-                            Svg::new("icons/cloud_slash_12.svg")
-                                .with_color(theme.workspace.titlebar.offline_icon.color)
-                                .boxed(),
-                        )
-                        .with_width(theme.workspace.titlebar.offline_icon.width)
-                        .boxed(),
-                    )
-                    .boxed(),
-                )
-                .with_style(theme.workspace.titlebar.offline_icon.container)
-                .boxed(),
-            ),
-            client::Status::UpgradeRequired => Some(
-                Label::new(
-                    "Please update Zed to collaborate".to_string(),
-                    theme.workspace.titlebar.outdated_warning.text.clone(),
-                )
-                .contained()
-                .with_style(theme.workspace.titlebar.outdated_warning.container)
-                .aligned()
-                .boxed(),
-            ),
-            _ => None,
-        }
+    pub fn is_following(&self, peer_id: PeerId) -> bool {
+        self.follower_states_by_leader.contains_key(&peer_id)
     }
 
     fn render_titlebar(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
         let project = &self.project.read(cx);
-        let replica_id = project.replica_id();
         let mut worktree_root_names = String::new();
         for (i, name) in project.worktree_root_names(cx).enumerate() {
             if i > 0 {
@@ -2129,7 +2123,7 @@ impl Workspace {
 
         enum TitleBar {}
         ConstrainedBox::new(
-            MouseEventHandler::<TitleBar>::new(0, cx, |_, cx| {
+            MouseEventHandler::<TitleBar>::new(0, cx, |_, _| {
                 Container::new(
                     Stack::new()
                         .with_child(
@@ -2138,21 +2132,10 @@ impl Workspace {
                                 .left()
                                 .boxed(),
                         )
-                        .with_child(
-                            Align::new(
-                                Flex::row()
-                                    .with_children(self.render_collaborators(theme, cx))
-                                    .with_children(self.render_current_user(
-                                        self.user_store.read(cx).current_user().as_ref(),
-                                        replica_id,
-                                        theme,
-                                        cx,
-                                    ))
-                                    .with_children(self.render_connection_status(cx))
-                                    .boxed(),
-                            )
-                            .right()
-                            .boxed(),
+                        .with_children(
+                            self.titlebar_item
+                                .as_ref()
+                                .map(|item| ChildView::new(item).aligned().right().boxed()),
                         )
                         .boxed(),
                 )
@@ -2218,125 +2201,6 @@ impl Workspace {
         if is_edited != self.window_edited {
             self.window_edited = is_edited;
             cx.set_window_edited(self.window_edited)
-        }
-    }
-
-    fn render_collaborators(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> Vec<ElementBox> {
-        let mut collaborators = self
-            .project
-            .read(cx)
-            .collaborators()
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        collaborators.sort_unstable_by_key(|collaborator| collaborator.replica_id);
-        collaborators
-            .into_iter()
-            .filter_map(|collaborator| {
-                Some(self.render_avatar(
-                    collaborator.user.avatar.clone()?,
-                    collaborator.replica_id,
-                    Some((collaborator.peer_id, &collaborator.user.github_login)),
-                    theme,
-                    cx,
-                ))
-            })
-            .collect()
-    }
-
-    fn render_current_user(
-        &self,
-        user: Option<&Arc<User>>,
-        replica_id: ReplicaId,
-        theme: &Theme,
-        cx: &mut RenderContext<Self>,
-    ) -> Option<ElementBox> {
-        let status = *self.client.status().borrow();
-        if let Some(avatar) = user.and_then(|user| user.avatar.clone()) {
-            Some(self.render_avatar(avatar, replica_id, None, theme, cx))
-        } else if matches!(status, client::Status::UpgradeRequired) {
-            None
-        } else {
-            Some(
-                MouseEventHandler::<Authenticate>::new(0, cx, |state, _| {
-                    let style = theme
-                        .workspace
-                        .titlebar
-                        .sign_in_prompt
-                        .style_for(state, false);
-                    Label::new("Sign in".to_string(), style.text.clone())
-                        .contained()
-                        .with_style(style.container)
-                        .boxed()
-                })
-                .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(Authenticate))
-                .with_cursor_style(CursorStyle::PointingHand)
-                .aligned()
-                .boxed(),
-            )
-        }
-    }
-
-    fn render_avatar(
-        &self,
-        avatar: Arc<ImageData>,
-        replica_id: ReplicaId,
-        peer: Option<(PeerId, &str)>,
-        theme: &Theme,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
-        let replica_color = theme.editor.replica_selection_style(replica_id).cursor;
-        let is_followed = peer.map_or(false, |(peer_id, _)| {
-            self.follower_states_by_leader.contains_key(&peer_id)
-        });
-        let mut avatar_style = theme.workspace.titlebar.avatar;
-        if is_followed {
-            avatar_style.border = Border::all(1.0, replica_color);
-        }
-        let content = Stack::new()
-            .with_child(
-                Image::new(avatar)
-                    .with_style(avatar_style)
-                    .constrained()
-                    .with_width(theme.workspace.titlebar.avatar_width)
-                    .aligned()
-                    .boxed(),
-            )
-            .with_child(
-                AvatarRibbon::new(replica_color)
-                    .constrained()
-                    .with_width(theme.workspace.titlebar.avatar_ribbon.width)
-                    .with_height(theme.workspace.titlebar.avatar_ribbon.height)
-                    .aligned()
-                    .bottom()
-                    .boxed(),
-            )
-            .constrained()
-            .with_width(theme.workspace.titlebar.avatar_width)
-            .contained()
-            .with_margin_left(theme.workspace.titlebar.avatar_margin)
-            .boxed();
-
-        if let Some((peer_id, peer_github_login)) = peer {
-            MouseEventHandler::<ToggleFollow>::new(replica_id.into(), cx, move |_, _| content)
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, cx| {
-                    cx.dispatch_action(ToggleFollow(peer_id))
-                })
-                .with_tooltip::<ToggleFollow, _>(
-                    peer_id.0 as usize,
-                    if is_followed {
-                        format!("Unfollow {}", peer_github_login)
-                    } else {
-                        format!("Follow {}", peer_github_login)
-                    },
-                    Some(Box::new(FollowNextCollaborator)),
-                    theme.tooltip.clone(),
-                    cx,
-                )
-                .boxed()
-        } else {
-            content
         }
     }
 
@@ -2698,6 +2562,7 @@ impl View for Workspace {
                     .with_child(
                         Stack::new()
                             .with_child({
+                                let project = self.project.clone();
                                 Flex::row()
                                     .with_children(
                                         if self.left_sidebar.read(cx).active_item().is_some() {
@@ -2715,9 +2580,11 @@ impl View for Workspace {
                                             Flex::column()
                                                 .with_child(
                                                     FlexItem::new(self.center.render(
+                                                        &project,
                                                         &theme,
                                                         &self.follower_states_by_leader,
-                                                        self.project.read(cx).collaborators(),
+                                                        self.active_call.as_ref(),
+                                                        cx,
                                                     ))
                                                     .flex(1., true)
                                                     .boxed(),
@@ -2814,87 +2681,6 @@ impl WorkspaceHandle for ViewHandle<Workspace> {
     }
 }
 
-pub struct AvatarRibbon {
-    color: Color,
-}
-
-impl AvatarRibbon {
-    pub fn new(color: Color) -> AvatarRibbon {
-        AvatarRibbon { color }
-    }
-}
-
-impl Element for AvatarRibbon {
-    type LayoutState = ();
-
-    type PaintState = ();
-
-    fn layout(
-        &mut self,
-        constraint: gpui::SizeConstraint,
-        _: &mut gpui::LayoutContext,
-    ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
-        (constraint.max, ())
-    }
-
-    fn paint(
-        &mut self,
-        bounds: gpui::geometry::rect::RectF,
-        _: gpui::geometry::rect::RectF,
-        _: &mut Self::LayoutState,
-        cx: &mut gpui::PaintContext,
-    ) -> Self::PaintState {
-        let mut path = PathBuilder::new();
-        path.reset(bounds.lower_left());
-        path.curve_to(
-            bounds.origin() + vec2f(bounds.height(), 0.),
-            bounds.origin(),
-        );
-        path.line_to(bounds.upper_right() - vec2f(bounds.height(), 0.));
-        path.curve_to(bounds.lower_right(), bounds.upper_right());
-        path.line_to(bounds.lower_left());
-        cx.scene.push_path(path.build(self.color, None));
-    }
-
-    fn dispatch_event(
-        &mut self,
-        _: &gpui::Event,
-        _: RectF,
-        _: RectF,
-        _: &mut Self::LayoutState,
-        _: &mut Self::PaintState,
-        _: &mut gpui::EventContext,
-    ) -> bool {
-        false
-    }
-
-    fn rect_for_text_range(
-        &self,
-        _: Range<usize>,
-        _: RectF,
-        _: RectF,
-        _: &Self::LayoutState,
-        _: &Self::PaintState,
-        _: &gpui::MeasurementContext,
-    ) -> Option<RectF> {
-        None
-    }
-
-    fn debug(
-        &self,
-        bounds: gpui::geometry::rect::RectF,
-        _: &Self::LayoutState,
-        _: &Self::PaintState,
-        _: &gpui::DebugContext,
-    ) -> gpui::json::Value {
-        json::json!({
-            "type": "AvatarRibbon",
-            "bounds": bounds.to_json(),
-            "color": self.color.to_json(),
-        })
-    }
-}
-
 impl std::fmt::Debug for OpenPaths {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OpenPaths")
@@ -2964,7 +2750,6 @@ pub fn open_paths(
 
             cx.add_window((app_state.build_window_options)(), |cx| {
                 let project = Project::local(
-                    false,
                     app_state.client.clone(),
                     app_state.user_store.clone(),
                     app_state.project_store.clone(),
@@ -2989,44 +2774,14 @@ pub fn open_paths(
             })
             .await;
 
-        if let Some(project) = new_project {
-            project
-                .update(&mut cx, |project, cx| project.restore_state(cx))
-                .await
-                .log_err();
-        }
-
         (workspace, items)
     })
-}
-
-pub fn join_project(
-    contact: Arc<Contact>,
-    project_index: usize,
-    app_state: &Arc<AppState>,
-    cx: &mut MutableAppContext,
-) {
-    let project_id = contact.projects[project_index].id;
-
-    for window_id in cx.window_ids().collect::<Vec<_>>() {
-        if let Some(workspace) = cx.root_view::<Workspace>(window_id) {
-            if workspace.read(cx).project().read(cx).remote_id() == Some(project_id) {
-                cx.activate_window(window_id);
-                return;
-            }
-        }
-    }
-
-    cx.add_window((app_state.build_window_options)(), |cx| {
-        WaitingRoom::new(contact, project_index, app_state.clone(), cx)
-    });
 }
 
 fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
     let (window_id, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
         let mut workspace = Workspace::new(
             Project::local(
-                false,
                 app_state.client.clone(),
                 app_state.user_store.clone(),
                 app_state.project_store.clone(),
@@ -3236,7 +2991,7 @@ mod tests {
         // When there are no dirty items, there's nothing to do.
         let item1 = cx.add_view(&workspace, |_| TestItem::new());
         workspace.update(cx, |w, cx| w.add_item(Box::new(item1.clone()), cx));
-        let task = workspace.update(cx, |w, cx| w.prepare_to_close(cx));
+        let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
         assert!(task.await.unwrap());
 
         // When there are dirty untitled items, prompt to save each one. If the user
@@ -3256,7 +3011,7 @@ mod tests {
             w.add_item(Box::new(item2.clone()), cx);
             w.add_item(Box::new(item3.clone()), cx);
         });
-        let task = workspace.update(cx, |w, cx| w.prepare_to_close(cx));
+        let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
         cx.foreground().run_until_parked();
         cx.simulate_prompt_answer(window_id, 2 /* cancel */);
         cx.foreground().run_until_parked();

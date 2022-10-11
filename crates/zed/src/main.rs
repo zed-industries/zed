@@ -112,7 +112,6 @@ fn main() {
         go_to_line::init(cx);
         file_finder::init(cx);
         chat_panel::init(cx);
-        contacts_panel::init(cx);
         outline::init(cx);
         project_symbols::init(cx);
         project_panel::init(cx);
@@ -138,11 +137,11 @@ fn main() {
         })
         .detach();
 
+        let project_store = cx.add_model(|_| ProjectStore::new());
         let db = cx.background().block(db);
         client.start_telemetry(db.clone());
         client.report_event("start app", Default::default());
 
-        let project_store = cx.add_model(|_| ProjectStore::new(db.clone()));
         let app_state = Arc::new(AppState {
             languages,
             themes,
@@ -159,6 +158,7 @@ fn main() {
         journal::init(app_state.clone(), cx);
         theme_selector::init(app_state.clone(), cx);
         zed::init(&app_state, cx);
+        collab_ui::init(app_state.clone(), cx);
 
         cx.set_menus(menus::menus());
 

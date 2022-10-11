@@ -91,7 +91,7 @@ pub fn run_test(
 
                 cx.update(|cx| cx.remove_all_windows());
                 deterministic.run_until_parked();
-                cx.update(|_| {}); // flush effects
+                cx.update(|cx| cx.clear_globals());
 
                 leak_detector.lock().detect();
                 if is_last_iteration {

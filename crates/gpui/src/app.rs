@@ -786,6 +786,24 @@ impl AsyncAppContext {
         self.update(|cx| cx.add_window(window_options, build_root_view))
     }
 
+    pub fn remove_window(&mut self, window_id: usize) {
+        self.update(|cx| cx.remove_window(window_id))
+    }
+
+    pub fn activate_window(&mut self, window_id: usize) {
+        self.update(|cx| cx.activate_window(window_id))
+    }
+
+    pub fn prompt(
+        &mut self,
+        window_id: usize,
+        level: PromptLevel,
+        msg: &str,
+        answers: &[&str],
+    ) -> oneshot::Receiver<usize> {
+        self.update(|cx| cx.prompt(window_id, level, msg, answers))
+    }
+
     pub fn platform(&self) -> Arc<dyn Platform> {
         self.0.borrow().platform()
     }
@@ -1519,6 +1537,17 @@ impl MutableAppContext {
         }
     }
 
+    pub fn observe_default_global<G, F>(&mut self, observe: F) -> Subscription
+    where
+        G: Any + Default,
+        F: 'static + FnMut(&mut MutableAppContext),
+    {
+        if !self.has_global::<G>() {
+            self.set_global(G::default());
+        }
+        self.observe_global::<G, F>(observe)
+    }
+
     pub fn observe_release<E, H, F>(&mut self, handle: &H, callback: F) -> Subscription
     where
         E: Entity,
@@ -1887,6 +1916,10 @@ impl MutableAppContext {
         })
     }
 
+    pub fn clear_globals(&mut self) {
+        self.cx.globals.clear();
+    }
+
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>
     where
         T: Entity,
@@ -1965,6 +1998,10 @@ impl MutableAppContext {
 
             (window_id, root_view)
         })
+    }
+
+    pub fn remove_status_bar_item(&mut self, id: usize) {
+        self.remove_window(id);
     }
 
     fn register_platform_window(
@@ -4649,6 +4686,12 @@ impl<T> PartialEq for WeakModelHandle<T> {
 }
 
 impl<T> Eq for WeakModelHandle<T> {}
+
+impl<T: Entity> PartialEq<ModelHandle<T>> for WeakModelHandle<T> {
+    fn eq(&self, other: &ModelHandle<T>) -> bool {
+        self.model_id == other.model_id
+    }
+}
 
 impl<T> Clone for WeakModelHandle<T> {
     fn clone(&self) -> Self {

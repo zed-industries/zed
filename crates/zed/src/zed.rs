@@ -10,9 +10,8 @@ use anyhow::{anyhow, Context, Result};
 use assets::Assets;
 use breadcrumbs::Breadcrumbs;
 pub use client;
+use collab_ui::CollabTitlebarItem;
 use collections::VecDeque;
-pub use contacts_panel;
-use contacts_panel::ContactsPanel;
 pub use editor;
 use editor::{Editor, MultiBuffer};
 use gpui::{
@@ -214,15 +213,9 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
             workspace.toggle_sidebar_item_focus(SidebarSide::Left, 0, cx);
         },
     );
-    cx.add_action(
-        |workspace: &mut Workspace,
-         _: &contacts_panel::ToggleFocus,
-         cx: &mut ViewContext<Workspace>| {
-            workspace.toggle_sidebar_item_focus(SidebarSide::Right, 0, cx);
-        },
-    );
 
     activity_indicator::init(cx);
+    call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
     settings::KeymapFileContent::load_defaults(cx);
 }
 
@@ -231,7 +224,8 @@ pub fn initialize_workspace(
     app_state: &Arc<AppState>,
     cx: &mut ViewContext<Workspace>,
 ) {
-    cx.subscribe(&cx.handle(), {
+    let workspace_handle = cx.handle();
+    cx.subscribe(&workspace_handle, {
         move |_, _, event, cx| {
             if let workspace::Event::PaneAdded(pane) = event {
                 pane.update(cx, |pane, cx| {
@@ -285,29 +279,16 @@ pub fn initialize_workspace(
         }));
     });
 
-    let project_panel = ProjectPanel::new(workspace.project().clone(), cx);
-    let contact_panel = cx.add_view(|cx| {
-        ContactsPanel::new(
-            app_state.user_store.clone(),
-            app_state.project_store.clone(),
-            workspace.weak_handle(),
-            cx,
-        )
-    });
+    let collab_titlebar_item =
+        cx.add_view(|cx| CollabTitlebarItem::new(&workspace_handle, &app_state.user_store, cx));
+    workspace.set_titlebar_item(collab_titlebar_item, cx);
 
+    let project_panel = ProjectPanel::new(workspace.project().clone(), cx);
     workspace.left_sidebar().update(cx, |sidebar, cx| {
         sidebar.add_item(
             "icons/folder_tree_16.svg",
             "Project Panel".to_string(),
             project_panel,
-            cx,
-        )
-    });
-    workspace.right_sidebar().update(cx, |sidebar, cx| {
-        sidebar.add_item(
-            "icons/user_group_16.svg",
-            "Contacts Panel".to_string(),
-            contact_panel,
             cx,
         )
     });
@@ -363,7 +344,9 @@ fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
         // If the user cancels any save prompt, then keep the app open.
         for workspace in workspaces {
             if !workspace
-                .update(&mut cx, |workspace, cx| workspace.prepare_to_close(cx))
+                .update(&mut cx, |workspace, cx| {
+                    workspace.prepare_to_close(true, cx)
+                })
                 .await?
             {
                 return Ok(());
@@ -1772,6 +1755,7 @@ mod tests {
             let state = Arc::get_mut(&mut app_state).unwrap();
             state.initialize_workspace = initialize_workspace;
             state.build_window_options = build_window_options;
+            call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
             editor::init(cx);
             pane::init(cx);

@@ -84,7 +84,23 @@ async fn main() {
                     },
                 )
                 .await
-                .expect("failed to insert user"),
+                .expect("failed to insert user")
+                .user_id,
+            );
+        } else if admin {
+            zed_user_ids.push(
+                db.create_user(
+                    &format!("{}@zed.dev", github_user.login),
+                    admin,
+                    db::NewUserParams {
+                        github_login: github_user.login,
+                        github_user_id: github_user.id,
+                        invite_count: 5,
+                    },
+                )
+                .await
+                .expect("failed to insert user")
+                .user_id,
             );
         }
     }

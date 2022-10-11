@@ -395,7 +395,6 @@
         "context": "Workspace",
         "bindings": {
             "shift-escape": "dock::FocusDock",
-            "cmd-shift-c": "contacts_panel::ToggleFocus",
             "cmd-shift-b": "workspace::ToggleRightSidebar"
         }
     },

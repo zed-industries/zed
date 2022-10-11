@@ -726,6 +726,8 @@ impl Element for TerminalElement {
         layout: &mut Self::LayoutState,
         cx: &mut gpui::PaintContext,
     ) -> Self::PaintState {
+        let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
+
         //Setup element stuff
         let clip_bounds = Some(visible_bounds);
 

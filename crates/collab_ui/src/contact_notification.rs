@@ -49,10 +49,7 @@ impl View for ContactNotification {
                 self.user.clone(),
                 "wants to add you as a contact",
                 Some("They won't know if you decline."),
-                RespondToContactRequest {
-                    user_id: self.user.id,
-                    accept: false,
-                },
+                Dismiss(self.user.id),
                 vec![
                     (
                         "Decline",

@@ -1731,7 +1731,8 @@ impl Element for EditorElement {
         layout: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        cx.scene.push_layer(Some(bounds));
+        let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
+        cx.scene.push_layer(Some(visible_bounds));
 
         let gutter_bounds = RectF::new(bounds.origin(), layout.gutter_size);
         let text_bounds = RectF::new(

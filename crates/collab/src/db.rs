@@ -1098,10 +1098,7 @@ impl Db for PostgresDb {
             .bind(user_id)
             .fetch(&self.pool);
 
-        let mut contacts = vec![Contact::Accepted {
-            user_id,
-            should_notify: false,
-        }];
+        let mut contacts = Vec::new();
         while let Some(row) = rows.next().await {
             let (user_id_a, user_id_b, a_to_b, accepted, should_notify) = row?;
 
@@ -2080,10 +2077,7 @@ mod test {
 
         async fn get_contacts(&self, id: UserId) -> Result<Vec<Contact>> {
             self.background.simulate_random_delay().await;
-            let mut contacts = vec![Contact::Accepted {
-                user_id: id,
-                should_notify: false,
-            }];
+            let mut contacts = Vec::new();
 
             for contact in self.contacts.lock().iter() {
                 if contact.requester_id == id {

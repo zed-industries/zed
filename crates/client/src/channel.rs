@@ -530,7 +530,7 @@ impl ChannelMessage {
     ) -> Result<Self> {
         let sender = user_store
             .update(cx, |user_store, cx| {
-                user_store.fetch_user(message.sender_id, cx)
+                user_store.get_user(message.sender_id, cx)
             })
             .await?;
         Ok(ChannelMessage {

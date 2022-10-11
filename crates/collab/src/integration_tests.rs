@@ -5,9 +5,10 @@ use crate::{
 };
 use ::rpc::Peer;
 use anyhow::anyhow;
+use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{
-    self, proto, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Connection,
-    Credentials, EstablishConnectionError, ProjectMetadata, UserStore, RECEIVE_TIMEOUT,
+    self, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Connection,
+    Credentials, EstablishConnectionError, User, UserStore, RECEIVE_TIMEOUT,
 };
 use collections::{BTreeMap, HashMap, HashSet};
 use editor::{
@@ -39,8 +40,8 @@ use serde_json::json;
 use settings::{Formatter, Settings};
 use sqlx::types::time::OffsetDateTime;
 use std::{
-    cell::RefCell,
-    env,
+    cell::{Cell, RefCell},
+    env, mem,
     ops::Deref,
     path::{Path, PathBuf},
     rc::Rc,
@@ -62,20 +63,487 @@ fn init_logger() {
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_share_project(
+async fn test_basic_calls(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
     cx_b2: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
 ) {
-    cx_a.foreground().forbid_parking();
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+    server
+        .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_c = cx_c.read(ActiveCall::global);
+
+    // Call user B from client A.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+    deterministic.run_until_parked();
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: Default::default(),
+            pending: vec!["user_b".to_string()]
+        }
+    );
+
+    // User B receives the call.
+    let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
+    let call_b = incoming_call_b.next().await.unwrap().unwrap();
+    assert_eq!(call_b.caller.github_login, "user_a");
+
+    // User B connects via another client and also receives a ring on the newly-connected client.
+    let _client_b2 = server.create_client(cx_b2, "user_b").await;
+    let active_call_b2 = cx_b2.read(ActiveCall::global);
+    let mut incoming_call_b2 = active_call_b2.read_with(cx_b2, |call, _| call.incoming());
+    deterministic.run_until_parked();
+    let call_b2 = incoming_call_b2.next().await.unwrap().unwrap();
+    assert_eq!(call_b2.caller.github_login, "user_a");
+
+    // User B joins the room using the first client.
+    active_call_b
+        .update(cx_b, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+    let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
+    assert!(incoming_call_b.next().await.unwrap().is_none());
+
+    deterministic.run_until_parked();
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: vec!["user_b".to_string()],
+            pending: Default::default()
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: vec!["user_a".to_string()],
+            pending: Default::default()
+        }
+    );
+
+    // Call user C from client B.
+    let mut incoming_call_c = active_call_c.read_with(cx_c, |call, _| call.incoming());
+    active_call_b
+        .update(cx_b, |call, cx| {
+            call.invite(client_c.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: vec!["user_b".to_string()],
+            pending: vec!["user_c".to_string()]
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: vec!["user_a".to_string()],
+            pending: vec!["user_c".to_string()]
+        }
+    );
+
+    // User C receives the call, but declines it.
+    let call_c = incoming_call_c.next().await.unwrap().unwrap();
+    assert_eq!(call_c.caller.github_login, "user_b");
+    active_call_c.update(cx_c, |call, _| call.decline_incoming().unwrap());
+    assert!(incoming_call_c.next().await.unwrap().is_none());
+
+    deterministic.run_until_parked();
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: vec!["user_b".to_string()],
+            pending: Default::default()
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: vec!["user_a".to_string()],
+            pending: Default::default()
+        }
+    );
+
+    // User A leaves the room.
+    active_call_a.update(cx_a, |call, cx| {
+        call.hang_up(cx).unwrap();
+        assert!(call.room().is_none());
+    });
+    deterministic.run_until_parked();
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: Default::default(),
+            pending: Default::default()
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: Default::default(),
+            pending: Default::default()
+        }
+    );
+
+    // User B leaves the room.
+    active_call_b.update(cx_b, |call, cx| {
+        call.hang_up(cx).unwrap();
+        assert!(call.room().is_none());
+    });
+    deterministic.run_until_parked();
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: Default::default(),
+            pending: Default::default()
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: Default::default(),
+            pending: Default::default()
+        }
+    );
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_room_uniqueness(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_a2: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    cx_b2: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let _client_a2 = server.create_client(cx_a2, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let _client_b2 = server.create_client(cx_b2, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+    server
+        .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_a2 = cx_a2.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_b2 = cx_b2.read(ActiveCall::global);
+    let active_call_c = cx_c.read(ActiveCall::global);
+
+    // Call user B from client A.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+
+    // Ensure a new room can't be created given user A just created one.
+    active_call_a2
+        .update(cx_a2, |call, cx| {
+            call.invite(client_c.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap_err();
+    active_call_a2.read_with(cx_a2, |call, _| assert!(call.room().is_none()));
+
+    // User B receives the call from user A.
+    let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
+    let call_b1 = incoming_call_b.next().await.unwrap().unwrap();
+    assert_eq!(call_b1.caller.github_login, "user_a");
+
+    // Ensure calling users A and B from client C fails.
+    active_call_c
+        .update(cx_c, |call, cx| {
+            call.invite(client_a.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap_err();
+    active_call_c
+        .update(cx_c, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap_err();
+
+    // Ensure User B can't create a room while they still have an incoming call.
+    active_call_b2
+        .update(cx_b2, |call, cx| {
+            call.invite(client_c.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap_err();
+    active_call_b2.read_with(cx_b2, |call, _| assert!(call.room().is_none()));
+
+    // User B joins the room and calling them after they've joined still fails.
+    active_call_b
+        .update(cx_b, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+    active_call_c
+        .update(cx_c, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap_err();
+
+    // Ensure User B can't create a room while they belong to another room.
+    active_call_b2
+        .update(cx_b2, |call, cx| {
+            call.invite(client_c.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap_err();
+    active_call_b2.read_with(cx_b2, |call, _| assert!(call.room().is_none()));
+
+    // Client C can successfully call client B after client B leaves the room.
+    active_call_b
+        .update(cx_b, |call, cx| call.hang_up(cx))
+        .unwrap();
+    deterministic.run_until_parked();
+    active_call_c
+        .update(cx_c, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    let call_b2 = incoming_call_b.next().await.unwrap().unwrap();
+    assert_eq!(call_b2.caller.github_login, "user_c");
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_leaving_room_on_disconnection(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    // Call user B from client A.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+
+    // User B receives the call and joins the room.
+    let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
+    incoming_call_b.next().await.unwrap().unwrap();
+    active_call_b
+        .update(cx_b, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+    let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
+    deterministic.run_until_parked();
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: vec!["user_b".to_string()],
+            pending: Default::default()
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: vec!["user_a".to_string()],
+            pending: Default::default()
+        }
+    );
+
+    // When user A disconnects, both client A and B clear their room on the active call.
+    server.disconnect_client(client_a.current_user_id(cx_a));
+    cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
+    active_call_a.read_with(cx_a, |call, _| assert!(call.room().is_none()));
+    active_call_b.read_with(cx_b, |call, _| assert!(call.room().is_none()));
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: Default::default(),
+            pending: Default::default()
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: Default::default(),
+            pending: Default::default()
+        }
+    );
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_calls_on_multiple_connections(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b1: &mut TestAppContext,
+    cx_b2: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b1 = server.create_client(cx_b1, "user_b").await;
+    let _client_b2 = server.create_client(cx_b2, "user_b").await;
+    server
+        .make_contacts(&mut [(&client_a, cx_a), (&client_b1, cx_b1)])
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b1 = cx_b1.read(ActiveCall::global);
+    let active_call_b2 = cx_b2.read(ActiveCall::global);
+    let mut incoming_call_b1 = active_call_b1.read_with(cx_b1, |call, _| call.incoming());
+    let mut incoming_call_b2 = active_call_b2.read_with(cx_b2, |call, _| call.incoming());
+    assert!(incoming_call_b1.next().await.unwrap().is_none());
+    assert!(incoming_call_b2.next().await.unwrap().is_none());
+
+    // Call user B from client A, ensuring both clients for user B ring.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b1.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert!(incoming_call_b1.next().await.unwrap().is_some());
+    assert!(incoming_call_b2.next().await.unwrap().is_some());
+
+    // User B declines the call on one of the two connections, causing both connections
+    // to stop ringing.
+    active_call_b2.update(cx_b2, |call, _| call.decline_incoming().unwrap());
+    deterministic.run_until_parked();
+    assert!(incoming_call_b1.next().await.unwrap().is_none());
+    assert!(incoming_call_b2.next().await.unwrap().is_none());
+
+    // Call user B again from client A.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b1.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert!(incoming_call_b1.next().await.unwrap().is_some());
+    assert!(incoming_call_b2.next().await.unwrap().is_some());
+
+    // User B accepts the call on one of the two connections, causing both connections
+    // to stop ringing.
+    active_call_b2
+        .update(cx_b2, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert!(incoming_call_b1.next().await.unwrap().is_none());
+    assert!(incoming_call_b2.next().await.unwrap().is_none());
+
+    // User B hangs up, and user A calls them again.
+    active_call_b2.update(cx_b2, |call, cx| call.hang_up(cx).unwrap());
+    deterministic.run_until_parked();
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b1.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert!(incoming_call_b1.next().await.unwrap().is_some());
+    assert!(incoming_call_b2.next().await.unwrap().is_some());
+
+    // User A cancels the call, causing both connections to stop ringing.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.cancel_invite(client_b1.user_id().unwrap(), cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert!(incoming_call_b1.next().await.unwrap().is_none());
+    assert!(incoming_call_b2.next().await.unwrap().is_none());
+
+    // User A calls user B again.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b1.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert!(incoming_call_b1.next().await.unwrap().is_some());
+    assert!(incoming_call_b2.next().await.unwrap().is_some());
+
+    // User A hangs up, causing both connections to stop ringing.
+    active_call_a.update(cx_a, |call, cx| call.hang_up(cx).unwrap());
+    deterministic.run_until_parked();
+    assert!(incoming_call_b1.next().await.unwrap().is_none());
+    assert!(incoming_call_b2.next().await.unwrap().is_none());
+
+    // User A calls user B again.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b1.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert!(incoming_call_b1.next().await.unwrap().is_some());
+    assert!(incoming_call_b2.next().await.unwrap().is_some());
+
+    // User A disconnects up, causing both connections to stop ringing.
+    server.disconnect_client(client_a.current_user_id(cx_a));
+    cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
+    assert!(incoming_call_b1.next().await.unwrap().is_none());
+    assert!(incoming_call_b2.next().await.unwrap().is_none());
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_share_project(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
     let (_, window_b) = cx_b.add_window(|_| EmptyView);
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
 
     client_a
         .fs
@@ -93,30 +561,35 @@ async fn test_share_project(
         )
         .await;
 
+    // Invite client B to collaborate on a project
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = project_a.read_with(cx_a, |project, _| project.remote_id().unwrap());
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), Some(project_a.clone()), cx)
+        })
+        .await
+        .unwrap();
 
     // Join that project as client B
+    let incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
+    deterministic.run_until_parked();
+    let call = incoming_call_b.borrow().clone().unwrap();
+    assert_eq!(call.caller.github_login, "user_a");
+    let initial_project = call.initial_project.unwrap();
+    active_call_b
+        .update(cx_b, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
     let client_b_peer_id = client_b.peer_id;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
-    let replica_id_b = project_b.read_with(cx_b, |project, _| {
-        assert_eq!(
-            project
-                .collaborators()
-                .get(&client_a.peer_id)
-                .unwrap()
-                .user
-                .github_login,
-            "user_a"
-        );
-        project.replica_id()
-    });
+    let project_b = client_b
+        .build_remote_project(initial_project.id, cx_b)
+        .await;
+    let replica_id_b = project_b.read_with(cx_b, |project, _| project.replica_id());
 
     deterministic.run_until_parked();
     project_a.read_with(cx_a, |project, _| {
         let client_b_collaborator = project.collaborators().get(&client_b_peer_id).unwrap();
         assert_eq!(client_b_collaborator.replica_id, replica_id_b);
-        assert_eq!(client_b_collaborator.user.github_login, "user_b");
     });
     project_b.read_with(cx_b, |project, cx| {
         let worktree = project.worktrees(cx).next().unwrap().read(cx);
@@ -167,40 +640,6 @@ async fn test_share_project(
     // buffer_a
     //     .condition(&cx_a, |buffer, _| buffer.selection_sets().count() == 0)
     //     .await;
-
-    // Client B can join again on a different window because they are already a participant.
-    let client_b2 = server.create_client(cx_b2, "user_b").await;
-    let project_b2 = Project::remote(
-        project_id,
-        client_b2.client.clone(),
-        client_b2.user_store.clone(),
-        client_b2.project_store.clone(),
-        client_b2.language_registry.clone(),
-        FakeFs::new(cx_b2.background()),
-        cx_b2.to_async(),
-    )
-    .await
-    .unwrap();
-    deterministic.run_until_parked();
-    project_a.read_with(cx_a, |project, _| {
-        assert_eq!(project.collaborators().len(), 2);
-    });
-    project_b.read_with(cx_b, |project, _| {
-        assert_eq!(project.collaborators().len(), 2);
-    });
-    project_b2.read_with(cx_b2, |project, _| {
-        assert_eq!(project.collaborators().len(), 2);
-    });
-
-    // Dropping client B's first project removes only that from client A's collaborators.
-    cx_b.update(move |_| drop(project_b));
-    deterministic.run_until_parked();
-    project_a.read_with(cx_a, |project, _| {
-        assert_eq!(project.collaborators().len(), 1);
-    });
-    project_b2.read_with(cx_b2, |project, _| {
-        assert_eq!(project.collaborators().len(), 1);
-    });
 }
 
 #[gpui::test(iterations = 10)]
@@ -208,14 +647,19 @@ async fn test_unshare_project(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
 ) {
-    cx_a.foreground().forbid_parking();
+    deterministic.forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
 
     client_a
         .fs
@@ -229,8 +673,12 @@ async fn test_unshare_project(
         .await;
 
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
     let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
     project_b
@@ -238,23 +686,39 @@ async fn test_unshare_project(
         .await
         .unwrap();
 
-    // When client B leaves the project, it gets automatically unshared.
-    cx_b.update(|_| drop(project_b));
+    // When client B leaves the room, the project becomes read-only.
+    active_call_b.update(cx_b, |call, cx| call.hang_up(cx).unwrap());
+    deterministic.run_until_parked();
+    assert!(project_b.read_with(cx_b, |project, _| project.is_read_only()));
+
+    // Client C opens the project.
+    let project_c = client_c.build_remote_project(project_id, cx_c).await;
+
+    // When client A unshares the project, client C's project becomes read-only.
+    project_a
+        .update(cx_a, |project, cx| project.unshare(cx))
+        .unwrap();
     deterministic.run_until_parked();
     assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
+    assert!(project_c.read_with(cx_c, |project, _| project.is_read_only()));
 
-    // When client B joins again, the project gets re-shared.
-    let project_b2 = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    // Client C can open the project again after client A re-shares.
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_c2 = client_c.build_remote_project(project_id, cx_c).await;
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
-    project_b2
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+    project_c2
+        .update(cx_c, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
         .unwrap();
 
-    // When client A (the host) leaves, the project gets unshared and guests are notified.
-    cx_a.update(|_| drop(project_a));
+    // When client A (the host) leaves the room, the project gets unshared and guests are notified.
+    active_call_a.update(cx_a, |call, cx| call.hang_up(cx).unwrap());
     deterministic.run_until_parked();
-    project_b2.read_with(cx_b, |project, _| {
+    project_a.read_with(cx_a, |project, _| assert!(!project.is_shared()));
+    project_c2.read_with(cx_c, |project, _| {
         assert!(project.is_read_only());
         assert!(project.collaborators().is_empty());
     });
@@ -274,11 +738,7 @@ async fn test_host_disconnect(
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
     server
-        .make_contacts(vec![
-            (&client_a, cx_a),
-            (&client_b, cx_b),
-            (&client_c, cx_c),
-        ])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
 
     client_a
@@ -292,11 +752,15 @@ async fn test_host_disconnect(
         )
         .await;
 
+    let active_call_a = cx_a.read(ActiveCall::global);
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
     let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
-    let project_id = project_a.read_with(cx_a, |project, _| project.remote_id().unwrap());
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
 
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
     let (_, workspace_b) =
@@ -318,20 +782,6 @@ async fn test_host_disconnect(
     editor_b.update(cx_b, |editor, cx| editor.insert("X", cx));
     assert!(cx_b.is_window_edited(workspace_b.window_id()));
 
-    // Request to join that project as client C
-    let project_c = cx_c.spawn(|cx| {
-        Project::remote(
-            project_id,
-            client_c.client.clone(),
-            client_c.user_store.clone(),
-            client_c.project_store.clone(),
-            client_c.language_registry.clone(),
-            FakeFs::new(cx.background()),
-            cx,
-        )
-    });
-    deterministic.run_until_parked();
-
     // Drop client A's connection. Collaborators should disappear and the project should not be shown as shared.
     server.disconnect_client(client_a.current_user_id(cx_a));
     cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
@@ -343,10 +793,6 @@ async fn test_host_disconnect(
         .condition(cx_b, |project, _| project.is_read_only())
         .await;
     assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
-    assert!(matches!(
-        project_c.await.unwrap_err(),
-        project::JoinProjectError::HostWentOffline
-    ));
 
     // Ensure client B's edited state is reset and that the whole window is blurred.
     cx_b.read(|cx| {
@@ -355,447 +801,265 @@ async fn test_host_disconnect(
     assert!(!cx_b.is_window_edited(workspace_b.window_id()));
 
     // Ensure client B is not prompted to save edits when closing window after disconnecting.
-    workspace_b
-        .update(cx_b, |workspace, cx| {
-            workspace.close(&Default::default(), cx)
-        })
-        .unwrap()
+    let can_close = workspace_b
+        .update(cx_b, |workspace, cx| workspace.prepare_to_close(true, cx))
         .await
         .unwrap();
-    assert_eq!(cx_b.window_ids().len(), 0);
-    cx_b.update(|_| {
-        drop(workspace_b);
-        drop(project_b);
-    });
-
-    // Ensure guests can still join.
-    let project_b2 = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
-    assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
-    project_b2
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
-        .await
-        .unwrap();
+    assert!(can_close);
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_decline_join_request(
+async fn test_active_call_events(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    cx_a.foreground().forbid_parking();
+    deterministic.forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
-        .await;
-
     client_a.fs.insert_tree("/a", json!({})).await;
+    client_b.fs.insert_tree("/b", json!({})).await;
 
     let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = project_a.read_with(cx_a, |project, _| project.remote_id().unwrap());
+    let (project_b, _) = client_b.build_local_project("/b", cx_b).await;
 
-    // Request to join that project as client B
-    let project_b = cx_b.spawn(|cx| {
-        Project::remote(
-            project_id,
-            client_b.client.clone(),
-            client_b.user_store.clone(),
-            client_b.project_store.clone(),
-            client_b.language_registry.clone(),
-            FakeFs::new(cx.background()),
-            cx,
-        )
-    });
-    deterministic.run_until_parked();
-    project_a.update(cx_a, |project, cx| {
-        project.respond_to_join_request(client_b.user_id().unwrap(), false, cx)
-    });
-    assert!(matches!(
-        project_b.await.unwrap_err(),
-        project::JoinProjectError::HostDeclined
-    ));
-
-    // Request to join the project again as client B
-    let project_b = cx_b.spawn(|cx| {
-        Project::remote(
-            project_id,
-            client_b.client.clone(),
-            client_b.user_store.clone(),
-            client_b.project_store.clone(),
-            client_b.language_registry.clone(),
-            FakeFs::new(cx.background()),
-            cx,
-        )
-    });
-
-    // Close the project on the host
-    deterministic.run_until_parked();
-    cx_a.update(|_| drop(project_a));
-    deterministic.run_until_parked();
-    assert!(matches!(
-        project_b.await.unwrap_err(),
-        project::JoinProjectError::HostClosedProject
-    ));
-}
-
-#[gpui::test(iterations = 10)]
-async fn test_cancel_join_request(
-    deterministic: Arc<Deterministic>,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
-) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
 
-    client_a.fs.insert_tree("/a", json!({})).await;
-    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = project_a.read_with(cx_a, |project, _| project.remote_id().unwrap());
+    let events_a = active_call_events(cx_a);
+    let events_b = active_call_events(cx_b);
 
-    let user_b = client_a
-        .user_store
-        .update(cx_a, |store, cx| {
-            store.fetch_user(client_b.user_id().unwrap(), cx)
-        })
+    let project_a_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-
-    let project_a_events = Rc::new(RefCell::new(Vec::new()));
-    project_a.update(cx_a, {
-        let project_a_events = project_a_events.clone();
-        move |_, cx| {
-            cx.subscribe(&cx.handle(), move |_, _, event, _| {
-                project_a_events.borrow_mut().push(event.clone());
-            })
-            .detach();
-        }
-    });
-
-    // Request to join that project as client B
-    let project_b = cx_b.spawn(|cx| {
-        Project::remote(
-            project_id,
-            client_b.client.clone(),
-            client_b.user_store.clone(),
-            client_b.project_store.clone(),
-            client_b.language_registry.clone(),
-            FakeFs::new(cx.background()),
-            cx,
-        )
-    });
     deterministic.run_until_parked();
+    assert_eq!(mem::take(&mut *events_a.borrow_mut()), vec![]);
     assert_eq!(
-        &*project_a_events.borrow(),
-        &[project::Event::ContactRequestedJoin(user_b.clone())]
-    );
-    project_a_events.borrow_mut().clear();
-
-    // Cancel the join request by leaving the project
-    client_b
-        .client
-        .send(proto::LeaveProject { project_id })
-        .unwrap();
-    drop(project_b);
-
-    deterministic.run_until_parked();
-    assert_eq!(
-        &*project_a_events.borrow(),
-        &[project::Event::ContactCancelledJoinRequest(user_b)]
-    );
-}
-
-#[gpui::test(iterations = 10)]
-async fn test_offline_projects(
-    deterministic: Arc<Deterministic>,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
-    cx_c: &mut TestAppContext,
-) {
-    cx_a.foreground().forbid_parking();
-    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
-    let client_c = server.create_client(cx_c, "user_c").await;
-    let user_a = UserId::from_proto(client_a.user_id().unwrap());
-    server
-        .make_contacts(vec![
-            (&client_a, cx_a),
-            (&client_b, cx_b),
-            (&client_c, cx_c),
-        ])
-        .await;
-
-    // Set up observers of the project and user stores. Any time either of
-    // these models update, they should be in a consistent state with each
-    // other. There should not be an observable moment where the current
-    // user's contact entry contains a project that does not match one of
-    // the current open projects. That would cause a duplicate entry to be
-    // shown in the contacts panel.
-    let mut subscriptions = vec![];
-    let (window_id, view) = cx_a.add_window(|cx| {
-        subscriptions.push(cx.observe(&client_a.user_store, {
-            let project_store = client_a.project_store.clone();
-            let user_store = client_a.user_store.clone();
-            move |_, _, cx| check_project_list(project_store.clone(), user_store.clone(), cx)
-        }));
-
-        subscriptions.push(cx.observe(&client_a.project_store, {
-            let project_store = client_a.project_store.clone();
-            let user_store = client_a.user_store.clone();
-            move |_, _, cx| check_project_list(project_store.clone(), user_store.clone(), cx)
-        }));
-
-        fn check_project_list(
-            project_store: ModelHandle<ProjectStore>,
-            user_store: ModelHandle<UserStore>,
-            cx: &mut gpui::MutableAppContext,
-        ) {
-            let user_store = user_store.read(cx);
-            for contact in user_store.contacts() {
-                if contact.user.id == user_store.current_user().unwrap().id {
-                    for project in &contact.projects {
-                        let store_contains_project = project_store
-                            .read(cx)
-                            .projects(cx)
-                            .filter_map(|project| project.read(cx).remote_id())
-                            .any(|x| x == project.id);
-
-                        if !store_contains_project {
-                            panic!(
-                                concat!(
-                                    "current user's contact data has a project",
-                                    "that doesn't match any open project {:?}",
-                                ),
-                                project
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
-        EmptyView
-    });
-
-    // Build an offline project with two worktrees.
-    client_a
-        .fs
-        .insert_tree(
-            "/code",
-            json!({
-                "crate1": { "a.rs": "" },
-                "crate2": { "b.rs": "" },
+        mem::take(&mut *events_b.borrow_mut()),
+        vec![room::Event::RemoteProjectShared {
+            owner: Arc::new(User {
+                id: client_a.user_id().unwrap(),
+                github_login: "user_a".to_string(),
+                avatar: None,
             }),
-        )
+            project_id: project_a_id,
+            worktree_root_names: vec!["a".to_string()],
+        }]
+    );
+
+    let project_b_id = active_call_b
+        .update(cx_b, |call, cx| call.share_project(project_b.clone(), cx))
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert_eq!(
+        mem::take(&mut *events_a.borrow_mut()),
+        vec![room::Event::RemoteProjectShared {
+            owner: Arc::new(User {
+                id: client_b.user_id().unwrap(),
+                github_login: "user_b".to_string(),
+                avatar: None,
+            }),
+            project_id: project_b_id,
+            worktree_root_names: vec!["b".to_string()]
+        }]
+    );
+    assert_eq!(mem::take(&mut *events_b.borrow_mut()), vec![]);
+
+    // Sharing a project twice is idempotent.
+    let project_b_id_2 = active_call_b
+        .update(cx_b, |call, cx| call.share_project(project_b.clone(), cx))
+        .await
+        .unwrap();
+    assert_eq!(project_b_id_2, project_b_id);
+    deterministic.run_until_parked();
+    assert_eq!(mem::take(&mut *events_a.borrow_mut()), vec![]);
+    assert_eq!(mem::take(&mut *events_b.borrow_mut()), vec![]);
+
+    fn active_call_events(cx: &mut TestAppContext) -> Rc<RefCell<Vec<room::Event>>> {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let active_call = cx.read(ActiveCall::global);
+        cx.update({
+            let events = events.clone();
+            |cx| {
+                cx.subscribe(&active_call, move |_, event, _| {
+                    events.borrow_mut().push(event.clone())
+                })
+                .detach()
+            }
+        });
+        events
+    }
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_room_location(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    client_a.fs.insert_tree("/a", json!({})).await;
+    client_b.fs.insert_tree("/b", json!({})).await;
+
+    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
+    let (project_b, _) = client_b.build_local_project("/b", cx_b).await;
+
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    let project = cx_a.update(|cx| {
-        Project::local(
-            false,
-            client_a.client.clone(),
-            client_a.user_store.clone(),
-            client_a.project_store.clone(),
-            client_a.language_registry.clone(),
-            client_a.fs.clone(),
-            cx,
-        )
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+    let a_notified = Rc::new(Cell::new(false));
+    cx_a.update({
+        let notified = a_notified.clone();
+        |cx| {
+            cx.observe(&active_call_a, move |_, _| notified.set(true))
+                .detach()
+        }
     });
-    project
-        .update(cx_a, |p, cx| {
-            p.find_or_create_local_worktree("/code/crate1", true, cx)
+
+    let active_call_b = cx_b.read(ActiveCall::global);
+    let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
+    let b_notified = Rc::new(Cell::new(false));
+    cx_b.update({
+        let b_notified = b_notified.clone();
+        |cx| {
+            cx.observe(&active_call_b, move |_, _| b_notified.set(true))
+                .detach()
+        }
+    });
+
+    room_a
+        .update(cx_a, |room, cx| room.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert!(a_notified.take());
+    assert_eq!(
+        participant_locations(&room_a, cx_a),
+        vec![("user_b".to_string(), ParticipantLocation::External)]
+    );
+    assert!(b_notified.take());
+    assert_eq!(
+        participant_locations(&room_b, cx_b),
+        vec![("user_a".to_string(), ParticipantLocation::UnsharedProject)]
+    );
+
+    let project_a_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert!(a_notified.take());
+    assert_eq!(
+        participant_locations(&room_a, cx_a),
+        vec![("user_b".to_string(), ParticipantLocation::External)]
+    );
+    assert!(b_notified.take());
+    assert_eq!(
+        participant_locations(&room_b, cx_b),
+        vec![(
+            "user_a".to_string(),
+            ParticipantLocation::SharedProject {
+                project_id: project_a_id
+            }
+        )]
+    );
+
+    let project_b_id = active_call_b
+        .update(cx_b, |call, cx| call.share_project(project_b.clone(), cx))
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert!(a_notified.take());
+    assert_eq!(
+        participant_locations(&room_a, cx_a),
+        vec![("user_b".to_string(), ParticipantLocation::External)]
+    );
+    assert!(b_notified.take());
+    assert_eq!(
+        participant_locations(&room_b, cx_b),
+        vec![(
+            "user_a".to_string(),
+            ParticipantLocation::SharedProject {
+                project_id: project_a_id
+            }
+        )]
+    );
+
+    room_b
+        .update(cx_b, |room, cx| room.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert!(a_notified.take());
+    assert_eq!(
+        participant_locations(&room_a, cx_a),
+        vec![(
+            "user_b".to_string(),
+            ParticipantLocation::SharedProject {
+                project_id: project_b_id
+            }
+        )]
+    );
+    assert!(b_notified.take());
+    assert_eq!(
+        participant_locations(&room_b, cx_b),
+        vec![(
+            "user_a".to_string(),
+            ParticipantLocation::SharedProject {
+                project_id: project_a_id
+            }
+        )]
+    );
+
+    room_b
+        .update(cx_b, |room, cx| room.set_location(None, cx))
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert!(a_notified.take());
+    assert_eq!(
+        participant_locations(&room_a, cx_a),
+        vec![("user_b".to_string(), ParticipantLocation::External)]
+    );
+    assert!(b_notified.take());
+    assert_eq!(
+        participant_locations(&room_b, cx_b),
+        vec![(
+            "user_a".to_string(),
+            ParticipantLocation::SharedProject {
+                project_id: project_a_id
+            }
+        )]
+    );
+
+    fn participant_locations(
+        room: &ModelHandle<Room>,
+        cx: &TestAppContext,
+    ) -> Vec<(String, ParticipantLocation)> {
+        room.read_with(cx, |room, _| {
+            room.remote_participants()
+                .values()
+                .map(|participant| {
+                    (
+                        participant.user.github_login.to_string(),
+                        participant.location,
+                    )
+                })
+                .collect()
         })
-        .await
-        .unwrap();
-    project
-        .update(cx_a, |p, cx| {
-            p.find_or_create_local_worktree("/code/crate2", true, cx)
-        })
-        .await
-        .unwrap();
-    project
-        .update(cx_a, |p, cx| p.restore_state(cx))
-        .await
-        .unwrap();
-
-    // When a project is offline, we still create it on the server but is invisible
-    // to other users.
-    deterministic.run_until_parked();
-    assert!(server
-        .store
-        .lock()
-        .await
-        .project_metadata_for_user(user_a)
-        .is_empty());
-    project.read_with(cx_a, |project, _| {
-        assert!(project.remote_id().is_some());
-        assert!(!project.is_online());
-    });
-    assert!(client_b
-        .user_store
-        .read_with(cx_b, |store, _| { store.contacts()[0].projects.is_empty() }));
-
-    // When the project is taken online, its metadata is sent to the server
-    // and broadcasted to other users.
-    project.update(cx_a, |p, cx| p.set_online(true, cx));
-    deterministic.run_until_parked();
-    let project_id = project.read_with(cx_a, |p, _| p.remote_id()).unwrap();
-    client_b.user_store.read_with(cx_b, |store, _| {
-        assert_eq!(
-            store.contacts()[0].projects,
-            &[ProjectMetadata {
-                id: project_id,
-                visible_worktree_root_names: vec!["crate1".into(), "crate2".into()],
-                guests: Default::default(),
-            }]
-        );
-    });
-
-    // The project is registered again when the host loses and regains connection.
-    server.disconnect_client(user_a);
-    server.forbid_connections();
-    cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
-    assert!(server
-        .store
-        .lock()
-        .await
-        .project_metadata_for_user(user_a)
-        .is_empty());
-    assert!(project.read_with(cx_a, |p, _| p.remote_id().is_none()));
-    assert!(client_b
-        .user_store
-        .read_with(cx_b, |store, _| { store.contacts()[0].projects.is_empty() }));
-
-    server.allow_connections();
-    cx_b.foreground().advance_clock(Duration::from_secs(10));
-    let project_id = project.read_with(cx_a, |p, _| p.remote_id()).unwrap();
-    client_b.user_store.read_with(cx_b, |store, _| {
-        assert_eq!(
-            store.contacts()[0].projects,
-            &[ProjectMetadata {
-                id: project_id,
-                visible_worktree_root_names: vec!["crate1".into(), "crate2".into()],
-                guests: Default::default(),
-            }]
-        );
-    });
-
-    project
-        .update(cx_a, |p, cx| {
-            p.find_or_create_local_worktree("/code/crate3", true, cx)
-        })
-        .await
-        .unwrap();
-    deterministic.run_until_parked();
-    client_b.user_store.read_with(cx_b, |store, _| {
-        assert_eq!(
-            store.contacts()[0].projects,
-            &[ProjectMetadata {
-                id: project_id,
-                visible_worktree_root_names: vec![
-                    "crate1".into(),
-                    "crate2".into(),
-                    "crate3".into()
-                ],
-                guests: Default::default(),
-            }]
-        );
-    });
-
-    // Build another project using a directory which was previously part of
-    // an online project. Restore the project's state from the host's database.
-    let project2_a = cx_a.update(|cx| {
-        Project::local(
-            false,
-            client_a.client.clone(),
-            client_a.user_store.clone(),
-            client_a.project_store.clone(),
-            client_a.language_registry.clone(),
-            client_a.fs.clone(),
-            cx,
-        )
-    });
-    project2_a
-        .update(cx_a, |p, cx| {
-            p.find_or_create_local_worktree("/code/crate3", true, cx)
-        })
-        .await
-        .unwrap();
-    project2_a
-        .update(cx_a, |project, cx| project.restore_state(cx))
-        .await
-        .unwrap();
-
-    // This project is now online, because its directory was previously online.
-    project2_a.read_with(cx_a, |project, _| assert!(project.is_online()));
-    deterministic.run_until_parked();
-    let project2_id = project2_a.read_with(cx_a, |p, _| p.remote_id()).unwrap();
-    client_b.user_store.read_with(cx_b, |store, _| {
-        assert_eq!(
-            store.contacts()[0].projects,
-            &[
-                ProjectMetadata {
-                    id: project_id,
-                    visible_worktree_root_names: vec![
-                        "crate1".into(),
-                        "crate2".into(),
-                        "crate3".into()
-                    ],
-                    guests: Default::default(),
-                },
-                ProjectMetadata {
-                    id: project2_id,
-                    visible_worktree_root_names: vec!["crate3".into()],
-                    guests: Default::default(),
-                }
-            ]
-        );
-    });
-
-    let project2_b = client_b.build_remote_project(&project2_a, cx_a, cx_b).await;
-    let project2_c = cx_c.foreground().spawn(Project::remote(
-        project2_id,
-        client_c.client.clone(),
-        client_c.user_store.clone(),
-        client_c.project_store.clone(),
-        client_c.language_registry.clone(),
-        FakeFs::new(cx_c.background()),
-        cx_c.to_async(),
-    ));
-    deterministic.run_until_parked();
-
-    // Taking a project offline unshares the project, rejects any pending join request and
-    // disconnects existing guests.
-    project2_a.update(cx_a, |project, cx| project.set_online(false, cx));
-    deterministic.run_until_parked();
-    project2_a.read_with(cx_a, |project, _| assert!(!project.is_shared()));
-    project2_b.read_with(cx_b, |project, _| assert!(project.is_read_only()));
-    project2_c.await.unwrap_err();
-
-    client_b.user_store.read_with(cx_b, |store, _| {
-        assert_eq!(
-            store.contacts()[0].projects,
-            &[ProjectMetadata {
-                id: project_id,
-                visible_worktree_root_names: vec![
-                    "crate1".into(),
-                    "crate2".into(),
-                    "crate3".into()
-                ],
-                guests: Default::default(),
-            },]
-        );
-    });
-
-    cx_a.update(|cx| {
-        drop(subscriptions);
-        drop(view);
-        cx.remove_window(window_id);
-    });
+    }
 }
 
 #[gpui::test(iterations = 10)]
@@ -810,12 +1074,9 @@ async fn test_propagate_saves_and_fs_changes(
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
     server
-        .make_contacts(vec![
-            (&client_a, cx_a),
-            (&client_b, cx_b),
-            (&client_c, cx_c),
-        ])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -829,10 +1090,14 @@ async fn test_propagate_saves_and_fs_changes(
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
     let worktree_a = project_a.read_with(cx_a, |p, cx| p.worktrees(cx).next().unwrap());
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
 
     // Join that worktree as clients B and C.
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
-    let project_c = client_c.build_remote_project(&project_a, cx_a, cx_c).await;
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_c = client_c.build_remote_project(project_id, cx_c).await;
     let worktree_b = project_b.read_with(cx_b, |p, cx| p.worktrees(cx).next().unwrap());
     let worktree_c = project_c.read_with(cx_c, |p, cx| p.worktrees(cx).next().unwrap());
 
@@ -958,8 +1223,9 @@ async fn test_git_diff_base_change(
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -985,9 +1251,14 @@ async fn test_git_diff_base_change(
         .await;
 
     let (project_local, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_remote = client_b
-        .build_remote_project(&project_local, cx_a, cx_b)
-        .await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| {
+            call.share_project(project_local.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    let project_remote = client_b.build_remote_project(project_id, cx_b).await;
 
     let diff_base = "
         one
@@ -1204,8 +1475,9 @@ async fn test_fs_operations(
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -1218,7 +1490,11 @@ async fn test_fs_operations(
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     let worktree_a = project_a.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
     let worktree_b = project_b.read_with(cx_b, |project, cx| project.worktrees(cx).next().unwrap());
@@ -1465,8 +1741,9 @@ async fn test_buffer_conflict_after_save(cx_a: &mut TestAppContext, cx_b: &mut T
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -1478,7 +1755,11 @@ async fn test_buffer_conflict_after_save(cx_a: &mut TestAppContext, cx_b: &mut T
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Open a buffer as client B
     let buffer_b = project_b
@@ -1514,8 +1795,9 @@ async fn test_buffer_reloading(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -1527,7 +1809,11 @@ async fn test_buffer_reloading(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Open a buffer as client B
     let buffer_b = project_b
@@ -1568,15 +1854,20 @@ async fn test_editing_while_guest_opens_buffer(
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
         .insert_tree("/dir", json!({ "a.txt": "a-contents" }))
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Open a buffer as client A
     let buffer_a = project_a
@@ -1610,15 +1901,20 @@ async fn test_leaving_worktree_while_opening_buffer(
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
         .insert_tree("/dir", json!({ "a.txt": "a-contents" }))
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // See that a guest has joined as client A.
     project_a
@@ -1650,8 +1946,9 @@ async fn test_canceling_buffer_opening(
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -1663,7 +1960,11 @@ async fn test_canceling_buffer_opening(
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     let buffer_a = project_a
         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
@@ -1685,14 +1986,21 @@ async fn test_canceling_buffer_opening(
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_leaving_project(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
-    cx_a.foreground().forbid_parking();
+async fn test_leaving_project(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -1705,34 +2013,67 @@ async fn test_leaving_project(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
         )
         .await;
     let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
-    let _project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_c = client_c.build_remote_project(project_id, cx_c).await;
 
     // Client A sees that a guest has joined.
-    project_a
-        .condition(cx_a, |p, _| p.collaborators().len() == 1)
-        .await;
+    deterministic.run_until_parked();
+    project_a.read_with(cx_a, |project, _| {
+        assert_eq!(project.collaborators().len(), 2);
+    });
+    project_b.read_with(cx_b, |project, _| {
+        assert_eq!(project.collaborators().len(), 2);
+    });
+    project_c.read_with(cx_c, |project, _| {
+        assert_eq!(project.collaborators().len(), 2);
+    });
 
-    // Drop client B's connection and ensure client A observes client B leaving the project.
+    // Drop client B's connection and ensure client A and client C observe client B leaving the project.
     client_b.disconnect(&cx_b.to_async()).unwrap();
-    project_a
-        .condition(cx_a, |p, _| p.collaborators().is_empty())
-        .await;
+    deterministic.run_until_parked();
+    project_a.read_with(cx_a, |project, _| {
+        assert_eq!(project.collaborators().len(), 1);
+    });
+    project_b.read_with(cx_b, |project, _| {
+        assert!(project.is_read_only());
+    });
+    project_c.read_with(cx_c, |project, _| {
+        assert_eq!(project.collaborators().len(), 1);
+    });
 
-    // Rejoin the project as client B
-    let _project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    // Client B can't join the project, unless they re-join the room.
+    cx_b.spawn(|cx| {
+        Project::remote(
+            project_id,
+            client_b.client.clone(),
+            client_b.user_store.clone(),
+            client_b.project_store.clone(),
+            client_b.language_registry.clone(),
+            FakeFs::new(cx.background()),
+            cx,
+        )
+    })
+    .await
+    .unwrap_err();
 
-    // Client A sees that a guest has re-joined.
-    project_a
-        .condition(cx_a, |p, _| p.collaborators().len() == 1)
-        .await;
-
-    // Simulate connection loss for client B and ensure client A observes client B leaving the project.
-    client_b.wait_for_current_user(cx_b).await;
-    server.disconnect_client(client_b.current_user_id(cx_b));
+    // Simulate connection loss for client C and ensure client A observes client C leaving the project.
+    client_c.wait_for_current_user(cx_c).await;
+    server.disconnect_client(client_c.current_user_id(cx_c));
     cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
-    project_a
-        .condition(cx_a, |p, _| p.collaborators().is_empty())
-        .await;
+    deterministic.run_until_parked();
+    project_a.read_with(cx_a, |project, _| {
+        assert_eq!(project.collaborators().len(), 0);
+    });
+    project_b.read_with(cx_b, |project, _| {
+        assert!(project.is_read_only());
+    });
+    project_c.read_with(cx_c, |project, _| {
+        assert!(project.is_read_only());
+    });
 }
 
 #[gpui::test(iterations = 10)]
@@ -1748,12 +2089,9 @@ async fn test_collaborating_with_diagnostics(
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
     server
-        .make_contacts(vec![
-            (&client_a, cx_a),
-            (&client_b, cx_b),
-            (&client_c, cx_c),
-        ])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -1779,7 +2117,10 @@ async fn test_collaborating_with_diagnostics(
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = project_a.update(cx_a, |p, _| p.next_remote_id()).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
 
     // Cause the language server to start.
     let _buffer = cx_a
@@ -1797,7 +2138,7 @@ async fn test_collaborating_with_diagnostics(
         .unwrap();
 
     // Join the worktree as client B.
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Simulate a language server reporting errors for a file.
     let mut fake_language_server = fake_language_servers.next().await.unwrap();
@@ -1845,7 +2186,7 @@ async fn test_collaborating_with_diagnostics(
     });
 
     // Join project as client C and observe the diagnostics.
-    let project_c = client_c.build_remote_project(&project_a, cx_a, cx_c).await;
+    let project_c = client_c.build_remote_project(project_id, cx_c).await;
     deterministic.run_until_parked();
     project_c.read_with(cx_c, |project, cx| {
         assert_eq!(
@@ -1986,8 +2327,9 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -2023,7 +2365,11 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Open a file in an editor as the guest.
     let buffer_b = project_b
@@ -2155,8 +2501,9 @@ async fn test_reloading_buffer_manually(cx_a: &mut TestAppContext, cx_b: &mut Te
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -2167,8 +2514,12 @@ async fn test_reloading_buffer_manually(cx_a: &mut TestAppContext, cx_b: &mut Te
         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
         .await
         .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
 
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     let buffer_b = cx_b
         .background()
@@ -2243,8 +2594,9 @@ async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -2267,7 +2619,11 @@ async fn test_formatting_buffer(cx_a: &mut TestAppContext, cx_b: &mut TestAppCon
         .insert_tree(&directory, json!({ "a.rs": "let one = \"two\"" }))
         .await;
     let (project_a, worktree_id) = client_a.build_local_project(&directory, cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     let buffer_b = cx_b
         .background()
@@ -2339,8 +2695,9 @@ async fn test_definition(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -2370,7 +2727,11 @@ async fn test_definition(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/root/dir-1", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Open the file on client B.
     let buffer_b = cx_b
@@ -2478,8 +2839,9 @@ async fn test_references(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -2509,7 +2871,11 @@ async fn test_references(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/root/dir-1", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Open the file on client B.
     let buffer_b = cx_b
@@ -2574,8 +2940,9 @@ async fn test_project_search(cx_a: &mut TestAppContext, cx_b: &mut TestAppContex
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -2604,8 +2971,12 @@ async fn test_project_search(cx_a: &mut TestAppContext, cx_b: &mut TestAppContex
     worktree_2
         .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
         .await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
 
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Perform a search as the guest.
     let results = project_b
@@ -2648,8 +3019,9 @@ async fn test_document_highlights(cx_a: &mut TestAppContext, cx_b: &mut TestAppC
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -2674,7 +3046,11 @@ async fn test_document_highlights(cx_a: &mut TestAppContext, cx_b: &mut TestAppC
     client_a.language_registry.add(Arc::new(language));
 
     let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Open the file on client B.
     let buffer_b = cx_b
@@ -2745,8 +3121,9 @@ async fn test_lsp_hover(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -2771,7 +3148,11 @@ async fn test_lsp_hover(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     client_a.language_registry.add(Arc::new(language));
 
     let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Open the file as the guest
     let buffer_b = cx_b
@@ -2843,8 +3224,9 @@ async fn test_project_symbols(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -2876,7 +3258,11 @@ async fn test_project_symbols(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/code/crate-1", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Cause the language server to start.
     let _buffer = cx_b
@@ -2946,8 +3332,9 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -2972,7 +3359,11 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/root", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     let buffer_b1 = cx_b
         .background()
@@ -3017,8 +3408,9 @@ async fn test_collaborating_with_code_actions(
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -3043,9 +3435,13 @@ async fn test_collaborating_with_code_actions(
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
 
     // Join the project as client B.
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
     let (_window_b, workspace_b) =
         cx_b.add_window(|cx| Workspace::new(project_b.clone(), |_, _| unimplemented!(), cx));
     let editor_b = workspace_b
@@ -3223,8 +3619,9 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -3260,7 +3657,11 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     let (_window_b, workspace_b) =
         cx_b.add_window(|cx| Workspace::new(project_b.clone(), |_, _| unimplemented!(), cx));
@@ -3410,8 +3811,9 @@ async fn test_language_server_statuses(
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -3468,7 +3870,11 @@ async fn test_language_server_statuses(
         );
     });
 
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
     project_b.read_with(cx_b, |project, _| {
         let status = project.language_server_statuses().next().unwrap();
         assert_eq!(status.name, "the-language-server");
@@ -3926,130 +4332,53 @@ async fn test_contacts(
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
     server
-        .make_contacts(vec![
-            (&client_a, cx_a),
-            (&client_b, cx_b),
-            (&client_c, cx_c),
-        ])
+        .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_c = cx_c.read(ActiveCall::global);
 
     deterministic.run_until_parked();
-    for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
-        client.user_store.read_with(*cx, |store, _| {
-            assert_eq!(
-                contacts(store),
-                [
-                    ("user_a", true, vec![]),
-                    ("user_b", true, vec![]),
-                    ("user_c", true, vec![])
-                ],
-                "{} has the wrong contacts",
-                client.username
-            )
-        });
-    }
-
-    // Share a project as client A.
-    client_a.fs.create_dir(Path::new("/a")).await.unwrap();
-    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
-
-    deterministic.run_until_parked();
-    for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
-        client.user_store.read_with(*cx, |store, _| {
-            assert_eq!(
-                contacts(store),
-                [
-                    ("user_a", true, vec![("a", vec![])]),
-                    ("user_b", true, vec![]),
-                    ("user_c", true, vec![])
-                ],
-                "{} has the wrong contacts",
-                client.username
-            )
-        });
-    }
-
-    let _project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
-
-    deterministic.run_until_parked();
-    for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
-        client.user_store.read_with(*cx, |store, _| {
-            assert_eq!(
-                contacts(store),
-                [
-                    ("user_a", true, vec![("a", vec!["user_b"])]),
-                    ("user_b", true, vec![]),
-                    ("user_c", true, vec![])
-                ],
-                "{} has the wrong contacts",
-                client.username
-            )
-        });
-    }
-
-    // Add a local project as client B
-    client_a.fs.create_dir("/b".as_ref()).await.unwrap();
-    let (_project_b, _) = client_b.build_local_project("/b", cx_b).await;
-
-    deterministic.run_until_parked();
-    for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
-        client.user_store.read_with(*cx, |store, _| {
-            assert_eq!(
-                contacts(store),
-                [
-                    ("user_a", true, vec![("a", vec!["user_b"])]),
-                    ("user_b", true, vec![("b", vec![])]),
-                    ("user_c", true, vec![])
-                ],
-                "{} has the wrong contacts",
-                client.username
-            )
-        });
-    }
-
-    project_a
-        .condition(cx_a, |project, _| {
-            project.collaborators().contains_key(&client_b.peer_id)
-        })
-        .await;
-
-    cx_a.update(move |_| drop(project_a));
-    deterministic.run_until_parked();
-    for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
-        client.user_store.read_with(*cx, |store, _| {
-            assert_eq!(
-                contacts(store),
-                [
-                    ("user_a", true, vec![]),
-                    ("user_b", true, vec![("b", vec![])]),
-                    ("user_c", true, vec![])
-                ],
-                "{} has the wrong contacts",
-                client.username
-            )
-        });
-    }
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), "online", "free"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), "online", "free"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), "online", "free"),
+            ("user_b".to_string(), "online", "free")
+        ]
+    );
 
     server.disconnect_client(client_c.current_user_id(cx_c));
     server.forbid_connections();
     deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
-    for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b)] {
-        client.user_store.read_with(*cx, |store, _| {
-            assert_eq!(
-                contacts(store),
-                [
-                    ("user_a", true, vec![]),
-                    ("user_b", true, vec![("b", vec![])]),
-                    ("user_c", false, vec![])
-                ],
-                "{} has the wrong contacts",
-                client.username
-            )
-        });
-    }
-    client_c
-        .user_store
-        .read_with(cx_c, |store, _| assert_eq!(contacts(store), []));
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), "online", "free"),
+            ("user_c".to_string(), "offline", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), "online", "free"),
+            ("user_c".to_string(), "offline", "free")
+        ]
+    );
+    assert_eq!(contacts(&client_c, cx_c), []);
 
     server.allow_connections();
     client_c
@@ -4058,40 +4387,256 @@ async fn test_contacts(
         .unwrap();
 
     deterministic.run_until_parked();
-    for (client, cx) in [(&client_a, &cx_a), (&client_b, &cx_b), (&client_c, &cx_c)] {
-        client.user_store.read_with(*cx, |store, _| {
-            assert_eq!(
-                contacts(store),
-                [
-                    ("user_a", true, vec![]),
-                    ("user_b", true, vec![("b", vec![])]),
-                    ("user_c", true, vec![])
-                ],
-                "{} has the wrong contacts",
-                client.username
-            )
-        });
-    }
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), "online", "free"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), "online", "free"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), "online", "free"),
+            ("user_b".to_string(), "online", "free")
+        ]
+    );
+
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), "online", "busy"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_b".to_string(), "online", "busy")
+        ]
+    );
+
+    active_call_b.update(cx_b, |call, _| call.decline_incoming().unwrap());
+    deterministic.run_until_parked();
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), "online", "free"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), "online", "free"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), "online", "free"),
+            ("user_b".to_string(), "online", "free")
+        ]
+    );
+
+    active_call_c
+        .update(cx_c, |call, cx| {
+            call.invite(client_a.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), "online", "free"),
+            ("user_c".to_string(), "online", "busy")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_c".to_string(), "online", "busy")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_b".to_string(), "online", "free")
+        ]
+    );
+
+    active_call_a
+        .update(cx_a, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), "online", "free"),
+            ("user_c".to_string(), "online", "busy")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_c".to_string(), "online", "busy")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_b".to_string(), "online", "free")
+        ]
+    );
+
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), "online", "busy"),
+            ("user_c".to_string(), "online", "busy")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_c".to_string(), "online", "busy")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_b".to_string(), "online", "busy")
+        ]
+    );
+
+    active_call_a.update(cx_a, |call, cx| call.hang_up(cx).unwrap());
+    deterministic.run_until_parked();
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), "online", "free"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), "online", "free"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), "online", "free"),
+            ("user_b".to_string(), "online", "free")
+        ]
+    );
+
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), "online", "busy"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_b".to_string(), "online", "busy")
+        ]
+    );
+
+    server.forbid_connections();
+    server.disconnect_client(client_a.current_user_id(cx_a));
+    deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
+    assert_eq!(contacts(&client_a, cx_a), []);
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), "offline", "free"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), "offline", "free"),
+            ("user_b".to_string(), "online", "free")
+        ]
+    );
 
     #[allow(clippy::type_complexity)]
-    fn contacts(user_store: &UserStore) -> Vec<(&str, bool, Vec<(&str, Vec<&str>)>)> {
-        user_store
-            .contacts()
-            .iter()
-            .map(|contact| {
-                let projects = contact
-                    .projects
-                    .iter()
-                    .map(|p| {
-                        (
-                            p.visible_worktree_root_names[0].as_str(),
-                            p.guests.iter().map(|p| p.github_login.as_str()).collect(),
-                        )
-                    })
-                    .collect();
-                (contact.user.github_login.as_str(), contact.online, projects)
-            })
-            .collect()
+    fn contacts(
+        client: &TestClient,
+        cx: &TestAppContext,
+    ) -> Vec<(String, &'static str, &'static str)> {
+        client.user_store.read_with(cx, |store, _| {
+            store
+                .contacts()
+                .iter()
+                .map(|contact| {
+                    (
+                        contact.user.github_login.clone(),
+                        if contact.online { "online" } else { "offline" },
+                        if contact.busy { "busy" } else { "free" },
+                    )
+                })
+                .collect()
+        })
     }
 }
 
@@ -4194,18 +4739,18 @@ async fn test_contact_requests(
 
     // User B sees user A as their contact now in all client, and the incoming request from them is removed.
     let contacts_b = client_b.summarize_contacts(cx_b);
-    assert_eq!(contacts_b.current, &["user_a", "user_b"]);
+    assert_eq!(contacts_b.current, &["user_a"]);
     assert_eq!(contacts_b.incoming_requests, &["user_c"]);
     let contacts_b2 = client_b2.summarize_contacts(cx_b2);
-    assert_eq!(contacts_b2.current, &["user_a", "user_b"]);
+    assert_eq!(contacts_b2.current, &["user_a"]);
     assert_eq!(contacts_b2.incoming_requests, &["user_c"]);
 
     // User A sees user B as their contact now in all clients, and the outgoing request to them is removed.
     let contacts_a = client_a.summarize_contacts(cx_a);
-    assert_eq!(contacts_a.current, &["user_a", "user_b"]);
+    assert_eq!(contacts_a.current, &["user_b"]);
     assert!(contacts_a.outgoing_requests.is_empty());
     let contacts_a2 = client_a2.summarize_contacts(cx_a2);
-    assert_eq!(contacts_a2.current, &["user_a", "user_b"]);
+    assert_eq!(contacts_a2.current, &["user_b"]);
     assert!(contacts_a2.outgoing_requests.is_empty());
 
     // Contacts are present upon connecting (tested here via disconnect/reconnect)
@@ -4213,19 +4758,13 @@ async fn test_contact_requests(
     disconnect_and_reconnect(&client_b, cx_b).await;
     disconnect_and_reconnect(&client_c, cx_c).await;
     executor.run_until_parked();
-    assert_eq!(
-        client_a.summarize_contacts(cx_a).current,
-        &["user_a", "user_b"]
-    );
-    assert_eq!(
-        client_b.summarize_contacts(cx_b).current,
-        &["user_a", "user_b"]
-    );
+    assert_eq!(client_a.summarize_contacts(cx_a).current, &["user_b"]);
+    assert_eq!(client_b.summarize_contacts(cx_b).current, &["user_a"]);
     assert_eq!(
         client_b.summarize_contacts(cx_b).incoming_requests,
         &["user_c"]
     );
-    assert_eq!(client_c.summarize_contacts(cx_c).current, &["user_c"]);
+    assert!(client_c.summarize_contacts(cx_c).current.is_empty());
     assert_eq!(
         client_c.summarize_contacts(cx_c).outgoing_requests,
         &["user_b"]
@@ -4244,18 +4783,18 @@ async fn test_contact_requests(
 
     // User B doesn't see user C as their contact, and the incoming request from them is removed.
     let contacts_b = client_b.summarize_contacts(cx_b);
-    assert_eq!(contacts_b.current, &["user_a", "user_b"]);
+    assert_eq!(contacts_b.current, &["user_a"]);
     assert!(contacts_b.incoming_requests.is_empty());
     let contacts_b2 = client_b2.summarize_contacts(cx_b2);
-    assert_eq!(contacts_b2.current, &["user_a", "user_b"]);
+    assert_eq!(contacts_b2.current, &["user_a"]);
     assert!(contacts_b2.incoming_requests.is_empty());
 
     // User C doesn't see user B as their contact, and the outgoing request to them is removed.
     let contacts_c = client_c.summarize_contacts(cx_c);
-    assert_eq!(contacts_c.current, &["user_c"]);
+    assert!(contacts_c.current.is_empty());
     assert!(contacts_c.outgoing_requests.is_empty());
     let contacts_c2 = client_c2.summarize_contacts(cx_c2);
-    assert_eq!(contacts_c2.current, &["user_c"]);
+    assert!(contacts_c2.current.is_empty());
     assert!(contacts_c2.outgoing_requests.is_empty());
 
     // Incoming/outgoing requests are not present upon connecting (tested here via disconnect/reconnect)
@@ -4263,19 +4802,13 @@ async fn test_contact_requests(
     disconnect_and_reconnect(&client_b, cx_b).await;
     disconnect_and_reconnect(&client_c, cx_c).await;
     executor.run_until_parked();
-    assert_eq!(
-        client_a.summarize_contacts(cx_a).current,
-        &["user_a", "user_b"]
-    );
-    assert_eq!(
-        client_b.summarize_contacts(cx_b).current,
-        &["user_a", "user_b"]
-    );
+    assert_eq!(client_a.summarize_contacts(cx_a).current, &["user_b"]);
+    assert_eq!(client_b.summarize_contacts(cx_b).current, &["user_a"]);
     assert!(client_b
         .summarize_contacts(cx_b)
         .incoming_requests
         .is_empty());
-    assert_eq!(client_c.summarize_contacts(cx_c).current, &["user_c"]);
+    assert!(client_c.summarize_contacts(cx_c).current.is_empty());
     assert!(client_c
         .summarize_contacts(cx_c)
         .outgoing_requests
@@ -4294,14 +4827,16 @@ async fn test_contact_requests(
 #[gpui::test(iterations = 10)]
 async fn test_following(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
         .fs
@@ -4315,8 +4850,11 @@ async fn test_following(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Client A opens some editors.
     let workspace_a = client_a.build_workspace(&project_a, cx_a);
@@ -4500,14 +5038,16 @@ async fn test_following(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
 #[gpui::test(iterations = 10)]
 async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Client A shares a project.
     client_a
@@ -4523,9 +5063,13 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
 
     // Client B joins the project.
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Client A opens some editors.
     let workspace_a = client_a.build_workspace(&project_a, cx_a);
@@ -4662,16 +5206,17 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
 #[gpui::test(iterations = 10)]
 async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     cx_a.foreground().forbid_parking();
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
 
     // 2 clients connect to a server.
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     // Client A shares a project.
     client_a
@@ -4686,7 +5231,11 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Client A opens some editors.
     let workspace_a = client_a.build_workspace(&project_a, cx_a);
@@ -4822,21 +5371,26 @@ async fn test_peers_simultaneously_following_each_other(
     cx_b: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
 
     let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     server
-        .make_contacts(vec![(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
+    let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a.fs.insert_tree("/a", json!({})).await;
     let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
     let workspace_a = client_a.build_workspace(&project_a, cx_a);
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
 
-    let project_b = client_b.build_remote_project(&project_a, cx_a, cx_b).await;
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
     let workspace_b = client_b.build_workspace(&project_b, cx_b);
 
     deterministic.run_until_parked();
@@ -4899,12 +5453,13 @@ async fn test_random_collaboration(
 
     let mut server = TestServer::start(cx.foreground(), cx.background()).await;
     let db = server.app_state.db.clone();
-    let host_user_id = db
+
+    let room_creator_user_id = db
         .create_user(
-            "host@example.com",
+            "room-creator@example.com",
             false,
             NewUserParams {
-                github_login: "host".into(),
+                github_login: "room-creator".into(),
                 github_user_id: 0,
                 invite_count: 0,
             },
@@ -4919,34 +5474,40 @@ async fn test_random_collaboration(
         "guest-4".to_string(),
     ];
 
-    for (ix, username) in available_guests.iter().enumerate() {
-        let guest_user_id = db
+    for (ix, username) in Some(&"host".to_string())
+        .into_iter()
+        .chain(&available_guests)
+        .enumerate()
+    {
+        let user_id = db
             .create_user(
                 &format!("{username}@example.com"),
                 false,
                 NewUserParams {
                     github_login: username.into(),
-                    github_user_id: ix as i32,
+                    github_user_id: (ix + 1) as i32,
                     invite_count: 0,
                 },
             )
             .await
             .unwrap()
             .user_id;
-        assert_eq!(*username, format!("guest-{}", guest_user_id));
         server
             .app_state
             .db
-            .send_contact_request(guest_user_id, host_user_id)
+            .send_contact_request(user_id, room_creator_user_id)
             .await
             .unwrap();
         server
             .app_state
             .db
-            .respond_to_contact_request(host_user_id, guest_user_id, true)
+            .respond_to_contact_request(room_creator_user_id, user_id, true)
             .await
             .unwrap();
     }
+
+    let _room_creator = server.create_client(cx, "room-creator").await;
+    let active_call = cx.read(ActiveCall::global);
 
     let mut clients = Vec::new();
     let mut user_ids = Vec::new();
@@ -4965,7 +5526,6 @@ async fn test_random_collaboration(
     let host = server.create_client(&mut host_cx, "host").await;
     let host_project = host_cx.update(|cx| {
         Project::local(
-            true,
             host.client.clone(),
             host.user_store.clone(),
             host.project_store.clone(),
@@ -4974,9 +5534,6 @@ async fn test_random_collaboration(
             cx,
         )
     });
-    let host_project_id = host_project
-        .update(&mut host_cx, |p, _| p.next_remote_id())
-        .await;
 
     let (collab_worktree, _) = host_project
         .update(&mut host_cx, |project, cx| {
@@ -5117,8 +5674,30 @@ async fn test_random_collaboration(
         .await;
     host_language_registry.add(Arc::new(language));
 
+    let host_user_id = host.current_user_id(&host_cx);
+    active_call
+        .update(cx, |call, cx| {
+            call.invite(host_user_id.to_proto(), None, cx)
+        })
+        .await
+        .unwrap();
+    active_call.read_with(cx, |call, cx| call.room().unwrap().read(cx).id());
+    deterministic.run_until_parked();
+    let host_active_call = host_cx.read(ActiveCall::global);
+    host_active_call
+        .update(&mut host_cx, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+
+    let host_project_id = host_active_call
+        .update(&mut host_cx, |call, cx| {
+            call.share_project(host_project.clone(), cx)
+        })
+        .await
+        .unwrap();
+
     let op_start_signal = futures::channel::mpsc::unbounded();
-    user_ids.push(host.current_user_id(&host_cx));
+    user_ids.push(host_user_id);
     op_start_signals.push(op_start_signal.0);
     clients.push(host_cx.foreground().spawn(host.simulate_host(
         host_project,
@@ -5155,26 +5734,16 @@ async fn test_random_collaboration(
                     log::error!("{} error - {:?}", guest.username, guest_err);
                 }
 
-                let contacts = server
-                    .app_state
-                    .db
-                    .get_contacts(guest.current_user_id(&guest_cx))
-                    .await
-                    .unwrap();
-                let contacts = server
-                    .store
-                    .lock()
-                    .await
-                    .build_initial_contacts_update(contacts)
-                    .contacts;
-                assert!(!contacts
-                    .iter()
-                    .flat_map(|contact| &contact.projects)
-                    .any(|project| project.id == host_project_id));
                 guest_project.read_with(&guest_cx, |project, _| assert!(project.is_read_only()));
-                guest_cx.update(|_| drop((guest, guest_project)));
+                guest_cx.update(|cx| {
+                    cx.clear_globals();
+                    drop((guest, guest_project));
+                });
             }
-            host_cx.update(|_| drop((host, host_project)));
+            host_cx.update(|cx| {
+                cx.clear_globals();
+                drop((host, host_project));
+            });
 
             return;
         }
@@ -5198,6 +5767,21 @@ async fn test_random_collaboration(
 
                 deterministic.start_waiting();
                 let guest = server.create_client(&mut guest_cx, &guest_username).await;
+                let guest_user_id = guest.current_user_id(&guest_cx);
+
+                active_call
+                    .update(cx, |call, cx| {
+                        call.invite(guest_user_id.to_proto(), None, cx)
+                    })
+                    .await
+                    .unwrap();
+                deterministic.run_until_parked();
+                guest_cx
+                    .read(ActiveCall::global)
+                    .update(&mut guest_cx, |call, cx| call.accept_incoming(cx))
+                    .await
+                    .unwrap();
+
                 let guest_project = Project::remote(
                     host_project_id,
                     guest.client.clone(),
@@ -5212,7 +5796,7 @@ async fn test_random_collaboration(
                 deterministic.finish_waiting();
 
                 let op_start_signal = futures::channel::mpsc::unbounded();
-                user_ids.push(guest.current_user_id(&guest_cx));
+                user_ids.push(guest_user_id);
                 op_start_signals.push(op_start_signal.0);
                 clients.push(guest_cx.foreground().spawn(guest.simulate_guest(
                     guest_username.clone(),
@@ -5259,20 +5843,15 @@ async fn test_random_collaboration(
                                 "removed guest is still a contact of another peer"
                             );
                         }
-                        for project in contact.projects {
-                            for project_guest_id in project.guests {
-                                assert_ne!(
-                                    project_guest_id, removed_guest_id.0 as u64,
-                                    "removed guest appears as still participating on a project"
-                                );
-                            }
-                        }
                     }
                 }
 
                 log::info!("{} removed", guest.username);
                 available_guests.push(guest.username.clone());
-                guest_cx.update(|_| drop((guest, guest_project)));
+                guest_cx.update(|cx| {
+                    cx.clear_globals();
+                    drop((guest, guest_project));
+                });
 
                 operations += 1;
             }
@@ -5387,10 +5966,16 @@ async fn test_random_collaboration(
             );
         }
 
-        guest_cx.update(|_| drop((guest_project, guest_client)));
+        guest_cx.update(|cx| {
+            cx.clear_globals();
+            drop((guest_project, guest_client));
+        });
     }
 
-    host_cx.update(|_| drop((host_client, host_project)));
+    host_cx.update(|cx| {
+        cx.clear_globals();
+        drop((host_client, host_project))
+    });
 }
 
 struct TestServer {
@@ -5513,7 +6098,7 @@ impl TestServer {
 
         let fs = FakeFs::new(cx.background());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
-        let project_store = cx.add_model(|_| ProjectStore::new(project::Db::open_fake()));
+        let project_store = cx.add_model(|_| ProjectStore::new());
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
@@ -5528,7 +6113,10 @@ impl TestServer {
 
         Channel::init(&client);
         Project::init(&client);
-        cx.update(|cx| workspace::init(app_state.clone(), cx));
+        cx.update(|cx| {
+            workspace::init(app_state.clone(), cx);
+            call::init(client.clone(), user_store.clone(), cx);
+        });
 
         client
             .authenticate_and_connect(false, &cx.to_async())
@@ -5566,12 +6154,14 @@ impl TestServer {
         self.forbid_connections.store(false, SeqCst);
     }
 
-    async fn make_contacts(&self, mut clients: Vec<(&TestClient, &mut TestAppContext)>) {
-        while let Some((client_a, cx_a)) = clients.pop() {
-            for (client_b, cx_b) in &mut clients {
+    async fn make_contacts(&self, clients: &mut [(&TestClient, &mut TestAppContext)]) {
+        for ix in 1..clients.len() {
+            let (left, right) = clients.split_at_mut(ix);
+            let (client_a, cx_a) = left.last_mut().unwrap();
+            for (client_b, cx_b) in right {
                 client_a
                     .user_store
-                    .update(cx_a, |store, cx| {
+                    .update(*cx_a, |store, cx| {
                         store.request_contact(client_b.user_id().unwrap(), cx)
                     })
                     .await
@@ -5585,6 +6175,29 @@ impl TestServer {
                     .await
                     .unwrap();
             }
+        }
+    }
+
+    async fn create_room(&self, clients: &mut [(&TestClient, &mut TestAppContext)]) {
+        self.make_contacts(clients).await;
+
+        let (left, right) = clients.split_at_mut(1);
+        let (_client_a, cx_a) = &mut left[0];
+        let active_call_a = cx_a.read(ActiveCall::global);
+
+        for (client_b, cx_b) in right {
+            let user_id_b = client_b.current_user_id(*cx_b).to_proto();
+            active_call_a
+                .update(*cx_a, |call, cx| call.invite(user_id_b, None, cx))
+                .await
+                .unwrap();
+
+            cx_b.foreground().run_until_parked();
+            let active_call_b = cx_b.read(ActiveCall::global);
+            active_call_b
+                .update(*cx_b, |call, cx| call.accept_incoming(cx))
+                .await
+                .unwrap();
         }
     }
 
@@ -5699,7 +6312,6 @@ impl TestClient {
     ) -> (ModelHandle<Project>, WorktreeId) {
         let project = cx.update(|cx| {
             Project::local(
-                true,
                 self.client.clone(),
                 self.user_store.clone(),
                 self.project_store.clone(),
@@ -5717,40 +6329,26 @@ impl TestClient {
         worktree
             .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        project
-            .update(cx, |project, _| project.next_remote_id())
-            .await;
         (project, worktree.read_with(cx, |tree, _| tree.id()))
     }
 
     async fn build_remote_project(
         &self,
-        host_project: &ModelHandle<Project>,
-        host_cx: &mut TestAppContext,
+        host_project_id: u64,
         guest_cx: &mut TestAppContext,
     ) -> ModelHandle<Project> {
-        let host_project_id = host_project
-            .read_with(host_cx, |project, _| project.next_remote_id())
-            .await;
-        let guest_user_id = self.user_id().unwrap();
-        let languages = host_project.read_with(host_cx, |project, _| project.languages().clone());
         let project_b = guest_cx.spawn(|cx| {
             Project::remote(
                 host_project_id,
                 self.client.clone(),
                 self.user_store.clone(),
                 self.project_store.clone(),
-                languages,
+                self.language_registry.clone(),
                 FakeFs::new(cx.background()),
                 cx,
             )
         });
-        host_cx.foreground().run_until_parked();
-        host_project.update(host_cx, |project, cx| {
-            project.respond_to_join_request(guest_user_id, true, cx)
-        });
-        let project = project_b.await.unwrap();
-        project
+        project_b.await.unwrap()
     }
 
     fn build_workspace(
@@ -5784,18 +6382,6 @@ impl TestClient {
             cx: &mut TestAppContext,
         ) -> anyhow::Result<()> {
             let fs = project.read_with(cx, |project, _| project.fs().clone());
-
-            cx.update(|cx| {
-                cx.subscribe(&project, move |project, event, cx| {
-                    if let project::Event::ContactRequestedJoin(user) = event {
-                        log::info!("Host: accepting join request from {}", user.github_login);
-                        project.update(cx, |project, cx| {
-                            project.respond_to_join_request(user.id, true, cx)
-                        });
-                    }
-                })
-                .detach();
-            });
 
             while op_start_signal.next().await.is_some() {
                 let distribution = rng.lock().gen_range::<usize, _>(0..100);
@@ -6273,4 +6859,25 @@ fn channel_messages(channel: &Channel) -> Vec<(String, String, bool)> {
             )
         })
         .collect()
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct RoomParticipants {
+    remote: Vec<String>,
+    pending: Vec<String>,
+}
+
+fn room_participants(room: &ModelHandle<Room>, cx: &mut TestAppContext) -> RoomParticipants {
+    room.read_with(cx, |room, _| RoomParticipants {
+        remote: room
+            .remote_participants()
+            .iter()
+            .map(|(_, participant)| participant.user.github_login.clone())
+            .collect(),
+        pending: room
+            .pending_participants()
+            .iter()
+            .map(|user| user.github_login.clone())
+            .collect(),
+    })
 }

@@ -33,7 +33,7 @@ impl fmt::Display for ConnectionId {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct PeerId(pub u32);
 
 impl fmt::Display for PeerId {
@@ -394,7 +394,11 @@ impl Peer {
             send?;
             let (response, _barrier) = rx.await.map_err(|_| anyhow!("connection was closed"))?;
             if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
-                Err(anyhow!("RPC request failed - {}", error.message))
+                Err(anyhow!(
+                    "RPC request {} failed - {}",
+                    T::NAME,
+                    error.message
+                ))
             } else {
                 T::Response::from_envelope(response)
                     .ok_or_else(|| anyhow!("received response of the wrong type"))

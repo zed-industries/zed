@@ -20,7 +20,7 @@ pub struct Theme {
     pub context_menu: ContextMenu,
     pub chat_panel: ChatPanel,
     pub contacts_popover: ContactsPopover,
-    pub contacts_panel: ContactsPanel,
+    pub contact_list: ContactList,
     pub contact_finder: ContactFinder,
     pub project_panel: ProjectPanel,
     pub command_palette: CommandPalette,
@@ -31,6 +31,8 @@ pub struct Theme {
     pub breadcrumbs: ContainedText,
     pub contact_notification: ContactNotification,
     pub update_notification: UpdateNotification,
+    pub project_shared_notification: ProjectSharedNotification,
+    pub incoming_call_notification: IncomingCallNotification,
     pub tooltip: TooltipStyle,
     pub terminal: TerminalStyle,
 }
@@ -58,6 +60,7 @@ pub struct Workspace {
     pub notifications: Notifications,
     pub joining_project_avatar: ImageStyle,
     pub joining_project_message: ContainedText,
+    pub external_location_message: ContainedText,
     pub dock: Dock,
 }
 
@@ -72,8 +75,67 @@ pub struct Titlebar {
     pub avatar_ribbon: AvatarRibbon,
     pub offline_icon: OfflineIcon,
     pub avatar: ImageStyle,
+    pub inactive_avatar: ImageStyle,
     pub sign_in_prompt: Interactive<ContainedText>,
     pub outdated_warning: ContainedText,
+    pub share_button: Interactive<ContainedText>,
+    pub toggle_contacts_button: Interactive<IconButton>,
+    pub toggle_contacts_badge: ContainerStyle,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ContactsPopover {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub height: f32,
+    pub width: f32,
+    pub invite_row_height: f32,
+    pub invite_row: Interactive<ContainedLabel>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ContactList {
+    pub user_query_editor: FieldEditor,
+    pub user_query_editor_height: f32,
+    pub add_contact_button: IconButton,
+    pub header_row: Interactive<ContainedText>,
+    pub leave_call: Interactive<ContainedText>,
+    pub contact_row: Interactive<ContainerStyle>,
+    pub row_height: f32,
+    pub project_row: Interactive<ProjectRow>,
+    pub tree_branch: Interactive<TreeBranch>,
+    pub contact_avatar: ImageStyle,
+    pub contact_status_free: ContainerStyle,
+    pub contact_status_busy: ContainerStyle,
+    pub contact_username: ContainedText,
+    pub contact_button: Interactive<IconButton>,
+    pub contact_button_spacing: f32,
+    pub disabled_button: IconButton,
+    pub section_icon_size: f32,
+    pub calling_indicator: ContainedText,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ProjectRow {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub name: ContainedText,
+}
+
+#[derive(Deserialize, Default, Clone, Copy)]
+pub struct TreeBranch {
+    pub width: f32,
+    pub color: Color,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ContactFinder {
+    pub picker: Picker,
+    pub row_height: f32,
+    pub contact_avatar: ImageStyle,
+    pub contact_username: ContainerStyle,
+    pub contact_button: IconButton,
+    pub disabled_contact_button: IconButton,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -316,54 +378,12 @@ pub struct CommandPalette {
 }
 
 #[derive(Deserialize, Default)]
-pub struct ContactsPopover {
-    pub background: Color,
-}
-
-#[derive(Deserialize, Default)]
-pub struct ContactsPanel {
-    #[serde(flatten)]
-    pub container: ContainerStyle,
-    pub user_query_editor: FieldEditor,
-    pub user_query_editor_height: f32,
-    pub add_contact_button: IconButton,
-    pub header_row: Interactive<ContainedText>,
-    pub contact_row: Interactive<ContainerStyle>,
-    pub project_row: Interactive<ProjectRow>,
-    pub row_height: f32,
-    pub contact_avatar: ImageStyle,
-    pub contact_username: ContainedText,
-    pub contact_button: Interactive<IconButton>,
-    pub contact_button_spacing: f32,
-    pub disabled_button: IconButton,
-    pub tree_branch: Interactive<TreeBranch>,
-    pub private_button: Interactive<IconButton>,
-    pub section_icon_size: f32,
-    pub invite_row: Interactive<ContainedLabel>,
-}
-
-#[derive(Deserialize, Default)]
 pub struct InviteLink {
     #[serde(flatten)]
     pub container: ContainerStyle,
     #[serde(flatten)]
     pub label: LabelStyle,
     pub icon: Icon,
-}
-
-#[derive(Deserialize, Default, Clone, Copy)]
-pub struct TreeBranch {
-    pub width: f32,
-    pub color: Color,
-}
-
-#[derive(Deserialize, Default)]
-pub struct ContactFinder {
-    pub row_height: f32,
-    pub contact_avatar: ImageStyle,
-    pub contact_username: ContainerStyle,
-    pub contact_button: IconButton,
-    pub disabled_contact_button: IconButton,
 }
 
 #[derive(Deserialize, Default)]
@@ -382,16 +402,6 @@ pub struct IconButton {
     pub color: Color,
     pub icon_width: f32,
     pub button_width: f32,
-}
-
-#[derive(Deserialize, Default)]
-pub struct ProjectRow {
-    #[serde(flatten)]
-    pub container: ContainerStyle,
-    pub name: ContainedText,
-    pub guests: ContainerStyle,
-    pub guest_avatar: ImageStyle,
-    pub guest_avatar_spacing: f32,
 }
 
 #[derive(Deserialize, Default)]
@@ -473,6 +483,40 @@ pub struct UpdateNotification {
     pub message: ContainedText,
     pub action_message: Interactive<ContainedText>,
     pub dismiss_button: Interactive<IconButton>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ProjectSharedNotification {
+    pub window_height: f32,
+    pub window_width: f32,
+    #[serde(default)]
+    pub background: Color,
+    pub owner_container: ContainerStyle,
+    pub owner_avatar: ImageStyle,
+    pub owner_metadata: ContainerStyle,
+    pub owner_username: ContainedText,
+    pub message: ContainedText,
+    pub worktree_roots: ContainedText,
+    pub button_width: f32,
+    pub open_button: ContainedText,
+    pub dismiss_button: ContainedText,
+}
+
+#[derive(Deserialize, Default)]
+pub struct IncomingCallNotification {
+    pub window_height: f32,
+    pub window_width: f32,
+    #[serde(default)]
+    pub background: Color,
+    pub caller_container: ContainerStyle,
+    pub caller_avatar: ImageStyle,
+    pub caller_metadata: ContainerStyle,
+    pub caller_username: ContainedText,
+    pub caller_message: ContainedText,
+    pub worktree_roots: ContainedText,
+    pub button_width: f32,
+    pub accept_button: ContainedText,
+    pub decline_button: ContainedText,
 }
 
 #[derive(Clone, Deserialize, Default)]
