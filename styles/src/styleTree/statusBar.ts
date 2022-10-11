@@ -111,7 +111,7 @@ export default function statusBar(colorScheme: ColorScheme) {
         padding: 2,
         margin: { bottom: -1, right: -1 },
         border: border(layer),
-        background: background(layer, "info"),
+        background: background(layer, "accent"),
       },
     },
   };

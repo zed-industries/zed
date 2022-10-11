@@ -23,8 +23,8 @@ export default function HoverPopover(elevation: Elevation) {
     container: baseContainer,
     infoContainer: {
       ...baseContainer,
-      background: background(layer, "info"),
-      border: border(layer, "info"),
+      background: background(layer, "accent"),
+      border: border(layer, "accent"),
     },
     warningContainer: {
       ...baseContainer,

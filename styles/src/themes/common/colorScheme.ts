@@ -49,7 +49,7 @@ export interface Layer {
   base: StyleSet;
   variant: StyleSet;
   on: StyleSet;
-  info: StyleSet;
+  accent: StyleSet;
   positive: StyleSet;
   warning: StyleSet;
   negative: StyleSet;
@@ -74,6 +74,7 @@ export interface StyleSet {
   disabled: Style;
   hovered: Style;
   pressed: Style;
+  inverted: Style;
 }
 
 export interface Style {

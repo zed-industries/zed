@@ -12,9 +12,8 @@ import {
 } from "./colorScheme";
 
 export function colorRamp(color: Color): Scale {
-  let hue = color.hsl()[0];
-  let endColor = chroma.hsl(hue, 0.88, 0.96);
-  let startColor = chroma.hsl(hue, 0.68, 0.12);
+  let endColor = color.desaturate(1).brighten(5);
+  let startColor = color.desaturate(1).darken(5);
   return chroma.scale([startColor, color, endColor]).mode("hsl");
 }
 
@@ -58,9 +57,9 @@ export function createColorScheme(
     magenta: baseRamps.magenta,
   };
 
-  let lowest = elevation(resampleSet(baseSet, evenSamples(0, 1)), isLight);
+  let lowest = elevation(resampleSet(baseSet, evenSamples(0, 1)));
 
-  let middle = elevation(resampleSet(baseSet, evenSamples(0.08, 1)), isLight, {
+  let middle = elevation(resampleSet(baseSet, evenSamples(0.08, 1)), {
     blur: 4,
     color: baseSet
       .neutral(isLight ? 7 : 0)
@@ -71,7 +70,7 @@ export function createColorScheme(
   });
   lowest.above = middle;
 
-  let highest = elevation(resampleSet(baseSet, evenSamples(0.16, 1)), isLight, {
+  let highest = elevation(resampleSet(baseSet, evenSamples(0.16, 1)), {
     blur: 16,
     color: baseSet
       .neutral(isLight ? 7 : 0)
@@ -139,35 +138,63 @@ function resample(scale: Scale, samples: number[]): Scale {
 
 function elevation(
   ramps: RampSet,
-  isLight: boolean,
   shadow?: Shadow
 ): Elevation {
   return {
     ramps,
 
-    bottom: bottomLayer(ramps, isLight),
-    middle: middleLayer(ramps, isLight),
-    top: topLayer(ramps, isLight),
+    bottom: bottomLayer(ramps),
+    middle: middleLayer(ramps),
+    top: topLayer(ramps),
 
     shadow,
   };
 }
 
-interface StyleColors {
-  default: number | Color;
-  hovered: number | Color;
-  pressed: number | Color;
-  active: number | Color;
-  disabled: number | Color;
+function bottomLayer(ramps: RampSet): Layer {
+  return {
+    base: buildStyleSet(ramps.neutral, 0.2, 1),
+    variant: buildStyleSet(ramps.neutral, 0.2, 0.7),
+    on: buildStyleSet(ramps.neutral, 0.1, 1),
+    accent: buildStyleSet(ramps.blue, 0.1, 0.5),
+    positive: buildStyleSet(ramps.green, 0.1, 0.5),
+    warning: buildStyleSet(ramps.yellow, 0.1, 0.5),
+    negative: buildStyleSet(ramps.red, 0.1, 0.5),
+  };
 }
+
+function middleLayer(ramps: RampSet): Layer {
+  return {
+    base: buildStyleSet(ramps.neutral, 0.1, 1),
+    variant: buildStyleSet(ramps.neutral, 0.1, 0.7),
+    on: buildStyleSet(ramps.neutral, 0, 1),
+    accent: buildStyleSet(ramps.blue, 0.1, 0.5),
+    positive: buildStyleSet(ramps.green, 0.1, 0.5),
+    warning: buildStyleSet(ramps.yellow, 0.1, 0.5),
+    negative: buildStyleSet(ramps.red, 0.1, 0.5),
+  };
+}
+
+function topLayer(ramps: RampSet): Layer {
+  return {
+    base: buildStyleSet(ramps.neutral, 0, 1),
+    variant: buildStyleSet(ramps.neutral, 0, 0.7),
+    on: buildStyleSet(ramps.neutral, 0.1, 1),
+    accent: buildStyleSet(ramps.blue, 0.1, 0.5),
+    positive: buildStyleSet(ramps.green, 0.1, 0.5),
+    warning: buildStyleSet(ramps.yellow, 0.1, 0.5),
+    negative: buildStyleSet(ramps.red, 0.1, 0.5),
+  };
+}
+
 function buildStyleSet(
   ramp: Scale,
-  styleDefinitions: {
-    background: StyleColors;
-    border: StyleColors;
-    foreground: StyleColors;
-  }
+  backgroundBase: number,
+  foregroundBase: number,
+  step: number = 0.08,
 ): StyleSet {
+  let styleDefinitions = buildStyleDefinition(backgroundBase, foregroundBase, step);
+
   function colorString(indexOrColor: number | Color): string {
     if (typeof indexOrColor === "number") {
       return ramp(indexOrColor).hex();
@@ -190,10 +217,11 @@ function buildStyleSet(
     pressed: buildStyle("pressed"),
     active: buildStyle("active"),
     disabled: buildStyle("disabled"),
+    inverted: buildStyle("inverted"),
   };
 }
 
-function buildLayer(bgBase: number, fgBase: number, step: number) {
+function buildStyleDefinition(bgBase: number, fgBase: number, step: number = 0.08) {
   return {
     background: {
       default: bgBase,
@@ -201,6 +229,7 @@ function buildLayer(bgBase: number, fgBase: number, step: number) {
       pressed: bgBase + step * 1.5,
       active: bgBase + step * 3,
       disabled: bgBase,
+      inverted: fgBase + step * 6,
     },
     border: {
       default: bgBase + step * 1,
@@ -208,49 +237,15 @@ function buildLayer(bgBase: number, fgBase: number, step: number) {
       pressed: bgBase + step,
       active: bgBase + step * 3,
       disabled: bgBase + step * 0.5,
+      inverted: bgBase - step * 3,
     },
     foreground: {
       default: fgBase,
       hovered: fgBase,
       pressed: fgBase,
-      active: fgBase,
+      active: fgBase + step * 6,
       disabled: bgBase + step * 4,
+      inverted: bgBase + step * 2,
     },
-  };
-}
-
-function bottomLayer(ramps: RampSet, isLight: boolean): Layer {
-  return {
-    base: buildStyleSet(ramps.neutral, buildLayer(0.2, 1, 0.08)),
-    variant: buildStyleSet(ramps.neutral, buildLayer(0.2, 0.7, 0.08)),
-    on: buildStyleSet(ramps.neutral, buildLayer(0.1, 1, 0.08)),
-    info: buildStyleSet(ramps.blue, buildLayer(0.1, 0.5, 0.08)),
-    positive: buildStyleSet(ramps.green, buildLayer(0.1, 0.5, 0.08)),
-    warning: buildStyleSet(ramps.yellow, buildLayer(0.1, 0.5, 0.08)),
-    negative: buildStyleSet(ramps.red, buildLayer(0.1, 0.5, 0.08)),
-  };
-}
-
-function middleLayer(ramps: RampSet, isLight: boolean): Layer {
-  return {
-    base: buildStyleSet(ramps.neutral, buildLayer(0.1, 1, 0.08)),
-    variant: buildStyleSet(ramps.neutral, buildLayer(0.1, 0.7, 0.08)),
-    on: buildStyleSet(ramps.neutral, buildLayer(0, 1, 0.08)),
-    info: buildStyleSet(ramps.blue, buildLayer(0.1, 0.5, 0.08)),
-    positive: buildStyleSet(ramps.green, buildLayer(0.1, 0.5, 0.08)),
-    warning: buildStyleSet(ramps.yellow, buildLayer(0.1, 0.5, 0.08)),
-    negative: buildStyleSet(ramps.red, buildLayer(0.1, 0.5, 0.08)),
-  };
-}
-
-function topLayer(ramps: RampSet, isLight: boolean): Layer {
-  return {
-    base: buildStyleSet(ramps.neutral, buildLayer(0, 1, 0.08)),
-    variant: buildStyleSet(ramps.neutral, buildLayer(0, 0.7, 0.08)),
-    on: buildStyleSet(ramps.neutral, buildLayer(0.1, 1, 0.08)),
-    info: buildStyleSet(ramps.blue, buildLayer(0.1, 0.5, 0.08)),
-    positive: buildStyleSet(ramps.green, buildLayer(0.1, 0.5, 0.08)),
-    warning: buildStyleSet(ramps.yellow, buildLayer(0.1, 0.5, 0.08)),
-    negative: buildStyleSet(ramps.red, buildLayer(0.1, 0.5, 0.08)),
   };
 }

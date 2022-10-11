@@ -107,7 +107,7 @@ impl ThemeTestbench {
                     .boxed(),
             )
             .with_child(
-                Self::render_button_set(3, layer_index, "info", &layer.info, cx)
+                Self::render_button_set(3, layer_index, "accent", &layer.accent, cx)
                     .flex(1., false)
                     .boxed(),
             )
@@ -185,6 +185,14 @@ impl ThemeTestbench {
                 "disabled",
                 &style_set,
                 Some(|style_set| &style_set.disabled),
+                cx,
+            ))
+            .with_child(Self::render_button(
+                set_index * 6 + 5,
+                layer_index,
+                "inverted",
+                &style_set,
+                Some(|style_set| &style_set.inverted),
                 cx,
             ))
     }

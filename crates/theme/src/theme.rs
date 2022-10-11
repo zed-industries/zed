@@ -777,7 +777,7 @@ pub struct Layer {
     pub base: StyleSet,
     pub variant: StyleSet,
     pub on: StyleSet,
-    pub info: StyleSet,
+    pub accent: StyleSet,
     pub positive: StyleSet,
     pub warning: StyleSet,
     pub negative: StyleSet,
@@ -790,6 +790,7 @@ pub struct StyleSet {
     pub disabled: Style,
     pub hovered: Style,
     pub pressed: Style,
+    pub inverted: Style,
 }
 
 #[derive(Clone, Deserialize, Default)]

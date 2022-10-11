@@ -9,7 +9,7 @@ export default function commandPalette(colorScheme: ColorScheme) {
     key: {
       text: text(layer, "mono", "on", "default", { size: "xs" }),
       cornerRadius: 2,
-      background: withOpacity(background(layer, "on"), 0.5),
+      background: background(layer, "on"),
       padding: {
         top: 1,
         bottom: 1,
@@ -22,7 +22,7 @@ export default function commandPalette(colorScheme: ColorScheme) {
         left: 2,
       },
       active: {
-        text: text(layer, "mono", "on", "active", { size: "xs" }),
+        text: text(layer, "mono", "on", "inverted", { size: "xs" }),
         background: withOpacity(background(layer, "on"), 0.2),
       },
     },

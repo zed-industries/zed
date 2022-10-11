@@ -31,7 +31,7 @@ export default function tabBar(colorScheme: ColorScheme) {
 
     // Indicators
     iconConflict: foreground(layer, "warning"),
-    iconDirty: foreground(layer, "info"),
+    iconDirty: foreground(layer, "accent"),
 
     // When two tabs of the same name are open, a label appears next to them
     description: {

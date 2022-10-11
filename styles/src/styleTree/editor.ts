@@ -36,8 +36,8 @@ export default function editor(colorScheme: ColorScheme) {
         }),
       },
       message: {
-        text: text(layer, "sans", styleSet, { size: "sm" }),
-        highlightText: text(layer, "sans", styleSet, {
+        text: text(layer, "sans", styleSet, "inverted", { size: "sm" }),
+        highlightText: text(layer, "sans", styleSet, "inverted", {
           size: "sm",
           weight: "bold",
         }),
@@ -153,7 +153,7 @@ export default function editor(colorScheme: ColorScheme) {
       .neutral(0.5)
       .alpha(0.4)
       .hex(), // TODO: This was blend * 2
-    errorColor: foreground(layer, "negative"),
+    errorColor: background(layer, "negative"),
     gutterBackground: background(layer),
     gutterPaddingFactor: 3.5,
     lineNumber: foreground(layer, "disabled"),
@@ -225,7 +225,7 @@ export default function editor(colorScheme: ColorScheme) {
     },
     errorDiagnostic: diagnostic(elevation.middle, "negative"),
     warningDiagnostic: diagnostic(elevation.middle, "warning"),
-    informationDiagnostic: diagnostic(elevation.middle, "info"),
+    informationDiagnostic: diagnostic(elevation.middle, "accent"),
     hintDiagnostic: diagnostic(elevation.middle, "warning"),
     invalidErrorDiagnostic: diagnostic(elevation.middle, "base"),
     invalidHintDiagnostic: diagnostic(elevation.middle, "base"),

@@ -26,11 +26,11 @@ export default function picker(colorScheme: ColorScheme) {
       },
       cornerRadius: 8,
       text: text(layer, "sans", "variant"),
-      highlightText: text(layer, "sans", "info", { weight: "bold" }),
+      highlightText: text(layer, "sans", "accent", { weight: "bold" }),
       active: {
-        background: background(layer, "active"),
-        text: text(layer, "sans", "active"),
-        highlightText: text(layer, "sans", "info", "active", {
+        background: background(layer, "base", "inverted"),
+        text: text(layer, "sans", "base", "inverted"),
+        highlightText: text(layer, "sans", "accent", "inverted", {
           weight: "bold",
         }),
       },
