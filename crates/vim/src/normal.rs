@@ -115,13 +115,7 @@ pub fn normal_object(object: Object, cx: &mut MutableAppContext) {
 fn move_cursor(vim: &mut Vim, motion: Motion, times: usize, cx: &mut MutableAppContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
-            s.move_cursors_with(|map, cursor, goal| {
-                let mut result = (cursor, goal);
-                for _ in 0..times {
-                    result = motion.move_point(map, result.0, result.1);
-                }
-                result
-            })
+            s.move_cursors_with(|map, cursor, goal| motion.move_point(map, cursor, goal, times))
         })
     });
 }
@@ -132,7 +126,7 @@ fn insert_after(_: &mut Workspace, _: &InsertAfter, cx: &mut ViewContext<Workspa
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_cursors_with(|map, cursor, goal| {
-                    Motion::Right.move_point(map, cursor, goal)
+                    Motion::Right.move_point(map, cursor, goal, 1)
                 });
             });
         });
@@ -149,7 +143,7 @@ fn insert_first_non_whitespace(
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_cursors_with(|map, cursor, goal| {
-                    Motion::FirstNonWhitespace.move_point(map, cursor, goal)
+                    Motion::FirstNonWhitespace.move_point(map, cursor, goal, 1)
                 });
             });
         });
@@ -162,7 +156,7 @@ fn insert_end_of_line(_: &mut Workspace, _: &InsertEndOfLine, cx: &mut ViewConte
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_cursors_with(|map, cursor, goal| {
-                    Motion::EndOfLine.move_point(map, cursor, goal)
+                    Motion::EndOfLine.move_point(map, cursor, goal, 1)
                 });
             });
         });
@@ -222,7 +216,7 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
                 });
                 editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                     s.move_cursors_with(|map, cursor, goal| {
-                        Motion::EndOfLine.move_point(map, cursor, goal)
+                        Motion::EndOfLine.move_point(map, cursor, goal, 1)
                     });
                 });
                 editor.edit_with_autoindent(edits, cx);
@@ -551,19 +545,34 @@ mod test {
 
     #[gpui::test]
     async fn test_gg(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["g", "g"]);
-        cx.assert_all(indoc! {"
-            The qˇuick
-        
-            brown fox jumps
-            over ˇthe laˇzy dog"})
-            .await;
-        cx.assert(indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.assert_binding_matches_all(
+            ["g", "g"],
+            indoc! {"
+                The qˇuick
             
-        
-            brown fox jumps
-            over the laˇzy dog"})
-            .await;
+                brown fox jumps
+                over ˇthe laˇzy dog"},
+        )
+        .await;
+        cx.assert_binding_matches(
+            ["g", "g"],
+            indoc! {"
+                
+            
+                brown fox jumps
+                over the laˇzy dog"},
+        )
+        .await;
+        cx.assert_binding_matches(
+            ["2", "g", "g"],
+            indoc! {"
+                
+                
+                brown fox juˇmps
+                over the lazydog"},
+        )
+        .await;
     }
 
     #[gpui::test]

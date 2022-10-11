@@ -30,11 +30,9 @@ pub fn visual_motion(motion: Motion, times: usize, cx: &mut MutableAppContext) {
                 s.move_with(|map, selection| {
                     let was_reversed = selection.reversed;
 
-                    for _ in 0..times {
-                        let (new_head, goal) =
-                            motion.move_point(map, selection.head(), selection.goal);
-                        selection.set_head(new_head, goal);
-                    }
+                    let (new_head, goal) =
+                        motion.move_point(map, selection.head(), selection.goal, times);
+                    selection.set_head(new_head, goal);
 
                     if was_reversed && !selection.reversed {
                         // Head was at the start of the selection, and now is at the end. We need to move the start

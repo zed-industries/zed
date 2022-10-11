@@ -6,7 +6,7 @@ use language::Selection;
 use serde::Deserialize;
 use workspace::Workspace;
 
-use crate::{motion, normal::normal_object, state::Mode, visual::visual_object, Vim};
+use crate::{motion::right, normal::normal_object, state::Mode, visual::visual_object, Vim};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Object {
@@ -124,7 +124,7 @@ fn in_word(
     // Use motion::right so that we consider the character under the cursor when looking for the start
     let start = movement::find_preceding_boundary_in_line(
         map,
-        motion::right(map, relative_to),
+        right(map, relative_to, 1),
         |left, right| {
             char_kind(left).coerce_punctuation(ignore_punctuation)
                 != char_kind(right).coerce_punctuation(ignore_punctuation)
@@ -185,7 +185,7 @@ fn around_next_word(
     // Get the start of the word
     let start = movement::find_preceding_boundary_in_line(
         map,
-        motion::right(map, relative_to),
+        right(map, relative_to, 1),
         |left, right| {
             char_kind(left).coerce_punctuation(ignore_punctuation)
                 != char_kind(right).coerce_punctuation(ignore_punctuation)

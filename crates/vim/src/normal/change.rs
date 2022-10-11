@@ -1,5 +1,5 @@
 use crate::{motion::Motion, object::Object, state::Mode, utils::copy_selections_content, Vim};
-use editor::{char_kind, display_map::DisplaySnapshot, movement, Autoscroll, Bias, DisplayPoint};
+use editor::{char_kind, display_map::DisplaySnapshot, movement, Autoscroll, DisplayPoint};
 use gpui::MutableAppContext;
 use language::Selection;
 
