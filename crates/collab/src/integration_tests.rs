@@ -541,13 +541,15 @@ async fn test_share_project(
     deterministic.run_until_parked();
     let call = incoming_call_b.borrow().clone().unwrap();
     assert_eq!(call.caller.github_login, "user_a");
-    let project_id = call.initial_project_id.unwrap();
+    let initial_project = call.initial_project.unwrap();
     active_call_b
         .update(cx_b, |call, cx| call.accept_incoming(cx))
         .await
         .unwrap();
     let client_b_peer_id = client_b.peer_id;
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b = client_b
+        .build_remote_project(initial_project.id, cx_b)
+        .await;
     let replica_id_b = project_b.read_with(cx_b, |project, _| project.replica_id());
 
     deterministic.run_until_parked();

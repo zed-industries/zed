@@ -1,4 +1,5 @@
 use call::{ActiveCall, IncomingCall};
+use client::proto;
 use futures::StreamExt;
 use gpui::{
     elements::*,
@@ -26,7 +27,11 @@ pub fn init(cx: &mut MutableAppContext) {
             if let Some(incoming_call) = incoming_call {
                 const PADDING: f32 = 16.;
                 let screen_size = cx.platform().screen_size();
-                let window_size = vec2f(274., 64.);
+
+                let window_size = cx.read(|cx| {
+                    let theme = &cx.global::<Settings>().theme.incoming_call_notification;
+                    vec2f(theme.window_width, theme.window_height)
+                });
                 let (window_id, _) = cx.add_window(
                     WindowOptions {
                         bounds: WindowBounds::Fixed(RectF::new(
@@ -66,7 +71,7 @@ impl IncomingCallNotification {
         if action.accept {
             let join = active_call.update(cx, |active_call, cx| active_call.accept_incoming(cx));
             let caller_user_id = self.call.caller.id;
-            let initial_project_id = self.call.initial_project_id;
+            let initial_project_id = self.call.initial_project.as_ref().map(|project| project.id);
             cx.spawn_weak(|_, mut cx| async move {
                 join.await?;
                 if let Some(project_id) = initial_project_id {
@@ -89,6 +94,12 @@ impl IncomingCallNotification {
 
     fn render_caller(&self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = &cx.global::<Settings>().theme.incoming_call_notification;
+        let default_project = proto::ParticipantProject::default();
+        let initial_project = self
+            .call
+            .initial_project
+            .as_ref()
+            .unwrap_or(&default_project);
         Flex::row()
             .with_children(self.call.caller.avatar.clone().map(|avatar| {
                 Image::new(avatar)
@@ -108,11 +119,34 @@ impl IncomingCallNotification {
                         .boxed(),
                     )
                     .with_child(
-                        Label::new("is calling you".into(), theme.caller_message.text.clone())
-                            .contained()
-                            .with_style(theme.caller_message.container)
-                            .boxed(),
+                        Label::new(
+                            format!(
+                                "is sharing a project in Zed{}",
+                                if initial_project.worktree_root_names.is_empty() {
+                                    ""
+                                } else {
+                                    ":"
+                                }
+                            ),
+                            theme.caller_message.text.clone(),
+                        )
+                        .contained()
+                        .with_style(theme.caller_message.container)
+                        .boxed(),
                     )
+                    .with_children(if initial_project.worktree_root_names.is_empty() {
+                        None
+                    } else {
+                        Some(
+                            Label::new(
+                                initial_project.worktree_root_names.join(", "),
+                                theme.worktree_roots.text.clone(),
+                            )
+                            .contained()
+                            .with_style(theme.worktree_roots.container)
+                            .boxed(),
+                        )
+                    })
                     .contained()
                     .with_style(theme.caller_metadata)
                     .aligned()

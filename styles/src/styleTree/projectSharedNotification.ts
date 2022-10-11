@@ -4,7 +4,7 @@ import { backgroundColor, borderColor, text } from "./components";
 export default function projectSharedNotification(theme: Theme): Object {
   const avatarSize = 48;
   return {
-    windowHeight: 72,
+    windowHeight: 74,
     windowWidth: 380,
     background: backgroundColor(theme, 300),
     ownerContainer: {

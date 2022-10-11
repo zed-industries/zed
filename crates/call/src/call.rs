@@ -23,7 +23,7 @@ pub struct IncomingCall {
     pub room_id: u64,
     pub caller: Arc<User>,
     pub participants: Vec<Arc<User>>,
-    pub initial_project_id: Option<u64>,
+    pub initial_project: Option<proto::ParticipantProject>,
 }
 
 pub struct ActiveCall {
@@ -78,7 +78,7 @@ impl ActiveCall {
                     user_store.get_user(envelope.payload.caller_user_id, cx)
                 })
                 .await?,
-            initial_project_id: envelope.payload.initial_project_id,
+            initial_project: envelope.payload.initial_project,
         };
         this.update(&mut cx, |this, _| {
             *this.incoming_call.0.borrow_mut() = Some(call);

@@ -4,6 +4,8 @@ import { backgroundColor, borderColor, text } from "./components";
 export default function incomingCallNotification(theme: Theme): Object {
   const avatarSize = 32;
   return {
+    windowHeight: 74,
+    windowWidth: 380,
     background: backgroundColor(theme, 300),
     callerContainer: {
       padding: 12,
@@ -22,6 +24,10 @@ export default function incomingCallNotification(theme: Theme): Object {
     },
     callerMessage: {
       ...text(theme, "sans", "secondary", { size: "xs" }),
+      margin: { top: -3 },
+    },
+    worktreeRoots: {
+      ...text(theme, "sans", "secondary", { size: "xs", weight: "bold" }),
       margin: { top: -3 },
     },
     buttonWidth: 96,

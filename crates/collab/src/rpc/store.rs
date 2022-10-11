@@ -176,9 +176,9 @@ impl Store {
                         .iter()
                         .map(|participant| participant.user_id)
                         .collect(),
-                    initial_project_id: active_call
+                    initial_project: active_call
                         .initial_project_id
-                        .map(|project_id| project_id.to_proto()),
+                        .and_then(|id| Self::build_participant_project(id, &self.projects)),
                 })
             }
         } else {
@@ -572,7 +572,8 @@ impl Store {
                     .iter()
                     .map(|participant| participant.user_id)
                     .collect(),
-                initial_project_id: initial_project_id.map(|project_id| project_id.to_proto()),
+                initial_project: initial_project_id
+                    .and_then(|id| Self::build_participant_project(id, &self.projects)),
             },
         ))
     }
@@ -726,14 +727,6 @@ impl Store {
             .iter_mut()
             .find(|participant| participant.peer_id == host_connection_id.0)
             .ok_or_else(|| anyhow!("no such room"))?;
-        participant.projects.push(proto::ParticipantProject {
-            id: project_id.to_proto(),
-            worktree_root_names: worktrees
-                .iter()
-                .filter(|worktree| worktree.visible)
-                .map(|worktree| worktree.root_name.clone())
-                .collect(),
-        });
 
         connection.projects.insert(project_id);
         self.projects.insert(
@@ -766,6 +759,10 @@ impl Store {
                 language_servers: Default::default(),
             },
         );
+
+        participant
+            .projects
+            .extend(Self::build_participant_project(project_id, &self.projects));
 
         Ok(room)
     }
@@ -1009,6 +1006,22 @@ impl Store {
         worktree.scan_id = scan_id;
         worktree.is_complete = is_last_update;
         Ok(connection_ids)
+    }
+
+    fn build_participant_project(
+        project_id: ProjectId,
+        projects: &BTreeMap<ProjectId, Project>,
+    ) -> Option<proto::ParticipantProject> {
+        Some(proto::ParticipantProject {
+            id: project_id.to_proto(),
+            worktree_root_names: projects
+                .get(&project_id)?
+                .worktrees
+                .values()
+                .filter(|worktree| worktree.visible)
+                .map(|worktree| worktree.root_name.clone())
+                .collect(),
+        })
     }
 
     pub fn project_connection_ids(
