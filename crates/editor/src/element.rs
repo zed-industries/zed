@@ -922,7 +922,7 @@ impl EditorElement {
         let bottom = bounds.max_y();
         let height = bounds.height();
 
-        let max_row = layout.max_row + row_range.len() as u32;
+        let max_row = layout.max_row + ((row_range.end - row_range.start) as u32);
         let scrollbar_start = row_range.start as f32 / max_row as f32;
         let scrollbar_end = row_range.end as f32 / max_row as f32;
 
@@ -959,7 +959,7 @@ impl EditorElement {
             )
             .on_down(MouseButton::Left, {
                 let view = view.clone();
-                let row_range_len = row_range.len();
+                let row_range_len = row_range.end - row_range.start;
                 move |e, cx| {
                     let y = e.position.y();
                     if y < thumb_top || thumb_bottom < y {
@@ -1653,7 +1653,7 @@ impl Element for EditorElement {
             .collect();
 
         let scrollbar_row_range = if snapshot.mode == EditorMode::Full {
-            Some(start_row..(start_row + visible_row_count))
+            Some(scroll_position.y()..(scroll_position.y() + visible_row_count as f32))
         } else {
             None
         };
@@ -1945,7 +1945,7 @@ pub struct LayoutState {
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
     selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
-    scrollbar_row_range: Option<Range<u32>>,
+    scrollbar_row_range: Option<Range<f32>>,
     max_row: u32,
     context_menu: Option<(DisplayPoint, ElementBox)>,
     diff_hunks: Vec<DiffHunk<u32>>,
