@@ -172,7 +172,7 @@ export default function editor(theme: Theme) {
       },
     },
     scrollbar: {
-      width: 12,
+      width: 14,
       track: {
         border: {
           left: true,
@@ -181,7 +181,11 @@ export default function editor(theme: Theme) {
         },
       },
       thumb: {
-        background: borderColor(theme, "secondary"),
+        background: withOpacity(borderColor(theme, "secondary"), 0.5),
+        border: {
+          width: 1,
+          color: withOpacity(borderColor(theme, 'muted'), 0.5),
+        }
       }
     },
     compositionMark: {
