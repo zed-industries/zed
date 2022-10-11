@@ -169,6 +169,7 @@ impl<Tag> Element for MouseEventHandler<Tag> {
         _: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
+        let visible_bounds = visible_bounds.intersection(bounds).unwrap_or_default();
         let hit_bounds = self.hit_bounds(visible_bounds);
         if let Some(style) = self.cursor_style {
             cx.scene.push_cursor_region(CursorRegion {

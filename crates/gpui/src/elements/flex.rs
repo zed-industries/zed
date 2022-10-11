@@ -241,11 +241,12 @@ impl Element for Flex {
         remaining_space: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        let mut remaining_space = *remaining_space;
+        let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
+        let mut remaining_space = *remaining_space;
         let overflowing = remaining_space < 0.;
         if overflowing {
-            cx.scene.push_layer(Some(bounds));
+            cx.scene.push_layer(Some(visible_bounds));
         }
 
         if let Some(scroll_state) = &self.scroll_state {
