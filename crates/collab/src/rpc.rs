@@ -479,30 +479,34 @@ impl Server {
             let mut store = self.store().await;
             let removed_connection = store.remove_connection(connection_id)?;
 
-            for (project_id, project) in removed_connection.hosted_projects {
-                projects_to_unshare.push(project_id);
+            for project in removed_connection.hosted_projects {
+                projects_to_unshare.push(project.id);
                 broadcast(connection_id, project.guests.keys().copied(), |conn_id| {
                     self.peer.send(
                         conn_id,
                         proto::UnshareProject {
-                            project_id: project_id.to_proto(),
+                            project_id: project.id.to_proto(),
                         },
                     )
                 });
             }
 
-            for project_id in removed_connection.guest_project_ids {
-                if let Some(project) = store.project(project_id).trace_err() {
-                    broadcast(connection_id, project.connection_ids(), |conn_id| {
-                        self.peer.send(
-                            conn_id,
-                            proto::RemoveProjectCollaborator {
-                                project_id: project_id.to_proto(),
-                                peer_id: connection_id.0,
-                            },
-                        )
-                    });
-                }
+            for project in removed_connection.guest_projects {
+                broadcast(connection_id, project.connection_ids, |conn_id| {
+                    self.peer.send(
+                        conn_id,
+                        proto::RemoveProjectCollaborator {
+                            project_id: project.id.to_proto(),
+                            peer_id: connection_id.0,
+                        },
+                    )
+                });
+            }
+
+            for connection_id in removed_connection.canceled_call_connection_ids {
+                self.peer
+                    .send(connection_id, proto::CallCanceled {})
+                    .trace_err();
             }
 
             if let Some(room) = removed_connection
@@ -664,6 +668,12 @@ impl Server {
                         },
                     )?;
                 }
+            }
+
+            for connection_id in left_room.canceled_call_connection_ids {
+                self.peer
+                    .send(connection_id, proto::CallCanceled {})
+                    .trace_err();
             }
 
             if let Some(room) = left_room.room {

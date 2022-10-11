@@ -492,6 +492,40 @@ async fn test_calls_on_multiple_connections(
     deterministic.run_until_parked();
     assert!(incoming_call_b1.next().await.unwrap().is_none());
     assert!(incoming_call_b2.next().await.unwrap().is_none());
+
+    // User A calls user B again.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b1.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert!(incoming_call_b1.next().await.unwrap().is_some());
+    assert!(incoming_call_b2.next().await.unwrap().is_some());
+
+    // User A hangs up, causing both connections to stop ringing.
+    active_call_a.update(cx_a, |call, cx| call.hang_up(cx).unwrap());
+    deterministic.run_until_parked();
+    assert!(incoming_call_b1.next().await.unwrap().is_none());
+    assert!(incoming_call_b2.next().await.unwrap().is_none());
+
+    // User A calls user B again.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b1.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert!(incoming_call_b1.next().await.unwrap().is_some());
+    assert!(incoming_call_b2.next().await.unwrap().is_some());
+
+    // User A disconnects up, causing both connections to stop ringing.
+    server.disconnect_client(client_a.current_user_id(cx_a));
+    cx_a.foreground().advance_clock(rpc::RECEIVE_TIMEOUT);
+    assert!(incoming_call_b1.next().await.unwrap().is_none());
+    assert!(incoming_call_b2.next().await.unwrap().is_none());
 }
 
 #[gpui::test(iterations = 10)]

@@ -86,10 +86,11 @@ pub type ReplicaId = u16;
 #[derive(Default)]
 pub struct RemovedConnectionState {
     pub user_id: UserId,
-    pub hosted_projects: HashMap<ProjectId, Project>,
-    pub guest_project_ids: HashSet<ProjectId>,
+    pub hosted_projects: Vec<Project>,
+    pub guest_projects: Vec<LeftProject>,
     pub contact_ids: HashSet<UserId>,
     pub room_id: Option<RoomId>,
+    pub canceled_call_connection_ids: Vec<ConnectionId>,
 }
 
 pub struct LeftProject {
@@ -104,6 +105,7 @@ pub struct LeftRoom<'a> {
     pub room: Option<&'a proto::Room>,
     pub unshared_projects: Vec<Project>,
     pub left_projects: Vec<LeftProject>,
+    pub canceled_call_connection_ids: Vec<ConnectionId>,
 }
 
 #[derive(Copy, Clone)]
@@ -197,7 +199,6 @@ impl Store {
             .ok_or_else(|| anyhow!("no such connection"))?;
 
         let user_id = connection.user_id;
-        let connection_projects = mem::take(&mut connection.projects);
         let connection_channels = mem::take(&mut connection.channels);
 
         let mut result = RemovedConnectionState {
@@ -210,48 +211,21 @@ impl Store {
             self.leave_channel(connection_id, channel_id);
         }
 
-        // Unshare and leave all projects.
-        for project_id in connection_projects {
-            if let Ok((_, project)) = self.unshare_project(project_id, connection_id) {
-                result.hosted_projects.insert(project_id, project);
-            } else if self.leave_project(project_id, connection_id).is_ok() {
-                result.guest_project_ids.insert(project_id);
-            }
+        let connected_user = self.connected_users.get(&user_id).unwrap();
+        if let Some(active_call) = connected_user.active_call.as_ref() {
+            let room_id = active_call.room_id;
+            let left_room = self.leave_room(room_id, connection_id)?;
+            result.hosted_projects = left_room.unshared_projects;
+            result.guest_projects = left_room.left_projects;
+            result.room_id = Some(room_id);
+            result.canceled_call_connection_ids = left_room.canceled_call_connection_ids;
         }
 
         let connected_user = self.connected_users.get_mut(&user_id).unwrap();
         connected_user.connection_ids.remove(&connection_id);
-        if let Some(active_call) = connected_user.active_call.as_ref() {
-            let room_id = active_call.room_id;
-            if let Some(room) = self.rooms.get_mut(&room_id) {
-                let prev_participant_count = room.participants.len();
-                room.participants
-                    .retain(|participant| participant.peer_id != connection_id.0);
-                if prev_participant_count == room.participants.len() {
-                    if connected_user.connection_ids.is_empty() {
-                        room.pending_participant_user_ids
-                            .retain(|pending_user_id| *pending_user_id != user_id.to_proto());
-                        result.room_id = Some(room_id);
-                        connected_user.active_call = None;
-                    }
-                } else {
-                    result.room_id = Some(room_id);
-                    connected_user.active_call = None;
-                }
-
-                if room.participants.is_empty() && room.pending_participant_user_ids.is_empty() {
-                    self.rooms.remove(&room_id);
-                }
-            } else {
-                tracing::error!("disconnected user claims to be in a room that does not exist");
-                connected_user.active_call = None;
-            }
-        }
-
         if connected_user.connection_ids.is_empty() {
             self.connected_users.remove(&user_id);
         }
-
         self.connections.remove(&connection_id).unwrap();
 
         Ok(result)
@@ -491,6 +465,31 @@ impl Store {
             .ok_or_else(|| anyhow!("no such room"))?;
         room.participants
             .retain(|participant| participant.peer_id != connection_id.0);
+
+        let mut canceled_call_connection_ids = Vec::new();
+        room.pending_participant_user_ids
+            .retain(|pending_participant_user_id| {
+                if let Some(connected_user) = self
+                    .connected_users
+                    .get_mut(&UserId::from_proto(*pending_participant_user_id))
+                {
+                    if let Some(call) = connected_user.active_call.as_ref() {
+                        if call.caller_user_id == user_id {
+                            connected_user.active_call.take();
+                            canceled_call_connection_ids
+                                .extend(connected_user.connection_ids.iter().copied());
+                            false
+                        } else {
+                            true
+                        }
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                }
+            });
+
         if room.participants.is_empty() && room.pending_participant_user_ids.is_empty() {
             self.rooms.remove(&room_id);
         }
@@ -499,6 +498,7 @@ impl Store {
             room: self.rooms.get(&room_id),
             unshared_projects,
             left_projects,
+            canceled_call_connection_ids,
         })
     }
 
