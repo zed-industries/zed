@@ -11,7 +11,7 @@ jobs:
       with:
         webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
         content: |
-          📣 Zed ${{ github.event.release.name }} was just released!
+          📣 Zed ${{ github.event.release.tag_name }} was just released!
           
           Restart your Zed or head to https://zed.dev/releases to grab it.
         
