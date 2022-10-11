@@ -51,7 +51,7 @@ pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Mutab
                         .chars_at(selection.start)
                         .take_while(|(_, p)| p < &selection.end)
                         .all(|(char, _)| char == '\n')
-                        || offset_range.is_empty();
+                        && !offset_range.is_empty();
                     let end_at_newline = map
                         .chars_at(selection.end)
                         .next()

@@ -60,22 +60,23 @@ pub fn visual_object(object: Object, cx: &mut MutableAppContext) {
                 editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                     s.move_with(|map, selection| {
                         let head = selection.head();
-                        let mut range = object.range(map, head, around);
-                        if !range.is_empty() {
-                            if let Some((_, end)) = map.reverse_chars_at(range.end).next() {
-                                range.end = end;
-                            }
+                        if let Some(mut range) = object.range(map, head, around) {
+                            if !range.is_empty() {
+                                if let Some((_, end)) = map.reverse_chars_at(range.end).next() {
+                                    range.end = end;
+                                }
 
-                            if selection.is_empty() {
-                                selection.start = range.start;
-                                selection.end = range.end;
-                            } else if selection.reversed {
-                                selection.start = range.start;
-                            } else {
-                                selection.end = range.end;
+                                if selection.is_empty() {
+                                    selection.start = range.start;
+                                    selection.end = range.end;
+                                } else if selection.reversed {
+                                    selection.start = range.start;
+                                } else {
+                                    selection.end = range.end;
+                                }
                             }
                         }
-                    })
+                    });
                 });
             });
         }

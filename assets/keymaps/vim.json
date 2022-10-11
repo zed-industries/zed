@@ -198,7 +198,18 @@
                     "ignorePunctuation": true
                 }
             ],
-            "s": "vim::Sentence"
+            "s": "vim::Sentence",
+            "'": "vim::Quotes",
+            "`": "vim::BackQuotes",
+            "\"": "vim::DoubleQuotes",
+            "(": "vim::Parentheses",
+            ")": "vim::Parentheses",
+            "[": "vim::SquareBrackets",
+            "]": "vim::SquareBrackets",
+            "{": "vim::CurlyBrackets",
+            "}": "vim::CurlyBrackets",
+            "<": "vim::AngleBrackets",
+            ">": "vim::AngleBrackets"
         }
     },
     {

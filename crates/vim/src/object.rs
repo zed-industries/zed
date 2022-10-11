@@ -12,6 +12,13 @@ use crate::{motion, normal::normal_object, state::Mode, visual::visual_object, V
 pub enum Object {
     Word { ignore_punctuation: bool },
     Sentence,
+    Quotes,
+    BackQuotes,
+    DoubleQuotes,
+    Parentheses,
+    SquareBrackets,
+    CurlyBrackets,
+    AngleBrackets,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -21,7 +28,19 @@ struct Word {
     ignore_punctuation: bool,
 }
 
-actions!(vim, [Sentence]);
+actions!(
+    vim,
+    [
+        Sentence,
+        Quotes,
+        BackQuotes,
+        DoubleQuotes,
+        Parentheses,
+        SquareBrackets,
+        CurlyBrackets,
+        AngleBrackets
+    ]
+);
 impl_actions!(vim, [Word]);
 
 pub fn init(cx: &mut MutableAppContext) {
@@ -31,6 +50,15 @@ pub fn init(cx: &mut MutableAppContext) {
         },
     );
     cx.add_action(|_: &mut Workspace, _: &Sentence, cx: _| object(Object::Sentence, cx));
+    cx.add_action(|_: &mut Workspace, _: &Quotes, cx: _| object(Object::Quotes, cx));
+    cx.add_action(|_: &mut Workspace, _: &BackQuotes, cx: _| object(Object::BackQuotes, cx));
+    cx.add_action(|_: &mut Workspace, _: &DoubleQuotes, cx: _| object(Object::DoubleQuotes, cx));
+    cx.add_action(|_: &mut Workspace, _: &Parentheses, cx: _| object(Object::Parentheses, cx));
+    cx.add_action(|_: &mut Workspace, _: &SquareBrackets, cx: _| {
+        object(Object::SquareBrackets, cx)
+    });
+    cx.add_action(|_: &mut Workspace, _: &CurlyBrackets, cx: _| object(Object::CurlyBrackets, cx));
+    cx.add_action(|_: &mut Workspace, _: &AngleBrackets, cx: _| object(Object::AngleBrackets, cx));
 }
 
 fn object(object: Object, cx: &mut MutableAppContext) {
@@ -49,7 +77,7 @@ impl Object {
         map: &DisplaySnapshot,
         relative_to: DisplayPoint,
         around: bool,
-    ) -> Range<DisplayPoint> {
+    ) -> Option<Range<DisplayPoint>> {
         match self {
             Object::Word { ignore_punctuation } => {
                 if around {
@@ -59,6 +87,13 @@ impl Object {
                 }
             }
             Object::Sentence => sentence(map, relative_to, around),
+            Object::Quotes => surrounding_markers(map, relative_to, around, false, '\'', '\''),
+            Object::BackQuotes => surrounding_markers(map, relative_to, around, false, '`', '`'),
+            Object::DoubleQuotes => surrounding_markers(map, relative_to, around, false, '"', '"'),
+            Object::Parentheses => surrounding_markers(map, relative_to, around, true, '(', ')'),
+            Object::SquareBrackets => surrounding_markers(map, relative_to, around, true, '[', ']'),
+            Object::CurlyBrackets => surrounding_markers(map, relative_to, around, true, '{', '}'),
+            Object::AngleBrackets => surrounding_markers(map, relative_to, around, true, '<', '>'),
         }
     }
 
@@ -67,10 +102,14 @@ impl Object {
         map: &DisplaySnapshot,
         selection: &mut Selection<DisplayPoint>,
         around: bool,
-    ) {
-        let range = self.range(map, selection.head(), around);
-        selection.start = range.start;
-        selection.end = range.end;
+    ) -> bool {
+        if let Some(range) = self.range(map, selection.head(), around) {
+            selection.start = range.start;
+            selection.end = range.end;
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -81,7 +120,7 @@ fn in_word(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
-) -> Range<DisplayPoint> {
+) -> Option<Range<DisplayPoint>> {
     // Use motion::right so that we consider the character under the cursor when looking for the start
     let start = movement::find_preceding_boundary_in_line(
         map,
@@ -96,7 +135,7 @@ fn in_word(
             != char_kind(right).coerce_punctuation(ignore_punctuation)
     });
 
-    start..end
+    Some(start..end)
 }
 
 /// Return a range that surrounds the word and following whitespace
@@ -115,7 +154,7 @@ fn around_word(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
-) -> Range<DisplayPoint> {
+) -> Option<Range<DisplayPoint>> {
     let in_word = map
         .chars_at(relative_to)
         .next()
@@ -133,15 +172,16 @@ fn around_containing_word(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
-) -> Range<DisplayPoint> {
-    expand_to_include_whitespace(map, in_word(map, relative_to, ignore_punctuation), true)
+) -> Option<Range<DisplayPoint>> {
+    in_word(map, relative_to, ignore_punctuation)
+        .map(|range| expand_to_include_whitespace(map, range, true))
 }
 
 fn around_next_word(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
-) -> Range<DisplayPoint> {
+) -> Option<Range<DisplayPoint>> {
     // Get the start of the word
     let start = movement::find_preceding_boundary_in_line(
         map,
@@ -166,10 +206,14 @@ fn around_next_word(
         found
     });
 
-    start..end
+    Some(start..end)
 }
 
-fn sentence(map: &DisplaySnapshot, relative_to: DisplayPoint, around: bool) -> Range<DisplayPoint> {
+fn sentence(
+    map: &DisplaySnapshot,
+    relative_to: DisplayPoint,
+    around: bool,
+) -> Option<Range<DisplayPoint>> {
     let mut start = None;
     let mut previous_end = relative_to;
 
@@ -220,7 +264,7 @@ fn sentence(map: &DisplaySnapshot, relative_to: DisplayPoint, around: bool) -> R
         range = expand_to_include_whitespace(map, range, false);
     }
 
-    range
+    Some(range)
 }
 
 fn is_possible_sentence_start(character: char) -> bool {
@@ -304,6 +348,83 @@ fn expand_to_include_whitespace(
     }
 
     range
+}
+
+fn surrounding_markers(
+    map: &DisplaySnapshot,
+    relative_to: DisplayPoint,
+    around: bool,
+    search_across_lines: bool,
+    start_marker: char,
+    end_marker: char,
+) -> Option<Range<DisplayPoint>> {
+    let mut matched_ends = 0;
+    let mut start = None;
+    for (char, mut point) in map.reverse_chars_at(relative_to) {
+        if char == start_marker {
+            if matched_ends > 0 {
+                matched_ends -= 1;
+            } else {
+                if around {
+                    start = Some(point)
+                } else {
+                    *point.column_mut() += char.len_utf8() as u32;
+                    start = Some(point);
+                }
+                break;
+            }
+        } else if char == end_marker {
+            matched_ends += 1;
+        } else if char == '\n' && !search_across_lines {
+            break;
+        }
+    }
+
+    let mut matched_starts = 0;
+    let mut end = None;
+    for (char, mut point) in map.chars_at(relative_to) {
+        if char == end_marker {
+            if start.is_none() {
+                break;
+            }
+
+            if matched_starts > 0 {
+                matched_starts -= 1;
+            } else {
+                if around {
+                    *point.column_mut() += char.len_utf8() as u32;
+                    end = Some(point);
+                } else {
+                    end = Some(point);
+                }
+
+                break;
+            }
+        }
+
+        if char == start_marker {
+            if start.is_none() {
+                if around {
+                    start = Some(point);
+                } else {
+                    *point.column_mut() += char.len_utf8() as u32;
+                    start = Some(point);
+                }
+            } else {
+                matched_starts += 1;
+            }
+        }
+
+        if char == '\n' && !search_across_lines {
+            break;
+        }
+    }
+
+    if let (Some(start), Some(end)) = (start, end) {
+        Some(start..end)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -458,5 +579,62 @@ mod test {
         // for sentence_example in SENTENCE_EXAMPLES {
         //     cx.assert_all(sentence_example).await;
         // }
+    }
+
+    // Test string with "`" for opening surrounders and "'" for closing surrounders
+    const SURROUNDING_MARKER_STRING: &str = indoc! {"
+        ˇTh'ˇe ˇ`ˇ'ˇquˇi`ˇck broˇ'wn`
+        'ˇfox juˇmps ovˇ`ˇer
+        the ˇlazy dˇ'ˇoˇ`ˇg"};
+
+    const SURROUNDING_OBJECTS: &[(char, char)] = &[
+        // ('\'', '\''), // Quote,
+        // ('`', '`'),   // Back Quote
+        // ('"', '"'),   // Double Quote
+        // ('"', '"'),   // Double Quote
+        ('(', ')'), // Parentheses
+        ('[', ']'), // SquareBrackets
+        ('{', '}'), // CurlyBrackets
+        ('<', '>'), // AngleBrackets
+    ];
+
+    #[gpui::test]
+    async fn test_change_surrounding_character_objects(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        for (start, end) in SURROUNDING_OBJECTS {
+            let marked_string = SURROUNDING_MARKER_STRING
+                .replace('`', &start.to_string())
+                .replace('\'', &end.to_string());
+
+            // cx.assert_binding_matches_all(["c", "i", &start.to_string()], &marked_string)
+            //     .await;
+            cx.assert_binding_matches_all(["c", "i", &end.to_string()], &marked_string)
+                .await;
+            // cx.assert_binding_matches_all(["c", "a", &start.to_string()], &marked_string)
+            //     .await;
+            cx.assert_binding_matches_all(["c", "a", &end.to_string()], &marked_string)
+                .await;
+        }
+    }
+
+    #[gpui::test]
+    async fn test_delete_surrounding_character_objects(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        for (start, end) in SURROUNDING_OBJECTS {
+            let marked_string = SURROUNDING_MARKER_STRING
+                .replace('`', &start.to_string())
+                .replace('\'', &end.to_string());
+
+            // cx.assert_binding_matches_all(["d", "i", &start.to_string()], &marked_string)
+            //     .await;
+            cx.assert_binding_matches_all(["d", "i", &end.to_string()], &marked_string)
+                .await;
+            // cx.assert_binding_matches_all(["d", "a", &start.to_string()], &marked_string)
+            //     .await;
+            cx.assert_binding_matches_all(["d", "a", &end.to_string()], &marked_string)
+                .await;
+        }
     }
 }

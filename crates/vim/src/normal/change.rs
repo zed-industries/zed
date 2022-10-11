@@ -1,5 +1,5 @@
 use crate::{motion::Motion, object::Object, state::Mode, utils::copy_selections_content, Vim};
-use editor::{char_kind, display_map::DisplaySnapshot, movement, Autoscroll, DisplayPoint};
+use editor::{char_kind, display_map::DisplaySnapshot, movement, Autoscroll, Bias, DisplayPoint};
 use gpui::MutableAppContext;
 use language::Selection;
 
@@ -25,20 +25,28 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: usize, cx: &mut Mutab
 }
 
 pub fn change_object(vim: &mut Vim, object: Object, around: bool, cx: &mut MutableAppContext) {
+    let mut objects_found = false;
     vim.update_active_editor(cx, |editor, cx| {
+        // We are swapping to insert mode anyway. Just set the line end clipping behavior now
+        editor.set_clip_at_line_ends(false, cx);
         editor.transact(cx, |editor, cx| {
-            // We are swapping to insert mode anyway. Just set the line end clipping behavior now
-            editor.set_clip_at_line_ends(false, cx);
             editor.change_selections(Some(Autoscroll::Fit), cx, |s| {
                 s.move_with(|map, selection| {
-                    object.expand_selection(map, selection, around);
+                    objects_found |= object.expand_selection(map, selection, around);
                 });
             });
-            copy_selections_content(editor, false, cx);
-            editor.insert("", cx);
+            if objects_found {
+                copy_selections_content(editor, false, cx);
+                editor.insert("", cx);
+            }
         });
     });
-    vim.switch_mode(Mode::Insert, false, cx);
+
+    if objects_found {
+        vim.switch_mode(Mode::Insert, false, cx);
+    } else {
+        vim.switch_mode(Mode::Normal, false, cx);
+    }
 }
 
 // From the docs https://vimhelp.org/change.txt.html#cw
