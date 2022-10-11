@@ -1,13 +1,15 @@
+use fs::Fs;
 use futures::StreamExt;
 use gpui::{executor, MutableAppContext};
 use postage::sink::Sink as _;
 use postage::{prelude::Stream, watch};
-use project::Fs;
 use serde::Deserialize;
-use settings::{parse_json_with_comments, KeymapFileContent, Settings, SettingsFileContent};
+
 use std::{path::Path, sync::Arc, time::Duration};
 use theme::ThemeRegistry;
 use util::ResultExt;
+
+use crate::{parse_json_with_comments, KeymapFileContent, Settings, SettingsFileContent};
 
 #[derive(Clone)]
 pub struct WatchedJsonFile<T>(pub watch::Receiver<T>);
@@ -77,7 +79,7 @@ pub fn watch_settings_file(
 
 pub fn keymap_updated(content: KeymapFileContent, cx: &mut MutableAppContext) {
     cx.clear_bindings();
-    settings::KeymapFileContent::load_defaults(cx);
+    KeymapFileContent::load_defaults(cx);
     content.add_to_cx(cx).log_err();
 }
 
@@ -105,8 +107,8 @@ pub fn watch_keymap_file(mut file: WatchedJsonFile<KeymapFileContent>, cx: &mut 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use project::FakeFs;
-    use settings::{EditorSettings, SoftWrap};
+    use crate::{EditorSettings, SoftWrap};
+    use fs::FakeFs;
 
     #[gpui::test]
     async fn test_watch_settings_files(cx: &mut gpui::TestAppContext) {

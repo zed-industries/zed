@@ -1,4 +1,5 @@
 mod keymap_file;
+pub mod settings_file;
 
 use anyhow::Result;
 use gpui::{

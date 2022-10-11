@@ -32,13 +32,11 @@ use std::{env, ffi::OsStr, panic, path::PathBuf, sync::Arc, thread, time::Durati
 use terminal::terminal_container_view::{get_working_directory, TerminalContainer};
 
 use fs::RealFs;
+use settings::settings_file::{watch_keymap_file, watch_settings_file, WatchedJsonFile};
 use theme::ThemeRegistry;
 use util::{ResultExt, TryFutureExt};
 use workspace::{self, AppState, ItemHandle, NewFile, OpenPaths, Workspace};
-use zed::{
-    self, build_window_options, initialize_workspace, languages, menus,
-    settings_file::{watch_keymap_file, watch_settings_file, WatchedJsonFile},
-};
+use zed::{self, build_window_options, initialize_workspace, languages, menus};
 
 fn main() {
     let http = http::client();
