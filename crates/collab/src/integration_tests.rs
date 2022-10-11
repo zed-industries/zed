@@ -801,18 +801,11 @@ async fn test_host_disconnect(
     assert!(!cx_b.is_window_edited(workspace_b.window_id()));
 
     // Ensure client B is not prompted to save edits when closing window after disconnecting.
-    workspace_b
-        .update(cx_b, |workspace, cx| {
-            workspace.close(&Default::default(), cx)
-        })
-        .unwrap()
+    let can_close = workspace_b
+        .update(cx_b, |workspace, cx| workspace.prepare_to_close(true, cx))
         .await
         .unwrap();
-    assert_eq!(cx_b.window_ids().len(), 0);
-    cx_b.update(|_| {
-        drop(workspace_b);
-        drop(project_b);
-    });
+    assert!(can_close);
 }
 
 #[gpui::test(iterations = 10)]
