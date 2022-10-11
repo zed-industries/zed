@@ -11,9 +11,9 @@ use gpui::{
 use indoc::indoc;
 use language::{FakeLspAdapter, LanguageConfig, LanguageRegistry};
 use project::FakeFs;
+use rope::point::Point;
 use settings::EditorSettings;
 use std::{cell::RefCell, rc::Rc, time::Instant};
-use text::Point;
 use unindent::Unindent;
 use util::{
     assert_set_eq,

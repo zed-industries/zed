@@ -8,11 +8,23 @@ path = "src/fs.rs"
 
 [dependencies]
 collections = { path = "../collections" }
-fsevent = { path = "../fsevent" }
+gpui = { path = "../gpui" }
+lsp = { path = "../lsp" }
+rope = { path = "../rope" }
+util = { path = "../util" }
 anyhow = "1.0.57"
 async-trait = "0.1"
 futures = "0.3"
+fsevent = { path = "../fsevent" }
+lazy_static = "1.4.0"
 parking_lot = "0.11.1"
 smol = "1.2.5"
-text = { path = "../text" }
-util = { path = "../util" }
+regex = "1.5"
+git2 = { version = "0.15", default-features = false }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { version = "0.4.16", features = ["kv_unstable_serde"] }
+libc = "0.2"
+
+[features]
+test-support = []

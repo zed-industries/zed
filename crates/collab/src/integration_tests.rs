@@ -15,6 +15,7 @@ use editor::{
     self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, Redo, Rename, ToOffset,
     ToggleCodeActions, Undo,
 };
+use fs::{FakeFs, Fs as _, LineEnding};
 use futures::{channel::mpsc, Future, StreamExt as _};
 use gpui::{
     executor::{self, Deterministic},
@@ -24,17 +25,16 @@ use gpui::{
 };
 use language::{
     range_to_lsp, tree_sitter_rust, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
-    LanguageConfig, LanguageRegistry, LineEnding, OffsetRangeExt, Point, Rope,
+    LanguageConfig, LanguageRegistry, OffsetRangeExt, Rope,
 };
 use lsp::{self, FakeLanguageServer};
 use parking_lot::Mutex;
 use project::{
-    fs::{FakeFs, Fs as _},
-    search::SearchQuery,
-    worktree::WorktreeHandle,
-    DiagnosticSummary, Project, ProjectPath, ProjectStore, WorktreeId,
+    search::SearchQuery, worktree::WorktreeHandle, DiagnosticSummary, Project, ProjectPath,
+    ProjectStore, WorktreeId,
 };
 use rand::prelude::*;
+use rope::point::Point;
 use rpc::PeerId;
 use serde_json::json;
 use settings::{Formatter, Settings};

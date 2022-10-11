@@ -1,8 +1,9 @@
-use super::{Point, ToOffset};
-use crate::{rope::TextDimension, BufferSnapshot, PointUtf16, ToPoint, ToPointUtf16};
 use anyhow::Result;
+use rope::{point::Point, point_utf16::PointUtf16, TextDimension};
 use std::{cmp::Ordering, fmt::Debug, ops::Range};
 use sum_tree::Bias;
+
+use crate::{BufferSnapshot, ToOffset, ToPoint, ToPointUtf16};
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Default)]
 pub struct Anchor {

@@ -13,7 +13,8 @@ use change::init as change_init;
 use collections::HashSet;
 use editor::{Autoscroll, Bias, ClipboardSelection, DisplayPoint};
 use gpui::{actions, MutableAppContext, ViewContext};
-use language::{AutoindentMode, Point, SelectionGoal};
+use language::{AutoindentMode, SelectionGoal};
+use rope::point::Point;
 use workspace::Workspace;
 
 use self::{change::change_over, delete::delete_over, yank::yank_over};

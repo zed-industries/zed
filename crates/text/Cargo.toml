@@ -14,23 +14,23 @@ test-support = ["rand"]
 clock = { path = "../clock" }
 collections = { path = "../collections" }
 fs = { path = "../fs" }
+rope = { path = "../rope" }
 sum_tree = { path = "../sum_tree" }
 anyhow = "1.0.38"
-arrayvec = "0.7.1"
 digest = { version = "0.9", features = ["std"] }
-bromberg_sl2 = "0.6"
 lazy_static = "1.4"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 parking_lot = "0.11"
 postage = { version = "0.4.1", features = ["futures-traits"] }
 rand = { version = "0.8.3", optional = true }
-regex = "1.5"
 smallvec = { version = "1.6", features = ["union"] }
+util = { path = "../util" }
+regex = "1.5"
+
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
-util = { path = "../util", features = ["test-support"] }
 ctor = "0.1"
 env_logger = "0.9"
 rand = "0.8.3"

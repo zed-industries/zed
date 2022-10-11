@@ -14,10 +14,10 @@ use gpui::{
     ViewHandle, WeakViewHandle,
 };
 use language::{
-    Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection,
-    SelectionGoal,
+    Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Selection, SelectionGoal,
 };
 use project::{DiagnosticSummary, Project, ProjectPath};
+use rope::point::Point;
 use serde_json::json;
 use settings::Settings;
 use smallvec::SmallVec;
@@ -738,7 +738,8 @@ mod tests {
         DisplayPoint,
     };
     use gpui::TestAppContext;
-    use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16};
+    use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity};
+    use rope::point_utf16::PointUtf16;
     use serde_json::json;
     use unindent::Unindent as _;
     use workspace::AppState;

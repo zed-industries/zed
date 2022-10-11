@@ -1,5 +1,7 @@
-use crate::Anchor;
-use crate::{rope::TextDimension, BufferSnapshot};
+use rope::TextDimension;
+
+use crate::{Anchor, BufferSnapshot};
+
 use std::cmp::Ordering;
 use std::ops::Range;
 

@@ -2,14 +2,8 @@ mod anchor;
 pub mod locator;
 #[cfg(any(test, feature = "test-support"))]
 pub mod network;
-mod offset_utf16;
 pub mod operation_queue;
 mod patch;
-mod point;
-mod point_utf16;
-#[cfg(any(test, feature = "test-support"))]
-pub mod random_char_iter;
-pub mod rope;
 mod selection;
 pub mod subscription;
 #[cfg(test)]
@@ -20,22 +14,15 @@ pub use anchor::*;
 use anyhow::Result;
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
-use lazy_static::lazy_static;
+use fs::LineEnding;
 use locator::Locator;
-pub use offset_utf16::*;
 use operation_queue::OperationQueue;
 pub use patch::Patch;
-pub use point::*;
-pub use point_utf16::*;
 use postage::{barrier, oneshot, prelude::*};
-#[cfg(any(test, feature = "test-support"))]
-pub use random_char_iter::*;
-use regex::Regex;
-use rope::TextDimension;
+use rope::{offset_utf16::OffsetUtf16, point::Point, point_utf16::PointUtf16, TextDimension};
 pub use rope::{Chunks, Rope, TextSummary};
 pub use selection::*;
 use std::{
-    borrow::Cow,
     cmp::{self, Ordering, Reverse},
     future::Future,
     iter::Iterator,
@@ -49,9 +36,8 @@ pub use sum_tree::Bias;
 use sum_tree::{FilterCursor, SumTree, TreeMap};
 use undo_map::UndoMap;
 
-lazy_static! {
-    static ref CARRIAGE_RETURNS_REGEX: Regex = Regex::new("\r\n|\r").unwrap();
-}
+#[cfg(any(test, feature = "test-support"))]
+use util::RandomCharIter;
 
 pub type TransactionId = clock::Local;
 
@@ -1458,9 +1444,7 @@ impl Buffer {
             last_end = Some(range.end);
 
             let new_text_len = rng.gen_range(0..10);
-            let new_text: String = crate::random_char_iter::RandomCharIter::new(&mut *rng)
-                .take(new_text_len)
-                .collect();
+            let new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
 
             edits.push((range, new_text.into()));
         }

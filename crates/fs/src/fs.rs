@@ -3,8 +3,15 @@ pub mod repository;
 use anyhow::{anyhow, Result};
 use fsevent::EventStream;
 use futures::{future::BoxFuture, Stream, StreamExt};
+use git2::Repository as LibGitRepository;
+use lazy_static::lazy_static;
 use parking_lot::Mutex as SyncMutex;
+use regex::Regex;
+use repository::GitRepository;
+use rope::Rope;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
+use std::borrow::Cow;
+use std::cmp;
 use std::sync::Arc;
 use std::{
     io,
@@ -13,7 +20,6 @@ use std::{
     pin::Pin,
     time::{Duration, SystemTime},
 };
-use text::Rope;
 use util::ResultExt;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -21,9 +27,13 @@ use collections::{btree_map, BTreeMap};
 #[cfg(any(test, feature = "test-support"))]
 use futures::lock::Mutex;
 #[cfg(any(test, feature = "test-support"))]
-use git::repository::FakeGitRepositoryState;
+use repository::FakeGitRepositoryState;
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::Weak;
+
+lazy_static! {
+    static ref CARRIAGE_RETURNS_REGEX: Regex = Regex::new("\r\n|\r").unwrap();
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LineEnding {
@@ -72,7 +82,7 @@ impl LineEnding {
         }
     }
 
-    fn normalize_arc(text: Arc<str>) -> Arc<str> {
+    pub fn normalize_arc(text: Arc<str>) -> Arc<str> {
         if let Cow::Owned(replaced) = CARRIAGE_RETURNS_REGEX.replace_all(&text, "\n") {
             replaced.into()
         } else {
@@ -139,6 +149,33 @@ pub struct Metadata {
     pub mtime: SystemTime,
     pub is_symlink: bool,
     pub is_dir: bool,
+}
+
+impl From<lsp::CreateFileOptions> for CreateOptions {
+    fn from(options: lsp::CreateFileOptions) -> Self {
+        Self {
+            overwrite: options.overwrite.unwrap_or(false),
+            ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
+        }
+    }
+}
+
+impl From<lsp::RenameFileOptions> for RenameOptions {
+    fn from(options: lsp::RenameFileOptions) -> Self {
+        Self {
+            overwrite: options.overwrite.unwrap_or(false),
+            ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
+        }
+    }
+}
+
+impl From<lsp::DeleteFileOptions> for RemoveOptions {
+    fn from(options: lsp::DeleteFileOptions) -> Self {
+        Self {
+            recursive: options.recursive.unwrap_or(false),
+            ignore_if_not_exists: options.ignore_if_not_exists.unwrap_or(false),
+        }
+    }
 }
 
 pub struct RealFs;
@@ -340,7 +377,7 @@ enum FakeFsEntry {
         inode: u64,
         mtime: SystemTime,
         entries: BTreeMap<String, Arc<Mutex<FakeFsEntry>>>,
-        git_repo_state: Option<Arc<SyncMutex<git::repository::FakeGitRepositoryState>>>,
+        git_repo_state: Option<Arc<SyncMutex<repository::FakeGitRepositoryState>>>,
     },
     Symlink {
         target: PathBuf,
@@ -952,7 +989,7 @@ impl Fs for FakeFs {
                         Arc::new(SyncMutex::new(FakeGitRepositoryState::default()))
                     })
                     .clone();
-                Some(git::repository::FakeGitRepository::open(state))
+                Some(repository::FakeGitRepository::open(state))
             } else {
                 None
             }

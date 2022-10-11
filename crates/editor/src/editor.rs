@@ -43,8 +43,8 @@ pub use items::MAX_TAB_TITLE_LEN;
 pub use language::{char_kind, CharKind};
 use language::{
     AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion, Diagnostic,
-    DiagnosticSeverity, IndentKind, IndentSize, Language, OffsetRangeExt, OffsetUtf16, Point,
-    Selection, SelectionGoal, TransactionId,
+    DiagnosticSeverity, IndentKind, IndentSize, Language, OffsetRangeExt, Selection, SelectionGoal,
+    TransactionId,
 };
 use link_go_to_definition::{hide_link_definition, LinkGoToDefinitionState};
 pub use multi_buffer::{
@@ -54,6 +54,7 @@ pub use multi_buffer::{
 use multi_buffer::{MultiBufferChunks, ToOffsetUtf16};
 use ordered_float::OrderedFloat;
 use project::{FormatTrigger, LocationLink, Project, ProjectPath, ProjectTransaction};
+use rope::{offset_utf16::OffsetUtf16, point::Point};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::Settings;

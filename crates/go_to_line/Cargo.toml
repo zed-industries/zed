@@ -13,5 +13,6 @@ gpui = { path = "../gpui" }
 menu = { path = "../menu" }
 settings = { path = "../settings" }
 text = { path = "../text" }
+rope = { path = "../rope" }
 workspace = { path = "../workspace" }
 postage = { version = "0.4", features = ["futures-traits"] }

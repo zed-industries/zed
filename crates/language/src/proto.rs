@@ -8,19 +8,19 @@ use rpc::proto;
 use std::{ops::Range, sync::Arc};
 use text::*;
 
-pub use proto::{BufferState, LineEnding, Operation, SelectionSet};
+pub use proto::{BufferState, Operation, SelectionSet};
 
-pub fn deserialize_line_ending(message: proto::LineEnding) -> text::LineEnding {
+pub fn deserialize_line_ending(message: proto::LineEnding) -> fs::LineEnding {
     match message {
-        LineEnding::Unix => text::LineEnding::Unix,
-        LineEnding::Windows => text::LineEnding::Windows,
+        proto::LineEnding::Unix => fs::LineEnding::Unix,
+        proto::LineEnding::Windows => fs::LineEnding::Windows,
     }
 }
 
-pub fn serialize_line_ending(message: text::LineEnding) -> proto::LineEnding {
+pub fn serialize_line_ending(message: fs::LineEnding) -> proto::LineEnding {
     match message {
-        text::LineEnding::Unix => proto::LineEnding::Unix,
-        text::LineEnding::Windows => proto::LineEnding::Windows,
+        fs::LineEnding::Unix => proto::LineEnding::Unix,
+        fs::LineEnding::Windows => proto::LineEnding::Windows,
     }
 }
 

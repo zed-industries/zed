@@ -25,9 +25,11 @@ client = { path = "../client" }
 clock = { path = "../clock" }
 collections = { path = "../collections" }
 fuzzy = { path = "../fuzzy" }
+fs = { path = "../fs" }
 git = { path = "../git" }
 gpui = { path = "../gpui" }
 lsp = { path = "../lsp" }
+rope = { path = "../rope" }
 rpc = { path = "../rpc" }
 settings = { path = "../settings" }
 sum_tree = { path = "../sum_tree" }

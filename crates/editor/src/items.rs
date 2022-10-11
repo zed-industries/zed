@@ -11,6 +11,7 @@ use gpui::{
 };
 use language::{Bias, Buffer, File as _, OffsetRangeExt, SelectionGoal};
 use project::{File, FormatTrigger, Project, ProjectEntryId, ProjectPath};
+use rope::point::Point;
 use rpc::proto::{self, update_view};
 use settings::Settings;
 use smallvec::SmallVec;
@@ -21,7 +22,7 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
 };
-use text::{Point, Selection};
+use text::Selection;
 use util::TryFutureExt;
 use workspace::{
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},

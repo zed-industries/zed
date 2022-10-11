@@ -21,6 +21,7 @@ client = { path = "../client" }
 collections = { path = "../collections" }
 context_menu = { path = "../context_menu" }
 drag_and_drop = { path = "../drag_and_drop" }
+fs = { path = "../fs" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 menu = { path = "../menu" }

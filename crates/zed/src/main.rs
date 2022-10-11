@@ -14,7 +14,6 @@ use client::{
     http::{self, HttpClient},
     UserStore, ZED_SECRET_CLIENT_TOKEN,
 };
-use fs::OpenOptions;
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, SinkExt, StreamExt,
@@ -28,16 +27,16 @@ use project::{Fs, ProjectStore};
 use serde_json::json;
 use settings::{self, KeymapFileContent, Settings, SettingsFileContent, WorkingDirectory};
 use smol::process::Command;
-use std::{env, ffi::OsStr, fs, panic, path::PathBuf, sync::Arc, thread, time::Duration};
+use std::fs::OpenOptions;
+use std::{env, ffi::OsStr, panic, path::PathBuf, sync::Arc, thread, time::Duration};
 use terminal::terminal_container_view::{get_working_directory, TerminalContainer};
 
+use fs::RealFs;
 use theme::ThemeRegistry;
 use util::{ResultExt, TryFutureExt};
 use workspace::{self, AppState, ItemHandle, NewFile, OpenPaths, Workspace};
 use zed::{
-    self, build_window_options,
-    fs::RealFs,
-    initialize_workspace, languages, menus,
+    self, build_window_options, initialize_workspace, languages, menus,
     settings_file::{watch_keymap_file, watch_settings_file, WatchedJsonFile},
 };
 
@@ -200,23 +199,23 @@ fn main() {
 }
 
 fn init_paths() {
-    fs::create_dir_all(&*zed::paths::CONFIG_DIR).expect("could not create config path");
-    fs::create_dir_all(&*zed::paths::LANGUAGES_DIR).expect("could not create languages path");
-    fs::create_dir_all(&*zed::paths::DB_DIR).expect("could not create database path");
-    fs::create_dir_all(&*zed::paths::LOGS_DIR).expect("could not create logs path");
+    std::fs::create_dir_all(&*zed::paths::CONFIG_DIR).expect("could not create config path");
+    std::fs::create_dir_all(&*zed::paths::LANGUAGES_DIR).expect("could not create languages path");
+    std::fs::create_dir_all(&*zed::paths::DB_DIR).expect("could not create database path");
+    std::fs::create_dir_all(&*zed::paths::LOGS_DIR).expect("could not create logs path");
 
     // Copy setting files from legacy locations. TODO: remove this after a few releases.
     thread::spawn(|| {
-        if fs::metadata(&*zed::paths::legacy::SETTINGS).is_ok()
-            && fs::metadata(&*zed::paths::SETTINGS).is_err()
+        if std::fs::metadata(&*zed::paths::legacy::SETTINGS).is_ok()
+            && std::fs::metadata(&*zed::paths::SETTINGS).is_err()
         {
-            fs::copy(&*zed::paths::legacy::SETTINGS, &*zed::paths::SETTINGS).log_err();
+            std::fs::copy(&*zed::paths::legacy::SETTINGS, &*zed::paths::SETTINGS).log_err();
         }
 
-        if fs::metadata(&*zed::paths::legacy::KEYMAP).is_ok()
-            && fs::metadata(&*zed::paths::KEYMAP).is_err()
+        if std::fs::metadata(&*zed::paths::legacy::KEYMAP).is_ok()
+            && std::fs::metadata(&*zed::paths::KEYMAP).is_err()
         {
-            fs::copy(&*zed::paths::legacy::KEYMAP, &*zed::paths::KEYMAP).log_err();
+            std::fs::copy(&*zed::paths::legacy::KEYMAP, &*zed::paths::KEYMAP).log_err();
         }
     });
 }
@@ -231,9 +230,10 @@ fn init_logger() {
         const KIB: u64 = 1024;
         const MIB: u64 = 1024 * KIB;
         const MAX_LOG_BYTES: u64 = MIB;
-        if fs::metadata(&*zed::paths::LOG).map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES)
+        if std::fs::metadata(&*zed::paths::LOG)
+            .map_or(false, |metadata| metadata.len() > MAX_LOG_BYTES)
         {
-            let _ = fs::rename(&*zed::paths::LOG, &*zed::paths::OLD_LOG);
+            let _ = std::fs::rename(&*zed::paths::LOG, &*zed::paths::OLD_LOG);
         }
 
         let log_file = OpenOptions::new()
@@ -289,7 +289,7 @@ fn init_panic_hook(app_version: String, http: Arc<dyn HttpClient>, background: A
                         .body(body.into())?;
                     let response = http.send(request).await.context("error sending panic")?;
                     if response.status().is_success() {
-                        fs::remove_file(child_path)
+                        std::fs::remove_file(child_path)
                             .context("error removing panic after sending it successfully")
                             .log_err();
                     } else {
@@ -338,7 +338,7 @@ fn init_panic_hook(app_version: String, http: Arc<dyn HttpClient>, background: A
         };
 
         let panic_filename = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
-        fs::write(
+        std::fs::write(
             zed::paths::LOGS_DIR.join(format!("zed-{}-{}.panic", app_version, panic_filename)),
             &message,
         )
@@ -395,7 +395,7 @@ fn stdout_is_a_pty() -> bool {
 fn collect_path_args() -> Vec<PathBuf> {
     env::args()
         .skip(1)
-        .filter_map(|arg| match fs::canonicalize(arg) {
+        .filter_map(|arg| match std::fs::canonicalize(arg) {
             Ok(path) => Some(path),
             Err(error) => {
                 log::error!("error parsing path argument: {}", error);

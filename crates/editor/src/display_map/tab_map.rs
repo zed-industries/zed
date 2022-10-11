@@ -3,11 +3,12 @@ use super::{
     TextHighlights,
 };
 use crate::MultiBufferSnapshot;
-use language::{rope, Chunk};
+use language::Chunk;
 use parking_lot::Mutex;
+use rope;
+use rope::point::Point;
 use std::{cmp, mem, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
-use text::Point;
 
 pub struct TabMap(Mutex<TabSnapshot>);
 
@@ -332,11 +333,11 @@ impl TabSnapshot {
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct TabPoint(pub super::Point);
+pub struct TabPoint(pub Point);
 
 impl TabPoint {
     pub fn new(row: u32, column: u32) -> Self {
-        Self(super::Point::new(row, column))
+        Self(Point::new(row, column))
     }
 
     pub fn zero() -> Self {
@@ -352,8 +353,8 @@ impl TabPoint {
     }
 }
 
-impl From<super::Point> for TabPoint {
-    fn from(point: super::Point) -> Self {
+impl From<Point> for TabPoint {
+    fn from(point: Point) -> Self {
         Self(point)
     }
 }
@@ -362,7 +363,7 @@ pub type TabEdit = text::Edit<TabPoint>;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TextSummary {
-    pub lines: super::Point,
+    pub lines: Point,
     pub first_line_chars: u32,
     pub last_line_chars: u32,
     pub longest_row: u32,
@@ -485,7 +486,6 @@ mod tests {
     use super::*;
     use crate::{display_map::fold_map::FoldMap, MultiBuffer};
     use rand::{prelude::StdRng, Rng};
-    use text::{RandomCharIter, Rope};
 
     #[test]
     fn test_expand_tabs() {
@@ -508,7 +508,9 @@ mod tests {
         let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
         let len = rng.gen_range(0..30);
         let buffer = if rng.gen() {
-            let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+            let text = util::RandomCharIter::new(&mut rng)
+                .take(len)
+                .collect::<String>();
             MultiBuffer::build_simple(&text, cx)
         } else {
             MultiBuffer::build_random(&mut rng, cx)
@@ -522,7 +524,7 @@ mod tests {
         log::info!("FoldMap text: {:?}", folds_snapshot.text());
 
         let (_, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);
-        let text = Rope::from(tabs_snapshot.text().as_str());
+        let text = rope::Rope::from(tabs_snapshot.text().as_str());
         log::info!(
             "TabMap text (tab size: {}): {:?}",
             tab_size,

@@ -32,6 +32,7 @@ diagnostics = { path = "../diagnostics" }
 editor = { path = "../editor" }
 file_finder = { path = "../file_finder" }
 search = { path = "../search" }
+fs = { path = "../fs" }
 fsevent = { path = "../fsevent" }
 fuzzy = { path = "../fuzzy" }
 go_to_line = { path = "../go_to_line" }
