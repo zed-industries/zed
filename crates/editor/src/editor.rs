@@ -239,6 +239,9 @@ pub enum Direction {
     Next,
 }
 
+#[derive(Default)]
+struct ScrollbarAutoHide(bool);
+
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::new_file);
     cx.add_action(|this: &mut Editor, action: &Scroll, cx| this.set_scroll_position(action.0, cx));
@@ -326,6 +329,10 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_async_action(Editor::rename);
     cx.add_async_action(Editor::confirm_rename);
     cx.add_async_action(Editor::find_all_references);
+
+    cx.set_global(ScrollbarAutoHide(
+        cx.platform().should_auto_hide_scrollbars(),
+    ));
 
     hover_popover::init(cx);
     link_go_to_definition::init(cx);
@@ -5949,15 +5956,19 @@ impl Editor {
             cx.notify();
         }
 
-        self.hide_scrollbar_task = Some(cx.spawn_weak(|this, mut cx| async move {
-            Timer::after(SCROLLBAR_SHOW_INTERVAL).await;
-            if let Some(this) = this.upgrade(&cx) {
-                this.update(&mut cx, |this, cx| {
-                    this.show_scrollbars = false;
-                    cx.notify();
-                });
-            }
-        }));
+        if cx.default_global::<ScrollbarAutoHide>().0 {
+            self.hide_scrollbar_task = Some(cx.spawn_weak(|this, mut cx| async move {
+                Timer::after(SCROLLBAR_SHOW_INTERVAL).await;
+                if let Some(this) = this.upgrade(&cx) {
+                    this.update(&mut cx, |this, cx| {
+                        this.show_scrollbars = false;
+                        cx.notify();
+                    });
+                }
+            }));
+        } else {
+            self.hide_scrollbar_task = None;
+        }
     }
 
     fn on_buffer_changed(&mut self, _: ModelHandle<MultiBuffer>, cx: &mut ViewContext<Self>) {
