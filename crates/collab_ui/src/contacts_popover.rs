@@ -27,7 +27,6 @@ pub struct ContactsPopover {
     project: ModelHandle<Project>,
     user_store: ModelHandle<UserStore>,
     _subscription: Option<gpui::Subscription>,
-    _window_subscription: gpui::Subscription,
 }
 
 impl ContactsPopover {
@@ -43,16 +42,9 @@ impl ContactsPopover {
             project,
             user_store,
             _subscription: None,
-            _window_subscription: cx.observe_window_activation(Self::window_activation_changed),
         };
         this.show_contact_list(cx);
         this
-    }
-
-    fn window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if !active {
-            cx.emit(Event::Dismissed);
-        }
     }
 
     fn toggle_contact_finder(&mut self, _: &ToggleContactFinder, cx: &mut ViewContext<Self>) {
@@ -65,8 +57,8 @@ impl ContactsPopover {
     fn show_contact_finder(&mut self, cx: &mut ViewContext<ContactsPopover>) {
         let child = cx.add_view(|cx| ContactFinder::new(self.user_store.clone(), cx));
         cx.focus(&child);
-        self._subscription = Some(cx.subscribe(&child, |this, _, event, cx| match event {
-            crate::contact_finder::Event::Dismissed => this.show_contact_list(cx),
+        self._subscription = Some(cx.subscribe(&child, |_, _, event, cx| match event {
+            crate::contact_finder::Event::Dismissed => cx.emit(Event::Dismissed),
         }));
         self.child = Child::ContactFinder(child);
         cx.notify();
