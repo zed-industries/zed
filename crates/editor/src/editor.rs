@@ -76,6 +76,7 @@ use util::{post_inc, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
+const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
@@ -237,6 +238,9 @@ pub enum Direction {
     Prev,
     Next,
 }
+
+#[derive(Default)]
+struct ScrollbarAutoHide(bool);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::new_file);
@@ -427,6 +431,8 @@ pub struct Editor {
     focused: bool,
     show_local_cursors: bool,
     show_local_selections: bool,
+    show_scrollbars: bool,
+    hide_scrollbar_task: Option<Task<()>>,
     blink_epoch: usize,
     blinking_paused: bool,
     mode: EditorMode,
@@ -1029,6 +1035,8 @@ impl Editor {
             focused: false,
             show_local_cursors: false,
             show_local_selections: true,
+            show_scrollbars: true,
+            hide_scrollbar_task: None,
             blink_epoch: 0,
             blinking_paused: false,
             mode,
@@ -1061,9 +1069,15 @@ impl Editor {
             ],
         };
         this.end_selection(cx);
+        this.make_scrollbar_visible(cx);
 
         let editor_created_event = EditorCreated(cx.handle());
         cx.emit_global(editor_created_event);
+
+        if mode == EditorMode::Full {
+            let should_auto_hide_scrollbars = cx.platform().should_auto_hide_scrollbars();
+            cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
+        }
 
         this.report_event("open editor", cx);
         this
@@ -1181,6 +1195,7 @@ impl Editor {
             self.scroll_top_anchor = anchor;
         }
 
+        self.make_scrollbar_visible(cx);
         self.autoscroll_request.take();
         hide_hover(self, cx);
 
@@ -5950,6 +5965,31 @@ impl Editor {
 
     pub fn show_local_cursors(&self) -> bool {
         self.show_local_cursors && self.focused
+    }
+
+    pub fn show_scrollbars(&self) -> bool {
+        self.show_scrollbars
+    }
+
+    fn make_scrollbar_visible(&mut self, cx: &mut ViewContext<Self>) {
+        if !self.show_scrollbars {
+            self.show_scrollbars = true;
+            cx.notify();
+        }
+
+        if cx.default_global::<ScrollbarAutoHide>().0 {
+            self.hide_scrollbar_task = Some(cx.spawn_weak(|this, mut cx| async move {
+                Timer::after(SCROLLBAR_SHOW_INTERVAL).await;
+                if let Some(this) = this.upgrade(&cx) {
+                    this.update(&mut cx, |this, cx| {
+                        this.show_scrollbars = false;
+                        cx.notify();
+                    });
+                }
+            }));
+        } else {
+            self.hide_scrollbar_task = None;
+        }
     }
 
     fn on_buffer_changed(&mut self, _: ModelHandle<MultiBuffer>, cx: &mut ViewContext<Self>) {

@@ -554,6 +554,15 @@ pub struct Editor {
     pub link_definition: HighlightStyle,
     pub composition_mark: HighlightStyle,
     pub jump_icon: Interactive<IconButton>,
+    pub scrollbar: Scrollbar,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct Scrollbar {
+    pub track: ContainerStyle,
+    pub thumb: ContainerStyle,
+    pub width: f32,
+    pub min_height_factor: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]

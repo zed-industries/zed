@@ -123,7 +123,7 @@ export function createTheme(
   const borderColor = {
     primary: sample(ramps.neutral, isLight ? 1.5 : 0),
     secondary: sample(ramps.neutral, isLight ? 1.25 : 1),
-    muted: sample(ramps.neutral, isLight ? 1 : 3),
+    muted: sample(ramps.neutral, isLight ? 1.25 : 3),
     active: sample(ramps.neutral, isLight ? 4 : 3),
     onMedia: withOpacity(darkest, 0.1),
     ok: sample(ramps.green, 0.3),

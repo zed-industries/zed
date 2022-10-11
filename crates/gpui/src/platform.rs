@@ -65,6 +65,7 @@ pub trait Platform: Send + Sync {
     fn delete_credentials(&self, url: &str) -> Result<()>;
 
     fn set_cursor_style(&self, style: CursorStyle);
+    fn should_auto_hide_scrollbars(&self) -> bool;
 
     fn local_timezone(&self) -> UtcOffset;
 
