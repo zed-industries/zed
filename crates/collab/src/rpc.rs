@@ -22,7 +22,7 @@ use axum::{
     routing::get,
     Extension, Router, TypedHeader,
 };
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::{
     channel::mpsc,
     future::{self, BoxFuture},
@@ -474,7 +474,7 @@ impl Server {
         self.peer.disconnect(connection_id);
 
         let mut projects_to_unshare = Vec::new();
-        let removed_user_id;
+        let mut contacts_to_update = HashSet::default();
         {
             let mut store = self.store().await;
             let removed_connection = store.remove_connection(connection_id)?;
@@ -507,6 +507,7 @@ impl Server {
                 self.peer
                     .send(connection_id, proto::CallCanceled {})
                     .trace_err();
+                contacts_to_update.extend(store.user_id_for_connection(connection_id).ok());
             }
 
             if let Some(room) = removed_connection
@@ -516,10 +517,12 @@ impl Server {
                 self.room_updated(room);
             }
 
-            removed_user_id = removed_connection.user_id;
+            contacts_to_update.insert(removed_connection.user_id);
         };
 
-        self.update_user_contacts(removed_user_id).await.trace_err();
+        for user_id in contacts_to_update {
+            self.update_user_contacts(user_id).await.trace_err();
+        }
 
         for project_id in projects_to_unshare {
             self.app_state
@@ -632,11 +635,12 @@ impl Server {
     }
 
     async fn leave_room(self: Arc<Server>, message: TypedEnvelope<proto::LeaveRoom>) -> Result<()> {
-        let user_id;
+        let mut contacts_to_update = HashSet::default();
         {
             let mut store = self.store().await;
-            user_id = store.user_id_for_connection(message.sender_id)?;
+            let user_id = store.user_id_for_connection(message.sender_id)?;
             let left_room = store.leave_room(message.payload.id, message.sender_id)?;
+            contacts_to_update.insert(user_id);
 
             for project in left_room.unshared_projects {
                 for connection_id in project.connection_ids() {
@@ -670,17 +674,21 @@ impl Server {
                 }
             }
 
+            if let Some(room) = left_room.room {
+                self.room_updated(room);
+            }
+
             for connection_id in left_room.canceled_call_connection_ids {
                 self.peer
                     .send(connection_id, proto::CallCanceled {})
                     .trace_err();
-            }
-
-            if let Some(room) = left_room.room {
-                self.room_updated(room);
+                contacts_to_update.extend(store.user_id_for_connection(connection_id).ok());
             }
         }
-        self.update_user_contacts(user_id).await?;
+
+        for user_id in contacts_to_update {
+            self.update_user_contacts(user_id).await?;
+        }
 
         Ok(())
     }

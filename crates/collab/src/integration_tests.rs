@@ -4549,6 +4549,78 @@ async fn test_contacts(
         ]
     );
 
+    active_call_a.update(cx_a, |call, cx| call.hang_up(cx).unwrap());
+    deterministic.run_until_parked();
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), "online", "free"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), "online", "free"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), "online", "free"),
+            ("user_b".to_string(), "online", "free")
+        ]
+    );
+
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+    assert_eq!(
+        contacts(&client_a, cx_a),
+        [
+            ("user_b".to_string(), "online", "busy"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), "online", "busy"),
+            ("user_b".to_string(), "online", "busy")
+        ]
+    );
+
+    server.forbid_connections();
+    server.disconnect_client(client_a.current_user_id(cx_a));
+    deterministic.advance_clock(rpc::RECEIVE_TIMEOUT);
+    assert_eq!(contacts(&client_a, cx_a), []);
+    assert_eq!(
+        contacts(&client_b, cx_b),
+        [
+            ("user_a".to_string(), "offline", "free"),
+            ("user_c".to_string(), "online", "free")
+        ]
+    );
+    assert_eq!(
+        contacts(&client_c, cx_c),
+        [
+            ("user_a".to_string(), "offline", "free"),
+            ("user_b".to_string(), "online", "free")
+        ]
+    );
+
     #[allow(clippy::type_complexity)]
     fn contacts(
         client: &TestClient,
