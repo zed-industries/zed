@@ -709,6 +709,16 @@ impl platform::Platform for MacPlatform {
         }
     }
 
+    fn should_auto_hide_scrollbars(&self) -> bool {
+        #[allow(non_upper_case_globals)]
+        const NSScrollerStyleOverlay: NSInteger = 1;
+
+        unsafe {
+            let style: NSInteger = msg_send![class!(NSScroller), preferredScrollerStyle];
+            style == NSScrollerStyleOverlay
+        }
+    }
+
     fn local_timezone(&self) -> UtcOffset {
         unsafe {
             let local_timezone: id = msg_send![class!(NSTimeZone), localTimeZone];

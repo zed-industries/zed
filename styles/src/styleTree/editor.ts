@@ -1,4 +1,5 @@
 import Theme from "../themes/common/theme";
+import { withOpacity } from "../utils/color";
 import {
   backgroundColor,
   border,
@@ -169,6 +170,24 @@ export default function editor(theme: Theme) {
         color: iconColor(theme, "active"),
         background: backgroundColor(theme, "on500"),
       },
+    },
+    scrollbar: {
+      width: 12,
+      minHeightFactor: 1.0,
+      track: {
+        border: {
+          left: true,
+          width: 1,
+          color: borderColor(theme, "secondary"),
+        },
+      },
+      thumb: {
+        background: withOpacity(borderColor(theme, "secondary"), 0.5),
+        border: {
+          width: 1,
+          color: withOpacity(borderColor(theme, 'muted'), 0.5),
+        }
+      }
     },
     compositionMark: {
       underline: {

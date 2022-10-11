@@ -1,12 +1,14 @@
 use std::ops::{Deref, DerefMut};
 
-use editor::test::EditorTestContext;
-use gpui::{json::json, AppContext, ViewHandle};
+use editor::test::editor_test_context::EditorTestContext;
+use gpui::{json::json, AppContext, ContextHandle, ViewHandle};
 use project::Project;
 use search::{BufferSearchBar, ProjectSearchBar};
 use workspace::{pane, AppState, WorkspaceHandle};
 
 use crate::{state::Operator, *};
+
+use super::VimBindingTestContext;
 
 pub struct VimTestContext<'a> {
     cx: EditorTestContext<'a>,
@@ -117,18 +119,18 @@ impl<'a> VimTestContext<'a> {
             .read(|cx| cx.global::<Vim>().state.operator_stack.last().copied())
     }
 
-    pub fn set_state(&mut self, text: &str, mode: Mode) {
+    pub fn set_state(&mut self, text: &str, mode: Mode) -> ContextHandle {
         self.cx.update(|cx| {
             Vim::update(cx, |vim, cx| {
                 vim.switch_mode(mode, false, cx);
             })
         });
-        self.cx.set_state(text);
+        self.cx.set_state(text)
     }
 
     pub fn assert_state(&mut self, text: &str, mode: Mode) {
         self.assert_editor_state(text);
-        assert_eq!(self.mode(), mode);
+        assert_eq!(self.mode(), mode, "{}", self.assertion_context());
     }
 
     pub fn assert_binding<const COUNT: usize>(
@@ -142,8 +144,8 @@ impl<'a> VimTestContext<'a> {
         self.set_state(initial_state, initial_mode);
         self.cx.simulate_keystrokes(keystrokes);
         self.cx.assert_editor_state(state_after);
-        assert_eq!(self.mode(), mode_after);
-        assert_eq!(self.active_operator(), None);
+        assert_eq!(self.mode(), mode_after, "{}", self.assertion_context());
+        assert_eq!(self.active_operator(), None, "{}", self.assertion_context());
     }
 
     pub fn binding<const COUNT: usize>(
@@ -164,70 +166,6 @@ impl<'a> Deref for VimTestContext<'a> {
 }
 
 impl<'a> DerefMut for VimTestContext<'a> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.cx
-    }
-}
-
-pub struct VimBindingTestContext<'a, const COUNT: usize> {
-    cx: VimTestContext<'a>,
-    keystrokes_under_test: [&'static str; COUNT],
-    mode_before: Mode,
-    mode_after: Mode,
-}
-
-impl<'a, const COUNT: usize> VimBindingTestContext<'a, COUNT> {
-    pub fn new(
-        keystrokes_under_test: [&'static str; COUNT],
-        mode_before: Mode,
-        mode_after: Mode,
-        cx: VimTestContext<'a>,
-    ) -> Self {
-        Self {
-            cx,
-            keystrokes_under_test,
-            mode_before,
-            mode_after,
-        }
-    }
-
-    pub fn binding<const NEW_COUNT: usize>(
-        self,
-        keystrokes_under_test: [&'static str; NEW_COUNT],
-    ) -> VimBindingTestContext<'a, NEW_COUNT> {
-        VimBindingTestContext {
-            keystrokes_under_test,
-            cx: self.cx,
-            mode_before: self.mode_before,
-            mode_after: self.mode_after,
-        }
-    }
-
-    pub fn mode_after(mut self, mode_after: Mode) -> Self {
-        self.mode_after = mode_after;
-        self
-    }
-
-    pub fn assert(&mut self, initial_state: &str, state_after: &str) {
-        self.cx.assert_binding(
-            self.keystrokes_under_test,
-            initial_state,
-            self.mode_before,
-            state_after,
-            self.mode_after,
-        )
-    }
-}
-
-impl<'a, const COUNT: usize> Deref for VimBindingTestContext<'a, COUNT> {
-    type Target = VimTestContext<'a>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.cx
-    }
-}
-
-impl<'a, const COUNT: usize> DerefMut for VimBindingTestContext<'a, COUNT> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.cx
     }

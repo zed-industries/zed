@@ -3874,6 +3874,7 @@ async fn test_language_server_statuses(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
+    deterministic.run_until_parked();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
     project_b.read_with(cx_b, |project, _| {
         let status = project.language_server_statuses().next().unwrap();
@@ -5522,6 +5523,7 @@ async fn test_random_collaboration(
         cx.font_cache(),
         cx.leak_detector(),
         next_entity_id,
+        cx.function_name.clone(),
     );
     let host = server.create_client(&mut host_cx, "host").await;
     let host_project = host_cx.update(|cx| {
@@ -5763,6 +5765,7 @@ async fn test_random_collaboration(
                     cx.font_cache(),
                     cx.leak_detector(),
                     next_entity_id,
+                    cx.function_name.clone(),
                 );
 
                 deterministic.start_waiting();
