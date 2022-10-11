@@ -1,0 +1,17 @@
+on:
+  release:
+    types: [published]
+    
+jobs:
+  amplitude_release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Amplitude Release
+        uses: actions/checkout@v3
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10.5"
+          architecture: "x64"
+          cache: "pip"
+      - run: pip install -r script/amplitude_release/requirements.txt
+      - run: python scripts/amplitude_release/main.py ${{ github.event.release.name }} ${{ secrets.ZED_AMPLITUDE_API_KEY }} ${{ secrets.ZED_AMPLITUDE_SECRET_KEY }}
