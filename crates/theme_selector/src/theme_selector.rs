@@ -153,6 +153,10 @@ impl PickerDelegate for ThemeSelector {
 
     fn confirm(&mut self, cx: &mut ViewContext<Self>) {
         self.selection_completed = true;
+
+        let theme_name = cx.global::<Settings>().theme.meta.name.clone();
+        settings::settings_file::write_setting("theme", theme_name, cx);
+
         cx.emit(Event::Dismissed);
     }
 

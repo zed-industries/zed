@@ -25,7 +25,10 @@ use log::LevelFilter;
 use parking_lot::Mutex;
 use project::{Fs, ProjectStore};
 use serde_json::json;
-use settings::{self, KeymapFileContent, Settings, SettingsFileContent, WorkingDirectory};
+use settings::{
+    self, settings_file::SettingsFile, KeymapFileContent, Settings, SettingsFileContent,
+    WorkingDirectory,
+};
 use smol::process::Command;
 use std::fs::OpenOptions;
 use std::{env, ffi::OsStr, panic, path::PathBuf, sync::Arc, thread, time::Duration};
@@ -62,6 +65,7 @@ fn main() {
     let themes = ThemeRegistry::new(Assets, app.font_cache());
     let default_settings = Settings::defaults(Assets, &app.font_cache(), &themes);
 
+    let settings_file = SettingsFile::new(&*zed::paths::SETTINGS, fs.clone());
     let config_files = load_config_files(&app, fs.clone());
 
     let login_shell_env_loaded = if stdout_is_a_pty() {
@@ -94,10 +98,11 @@ fn main() {
             .spawn(languages::init(languages.clone(), cx.background().clone()));
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
 
-        let (settings_file, keymap_file) = cx.background().block(config_files).unwrap();
+        let (settings_file_content, keymap_file) = cx.background().block(config_files).unwrap();
 
         //Setup settings global before binding actions
-        watch_settings_file(default_settings, settings_file, themes.clone(), cx);
+        cx.set_global(settings_file);
+        watch_settings_file(default_settings, settings_file_content, themes.clone(), cx);
         watch_keymap_file(keymap_file, cx);
 
         context_menu::init(cx);
