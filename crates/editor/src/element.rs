@@ -48,6 +48,11 @@ use std::{
 };
 use theme::DiffStyle;
 
+struct DiffHunkLayout {
+    visual_range: Range<u32>,
+    status: DiffHunkStatus,
+}
+
 struct SelectionLayout {
     head: DisplayPoint,
     range: Range<DisplayPoint>,
@@ -539,17 +544,17 @@ impl EditorElement {
         }
 
         fn diff_quad(
-            hunk: &DiffHunk<u32>,
+            hunk: &DiffHunkLayout,
             gutter_layout: &GutterLayout,
             diff_style: &DiffStyle,
         ) -> Quad {
-            let color = match hunk.status() {
+            let color = match hunk.status {
                 DiffHunkStatus::Added => diff_style.inserted,
                 DiffHunkStatus::Modified => diff_style.modified,
 
                 //TODO: This rendering is entirely a horrible hack
                 DiffHunkStatus::Removed => {
-                    let row = hunk.buffer_range.start;
+                    let row = hunk.visual_range.start;
 
                     let offset = gutter_layout.line_height / 2.;
                     let start_y =
@@ -570,8 +575,8 @@ impl EditorElement {
                 }
             };
 
-            let start_row = hunk.buffer_range.start;
-            let end_row = hunk.buffer_range.end;
+            let start_row = hunk.visual_range.start;
+            let end_row = hunk.visual_range.end;
 
             let start_y = start_row as f32 * gutter_layout.line_height - gutter_layout.scroll_top;
             let end_y = end_row as f32 * gutter_layout.line_height - gutter_layout.scroll_top;
@@ -613,7 +618,13 @@ impl EditorElement {
             GitGutter::TrackedFiles
         );
 
-        // line is `None` when there's a line wrap
+        if show_gutter {
+            for hunk in &layout.hunk_layouts {
+                let quad = diff_quad(hunk, &gutter_layout, diff_style);
+                cx.scene.push_quad(quad);
+            }
+        }
+
         for (ix, line) in layout.line_number_layouts.iter().enumerate() {
             if let Some(line) = line {
                 let line_origin = bounds.origin()
@@ -624,36 +635,7 @@ impl EditorElement {
                     );
 
                 line.paint(line_origin, visible_bounds, gutter_layout.line_height, cx);
-
-                if show_gutter {
-                    //This line starts a buffer line, so let's do the diff calculation
-                    let new_hunk = get_hunk(diff_layout.buffer_row, &layout.diff_hunks);
-
-                    let (is_ending, is_starting) = match (diff_layout.last_diff, new_hunk) {
-                        (Some(old_hunk), Some(new_hunk)) if new_hunk == old_hunk => (false, false),
-                        (a, b) => (a.is_some(), b.is_some()),
-                    };
-
-                    if is_ending {
-                        let last_hunk = diff_layout.last_diff.take().unwrap();
-                        cx.scene
-                            .push_quad(diff_quad(last_hunk, &gutter_layout, diff_style));
-                    }
-
-                    if is_starting {
-                        let new_hunk = new_hunk.unwrap();
-                        diff_layout.last_diff = Some(new_hunk);
-                    };
-
-                    diff_layout.buffer_row += 1;
-                }
             }
-        }
-
-        // If we ran out with a diff hunk still being prepped, paint it now
-        if let Some(last_hunk) = diff_layout.last_diff {
-            cx.scene
-                .push_quad(diff_quad(last_hunk, &gutter_layout, diff_style))
         }
 
         if let Some((row, indicator)) = layout.code_actions_indicator.as_mut() {
@@ -1013,6 +995,78 @@ impl EditorElement {
             .width()
     }
 
+    fn layout_diff_hunk(
+        hunk: &DiffHunk<u32>,
+        buffer_rows: &mut std::iter::Peekable<impl Iterator<Item = Option<u32>>>,
+    ) -> DiffHunkLayout {
+        //This should start with a row which is contained in the hunk's buffer range
+        let visual_start = buffer_rows.peek().unwrap().unwrap();
+
+        let mut visual_count = 0;
+        while let Some(&buffer_row) = buffer_rows.peek() {
+            if let Some(buffer_row) = buffer_row {
+                if buffer_row == hunk.buffer_range.end {
+                    visual_count += 1;
+                    break;
+                } else if buffer_row > hunk.buffer_range.end {
+                    break;
+                }
+                visual_count += 1;
+                buffer_rows.next();
+            }
+        }
+
+        DiffHunkLayout {
+            visual_range: visual_start..visual_start + visual_count,
+            status: hunk.status(),
+        }
+    }
+
+    //Folds contained in a hunk are ignored apart from shrinking visual size
+    //If a fold contains any hunks then that fold line is marked as modified
+    fn layout_git_gutters(
+        &self,
+        rows: Range<u32>,
+        snapshot: &EditorSnapshot,
+    ) -> Vec<DiffHunkLayout> {
+        let mut diff_hunks = snapshot
+            .buffer_snapshot
+            .git_diff_hunks_in_range(rows.clone())
+            .peekable();
+
+        //Some number followed by Nones for wrapped lines
+        //Jump in number for folded lines
+        let mut buffer_rows = snapshot
+            .buffer_rows(rows.start)
+            .take((rows.end - rows.start) as usize)
+            .peekable();
+
+        let mut layouts = Vec::new();
+
+        while let Some(buffer_row) = buffer_rows.next() {
+            let buffer_row = buffer_row.unwrap();
+
+            if let Some(hunk) = diff_hunks.peek() {
+                if hunk.buffer_range.contains(&buffer_row) {
+                    layouts.push(Self::layout_diff_hunk(hunk, &mut buffer_rows));
+                    diff_hunks.next();
+                } else if hunk.buffer_range.end < buffer_row {
+                    //A hunk that was missed due to being entirely contained in a fold
+                    //We can safely assume that the previous visual row is the fold
+                    //TODO: If there is another hunk that ends inside the fold then
+                    //this will overlay over, but right now that seems fine
+                    layouts.push(DiffHunkLayout {
+                        visual_range: buffer_row - 1..buffer_row,
+                        status: DiffHunkStatus::Modified,
+                    });
+                    diff_hunks.next();
+                } 
+            }
+        }
+
+        layouts
+    }
+
     fn layout_line_numbers(
         &self,
         rows: Range<u32>,
@@ -1367,7 +1421,7 @@ impl EditorElement {
 
 /// Get the hunk that contains buffer_line, starting from start_idx
 /// Returns none if there is none found, and
-fn get_hunk(buffer_line: u32, hunks: &[DiffHunk<u32>]) -> Option<&DiffHunk<u32>> {
+fn get_hunk(hunks: &[DiffHunk<u32>], buffer_line: u32) -> Option<&DiffHunk<u32>> {
     for i in 0..hunks.len() {
         // Safety: Index out of bounds is handled by the check above
         let hunk = hunks.get(i).unwrap();
@@ -1561,10 +1615,7 @@ impl Element for EditorElement {
         let line_number_layouts =
             self.layout_line_numbers(start_row..end_row, &active_rows, &snapshot, cx);
 
-        let diff_hunks = snapshot
-            .buffer_snapshot
-            .git_diff_hunks_in_range(start_row..end_row)
-            .collect();
+        let hunk_layouts = self.layout_git_gutters(start_row..end_row, &snapshot);
 
         let mut max_visible_line_width = 0.0;
         let line_layouts = self.layout_lines(start_row..end_row, &snapshot, cx);
@@ -1714,7 +1765,7 @@ impl Element for EditorElement {
                 highlighted_rows,
                 highlighted_ranges,
                 line_number_layouts,
-                diff_hunks,
+                hunk_layouts,
                 blocks,
                 selections,
                 context_menu,
@@ -1848,11 +1899,11 @@ pub struct LayoutState {
     active_rows: BTreeMap<u32, bool>,
     highlighted_rows: Option<Range<u32>>,
     line_number_layouts: Vec<Option<text_layout::Line>>,
+    hunk_layouts: Vec<DiffHunkLayout>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
     selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
     context_menu: Option<(DisplayPoint, ElementBox)>,
-    diff_hunks: Vec<DiffHunk<u32>>,
     code_actions_indicator: Option<(u32, ElementBox)>,
     hover_popovers: Option<(DisplayPoint, Vec<ElementBox>)>,
 }
