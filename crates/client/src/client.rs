@@ -663,7 +663,6 @@ impl Client {
             self.set_status(Status::Reconnecting, cx);
         }
 
-        let mut timeout = cx.background().timer(CONNECTION_TIMEOUT).fuse();
         futures::select_biased! {
             connection = self.establish_connection(&credentials, cx).fuse() => {
                 match connection {
@@ -696,7 +695,7 @@ impl Client {
                     }
                 }
             }
-            _ = timeout => {
+            _ = cx.background().timer(CONNECTION_TIMEOUT).fuse() => {
                 self.set_status(Status::ConnectionError, cx);
                 Err(anyhow!("timed out trying to establish connection"))
             }
