@@ -200,6 +200,10 @@ impl View for ProjectSearchView {
                 .0
                 .insert(self.model.read(cx).project.downgrade(), handle)
         });
+
+        if cx.is_self_focused() {
+            self.focus_query_editor(cx);
+        }
     }
 }
 
