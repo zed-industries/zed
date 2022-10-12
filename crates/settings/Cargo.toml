@@ -19,6 +19,7 @@ anyhow = "1.0.38"
 futures = "0.3"
 theme = { path = "../theme" }
 util = { path = "../util" }
+rope = { path = "../rope" }
 json_comments = "0.2"
 postage = { version = "0.4.1", features = ["futures-traits"] }
 schemars = "0.8"
@@ -32,3 +33,4 @@ tree-sitter-json = "*"
 [dev-dependencies]
 unindent = "0.1"
 gpui = { path = "../gpui", features = ["test-support"] }
+fs = { path = "../fs", features = ["test-support"] }

@@ -2009,6 +2009,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "tempfile",
  "util",
 ]
 
@@ -5065,6 +5066,7 @@ dependencies = [
  "gpui",
  "json_comments",
  "postage",
+ "rope",
  "schemars",
  "serde",
  "serde_json",

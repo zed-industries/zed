@@ -9,14 +9,53 @@ use std::{path::Path, sync::Arc, time::Duration};
 use theme::ThemeRegistry;
 use util::ResultExt;
 
-use crate::{parse_json_with_comments, KeymapFileContent, Settings, SettingsFileContent};
+use crate::{
+    parse_json_with_comments, write_top_level_setting, KeymapFileContent, Settings,
+    SettingsFileContent,
+};
+
+// TODO: Switch SettingsFile to open a worktree and buffer for synchronization
+//       And instant updates in the Zed editor
+#[derive(Clone)]
+pub struct SettingsFile {
+    path: &'static Path,
+    fs: Arc<dyn Fs>,
+}
+
+impl SettingsFile {
+    pub fn new(path: &'static Path, fs: Arc<dyn Fs>) -> Self {
+        SettingsFile { path, fs }
+    }
+
+    pub async fn rewrite_settings_file<F>(&self, f: F) -> anyhow::Result<()>
+    where
+        F: Fn(String) -> String,
+    {
+        let content = self.fs.load(self.path).await?;
+
+        let new_settings = f(content);
+
+        self.fs
+            .atomic_write(self.path.to_path_buf(), new_settings)
+            .await?;
+
+        Ok(())
+    }
+}
+
+pub fn write_setting(key: &'static str, val: String, cx: &mut MutableAppContext) {
+    let settings_file = cx.global::<SettingsFile>().clone();
+    cx.background()
+        .spawn(async move {
+            settings_file
+                .rewrite_settings_file(|settings| write_top_level_setting(settings, key, &val))
+                .await
+        })
+        .detach_and_log_err(cx);
+}
 
 #[derive(Clone)]
 pub struct WatchedJsonFile<T>(pub watch::Receiver<T>);
-
-// 1) Do the refactoring to pull WatchedJSON and fs out and into everything else
-// 2) Scaffold this by making the basic structs we'll need SettingsFile::atomic_write_theme()
-// 3) Fix the overeager settings writing, if that works, and there's no data loss, call it?
 
 impl<T> WatchedJsonFile<T>
 where

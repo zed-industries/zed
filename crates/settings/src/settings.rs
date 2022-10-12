@@ -503,7 +503,11 @@ pub fn settings_file_json_schema(
     serde_json::to_value(root_schema).unwrap()
 }
 
-pub fn write_theme(mut settings_content: String, new_val: &str) -> String {
+pub fn write_top_level_setting(
+    mut settings_content: String,
+    top_level_key: &str,
+    new_val: &str,
+) -> String {
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(tree_sitter_json::language()).unwrap();
     let tree = parser.parse(&settings_content, None).unwrap();
@@ -536,7 +540,7 @@ pub fn write_theme(mut settings_content: String, new_val: &str) -> String {
         first_key_start.get_or_insert_with(|| key.node.start_byte());
 
         if let Some(key_text) = settings_content.get(key.node.byte_range()) {
-            if key_text == "\"theme\"" {
+            if key_text == format!("\"{top_level_key}\"") {
                 existing_value_range = Some(value.node.byte_range());
                 break;
             }
@@ -547,7 +551,12 @@ pub fn write_theme(mut settings_content: String, new_val: &str) -> String {
         (None, None) => {
             // No document, create a new object and overwrite
             settings_content.clear();
-            write!(settings_content, "{{\n    \"theme\": \"{new_val}\"\n}}\n").unwrap();
+            write!(
+                settings_content,
+                "{{\n    \"{}\": \"{new_val}\"\n}}\n",
+                top_level_key
+            )
+            .unwrap();
         }
 
         (_, Some(existing_value_range)) => {
@@ -572,7 +581,7 @@ pub fn write_theme(mut settings_content: String, new_val: &str) -> String {
                 }
             }
 
-            let content = format!(r#""theme": "{new_val}","#);
+            let content = format!(r#""{top_level_key}": "{new_val}","#);
             settings_content.insert_str(first_key_start, &content);
 
             if row > 0 {
@@ -603,7 +612,7 @@ pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T>
 
 #[cfg(test)]
 mod tests {
-    use crate::write_theme;
+    use crate::write_top_level_setting;
     use unindent::Unindent;
 
     #[test]
@@ -622,7 +631,7 @@ mod tests {
         "#
         .unindent();
 
-        let settings_after_theme = write_theme(settings, "summerfruit-light");
+        let settings_after_theme = write_top_level_setting(settings, "theme", "summerfruit-light");
 
         assert_eq!(settings_after_theme, new_settings)
     }
@@ -642,7 +651,7 @@ mod tests {
         "#
         .unindent();
 
-        let settings_after_theme = write_theme(settings, "summerfruit-light");
+        let settings_after_theme = write_top_level_setting(settings, "theme", "summerfruit-light");
 
         assert_eq!(settings_after_theme, new_settings)
     }
@@ -658,7 +667,7 @@ mod tests {
         "#
         .unindent();
 
-        let settings_after_theme = write_theme(settings, "summerfruit-light");
+        let settings_after_theme = write_top_level_setting(settings, "theme", "summerfruit-light");
 
         assert_eq!(settings_after_theme, new_settings)
     }
@@ -668,7 +677,7 @@ mod tests {
         let settings = r#"{ "a": "", "ok": true }"#.to_string();
         let new_settings = r#"{ "theme": "summerfruit-light", "a": "", "ok": true }"#;
 
-        let settings_after_theme = write_theme(settings, "summerfruit-light");
+        let settings_after_theme = write_top_level_setting(settings, "theme", "summerfruit-light");
 
         assert_eq!(settings_after_theme, new_settings)
     }
@@ -678,7 +687,7 @@ mod tests {
         let settings = r#"          { "a": "", "ok": true }"#.to_string();
         let new_settings = r#"          { "theme": "summerfruit-light", "a": "", "ok": true }"#;
 
-        let settings_after_theme = write_theme(settings, "summerfruit-light");
+        let settings_after_theme = write_top_level_setting(settings, "theme", "summerfruit-light");
 
         assert_eq!(settings_after_theme, new_settings)
     }
@@ -700,7 +709,7 @@ mod tests {
         "#
         .unindent();
 
-        let settings_after_theme = write_theme(settings, "summerfruit-light");
+        let settings_after_theme = write_top_level_setting(settings, "theme", "summerfruit-light");
 
         assert_eq!(settings_after_theme, new_settings)
     }

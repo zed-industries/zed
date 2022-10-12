@@ -15,6 +15,7 @@ util = { path = "../util" }
 anyhow = "1.0.57"
 async-trait = "0.1"
 futures = "0.3"
+tempfile = "3"
 fsevent = { path = "../fsevent" }
 lazy_static = "1.4.0"
 parking_lot = "0.11.1"

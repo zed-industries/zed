@@ -12,6 +12,7 @@ use rope::Rope;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::borrow::Cow;
 use std::cmp;
+use std::io::Write;
 use std::sync::Arc;
 use std::{
     io,
@@ -20,6 +21,7 @@ use std::{
     pin::Pin,
     time::{Duration, SystemTime},
 };
+use tempfile::NamedTempFile;
 use util::ResultExt;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -100,6 +102,7 @@ pub trait Fs: Send + Sync {
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>>;
     async fn load(&self, path: &Path) -> Result<String>;
+    async fn atomic_write(&self, path: PathBuf, text: String) -> Result<()>;
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
     async fn is_file(&self, path: &Path) -> bool;
@@ -258,6 +261,18 @@ impl Fs for RealFs {
         let mut text = String::new();
         file.read_to_string(&mut text).await?;
         Ok(text)
+    }
+
+    async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
+        smol::unblock(move || {
+            let mut tmp_file = NamedTempFile::new()?;
+            tmp_file.write_all(data.as_bytes())?;
+            tmp_file.persist(path)?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await?;
+
+        Ok(())
     }
 
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
@@ -878,6 +893,14 @@ impl Fs for FakeFs {
         let entry = state.read_path(&path).await?;
         let entry = entry.lock().await;
         entry.file_content(&path).cloned()
+    }
+
+    async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
+        self.simulate_random_delay().await;
+        let path = normalize_path(path.as_path());
+        self.insert_file(path, data.to_string()).await;
+
+        Ok(())
     }
 
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
