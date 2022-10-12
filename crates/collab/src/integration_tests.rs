@@ -2159,10 +2159,6 @@ async fn test_collaborating_with_diagnostics(
         )
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = active_call_a
-        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-        .await
-        .unwrap();
 
     // Cause the language server to start.
     let _buffer = cx_a
@@ -2179,14 +2175,31 @@ async fn test_collaborating_with_diagnostics(
         .await
         .unwrap();
 
-    // Join the worktree as client B.
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
-
     // Simulate a language server reporting errors for a file.
     let mut fake_language_server = fake_language_servers.next().await.unwrap();
     fake_language_server
         .receive_notification::<lsp::notification::DidOpenTextDocument>()
         .await;
+    fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
+        lsp::PublishDiagnosticsParams {
+            uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
+            version: None,
+            diagnostics: vec![lsp::Diagnostic {
+                severity: Some(lsp::DiagnosticSeverity::WARNING),
+                range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 7)),
+                message: "message 0".to_string(),
+                ..Default::default()
+            }],
+        },
+    );
+
+    // Client A shares the project and, simultaneously, the language server
+    // publishes a diagnostic. This is done to ensure that the server always
+    // observes the latest diagnostics for a worktree.
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         lsp::PublishDiagnosticsParams {
             uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
@@ -2199,6 +2212,9 @@ async fn test_collaborating_with_diagnostics(
             }],
         },
     );
+
+    // Join the worktree as client B.
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Wait for server to see the diagnostics update.
     deterministic.run_until_parked();
@@ -2321,7 +2337,7 @@ async fn test_collaborating_with_diagnostics(
                 DiagnosticEntry {
                     range: Point::new(0, 4)..Point::new(0, 7),
                     diagnostic: Diagnostic {
-                        group_id: 1,
+                        group_id: 2,
                         message: "message 1".to_string(),
                         severity: lsp::DiagnosticSeverity::ERROR,
                         is_primary: true,
@@ -2331,7 +2347,7 @@ async fn test_collaborating_with_diagnostics(
                 DiagnosticEntry {
                     range: Point::new(0, 10)..Point::new(0, 13),
                     diagnostic: Diagnostic {
-                        group_id: 2,
+                        group_id: 3,
                         severity: lsp::DiagnosticSeverity::WARNING,
                         message: "message 2".to_string(),
                         is_primary: true,
