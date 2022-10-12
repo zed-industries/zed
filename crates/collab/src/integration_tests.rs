@@ -2161,9 +2161,8 @@ async fn test_collaborating_with_diagnostics(
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
 
     // Cause the language server to start.
-    let _buffer = cx_a
-        .background()
-        .spawn(project_a.update(cx_a, |project, cx| {
+    let _buffer = project_a
+        .update(cx_a, |project, cx| {
             project.open_buffer(
                 ProjectPath {
                     worktree_id,
@@ -2171,7 +2170,7 @@ async fn test_collaborating_with_diagnostics(
                 },
                 cx,
             )
-        }))
+        })
         .await
         .unwrap();
 
@@ -2245,23 +2244,34 @@ async fn test_collaborating_with_diagnostics(
 
     // Join project as client C and observe the diagnostics.
     let project_c = client_c.build_remote_project(project_id, cx_c).await;
-    deterministic.run_until_parked();
-    project_c.read_with(cx_c, |project, cx| {
-        assert_eq!(
-            project.diagnostic_summaries(cx).collect::<Vec<_>>(),
-            &[(
-                ProjectPath {
-                    worktree_id,
-                    path: Arc::from(Path::new("a.rs")),
-                },
-                DiagnosticSummary {
-                    error_count: 1,
-                    warning_count: 0,
-                    ..Default::default()
-                },
-            )]
-        )
+    let project_c_diagnostic_summaries = Rc::new(RefCell::new(Vec::new()));
+    project_c.update(cx_c, |_, cx| {
+        let summaries = project_c_diagnostic_summaries.clone();
+        cx.subscribe(&project_c, {
+            move |p, _, event, cx| {
+                if let project::Event::DiskBasedDiagnosticsFinished { .. } = event {
+                    *summaries.borrow_mut() = p.diagnostic_summaries(cx).collect();
+                }
+            }
+        })
+        .detach();
     });
+
+    deterministic.run_until_parked();
+    assert_eq!(
+        project_c_diagnostic_summaries.borrow().as_slice(),
+        &[(
+            ProjectPath {
+                worktree_id,
+                path: Arc::from(Path::new("a.rs")),
+            },
+            DiagnosticSummary {
+                error_count: 1,
+                warning_count: 0,
+                ..Default::default()
+            },
+        )]
+    );
 
     // Simulate a language server reporting more errors for a file.
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
