@@ -1,5 +1,4 @@
-/// NOTE: Focus only 'takes' after an update has flushed_effects. Pane sends an event in on_focus_in
-/// which the workspace uses to change the activated pane.
+/// NOTE: Focus only 'takes' after an update has flushed_effects.
 ///
 /// This may cause issues when you're trying to write tests that use workspace focus to add items at
 /// specific locations.
@@ -971,7 +970,7 @@ pub struct Workspace {
     panes: Vec<ViewHandle<Pane>>,
     panes_by_item: HashMap<usize, WeakViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
-    last_active_center_pane: Option<ViewHandle<Pane>>,
+    last_active_center_pane: Option<WeakViewHandle<Pane>>,
     status_bar: ViewHandle<StatusBar>,
     titlebar_item: Option<AnyViewHandle>,
     dock: Dock,
@@ -1111,7 +1110,7 @@ impl Workspace {
             panes: vec![dock_pane, center_pane.clone()],
             panes_by_item: Default::default(),
             active_pane: center_pane.clone(),
-            last_active_center_pane: Some(center_pane.clone()),
+            last_active_center_pane: Some(center_pane.downgrade()),
             status_bar,
             titlebar_item: None,
             notifications: Default::default(),
@@ -1850,7 +1849,7 @@ impl Workspace {
             if &pane == self.dock_pane() {
                 Dock::show(self, cx);
             } else {
-                self.last_active_center_pane = Some(pane.clone());
+                self.last_active_center_pane = Some(pane.downgrade());
                 if self.dock.is_anchored_at(DockAnchor::Expanded) {
                     Dock::hide(self, cx);
                 }
@@ -1881,7 +1880,6 @@ impl Workspace {
                 }
                 pane::Event::Remove if !is_dock => self.remove_pane(pane, cx),
                 pane::Event::Remove if is_dock => Dock::hide(self, cx),
-                pane::Event::Focused => self.handle_pane_focused(pane, cx),
                 pane::Event::ActivateItem { local } => {
                     if *local {
                         self.unfollow(&pane, cx);
@@ -1942,7 +1940,7 @@ impl Workspace {
             for removed_item in pane.read(cx).items() {
                 self.panes_by_item.remove(&removed_item.id());
             }
-            if self.last_active_center_pane == Some(pane) {
+            if self.last_active_center_pane == Some(pane.downgrade()) {
                 self.last_active_center_pane = None;
             }
 
@@ -2652,9 +2650,17 @@ impl View for Workspace {
             .named("workspace")
     }
 
-    fn on_focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn on_focus_in(&mut self, view: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if cx.is_self_focused() {
             cx.focus(&self.active_pane);
+        } else {
+            for pane in self.panes() {
+                let view = view.clone();
+                if pane.update(cx, |_, cx| cx.is_child(view)) {
+                    self.handle_pane_focused(pane.clone(), cx);
+                    break;
+                }
+            }
         }
     }
 

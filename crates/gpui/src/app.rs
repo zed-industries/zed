@@ -618,7 +618,6 @@ pub struct MutableAppContext {
         HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
     foreground: Rc<executor::Foreground>,
     pending_effects: VecDeque<Effect>,
-    pending_focus_index: Option<usize>,
     pending_notifications: HashSet<usize>,
     pending_global_notifications: HashSet<TypeId>,
     pending_flushes: usize,
@@ -673,7 +672,6 @@ impl MutableAppContext {
             presenters_and_platform_windows: Default::default(),
             foreground,
             pending_effects: VecDeque::new(),
-            pending_focus_index: None,
             pending_notifications: Default::default(),
             pending_global_notifications: Default::default(),
             pending_flushes: 0,
@@ -1876,9 +1874,6 @@ impl MutableAppContext {
             let mut refreshing = false;
             loop {
                 if let Some(effect) = self.pending_effects.pop_front() {
-                    if let Some(pending_focus_index) = self.pending_focus_index.as_mut() {
-                        *pending_focus_index = pending_focus_index.saturating_sub(1);
-                    }
                     match effect {
                         Effect::Subscription {
                             entity_id,
@@ -2259,8 +2254,6 @@ impl MutableAppContext {
     }
 
     fn handle_focus_effect(&mut self, window_id: usize, focused_id: Option<usize>) {
-        self.pending_focus_index.take();
-
         if self
             .cx
             .windows
@@ -2383,10 +2376,6 @@ impl MutableAppContext {
     }
 
     pub fn focus(&mut self, window_id: usize, view_id: Option<usize>) {
-        if let Some(pending_focus_index) = self.pending_focus_index {
-            self.pending_effects.remove(pending_focus_index);
-        }
-        self.pending_focus_index = Some(self.pending_effects.len());
         self.pending_effects
             .push_back(Effect::Focus { window_id, view_id });
     }
@@ -3463,6 +3452,15 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn is_self_focused(&self) -> bool {
         self.app.focused_view_id(self.window_id) == Some(self.view_id)
+    }
+
+    pub fn is_child(&self, view: impl Into<AnyViewHandle>) -> bool {
+        let view = view.into();
+        if self.window_id != view.window_id {
+            return false;
+        }
+        self.parents(view.window_id, view.view_id)
+            .any(|parent| parent == self.view_id)
     }
 
     pub fn blur(&mut self) {
@@ -6378,18 +6376,29 @@ mod tests {
         assert_eq!(mem::take(&mut *observed_events.lock()), Vec::<&str>::new());
 
         view_1.update(cx, |_, cx| {
-            // Ensure only the latest focus is honored.
+            // Ensure focus events are sent for all intermediate focuses
             cx.focus(&view_2);
             cx.focus(&view_1);
             cx.focus(&view_2);
         });
         assert_eq!(
             mem::take(&mut *view_events.lock()),
-            ["view 1 blurred", "view 2 focused"],
+            [
+                "view 1 blurred",
+                "view 2 focused",
+                "view 2 blurred",
+                "view 1 focused",
+                "view 1 blurred",
+                "view 2 focused"
+            ],
         );
         assert_eq!(
             mem::take(&mut *observed_events.lock()),
             [
+                "view 2 observed view 1's blur",
+                "view 1 observed view 2's focus",
+                "view 1 observed view 2's blur",
+                "view 2 observed view 1's focus",
                 "view 2 observed view 1's blur",
                 "view 1 observed view 2's focus"
             ]

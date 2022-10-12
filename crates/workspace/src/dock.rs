@@ -170,7 +170,11 @@ impl Dock {
             } else {
                 cx.focus(pane);
             }
-        } else if let Some(last_active_center_pane) = workspace.last_active_center_pane.clone() {
+        } else if let Some(last_active_center_pane) = workspace
+            .last_active_center_pane
+            .as_ref()
+            .and_then(|pane| pane.upgrade(cx))
+        {
             cx.focus(last_active_center_pane);
         }
         cx.emit(crate::Event::DockAnchorChanged);
@@ -583,10 +587,11 @@ mod tests {
         }
 
         pub fn center_pane_handle(&self) -> ViewHandle<Pane> {
-            self.workspace(|workspace, _| {
+            self.workspace(|workspace, cx| {
                 workspace
                     .last_active_center_pane
                     .clone()
+                    .and_then(|pane| pane.upgrade(cx))
                     .unwrap_or_else(|| workspace.center.panes()[0].clone())
             })
         }
@@ -597,6 +602,7 @@ mod tests {
                 let pane = workspace
                     .last_active_center_pane
                     .clone()
+                    .and_then(|pane| pane.upgrade(cx))
                     .unwrap_or_else(|| workspace.center.panes()[0].clone());
                 Pane::add_item(
                     workspace,
