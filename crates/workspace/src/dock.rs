@@ -35,23 +35,16 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Dock::move_dock);
     cx.add_action(
         |workspace: &mut Workspace, _: &AnchorDockRight, cx: &mut ViewContext<Workspace>| {
-            settings::settings_file::write_setting("default_dock_anchor", "right".to_string(), cx);
             Dock::move_dock(workspace, &MoveDock(DockAnchor::Right), cx)
         },
     );
     cx.add_action(
         |workspace: &mut Workspace, _: &AnchorDockBottom, cx: &mut ViewContext<Workspace>| {
-            settings::settings_file::write_setting("default_dock_anchor", "bottom".to_string(), cx);
             Dock::move_dock(workspace, &MoveDock(DockAnchor::Bottom), cx)
         },
     );
     cx.add_action(
         |workspace: &mut Workspace, _: &ExpandDock, cx: &mut ViewContext<Workspace>| {
-            settings::settings_file::write_setting(
-                "default_dock_anchor",
-                "expanded".to_string(),
-                cx,
-            );
             Dock::move_dock(workspace, &MoveDock(DockAnchor::Expanded), cx)
         },
     );
